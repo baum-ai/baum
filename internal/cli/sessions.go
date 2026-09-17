@@ -145,7 +145,7 @@ func rowOf(engine *redact.Engine, s sessions.Session) (sessionRow, error) {
 	if root := s.Root(); root != nil {
 		row.StartedAt, row.EndedAt, row.Outcome = root.StartedAt, root.EndedAt, root.Outcome
 		if root.Title != nil {
-			title, _, err := engine.RedactString(*root.Title)
+			title, _, err := engine.Redact(*root.Title)
 			if err != nil {
 				return sessionRow{}, err
 			}
@@ -182,7 +182,7 @@ func dumpSession(w io.Writer, engine *redact.Engine, found []sessions.Session, i
 		if err != nil {
 			return fmt.Errorf("encoding session graph: %w", err)
 		}
-		redacted, _, err := engine.RedactString(string(encoded))
+		redacted, _, err := engine.Redact(string(encoded))
 		if err != nil {
 			return err
 		}

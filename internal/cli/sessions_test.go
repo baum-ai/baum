@@ -70,7 +70,7 @@ func TestSessionsJSONRedactsText(t *testing.T) {
 	if len(rows) != 1 || rows[0].Source != "claude_code" || rows[0].Branch != "feature/x" {
 		t.Errorf("rows = %+v", rows)
 	}
-	if strings.Contains(stdout, "ada.lovelace@example.com") {
+	if strings.Contains(stdout, "ada.lovelace") || strings.Contains(stdout, "example.com") {
 		t.Errorf("e-mail leaked into the listing:\n%s", stdout)
 	}
 }
@@ -84,7 +84,7 @@ func TestSessionsDumpIsRedacted(t *testing.T) {
 	if !strings.Contains(stdout, `"user_inputs"`) || !strings.Contains(stdout, "about the parser") {
 		t.Errorf("dump should be the graph:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "ada.lovelace@example.com") || !strings.Contains(stdout, "[redacted]") {
+	if strings.Contains(stdout, "ada.lovelace") || strings.Contains(stdout, "example.com") {
 		t.Errorf("dump must be redacted:\n%s", stdout)
 	}
 	if _, _, err := run(t, append([]string{"sessions", "--dump", "nope", repo}, flags...)...); err == nil {

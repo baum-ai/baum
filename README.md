@@ -72,8 +72,7 @@ reviewpal sessions --dump <session-id>
 ```
 
 Titles, prompts and every other text printed go through the same redaction
-as the review bundle: secrets are masked in place and e-mail addresses and
-@-mentions are removed.
+as the review bundle: secrets and e-mail addresses are masked in place.
 
 ## Configuration
 
@@ -134,7 +133,7 @@ own plumbing is under `internal/`.
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
 | `linkage` | matches commits of a pull request to the sessions that produced them |
 | `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
-| `redact` | masks secrets with [goredact](https://github.com/lastpersonlabs/goredact) and removes identities |
+| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact) |
 | `schema` | the vendored review schema and its validator |
 
 ## Development

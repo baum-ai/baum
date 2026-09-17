@@ -22,59 +22,65 @@ func engine(t *testing.T) *Engine {
 	return e
 }
 
-func TestRedactStringMasksSecretsAndIdentities(t *testing.T) {
+func TestRedactMasksSecretsAndEmails(t *testing.T) {
 	e := engine(t)
-	in := "ping @octocat, mail " + email + " and use " + plantedURL + " for the tests"
-	out, summary, err := e.RedactString(in)
+	in := "mail " + email + " and use " + plantedURL + " for the tests"
+	out, summary, err := e.Redact(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "Tr0ub4dor") {
-		t.Errorf("password survived: %q", out)
+	if len(out) != len(in) {
+		t.Errorf("length changed: %d -> %d", len(in), len(out))
 	}
-	if strings.Contains(out, email) || strings.Contains(out, "@octocat") {
-		t.Errorf("identity survived: %q", out)
+	if strings.Contains(out, "Tr0ub4dor") || strings.Contains(out, "ada.lovelace") || strings.Contains(out, "example.com") {
+		t.Errorf("secret or e-mail survived: %q", out)
 	}
-	if !strings.Contains(out, "ping octocat,") || !strings.Contains(out, Marker) {
-		t.Errorf("unexpected rewrite: %q", out)
+	if !strings.HasPrefix(out, "mail ") || !strings.HasSuffix(out, " for the tests") {
+		t.Errorf("text around the spans was rewritten: %q", out)
 	}
-	if summary.Secrets < 1 || summary.Identities < 2 || summary.Total() != summary.Secrets+summary.Identities {
+	if summary.Findings < 2 || summary.ByRule[EmailRuleID] < 1 {
 		t.Errorf("summary = %+v", summary)
-	}
-	if len(summary.ByRule) == 0 {
-		t.Errorf("ByRule should name the rule: %+v", summary)
 	}
 }
 
-func TestRedactLinesPreservesLineCountAndMentions(t *testing.T) {
+func TestRedactKeepsLinesAndCode(t *testing.T) {
 	e := engine(t)
 	in := strings.Join([]string{
 		"@@ -1,3 +1,4 @@",
 		"+    @Override",
 		"+    dsn = \"" + plantedURL + "\"",
-		"+    // contact " + email,
+		"+    // contact " + email + ".",
 		plantedKey,
+		"thanks @octocat",
 		"",
 	}, "\n")
-	out, summary, err := e.RedactLines(in)
+	out, summary, err := e.Redact(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Count(out, "\n"), strings.Count(in, "\n"); got != want {
-		t.Fatalf("line count changed: got %d, want %d\n%s", got, want, out)
+	inLines, outLines := strings.Split(in, "\n"), strings.Split(out, "\n")
+	if len(outLines) != len(inLines) {
+		t.Fatalf("line count changed: got %d, want %d\n%s", len(outLines), len(inLines), out)
 	}
-	if strings.Contains(out, "Tr0ub4dor") || strings.Contains(out, email) || strings.Contains(out, "MIIEpAIBAAKCAQEA7Qx1") {
+	for i := range inLines {
+		if len(outLines[i]) != len(inLines[i]) {
+			t.Errorf("line %d changed length: %q -> %q", i+1, inLines[i], outLines[i])
+		}
+	}
+	if strings.Contains(out, "Tr0ub4dor") || strings.Contains(out, "ada.lovelace") || strings.Contains(out, "MIIEpAIBAAKCAQEA7Qx1") {
 		t.Errorf("secret or e-mail survived: %q", out)
 	}
-	if !strings.Contains(out, "@Override") || !strings.Contains(out, "@@ -1,3 +1,4 @@") {
-		t.Errorf("hunk header or annotation was rewritten: %q", out)
+	for _, kept := range []string{"@@ -1,3 +1,4 @@", "@Override", "thanks @octocat", "// contact ", "."} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("%q was rewritten:\n%s", kept, out)
+		}
 	}
-	if summary.Secrets < 2 || summary.Identities < 1 {
+	if summary.Findings < 3 || summary.ByRule[EmailRuleID] != 1 {
 		t.Errorf("summary = %+v", summary)
 	}
 }
 
-func TestRedactReaderStreamsSecretsOnly(t *testing.T) {
+func TestRedactReaderMasksEmailsInStreams(t *testing.T) {
 	e := engine(t)
 	in := "{\"text\":\"" + email + " " + plantedURL + "\"}\n{\"text\":\"second record\"}\n"
 	var out bytes.Buffer
@@ -82,21 +88,57 @@ func TestRedactReaderStreamsSecretsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "Tr0ub4dor") {
-		t.Errorf("password survived: %q", out.String())
+	got := out.String()
+	if strings.Contains(got, "Tr0ub4dor") || strings.Contains(got, "ada.lovelace") {
+		t.Errorf("secret or e-mail survived: %q", got)
 	}
-	if !strings.Contains(out.String(), email) {
-		t.Errorf("reader path must leave identities alone: %q", out.String())
+	if len(got) != len(in) || strings.Count(got, "\n") != 2 || !strings.HasSuffix(got, "second record\"}\n") {
+		t.Errorf("stream structure changed: %q", got)
 	}
-	if strings.Count(out.String(), "\n") != 2 || !strings.HasSuffix(out.String(), "second record\"}\n") {
-		t.Errorf("stream structure changed: %q", out.String())
-	}
-	if summary.Secrets < 1 || summary.Identities != 0 {
+	if summary.ByRule[EmailRuleID] < 1 {
 		t.Errorf("summary = %+v", summary)
 	}
 }
 
-func TestRedactIdentities(t *testing.T) {
+func TestEmailRule(t *testing.T) {
+	e := engine(t)
+	tests := []struct {
+		name   string
+		in     string
+		masked bool
+	}{
+		{"plain", "write to " + email + " today", true},
+		{"plus and digits", "a.b+tag1@sub.example.co.uk", true},
+		{"sentence end", "ask " + email + ".", true},
+		{"angle brackets", "From: Ada <" + email + ">", true},
+		{"mention", "thanks @octocat", false},
+		{"annotation", "@Override", false},
+		{"decorator with dot", "@pytest.fixture", false},
+		{"scoped package", "npm i @scope/name", false},
+		{"no tld", "user@localhost", false},
+		{"numeric tld", "user@host.123", false},
+		{"bare at", "a @ b", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, summary, err := e.Redact(tt.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := summary.ByRule[EmailRuleID] > 0; got != tt.masked {
+				t.Errorf("Redact(%q) masked e-mail = %v, want %v (out %q)", tt.in, got, tt.masked, out)
+			}
+			if !tt.masked && out != tt.in {
+				t.Errorf("Redact(%q) = %q, want unchanged", tt.in, out)
+			}
+			if tt.masked && strings.Contains(out, "example") {
+				t.Errorf("Redact(%q) = %q, domain survived", tt.in, out)
+			}
+		})
+	}
+}
+
+func TestStripMentions(t *testing.T) {
 	tests := []struct {
 		name  string
 		in    string
@@ -104,32 +146,29 @@ func TestRedactIdentities(t *testing.T) {
 		count int
 	}{
 		{"none", "plain text", "plain text", 0},
-		{"email", "mail " + email + " now", "mail " + Marker + " now", 1},
 		{"mention", "thanks @octocat", "thanks octocat", 1},
 		{"mention at start", "@octocat please", "octocat please", 1},
-		{"decorator kept mid-token", "use x@y", "use x@y", 0},
+		{"address left alone", "x@y", "x@y", 0},
 		{"path kept", "pkg/@scope/name", "pkg/@scope/name", 0},
-		{"both", email + " cc @octocat", Marker + " cc octocat", 2},
+		{"two", "@ada cc @octocat", "ada cc octocat", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, count := RedactIdentities(tt.in)
+			got, count := StripMentions(tt.in)
 			if got != tt.want || count != tt.count {
-				t.Errorf("RedactIdentities(%q) = %q, %d; want %q, %d", tt.in, got, count, tt.want, tt.count)
+				t.Errorf("StripMentions(%q) = %q, %d; want %q, %d", tt.in, got, count, tt.want, tt.count)
 			}
 		})
 	}
 }
 
-func TestEmptyInput(t *testing.T) {
+func TestEmptyAndProfile(t *testing.T) {
 	e := engine(t)
-	for name, fn := range map[string]func(string) (string, Summary, error){"string": e.RedactString, "lines": e.RedactLines} {
-		out, summary, err := fn("")
-		if err != nil || out != "" || summary.Total() != 0 {
-			t.Errorf("%s: %q %+v %v", name, out, summary, err)
-		}
+	out, summary, err := e.Redact("")
+	if err != nil || out != "" || summary.Findings != 0 {
+		t.Errorf("empty: %q %+v %v", out, summary, err)
 	}
-	if !strings.HasPrefix(engine(t).Profile(), "goredact balanced") {
-		t.Errorf("profile = %q", engine(t).Profile())
+	if !strings.HasPrefix(e.Profile(), "goredact balanced") {
+		t.Errorf("profile = %q", e.Profile())
 	}
 }
