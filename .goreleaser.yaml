@@ -1,0 +1,66 @@
+# goreleaser v2 configuration. `just release-snapshot` builds every target
+# locally; the release workflow publishes on a v* tag.
+version: 2
+
+project_name: reviewpal
+
+before:
+  hooks:
+    - go mod tidy
+    # Phase 3 adds the viewer build here so internal/viewer's embed.FS has
+    # ui/dist before go build runs.
+
+builds:
+  - id: reviewpal
+    main: ./cmd/reviewpal
+    binary: reviewpal
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/lastpersonlabs/reviewpal/internal/cli.buildVersion={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^chore"
+      - "^ci"
+
+release:
+  github:
+    owner: lastpersonlabs
+    name: reviewpal
+  draft: false
+  prerelease: auto
