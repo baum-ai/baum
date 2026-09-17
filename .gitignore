@@ -1,0 +1,23 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.html
+
+# UI (Phase 3)
+node_modules/
+/ui/dist/
+/ui/coverage/
+/ui/playwright-report/
+/ui/test-results/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local planning notes and agent worktrees
+.plans/
+/.agents/worktrees
