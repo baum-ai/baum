@@ -21,9 +21,9 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, vendored schema and release pipeline exist; `generate`, `bundle`,
-`view`, `validate`, `refresh` and `sessions` print their help and exit
-non-zero until their phase lands.
+layout, vendored schema, release pipeline and `reviewpal sessions` exist;
+`generate`, `bundle`, `view`, `validate` and `refresh` print their help and
+exit non-zero until their phase lands.
 
 ## Install
 
@@ -51,10 +51,29 @@ reviewpal bundle --pr 191 -o bundle.json
 reviewpal view review.json
 ```
 
-`reviewpal validate` checks a document against the schema and its rules,
+`reviewpal validate` checks a document against the schema and its rules and
 `reviewpal refresh` updates checks, threads and session evidence without a
-model call, and `reviewpal sessions` lists the coding-agent sessions recorded
-for the current repository. Run any command with `--help` for its flags.
+model call. Run any command with `--help` for its flags.
+
+### Sessions
+
+```sh
+# Sessions recorded on this machine for the repository in the current
+# directory: Claude Code, Codex and Cursor from their home-directory stores,
+# Entire from the clone's checkpoint branch.
+reviewpal sessions
+
+# Only the last three days, as JSON, including sessions recorded when the
+# repository lived somewhere else.
+reviewpal sessions --since 72h --json --previous-path ~/old/checkout
+
+# The normalised session graph of one session, redacted, for debugging.
+reviewpal sessions --dump <session-id>
+```
+
+Titles, prompts and every other text printed go through the same redaction
+as the review bundle: secrets are masked in place and e-mail addresses and
+@-mentions are removed.
 
 ## Configuration
 
@@ -102,6 +121,21 @@ Documents follow the `recountable.review/1` JSON Schema published at
 document; `just schema-refresh` updates the copy from the published URL and a
 test validates the example against it. The URL is the source of truth for
 now; the schema's long-term home is still to be decided.
+
+## Packages
+
+The Go packages other tools may import sit at public paths; only the CLI's
+own plumbing is under `internal/`.
+
+| Package | What it does |
+| --- | --- |
+| `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
+| `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
+| `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
+| `linkage` | matches commits of a pull request to the sessions that produced them |
+| `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
+| `redact` | masks secrets with [goredact](https://github.com/lastpersonlabs/goredact) and removes identities |
+| `schema` | the vendored review schema and its validator |
 
 ## Development
 

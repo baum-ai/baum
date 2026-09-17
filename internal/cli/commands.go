@@ -62,14 +62,3 @@ func newRefreshCommand() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull request number")
 	return cmd
 }
-
-func newSessionsCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "sessions [dir]",
-		Short: "List coding-agent sessions recorded for the repository containing dir",
-		RunE:  notImplemented,
-	}
-	cmd.Flags().Bool("json", false, "print sessions as JSON")
-	cmd.Flags().String("vendor", "", "only sessions from this vendor: claude_code, codex, cursor or entire")
-	return cmd
-}
