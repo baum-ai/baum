@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "telemetry": true,
+ "strategy_options": {
+    "checkpoint_remote": {
+      "provider": "github",
+      "repo": "lastpersonlabs/checkpoints"
+    }
+  },
+  "checkpoints": {
+    "primary": {
+      "type": "git-refs"
+    }
+  }
+}
