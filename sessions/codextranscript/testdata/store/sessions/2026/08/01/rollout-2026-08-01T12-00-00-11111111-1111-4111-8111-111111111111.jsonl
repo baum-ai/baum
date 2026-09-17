@@ -1,0 +1,11 @@
+{"timestamp":"2026-08-01T12:00:00Z","type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111","session_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","cli_version":"0.146.0","source":"cli","history_mode":"legacy","git":{"branch":"main"}}}
+{"timestamp":"2026-08-01T12:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-parent"}}
+{"timestamp":"2026-08-01T12:00:02Z","type":"turn_context","payload":{"turn_id":"turn-parent","cwd":"/repo","model":"gpt-5","effort":"high"}}
+{"timestamp":"2026-08-01T12:00:03Z","type":"event_msg","payload":{"type":"user_message","message":"Delegate the audit","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-08-01T12:00:04Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Delegate the audit"}]}}
+{"timestamp":"2026-08-01T12:00:05Z","type":"response_item","payload":{"type":"message","id":"assistant-parent","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will delegate this."}]}}
+{"timestamp":"2026-08-01T12:00:06Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","namespace":"collaboration","arguments":"{\"task\":\"Audit\"}","call_id":"call-spawn"}}
+{"timestamp":"2026-08-01T12:00:07Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-spawn","output":"spawned /root/a"}}
+{"timestamp":"2026-08-01T12:00:08Z","type":"event_msg","payload":{"type":"sub_agent_activity","kind":"started","event_id":"call-spawn","agent_thread_id":"22222222-2222-4222-8222-222222222222","agent_path":"/root/a"}}
+{"timestamp":"2026-08-01T12:00:09Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-parent","last_agent_message":"I will delegate this."}}
+

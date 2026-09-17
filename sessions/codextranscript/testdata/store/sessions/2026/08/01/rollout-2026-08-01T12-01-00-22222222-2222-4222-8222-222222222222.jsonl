@@ -1,0 +1,9 @@
+{"timestamp":"2026-08-01T12:01:00Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","session_id":"11111111-1111-4111-8111-111111111111","parent_thread_id":"11111111-1111-4111-8111-111111111111","forked_from_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-08-01T12:01:00Z","cwd":"/repo","cli_version":"0.146.0","source":{"subagent":{"thread_spawn":{"parent_thread_id":"11111111-1111-4111-8111-111111111111","depth":1,"agent_path":"/root/a","agent_nickname":"Ada","agent_role":null}}},"agent_path":"/root/a","history_mode":"legacy"}}
+{"timestamp":"2026-08-01T12:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-parent"}}
+{"timestamp":"2026-08-01T12:01:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-child"}}
+{"timestamp":"2026-08-01T12:01:02Z","type":"inter_agent_communication_metadata","payload":{"trigger_turn":true}}
+{"timestamp":"2026-08-01T12:01:03Z","type":"response_item","payload":{"type":"agent_message","id":"agent-input","author":"/root","recipient":"/root/a","content":[{"type":"input_text","text":"Audit the mapper"}]}}
+{"timestamp":"2026-08-01T12:01:04Z","type":"turn_context","payload":{"turn_id":"turn-child","cwd":"/repo","model":"gpt-5","effort":"high"}}
+{"timestamp":"2026-08-01T12:01:05Z","type":"response_item","payload":{"type":"message","id":"assistant-child","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"The mapper is sound."}]}}
+{"timestamp":"2026-08-01T12:01:06Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-child","last_agent_message":"The mapper is sound."}}
+

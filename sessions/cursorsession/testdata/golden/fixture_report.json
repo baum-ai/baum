@@ -1,0 +1,34 @@
+{
+  "sessions": 3,
+  "rows": {
+    "user_inputs": 4,
+    "model_invocations": 5,
+    "assistant_messages": 3,
+    "tool_uses": 8,
+    "tool_results": 7,
+    "file_touches": 3,
+    "session_attributes": 21,
+    "token_usage": 0,
+    "vendor_ids": 73
+  },
+  "bubbles": {
+    "total": 18,
+    "mapped": 14,
+    "provenance": 2,
+    "discarded": {
+      "context/empty assistant bubble": 1,
+      "degenerate tool record": 1
+    }
+  },
+  "tokens": {
+    "assigned_invocations": 1,
+    "estimated_invocations": 4,
+    "ambiguous_bubbles": 0
+  },
+  "notes": [
+    "composer root bubble degenerate has a degenerate tool record",
+    "composer root codeBlockDiff 55555555-5555-4555-8555-555555555555 did not join a tool edit touch; mapped as an orphan edit touch",
+    "composer root lists dangling subagent dangling",
+    "composer root task tool call-phantom references unlisted subagent phantom"
+  ]
+}

@@ -1,0 +1,308 @@
+[
+  {
+    "session_id": "7f85b0e9-4f7a-4a81-a27e-1393aa1e80f6",
+    "checkpoint_id": "0004a7a444a0",
+    "created_at": "2026-07-26T15:52:20Z",
+    "fidelity_rank": 2,
+    "root": {
+      "id": "96fe3d3a-cbc1-5804-bfb1-139eb0ba88d6",
+      "outcome": "committed",
+      "started_at": "2026-07-26T15:52:21Z",
+      "ended_at": "2026-07-26T15:52:24Z",
+      "git_branch": "main"
+    },
+    "rows": {
+      "sessions": 1,
+      "user_inputs": 1,
+      "model_invocations": 2,
+      "assistant_messages": 2,
+      "tool_uses": 1,
+      "tool_results": 1,
+      "file_touches": 1,
+      "session_attributes": 12,
+      "token_usage": 0,
+      "vendor_ids": 19
+    },
+    "entity_ids": {
+      "attributes": [
+        "0b6b8bbd-182a-5a0e-a7c1-112ef2bd6f25",
+        "0ba57a77-41f2-5415-8a94-3eab68227421",
+        "0c6aa54c-21ad-57b4-becd-c64301e29236",
+        "44474855-e1a4-5014-92ce-158caaaddbbc",
+        "59f559fa-0e47-559e-aaf8-f9e10573db59",
+        "5e69cefc-9158-55ee-8f14-4b8e95cab5bf",
+        "66fccec5-5f84-50bc-a9d3-c960092a62e7",
+        "cb101071-45af-50fb-97d5-5323d18b16e9",
+        "d0311295-7663-5e89-b9e0-1e79fe7579e0",
+        "dd0f27fa-bab2-5458-8976-590b2e586410",
+        "de0dd904-c714-53aa-a4e6-13d14118d09a",
+        "f6160662-b51b-5925-8b16-84f10388b7ab"
+      ],
+      "inputs": [
+        "b307be9b-9876-54b8-965a-303eeae057a5"
+      ],
+      "invocations": [
+        "376004d4-2781-5355-8533-48b0c75ba8e5",
+        "9449fbbb-2510-5495-9a78-b9919fff3c33"
+      ],
+      "messages": [
+        "4525c92c-c31b-5bfa-885a-34f6186ae89d",
+        "66407b76-185f-5cc9-9b11-a12fde4a1e9a"
+      ],
+      "results": [
+        "a7f817d1-9ebf-58ef-9538-afc705373505"
+      ],
+      "sessions": [
+        "96fe3d3a-cbc1-5804-bfb1-139eb0ba88d6"
+      ],
+      "tools": [
+        "d478483a-3235-5076-8434-784ea97b36af"
+      ],
+      "touches": [
+        "44b229f8-5a9d-547a-95a3-e1a3f84e649f"
+      ]
+    },
+    "attribute_keys": [
+      "agent",
+      "checkpoints_count",
+      "cli_version",
+      "cwd",
+      "gitBranch",
+      "initial_attribution",
+      "model",
+      "prompt_attributions",
+      "save_step_count",
+      "session_metrics",
+      "strategy",
+      "token_usage"
+    ],
+    "file_touches": [
+      {
+        "path": "/repo/parse.go",
+        "kind": "read"
+      }
+    ],
+    "vendor_ids": [
+      {
+        "our_type": "assistant_message",
+        "vendor": "claude_code",
+        "kind": "uuid.block"
+      },
+      {
+        "our_type": "assistant_message",
+        "vendor": "claude_code",
+        "kind": "uuid.block"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "message.id"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "message.id"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "requestId"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "requestId"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "uuid"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "uuid"
+      },
+      {
+        "our_type": "session",
+        "vendor": "claude_code",
+        "kind": "sessionId"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "checkpoint_id"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "session_id"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "turn_id"
+      },
+      {
+        "our_type": "session_attribute",
+        "vendor": "claude_code",
+        "kind": "ordinal"
+      },
+      {
+        "our_type": "session_attribute",
+        "vendor": "claude_code",
+        "kind": "ordinal"
+      },
+      {
+        "our_type": "tool_result",
+        "vendor": "claude_code",
+        "kind": "tool_use_id"
+      },
+      {
+        "our_type": "tool_use",
+        "vendor": "claude_code",
+        "kind": "tool_use.id"
+      },
+      {
+        "our_type": "tool_use",
+        "vendor": "claude_code",
+        "kind": "uuid.block"
+      },
+      {
+        "our_type": "user_input",
+        "vendor": "claude_code",
+        "kind": "promptId"
+      },
+      {
+        "our_type": "user_input",
+        "vendor": "claude_code",
+        "kind": "uuid"
+      }
+    ]
+  },
+  {
+    "session_id": "d9f72f5a-32ee-4a09-83dc-6c2d52918c0a",
+    "checkpoint_id": "0004a7a444a0",
+    "created_at": "2026-07-26T15:52:59Z",
+    "fidelity_rank": 2,
+    "root": {
+      "id": "01868cad-52a8-5b89-8e86-6591f72222f2",
+      "outcome": "committed",
+      "started_at": "2026-07-26T15:53:00Z",
+      "ended_at": "2026-07-26T15:53:01Z",
+      "git_branch": "main"
+    },
+    "rows": {
+      "sessions": 1,
+      "user_inputs": 1,
+      "model_invocations": 1,
+      "assistant_messages": 1,
+      "tool_uses": 0,
+      "tool_results": 0,
+      "file_touches": 0,
+      "session_attributes": 10,
+      "token_usage": 0,
+      "vendor_ids": 12
+    },
+    "entity_ids": {
+      "attributes": [
+        "3dc25b2b-21c6-5db6-9628-da1274226ad0",
+        "649e4338-9ea6-5bdc-8a00-cd2b4aac0fa9",
+        "714db1b0-fe6c-5829-8e1b-cadf98f0fc6e",
+        "94c73617-ba8e-518f-b0d4-79b09a46a814",
+        "a068fe79-e62f-5be5-89c6-a5441bac463f",
+        "b8980b19-2203-5926-a26f-6ebe39a5c62a",
+        "bcd10501-6ade-5917-b9db-d24544a42f7f",
+        "da13bacb-6ba3-5324-a885-e15834d38390",
+        "e6238d69-4f65-5c9f-9780-17724966fb9a",
+        "f7bea50c-59c3-54bf-b43f-d9319dd406e8"
+      ],
+      "inputs": [
+        "dfa29e1b-9810-5e22-aee4-8af7291885b1"
+      ],
+      "invocations": [
+        "8fabf4fa-a19d-53b4-91ce-fbbfa68b10ce"
+      ],
+      "messages": [
+        "363d8776-ef8a-5f2f-a5d7-b8e2a741b84e"
+      ],
+      "sessions": [
+        "01868cad-52a8-5b89-8e86-6591f72222f2"
+      ]
+    },
+    "attribute_keys": [
+      "agent",
+      "checkpoints_count",
+      "cli_version",
+      "cwd",
+      "gitBranch",
+      "initial_attribution",
+      "model",
+      "session_metrics",
+      "strategy",
+      "token_usage"
+    ],
+    "vendor_ids": [
+      {
+        "our_type": "assistant_message",
+        "vendor": "claude_code",
+        "kind": "uuid.block"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "message.id"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "requestId"
+      },
+      {
+        "our_type": "model_invocation",
+        "vendor": "claude_code",
+        "kind": "uuid"
+      },
+      {
+        "our_type": "session",
+        "vendor": "claude_code",
+        "kind": "sessionId"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "checkpoint_id"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "session_id"
+      },
+      {
+        "our_type": "session",
+        "vendor": "entire",
+        "kind": "turn_id"
+      },
+      {
+        "our_type": "session_attribute",
+        "vendor": "claude_code",
+        "kind": "ordinal"
+      },
+      {
+        "our_type": "session_attribute",
+        "vendor": "claude_code",
+        "kind": "ordinal"
+      },
+      {
+        "our_type": "user_input",
+        "vendor": "claude_code",
+        "kind": "promptId"
+      },
+      {
+        "our_type": "user_input",
+        "vendor": "claude_code",
+        "kind": "uuid"
+      }
+    ]
+  }
+]

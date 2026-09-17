@@ -5,10 +5,20 @@ linters:
   enable:
     - misspell
     - unconvert
-    - unparam
   settings:
-    misspell:
-      locale: UK
+    staticcheck:
+      # ST1005 flags error strings that start with a product name such as
+      # Cursor or Entire; those names keep their capitals.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1005", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+    errcheck:
+      # Deferred and best-effort cleanup; the surrounding code already reports
+      # the operation's own error.
+      exclude-functions:
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/lastpersonlabs/reviewpal/sessions/cursortranscript.Store).Close
+        - os.RemoveAll
 
 formatters:
   enable:

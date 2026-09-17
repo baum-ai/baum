@@ -1,0 +1,6 @@
+{
+  "agentType": "Explore",
+  "description": "Check the schema",
+  "toolUseId": "toolu_spawn",
+  "spawnDepth": 1
+}

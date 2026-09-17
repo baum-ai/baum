@@ -1,0 +1,2 @@
+{"v":1,"agent":"claude-code","cli_version":"0.8.42","type":"user","ts":"2026-07-26T15:53:00Z","content":[{"text":"Check the documentation"}]}
+{"v":1,"agent":"claude-code","cli_version":"0.8.42","type":"assistant","ts":"2026-07-26T15:53:01Z","id":"message-2","input_tokens":7,"output_tokens":5,"content":[{"text":"The documentation is current.","type":"text"}]}

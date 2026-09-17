@@ -1,0 +1,48 @@
+{
+  "sessions": 3,
+  "rows": {
+    "user_inputs": 8,
+    "model_invocations": 11,
+    "assistant_messages": 7,
+    "tool_uses": 10,
+    "tool_results": 9,
+    "file_touches": 2,
+    "session_attributes": 11,
+    "vendor_ids": 96
+  },
+  "lines": {
+    "total": 41,
+    "mapped": 31,
+    "attribute_bearing": 5,
+    "merged": 1,
+    "discarded": {
+      "attachment": 1,
+      "control/queue-operation (dequeue)": 1,
+      "system/turn_duration": 1,
+      "unrecognised type/future-record": 1
+    },
+    "torn_final_lines": 0
+  },
+  "transcript": {
+    "versions": {
+      "seen": {
+        "2.1.220": 31,
+        "unknown": 10
+      },
+      "min": "2.1.220",
+      "max": "2.1.220"
+    },
+    "content_shapes": {
+      "array": 24,
+      "string": 7
+    },
+    "unread_keys": {
+      "durationMs": 1,
+      "entrypoint": 31,
+      "messageCount": 1,
+      "somethingNew": 1,
+      "sourceToolAssistantUUID": 2,
+      "userType": 31
+    }
+  }
+}

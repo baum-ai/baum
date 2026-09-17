@@ -1,0 +1,125 @@
+{
+  "transcripts": [
+    {
+      "file": "11111111-2222-3333-4444-555555555555.jsonl",
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "lines": 32,
+      "torn_final_line": false,
+      "types": {
+        "ai-title": 1,
+        "assistant": 10,
+        "attachment": 1,
+        "bridge-session": 1,
+        "future-record": 1,
+        "last-prompt": 1,
+        "mode": 1,
+        "permission-mode": 1,
+        "queue-operation": 2,
+        "system": 1,
+        "user": 12
+      },
+      "classes": {
+        "assistant": 10,
+        "attachment": 1,
+        "control": 7,
+        "system": 1,
+        "unknown_control": 1,
+        "user": 12
+      },
+      "user_kinds": {
+        "user_text": 6,
+        "user_tool_results": 6
+      },
+      "blocks": {
+        "text": 3,
+        "thinking": 2,
+        "tool_result": 7,
+        "tool_use": 8
+      },
+      "tool_uses": [
+        "Agent:toolu_denied",
+        "Agent:toolu_spawn",
+        "Bash:toolu_bg",
+        "Bash:toolu_commit",
+        "Glob:toolu_par_a",
+        "Grep:toolu_open",
+        "Read:toolu_read",
+        "WebFetch:toolu_par_b"
+      ],
+      "tool_results": [
+        "toolu_bg",
+        "toolu_commit",
+        "toolu_denied",
+        "toolu_par_a",
+        "toolu_par_b",
+        "toolu_read",
+        "toolu_spawn"
+      ]
+    },
+    {
+      "file": "agent-a1.jsonl",
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "agent_id": "a1",
+      "spawned_by_tool_use": "toolu_spawn",
+      "spawn_depth": 1,
+      "lines": 5,
+      "torn_final_line": false,
+      "types": {
+        "assistant": 3,
+        "user": 2
+      },
+      "classes": {
+        "assistant": 3,
+        "user": 2
+      },
+      "user_kinds": {
+        "user_text": 1,
+        "user_tool_results": 1
+      },
+      "blocks": {
+        "text": 2,
+        "tool_result": 1,
+        "tool_use": 1
+      },
+      "tool_uses": [
+        "Agent:toolu_nested"
+      ],
+      "tool_results": [
+        "toolu_nested"
+      ]
+    },
+    {
+      "file": "agent-a2.jsonl",
+      "session_id": "11111111-2222-3333-4444-555555555555",
+      "agent_id": "a2",
+      "spawned_by_tool_use": "toolu_nested",
+      "spawn_depth": 2,
+      "parent_agent_id": "a1",
+      "lines": 4,
+      "torn_final_line": false,
+      "types": {
+        "assistant": 2,
+        "user": 2
+      },
+      "classes": {
+        "assistant": 2,
+        "user": 2
+      },
+      "user_kinds": {
+        "user_text": 1,
+        "user_tool_results": 1
+      },
+      "blocks": {
+        "text": 1,
+        "tool_result": 1,
+        "tool_use": 1
+      },
+      "tool_uses": [
+        "Read:toolu_read_migration"
+      ],
+      "tool_results": [
+        "toolu_read_migration"
+      ]
+    }
+  ]
+}

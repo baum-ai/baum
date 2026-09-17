@@ -1,0 +1,101 @@
+{
+  "sessions": 3,
+  "failed_snapshots": 0,
+  "rows": {
+    "sessions": 3,
+    "user_inputs": 0,
+    "model_invocations": 0,
+    "assistant_messages": 0,
+    "tool_uses": 0,
+    "tool_results": 0,
+    "file_touches": 0,
+    "session_attributes": 21,
+    "token_usage": 1,
+    "vendor_ids": 9
+  },
+  "compact": {
+    "lines": {
+      "total": 0,
+      "mapped": 0,
+      "envelope_evidence": 0
+    },
+    "blocks": {
+      "total": 0,
+      "mapped": 0,
+      "envelope_evidence": 0
+    }
+  },
+  "metadata": {
+    "total": 56,
+    "mapped": 39,
+    "envelope_evidence": 11,
+    "discarded": {
+      "checkpoint metadata is not session-attributable: branch": 1,
+      "checkpoint metadata is not session-attributable: checkpoints_count": 1,
+      "checkpoint metadata is not session-attributable: cli_version": 1,
+      "checkpoint metadata is not session-attributable: files_touched": 1,
+      "checkpoint metadata is not session-attributable: strategy": 1,
+      "checkpoint metadata is not session-attributable: token_usage": 1
+    }
+  },
+  "envelope": {
+    "attributes_added": 21,
+    "vendor_ids_added": 9,
+    "aggregate_usage_added": 1,
+    "aggregate_usage_attributed": 0,
+    "files_considered": 25,
+    "files_already_covered": 0,
+    "files_unrepresentable": 25,
+    "files_shared": 18,
+    "hash_checked": 0,
+    "hash_mismatches": 0
+  },
+  "shape": {
+    "cli_versions": {
+      "seen": {
+        "0.8.42": 4
+      },
+      "min": "0.8.42",
+      "max": "0.8.42"
+    },
+    "checkpoint_keys": {
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "files_touched": 1,
+      "sessions": 1,
+      "strategy": 1,
+      "token_usage": 1
+    },
+    "session_keys": {
+      "agent": 3,
+      "branch": 3,
+      "checkpoint_id": 3,
+      "checkpoint_transcript_start": 3,
+      "checkpoints_count": 3,
+      "cli_version": 3,
+      "compact_transcript_start": 3,
+      "created_at": 3,
+      "files_touched": 3,
+      "initial_attribution": 3,
+      "model": 3,
+      "session_id": 3,
+      "skill_events": 1,
+      "skill_events_version": 1,
+      "strategy": 3,
+      "token_usage": 1,
+      "transcript_lines_at_start": 3,
+      "turn_id": 3
+    },
+    "compact_record_types": {},
+    "compact_block_kinds": {},
+    "compact_agents": {},
+    "hash_checked": 0,
+    "hash_mismatches": 0
+  },
+  "findings": [
+    "metadata files_touched cannot be emitted without inventing a user_input_id required by the current session schema",
+    "metadata files_touched identical across sessions is the checkpoint's diff and is attributed to no session"
+  ]
+}

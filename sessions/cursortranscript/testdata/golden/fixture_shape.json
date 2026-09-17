@@ -1,0 +1,31 @@
+{
+  "headers": 5,
+  "composer_versions": {
+    "17": 5
+  },
+  "bubble_versions": {
+    "3": 20
+  },
+  "bubble_types": {
+    "1": 5,
+    "2": 15
+  },
+  "tool_statuses": {
+    "cancelled": 1,
+    "completed": 4,
+    "degenerate": 1,
+    "error": 2,
+    "loading": 1
+  },
+  "key_families": {
+    "agentKv": 1,
+    "bubbleId": 20,
+    "codeBlockDiff": 3,
+    "composerData": 6,
+    "messageRequestContext": 1,
+    "null": 1
+  },
+  "composers_with_bubbles_without_data": 1,
+  "bubbles_without_composer_data": 1,
+  "junk_rows": 3
+}

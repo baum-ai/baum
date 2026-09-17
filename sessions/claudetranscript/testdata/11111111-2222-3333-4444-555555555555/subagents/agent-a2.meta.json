@@ -1,0 +1,7 @@
+{
+  "agentType": "Explore",
+  "description": "Read the migration",
+  "toolUseId": "toolu_nested",
+  "parentAgentId": "a1",
+  "spawnDepth": 2
+}
