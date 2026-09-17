@@ -1,0 +1,3739 @@
+{
+  "schema": "recountable.review/1",
+  "review": {
+    "repository": "lastpersonlabs/recountable",
+    "pull_request": 191,
+    "pr_state": "merged",
+    "head": "afd406e3e902dd31b741474e7bfb1727ba444a68",
+    "base": "43688e43e2b548912f3572a8491014248d92a4e4",
+    "merge_base": "43688e43e2b548912f3572a8491014248d92a4e4",
+    "merged_commit": "820459dc29dd1278928a8e66e3cc160f6addd30c",
+    "version": 3,
+    "previous_version": 2,
+    "generation_state": "current",
+    "generated_at": "2026-09-16T13:46:05Z",
+    "evidence_refreshed_at": "2026-09-16T13:46:05Z",
+    "generator": {
+      "model": "provider-model-id",
+      "review_md": null,
+      "schema_revision": "2026-09-16.3",
+      "truncated": [
+        "Session event summaries are paraphrased from execute calls; raw commands, tool outputs and local paths are not included",
+        "Human review comment bodies are not included in this fixture input; review_exchange records the replies but cannot summarize their substance"
+      ]
+    },
+    "sources": {
+      "diff": true,
+      "sessions": 1,
+      "checks": 4,
+      "test_reports": 0,
+      "review_threads": true,
+      "agent_reviews": 3,
+      "spec_links": true,
+      "review_md": false
+    },
+    "relations": []
+  },
+  "summary": {
+    "title": "Add commit-side session review and atomic corrections",
+    "text": "From a commit page, readers can compare every eligible session with its comparison evidence, and repository writers can confirm or reject the loaded sessions in one atomic save. Unseen pairs, other commits and cross-repository links are untouched. Two migrations add retry receipts and a shared evidence fingerprint, and every writer of comparison evidence now takes the same repository lock.",
+    "review_exchange": {
+      "summary": "All three agent reviews assess earlier heads. Two Codex rounds identified should-fix risks in stale-evidence hashing and concurrent snapshot updates, with follow-up commits recorded for both; the first finding is resolved and the second remains open. Cursor's stale approval raised three dismissed considerations about repository-wide locking, non-default-branch evidence and opt-in real-data coverage. Two human diff replies are indexed, but their bodies were unavailable in the generation input, so their substance cannot be summarized.",
+      "reviews": 3,
+      "back_and_forths": 2,
+      "critical_issues_found": 0,
+      "changes_after_open": {
+        "commits": 5,
+        "lines_added": 754,
+        "lines_removed": 487
+      }
+    },
+    "change_kind": "feature",
+    "implements": [
+      {
+        "type": "issue",
+        "system": "linear",
+        "key": "AGE-14"
+      },
+      {
+        "type": "issue",
+        "system": "linear",
+        "key": "AGE-17"
+      },
+      {
+        "type": "issue",
+        "system": "linear",
+        "key": "AGE-15"
+      },
+      {
+        "type": "issue",
+        "system": "linear",
+        "key": "AGE-16"
+      },
+      {
+        "type": "spec",
+        "page": "SPEC-117",
+        "assertion": "SPEC-117-A01"
+      },
+      {
+        "type": "spec",
+        "page": "SPEC-117",
+        "assertion": "SPEC-117-A02"
+      },
+      {
+        "type": "spec",
+        "page": "SPEC-117",
+        "assertion": "SPEC-117-A03"
+      },
+      {
+        "type": "spec",
+        "page": "SPEC-117",
+        "assertion": "SPEC-117-A04"
+      }
+    ],
+    "release_note": null,
+    "breaking_change": null,
+    "attention": {
+      "text": "Two new endpoints write and read attribution data, and a repository-wide advisory lock is now shared by every linkage and evidence writer.",
+      "refs": [
+        "sec_review_save",
+        "sec_fencing"
+      ]
+    },
+    "author": {
+      "login": "paulpritz",
+      "association": "MEMBER",
+      "bot": false
+    },
+    "authorship": {
+      "declared": "none",
+      "declared_tools": [],
+      "anchors": [],
+      "observed_sessions": 1,
+      "observed_vendors": [
+        "codex"
+      ],
+      "observed_models": [
+        "gpt-6-astra"
+      ]
+    }
+  },
+  "stats": {
+    "sections": 6,
+    "files": 47,
+    "hunks": 71,
+    "additions": 3372,
+    "deletions": 70,
+    "risk_loc": {
+      "critical": 0,
+      "high": 197,
+      "medium": 415,
+      "low": 3,
+      "unrated": 2520,
+      "mechanical": 307
+    },
+    "role_loc": {
+      "code": 1244,
+      "test": 1847,
+      "generated": 305,
+      "migration": 46
+    },
+    "checks": {
+      "required_failed": 0,
+      "optional_failed": 0,
+      "pending": 0,
+      "skipped": 0
+    },
+    "agent_findings": {
+      "open": 1,
+      "resolved": 1,
+      "dismissed": 3
+    }
+  },
+  "sections": [
+    {
+      "id": "sec_candidates",
+      "title": "Candidate reading",
+      "kind": "logical",
+      "hunks": [
+        "h_476989141c54",
+        "h_7c03d2f79af6",
+        "h_85f911c4cdbe",
+        "h_ead32fe93b64",
+        "h_c7491955a906",
+        "h_b403449a2f1f",
+        "h_1781aa962981",
+        "h_dda1a17d6339",
+        "h_9059c0588d90",
+        "h_2a4f00380769",
+        "h_c5520082411a",
+        "h_db0b371b59f2",
+        "h_2fcb17241737"
+      ],
+      "summary": {
+        "text": "Adds a paged, read-only endpoint that lists the sessions eligible for one commit: current links, manual rejections and resolver-prefilter candidates, each with comparison evidence and an evidence snapshot token.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_9059c0588d90"
+          },
+          {
+            "type": "hunk",
+            "id": "h_476989141c54"
+          }
+        ]
+      },
+      "attention": {
+        "text": "Candidate rows expose the session owner's email to every reader with repository access.",
+        "refs": [
+          "rsk_2"
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_1",
+          "tier": "medium",
+          "category": "public_endpoint",
+          "source": "model",
+          "text": "New authenticated read endpoint joining sessions, edges, files and branches for one commit; the query runs per page with several correlated subqueries",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_1781aa962981"
+            },
+            {
+              "type": "hunk",
+              "id": "h_9059c0588d90"
+            }
+          ]
+        },
+        {
+          "id": "rsk_2",
+          "tier": "medium",
+          "category": "permissions",
+          "source": "model",
+          "text": "Candidate rows include user_email of the session owner and are visible to any reader with repository access, not only writers",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_476989141c54",
+              "lines": [
+                47,
+                59
+              ]
+            },
+            {
+              "type": "hunk",
+              "id": "h_9059c0588d90",
+              "lines": [
+                46,
+                50
+              ]
+            }
+          ]
+        },
+        {
+          "id": "rsk_3",
+          "tier": "low",
+          "category": "api_compat",
+          "source": "agent_review",
+          "text": "Branch agreement is unavailable for commits outside the default branch because only default-branch membership is persisted",
+          "anchors": [
+            {
+              "type": "pr_comment",
+              "id": 5197744335
+            },
+            {
+              "type": "hunk",
+              "id": "h_9059c0588d90",
+              "lines": [
+                41,
+                43
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "test",
+          "claim": "Union, ordering, paging, access denial and malformed input are covered by new analytics tests",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_c5520082411a"
+            },
+            {
+              "type": "hunk",
+              "id": "h_db0b371b59f2"
+            }
+          ],
+          "detail": "Platform job passed on this head; per-test results are not reported separately"
+        },
+        {
+          "id": "ev_2",
+          "kind": "test",
+          "claim": "Evidence is read in the same statement as its snapshot",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_2a6d56cfc478"
+            }
+          ],
+          "detail": "TestCommitCandidateEvidenceUsesCurrentStatementCommitContext"
+        },
+        {
+          "id": "ev_3",
+          "kind": "review",
+          "claim": "Functional review found no defects in the candidate read on b65dc0b7",
+          "status": "reported",
+          "source": "agent_review",
+          "anchors": [
+            {
+              "type": "pr_comment",
+              "id": 5197744335
+            }
+          ],
+          "detail": "Assessed an earlier head; the read path did not change afterwards"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "Let a commit page compare every eligible session with the same admission rules the resolver uses, so a reviewer sees the evidence behind linked, suggested and rejected sessions.",
+          "anchors": [
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 1,
+              "input": "bb38fe80-0106-570a-859b-7fc80083eb2a"
+            },
+            {
+              "type": "pr_body",
+              "section": null
+            },
+            {
+              "type": "issue",
+              "system": "linear",
+              "key": "AGE-17"
+            },
+            {
+              "type": "spec",
+              "page": "SPEC-117",
+              "assertion": "SPEC-117-A01"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "endpoint",
+              "name": "GET /analytics/commits/:repository_id/:sha/session-candidates",
+              "path": "platform/internal/analytics/http/handlers.go",
+              "change": "added",
+              "hunks": [
+                "h_1781aa962981"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "RepositoryStore.CommitSessionCandidates",
+              "path": "platform/internal/analytics/commitcandidates.go",
+              "change": "added",
+              "hunks": [
+                "h_476989141c54"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Service.CommitSessionCandidates",
+              "path": "platform/internal/analytics/commitcandidates.go",
+              "change": "added",
+              "hunks": [
+                "h_476989141c54"
+              ]
+            },
+            {
+              "kind": "type",
+              "name": "CommitSessionCandidate",
+              "path": "platform/internal/analytics/commitcandidates.go",
+              "change": "added",
+              "hunks": [
+                "h_476989141c54"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "ListAnalyticsCommitSessionCandidates (SQL)",
+              "path": "platform/internal/db/sqlc/queries/commit_candidates.sql",
+              "change": "added",
+              "hunks": [
+                "h_9059c0588d90"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "analytics.WithMatcherConfig",
+              "path": "platform/internal/analytics/repository.go",
+              "change": "added",
+              "hunks": [
+                "h_7c03d2f79af6"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_1",
+              "text": "Candidates are the union of matched edges, manual rejections and sessions admitted by the resolver prefilter for the commit's primary repository, ordered linked first, then suggested, then rejected, then by time proximity to the commit",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_9059c0588d90",
+                  "lines": [
+                    11,
+                    38
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_2",
+              "text": "Pages are keyset-based with a limit of 1 to the analytics maximum; a malformed or foreign cursor is rejected as invalid",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_476989141c54",
+                  "lines": [
+                    79,
+                    100
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_476989141c54",
+                  "lines": [
+                    163,
+                    165
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_3",
+              "text": "Each row carries an evidence snapshot computed in the same statement as the displayed evidence, plus branch agreement and overlapping edited and read paths where commit files are known",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_9059c0588d90",
+                  "lines": [
+                    39,
+                    63
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_2"
+              ]
+            },
+            {
+              "id": "beh_4",
+              "text": "An unauthorized or unknown commit returns not found; the response states whether the caller can write, and lists attribution from other repositories separately as non-editable",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_476989141c54",
+                  "lines": [
+                    149,
+                    203
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_85f911c4cdbe"
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_5",
+              "text": "The analytics repository receives the resolver's matcher configuration so candidate admission follows the configured prefilter and tolerance",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_7c03d2f79af6"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_2a4f00380769"
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_1",
+              "by": "agent",
+              "text": "Candidates are read from primary provenance only; attribution from other repositories is returned but never editable",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_476989141c54",
+                  "lines": [
+                    102,
+                    110
+                  ]
+                },
+                {
+                  "type": "pr_body",
+                  "section": null
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "medium",
+        "additions": 665,
+        "deletions": 5,
+        "role_loc": {
+          "code": 327,
+          "test": 343
+        },
+        "reviewers": [
+          {
+            "login": "paulpritz",
+            "source": "requested"
+          }
+        ],
+        "state": "unchanged",
+        "evidence_summary": {
+          "verified": 2,
+          "reported": 1
+        },
+        "open_findings": 0
+      }
+    },
+    {
+      "id": "sec_review_save",
+      "title": "Atomic review save",
+      "kind": "logical",
+      "hunks": [
+        "h_e8401fe2ec65",
+        "h_5f1429b453eb",
+        "h_4b93c6c2dcad",
+        "h_7ac34d3bea48",
+        "h_7e15d11fd508",
+        "h_26b7c143418c",
+        "h_e53522884a34",
+        "h_35778366725b",
+        "h_1797f9bd0a06",
+        "h_4c3df5c2e388",
+        "h_c390c31077e3",
+        "h_0b3544f50b8e",
+        "h_0466ddd13766",
+        "h_0cf80e571fa2",
+        "h_017517ffea9a"
+      ],
+      "summary": {
+        "text": "Adds a write endpoint that saves a reviewed set of session decisions for one commit in a single transaction, guarded by a repository lock, per-pair evidence snapshots and a request receipt that makes retries idempotent.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_e8401fe2ec65"
+          },
+          {
+            "type": "hunk",
+            "id": "h_35778366725b"
+          }
+        ]
+      },
+      "attention": {
+        "text": "Every loaded pair left unselected becomes a manual rejection, including sessions that were never linked.",
+        "refs": [
+          "rsk_2"
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_1",
+          "tier": "high",
+          "category": "permissions",
+          "source": "model",
+          "text": "New write path over attribution data; authorization is enforced in the service, and the handler forwards the repository id from the body rather than the route",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_e53522884a34"
+            },
+            {
+              "type": "hunk",
+              "id": "h_e8401fe2ec65",
+              "lines": [
+                35,
+                50
+              ]
+            }
+          ]
+        },
+        {
+          "id": "rsk_2",
+          "tier": "high",
+          "category": "data_migration",
+          "source": "model",
+          "text": "Unselected loaded pairs are persisted as rejections, including never-linked suggestions, which later automatic resolution will not override",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_e8401fe2ec65",
+              "lines": [
+                27,
+                33
+              ]
+            },
+            {
+              "type": "hunk",
+              "id": "h_e8401fe2ec65",
+              "lines": [
+                135,
+                146
+              ]
+            }
+          ]
+        },
+        {
+          "id": "rsk_3",
+          "tier": "medium",
+          "category": "concurrency",
+          "source": "agent_review",
+          "text": "The repository-wide advisory lock serializes all linkage writers for that repository",
+          "anchors": [
+            {
+              "type": "pr_comment",
+              "id": 5197744335
+            },
+            {
+              "type": "hunk",
+              "id": "h_35778366725b",
+              "lines": [
+                1,
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "id": "rsk_4",
+          "tier": "medium",
+          "category": "data_migration",
+          "source": "model",
+          "text": "Additive migration on the linkage schema; migration freeze check applies to released SQL",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_1797f9bd0a06"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "test",
+          "claim": "Select, reject, undo, preserved unrelated links, mid-save rollback, stale snapshots and retries are covered",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_c390c31077e3"
+            }
+          ],
+          "detail": "TestCommitReviewPreservesUnreviewedAndUncappedLinksAndUndo, TestCommitReviewValidatesAllPairsAndStaleSnapshots, TestCommitReviewRollsBackFailureInsideSecondPairPersistence, TestCommitReviewNoneOfTheseAndChangedExistingDecision"
+        },
+        {
+          "id": "ev_2",
+          "kind": "test",
+          "claim": "Reader and writer permissions, hidden commits, foreign sessions and mixed invalid requests fail as a whole",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_0466ddd13766"
+            },
+            {
+              "type": "hunk",
+              "id": "h_0b3544f50b8e"
+            }
+          ]
+        },
+        {
+          "id": "ev_3",
+          "kind": "ci",
+          "claim": "SQL generation, migration freeze and whitespace checks passed",
+          "status": "reported",
+          "source": "author_human",
+          "anchors": [
+            {
+              "type": "pr_body",
+              "section": "Validation"
+            }
+          ],
+          "detail": "The Platform job includes these checks but the report does not name them individually"
+        },
+        {
+          "id": "ev_5",
+          "kind": "run",
+          "claim": "Forward migrations applied to a copy of the development database",
+          "status": "observed",
+          "source": "session",
+          "anchors": [
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "9178bb3b-1d69-5f02-bacb-961153052473"
+            },
+            {
+              "type": "hunk",
+              "id": "h_1797f9bd0a06"
+            }
+          ],
+          "detail": "recountable-migrate up ran in the API container at 11:51 UTC with status ok"
+        },
+        {
+          "id": "ev_4",
+          "kind": "review",
+          "claim": "Spec conformance for SPEC-117-A02 and A03 judged implemented on b65dc0b7",
+          "status": "reported",
+          "source": "agent_review",
+          "anchors": [
+            {
+              "type": "pr_comment",
+              "id": 5197744335
+            },
+            {
+              "type": "spec",
+              "page": "SPEC-117",
+              "assertion": "SPEC-117-A03"
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "Let a repository writer confirm or reject the loaded sessions for one commit atomically, without touching unseen pairs, other commits or cross-repository links, which the existing per-session editor cannot do safely.",
+          "anchors": [
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 1,
+              "input": "bb38fe80-0106-570a-859b-7fc80083eb2a"
+            },
+            {
+              "type": "pr_body",
+              "section": null
+            },
+            {
+              "type": "issue",
+              "system": "linear",
+              "key": "AGE-15"
+            },
+            {
+              "type": "spec",
+              "page": "SPEC-117",
+              "assertion": "SPEC-117-A03"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "endpoint",
+              "name": "PUT /linkage/commits/:sha/sessions",
+              "path": "platform/internal/linkageresolver/http/handlers.go",
+              "change": "added",
+              "hunks": [
+                "h_26b7c143418c"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Store.ReviewCommitEdges",
+              "path": "platform/internal/linkageresolver/commit_matches.go",
+              "change": "added",
+              "hunks": [
+                "h_e8401fe2ec65"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "ManualService.SetCommitSessions",
+              "path": "platform/internal/linkageresolver/commit_matches.go",
+              "change": "added",
+              "hunks": [
+                "h_e8401fe2ec65"
+              ]
+            },
+            {
+              "kind": "table",
+              "name": "linkage_commit_match_requests",
+              "change": "added",
+              "hunks": [
+                "h_1797f9bd0a06"
+              ]
+            },
+            {
+              "kind": "migration",
+              "name": "platform/migrations/000028_commit_match_requests.up.sql",
+              "change": "added",
+              "hunks": [
+                "h_1797f9bd0a06"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "LockRepositoryLinkage (SQL)",
+              "path": "platform/internal/db/sqlc/queries/commit_matches.sql",
+              "change": "added",
+              "hunks": [
+                "h_35778366725b"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_1",
+              "text": "Write authorization failures and unknown commits return not found; a request without a request id, with duplicate sessions or with a missing snapshot is rejected as invalid",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    35,
+                    50
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    61,
+                    80
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_e53522884a34"
+                }
+              ],
+              "evidence": [
+                "ev_1",
+                "ev_2"
+              ]
+            },
+            {
+              "id": "beh_2",
+              "text": "The save takes the repository linkage advisory lock, verifies the commit exists, and validates every reviewed snapshot in one statement before writing; any mismatch returns a conflict and writes nothing",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    87,
+                    134
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_35778366725b",
+                  "lines": [
+                    24,
+                    32
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_3",
+              "text": "Selected pairs become manual matches and unselected loaded pairs become manually unlinked edges; a selection also clears the commit's automatic outcome so resolution does not re-link it",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    135,
+                    151
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_4",
+              "text": "A receipt keyed by request id stores the digest of the reviewed set; an identical retry commits without changes and a different payload under the same id is rejected",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    103,
+                    109
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    152,
+                    155
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_1797f9bd0a06"
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_5",
+              "text": "Migration 000028 adds the receipt table with a composite key and cascade from the commit; the down migration drops it",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_1797f9bd0a06"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_4c3df5c2e388"
+                }
+              ],
+              "evidence": [
+                "ev_3",
+                "ev_5"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_1",
+              "by": "agent",
+              "text": "Idempotency comes from a stored request digest rather than comparing current edges, so a retried save after an intervening reversal cannot reapply the old decision",
+              "rejected": "Comparing the request against current edges at retry time",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_e8401fe2ec65",
+                  "lines": [
+                    97,
+                    101
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "dec_2",
+              "by": "agent",
+              "text": "The route is registered in the linkage resolver package because reads stay in analytics and writes stay in the resolver",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_4b93c6c2dcad"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "high",
+        "additions": 750,
+        "deletions": 3,
+        "role_loc": {
+          "code": 221,
+          "migration": 10,
+          "test": 522
+        },
+        "reviewers": [
+          {
+            "login": "paulpritz",
+            "source": "requested"
+          }
+        ],
+        "state": "unchanged",
+        "evidence_summary": {
+          "verified": 2,
+          "reported": 2,
+          "observed": 1
+        },
+        "open_findings": 0
+      }
+    },
+    {
+      "id": "sec_snapshot",
+      "title": "Evidence snapshot",
+      "kind": "logical",
+      "hunks": [
+        "h_1adb7ca7970a",
+        "h_c46cec5fec72",
+        "h_2a6d56cfc478"
+      ],
+      "summary": {
+        "text": "Adds a stable SQL function that fingerprints a session-commit pair's comparison evidence, so a review saved against changed evidence is rejected and the candidate read and the save agree on what changed.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_1adb7ca7970a"
+          }
+        ]
+      },
+      "attention": {
+        "text": "Introduced after a Codex finding; the snapshot now covers displayed evidence, not only the edge row.",
+        "refs": [
+          "dec_2"
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_1",
+          "tier": "medium",
+          "category": "data_migration",
+          "source": "model",
+          "text": "The fingerprint includes edge.xmin, so any rewrite of the edge row, including vacuum-independent updates by other writers, invalidates open reviews",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_1adb7ca7970a",
+              "lines": [
+                9,
+                10
+              ]
+            }
+          ]
+        },
+        {
+          "id": "rsk_2",
+          "tier": "low",
+          "category": "performance",
+          "source": "model",
+          "text": "Six correlated subqueries per candidate row, evaluated once per page for reads and once per pair for saves",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_1adb7ca7970a",
+              "lines": [
+                8,
+                25
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "test",
+          "claim": "Changed comparison evidence rejects the save; identical retries and unreviewed evidence do not",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_2a6d56cfc478"
+            }
+          ],
+          "detail": "TestCommitMatchRejectsChangedComparisonEvidence and three sibling tests; the author reports 16 stale-evidence regression cases"
+        },
+        {
+          "id": "ev_2",
+          "kind": "run",
+          "claim": "Changing evidence while the picker is open returns 409, changes no links, and Reload shows the updated evidence",
+          "status": "observed",
+          "source": "session",
+          "anchors": [
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "8709c8fb-0e2f-57c3-bfbe-1cc488366684"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "6a2d045a-a63d-5207-8495-267b8815c532"
+            },
+            {
+              "type": "pr_comment",
+              "id": 4005516815
+            }
+          ],
+          "detail": "A stale-evidence browser script ran twice against the real-data API before the fix was pushed; the outcome is described in the thread reply"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "A reviewer must not save a decision based on evidence that changed while the picker was open. Hashing only the linkage edge missed re-ingested sessions and refreshed commit metadata.",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_kwDOTPgJG86iGyZg"
+            },
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 6,
+              "input": "953ef7e0-1b1f-5737-a0ca-11209c56f5d2"
+            },
+            {
+              "type": "commit",
+              "sha": "e94b2e5996"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "function",
+              "name": "linkage_commit_match_snapshot(uuid, text, uuid)",
+              "path": "platform/migrations/000029_commit_match_evidence_snapshots.up.sql",
+              "change": "added",
+              "hunks": [
+                "h_1adb7ca7970a"
+              ]
+            },
+            {
+              "kind": "migration",
+              "name": "platform/migrations/000029_commit_match_evidence_snapshots.up.sql",
+              "change": "added",
+              "hunks": [
+                "h_1adb7ca7970a"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_1",
+              "text": "The fingerprint covers the edge row and its transaction id, session title, timing, vendor and identity, commit refs, branches, edited and read paths, commit metadata and commit files",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_1adb7ca7970a",
+                  "lines": [
+                    8,
+                    25
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_2",
+              "text": "The function is STABLE so all probes run in the caller's statement snapshot, including candidates without a linkage edge",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_1adb7ca7970a",
+                  "lines": [
+                    1,
+                    7
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_3",
+              "text": "An identical successful retry does not invalidate; unreviewed evidence and sync bookkeeping timestamps are excluded",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_1adb7ca7970a",
+                  "lines": [
+                    1,
+                    3
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_1",
+              "by": "human",
+              "text": "Address the Codex finding by widening the snapshot instead of leaving the edge-only token: the owner asked for the review comments to be addressed",
+              "anchors": [
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 6,
+                  "input": "953ef7e0-1b1f-5737-a0ca-11209c56f5d2"
+                },
+                {
+                  "type": "review_thread",
+                  "id": "PRRT_kwDOTPgJG86iGyZg"
+                }
+              ]
+            },
+            {
+              "id": "dec_2",
+              "by": "agent",
+              "text": "Replaced the edge-only token with a shared evidence fingerprint used by both the read and the save, computed in the same statement as the displayed evidence",
+              "rejected": "Versioning the evidence inputs separately from the edge row",
+              "anchors": [
+                {
+                  "type": "commit",
+                  "sha": "e94b2e5996"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_1adb7ca7970a",
+                  "lines": [
+                    1,
+                    7
+                  ]
+                },
+                {
+                  "type": "session_event",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "event": "be486822-1906-5965-9433-bd9879dda5cd"
+                }
+              ]
+            },
+            {
+              "id": "dec_3",
+              "by": "human",
+              "text": "Record the wider conflict rule as an after-the-fact spec proposal rather than amending SPEC-117 silently",
+              "anchors": [
+                {
+                  "type": "pr_comment",
+                  "id": 5667529999
+                },
+                {
+                  "type": "external_url",
+                  "url": "https://github.com/lastpersonlabs/recountable-spec/pull/17",
+                  "label": "recountable-spec#17"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "medium",
+        "additions": 230,
+        "deletions": 0,
+        "role_loc": {
+          "migration": 34,
+          "test": 196
+        },
+        "reviewers": [
+          {
+            "login": "paulpritz",
+            "source": "requested"
+          }
+        ],
+        "state": "unchanged",
+        "evidence_summary": {
+          "verified": 1,
+          "observed": 1
+        },
+        "open_findings": 0
+      }
+    },
+    {
+      "id": "sec_fencing",
+      "title": "Writer fencing",
+      "kind": "logical",
+      "hunks": [
+        "h_0fcf23d07ad4",
+        "h_0fcf23d07ad4-2",
+        "h_0fcf23d07ad4-3",
+        "h_3ad59b7e7177",
+        "h_f70440924152",
+        "h_c663df17a062",
+        "h_05379dcce2a8",
+        "h_ca38be15c006",
+        "h_26213ac396c0",
+        "h_c3add0e7be50",
+        "h_9e1576dfd2a6",
+        "h_9f8a822cd2a5"
+      ],
+      "summary": {
+        "text": "Makes every writer of comparison evidence take the repository linkage lock: resolver persistence, session ingest and enrichment, checkpoint cleanup, GitHub commit upserts and installation reconciliation.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_f70440924152"
+          },
+          {
+            "type": "hunk",
+            "id": "h_0fcf23d07ad4"
+          }
+        ]
+      },
+      "attention": {
+        "text": "The Codex thread on the validation-to-commit window is still open on GitHub although db83d1f0 fences the evidence writers.",
+        "refs": [
+          "dec_1"
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_1",
+          "tier": "high",
+          "category": "concurrency",
+          "source": "model",
+          "text": "Lock ordering: reconciliation and commit upserts take several repository locks in one transaction; sorted acquisition avoids deadlock only if every writer sorts the same way",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_c3add0e7be50",
+              "lines": [
+                496,
+                505
+              ]
+            },
+            {
+              "type": "hunk",
+              "id": "h_26213ac396c0"
+            }
+          ]
+        },
+        {
+          "id": "rsk_2",
+          "tier": "medium",
+          "category": "performance",
+          "source": "model",
+          "text": "Ingestion and enrichment now serialize with review saves and resolver runs per repository",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_f70440924152"
+            },
+            {
+              "type": "hunk",
+              "id": "h_3ad59b7e7177"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "test",
+          "claim": "Review, resolver and session editor interleavings are serialized in five writer orderings",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            },
+            {
+              "type": "hunk",
+              "id": "h_9f8a822cd2a5"
+            }
+          ],
+          "detail": "TestCommitReviewSerializesWithResolverAndSessionEditor"
+        },
+        {
+          "id": "ev_2",
+          "kind": "test",
+          "claim": "Ingestion and commit-sync writers are exercised under the lock",
+          "status": "asserted",
+          "source": "model",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_f70440924152"
+            },
+            {
+              "type": "hunk",
+              "id": "h_c3add0e7be50"
+            }
+          ],
+          "detail": "No test in this PR interleaves SaveIngest or UpsertCommits with a review save; existing suites cover their functional behavior"
+        },
+        {
+          "id": "ev_3",
+          "kind": "review",
+          "claim": "The session reviewed the second agent's fencing commits and their check runs and judged them necessary with no correctness defects",
+          "status": "observed",
+          "source": "session",
+          "anchors": [
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 11,
+              "input": "3238c162-0035-533e-9e05-77557a6b3c2f"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "9ace0d02-a819-5d97-a887-244328ed9e0e"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "ced4db03-ebc3-5bbe-9dd9-b4535e887f37"
+            }
+          ],
+          "detail": "Read-only review on request; the verdict is stated in the description and the platform summary"
+        },
+        {
+          "id": "ev_4",
+          "kind": "review",
+          "claim": "A clean review from a fresh agent on the final head found no outstanding defects",
+          "status": "reported",
+          "source": "author_agent",
+          "anchors": [
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 12,
+              "input": "2ec50979-be24-522e-9c04-fc13549af4fa"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "a7071545-1519-5b99-bd18-93879f3cea4f"
+            },
+            {
+              "type": "pr_body",
+              "section": "Validation"
+            }
+          ],
+          "detail": "The session fetched the head tarball into an isolated directory; the review outcome itself is reported, not observed"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "Close the window in which session ingestion or commit sync could change evidence between snapshot validation and the review's commit.",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_kwDOTPgJG86iIBP_"
+            },
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 11,
+              "input": "3238c162-0035-533e-9e05-77557a6b3c2f"
+            },
+            {
+              "type": "commit",
+              "sha": "db83d1f0ed"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "function",
+              "name": "Store.Enrich / enrichLocked",
+              "path": "platform/internal/sessionstore/enrich.go",
+              "change": "modified",
+              "hunks": [
+                "h_3ad59b7e7177"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Store.SaveIngest",
+              "path": "platform/internal/sessionstore/ingest.go",
+              "change": "modified",
+              "hunks": [
+                "h_f70440924152"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Store.DeleteSelfAttributedEntireCheckpointIngests",
+              "path": "platform/internal/sessionstore/ingest.go",
+              "change": "added",
+              "hunks": [
+                "h_c663df17a062"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "RepositoryStore.UpsertCommits",
+              "path": "platform/internal/githubsync/repository.go",
+              "change": "modified",
+              "hunks": [
+                "h_c3add0e7be50"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Repository.Reconcile",
+              "path": "platform/internal/githubintegration/repository.go",
+              "change": "modified",
+              "hunks": [
+                "h_26213ac396c0"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "ListGitHubInstallationRepositoryIDs (SQL)",
+              "path": "platform/internal/db/sqlc/queries/github_integrations.sql",
+              "change": "added",
+              "hunks": [
+                "h_9e1576dfd2a6"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_1",
+              "text": "PersistCommitFiles, PersistEdges and ReplaceSessionEdges lock the repository before deleting and rewriting",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_0fcf23d07ad4"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_0fcf23d07ad4-2"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_0fcf23d07ad4-3"
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_2",
+              "text": "SaveIngest locks the provenance repository before reading or replacing the ingest; Enrich reads the repository first, locks it, and restarts if the session moved repositories meanwhile",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_f70440924152"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_3ad59b7e7177",
+                  "lines": [
+                    23,
+                    55
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_3",
+              "text": "Self-attributed checkpoint cleanup moves behind the same lock through a new store method used by the Entire ingest service",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_c663df17a062"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_05379dcce2a8"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_ca38be15c006"
+                }
+              ],
+              "evidence": [
+                "ev_2"
+              ]
+            },
+            {
+              "id": "beh_4",
+              "text": "GitHub commit upserts lock every affected repository in sorted order; installation reconciliation locks each existing repository of the installation",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_c3add0e7be50"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_26213ac396c0"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_9e1576dfd2a6"
+                }
+              ],
+              "evidence": [
+                "ev_2"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_1",
+              "by": "agent",
+              "text": "One advisory lock per repository, shared by all evidence and attribution writers, instead of row locks that cannot cover never-linked candidates",
+              "rejected": "Row-level locks on linkage_edges",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_35778366725b",
+                  "lines": [
+                    1,
+                    5
+                  ]
+                },
+                {
+                  "type": "commit",
+                  "sha": "db83d1f0ed"
+                }
+              ]
+            },
+            {
+              "id": "dec_2",
+              "by": "human",
+              "text": "Keep the two fencing commits pushed by a second agent, after asking the session's agent to review them without editing",
+              "anchors": [
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 11,
+                  "input": "3238c162-0035-533e-9e05-77557a6b3c2f"
+                },
+                {
+                  "type": "commit",
+                  "sha": "db83d1f0ed"
+                },
+                {
+                  "type": "commit",
+                  "sha": "7e655fe327"
+                },
+                {
+                  "type": "session_event",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "event": "9ace0d02-a819-5d97-a887-244328ed9e0e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "high",
+        "additions": 451,
+        "deletions": 13,
+        "role_loc": {
+          "code": 117,
+          "test": 347
+        },
+        "reviewers": [
+          {
+            "login": "paulpritz",
+            "source": "requested"
+          }
+        ],
+        "state": "unchanged",
+        "evidence_summary": {
+          "verified": 1,
+          "asserted": 1,
+          "observed": 1,
+          "reported": 1
+        },
+        "open_findings": 1
+      }
+    },
+    {
+      "id": "sec_picker",
+      "title": "Commit picker",
+      "kind": "logical",
+      "hunks": [
+        "h_961c978132fc",
+        "h_49c10f265fa6",
+        "h_4bfa82cabb7a",
+        "h_7623e0574322",
+        "h_471bf103fc07",
+        "h_8b8e83f21a6a",
+        "h_8640afb1f95f",
+        "h_9eb57e2d06ae",
+        "h_9d4241b2c6fd",
+        "h_1be369672904",
+        "h_3195fb50f7c0",
+        "h_327374d3d206",
+        "h_1a81beb59155",
+        "h_f6b8625e1903",
+        "h_55d4ffabca2c",
+        "h_a29a36324f56",
+        "h_8cae0059668f"
+      ],
+      "summary": {
+        "text": "Replaces the per-session match editors on the commit page with one Review matches picker that pages candidates, shows evidence, saves the loaded decisions, and reloads commit context and session details after a conflict.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_961c978132fc"
+          },
+          {
+            "type": "hunk",
+            "id": "h_8b8e83f21a6a"
+          }
+        ]
+      },
+      "attention": {
+        "text": "Real-data browser verification ran in the session but its harness was removed; CI covers only the mocked suite.",
+        "refs": [
+          "ev_3",
+          "ev_4"
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_1",
+          "tier": "medium",
+          "category": "ui",
+          "source": "model",
+          "text": "The commit page no longer renders the per-session MatchEditor; the session-side editor remains available from session pages",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_8640afb1f95f"
+            },
+            {
+              "type": "hunk",
+              "id": "h_4bfa82cabb7a"
+            }
+          ]
+        },
+        {
+          "id": "rsk_2",
+          "tier": "low",
+          "category": "ui",
+          "source": "model",
+          "text": "Card accepts and spreads arbitrary section props to carry a data attribute for tests",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_f6b8625e1903"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "test",
+          "claim": "Paging, keyboard, reset, read-only, restricted, empty, failure, conflict reload and refresh paths are covered by mocked browser tests",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025707803"
+            },
+            {
+              "type": "hunk",
+              "id": "h_55d4ffabca2c"
+            },
+            {
+              "type": "hunk",
+              "id": "h_a29a36324f56"
+            }
+          ],
+          "detail": "UI job passed: 76 unit tests and 62 Chromium tests according to the description"
+        },
+        {
+          "id": "ev_2",
+          "kind": "test",
+          "claim": "Conflict reload invalidates expanded details and reopening shows fresh session data",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025707803"
+            },
+            {
+              "type": "hunk",
+              "id": "h_55d4ffabca2c"
+            }
+          ],
+          "detail": "Added in afd406e3 after the review round"
+        },
+        {
+          "id": "ev_3",
+          "kind": "run",
+          "claim": "Correction and reversal, refresh and read-only flows were driven with Playwright against an API running on an isolated copy of the development database",
+          "status": "observed",
+          "source": "session",
+          "anchors": [
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "280b8c75-5d1a-566c-a337-2cd422a09e06"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "a544d653-de0a-5e68-97bc-6c700f7c7185"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "bbe556d8-b643-5fe5-adc6-a5ea8db4eee3"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "8b13688a-c71a-50eb-819c-699a3f776ad0"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "b91075a9-1425-5753-a911-6401d987bd6d"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "72231b5e-8c82-5a39-aa48-9a0432baa142"
+            },
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "7a049f60-7acc-5ea8-9168-20a4003550f2"
+            }
+          ],
+          "detail": "Seven execute events between 11:32 and 13:08 UTC; the description reports 2,426 commits and 393 sessions in the copy. The bespoke harness was removed in 4215b99d and only the mocked suite runs in CI"
+        },
+        {
+          "id": "ev_4",
+          "kind": "run",
+          "claim": "The UI browser suite passed locally after the real-data tests were removed",
+          "status": "observed",
+          "source": "session",
+          "anchors": [
+            {
+              "type": "session_event",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "event": "d3b34ffb-1f77-50f7-95e7-7dc84094ed57"
+            },
+            {
+              "type": "commit",
+              "sha": "4215b99d89"
+            }
+          ],
+          "detail": "just ui::e2e at 13:25 UTC completed with status ok"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "Give readers one place to compare every eligible session for a commit and give writers a single save, replacing one editor per linked session.",
+          "anchors": [
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 1,
+              "input": "bb38fe80-0106-570a-859b-7fc80083eb2a"
+            },
+            {
+              "type": "prompt",
+              "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+              "index": 3,
+              "input": "db30ba11-44eb-5552-8de7-57a7d4d2d9ac"
+            },
+            {
+              "type": "pr_body",
+              "section": null
+            },
+            {
+              "type": "issue",
+              "system": "linear",
+              "key": "AGE-16"
+            },
+            {
+              "type": "spec",
+              "page": "SPEC-117",
+              "assertion": "SPEC-117-A04"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "file",
+              "name": "ui/app/components/commit-match-editor.tsx",
+              "change": "added",
+              "hunks": [
+                "h_961c978132fc"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "CommitMatchEditor",
+              "path": "ui/app/components/commit-match-editor.tsx",
+              "change": "added",
+              "hunks": [
+                "h_961c978132fc"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "setCommitSessions",
+              "path": "ui/app/api.ts",
+              "change": "added",
+              "hunks": [
+                "h_9eb57e2d06ae"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "getCommitSessionCandidates",
+              "path": "ui/app/browse-api.ts",
+              "change": "added",
+              "hunks": [
+                "h_9d4241b2c6fd"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "CommitDetailPage",
+              "path": "ui/app/routes/commits/detail.tsx",
+              "change": "modified",
+              "hunks": [
+                "h_49c10f265fa6",
+                "h_4bfa82cabb7a",
+                "h_7623e0574322",
+                "h_471bf103fc07",
+                "h_8b8e83f21a6a",
+                "h_8640afb1f95f"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "formatDateTime",
+              "path": "ui/app/components/format.ts",
+              "change": "added",
+              "hunks": [
+                "h_1be369672904"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_1",
+              "text": "Review matches is always offered on a loaded commit; the picker loads ten candidates per page, preselects linked sessions and appends further pages without resetting earlier edits",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_8b8e83f21a6a"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    145,
+                    194
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_2",
+              "text": "Save sends every loaded row with its snapshot under a request id that is reused for an identical retry; a 409 shows a conflict message and disables saving until Reload matches",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    213,
+                    243
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_3",
+              "text": "Reload after a conflict refetches candidates and the commit detail together, and remounts expanded session details so cached evidence is not shown",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    157,
+                    186
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_7623e0574322"
+                }
+              ],
+              "evidence": [
+                "ev_1",
+                "ev_2"
+              ]
+            },
+            {
+              "id": "beh_4",
+              "text": "Readers see candidates and evidence without save controls; an empty candidate list says no eligible sessions were found",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    281,
+                    285
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    382,
+                    387
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            },
+            {
+              "id": "beh_5",
+              "text": "After a successful save the page refreshes the commit report in place and returns focus to the Review matches button; a failed refresh offers a retry without re-saving",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    245,
+                    260
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_8b8e83f21a6a",
+                  "lines": [
+                    309,
+                    329
+                  ]
+                }
+              ],
+              "evidence": [
+                "ev_1"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_1",
+              "by": "human",
+              "text": "Remove the bespoke real-data browser harness (about 310 lines) to reduce the PR, keeping the mocked picker suite in CI",
+              "rejected": "Keeping the real-data tests as an opt-in CI suite",
+              "anchors": [
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 5,
+                  "input": "7dc68cb6-d7f6-5a7a-a010-c30bc01090c2"
+                },
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 7,
+                  "input": "1f942d61-2891-58db-b353-4e45b8865d12"
+                },
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 8,
+                  "input": "5cf1e246-94f2-543f-8970-f5bf2e5e0d8b"
+                },
+                {
+                  "type": "commit",
+                  "sha": "4215b99d89"
+                },
+                {
+                  "type": "session_event",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "event": "d3b34ffb-1f77-50f7-95e7-7dc84094ed57"
+                },
+                {
+                  "type": "pr_comment",
+                  "id": 4005678967
+                }
+              ]
+            },
+            {
+              "id": "dec_2",
+              "by": "human",
+              "text": "Show a message when no eligible sessions were found, after the owner asked why the list is often empty for unlinked commits",
+              "anchors": [
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 13,
+                  "input": "fafed36c-64ea-588f-9b72-a769c2c579fe"
+                },
+                {
+                  "type": "prompt",
+                  "session": "03712c34-87bd-5fad-8155-8f88e14a6580",
+                  "index": 14,
+                  "input": "c12bd0bd-016f-5d73-904f-f137bad78536"
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_961c978132fc",
+                  "lines": [
+                    382,
+                    387
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "dec_3",
+              "by": "agent",
+              "text": "Commit context is refreshed through local state rather than a route revalidation so the editor can control when the page updates",
+              "rejected": "Calling the router revalidator after save",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "h_7623e0574322"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "medium",
+        "additions": 970,
+        "deletions": 48,
+        "role_loc": {
+          "code": 579,
+          "test": 439
+        },
+        "reviewers": [
+          {
+            "login": "paulpritz",
+            "source": "requested"
+          }
+        ],
+        "state": "changed",
+        "evidence_summary": {
+          "verified": 2,
+          "observed": 2
+        },
+        "open_findings": 0
+      }
+    },
+    {
+      "id": "sec_mechanical",
+      "title": "Mechanical changes",
+      "kind": "mechanical",
+      "hunks": [
+        "h_8da81a184ce2",
+        "h_eac882df2cd5",
+        "h_aebb1249aa77",
+        "h_fbbb883b94a0",
+        "h_3706944a8bb9",
+        "h_a35a541686d4",
+        "h_06995e948036",
+        "h_83bf57abe2eb",
+        "h_f4780663f4f5",
+        "h_bef69485b471",
+        "h_b115f9d5bb63"
+      ],
+      "summary": {
+        "text": "Regenerated sqlc code for the new queries and a corrected spec path in a migration comment; no behavior change.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "h_8da81a184ce2"
+          }
+        ]
+      },
+      "attention": null,
+      "risks": [],
+      "evidence": [
+        {
+          "id": "ev_1",
+          "kind": "ci",
+          "claim": "Generated code matches the generator and the migration freeze check passes",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "chk_104025708221"
+            }
+          ],
+          "detail": "Platform job runs sqlc generation and the migration freeze script"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "groups",
+          "items": [
+            {
+              "id": "grp_1",
+              "rule": "sqlc output regenerated from the new commit_candidates.sql and commit_matches.sql queries and the github_integrations.sql addition",
+              "derived_from": "sec_review_save",
+              "hunks": [
+                "h_8da81a184ce2",
+                "h_eac882df2cd5",
+                "h_aebb1249aa77",
+                "h_fbbb883b94a0",
+                "h_3706944a8bb9",
+                "h_a35a541686d4",
+                "h_06995e948036",
+                "h_83bf57abe2eb",
+                "h_f4780663f4f5",
+                "h_bef69485b471"
+              ],
+              "count": 10
+            },
+            {
+              "id": "grp_2",
+              "rule": "Comment-only path update in the initial migration; released SQL unchanged",
+              "hunks": [
+                "h_b115f9d5bb63"
+              ],
+              "count": 1
+            }
+          ]
+        }
+      ],
+      "derived": {
+        "risk_tier": "mechanical",
+        "additions": 306,
+        "deletions": 1,
+        "role_loc": {
+          "generated": 305,
+          "migration": 2
+        },
+        "reviewers": [
+          {
+            "source": "none"
+          }
+        ],
+        "state": "unchanged",
+        "evidence_summary": {
+          "verified": 1
+        },
+        "open_findings": 0
+      }
+    }
+  ],
+  "agent_reviews": [
+    {
+      "id": "ar_codex_b65dc0b",
+      "tool": "codex",
+      "assessed_head": "b65dc0b7c2f23bf0fc202245c320787ff4d1094b",
+      "stale": true,
+      "verdict": "comment",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 0,
+        "should_fix": 1,
+        "consider": 0
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 4005143482
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_codex_1",
+          "severity": "should_fix",
+          "text": "Include displayed evidence in the stale-review snapshot; hashing only the edge row accepts decisions based on stale titles, timing, refs, branches and path overlaps",
+          "section": "sec_snapshot",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_kwDOTPgJG86iGyZg"
+            },
+            {
+              "type": "hunk",
+              "id": "h_9059c0588d90"
+            }
+          ],
+          "state": "resolved",
+          "addressed_by": "e94b2e5996"
+        }
+      ]
+    },
+    {
+      "id": "ar_codex_e94b2e5",
+      "tool": "codex",
+      "assessed_head": "e94b2e5996",
+      "stale": true,
+      "verdict": "comment",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 0,
+        "should_fix": 1,
+        "consider": 0
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 4005632520
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_codex_2",
+          "severity": "should_fix",
+          "text": "Serialize evidence updates through snapshot validation: session ingestion could commit between GetCommitMatchPairSnapshots and the edge upserts",
+          "section": "sec_fencing",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_kwDOTPgJG86iIBP_"
+            },
+            {
+              "type": "hunk",
+              "id": "h_e8401fe2ec65",
+              "lines": [
+                110,
+                134
+              ]
+            }
+          ],
+          "state": "open",
+          "addressed_by": "db83d1f0ed"
+        }
+      ]
+    },
+    {
+      "id": "ar_cursor_b65dc0b",
+      "tool": "cursor",
+      "assessed_head": "b65dc0b7c2f23bf0fc202245c320787ff4d1094b",
+      "stale": true,
+      "verdict": "approve",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 0,
+        "should_fix": 0,
+        "consider": 3
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 5197744335
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_cursor_1",
+          "severity": "consider",
+          "text": "The repository-wide advisory lock serializes all linkage writers for that repository",
+          "section": "sec_review_save",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_35778366725b",
+              "lines": [
+                1,
+                5
+              ]
+            }
+          ],
+          "state": "dismissed",
+          "addressed_by": null
+        },
+        {
+          "id": "fnd_cursor_2",
+          "severity": "consider",
+          "text": "Branch agreement is unavailable for non-default-branch commits",
+          "section": "sec_candidates",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_9059c0588d90",
+              "lines": [
+                41,
+                43
+              ]
+            }
+          ],
+          "state": "dismissed",
+          "addressed_by": null
+        },
+        {
+          "id": "fnd_cursor_3",
+          "severity": "consider",
+          "text": "Default CI e2e is the mocked picker suite; the real-data acceptance path is opt-in",
+          "section": "sec_picker",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "h_55d4ffabca2c"
+            }
+          ],
+          "state": "dismissed",
+          "addressed_by": null
+        }
+      ]
+    }
+  ],
+  "unassigned_hunks": [],
+  "index": {
+    "hunks": [
+      {
+        "path": "platform/internal/analytics/commitcandidates.go",
+        "new_range": [
+          1,
+          197
+        ],
+        "id": "h_476989141c54",
+        "additions": 197,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-b1ee8dbd0da463684aafd19127ea40fbd7006c41fc17baca9ba201715538aa63R1"
+      },
+      {
+        "path": "platform/internal/analytics/commitcandidates_test.go",
+        "new_range": [
+          1,
+          236
+        ],
+        "id": "h_c5520082411a",
+        "additions": 236,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-e0c556ac5e85516cd63cfbf4d6caa3ee1bfe34d6f70bb54b12835e392d07b4cfR1"
+      },
+      {
+        "path": "platform/internal/analytics/commitmatches_evidence_test.go",
+        "new_range": [
+          1,
+          196
+        ],
+        "id": "h_2a6d56cfc478",
+        "additions": 196,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-8b87b1fc2cc5ca1624f3ac8eb7b2c34c9eaacf40a7e1f51312a829cee4d12a48R1"
+      },
+      {
+        "path": "platform/internal/analytics/commitmatches_test.go",
+        "new_range": [
+          1,
+          238
+        ],
+        "id": "h_0466ddd13766",
+        "additions": 238,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-b66754fb8dea8658fc0411cc336cbda03ba8401f716bf470e5e297badf41a224R1"
+      },
+      {
+        "path": "platform/internal/analytics/http/commitcandidates_test.go",
+        "new_range": [
+          1,
+          103
+        ],
+        "id": "h_db0b371b59f2",
+        "additions": 103,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-8aee8e5a1829174720455eb806927a2f24e2c8c39cc750e86f05df6e67de115eR1"
+      },
+      {
+        "path": "platform/internal/analytics/http/dto.go",
+        "new_range": [
+          1660,
+          1676
+        ],
+        "id": "h_c7491955a906",
+        "additions": 14,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9621265ba49343bad7329b02b2416f19a5eeab8432b025201c103ac730cb0b66R1660"
+      },
+      {
+        "path": "platform/internal/analytics/http/handlers.go",
+        "new_range": [
+          15,
+          21
+        ],
+        "id": "h_b403449a2f1f",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-95965a702bf86606510216a4a26dc7ef1cd6969d10ef0639d3cbc13a2d142a64R15"
+      },
+      {
+        "path": "platform/internal/analytics/http/handlers.go",
+        "new_range": [
+          66,
+          72
+        ],
+        "id": "h_1781aa962981",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-95965a702bf86606510216a4a26dc7ef1cd6969d10ef0639d3cbc13a2d142a64R66"
+      },
+      {
+        "path": "platform/internal/analytics/http/handlers.go",
+        "new_range": [
+          426,
+          445
+        ],
+        "id": "h_dda1a17d6339",
+        "additions": 17,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-95965a702bf86606510216a4a26dc7ef1cd6969d10ef0639d3cbc13a2d142a64R426"
+      },
+      {
+        "path": "platform/internal/analytics/http/handlers_test.go",
+        "new_range": [
+          403,
+          409
+        ],
+        "id": "h_2fcb17241737",
+        "additions": 4,
+        "deletions": 0,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-4d21ab84578daa81a67362f4774a16297fd791ae72120b82649e3ef3b326214cR403"
+      },
+      {
+        "path": "platform/internal/analytics/repository.go",
+        "new_range": [
+          2,
+          37
+        ],
+        "id": "h_7c03d2f79af6",
+        "additions": 18,
+        "deletions": 4,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-6757ece94c98e0a61fab29bcbeff4f7b6fc96277f11146e5195093f5b7d52411R2"
+      },
+      {
+        "path": "platform/internal/analytics/repository.go",
+        "new_range": [
+          100,
+          110
+        ],
+        "id": "h_85f911c4cdbe",
+        "additions": 8,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-6757ece94c98e0a61fab29bcbeff4f7b6fc96277f11146e5195093f5b7d52411R100"
+      },
+      {
+        "path": "platform/internal/analytics/service.go",
+        "new_range": [
+          8,
+          15
+        ],
+        "id": "h_ead32fe93b64",
+        "additions": 2,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-282e816d72e24ed56174ea8dd11714f0d45f2ea027b6a8dc279ad1cfcf2db0a0R8"
+      },
+      {
+        "path": "platform/internal/db/sqlc/commit_candidates.sql.go",
+        "new_range": [
+          1,
+          133
+        ],
+        "id": "h_8da81a184ce2",
+        "additions": 133,
+        "deletions": 0,
+        "change": "added",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-d0a74c520f37b4bfa174b49722d27b36b7352a01a29121bf51e72571bcead646R1"
+      },
+      {
+        "path": "platform/internal/db/sqlc/commit_matches.sql.go",
+        "new_range": [
+          1,
+          120
+        ],
+        "id": "h_eac882df2cd5",
+        "additions": 120,
+        "deletions": 0,
+        "change": "added",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-2cc03c790baad26b3d5ace0cad12334afa2f241825a7a46828091547a6936293R1"
+      },
+      {
+        "path": "platform/internal/db/sqlc/github_integrations.sql.go",
+        "new_range": [
+          98,
+          132
+        ],
+        "id": "h_aebb1249aa77",
+        "additions": 29,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-4ba713de43a205f23ee9a7ea254032d4daf4791dc46275b40afe84b656cb1abfR98"
+      },
+      {
+        "path": "platform/internal/db/sqlc/models.go",
+        "new_range": [
+          864,
+          877
+        ],
+        "id": "h_fbbb883b94a0",
+        "additions": 8,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-dbea131e125bf9ead5285b09b35e41a0332e5d54a01de99885898d99deed99bfR864"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          60,
+          66
+        ],
+        "id": "h_3706944a8bb9",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R60"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          358,
+          367
+        ],
+        "id": "h_a35a541686d4",
+        "additions": 4,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R358"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          493,
+          499
+        ],
+        "id": "h_06995e948036",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R493"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          642,
+          649
+        ],
+        "id": "h_83bf57abe2eb",
+        "additions": 2,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R642"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          1043,
+          1051
+        ],
+        "id": "h_f4780663f4f5",
+        "additions": 3,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R1043"
+      },
+      {
+        "path": "platform/internal/db/sqlc/querier.go",
+        "new_range": [
+          1168,
+          1177
+        ],
+        "id": "h_bef69485b471",
+        "additions": 4,
+        "deletions": 0,
+        "change": "modified",
+        "role": "generated",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3bf28caccd50bef800f1778a8113794f86d3f15ae1f827041110a91539c54dd2R1168"
+      },
+      {
+        "path": "platform/internal/db/sqlc/queries/commit_candidates.sql",
+        "new_range": [
+          1,
+          63
+        ],
+        "id": "h_9059c0588d90",
+        "additions": 63,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-b386eeff9dbe6c5ae47cfe149fc24b0960c4296b9d7424ae43f114ebcd11f47aR1"
+      },
+      {
+        "path": "platform/internal/db/sqlc/queries/commit_matches.sql",
+        "new_range": [
+          1,
+          26
+        ],
+        "id": "h_35778366725b",
+        "additions": 26,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-7d7c0dfd90b404c725563afb3b3c1fe42706c31d265f92a45dfbd8542f24effeR1"
+      },
+      {
+        "path": "platform/internal/db/sqlc/queries/github_integrations.sql",
+        "new_range": [
+          23,
+          36
+        ],
+        "id": "h_9e1576dfd2a6",
+        "additions": 8,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-380d6aed6a140403dfc30d106b9385ff05786bf9bcc4170932caf8f8e37842d5R23"
+      },
+      {
+        "path": "platform/internal/entireingest/remotes.go",
+        "new_range": [
+          205,
+          211
+        ],
+        "id": "h_05379dcce2a8",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-95945390d50bf21ebcf3adcf7ec4fbc6d01dbe0613c8ddf985aa8c5645eda3d4R205"
+      },
+      {
+        "path": "platform/internal/entireingest/remotes.go",
+        "new_range": [
+          244,
+          250
+        ],
+        "id": "h_ca38be15c006",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-95945390d50bf21ebcf3adcf7ec4fbc6d01dbe0613c8ddf985aa8c5645eda3d4R244"
+      },
+      {
+        "path": "platform/internal/githubintegration/repository.go",
+        "new_range": [
+          46,
+          60
+        ],
+        "id": "h_26213ac396c0",
+        "additions": 9,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-df77c1412d1a5bda7b33f23ea8c8ebe34db63de35742cd4caede8f1015e66f49R46"
+      },
+      {
+        "path": "platform/internal/githubsync/repository.go",
+        "new_range": [
+          483,
+          508
+        ],
+        "id": "h_c3add0e7be50",
+        "additions": 14,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-48359dbcb2c08c767cce9000bb4fe6c76c3ed7b0119a03d45836818ca95c08aaR483"
+      },
+      {
+        "path": "platform/internal/linkageresolver/commit_matches.go",
+        "new_range": [
+          1,
+          156
+        ],
+        "id": "h_e8401fe2ec65",
+        "additions": 156,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-e53018e418ac5e71672881c90d652b875b5086b791152b9b4a237052d3a6cd50R1"
+      },
+      {
+        "path": "platform/internal/linkageresolver/commit_matches_concurrency_test.go",
+        "new_range": [
+          1,
+          347
+        ],
+        "id": "h_9f8a822cd2a5",
+        "additions": 347,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-5fd0aba616cf3121505d8487d6af199fe86837231a87a58e9d0207e95bdba13eR1"
+      },
+      {
+        "path": "platform/internal/linkageresolver/commit_matches_test.go",
+        "new_range": [
+          1,
+          262
+        ],
+        "id": "h_c390c31077e3",
+        "additions": 262,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-2c22e3b14df0485569c3aa198c77f747c10c2c69dcb5e94d79c330c09af1fb12R1"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/dto.go",
+        "new_range": [
+          1,
+          13
+        ],
+        "id": "h_5f1429b453eb",
+        "additions": 13,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-39f4ad13a398f0181c9a59a7621b09adb8415b7c9a96c6d80565f2795ecd4320R1"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers.go",
+        "new_range": [
+          1,
+          5
+        ],
+        "id": "h_4b93c6c2dcad",
+        "additions": 2,
+        "deletions": 3,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-a0fb249a3fc55041e80de13129ca4a9f515ade174f2deeb4f3f60ec2bbbbce7dR1"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers.go",
+        "new_range": [
+          8,
+          14
+        ],
+        "id": "h_7ac34d3bea48",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-a0fb249a3fc55041e80de13129ca4a9f515ade174f2deeb4f3f60ec2bbbbce7dR8"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers.go",
+        "new_range": [
+          20,
+          26
+        ],
+        "id": "h_7e15d11fd508",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-a0fb249a3fc55041e80de13129ca4a9f515ade174f2deeb4f3f60ec2bbbbce7dR20"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers.go",
+        "new_range": [
+          31,
+          37
+        ],
+        "id": "h_26b7c143418c",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-a0fb249a3fc55041e80de13129ca4a9f515ade174f2deeb4f3f60ec2bbbbce7dR31"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers.go",
+        "new_range": [
+          85,
+          105
+        ],
+        "id": "h_e53522884a34",
+        "additions": 18,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-a0fb249a3fc55041e80de13129ca4a9f515ade174f2deeb4f3f60ec2bbbbce7dR85"
+      },
+      {
+        "path": "platform/internal/linkageresolver/http/handlers_test.go",
+        "new_range": [
+          223,
+          238
+        ],
+        "id": "h_0b3544f50b8e",
+        "additions": 13,
+        "deletions": 0,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-e3052dda9b3e77132bfcb358eefb5aaf53cdcab41ae105c603733109bb2b4bdaR223"
+      },
+      {
+        "path": "platform/internal/linkageresolver/repository.go",
+        "new_range": [
+          272,
+          280
+        ],
+        "id": "h_0fcf23d07ad4",
+        "additions": 3,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-15a9ee4852dbd697e2977cb31f2a5daf499795989fd9f920aac25b47f4b5af6aR272"
+      },
+      {
+        "path": "platform/internal/linkageresolver/repository.go",
+        "new_range": [
+          362,
+          370
+        ],
+        "id": "h_0fcf23d07ad4-2",
+        "additions": 3,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-15a9ee4852dbd697e2977cb31f2a5daf499795989fd9f920aac25b47f4b5af6aR362"
+      },
+      {
+        "path": "platform/internal/linkageresolver/repository.go",
+        "new_range": [
+          505,
+          513
+        ],
+        "id": "h_0fcf23d07ad4-3",
+        "additions": 3,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-15a9ee4852dbd697e2977cb31f2a5daf499795989fd9f920aac25b47f4b5af6aR505"
+      },
+      {
+        "path": "platform/internal/recountableserver/server.go",
+        "new_range": [
+          64,
+          70
+        ],
+        "id": "h_2a4f00380769",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-ed31bb917929e721173792098221617cf3d2dcfc5d06d34abbc01ed01ac75db8R64"
+      },
+      {
+        "path": "platform/internal/server/server_test.go",
+        "new_range": [
+          4,
+          10
+        ],
+        "id": "h_0cf80e571fa2",
+        "additions": 1,
+        "deletions": 0,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-ef8fd6980175c3c93e317963d8535e0ecb18f16ff5516e72d2ba9ce1731f34b6R4"
+      },
+      {
+        "path": "platform/internal/server/server_test.go",
+        "new_range": [
+          1163,
+          1173
+        ],
+        "id": "h_017517ffea9a",
+        "additions": 8,
+        "deletions": 0,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-ef8fd6980175c3c93e317963d8535e0ecb18f16ff5516e72d2ba9ce1731f34b6R1163"
+      },
+      {
+        "path": "platform/internal/sessionstore/enrich.go",
+        "new_range": [
+          23,
+          93
+        ],
+        "id": "h_3ad59b7e7177",
+        "additions": 32,
+        "deletions": 11,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-7df626f61cd37aea8e62aa698cc127daf23913fd568ef298d65e776f159e974aR23"
+      },
+      {
+        "path": "platform/internal/sessionstore/ingest.go",
+        "new_range": [
+          124,
+          135
+        ],
+        "id": "h_f70440924152",
+        "additions": 6,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-c431fb6980ff14d9a886518307646246fda76993c00e425e01c855d799087f8bR124"
+      },
+      {
+        "path": "platform/internal/sessionstore/ingest.go",
+        "new_range": [
+          263,
+          292
+        ],
+        "id": "h_c663df17a062",
+        "additions": 24,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-c431fb6980ff14d9a886518307646246fda76993c00e425e01c855d799087f8bR263"
+      },
+      {
+        "path": "platform/migrations/000001_init_trace_schema.up.sql",
+        "new_range": [
+          1,
+          7
+        ],
+        "id": "h_b115f9d5bb63",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "migration",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-6b11f8e327908c74ac3f5721c31542c3d3c3f1edbb70318519b9d52f6063d175R1"
+      },
+      {
+        "path": "platform/migrations/000028_commit_match_requests.down.sql",
+        "new_range": [
+          1,
+          1
+        ],
+        "id": "h_4c3df5c2e388",
+        "additions": 1,
+        "deletions": 0,
+        "change": "added",
+        "role": "migration",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-7372ebea3e84a04ef054223385bc3120accbf91e9c6d1eefdac61b97c88a4b08R1"
+      },
+      {
+        "path": "platform/migrations/000028_commit_match_requests.up.sql",
+        "new_range": [
+          1,
+          9
+        ],
+        "id": "h_1797f9bd0a06",
+        "additions": 9,
+        "deletions": 0,
+        "change": "added",
+        "role": "migration",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-bc4c94e6b3b294174f39854bf8605fc747db385a7a4f70996e76e0d0e6fa2f83R1"
+      },
+      {
+        "path": "platform/migrations/000029_commit_match_evidence_snapshots.down.sql",
+        "new_range": [
+          1,
+          1
+        ],
+        "id": "h_c46cec5fec72",
+        "additions": 1,
+        "deletions": 0,
+        "change": "added",
+        "role": "migration",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-20909c2c181e10ecba93978960863fa95e5f8fe2d1ad3e47ee960e439e1be37bR1"
+      },
+      {
+        "path": "platform/migrations/000029_commit_match_evidence_snapshots.up.sql",
+        "new_range": [
+          1,
+          33
+        ],
+        "id": "h_1adb7ca7970a",
+        "additions": 33,
+        "deletions": 0,
+        "change": "added",
+        "role": "migration",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-765320cd7640548e1319887941577a7ba9c34b4ec514533967fbbfef02d1b618R1"
+      },
+      {
+        "path": "ui/app/api.ts",
+        "new_range": [
+          420,
+          440
+        ],
+        "id": "h_9eb57e2d06ae",
+        "additions": 18,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-0af1c591f74ada84625205330d327c9813b455f8a2ba13ad4bbb82584b82f0ccR420"
+      },
+      {
+        "path": "ui/app/browse-api.ts",
+        "new_range": [
+          432,
+          480
+        ],
+        "id": "h_9d4241b2c6fd",
+        "additions": 46,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-c05aab5833c9c75b0ae49d6f0ba8139108b2c2120c61f0b510c6921331b22a6bR432"
+      },
+      {
+        "path": "ui/app/components/commit-match-editor.tsx",
+        "new_range": [
+          1,
+          407
+        ],
+        "id": "h_961c978132fc",
+        "additions": 407,
+        "deletions": 0,
+        "change": "added",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-7ad90f757fd9ab9826c3f6c631ec477ffb69d257467b4ff6824db9b815cd6963R1"
+      },
+      {
+        "path": "ui/app/components/format.ts",
+        "new_range": [
+          178,
+          185
+        ],
+        "id": "h_1be369672904",
+        "additions": 5,
+        "deletions": 0,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-3cacb2ce1e17195e752abe20a5ba0cb0ea2ffaf4e25c7daa96ead34a1174dd24R178"
+      },
+      {
+        "path": "ui/app/components/sessions.tsx",
+        "new_range": [
+          90,
+          96
+        ],
+        "id": "h_3195fb50f7c0",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-844f15063a0a633d2d199834c757532e1fd89ee69612ec6b572b27cc621e8c14R90"
+      },
+      {
+        "path": "ui/app/components/sessions.tsx",
+        "new_range": [
+          116,
+          122
+        ],
+        "id": "h_327374d3d206",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-844f15063a0a633d2d199834c757532e1fd89ee69612ec6b572b27cc621e8c14R116"
+      },
+      {
+        "path": "ui/app/components/ui.tsx",
+        "new_range": [
+          5,
+          11
+        ],
+        "id": "h_1a81beb59155",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-85bcb06a99190bf532343bbfa417ed87be1232dde6f78dd2528a4b0aaba00246R5"
+      },
+      {
+        "path": "ui/app/components/ui.tsx",
+        "new_range": [
+          21,
+          30
+        ],
+        "id": "h_f6b8625e1903",
+        "additions": 2,
+        "deletions": 1,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-85bcb06a99190bf532343bbfa417ed87be1232dde6f78dd2528a4b0aaba00246R21"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          1,
+          12
+        ],
+        "id": "h_49c10f265fa6",
+        "additions": 4,
+        "deletions": 3,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR1"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          17,
+          30
+        ],
+        "id": "h_4bfa82cabb7a",
+        "additions": 1,
+        "deletions": 2,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR17"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          62,
+          83
+        ],
+        "id": "h_7623e0574322",
+        "additions": 15,
+        "deletions": 2,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR62"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          100,
+          105
+        ],
+        "id": "h_471bf103fc07",
+        "additions": 0,
+        "deletions": 3,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR100"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          283,
+          306
+        ],
+        "id": "h_8b8e83f21a6a",
+        "additions": 17,
+        "deletions": 13,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR283"
+      },
+      {
+        "path": "ui/app/routes/commits/detail.tsx",
+        "new_range": [
+          309,
+          329
+        ],
+        "id": "h_8640afb1f95f",
+        "additions": 14,
+        "deletions": 20,
+        "change": "modified",
+        "role": "code",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-9e8809e5c89baf99c9a51582c80a262da909f70275c797a08ca8d6058e57ecbdR309"
+      },
+      {
+        "path": "ui/e2e/browse.spec.ts",
+        "new_range": [
+          63,
+          69
+        ],
+        "id": "h_8cae0059668f",
+        "additions": 1,
+        "deletions": 1,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-ba184d64411ea55c7bc24769d05f7ff664e8af0066940ee860fba764362bde7fR63"
+      },
+      {
+        "path": "ui/e2e/commit-matches.spec.ts",
+        "new_range": [
+          1,
+          395
+        ],
+        "id": "h_55d4ffabca2c",
+        "additions": 395,
+        "deletions": 0,
+        "change": "added",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-f0e225c6c05ba2b9dc1e49c6cdaaaa983f40b1928281db2b5a56169f3e571562R1"
+      },
+      {
+        "path": "ui/e2e/mock-api.ts",
+        "new_range": [
+          821,
+          868
+        ],
+        "id": "h_a29a36324f56",
+        "additions": 42,
+        "deletions": 0,
+        "change": "modified",
+        "role": "test",
+        "github_url": "https://github.com/lastpersonlabs/recountable/pull/191/files#diff-82884726688ebf571bb5d50f3525a4468e519b729294c4f272524864516c08c1R821"
+      }
+    ],
+    "checks": [
+      {
+        "id": "chk_104025708221",
+        "kind": "check_run",
+        "name": "Platform",
+        "conclusion": "success",
+        "required": false,
+        "head": "afd406e3e902dd31b741474e7bfb1727ba444a68",
+        "started_at": "2026-09-14T14:57:00Z",
+        "completed_at": "2026-09-14T15:00:22Z",
+        "url": "https://github.com/lastpersonlabs/recountable/actions/runs/34858931938/job/104025708221"
+      },
+      {
+        "id": "chk_104025707803",
+        "kind": "check_run",
+        "name": "UI",
+        "conclusion": "success",
+        "required": false,
+        "head": "afd406e3e902dd31b741474e7bfb1727ba444a68",
+        "started_at": "2026-09-14T14:56:59Z",
+        "completed_at": "2026-09-14T14:59:31Z",
+        "url": "https://github.com/lastpersonlabs/recountable/actions/runs/34858931938/job/104025707803"
+      },
+      {
+        "id": "chk_104062239331",
+        "kind": "check_run",
+        "name": "Cursor Automation: spec-dev: linear-issue-reconciliation",
+        "conclusion": "success",
+        "required": false,
+        "head": "afd406e3e902dd31b741474e7bfb1727ba444a68",
+        "started_at": "2026-09-14T16:36:48Z",
+        "completed_at": "2026-09-14T16:42:04Z",
+        "url": "https://cursor.com/agents/bc-dc5bb96e-4dca-4b04-a1af-80266d8d284b"
+      },
+      {
+        "id": "chk_104062224746",
+        "kind": "check_run",
+        "name": "Cursor Automation: spec-dev: sync-spec",
+        "conclusion": "success",
+        "required": false,
+        "head": "afd406e3e902dd31b741474e7bfb1727ba444a68",
+        "started_at": "2026-09-14T16:36:46Z",
+        "completed_at": "2026-09-14T16:51:18Z",
+        "url": "https://cursor.com/agents/bc-55d7236f-4011-48a3-a3c8-2b648c4c8ca7"
+      }
+    ],
+    "reports": [
+      {
+        "id": "rep_recountable_summary",
+        "tool": "recountable",
+        "marker": "recountable:pr-summary",
+        "comment": 5663899453,
+        "head": null,
+        "summary": "Summarised from 1 linked agent session: a single Codex session following the ship-issue workflow, later addressing reviewer feedback and removing the real-data harness",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#issuecomment-5663899453"
+      }
+    ],
+    "comments": [
+      {
+        "id": 5197744335,
+        "kind": "review",
+        "author": "cursor",
+        "bot": true,
+        "created_at": "2026-09-14T12:39:35Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#pullrequestreview-5197744335"
+      },
+      {
+        "id": 4005143482,
+        "kind": "review_comment",
+        "author": "chatgpt-codex-connector",
+        "bot": true,
+        "created_at": "2026-09-14T12:31:47Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005143482"
+      },
+      {
+        "id": 4005516815,
+        "kind": "review_comment",
+        "author": "paulpritz",
+        "bot": false,
+        "created_at": "2026-09-14T13:12:20Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005516815"
+      },
+      {
+        "id": 4005632520,
+        "kind": "review_comment",
+        "author": "chatgpt-codex-connector",
+        "bot": true,
+        "created_at": "2026-09-14T13:25:13Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005632520"
+      },
+      {
+        "id": 4005678967,
+        "kind": "review_comment",
+        "author": "paulpritz",
+        "bot": false,
+        "created_at": "2026-09-14T13:30:29Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005678967"
+      },
+      {
+        "id": 5663899453,
+        "kind": "issue",
+        "author": "recountable-last-person-labs",
+        "bot": true,
+        "created_at": "2026-09-14T12:27:26Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#issuecomment-5663899453"
+      },
+      {
+        "id": 5667529999,
+        "kind": "issue",
+        "author": "paulpritz",
+        "bot": false,
+        "created_at": "2026-09-14T16:50:58Z",
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#issuecomment-5667529999"
+      }
+    ],
+    "threads": [
+      {
+        "id": "PRRT_kwDOTPgJG86iGyZg",
+        "path": "platform/internal/db/sqlc/queries/commit_candidates.sql",
+        "line": null,
+        "resolved": true,
+        "outdated": true,
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005143482"
+      },
+      {
+        "id": "PRRT_kwDOTPgJG86iIBP_",
+        "path": "platform/internal/linkageresolver/commit_matches.go",
+        "line": 123,
+        "resolved": false,
+        "outdated": false,
+        "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005632520"
+      }
+    ],
+    "sessions": [
+      {
+        "id": "03712c34-87bd-5fad-8155-8f88e14a6580",
+        "vendor": "codex",
+        "models": [
+          "gpt-6-astra"
+        ],
+        "title": null,
+        "git_branch": "codex/age14-reload",
+        "started_at": "2026-09-14T11:20:31Z",
+        "ended_at": "2026-09-14T14:55:57Z",
+        "duration_minutes": 215,
+        "outcome": "committed",
+        "prompt_count": 14,
+        "tool_calls": 300,
+        "restricted": false,
+        "events": [
+          {
+            "id": "280b8c75-5d1a-566c-a337-2cd422a09e06",
+            "at": "2026-09-14T11:32:43Z",
+            "verb": "execute",
+            "summary": "Created an isolated database age14_real in the test PostgreSQL container"
+          },
+          {
+            "id": "a544d653-de0a-5e68-97bc-6c700f7c7185",
+            "at": "2026-09-14T11:32:51Z",
+            "verb": "execute",
+            "summary": "Copied the development database into the isolated database with pg_dump"
+          },
+          {
+            "id": "bbe556d8-b643-5fe5-adc6-a5ea8db4eee3",
+            "at": "2026-09-14T11:34:19Z",
+            "verb": "execute",
+            "summary": "Started an API container against the isolated database"
+          },
+          {
+            "id": "8b13688a-c71a-50eb-819c-699a3f776ad0",
+            "at": "2026-09-14T11:40:50Z",
+            "verb": "execute",
+            "summary": "Drove the commit page with Playwright against the real-data API"
+          },
+          {
+            "id": "9178bb3b-1d69-5f02-bacb-961153052473",
+            "at": "2026-09-14T11:51:49Z",
+            "verb": "execute",
+            "summary": "Ran the forward migrations in the API container against the real-data copy"
+          },
+          {
+            "id": "b91075a9-1425-5753-a911-6401d987bd6d",
+            "at": "2026-09-14T12:05:03Z",
+            "verb": "execute",
+            "summary": "Repeated the Playwright correction and reversal run"
+          },
+          {
+            "id": "72231b5e-8c82-5a39-aa48-9a0432baa142",
+            "at": "2026-09-14T12:23:04Z",
+            "verb": "execute",
+            "summary": "Final Playwright run before opening the pull request"
+          },
+          {
+            "id": "80bb93b3-97b7-5ab9-a9e9-0176b02b3b4a",
+            "at": "2026-09-14T12:25:45Z",
+            "verb": "execute",
+            "summary": "Pushed the branch"
+          },
+          {
+            "id": "b1202ff7-fc3b-5b20-817b-d0031142aadb",
+            "at": "2026-09-14T12:26:32Z",
+            "verb": "execute",
+            "summary": "Opened the pull request with gh"
+          },
+          {
+            "id": "8709c8fb-0e2f-57c3-bfbe-1cc488366684",
+            "at": "2026-09-14T13:06:50Z",
+            "verb": "execute",
+            "summary": "Ran the stale-evidence browser script against the real-data API"
+          },
+          {
+            "id": "6a2d045a-a63d-5207-8495-267b8815c532",
+            "at": "2026-09-14T13:07:52Z",
+            "verb": "execute",
+            "summary": "Re-ran the stale-evidence browser script"
+          },
+          {
+            "id": "7a049f60-7acc-5ea8-9168-20a4003550f2",
+            "at": "2026-09-14T13:08:37Z",
+            "verb": "execute",
+            "summary": "Ran the real-data correction and reversal browser suite"
+          },
+          {
+            "id": "be486822-1906-5965-9433-bd9879dda5cd",
+            "at": "2026-09-14T13:12:15Z",
+            "verb": "execute",
+            "summary": "Replied to the Codex review thread with the change summary"
+          },
+          {
+            "id": "d3b34ffb-1f77-50f7-95e7-7dc84094ed57",
+            "at": "2026-09-14T13:25:14Z",
+            "verb": "execute",
+            "summary": "Ran the UI browser test suite after removing the real-data tests"
+          },
+          {
+            "id": "9ace0d02-a819-5d97-a887-244328ed9e0e",
+            "at": "2026-09-14T14:15:07Z",
+            "verb": "execute",
+            "summary": "Fetched the fencing commit from GitHub for review"
+          },
+          {
+            "id": "ced4db03-ebc3-5bbe-9dd9-b4535e887f37",
+            "at": "2026-09-14T14:16:14Z",
+            "verb": "execute",
+            "summary": "Read the check runs of the fencing commit"
+          },
+          {
+            "id": "a7071545-1519-5b99-bd18-93879f3cea4f",
+            "at": "2026-09-14T14:43:45Z",
+            "verb": "execute",
+            "summary": "Fetched the head tarball into an isolated directory for a clean review"
+          }
+        ],
+        "prompts": [
+          {
+            "index": 1,
+            "id": "bb38fe80-0106-570a-859b-7fc80083eb2a",
+            "at": "2026-09-14T11:20:31Z",
+            "text": "Use the $ship-issue skill to implement AGE-14. Make sure to update Linear etc."
+          },
+          {
+            "index": 3,
+            "id": "db30ba11-44eb-5552-8de7-57a7d4d2d9ac",
+            "at": "2026-09-14T11:31:20Z",
+            "text": "note that you should test against real data and also verify this in a browser end-to-end test pls"
+          },
+          {
+            "index": 5,
+            "id": "7dc68cb6-d7f6-5a7a-a010-c30bc01090c2",
+            "at": "2026-09-14T12:45:18Z",
+            "text": "why is the PR so long?"
+          },
+          {
+            "index": 6,
+            "id": "953ef7e0-1b1f-5737-a0ca-11209c56f5d2",
+            "at": "2026-09-14T13:00:32Z",
+            "text": "also address the review comments if they aren't already done"
+          },
+          {
+            "index": 7,
+            "id": "1f942d61-2891-58db-b353-4e45b8865d12",
+            "at": "2026-09-14T13:14:55Z",
+            "text": "Can anything be cut from this PR to reduce the line count? Also, do we want the browser tests in there? I guess they would become part of the CI...no edits yet"
+          },
+          {
+            "index": 8,
+            "id": "5cf1e246-94f2-543f-8970-f5bf2e5e0d8b",
+            "at": "2026-09-14T13:24:36Z",
+            "text": "Ok, remove the 2 real-data tests"
+          },
+          {
+            "index": 10,
+            "id": "494c86a1-f5c1-557b-a177-c66e89f6a0cc",
+            "at": "2026-09-14T13:29:49Z",
+            "text": "respond to the PR comment with what you changed"
+          },
+          {
+            "index": 11,
+            "id": "3238c162-0035-533e-9e05-77557a6b3c2f",
+            "at": "2026-09-14T14:15:02Z",
+            "text": "ok, another agent just made two commits with fixes. Review these and wether they were necessary. No edits, just tell me here"
+          },
+          {
+            "index": 12,
+            "id": "2ec50979-be24-522e-9c04-fc13549af4fa",
+            "at": "2026-09-14T14:43:26Z",
+            "text": "Run one more clean review on this PR"
+          },
+          {
+            "index": 13,
+            "id": "fafed36c-64ea-588f-9b72-a769c2c579fe",
+            "at": "2026-09-14T14:47:58Z",
+            "text": "Also quickly, what are the criteria for selecting session candidates? Frequently the list is empty for commits that don't have a linked session yet"
+          },
+          {
+            "index": 14,
+            "id": "c12bd0bd-016f-5d73-904f-f137bad78536",
+            "at": "2026-09-14T14:51:20Z",
+            "text": "Ok fix your finding above and also add a comment to the review matches view that no eligible sessions were found (otherwise users might wonder). Once done and pushed run one more clean review in a fresh agent"
+          }
+        ]
+      }
+    ],
+    "prs": []
+  }
+}
