@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 type Shape struct {

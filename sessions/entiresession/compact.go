@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 func buildCompact(snapshot *entirecheckpoint.SessionSnapshot) (*session.Graph, error) {

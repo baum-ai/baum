@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/sqliteread"
+	"github.com/lastpersonlabs/baum/sessions/sqliteread"
 )
 
 // SessionRef is the store index entry for one composer.

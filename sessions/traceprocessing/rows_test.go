@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func TestTallyRows(t *testing.T) {

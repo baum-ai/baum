@@ -41,7 +41,7 @@ func TestStubsPrintHelpAndFail(t *testing.T) {
 			if !errors.Is(err, ErrNotImplemented) {
 				t.Fatalf("err = %v, want ErrNotImplemented", err)
 			}
-			if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "reviewpal "+name) {
+			if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "baum "+name) {
 				t.Errorf("stderr should carry the %s usage, got %q", name, stderr)
 			}
 		})
@@ -65,7 +65,7 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !strings.HasPrefix(stdout, "reviewpal version ") {
+	if !strings.HasPrefix(stdout, "baum version ") {
 		t.Errorf("stdout = %q", stdout)
 	}
 }

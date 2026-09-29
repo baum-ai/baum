@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/claudetranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 // assistantLine maps one `assistant` line into the reply it belongs to.

@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func GenericToolVerb(name string) session.ToolVerb {

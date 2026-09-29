@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/sqliteread"
+	"github.com/lastpersonlabs/baum/sessions/sqliteread"
 )
 
 // Shape counts the source variants observed while decoding a store.

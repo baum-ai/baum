@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/model"
-	"github.com/lastpersonlabs/reviewpal/sessions/vendors"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
 type Entry struct {

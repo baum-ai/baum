@@ -27,7 +27,7 @@ func TestPathHonoursXDGConfigHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(dir, "reviewpal", "config.toml"); path != want {
+	if want := filepath.Join(dir, "baum", "config.toml"); path != want {
 		t.Errorf("path = %q, want %q", path, want)
 	}
 }
@@ -174,7 +174,7 @@ func TestSaveCreatesUserOnlyFile(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("file mode = %o, want 600", perm)
 	}
-	dirInfo, err := os.Stat(filepath.Join(dir, "reviewpal"))
+	dirInfo, err := os.Stat(filepath.Join(dir, "baum"))
 	if err != nil {
 		t.Fatal(err)
 	}

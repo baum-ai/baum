@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/vendors"
+	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
 // FileKind says what a session file is to the source that produced it.

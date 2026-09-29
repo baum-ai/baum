@@ -1,6 +1,6 @@
 package steps
 
-import "github.com/lastpersonlabs/reviewpal/linkage"
+import "github.com/lastpersonlabs/baum/linkage"
 
 // Default returns the built-in steps in linkage.DefaultMatchSteps order, one
 // per id. The pipeline (internal/linkage) can't import this package back (it

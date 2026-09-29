@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/claudesession"
-	"github.com/lastpersonlabs/reviewpal/sessions/codexsession"
-	"github.com/lastpersonlabs/reviewpal/sessions/cursorsession"
-	"github.com/lastpersonlabs/reviewpal/sessions/entiresession"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/claudesession"
+	"github.com/lastpersonlabs/baum/sessions/codexsession"
+	"github.com/lastpersonlabs/baum/sessions/cursorsession"
+	"github.com/lastpersonlabs/baum/sessions/entiresession"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 func TestAccountingCompatibility(t *testing.T) {

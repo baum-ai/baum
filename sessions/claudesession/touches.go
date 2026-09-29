@@ -3,8 +3,8 @@ package claudesession
 import (
 	"encoding/json"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/claudetranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 // toolInput is the part of a tool's arguments that names a file.

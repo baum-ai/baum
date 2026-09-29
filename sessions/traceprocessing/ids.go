@@ -1,6 +1,6 @@
 package traceprocessing
 
-import "github.com/lastpersonlabs/reviewpal/sessions/session"
+import "github.com/lastpersonlabs/baum/sessions/session"
 
 type IDNamespace []string
 

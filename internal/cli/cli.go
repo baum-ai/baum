@@ -1,4 +1,4 @@
-// Package cli implements the reviewpal command-line interface.
+// Package cli implements the baum command-line interface.
 package cli
 
 import (
@@ -33,9 +33,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 func newRootCommand(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "reviewpal",
+		Use:   "baum",
 		Short: "Local-first pull request review generator and viewer",
-		Long: `reviewpal builds a recountable.review/1 document for a pull request from
+		Long: `baum builds a recountable.review/1 document for a pull request from
 coding-agent sessions in your home directory, the local git clone and GitHub,
 and serves an embedded viewer for it on localhost.`,
 		Version:       version(),

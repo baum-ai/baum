@@ -1,9 +1,9 @@
 # Security policy
 
-## What reviewpal sends where
+## What baum sends where
 
-reviewpal is local-first, but generating a review requires a model. When you
-run `reviewpal generate`, the following is sent to the **model provider you
+baum is local-first, but generating a review requires a model. When you
+run `baum generate`, the following is sent to the **model provider you
 configure** (the Anthropic API, or the `claude`, `codex` or `cursor-agent` CLI,
 each of which talks to its own provider under your own account):
 
@@ -15,12 +15,12 @@ each of which talks to its own provider under your own account):
   redaction of secrets and identities with
   [goredact](https://github.com/lastpersonlabs/goredact).
 
-Redaction is best effort. Review `reviewpal bundle` output before using
+Redaction is best effort. Review `baum bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your
 provider.
 
-reviewpal sends no telemetry and contacts no server other than GitHub and the
+baum sends no telemetry and contacts no server other than GitHub and the
 configured provider. Tokens are read from the environment, `gh auth token` or
 the 0600 config file and are never written anywhere else.
 
@@ -41,5 +41,5 @@ exposed while triggering the issue, treat it as compromised and rotate it.
 
 ## Scope
 
-This policy covers the reviewpal repository. It does not cover the model
-providers, GitHub, or the coding-agent tools whose sessions reviewpal reads.
+This policy covers the baum repository. It does not cover the model
+providers, GitHub, or the coding-agent tools whose sessions baum reads.

@@ -1,6 +1,6 @@
-# Contributing to reviewpal
+# Contributing to baum
 
-Thanks for contributing. reviewpal handles code, pull request conversations
+Thanks for contributing. baum handles code, pull request conversations
 and coding-agent session transcripts that were never meant to leave a
 developer's machine unredacted, so changes to what is read, redacted or sent
 to a model provider get a closer look than ordinary hygiene.

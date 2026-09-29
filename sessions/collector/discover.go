@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/codex"
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/cursor"
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/model"
+	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
+	"github.com/lastpersonlabs/baum/sessions/collector/codex"
+	"github.com/lastpersonlabs/baum/sessions/collector/cursor"
+	"github.com/lastpersonlabs/baum/sessions/collector/model"
 )
 
 // Session and SessionFile are the shared discovery result shape.

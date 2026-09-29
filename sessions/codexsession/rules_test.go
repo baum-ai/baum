@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func buildLines(t *testing.T, lines ...string) (*session.Graph, *Report) {

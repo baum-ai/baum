@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 const (

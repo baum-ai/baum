@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 // Sanity: the default step registry order and ids match linkage.DefaultMatchSteps.

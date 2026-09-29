@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursorsession"
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/cursorsession"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
 )
 
 type payloadWire struct {

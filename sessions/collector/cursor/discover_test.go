@@ -8,7 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
 )
 
 func TestFindSessionsFiltersByRepositoryAndCarriesNestedTree(t *testing.T) {

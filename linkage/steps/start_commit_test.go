@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 const testAncestorSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

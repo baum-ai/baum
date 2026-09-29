@@ -1,7 +1,7 @@
-// Package config resolves reviewpal settings from flags, the environment,
+// Package config resolves baum settings from flags, the environment,
 // the XDG config file and defaults, in that order of precedence.
 //
-// reviewpal has no server, no login and no telemetry; the file holds the
+// baum has no server, no login and no telemetry; the file holds the
 // backend choice, optional tokens and generation budgets, nothing else.
 package config
 
@@ -24,8 +24,8 @@ const (
 	EnvGitHubToken     = "GITHUB_TOKEN"
 	EnvGHToken         = "GH_TOKEN"
 	EnvAnthropicAPIKey = "ANTHROPIC_API_KEY"
-	EnvBackend         = "REVIEWPAL_BACKEND"
-	EnvModel           = "REVIEWPAL_MODEL"
+	EnvBackend         = "BAUM_BACKEND"
+	EnvModel           = "BAUM_MODEL"
 )
 
 // Backend names a model backend. Auto picks one at run time, see Detect.
@@ -131,8 +131,8 @@ type Overrides struct {
 	Path string
 }
 
-// Path returns the config file location: $XDG_CONFIG_HOME/reviewpal/config.toml,
-// defaulting to ~/.config/reviewpal/config.toml.
+// Path returns the config file location: $XDG_CONFIG_HOME/baum/config.toml,
+// defaulting to ~/.config/baum/config.toml.
 func Path() (string, error) {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
 	if configDir == "" {
@@ -142,7 +142,7 @@ func Path() (string, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "reviewpal", "config.toml"), nil
+	return filepath.Join(configDir, "baum", "config.toml"), nil
 }
 
 // Load resolves the configuration with the precedence flags, environment,

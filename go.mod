@@ -1,4 +1,4 @@
-module github.com/lastpersonlabs/reviewpal
+module github.com/lastpersonlabs/baum
 
 go 1.26.6
 

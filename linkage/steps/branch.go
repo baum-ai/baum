@@ -3,7 +3,7 @@ package steps
 import (
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 const BranchStepID = "branch"

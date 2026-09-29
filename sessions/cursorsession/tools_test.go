@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func TestToolStatusesAndDecisions(t *testing.T) {

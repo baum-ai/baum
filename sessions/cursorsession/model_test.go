@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func TestBatchBoundaries(t *testing.T) {

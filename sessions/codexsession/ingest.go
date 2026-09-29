@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 const Vendor = "codex"

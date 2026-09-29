@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 // File is one transcript: the main thread, or one subagent.

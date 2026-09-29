@@ -1,6 +1,6 @@
 package cursorsession
 
-import "github.com/lastpersonlabs/reviewpal/sessions/session"
+import "github.com/lastpersonlabs/baum/sessions/session"
 
 func toolVerb(name string) session.ToolVerb {
 	switch name {

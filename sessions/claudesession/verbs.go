@@ -1,6 +1,6 @@
 package claudesession
 
-import "github.com/lastpersonlabs/reviewpal/sessions/session"
+import "github.com/lastpersonlabs/baum/sessions/session"
 
 // verbs is the Claude tool name → our verb table.
 var verbs = map[string]session.ToolVerb{

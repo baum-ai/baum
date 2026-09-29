@@ -3,8 +3,8 @@ package cursorsession
 import (
 	"encoding/json"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func (f *composerState) resolveChildren(tree *cursortranscript.Tree) map[string]*session.SpawnLink {

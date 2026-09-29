@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/claudesession"
-	"github.com/lastpersonlabs/reviewpal/sessions/claudetranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/codexsession"
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/cursorsession"
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/claudesession"
+	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
+	"github.com/lastpersonlabs/baum/sessions/codexsession"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	"github.com/lastpersonlabs/baum/sessions/cursorsession"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 type delegateFunc func(*entirecheckpoint.SessionSnapshot) (*session.Graph, *DelegateReport, error)

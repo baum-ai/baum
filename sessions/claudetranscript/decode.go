@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 // Decode reads a transcript as classified lines.

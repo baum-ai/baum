@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/internal/goldentest"
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/claudecode"
+	"github.com/lastpersonlabs/baum/internal/goldentest"
+	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
 )
 
 // FixtureSession is the transcript tree under testdata: a main thread, the

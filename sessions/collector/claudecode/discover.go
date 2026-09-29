@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/model"
-	"github.com/lastpersonlabs/reviewpal/sessions/vendors"
+	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
 // probeLines caps how many leading records are scanned when probing a

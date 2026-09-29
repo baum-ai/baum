@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/internal/goldentest"
+	"github.com/lastpersonlabs/baum/internal/goldentest"
 )
 
 func TestDiscoverAndRoots(t *testing.T) {

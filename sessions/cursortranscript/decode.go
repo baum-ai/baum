@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/sourcepath"
+	"github.com/lastpersonlabs/baum/sessions/sourcepath"
 )
 
 const (

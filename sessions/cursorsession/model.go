@@ -3,8 +3,8 @@ package cursorsession
 import (
 	"fmt"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 type bubbleBatch struct {

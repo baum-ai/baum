@@ -8,8 +8,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func TestCompactStatusVerbTouchAndOriginRules(t *testing.T) {

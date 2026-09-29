@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/sourcepath"
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/sourcepath"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 const Vendor = "cursor"

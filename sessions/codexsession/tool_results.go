@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lastpersonlabs/reviewpal/linkage/gitevidence"
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/linkage/gitevidence"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func (f *threadState) toolOutput(line codextranscript.Line, callID string, output json.RawMessage) (accountCategory, string, error) {

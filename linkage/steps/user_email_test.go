@@ -3,7 +3,7 @@ package steps
 import (
 	"testing"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 func TestUserEmailMatchesAuthor(t *testing.T) {

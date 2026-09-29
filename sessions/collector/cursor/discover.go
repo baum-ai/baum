@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/model"
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
-	"github.com/lastpersonlabs/reviewpal/sessions/vendors"
+	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
 const payloadName = "cursor-tree.json"

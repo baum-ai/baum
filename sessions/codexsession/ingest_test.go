@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/internal/goldentest"
-	"github.com/lastpersonlabs/reviewpal/sessions/codextranscript"
-	collectcodex "github.com/lastpersonlabs/reviewpal/sessions/collector/codex"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
+	"github.com/lastpersonlabs/baum/internal/goldentest"
+	"github.com/lastpersonlabs/baum/sessions/codextranscript"
+	collectcodex "github.com/lastpersonlabs/baum/sessions/collector/codex"
+	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
 func TestFixtureGolden(t *testing.T) {

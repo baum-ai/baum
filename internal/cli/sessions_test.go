@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/collector/claudecode"
+	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
 )
 
 func writeFile(t *testing.T, path, content string) {

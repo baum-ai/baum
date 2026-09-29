@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/cursortranscript"
+	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
 )
 
 // File is one concrete Cursor state.vscdb on disk.

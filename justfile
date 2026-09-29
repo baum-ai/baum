@@ -26,7 +26,7 @@ build:
 
 # Build the binary into ./bin
 install:
-    CGO_ENABLED=0 go build -o ./bin/ ./cmd/reviewpal
+    CGO_ENABLED=0 go build -o ./bin/ ./cmd/baum
 
 test *args:
     go test -race ./... {{ args }}

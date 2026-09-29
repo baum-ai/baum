@@ -1,6 +1,6 @@
 package claudesession
 
-import "github.com/lastpersonlabs/reviewpal/sessions/session"
+import "github.com/lastpersonlabs/baum/sessions/session"
 
 // Resolve after building the whole tree: a completion delivered to the parent
 // can name a tool in a child transcript. Keep every consequence in its own

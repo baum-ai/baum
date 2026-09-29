@@ -5,7 +5,7 @@ package steps
 import (
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/linkage"
+	"github.com/lastpersonlabs/baum/linkage"
 )
 
 const TimeframeStepID = "timeframe"

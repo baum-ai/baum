@@ -22,7 +22,7 @@ import (
 // EmailRuleID is the id the e-mail rule reports its findings under.
 const EmailRuleID = "email-address"
 
-// Config is how every byte reviewpal redacts is redacted. RecordAligned keeps
+// Config is how every byte baum redacts is redacted. RecordAligned keeps
 // emitted output on newline boundaries so JSONL streams stay whole records.
 var Config = goredact.Config{
 	Profile:       goredact.ProfileBalanced,

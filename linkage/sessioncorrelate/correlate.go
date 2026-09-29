@@ -23,10 +23,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/reviewpal/internal/textclean"
-	"github.com/lastpersonlabs/reviewpal/linkage/gitevidence"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/sourcepath"
+	"github.com/lastpersonlabs/baum/internal/textclean"
+	"github.com/lastpersonlabs/baum/linkage/gitevidence"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/sourcepath"
 )
 
 // Role mirrors agent_session_commit_refs.role. It is defined here rather than

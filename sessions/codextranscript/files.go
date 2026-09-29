@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"sort"
 
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 // Tree is the explicitly listed, fully decoded rollout set for one session.

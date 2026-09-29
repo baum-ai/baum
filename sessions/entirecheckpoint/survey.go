@@ -1,7 +1,7 @@
 package entirecheckpoint
 
 import (
-	"github.com/lastpersonlabs/reviewpal/sessions/traceprocessing"
+	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
 type Shape struct {

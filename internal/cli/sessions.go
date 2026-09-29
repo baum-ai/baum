@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/reviewpal/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/reviewpal/redact"
-	"github.com/lastpersonlabs/reviewpal/sessions"
-	"github.com/lastpersonlabs/reviewpal/sessions/session"
-	"github.com/lastpersonlabs/reviewpal/sessions/vendors"
+	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
+	"github.com/lastpersonlabs/baum/redact"
+	"github.com/lastpersonlabs/baum/sessions"
+	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
 type sessionsOptions struct {

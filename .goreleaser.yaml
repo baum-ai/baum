@@ -2,7 +2,7 @@
 # locally; the release workflow publishes on a v* tag.
 version: 2
 
-project_name: reviewpal
+project_name: baum
 
 before:
   hooks:
@@ -11,15 +11,15 @@ before:
     # ui/dist before go build runs.
 
 builds:
-  - id: reviewpal
-    main: ./cmd/reviewpal
-    binary: reviewpal
+  - id: baum
+    main: ./cmd/baum
+    binary: baum
     env:
       - CGO_ENABLED=0
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/lastpersonlabs/reviewpal/internal/cli.buildVersion={{ .Version }}
+      - -s -w -X github.com/lastpersonlabs/baum/internal/cli.buildVersion={{ .Version }}
     goos:
       - linux
       - darwin
@@ -61,6 +61,6 @@ changelog:
 release:
   github:
     owner: lastpersonlabs
-    name: reviewpal
+    name: baum
   draft: false
   prerelease: auto
