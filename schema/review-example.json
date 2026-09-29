@@ -16,7 +16,7 @@
     "generator": {
       "model": "provider-model-id",
       "review_md": null,
-      "schema_revision": "2026-09-16.3",
+      "schema_revision": "2026-09-17",
       "truncated": [
         "Session event summaries are paraphrased from execute calls; raw commands, tool outputs and local paths are not included",
         "Human review comment bodies are not included in this fixture input; review_exchange records the replies but cannot summarize their substance"
@@ -205,7 +205,10 @@
               "type": "hunk",
               "id": "h_9059c0588d90"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_2",
@@ -230,7 +233,10 @@
                 50
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_3",
@@ -251,7 +257,10 @@
                 43
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         }
       ],
       "evidence": [
@@ -607,7 +616,10 @@
                 50
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_2",
@@ -632,7 +644,10 @@
                 146
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_3",
@@ -653,7 +668,10 @@
                 5
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_4",
@@ -666,7 +684,10 @@
               "type": "hunk",
               "id": "h_1797f9bd0a06"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         }
       ],
       "evidence": [
@@ -1068,7 +1089,10 @@
                 10
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_2",
@@ -1085,7 +1109,10 @@
                 25
               ]
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         }
       ],
       "evidence": [
@@ -1375,7 +1402,10 @@
               "type": "hunk",
               "id": "h_26213ac396c0"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_2",
@@ -1392,7 +1422,10 @@
               "type": "hunk",
               "id": "h_3ad59b7e7177"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         }
       ],
       "evidence": [
@@ -1789,7 +1822,10 @@
               "type": "hunk",
               "id": "h_4bfa82cabb7a"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         },
         {
           "id": "rsk_2",
@@ -1802,7 +1838,10 @@
               "type": "hunk",
               "id": "h_f6b8625e1903"
             }
-          ]
+          ],
+          "state": "active",
+          "introduced_version": 1,
+          "mitigated_version": null
         }
       ],
       "evidence": [
@@ -3457,17 +3496,7 @@
         "url": "https://cursor.com/agents/bc-55d7236f-4011-48a3-a3c8-2b648c4c8ca7"
       }
     ],
-    "reports": [
-      {
-        "id": "rep_recountable_summary",
-        "tool": "recountable",
-        "marker": "recountable:pr-summary",
-        "comment": 5663899453,
-        "head": null,
-        "summary": "Summarised from 1 linked agent session: a single Codex session following the ship-issue workflow, later addressing reviewer feedback and removing the real-data harness",
-        "url": "https://github.com/lastpersonlabs/recountable/pull/191#issuecomment-5663899453"
-      }
-    ],
+    "reports": [],
     "comments": [
       {
         "id": 5197744335,
@@ -3508,14 +3537,6 @@
         "bot": false,
         "created_at": "2026-09-14T13:30:29Z",
         "url": "https://github.com/lastpersonlabs/recountable/pull/191#discussion_r4005678967"
-      },
-      {
-        "id": 5663899453,
-        "kind": "issue",
-        "author": "recountable-last-person-labs",
-        "bot": true,
-        "created_at": "2026-09-14T12:27:26Z",
-        "url": "https://github.com/lastpersonlabs/recountable/pull/191#issuecomment-5663899453"
       },
       {
         "id": 5667529999,
