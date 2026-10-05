@@ -47,7 +47,7 @@ func TestExampleValidates(t *testing.T) {
 func TestValidateRejectsWrongSchemaName(t *testing.T) {
 	example := readInstance(t, "review-example.json")
 	doc := example.(map[string]any)
-	doc["schema"] = "recountable.review/0"
+	doc["schema"] = "baum.review/0"
 	if err := Validate(doc); err == nil {
 		t.Fatal("a document with another schema name must not validate")
 	}

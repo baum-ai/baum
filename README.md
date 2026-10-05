@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 baum is a local-first pull request review generator and viewer. One
-binary on your machine builds a `recountable.review/1` document for a pull
+binary on your machine builds a `baum.review/1` document for a pull
 request and serves an embedded viewer for it on localhost.
 
 Everything runs locally:
@@ -114,12 +114,13 @@ to the provider.
 
 ## Review document schema
 
-Documents follow the `recountable.review/1` JSON Schema published at
-<https://static.recountable.ai/schemas/review/1.json>. A copy is vendored in
+Documents follow the `baum.review/1` JSON Schema published at
+<https://static.usebaum.com/schemas/review/1.json>. A copy is vendored in
 [`schema/review-1.json`](schema/review-1.json) together with an example
 document; `just schema-refresh` updates the copy from the published URL and a
-test validates the example against it. The URL is the source of truth for
-now; the schema's long-term home is still to be decided.
+test validates the example against it. The schema is defined in the baum
+monorepo for now and shared with the hosted service: baum supports every
+field it defines.
 
 ## Packages
 

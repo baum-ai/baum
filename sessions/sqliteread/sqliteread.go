@@ -405,7 +405,7 @@ func checkMagic(path string) error {
 // copyStore copies a store and its write-ahead log into a temporary
 // directory, returning the path of the copied store.
 func copyStore(path string) (string, error) {
-	dir, err := os.MkdirTemp("", "recountable-store-")
+	dir, err := os.MkdirTemp("", "baum-store-")
 	if err != nil {
 		return "", err
 	}

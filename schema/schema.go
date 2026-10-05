@@ -1,8 +1,10 @@
-// Package schema vendors the recountable.review/1 JSON Schema and compiles it
+// Package schema vendors the baum.review/1 JSON Schema and compiles it
 // for validation.
 //
-// The published schema at URL is the source of truth; review-1.json is a copy
-// refreshed with `just schema-refresh`. Additive schema edits bump the
+// The schema in the baum monorepo is the source of truth and is published at
+// URL; review-1.json is a copy refreshed from there with `just
+// schema-refresh`. The local tool and the hosted service share it and support
+// the same features. Additive schema edits bump the
 // revision recorded at $defs/schemaRevision/const, which a generated document
 // echoes in generator.schema_revision.
 package schema
@@ -17,10 +19,10 @@ import (
 )
 
 // URL is the schema's $id and the address it is published at.
-const URL = "https://static.recountable.ai/schemas/review/1.json"
+const URL = "https://static.usebaum.com/schemas/review/1.json"
 
 // Name is the value of a document's top-level "schema" field.
-const Name = "recountable.review/1"
+const Name = "baum.review/1"
 
 // Document is the vendored schema file.
 //
