@@ -2,17 +2,32 @@ package cursortranscript
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestDefaultStorePathAndBackupRejection(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "config")
-	t.Setenv("XDG_CONFIG_HOME", config)
+func TestDefaultStorePath(t *testing.T) {
+	// os.UserConfigDir reads a different variable on each OS, so point the one
+	// this OS honours at a temp dir and expect Cursor's layout beneath it.
+	base := t.TempDir()
+	config := base
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("AppData", base)
+	case "darwin":
+		t.Setenv("HOME", base)
+		config = filepath.Join(base, "Library", "Application Support")
+	default:
+		t.Setenv("XDG_CONFIG_HOME", base)
+	}
 	want := filepath.Join(config, "Cursor", "User", "globalStorage", "state.vscdb")
 	if got := DefaultStorePath(); got != want {
 		t.Fatalf("DefaultStorePath = %q, want %q", got, want)
 	}
+}
+
+func TestOpenRejectsBackupStore(t *testing.T) {
 	if _, err := Open(filepath.Join(t.TempDir(), "state.vscdb.backup")); err == nil || !strings.Contains(err.Error(), "backup stores") {
 		t.Fatalf("Open(.backup) error = %v", err)
 	}

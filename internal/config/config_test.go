@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -167,19 +168,22 @@ func TestSaveCreatesUserOnlyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("file mode = %o, want 600", perm)
-	}
-	dirInfo, err := os.Stat(filepath.Join(dir, "baum"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
-		t.Errorf("dir mode = %o, want 700", perm)
+	// Windows has no POSIX permission bits; Stat reports 0666/0777 there.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("file mode = %o, want 600", perm)
+		}
+		dirInfo, err := os.Stat(filepath.Join(dir, "baum"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+			t.Errorf("dir mode = %o, want 700", perm)
+		}
 	}
 
 	data, _ := os.ReadFile(path)
@@ -197,6 +201,9 @@ func TestSaveCreatesUserOnlyFile(t *testing.T) {
 }
 
 func TestSaveTightensExistingPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits")
+	}
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("backend = \"auto\"\n"), 0o644); err != nil {
 		t.Fatal(err)
