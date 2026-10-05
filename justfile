@@ -36,7 +36,7 @@ lint:
 
 # Re-fetch the vendored review schema from its published URL
 schema-refresh:
-    curl -fsSL https://static.recountable.ai/schemas/review/1.json -o schema/review-1.json
+    curl -fsSL https://static.usebaum.com/schemas/review/1.json -o schema/review-1.json
     go test ./schema/...
 
 # Build release archives for every target locally without publishing

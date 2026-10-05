@@ -8,7 +8,7 @@ func newGenerateCommand() *cobra.Command {
 		Short: "Generate the review document for a pull request",
 		Long: `Generate builds the generation bundle for a pull request from local sessions,
 the local clone and GitHub, runs the review agent passes with the configured
-model backend, validates the result and writes a recountable.review/1 document.`,
+model backend, validates the result and writes a baum.review/1 document.`,
 		RunE: notImplemented,
 	}
 	cmd.Flags().Int("pr", 0, "pull request number")
