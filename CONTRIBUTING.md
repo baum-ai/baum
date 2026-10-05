@@ -45,9 +45,14 @@ linux, macOS and Windows.
 - Describe what changed, why, and which checks you ran.
 - CI must pass before merge.
 - This repository is published from the `oss/` directory of the baum
-  monorepo. A merged pull request is pulled into the monorepo with `git
-  subtree pull --prefix=oss` before anything else is published, so keep its
-  commits as they are: no force pushes to `main`.
+  monorepo. Before anything else is published, a merged pull request is
+  pulled into the monorepo from its root with
+
+  ```sh
+  git subtree pull --prefix=oss https://github.com/lastpersonlabs/baum.git main
+  ```
+
+  so keep its commits as they are: no force pushes to `main`.
 - The review schema in `schema/` is shared with the hosted service. Change
   it in the monorepo, where the hosted code and its UI mirror change with it.
 
