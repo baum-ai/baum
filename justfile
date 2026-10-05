@@ -34,11 +34,6 @@ test *args:
 lint:
     golangci-lint run ./...
 
-# Re-fetch the vendored review schema from its published URL
-schema-refresh:
-    curl -fsSL https://static.usebaum.com/schemas/review/1.json -o schema/review-1.json
-    go test ./schema/...
-
 # Build release archives for every target locally without publishing
 release-snapshot:
     go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
