@@ -1,12 +1,11 @@
-// Package schema vendors the baum.review/1 JSON Schema and compiles it
-// for validation.
+// Package schema embeds the baum.review/1 JSON Schema and compiles it for
+// validation.
 //
-// The schema in the baum monorepo is the source of truth and is published at
-// URL; review-1.json is a copy refreshed from there with `just
-// schema-refresh`. The local tool and the hosted service share it and support
-// the same features. Additive schema edits bump the
-// revision recorded at $defs/schemaRevision/const, which a generated document
-// echoes in generator.schema_revision.
+// review-1.json is the schema itself, published at URL. The local tool and the
+// hosted service both read it from this package and support the same
+// features. Additive schema edits bump the revision recorded at
+// $defs/schemaRevision/const, which a generated document echoes in
+// generator.schema_revision.
 package schema
 
 import (

@@ -24,7 +24,7 @@ func TestContainment(t *testing.T) {
 		{"mixed edit and read", []string{"a.py", "b.py"}, []string{"a.py"}, []string{"a.py", "b.py"}, 0.625, 1},
 		{"commit fully inside a much larger run", []string{"a.py", "b.py", "c.py", "d.py"}, []string{"a.py", "b.py", "c.py", "d.py"}, []string{"a.py"}, 1.0, 1},
 		{"cwd-relative edit", []string{"src/agent/mod.rs"}, []string{"src/agent/mod.rs"}, []string{"src-tauri/src/agent/mod.rs"}, 1.0, 1},
-		{"cwd-relative read", []string{"dockercli/dockercli.go"}, nil, []string{"platform/internal/recountablectl/dockercli/dockercli.go"}, 0.25, 0},
+		{"cwd-relative read", []string{"dockercli/dockercli.go"}, nil, []string{"platform/internal/baumctl/dockercli/dockercli.go"}, 0.25, 0},
 		{"partial component is not a match", []string{"gent/mod.rs"}, []string{"gent/mod.rs"}, []string{"src-tauri/src/agent/mod.rs"}, 0.0, 0},
 		{"disjoint", []string{"a.py"}, []string{"a.py"}, []string{"b.py"}, 0.0, 0},
 		{"empty run", nil, nil, []string{"a.py"}, 0.0, 0},

@@ -21,7 +21,7 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, vendored schema, release pipeline and `baum sessions` exist;
+layout, review schema, release pipeline and `baum sessions` exist;
 `generate`, `bundle`, `view`, `validate` and `refresh` print their help and
 exit non-zero until their phase lands.
 
@@ -114,13 +114,11 @@ to the provider.
 
 ## Review document schema
 
-Documents follow the `baum.review/1` JSON Schema published at
-<https://static.usebaum.com/schemas/review/1.json>. A copy is vendored in
-[`schema/review-1.json`](schema/review-1.json) together with an example
-document; `just schema-refresh` updates the copy from the published URL and a
-test validates the example against it. The schema is defined in the baum
-monorepo for now and shared with the hosted service: baum supports every
-field it defines.
+Documents follow the `baum.review/1` JSON Schema in
+[`schema/review-1.json`](schema/review-1.json), published at
+<https://static.usebaum.com/schemas/review/1.json>; a test validates the
+example document next to it. The hosted baum service reads the same file, and
+baum supports every field it defines.
 
 ## Packages
 
@@ -135,7 +133,7 @@ own plumbing is under `internal/`.
 | `linkage` | matches commits of a pull request to the sessions that produced them |
 | `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
 | `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact) |
-| `schema` | the vendored review schema and its validator |
+| `schema` | the review schema and its validator |
 
 ## Development
 
@@ -143,6 +141,10 @@ Requires Go (version in `go.mod`), [just](https://just.systems) and
 [golangci-lint](https://golangci-lint.run). `just check` runs formatting,
 vet, build, tests and lint; `just --list` shows the other recipes. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+This repository is published from the `oss/` directory of the private baum
+monorepo, where the hosted service imports these packages. Pull requests are
+reviewed and merged here as usual and then pulled into the monorepo.
 
 ## License
 
