@@ -57,7 +57,7 @@ func TestFindSessionsReportsUnreadableRollouts(t *testing.T) {
 	repo := filepath.Join(base, "repo")
 	sessionsDir := filepath.Join(base, ".codex", "sessions")
 	rollout := filepath.Join(sessionsDir, "2026", "07", "22", "rollout-test.jsonl")
-	writeFile(t, rollout, `{"type":"session_meta","payload":{"id":"codex-1","cwd":"`+repo+`"}}`+"\n")
+	writeFile(t, rollout, fmt.Sprintf(`{"type":"session_meta","payload":{"id":"codex-1","cwd":%q}}`+"\n", repo))
 
 	sessions, report, err := FindSessions(sessionsDir, []string{repo})
 	if err != nil {

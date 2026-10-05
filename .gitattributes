@@ -1,0 +1,7 @@
+# Check text files out with LF on every platform: golden files are compared
+# byte-for-byte, and a CRLF checkout on Windows would break them.
+* text=auto eol=lf
+
+*.db binary
+*.db-wal binary
+*.vscdb binary
