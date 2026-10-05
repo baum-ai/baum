@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -173,6 +174,11 @@ func TestFindSessionsPreviousPaths(t *testing.T) {
 }
 
 func TestFindSessionsIncludesCursorTreesAtPreviousPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The fixture store records POSIX workspace paths, which no drive-rooted
+		// previous path resolved by filepath.Abs can contain.
+		t.Skip("Cursor fixture store records POSIX workspace paths")
+	}
 	fx := newFixture(t)
 	opts := FindOptions{
 		ClaudeProjectsDir: filepath.Join(t.TempDir(), "absent-claude"),

@@ -14,7 +14,9 @@ import (
 func TestFindSessionsFiltersByRepositoryAndCarriesNestedTree(t *testing.T) {
 	store := filepath.Join("..", "..", "cursortranscript", "testdata", "store.vscdb")
 
-	none, _, err := FindSessions([]string{store}, []string{"/elsewhere"})
+	// Discovery localizes the fixture's recorded POSIX workspace paths with
+	// filepath.Clean, so the roots are spelled the local way too.
+	none, _, err := FindSessions([]string{store}, []string{filepath.FromSlash("/elsewhere")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +24,7 @@ func TestFindSessionsFiltersByRepositoryAndCarriesNestedTree(t *testing.T) {
 		t.Fatalf("out-of-repository sessions = %+v", none)
 	}
 
-	sessions, report, err := FindSessions([]string{store}, []string{"/current", "/repo"})
+	sessions, report, err := FindSessions([]string{store}, []string{filepath.FromSlash("/current"), filepath.FromSlash("/repo")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestFindSessionsFiltersByRepositoryAndCarriesNestedTree(t *testing.T) {
 			continue
 		}
 		rootFound = true
-		if found.WorkingDir != "/repo" || len(found.Files) != 1 || len(found.Files[0].Data) == 0 || found.Files[0].Path != "" {
+		if found.WorkingDir != filepath.FromSlash("/repo") || len(found.Files) != 1 || len(found.Files[0].Data) == 0 || found.Files[0].Path != "" {
 			t.Fatalf("root discovery = %+v", found)
 		}
 		tree, err := cursortranscript.DecodeTreePayload(found.Files[0].Data)
@@ -85,7 +87,7 @@ func TestFindSessionsDoesNotReportBrokenOtherRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sessions, report, err := FindSessions([]string{store}, []string{"/repo"})
+	sessions, report, err := FindSessions([]string{store}, []string{filepath.FromSlash("/repo")})
 	if err != nil {
 		t.Fatal(err)
 	}
