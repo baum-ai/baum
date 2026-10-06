@@ -287,6 +287,7 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 			items[fmt.Sprint(evidence["id"])] = true
 			n.supportEvidenceStatus(evidence)
 		}
+		dropEmptyItemBlocks(section)
 		for _, block := range Objects(section["blocks"]) {
 			switch block["kind"] {
 			case "behavior":
@@ -325,6 +326,30 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 			}
 		}
 	}
+}
+
+// dropEmptyItemBlocks removes item-list blocks with no items. Such a block
+// carries nothing, and the strict contract requires at least one item, so
+// rejecting the document would only cost repair calls. Blocks with other
+// required content are left for validation.
+func dropEmptyItemBlocks(section map[string]any) {
+	blocks, ok := section["blocks"].([]any)
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(blocks))
+	for _, raw := range blocks {
+		if block, ok := raw.(map[string]any); ok {
+			switch block["kind"] {
+			case "entities", "groups", "decisions", "dependency", "included_prs":
+				if items, ok := block["items"].([]any); !ok && block["items"] == nil || ok && len(items) == 0 {
+					continue
+				}
+			}
+		}
+		kept = append(kept, raw)
+	}
+	section["blocks"] = kept
 }
 
 // supportEvidenceStatus keeps a claim whose anchors cannot carry its status

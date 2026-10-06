@@ -264,9 +264,20 @@ func textlessReason(change string, patch []byte) string {
 	return "binary"
 }
 
+// isBinaryPatch reports whether git printed a binary marker in the patch
+// header: "Binary files a/x and b/y differ", or "GIT binary patch" with
+// --binary. Only lines before the first "@@" count, so a text file whose
+// added or removed lines quote either phrase stays text.
 func isBinaryPatch(patch []byte) bool {
-	text := string(patch)
-	return strings.Contains(text, "Binary files ") || strings.Contains(text, "GIT binary patch")
+	for _, line := range strings.Split(string(patch), "\n") {
+		if strings.HasPrefix(line, "@@") {
+			return false
+		}
+		if strings.HasPrefix(line, "Binary files ") || strings.TrimSuffix(line, "\r") == "GIT binary patch" {
+			return true
+		}
+	}
+	return false
 }
 
 // parseHunkHeader reads the new-file start line and count from

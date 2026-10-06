@@ -577,3 +577,34 @@ func TestNormalizationFillsOnlyMissingAnchorsFromTheSectionsHunks(t *testing.T) 
 	assertSameDocumentJSON(t, []byte(`[{"type":"file","path":"main.go"}]`), tileJSON(t, items[1].(map[string]any)["anchors"]))
 	assertSameDocumentJSON(t, []byte(`[]`), tileJSON(t, sections[1].(map[string]any)["summary"].(map[string]any)["anchors"]))
 }
+
+func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	for name, empty := range map[string]map[string]any{
+		"missing": {"kind": "dependency"},
+		"null":    {"kind": "dependency", "items": nil},
+		"empty":   {"kind": "decisions", "items": []any{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc, err := decodeObject(authoredFixture(), "candidate")
+			checkNoError(t, err)
+			section := doc["sections"].([]any)[0].(map[string]any)
+			kept := map[string]any{"kind": "dependency", "items": []any{map[string]any{"name": "lib", "ecosystem": "go", "from": "1.0.0", "to": "1.1.0", "hunks": []any{testHunk}}}}
+			section["blocks"] = []any{empty, kept}
+			prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			checkEqual(t, "", findings)
+			var result map[string]any
+			checkNoError(t, json.Unmarshal(prepared, &result))
+			blocks := result["sections"].([]any)[0].(map[string]any)["blocks"].([]any)
+			checkEqual(t, 1, len(blocks))
+			checkEqual(t, "dependency", blocks[0].(map[string]any)["kind"])
+			checkEqual(t, 1, len(blocks[0].(map[string]any)["items"].([]any)))
+			// A section left with no blocks is still valid.
+			section["blocks"] = []any{empty}
+			_, findings = v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+			checkEqual(t, "", findings)
+		})
+	}
+}
