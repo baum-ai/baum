@@ -1,0 +1,5 @@
+field: commit.subject
+masked_spans: 0
+masked_bytes: none
+-- output --
+Bump @types/node from 20.1.0 to 22.4.1

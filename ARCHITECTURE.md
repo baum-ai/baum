@@ -85,8 +85,12 @@ never as zero.
 - Hunk IDs hash the path and the changed lines only, so a hunk keeps its ID
   across pushes and rebases that do not change it.
 - Redaction runs after reference extraction and before trimming, on every
-  free-text and URL field. SHAs, IDs and closed enums are exempt. The
-  checkout is not redacted; it is the repository the user already has.
+  free-text and URL field, with the `redact` engine: secrets and e-mail
+  addresses are masked in place over the whole text of each field, so a key
+  spanning lines is found and a patch keeps its lines and diff markers.
+  @mentions are not rewritten; a host defangs them where it posts text.
+  SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
+  the repository the user already has.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
   `generator.truncated` note.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git

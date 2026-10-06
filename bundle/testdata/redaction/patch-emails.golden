@@ -1,0 +1,9 @@
+field: diff.patch
+masked_spans: 4
+masked_bytes: [31,55) [72,89) [106,130) [143,163)
+-- output --
+@@ -1,3 +1,4 @@
+ Ada Lovelace <xxx.xxxxxxxx@xxxxxxx.xxx>
+-Grace Hopper <xxxxx@xxxxxxx.xxx>
++Grace Hopper <xxxxx.xxxxxx@xxxxxxx.xxx>
++# contact xxxxxxxx@xxxxxxx.xxx for disclosures.

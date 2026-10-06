@@ -1,0 +1,17 @@
+field: pull_request.body
+masked_spans: 17
+masked_bytes: [78,98) [125,165) [183,223) [241,334) [347,410) [420,460) [485,581) [594,699) [709,745) [751,791) [806,843) [853,901) [925,964) [976,1045) [1066,1170) [1178,1273) [1294,1326)
+-- output --
+Rotated every credential that leaked in the CI log:
+
+- AWS: AWS_ACCESS_KEY_ID=XXXXXXXXXXXXXXX99XXX and AWS_SECRET_ACCESS_KEY=xXx/x9xXX9XxX+9XXxxx/9XXx9XXx9xxxX9xXX/X
+- GitHub classic xxx_XXxXxXxXXXXXxXX9XxxxXxXXxxXxXX9xXXxX and fine-grained xxxxxx_xxx_xXXXXXXXXx9xXXXxxxXxXX_xX9x9XxXxxxxxxxxX9xxxxx9X9XxXxX9xxX9XXX9xXXX9XxxXXxX9xxXX9X
+- Slack bot xxxx-9999999999999-9999999999999-XxXxxXxXxx9x9xxxXX9xxxxxXxX9XX
+- Stripe xx_xxxx_xXXxXXXXxXxx9xXxxXXXXXxxXxXxxxxx
+- OpenAI OPENAI_API_KEY=xx-xxxx-XXXXXxxX9XxXxXxxXXXXxXXxXXX9XxxxxxXXx9xxX9XxxxXXXx99xXxxXxXxXxxX9XXXXxXxxxxXXxxXxxx9xxXX
+- Anthropic xx-xxx-xxx99-X9XxXXXxxxXXXx99XXxx9XXxXXxXxXxxxxxxXXxX9xxXxxXXxx99XXxXxXxxXxXxxxXXxx99XxxxXxx9xxx99xXXxxXX
+- GitLab xxxxx-XX_xX9xx9Xx99XXXXX_xXX99x9xXxX, npm xxx_xxxxx9xXXXxXX9XxxXXXxxxXxxXxXXXxxXXX, Hugging Face xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X
+- Linear xxx_xxx_XxXxXXxX9XXxxxXx9X9xxXxXXXXXxX9x9Xx9xxxX, Google GOOGLE_API_KEY=XXxxxxX9xXXXx9XXxXXXXXxXXxxXxxx9XX_999x
+- SendGrid XX.XxXxXX9xx9XxXxX9XXx9Xx.xXxx9xxxXX9xXxxXxxx9x999x9XXxxXxxxXXXXx9X99
+- Vault VAULT_TOKEN=xxx.xx9Xx-Xxx9xxxXx9xxXXXxXXxX9X9x99xx9X9Xxx9x999XXXxXXxxxXxXxXx99x-9X9x9XxXXxXxXXX9x9X_-XxxxXxxXxXxXXXx
+- PyPI xxxx-XxXXxXxxxX9xxxxxX9xXX9X999x9xXXxxXxXXx9xx9X-xXXXxx99x9Xxx9xXxXXxXXxXxx-9XxxXxxXxX-9xxX_9XX, Datadog DD_API_KEY=xx9x99x99x99x999xx9x9999xxxxx9xx

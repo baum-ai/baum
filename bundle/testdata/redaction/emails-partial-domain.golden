@@ -1,0 +1,7 @@
+field: conversation.body
+masked_spans: 6
+masked_bytes: [8,23) [30,45) [49,64) [72,86) [91,107) [111,127)
+-- output --
+contact xxx@xxxxxxx.xxx.1 now
+xxx@xxxxxxx.xxx-1, xxx@xxxxxxx.xxx.v2 and xxx@xxxxxxx.xx.uk2
+xxx@-xxxxxxx.xxx or xxx@.xxxxxxx.xxx, not ada@example.com_x

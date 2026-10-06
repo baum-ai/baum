@@ -7,13 +7,23 @@ run `baum generate`, the following is sent to the **model provider you
 configure** (the Anthropic API, or the `claude`, `codex` or `cursor-agent` CLI,
 each of which talks to its own provider under your own account):
 
-- content of the repository at the pull request head, including the diff and
-  any file the review agent chooses to read;
-- pull request metadata, commits, checks and conversation fetched from GitHub;
-- text from your local coding-agent sessions that were linked to the pull
-  request: prompts, paraphrased commands and touched paths, **after**
-  redaction of secrets and identities with
-  [goredact](https://github.com/lastpersonlabs/goredact).
+- the files of the repository at the pull request head and merge base,
+  which the review agent may read as they are, unredacted;
+- the evidence bundle: pull request metadata, commits, checks and
+  conversation fetched from GitHub, the diff, and text from your local
+  coding-agent sessions that were linked to the pull request (prompts,
+  paraphrased commands and touched paths). Its free-text and URL fields,
+  the diff included, are sent **after** secrets and e-mail addresses are
+  masked with [goredact](https://github.com/lastpersonlabs/goredact).
+  `REVIEW.md` is the exception: it is sent as it is, like the rest of the
+  repository.
+
+A mask keeps the shape of the value, not its characters. It has the same
+length; each letter becomes `X` or `x` by case and each digit `9`; the
+separators `- _ . : / + = @` are kept verbatim; any other byte becomes `*`,
+except line breaks and, in a diff, each line's leading `+`, `-` or space.
+An address such as `ada.lovelace@example.com` is sent as
+`xxx.xxxxxxxx@xxxxxxx.xxx`. @mentions are left as written.
 
 Redaction is best effort. Review `baum bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and

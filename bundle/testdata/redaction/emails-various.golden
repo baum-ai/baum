@@ -1,0 +1,10 @@
+field: conversation.body
+masked_spans: 8
+masked_bytes: [5,29) [40,74) [90,115) [124,139) [168,184) [193,207) [262,282) [301,383)
+-- output --
+Ping xxx.xxxxxxxx@xxxxxxx.xxx or Grace <xxxxx.xxxxxx+xx@xxxx.xxxxxxx.xx.xx>.
+Escalations: XXXXXXXX-XXXX@Xxxxxxx.XXX, mailto:xxx@xxxxxxx.xxx?subject=leak.
+Sentence end: xxxx@xxxxxxx.xxx. Comma: xxx@xxxxxxx.xx, then more.
+Git trailer style: Co-authored-by: Linus <xxxxxxxx@xxxxxxx.xxx>
+Long local part: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@xxxxxxx.xxx
+Not addresses: user@localhost, a @ b, host@10.0.0.1, @scope/pkg, x@y

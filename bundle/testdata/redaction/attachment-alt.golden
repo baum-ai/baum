@@ -1,0 +1,5 @@
+field: attachment.alt
+masked_spans: 1
+masked_bytes: [40,109)
+-- output --
+Screenshot of the settings page showing XX.XxXxXX9xx9XxXxX9XXx9Xx.xXxx9xxxXX9xXxxXxxx9x999x9XXxxXxxxXXXXx9X99 for @alice

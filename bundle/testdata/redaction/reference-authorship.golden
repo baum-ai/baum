@@ -1,0 +1,5 @@
+field: reference.value
+masked_spans: 2
+masked_bytes: [42,63) [69,174)
+-- output --
+Generated with an assistant; questions to xxx-xxxxx@xxxxxxx.xxx, key xx-xxx-xxx99-X9XxXXXxxxXXXx99XXxx9XXxXXxXxXxxxxxxXXxX9xxXxxXXxx99XXxXxXxxXxXxxxXXxx99XxxxXxx9xxx99xXXxxXX

@@ -1,0 +1,6 @@
+field: pull_request.body
+masked_spans: 0
+masked_bytes: none
+-- output --
+Set `ANTHROPIC_API_KEY=sk-ant-xxxxxxxx` locally, or `Authorization: Bearer <token>`,
+or export API_TOKEN=${API_TOKEN}. The value ghp_short is not a token and AKIA-short is not a key.

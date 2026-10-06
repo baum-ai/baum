@@ -1,0 +1,5 @@
+field: commit.subject
+masked_spans: 1
+masked_bytes: [26,43)
+-- output --
+Apply review from @alice <xxxxx@xxxxxxx.xxx>

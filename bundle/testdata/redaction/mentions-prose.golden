@@ -1,0 +1,6 @@
+field: conversation.body
+masked_spans: 0
+masked_bytes: none
+-- output --
+@alice can you take a look? cc @bob-smith and @acme/platform-team.
+Thanks @carol, see https://github.com/@dave and pkg/@scope/name.

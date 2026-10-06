@@ -1,19 +1,24 @@
 package bundle
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
 
-	"github.com/lastpersonlabs/goredact"
-
 	"github.com/lastpersonlabs/baum/redact"
 )
 
-// Redact runs goredact and identity redaction over every bundle string
-// field, after reference extraction (which runs against the unredacted
-// bundle) and before the byte-fit pass. Patch text is redacted line by line.
+// Redact masks secrets and e-mail addresses in every bundle string field,
+// after reference extraction (which runs against the unredacted bundle) and
+// before the byte-fit pass. Each field, a whole patch included, is redacted
+// as one text, so a secret spanning lines is found, and keeps its length and
+// lines. MaskedSpanCount is the number of spans masked, e-mail addresses
+// included.
+//
+// Mentions are not rewritten: nothing in the bundle is posted to a code
+// host as it is, and a field may hold code (a patch, a suggestion block, a
+// prompt), where an "@" is an annotation, decorator or package scope. Text
+// published to a code host has its mentions defanged where it is published.
 //
 // Every free-text or URL field is covered, including References[].Value —
 // ReferenceAuthorshipDisclosure copies up to 80 trailing characters of raw
@@ -71,11 +76,11 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		if bundle.Diff[i].Patch == "" {
 			continue
 		}
-		redacted, count, err := redactor.RedactPatchText(ctx, bundle.Diff[i].Patch)
+		redacted, count, err := redactor.RedactString(ctx, bundle.Diff[i].Patch)
 		if err != nil {
 			return err
 		}
-		bundle.Diff[i].Patch, total = redacted, total+count
+		bundle.Diff[i].Patch, total = keepLineMarkers(bundle.Diff[i].Patch, redacted), total+count
 	}
 	for i := range bundle.Sessions {
 		session := &bundle.Sessions[i]
@@ -158,60 +163,53 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	return nil
 }
 
-var bundleRedactionConfig = goredact.Config{
-	Profile:       goredact.ProfileBalanced,
-	MaskStrategy:  goredact.MaskFormatPreserving,
-	RecordAligned: true,
+// keepLineMarkers puts back the first byte of every patch line, its diff
+// marker. A key spanning lines is masked whole, and the mask would turn a
+// context line's leading space into "*", so the line would no longer parse
+// as a diff line. A marker (space, "+", "-" or "\\") is diff syntax, never
+// part of the secret; any other first byte stays masked.
+func keepLineMarkers(patch, redacted string) string {
+	if len(redacted) != len(patch) {
+		return redacted
+	}
+	out := []byte(redacted)
+	for i := 0; i < len(patch); i++ {
+		if (i == 0 || patch[i-1] == '\n') && strings.IndexByte(" +-\\", patch[i]) >= 0 {
+			out[i] = patch[i]
+		}
+	}
+	return string(out)
 }
 
-// Redactor wraps one goredact engine, safe for concurrent Redact calls.
+// Redactor masks bundle text with the redact package's engine, the one
+// redaction configuration baum uses for input, output and logs. It is safe
+// for concurrent use.
 type Redactor struct {
-	engine *goredact.Engine
+	engine *redact.Engine
 }
 
+// NewRedactor compiles the redaction rules.
 func NewRedactor() (*Redactor, error) {
-	engine, err := goredact.New(bundleRedactionConfig)
+	engine, err := redact.New()
 	if err != nil {
 		return nil, err
 	}
 	return &Redactor{engine: engine}, nil
 }
 
-// RedactString masks secret spans (goredact) and then redacts identities
-// (email, @mention), returning the result and the number of goredact
-// findings confirmed in this string, which the bundle reports as its
-// masked-span count. Identity redaction is a
-// smaller, best-effort pass on top (as the PR comment text treats it) and is
-// not separately counted.
+// RedactString masks every secret and e-mail address in s and returns the
+// result with the number of spans masked, which the bundle reports as its
+// masked-span count. Secrets are found over the whole text, so a key that
+// spans lines is caught, and the result keeps the length and the lines of
+// s: a patch keeps its line numbers. Mentions are left as written; a code
+// host is protected from them where text is published, not here.
 func (r *Redactor) RedactString(ctx context.Context, s string) (string, int, error) {
 	if s == "" {
 		return "", 0, nil
 	}
-	var buf bytes.Buffer
-	stats, err := r.engine.Redact(ctx, &buf, strings.NewReader(s))
+	redacted, summary, err := r.engine.RedactContext(ctx, s)
 	if err != nil {
 		return "", 0, err
 	}
-	identityRedacted, _ := redact.Identities(buf.String())
-	return identityRedacted, int(stats.Findings), nil
-}
-
-// RedactPatchText redacts a unified-diff patch one line at a time, so a
-// masked span can never merge or split a line and hunk line numbers stay
-// valid.
-func (r *Redactor) RedactPatchText(ctx context.Context, patch string) (string, int, error) {
-	if patch == "" {
-		return "", 0, nil
-	}
-	lines := strings.Split(patch, "\n")
-	total := 0
-	for i, line := range lines {
-		redacted, count, err := r.RedactString(ctx, line)
-		if err != nil {
-			return "", 0, err
-		}
-		lines[i] = redacted
-		total += count
-	}
-	return strings.Join(lines, "\n"), total, nil
+	return redacted, summary.Findings, nil
 }
