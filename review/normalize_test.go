@@ -610,48 +610,53 @@ func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
 }
 
 // approved_by_human marks an agent decision a human explicitly accepted; a
-// human decision cannot carry it.
+// human decision cannot carry it. Null (Codex's strict output for an absent
+// flag) and false are normalised away; a human decision marked approved is
+// left for the repair loop.
 func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
 	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	const absent = "absent"
 	for _, tc := range []struct {
 		by       string
 		approved any
 		valid    bool
+		kept     bool
 	}{
-		{"agent", true, true},
-		{"agent", nil, true},
-		{"human", nil, true},
-		{"human", true, false},
-		{"agent", false, false},
-		// Codex strict output sends null for an absent optional field;
-		// normalisation removes it.
-		{"agent", "null", true},
-		{"human", "null", true},
+		{"agent", true, true, true},
+		{"agent", absent, true, false},
+		{"agent", nil, true, false},
+		{"agent", false, true, false},
+		{"human", absent, true, false},
+		{"human", nil, true, false},
+		{"human", false, true, false},
+		{"human", true, false, true},
 	} {
 		doc, err := decodeObject(authoredFixture(), "candidate")
 		checkNoError(t, err)
 		item := map[string]any{"id": "dec_parser", "by": tc.by, "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
-		switch tc.approved {
-		case nil:
-		case "null":
-			item["approved_by_human"] = nil
-		default:
+		if tc.approved != absent {
 			item["approved_by_human"] = tc.approved
 		}
 		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
-		_, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+		prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
 		if (findings == "") != tc.valid {
 			t.Errorf("by %s, approved_by_human %v: findings %q, want valid %v", tc.by, tc.approved, findings, tc.valid)
 		}
-		// The lenient schema the model is given must take the null too.
-		if tc.approved == "null" {
+		// The lenient schema the model is given must take a null too.
+		if tc.approved == nil {
 			var lenient any
 			checkNoError(t, json.Unmarshal(tileJSON(t, doc), &lenient))
 			if err := resolvedSchema(t, v.Schema).Validate(lenient); err != nil {
 				t.Errorf("by %s with a null approved_by_human: lenient schema rejects it: %v", tc.by, err)
 			}
+		}
+		if !tc.valid {
+			continue
+		}
+		if kept := strings.Contains(string(prepared), `"approved_by_human":true`); kept != tc.kept || strings.Contains(string(prepared), "approved_by_human") != tc.kept {
+			t.Errorf("by %s, approved_by_human %v: prepared %s, want flag kept %v", tc.by, tc.approved, prepared, tc.kept)
 		}
 	}
 }

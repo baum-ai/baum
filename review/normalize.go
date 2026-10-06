@@ -298,6 +298,12 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 				for _, decision := range Objects(block["items"]) {
 					items[fmt.Sprint(decision["id"])] = true
 					fillAnchors(decision, "anchors", anchors)
+					// false says what an absent flag says. A human decision
+					// marked approved contradicts itself, so it stays for
+					// validation to ask which the model meant.
+					if decision["approved_by_human"] == false {
+						delete(decision, "approved_by_human")
+					}
 				}
 			case "entities", "groups", "dependency":
 				for _, item := range Objects(block["items"]) {
