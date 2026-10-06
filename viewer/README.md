@@ -1,0 +1,148 @@
+# viewer
+
+`@baum/viewer` is the React package that renders a `baum.review/1` document
+and its earlier versions: the summary, the sections and their blocks, risks,
+tiles, hunk evidence, description images, checks, the details and activity
+panes, and the version menu with comparison. It also holds the pure
+derivations behind them (review order, risk triage, anchor resolution, version
+changes) and the design tokens and primitives the components are built from.
+
+The package is private for now. Hosts consume it as TypeScript source through
+a `link:` dependency and compile it with their own bundler; there is no build
+step. It has no dependency on any server: it reads only the document and the
+versions a host hands it. `ReviewViewer` composes the components into a whole
+review page, and a host fills its optional slots with features of its own.
+
+## Using it
+
+React, React DOM and the Markdown, sanitising, validation and pluralisation
+libraries are peer dependencies (see `package.json`), so the host and the
+viewer share one copy of each. A host that links the package should resolve
+those imports from its own `node_modules` (in Vite, `resolve.dedupe`).
+
+Modules are imported by path, for example
+`@baum/viewer/components/review-section` or `@baum/viewer/review-document`;
+`package.json` lists every entry point.
+
+Styling uses Tailwind CSS v4. Import the viewer's tokens after Tailwind and
+add its sources so the utilities its components use are generated:
+
+```css
+@import "tailwindcss";
+@import "@baum/viewer/viewer.css";
+@source "<path to this package>/src";
+```
+
+`viewer.css` defines the type scale, the colour ramps and semantic tokens
+with their dark variants (applied under `:root[data-theme="dark"]`), the
+categorical series, and the pane and skeleton animations. The sans-serif family comes from `--viewer-font-sans`,
+which falls back to the system's sans-serif face; set it on `:root` to
+restyle the viewer.
+
+## Host seams
+
+The viewer never fetches anything and never decides who may see a document.
+A host connects it through props and context:
+
+| Seam | Required | How |
+| --- | --- | --- |
+| document source | yes | the `document` prop, and `loadVersion` (`LoadReviewVersion`), which answers a `ReviewVersionState` for an earlier version |
+| navigation | yes, for `ReviewViewer` and the selection and version hooks | `UrlStateProvider` with the URL's search params and a writer; `ViewerLinkProvider` with an in-app link component, which `ViewerLink` renders (a plain anchor without one), such as the head's back link |
+| attachment URL | no | `AttachmentUrlProvider` resolves an attachment id to an address; without it `images` blocks draw nothing |
+| hunk patch source | no | `HunkPatchProvider` loads a file's patch for cited code whose stored excerpt was omitted |
+| file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
+| row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
+| side pane, header slots and other features | no | the `ReviewViewer` slots below |
+
+## The review page
+
+`ReviewViewer` (`@baum/viewer/components/review-viewer`) renders a whole
+review: the head, the version menu with comparison, the rail (Summary,
+Changes and Critical risks, folding as the reader goes), the pane for the
+selection, and a side pane with the document's Details and Activity. It keeps
+the selection and the version being read in the URL through
+`UrlStateProvider`, and remembers the side pane's tab, fold and width in
+`localStorage`.
+
+```tsx
+<UrlStateProvider value={{ search, update }}>
+  <ReviewViewer document={document} versions={[2, 1]} loadVersion={load} />
+</UrlStateProvider>
+```
+
+With the document alone it draws nothing a host would have to supply: no
+version menu without `versions`, no read progress, files, sessions, commits
+or chat. Every other prop is optional, and a feature whose slot is absent is
+left out rather than shown empty or failed:
+
+| Prop | What it adds |
+| --- | --- |
+| `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
+| `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
+| `versionsFailed` | a retry for a version list that could not be loaded |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded |
+| `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
+| `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
+| `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
+| `notices` | alerts at the top of the pane, such as a generation in progress |
+| `files` | a Files group: the host's tree in the rail and its diff in the pane, with code links in the review opening the cited file there |
+| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
+| `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
+| `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
+| `hunkPatches` | the hunk patch source for the section and risk panes |
+| `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
+
+The document's own sessions are listed in the Activity tab; the Sessions
+group and its pane need the host's `sessions` slot. The `baum` binary fills
+it from the session stores on the user's machine.
+
+A link to a group whose slot is absent (`?pane=sessions` without
+`sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
+host that is still loading a group should pass its slot in a loading state
+rather than leave it out: the link then opens the group once it arrives.
+
+The loader and the version list are read by value: a host may pass a new
+`loadVersion` function or `versions` array on each render without anything
+being loaded again. A host whose loader starts answering for a different
+pull request should remount the viewer, for example with a `key`.
+
+The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
+of the window. A host should pad the page's scroll by it, so that a jump
+does not land a heading under the bar:
+
+```css
+html:has([data-review-page]) {
+  scroll-padding-top: calc(48px + 0.5rem);
+}
+```
+
+## Schema and tile types
+
+The document types in `src/review-document.ts` mirror
+[`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
+canonical. Tiles are validated against it with Ajv at runtime, and
+`src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
+retired, so stored tiles of those kinds still render. `pnpm generate` writes
+the tile types to `generated/review-tile-types.d.ts` from both files;
+`pnpm typecheck` runs it first, and the output is not committed.
+
+## Development
+
+Requires Node.js 24 and pnpm.
+
+```sh
+pnpm install
+pnpm check            # lint, format check, typecheck and unit tests
+just check            # the same, through this directory's justfile
+pnpm format           # format with Biome
+pnpm test:unit:watch  # watch the unit tests while editing
+```
+
+Unit tests use Vitest and sit beside the code they cover; fixtures live in
+`test/`. The tests run with the locale forced to en-US, since the formatters
+follow the runtime locale. `src/components/review-viewer.test.tsx` renders
+`ReviewViewer` with the schema's example document
+(`../schema/review-example.json`) alone and with an earlier version to
+compare. `src/typography.test.ts` fails on a font size outside the type scale
+in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
+a package that is not a peer dependency.

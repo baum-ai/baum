@@ -1,0 +1,5 @@
+field: session.reply
+masked_spans: 2
+masked_bytes: [75,355) [373,422)
+-- output --
+I found the service account file: {"type":"service_account","private_key":"-----XXXXX*XXXXXXX*XXX-----*xxxxXXXXXXXX9X+xxxxxXxXxxXxX+XxXXxXxXXX9xX9xXxXxXx9XxxxXX9x9xXxX9*xxxxxXX9xXx/xxXxxX9xXXx99xxxxX9XXXxxXxxXXxx99x9X+/9xxXx9XxxxxXX9X*x9xXxX9XXx99XXX9xX9XXxXxxxXxX9xxXxx99xXxXXx9XXXxX9XxXXXxXXxxxxXxx*x99xxx9xxXXxXX9Xxxx99Xx==*x-----XXX*XXXXXXX*XXX-----*x","client_email":"xx-xxxxxx@xxxxxxx-xxxxxxx.xxx.xxxxxxxxxxxxxxx.xxx"}

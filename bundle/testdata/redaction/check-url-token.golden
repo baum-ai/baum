@@ -1,0 +1,5 @@
+field: check.url
+masked_spans: 1
+masked_bytes: [37,77)
+-- output --
+https://ci.example.test/run/42?token=xxx_XXxXxXxXXXXXxXX9XxxxXxXXxxXxXX9xXXxX

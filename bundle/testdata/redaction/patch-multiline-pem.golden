@@ -1,0 +1,11 @@
+field: diff.patch
+masked_spans: 1
+masked_bytes: [17,311)
+-- output --
+@@ -0,0 +1,6 @@
++-----XXXXX*XXXXXXX*XXXXXXX*XXX-----
++xxxXXXXXXXX9X+xxxxxXxXxxXxX+XxXXxXxXXX9xX9xXxXxXx9XxxxXX9x9xXxX9
++xxxxXX9xXx/xxXxxX9xXXx99xxxxX9XXXxxXxxXXxx99x9X+/9xxXx9XxxxxXX9X
++9xXxX9XXx99XXX9xX9XXxXxxxXxX9xxXxx99xXxXXx9XXXxX9XxXXXxXXxxxxXxx
++99xxx9xxXXxXX9Xxxx99Xx==
++-----XXX*XXXXXXX*XXXXXXX*XXX-----

@@ -1,0 +1,5 @@
+field: command.target
+masked_spans: 1
+masked_bytes: [31,63)
+-- output --
+curl -H 'Authorization: Bearer xX9xX9xX9xX9xX9xX9xX9xX9xX9xX9xX' https://api.example.com/v1

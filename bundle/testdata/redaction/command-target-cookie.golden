@@ -1,0 +1,5 @@
+field: command.target
+masked_spans: 1
+masked_bytes: [39,63)
+-- output --
+curl -H 'Cookie: theme=dark; sessionid=xX9xX9xX9xX9xX9xX9xXxX9x; lang=en' https://app.example.test/

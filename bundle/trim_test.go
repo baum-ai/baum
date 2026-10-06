@@ -3,6 +3,7 @@ package bundle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -350,6 +351,19 @@ func TestRedactStringRedactsEmail(t *testing.T) {
 	}
 }
 
+func TestRedactStopsWhenTheContextEnds(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	bundle := &Bundle{Diff: []Hunk{{ID: testHunk, Path: "main.go", Patch: strings.Repeat("+line of code\n", 1<<16)}}}
+	if err := Redact(ctx, bundle, redactor); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Redact with a cancelled context = %v, want context.Canceled", err)
+	}
+}
+
 func TestRedactStringEmptyIsNoop(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
@@ -361,33 +375,45 @@ func TestRedactStringEmptyIsNoop(t *testing.T) {
 	}
 }
 
-func TestRedactPatchTextPreservesLineCount(t *testing.T) {
+// TestRedactPatchKeepsLinesAndFindsMultilineKeys checks a patch is redacted
+// as one text: a key whose lines are all diff lines is found, and every
+// line keeps its length and its diff marker, so hunk line numbers stay valid.
+func TestRedactPatchKeepsLinesAndFindsMultilineKeys(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	patch := "@@ -1,2 +1,2 @@\n-old " + plantedSecret + "\n+new line\n"
-	redacted, count, err := redactor.RedactPatchText(context.Background(), patch)
-	if err != nil {
+	patch := "@@ -1,8 +1,14 @@\n-old " + plantedSecret + "\n" + prefixLines("+", corpusPEM) + "\n" + prefixLines(" ", corpusPEM) + "\n+    @Override\n"
+	bundle := &Bundle{Diff: []Hunk{{ID: testHunk, Path: "main.go", Patch: patch}}}
+	if err := Redact(context.Background(), bundle, redactor); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(redacted, plantedSecret) {
-		t.Fatalf("planted secret survived patch redaction: %q", redacted)
+	redacted := bundle.Diff[0].Patch
+	if strings.Contains(redacted, plantedSecret) || strings.Contains(redacted, "rpvGMXOAKGX6B") {
+		t.Fatalf("secret survived patch redaction: %q", redacted)
 	}
-	wantLines := len(strings.Split(patch, "\n"))
-	gotLines := len(strings.Split(redacted, "\n"))
-	if wantLines != gotLines {
-		t.Fatalf("patch redaction changed line count: want %d, got %d (%q -> %q)", wantLines, gotLines, patch, redacted)
+	inLines, outLines := strings.Split(patch, "\n"), strings.Split(redacted, "\n")
+	if len(inLines) != len(outLines) {
+		t.Fatalf("patch redaction changed line count: %q -> %q", patch, redacted)
 	}
-	if count == 0 {
-		t.Fatalf("expected masked spans counted in patch redaction")
+	for i := range inLines {
+		if len(inLines[i]) != len(outLines[i]) {
+			t.Errorf("line %d changed length: %q -> %q", i+1, inLines[i], outLines[i])
+		} else if inLines[i] != "" && inLines[i][0] != outLines[i][0] {
+			t.Errorf("line %d lost its diff marker: %q -> %q", i+1, inLines[i], outLines[i])
+		}
+	}
+	if !strings.Contains(redacted, "+    @Override") {
+		t.Errorf("an annotation in code was rewritten: %q", redacted)
+	}
+	if bundle.MaskedSpanCount < 2 {
+		t.Fatalf("masked spans = %d, want the token and the key", bundle.MaskedSpanCount)
 	}
 }
 
 // TestRedactCoversEveryBundleStringField guards against the
-// whole-bundle redact pass silently skipping a field: README.md ("Evidence
-// bundle") requires secret redaction of every free-text field (goredact) and
-// identity redaction over every string field of the bundle type — including
+// whole-bundle redact pass silently skipping a field: every string field of
+// the bundle type is masked for secrets and e-mail addresses — including
 // bundle.Session.Title, which is free text (often an LLM-generated summary),
 // and the command-paraphrase entries' Program/Target fields.
 func TestRedactCoversEveryBundleStringField(t *testing.T) {

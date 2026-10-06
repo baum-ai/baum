@@ -1,0 +1,5 @@
+field: pull_request.title
+masked_spans: 1
+masked_bytes: [20,60)
+-- output --
+Revoke leaked token xxx_XXxXxXxXXXXXxXX9XxxxXxXXxxXxXX9xXXxX

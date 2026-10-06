@@ -1,0 +1,5 @@
+field: session.title
+masked_spans: 1
+masked_bytes: [23,63)
+-- output --
+Fix outage using token xxx_XXxXxXxXXXXXxXX9XxxxXxXXxxXxXX9xXXxX

@@ -6,13 +6,20 @@ and the hosted baum service, which imports them from this module. Both hosts
 support every field in the schema; they differ only in where evidence comes
 from and what they do with the result.
 
+The dependency runs one way. The hosted service imports these packages, but
+the `baum` binary never uses hosted baum data and never contacts a baum server:
+everything it reads comes from the user's machine, GitHub (with the user's own
+token) or the model provider the user configures. The one other contact is the
+public, signed price list described under "Running locally".
+
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle, and
-`review`, `agent` and `viewer` do not exist yet. Until a package is complete,
-its section describes the intended shape.
+`review` holds the document model, validation, history, refresh and the tile
+catalogue; output redaction, `agent` and `viewer` do not exist yet. Until a
+package is complete, its section describes the intended shape.
 
 ## Pipeline
 
@@ -86,8 +93,12 @@ never as zero.
 - Hunk IDs hash the path and the changed lines only, so a hunk keeps its ID
   across pushes and rebases that do not change it.
 - Redaction runs after reference extraction and before trimming, on every
-  free-text and URL field. SHAs, IDs and closed enums are exempt. The
-  checkout is not redacted; it is the repository the user already has.
+  free-text and URL field, with the `redact` engine: secrets and e-mail
+  addresses are masked in place over the whole text of each field, so a key
+  spanning lines is found and a patch keeps its lines and diff markers.
+  @mentions are not rewritten; a host defangs them where it posts text.
+  SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
+  the repository the user already has.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
   `generator.truncated` note.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
@@ -219,12 +230,15 @@ through props and context:
 | Seam | Required | `baum view` | Notes |
 | --- | --- | --- | --- |
 | document source | yes | the file given, and versions from the local store | the current document, a version list and a loader for one version |
-| attachment URL | yes | served from the local cache | resolves an image ID to a URL |
+| attachment URL | no | served from the local cache | resolves an image ID to a URL; without it, image blocks draw nothing |
 | navigation | yes | in-app history | link component and the selection and version state in the URL |
 | hunk patch source | no | not used | the full patch for a hunk when the document does not carry it |
+| file opener | no | not used | opens a cited file in the host's own diff view instead of following its link |
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
-| header slots | no | not used | statistics, generation controls |
+| header slots | no | not used | statistics, generation controls, approval state, a back link |
+| rail groups | no | linked sessions and commits from the local session stores | changed files, linked sessions and commits, each listed in the rail with the host's pane |
+| version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
 
 Optional seams default to absent, and the viewer renders the document alone.
 The viewer never decides who can see a document; that is the host's job.
@@ -232,6 +246,10 @@ The viewer never decides who can see a document; that is the host's job.
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
 defaults to an open font bundled with the package. A host overrides the
 variable to restyle the viewer without forking it.
+
+The components and their seams are in [`viewer/`](viewer/README.md); the
+standalone app and the bundled font are not there yet, and until the font is
+the variable falls back to the system's sans-serif face.
 
 ## Running locally
 
@@ -250,9 +268,25 @@ variable to restyle the viewer without forking it.
 7. validates, derives and redacts the document, and stores it as the next
    version.
 
+Git reads (the comparison, patches, blobs and the worktree) run in a private
+temporary bare repository that borrows the clone's objects and has default
+configuration, like the hosted git mirror. The clone's configuration,
+attributes and replace refs cannot change the output, and its refs,
+configuration and worktree registrations are left as they were. The worktree
+holds the committed bytes, as the hosted export does: line-ending, ident,
+encoding and filter attributes are not applied.
+
+The clone is written to only when it lacks a pull request commit: baum
+fetches it under `refs/baum/`, with the user's git configuration and no
+hooks. A partial clone missing the pull request's objects is reported, not
+fetched from on demand.
+
 `baum bundle` stops after step 5. `baum validate` and `baum refresh` run the
 `review` steps on an existing document. `baum view` serves the viewer, the
-document, its versions and the cached images.
+document, its versions, the cached images, and the sessions and commits linked
+to the pull request, read from the local session stores with `sessions` and
+`linkage`. When those sessions are not on this machine, the viewer shows the
+document's own session metadata.
 
 Estimated cost comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`

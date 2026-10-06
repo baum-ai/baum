@@ -1,0 +1,10 @@
+field: conversation.body
+masked_spans: 1
+masked_bytes: [95,135)
+-- output --
+Override the base method here:
+```suggestion
+    @Override
+    public String token() { return "xx_xxxx_xXXxXXXXxXxx9xXxxXXXXXxxXxXxxxxx"; }
+```
+@alice FYI

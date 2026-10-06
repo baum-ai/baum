@@ -1,0 +1,5 @@
+field: pull_request.head_ref
+masked_spans: 1
+masked_bytes: [11,51)
+-- output --
+fix/rotate-xxx_XXxXxXxXXXXXxXX9XxxxXxXXxxXxXX9xXXxX

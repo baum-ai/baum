@@ -1,0 +1,5 @@
+field: pull_request.title
+masked_spans: 1
+masked_bytes: [34,49)
+-- output --
+Fix login for @alice (reported by xxx@xxxxxxx.xxx)
