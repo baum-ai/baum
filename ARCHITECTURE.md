@@ -7,9 +7,9 @@ support every field in the schema; they differ only in where evidence comes
 from and what they do with the result.
 
 This file describes the package boundaries and the extension points a host
-implements. The `bundle` package holds the evidence types and the diff index so
-far; the rest of `bundle`, `review`, `agent` and `viewer` are being moved here
-in stages; until a package is complete, its section describes the intended
+implements. The packages are being moved here in stages: so far `bundle` holds
+the evidence types and the diff index, and `review`, `agent` and `viewer` do
+not exist yet. Until a package is complete, its section describes the intended
 shape.
 
 ## Pipeline

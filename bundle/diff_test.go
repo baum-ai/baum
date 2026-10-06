@@ -171,7 +171,7 @@ func TestUnreadablePatchIsOneTextlessHunk(t *testing.T) {
 		}
 		return []byte(hunkA), nil
 	}
-	hunks, notes, err := BuildDiffIndexNotes(comparison, fetch, RoleForPath)
+	hunks, notes, err := buildDiffIndex(comparison, fetch, RoleForPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestUnreadablePatchIsOneTextlessHunk(t *testing.T) {
 	}
 }
 
-// TestRenamedFileFetchesBothPaths guards ENG-592: a single-path pathspec
+// TestRenamedFileFetchesBothPaths: a single-path pathspec
 // hides the rename from git, which then reports the whole file as added.
 func TestRenamedFileFetchesBothPaths(t *testing.T) {
 	comparison := Comparison{Files: []FileChange{
@@ -232,7 +232,7 @@ func TestPureRenameYieldsOneTextlessRenameHunk(t *testing.T) {
 }
 
 // A rename plus a mode change with no text edits must not pass for a pure
-// rename (PR #269 review).
+// rename.
 func TestRenameWithModeChangeIsNotRenameOnly(t *testing.T) {
 	comparison := Comparison{Files: []FileChange{{OldPath: "a.sh", NewPath: "b.sh", Status: "renamed"}}}
 	patch := "diff --git a/a.sh b/b.sh\nold mode 100644\nnew mode 100755\nsimilarity index 100%\nrename from a.sh\nrename to b.sh\n"
@@ -257,8 +257,8 @@ func TestUnreadableRenameStaysBinary(t *testing.T) {
 }
 
 func TestDiffURLIsStableForPath(t *testing.T) {
-	url1 := diffURL("platform/internal/foo.go", 42)
-	url2 := diffURL("platform/internal/foo.go", 42)
+	url1 := diffURL("internal/foo.go", 42)
+	url2 := diffURL("internal/foo.go", 42)
 	if url1 != url2 {
 		t.Fatalf("diffURL must be deterministic: %q vs %q", url1, url2)
 	}
@@ -272,17 +272,17 @@ func TestRoleForPath(t *testing.T) {
 		path string
 		want string
 	}{
-		{"platform/internal/prreview/builder.go", RoleCode},
-		{"platform/internal/prreview/builder_test.go", RoleTest},
+		{"internal/review/builder.go", RoleCode},
+		{"internal/review/builder_test.go", RoleTest},
 		{"ui/src/components/Foo.test.tsx", RoleTest},
-		{"platform/migrations/000035_pr_review_evidence.up.sql", RoleMigration},
-		{"platform/internal/db/sqlc/pr_reviews.sql.go", RoleGenerated},
-		{"platform/go.sum", RoleGenerated},
+		{"db/migrations/000035_add_evidence.up.sql", RoleMigration},
+		{"internal/db/sqlc/reviews.sql.go", RoleGenerated},
+		{"go.sum", RoleGenerated},
 		{"docs/architecture.md", RoleDocs},
 		{"README.md", RoleDocs},
-		{"platform/config.toml", RoleConfig},
+		{"config.toml", RoleConfig},
 		{".github/workflows/ci.yml", RoleConfig},
-		{"platform/vendor/github.com/foo/bar.go", RoleVendored},
+		{"vendor/github.com/foo/bar.go", RoleVendored},
 		{"ui/node_modules/react/index.js", RoleVendored},
 	}
 	for _, c := range cases {

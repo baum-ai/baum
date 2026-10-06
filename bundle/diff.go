@@ -31,7 +31,7 @@ type PatchFetcher func(paths ...string) ([]byte, error)
 // same file whose changed lines are byte-identical (e.g. two blank-line-only
 // hunks) hash equally; ordinal suffixes disambiguate them in file order.
 func BuildDiffIndex(comparison Comparison, fetch PatchFetcher, roleFor func(path string) string) ([]Hunk, error) {
-	hunks, _, err := BuildDiffIndexNotes(comparison, fetch, roleFor)
+	hunks, _, err := buildDiffIndex(comparison, fetch, roleFor)
 	return hunks, err
 }
 
@@ -47,13 +47,13 @@ type DiffLimits struct {
 	MaxHunkLines int
 }
 
-// BuildDiffIndexNotes is BuildDiffIndex that also returns one truncation note
+// buildDiffIndex is BuildDiffIndex that also returns one truncation note
 // per kind of patch it could not read.
-func BuildDiffIndexNotes(comparison Comparison, fetch PatchFetcher, roleFor func(path string) string) ([]Hunk, []string, error) {
+func buildDiffIndex(comparison Comparison, fetch PatchFetcher, roleFor func(path string) string) ([]Hunk, []string, error) {
 	return BuildDiffIndexWithin(comparison, fetch, roleFor, DiffLimits{})
 }
 
-// BuildDiffIndexWithin is BuildDiffIndexNotes within limits. Exceeding a file
+// BuildDiffIndexWithin is buildDiffIndex within limits. Exceeding a file
 // or byte limit fails with the checkout budget reason naming it.
 func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor func(path string) string, limits DiffLimits) ([]Hunk, []string, error) {
 	if limits.MaxFiles > 0 && len(comparison.Files) > limits.MaxFiles {
