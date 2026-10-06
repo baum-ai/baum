@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -67,35 +68,51 @@ func TestParseGitmodulesPaths(t *testing.T) {
 	}
 }
 
-func TestUnpackCheckoutRejectsUnsafePathsAndOverBudgetArchives(t *testing.T) {
-	for _, name := range []string{"../escape", "head/../../escape", "/head/escape", "head/.git/config", "head\\escape", "head/a/../escape", "other/file", "head/link", "head/big"} {
+// writeCheckoutArchive gzips a tar of regular one-byte files, a symlink when
+// the name is "head/link", and one entry per "+"-separated name.
+func writeCheckoutArchive(t *testing.T, names string) string {
+	t.Helper()
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for _, name := range strings.Split(names, "+") {
+		entry := &tar.Header{Name: name, Typeflag: tar.TypeReg, Size: 1}
+		if name == "head/link" {
+			entry.Typeflag = tar.TypeSymlink
+			entry.Linkname = "/etc/passwd"
+			entry.Size = 0
+		}
+		_ = tw.WriteHeader(entry)
+		if entry.Size > 0 {
+			_, _ = tw.Write([]byte("x"))
+		}
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	path := filepath.Join(t.TempDir(), "input.gz")
+	if err := os.WriteFile(path, archive.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestUnpackCheckoutRejectsUnsafePathsAsInvalidArchives(t *testing.T) {
+	for _, name := range []string{"../escape", "head/../../escape", "/head/escape", "head/.git/config", "head\\escape", "head/a/../escape", "other/file", "head/link", "head/a+head/a/b"} {
 		t.Run(name, func(t *testing.T) {
-			var archive bytes.Buffer
-			gz := gzip.NewWriter(&archive)
-			tw := tar.NewWriter(gz)
-			entry := &tar.Header{Name: name, Typeflag: tar.TypeReg, Size: 1}
-			if name == "head/link" {
-				entry.Typeflag = tar.TypeSymlink
-				entry.Linkname = "/etc/passwd"
-				entry.Size = 0
-			}
-			_ = tw.WriteHeader(entry)
-			if entry.Size > 0 {
-				_, _ = tw.Write([]byte("x"))
-			}
-			_ = tw.Close()
-			_ = gz.Close()
-			root := t.TempDir()
-			path := filepath.Join(t.TempDir(), "input.gz")
-			_ = os.WriteFile(path, archive.Bytes(), 0600)
 			caps := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1024, MaxTotalFiles: 10}
-			if name == "head/big" {
-				caps.MaxTotalBytes = 0
-			}
-			if err := UnpackCheckout(context.Background(), path, root, caps); err == nil {
-				t.Fatal("accepted unsafe or over-budget archive")
+			err := UnpackCheckout(context.Background(), writeCheckoutArchive(t, name), t.TempDir(), caps)
+			if !errors.Is(err, ErrInvalidArchive) {
+				t.Fatalf("err = %v, want ErrInvalidArchive", err)
 			}
 		})
+	}
+}
+
+func TestUnpackCheckoutEnforcesBudgets(t *testing.T) {
+	caps := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 0, MaxTotalFiles: 10}
+	err := UnpackCheckout(context.Background(), writeCheckoutArchive(t, "head/big"), t.TempDir(), caps)
+	if err == nil || err.Error() != BudgetExceededReason("bytes") {
+		t.Fatalf("err = %v, want the bytes budget", err)
 	}
 }
 

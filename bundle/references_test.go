@@ -3,7 +3,7 @@ package bundle
 import "testing"
 
 // specKey is a key of the form the spec pattern recognises.
-const specKey = "SPEC" + "-138-A01"
+const specKey = "SPEC-1-A01"
 
 func hasReference(refs []Reference, kind, value string) bool {
 	for _, r := range refs {

@@ -38,6 +38,10 @@ const (
 // omitted for exceeding MaxFileBytes, or as submodule content, does not
 // count toward either.
 // ScratchRoot is local to each process and never crosses to a review agent.
+//
+// A zero MaxTotalBytes or MaxTotalFiles means unlimited in WriteArchive but
+// nothing allowed in UnpackCheckout; MaxFileBytes is always enforced, so zero
+// omits or rejects every file.
 type CheckoutConfig struct {
 	ScratchRoot   string `json:"-"`
 	MaxFileBytes  int64  `json:"max_file_bytes"`
@@ -77,8 +81,9 @@ func NewCheckoutBuilder(config CheckoutConfig) *CheckoutBuilder {
 }
 
 // submodulePaths reads .gitmodules at commitOID and returns every submodule
-// path it declares, repository-relative (submodule contents are omitted). git archive silently omits gitlink entries from its
-// output with no tar record at all, so .gitmodules — the same file git itself
+// path it declares, repository-relative (submodule contents are omitted).
+// git archive silently omits gitlink entries from its output with no tar
+// record at all, so .gitmodules — the same file git itself
 // uses to know which paths are submodules — is the only source for which paths
 // those were. A commit with no .gitmodules file has none.
 func submodulePaths(ctx context.Context, pinned PinnedExport, commitOID string) ([]string, error) {
@@ -292,7 +297,11 @@ func (c CheckoutConfig) MaxArchiveBytes() int64 {
 // read-only head/ and merge-base/ trees, enforcing caps again so a run never
 // reads more than the builder was allowed to write. An archive that does not
 // have the shape WriteArchive produces fails with ErrInvalidArchive; one over
-// a budget fails with BudgetExceededReason naming it.
+// a budget fails with BudgetExceededReason naming it, and so does a zero cap.
+//
+// The caller must bound the archive's size before calling (see
+// MaxArchiveBytes): the gzip stream is drained after the tar trailer without
+// a limit, and directory entries do not count toward MaxTotalFiles.
 func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig) error {
 	file, err := os.Open(archive)
 	if err != nil {
@@ -339,7 +348,7 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 		seen[name] = true
 		if entry.Typeflag == tar.TypeDir {
 			if err := os.MkdirAll(path, 0700); err != nil {
-				return err
+				return ErrInvalidArchive
 			}
 			continue
 		}
@@ -357,12 +366,14 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 		if files > caps.MaxTotalFiles {
 			return errors.New(BudgetExceededReason("files"))
 		}
+		// A path that cannot be created inside the tree, such as a file
+		// below a path an earlier entry made a file, is a malformed archive.
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return err
+			return ErrInvalidArchive
 		}
 		output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
 		if err != nil {
-			return err
+			return ErrInvalidArchive
 		}
 		_, copyErr := io.CopyN(output, reader, entry.Size)
 		err = errors.Join(copyErr, output.Close())

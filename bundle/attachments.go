@@ -224,9 +224,9 @@ func webpSize(b []byte) (int, int, bool) {
 
 var attachmentExtensions = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
 
-// AttachmentPath is where a stored image's file sits in the run directory;
+// attachmentPath is where a stored image's file sits in the run directory;
 // only a stored image of an accepted type has one.
-func AttachmentPath(image DescriptionImage) (string, bool) {
+func attachmentPath(image DescriptionImage) (string, bool) {
 	extension, ok := attachmentExtensions[image.ContentType]
 	if image.State != AttachmentStored || !ok || image.SHA256 == "" {
 		return "", false
@@ -242,7 +242,7 @@ var attachmentFileName = regexp.MustCompile(`^attachments/att_[0-9a-f]{32}\.(?:p
 func DescriptionAttachments(body string, images []DescriptionImage) []Attachment {
 	var attachments []Attachment
 	for _, image := range images {
-		path, ok := AttachmentPath(image)
+		path, ok := attachmentPath(image)
 		if !ok {
 			continue
 		}
@@ -289,7 +289,7 @@ func WriteAttachments(ctx context.Context, images []DescriptionImage, archive io
 	writer := tar.NewWriter(archive)
 	var kept []DescriptionImage
 	for _, image := range images {
-		path, ok := AttachmentPath(image)
+		path, ok := attachmentPath(image)
 		if !ok {
 			continue
 		}
@@ -335,7 +335,12 @@ func MaxAttachmentsArchiveBytes(maxImages int, maxImageBytes int64) int64 {
 
 // UnpackAttachments writes exactly the images the bundle lists to
 // attachments/<id>.<ext> in the run directory, read-only. An archive holding
-// anything else, missing a listed image or not matching its hash fails with ErrInvalidArchive. An empty archive path means the run has no images.
+// anything else, missing a listed image or not matching its hash fails with
+// ErrInvalidArchive. An empty archive path means the run has no images.
+//
+// The caller must bound the archive's size before calling (see
+// MaxAttachmentsArchiveBytes). A maxImageBytes of zero puts no per-entry
+// limit before the hash check.
 func UnpackAttachments(ctx context.Context, archive, dir string, attachments []Attachment, maxImageBytes int64) error {
 	if archive == "" {
 		if len(attachments) > 0 {
