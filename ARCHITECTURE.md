@@ -8,7 +8,8 @@ from and what they do with the result.
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
-the evidence types and the diff index, and `review`, `agent` and `viewer` do
+the evidence types, the diff index, and the caps, input redaction, byte
+trimming and digest applied to a bundle, and `review`, `agent` and `viewer` do
 not exist yet. Until a package is complete, its section describes the intended
 shape.
 

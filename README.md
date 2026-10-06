@@ -129,13 +129,13 @@ describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
-| `bundle` | the evidence bundle types a generation run reads and the diff index (hunk IDs, roles, diff URLs) built from a comparison |
+| `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, and the caps, input redaction, byte trimming and digest applied to a bundle |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
 | `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
 | `linkage` | matches commits of a pull request to the sessions that produced them |
 | `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
-| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact) |
+| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
 | `schema` | the review schema and its validator |
 
 ## Development

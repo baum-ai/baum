@@ -370,16 +370,6 @@ func TestParsingKeepsOneLinePastTheHunkCap(t *testing.T) {
 	}
 }
 
-// capPatchLines mirrors the per-hunk line cap a host applies after parsing: it
-// keeps the first limit lines and reports whether it cut any.
-func capPatchLines(patch string, limit int) (string, bool) {
-	lines := strings.Split(patch, "\n")
-	if patch == "" || len(lines) <= limit {
-		return patch, false
-	}
-	return strings.Join(lines[:limit], "\n"), true
-}
-
 func TestTextlessHunkIDHashesThePathAlone(t *testing.T) {
 	comparison := Comparison{Files: []FileChange{{NewPath: "image.png", Status: "modified"}}}
 	hunks, err := BuildDiffIndex(comparison, fetcher(nil), RoleForPath)
