@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,8 @@ import (
 // These test the individual trim-order steps directly (Fit:
 // assistant replies, older prompts, command paraphrases,
 // comment bodies oldest-first keeping review verdicts, generated/vendored
-// patch text, then whole sessions from lowest confidence), which is more
+// patch text, superseded session decisions, then whole sessions from lowest
+// confidence), which is more
 // robust than reverse-engineering exact byte thresholds for the cascading
 // Fit driver. TestFitBytesStopsAsSoonAsItFits below checks the
 // cascade itself stops at the first stage that satisfies the limit.
@@ -606,6 +608,10 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 		Sessions: []Session{{
 			RootSessionID: "s1",
 			Title:         "Fix the outage using token " + plantedSecret,
+			Decisions: decisionsOf(SessionDecision{
+				Summary: "Rotate " + plantedSecret, Who: "human", Category: "behavior", Turns: []int{1},
+				RejectedAlternative: "Keep " + plantedSecret, Files: []string{"config/" + plantedSecret + ".toml"},
+			}),
 			CommandEvents: []CommandEvent{{
 				ID: "e1", Outcome: "succeeded",
 				Commands: []CommandEntry{{
@@ -619,6 +625,15 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 	}
 	if strings.Contains(bundle.Sessions[0].Title, plantedSecret) {
 		t.Errorf("session title was not redacted: %q", bundle.Sessions[0].Title)
+	}
+	decision := (*bundle.Sessions[0].Decisions)[0]
+	for name, text := range map[string]string{"summary": decision.Summary, "rejected alternative": decision.RejectedAlternative, "file": decision.Files[0]} {
+		if strings.Contains(text, plantedSecret) {
+			t.Errorf("session decision %s was not redacted: %q", name, text)
+		}
+	}
+	if decision.Who != "human" || decision.Category != "behavior" {
+		t.Errorf("session decision enums changed: %+v", decision)
 	}
 	entry := bundle.Sessions[0].CommandEvents[0].Commands[0]
 	if strings.Contains(entry.Program, plantedSecret) {
@@ -859,5 +874,109 @@ func TestCapAttachmentsShortensAltAndHeadingAndNotes(t *testing.T) {
 	CapAttachments(bundle, Caps{})
 	if len(bundle.Truncated) != 1 {
 		t.Fatal("a zero limit must not cap or note")
+	}
+}
+
+func decisionsOf(items ...SessionDecision) *[]SessionDecision { return &items }
+
+// contentBytes is the size Fit measures against MaxBytes.
+func contentBytes(t *testing.T, bundle *Bundle) int {
+	return len(mustJSON(t, bundle)) - diffIndexBytes(bundle)
+}
+
+func TestCutSupersededDecisionsKeepsCurrentOnesAndTheExtractedMarker(t *testing.T) {
+	bundle := &Bundle{Sessions: []Session{
+		{RootSessionID: "s1", Decisions: decisionsOf(
+			SessionDecision{Summary: "Chose a map.", Who: "agent", Category: "implementation", Superseded: true, Turns: []int{1}},
+			SessionDecision{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{2}},
+		)},
+		{RootSessionID: "s2", Decisions: decisionsOf(
+			SessionDecision{Summary: "Chose a cache.", Who: "agent", Category: "architecture", Superseded: true, Turns: []int{1}},
+		)},
+		{RootSessionID: "s3"},
+	}}
+	if !cutSupersededDecisions(bundle) {
+		t.Fatal("expected a cut")
+	}
+	if got := *bundle.Sessions[0].Decisions; len(got) != 1 || got[0].Summary != "Chose a slice." {
+		t.Fatalf("current decision not kept alone: %+v", got)
+	}
+	if got := bundle.Sessions[1].Decisions; got == nil || len(*got) != 0 {
+		t.Fatalf("an emptied session must still read as extracted: %+v", got)
+	}
+	if encoded := string(mustJSON(t, bundle)); !strings.Contains(encoded, `"id":"s2","vendor":"","restricted":false,"decisions":[]`) {
+		t.Fatalf("emptied decisions do not encode as an empty list: %s", encoded)
+	}
+	if bundle.Sessions[2].Decisions != nil {
+		t.Fatal("a session without extracted decisions gained them")
+	}
+	if cutSupersededDecisions(bundle) {
+		t.Error("expected no further cut once superseded decisions are gone")
+	}
+}
+
+// Current decisions outlast every cut of prompt text: the session's older
+// prompts and superseded decisions go first, and current decisions only with
+// the whole session.
+func TestFitBytesCutsDecisionsAfterPromptTextAndOnlySupersededOnesBeforeSessions(t *testing.T) {
+	build := func() *Bundle {
+		var prompts []Prompt
+		for i := 1; i <= 6; i++ {
+			prompts = append(prompts, Prompt{ID: fmt.Sprint("p", i), Index: i, Text: strings.Repeat("prompt text ", 20)})
+		}
+		return &Bundle{Sessions: []Session{
+			{RootSessionID: "high", Confidence: 0.9, Prompts: prompts, Decisions: decisionsOf(
+				SessionDecision{Summary: strings.Repeat("old choice ", 20), Who: "agent", Category: "implementation", Superseded: true, Turns: []int{2}},
+				SessionDecision{Summary: "Kept choice.", Who: "agent_proposed_human_approved", Category: "implementation", Turns: []int{3}, Files: []string{"main.go"}},
+			)},
+			{RootSessionID: "low", Confidence: 0.1, Decisions: decisionsOf(
+				SessionDecision{Summary: strings.Repeat("low choice ", 20), Who: "human", Category: "scope", Turns: []int{1}},
+			)},
+		}}
+	}
+	afterPrompts := build()
+	cutOlderPrompts(afterPrompts)
+	afterPrompts.Truncated = []string{"older prompts omitted to fit the size limit; the first and latest prompts of each session are kept"}
+	afterSuperseded := build()
+	cutOlderPrompts(afterSuperseded)
+	cutSupersededDecisions(afterSuperseded)
+	afterSuperseded.Truncated = append(slices.Clone(afterPrompts.Truncated), "superseded session decisions omitted to fit the size limit; current decisions are kept")
+
+	t.Run("prompt text goes first", func(t *testing.T) {
+		bundle := build()
+		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterPrompts)}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*bundle.Sessions[0].Decisions) != 2 || len(bundle.Sessions[0].Prompts) != 2 {
+			t.Fatalf("decisions were cut before prompt text: %+v", bundle.Sessions[0])
+		}
+	})
+	t.Run("then superseded decisions", func(t *testing.T) {
+		bundle := build()
+		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterSuperseded)}); err != nil {
+			t.Fatal(err)
+		}
+		if got := *bundle.Sessions[0].Decisions; len(got) != 1 || got[0].Summary != "Kept choice." || len(bundle.Sessions) != 2 {
+			t.Fatalf("want only the superseded decision cut, got %+v", bundle.Sessions)
+		}
+		if !slices.Contains(bundle.Truncated, "superseded session decisions omitted to fit the size limit; current decisions are kept") {
+			t.Fatalf("cut not noted: %q", bundle.Truncated)
+		}
+	})
+	t.Run("then current decisions only with their session", func(t *testing.T) {
+		bundle := build()
+		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterSuperseded) - 1}); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" || len(*bundle.Sessions[0].Decisions) != 1 {
+			t.Fatalf("want the low-confidence session dropped whole and the other's current decision kept, got %+v", bundle.Sessions)
+		}
+	})
+}
+
+func TestBundleWithoutDecisionsEncodesWithoutTheField(t *testing.T) {
+	encoded := string(mustJSON(t, &Bundle{Sessions: []Session{{RootSessionID: "s1", Prompts: []Prompt{{ID: "p1", Index: 1, Text: "go"}}}}}))
+	if strings.Contains(encoded, "decisions") {
+		t.Fatalf("a session without extracted decisions changed the encoding: %s", encoded)
 	}
 }

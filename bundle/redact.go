@@ -24,19 +24,21 @@ import (
 // ReferenceAuthorshipDisclosure copies up to 80 trailing characters of raw
 // text and an image/video reference copies the matched URL, so a secret
 // masked in Body/Title could otherwise still surface here — and branch
-// names, check names/URLs, requested-reviewer logins and comment paths,
-// none of which are structurally constrained enough to skip. SHA, ID and
-// closed-enum fields (Kind, State, Role, Change, Outcome, ...) are not
-// redacted: they are not free text, and running secret detection on a hex
-// SHA risks a false-positive match corrupting the hash a hunk/commit anchor
-// resolves against. DiffURL is a generated hash fragment, reference Source
-// is a fixed tag with a numeric comment ID, and AuthorAssociation is a
-// GitHub enum; these also contain no user-authored text. ReviewConfig.Content
-// (REVIEW.md) is likewise not redacted: unlike a PR body or comment, it has
-// no audience but the review agent itself — it never displays to a human
-// viewer — and the model can already read the same unredacted file directly
-// off the checkout via its Read tool, so masking the bundled copy would only
-// create an inconsistency between the two, not add any protection.
+// names, check names/URLs, requested-reviewer logins, comment paths and a
+// session decision's summary, rejected alternative and files, none of which
+// are structurally constrained enough to skip. SHA, ID and closed-enum
+// fields (Kind, State, Role, Change, Outcome, a decision's Who and
+// Category, ...) are not redacted: they are not free text, and running
+// secret detection on a hex SHA risks a false-positive match corrupting
+// the hash a hunk/commit anchor resolves against. DiffURL is a generated
+// hash fragment, reference Source is a fixed tag with a numeric comment ID,
+// and AuthorAssociation is a GitHub enum; these also contain no
+// user-authored text. ReviewConfig.Content (REVIEW.md) is likewise not
+// redacted: unlike a PR body or comment, it has no audience but the review
+// agent itself — it never displays to a human viewer — and the model can
+// already read the same unredacted file directly off the checkout via its
+// Read tool, so masking the bundled copy would only create an inconsistency
+// between the two, not add any protection.
 func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	total := 0
 	redactField := func(s *string) error {
@@ -98,6 +100,15 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 			for c := range session.CommandEvents[e].Commands {
 				entry := &session.CommandEvents[e].Commands[c]
 				fields = append(fields, &entry.Program, &entry.Target)
+			}
+		}
+		if session.Decisions != nil {
+			for d := range *session.Decisions {
+				decision := &(*session.Decisions)[d]
+				fields = append(fields, &decision.Summary, &decision.RejectedAlternative)
+				for f := range decision.Files {
+					fields = append(fields, &decision.Files[f])
+				}
 			}
 		}
 	}

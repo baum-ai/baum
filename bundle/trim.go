@@ -172,8 +172,11 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // trimming can empty every patch but never drops a hunk, and the hunk count
 // alone never exceeds the content limit. The documented order is assistant
 // replies, older prompts, command paraphrases, comment bodies oldest first
-// (keeping review verdicts), generated and vendored patch text, then whole
-// sessions from the lowest confidence. REVIEW.md content is cut first,
+// (keeping review verdicts), generated and vendored patch text, superseded
+// session decisions, then whole sessions from the lowest confidence. A
+// session's current decisions go only with the session: they are a short,
+// reviewed account of what its prompts decided, so they outlast every cut of
+// raw prompt text. REVIEW.md content is cut first,
 // ahead of every documented stage, because it is supplementary guidance
 // rather than PR evidence, and because a fixed content cap would otherwise
 // make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no
@@ -203,6 +206,7 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		{cutCommandEvents, "command paraphrases omitted to fit the size limit"},
 		{cutOldestComments, "older comments omitted to fit the size limit; review verdicts are kept"},
 		{cutGeneratedOrVendoredPatches, "generated and vendored patch text omitted to fit the size limit"},
+		{cutSupersededDecisions, "superseded session decisions omitted to fit the size limit; current decisions are kept"},
 		{cutLowestConfidenceSession, ""},
 	}
 	for _, stage := range stages {
@@ -354,6 +358,25 @@ func cutGeneratedOrVendoredPatches(bundle *Bundle) bool {
 			bundle.Diff[i].Patch = ""
 			bundle.Diff[i].Textless = true
 			bundle.Diff[i].TextlessReason = "trimmed_" + bundle.Diff[i].Role
+			cut = true
+		}
+	}
+	return cut
+}
+
+// cutSupersededDecisions drops decisions a later decision of the same
+// session reversed or replaced. The session keeps its (possibly now empty)
+// list, so it still reads as extracted.
+func cutSupersededDecisions(bundle *Bundle) bool {
+	cut := false
+	for i := range bundle.Sessions {
+		decisions := bundle.Sessions[i].Decisions
+		if decisions == nil {
+			continue
+		}
+		kept := slices.DeleteFunc(slices.Clone(*decisions), func(d SessionDecision) bool { return d.Superseded })
+		if len(kept) < len(*decisions) {
+			*decisions = kept
 			cut = true
 		}
 	}

@@ -189,6 +189,11 @@ type Session struct {
 
 	Prompts       []Prompt       `json:"prompts,omitempty"`
 	CommandEvents []CommandEvent `json:"command_events,omitempty"`
+	// Decisions are the decisions a host extracted from the session's
+	// transcript, in the host's order. Nil means none were extracted (off,
+	// failed or skipped); a non-nil empty list means the session was
+	// extracted and made none. A restricted session never carries them.
+	Decisions *[]SessionDecision `json:"decisions,omitempty"`
 
 	// Confidence, HasStartedAt and StartedAtValue are the sort keys used when
 	// capping and ordering sessions; not part of the encoded bundle.
@@ -207,6 +212,22 @@ type Prompt struct {
 	Text         string     `json:"text"`
 	Reply        string     `json:"reply,omitempty"`
 	TouchedPaths []string   `json:"touched_paths,omitempty"`
+}
+
+// SessionDecision is one decision extracted from a session: a choice
+// between plausible alternatives that shaped the repository. Who is "human",
+// "agent" or "agent_proposed_human_approved"; Superseded marks a choice a
+// later decision of the session reversed or replaced. Turns are prompt
+// indexes of the session, the turns where it was proposed, made or
+// implemented; Files are repository-relative paths edited in those turns.
+type SessionDecision struct {
+	Summary             string   `json:"summary"`
+	Who                 string   `json:"who"`
+	Category            string   `json:"category"`
+	RejectedAlternative string   `json:"rejected_alternative,omitempty"`
+	Superseded          bool     `json:"superseded,omitempty"`
+	Turns               []int    `json:"turns"`
+	Files               []string `json:"files,omitempty"`
 }
 
 // CommandEvent is one execute tool use.
