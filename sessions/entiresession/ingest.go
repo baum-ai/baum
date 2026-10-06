@@ -41,7 +41,7 @@ type Result struct {
 	Err            error        `json:"-"`
 	// Envelope is the Entire-owned metadata layer, already applied to Graph. A
 	// lower-fidelity arrival cannot replace a tree an upload owns, and this is
-	// what it contributes instead (see ARCHITECTURE.md).
+	// what it contributes instead.
 	// Not serialized: it is a view of rows the graph above already
 	// carries.
 	Envelope *EnvelopeData `json:"-"`

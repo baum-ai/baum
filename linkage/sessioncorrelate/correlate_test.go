@@ -407,7 +407,7 @@ func TestCorrelateIgnoresAbsoluteEditedFiles(t *testing.T) {
 	}
 }
 
-// agent_session_files is keyed on (root_session_id, path, kind), so the same
+// Stored file evidence is keyed on (root session, path, kind), so the same
 // file read twice is one row and the same file read and edited is two.
 func TestCorrelateDeduplicatesFilesOnPathAndKind(t *testing.T) {
 	tree := newTree("/repo", "").

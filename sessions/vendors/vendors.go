@@ -1,6 +1,6 @@
 // Package vendors holds the canonical agent slugs the platform stores and
 // groups by. A slug names the agent that ran — never how its session reached
-// us, which is `agent_session_ingests.source`.
+// us (the ingest source).
 //
 // It is deliberately tiny and has no dependencies: it is a shared spelling, not
 // a registry. The mappers do not import it (a mapper knows only its own
@@ -11,7 +11,7 @@
 package vendors
 
 // Slug is a canonical agent identifier: the value stored in
-// `agent_session_ingests.vendor` and the value the analytics `source` filter
+// the stored vendor value and the value the analytics `source` filter
 // accepts.
 type Slug string
 

@@ -1,5 +1,4 @@
-// Package session defines the vendor-agnostic session model described in
-// ARCHITECTURE.md. It is the shape we store: adapters read a vendor transcript
+// Package session defines the vendor-agnostic session model. It is the shape we store: adapters read a vendor transcript
 // and emit a Graph, and a store writes that Graph to a database.
 //
 // The package has no I/O and no vendor knowledge. Every id in a Graph is one of

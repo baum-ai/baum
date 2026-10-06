@@ -1,7 +1,6 @@
 // Package sessioncorrelate derives the evidence the commit matcher needs from a
 // session tree: repo-relative file paths, role-tagged commit refs, and the
-// branches and working directories the tree was seen in
-// (see ARCHITECTURE.md).
+// branches and working directories the tree was seen in.
 //
 // It never mutates the graph. Rewriting file paths inside the session would
 // make the stored session stop saying what the tool actually reported, and
@@ -28,10 +27,10 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/sourcepath"
 )
 
-// Role mirrors agent_session_commit_refs.role. It is defined here rather than
-// imported from the matcher or a session store so this package stays decoupled
-// from both; the ingest layer
-// translates at the persist boundary.
+// Role is how a session relates to a commit SHA: created it, mentioned it,
+// checked it out, and so on. It is defined here rather than imported from the
+// matcher or a session store so this package stays decoupled from both; the
+// ingest layer translates at the persist boundary.
 type Role string
 
 const (
@@ -511,7 +510,7 @@ type fileKey struct {
 }
 
 // fileEvidence relativizes every file touch and deduplicates on (path, kind),
-// which is what agent_session_files is keyed on. Externally reported edited
+// which is the key stored file evidence uses. Externally reported edited
 // paths are already repository-relative, so they are evidence directly and
 // also anchor the touches this tree could not relativize on its own.
 func fileEvidence(graph *session.Graph, dirs workingDirs, editedFiles, fileAnchors []string, movedTouches map[string]bool) ([]FileEvidence, []string) {
@@ -765,11 +764,12 @@ func attributeString(value json.RawMessage) (string, bool) {
 	return text, true
 }
 
-// clean prepares a value captured from an agent for the TEXT columns the
-// evidence tables are made of. A tool-reported path or branch can carry a NUL
-// or invalid UTF-8 exactly like the rest of a transcript, and one rejected
-// value would abort the whole ingest transaction (the text must be valid for the database). Scrubbing
-// happens on the way in so matching and deduplication see the stored spelling.
+// clean prepares a value captured from an agent for storage as text. A
+// tool-reported path or branch can carry a NUL or invalid UTF-8 exactly like the
+// rest of a transcript, and many text stores reject such values. clean returns
+// valid text with those bytes removed or replaced, so one bad value cannot fail
+// a whole ingest. Scrubbing happens on the way in so matching and deduplication
+// see the stored spelling.
 func clean(value string) string { return textclean.SafeText(value) }
 
 type commitRefKey struct {
@@ -778,8 +778,8 @@ type commitRefKey struct {
 }
 
 // commitRefSet keeps the first observation of each (SHA, role) pair, with the
-// SHA lowercased. agent_session_commit_refs is keyed on
-// (root_session_id, sha, role) and one commit legitimately shows up more than
+// SHA lowercased. the stored commit refs are keyed on
+// (root session id, sha, role) and one commit legitimately shows up more than
 // once — the same hash echoed by two successful commit commands — so a
 // duplicate would collide on insert, and two spellings of one hash would be two
 // rows saying the same thing.

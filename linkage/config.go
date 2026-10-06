@@ -214,8 +214,7 @@ func (c Config) Validate() error {
 //
 // What the prefilter still moves when this holds is the diagnostic on an
 // unmatched edge, never the edge: reason and candidates_remaining are read off
-// a set timeframe's rejects were never loaded into
-// (see ARCHITECTURE.md).
+// a set timeframe's rejects were never loaded into.
 func (c Config) CandidatePrefilterSound() bool {
 	timeframeEnabled := false
 	for _, id := range c.EnabledMatchSteps {

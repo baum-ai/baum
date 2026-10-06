@@ -1,9 +1,8 @@
 package sessioncorrelate
 
 // attributeKeys are the attribute-log spellings one vendor uses for the facts
-// the matcher needs. The session model keeps each vendor's own key unrenamed
-// (see ARCHITECTURE.md), so reading the log at all means knowing those
-// spellings; this table is the per-vendor hook, and the only place in the
+// the matcher needs. The session model keeps each vendor's own attribute key
+// unrenamed, so reading the log at all means knowing those spellings; this table is the per-vendor hook, and the only place in the
 // package a vendor is named.
 type attributeKeys struct {
 	workingDir     map[string]bool

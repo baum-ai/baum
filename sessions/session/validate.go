@@ -6,8 +6,8 @@ import (
 	"fmt"
 )
 
-// Validate checks a Graph against every invariant of the session model
-// (see ARCHITECTURE.md), reporting all violations at once. It
+// Validate checks a Graph against every invariant of the session model (ids
+// unique, references resolve, children follow parents), reporting all violations at once. It
 // runs before anything is written: the failures it catches — a consequence
 // attributed to the wrong session, a second result for one tool call, two
 // entities sharing an id — would otherwise be a wrong answer in the database
