@@ -113,9 +113,14 @@ export type ReviewFile = { id: string; path: string; old_path?: string; viewed: 
 /** The line a file pane should scroll to and mark. */
 export type FileLineFocus = { side: "LEFT" | "RIGHT"; line: number } | null;
 
+/** The file the Files pane should unfold and bring into view. `at` tells a
+ *  repeated open of the same file (a rail click on it after it was folded)
+ *  from the last; a file reached through the URL alone opens with `at` 0. */
+export type FileOpenRequest = { id: string; at: number } | null;
+
 /** The pull request's changed files, which the host loads and draws: the
- *  rail's tree and each file's diff. Null `files` until the first load
- *  answers. A host that loads files for one review version at a time should
+ *  rail's tree and the pane listing every file's diff, all folded except the
+ *  one `open` names. Null `files` until the first load answers. A host that loads files for one review version at a time should
  *  load none while two versions are compared. */
 export type ReviewFilesSlot<F extends ReviewFile = ReviewFile> = {
   files: F[] | null;
@@ -127,12 +132,12 @@ export type ReviewFilesSlot<F extends ReviewFile = ReviewFile> = {
     selected: string | null;
     onSelect: (file: F) => void;
   }) => ReactNode;
-  renderFile: (props: {
-    file: F;
-    previous?: F;
-    next?: F;
+  renderFiles: (props: {
+    files: F[];
+    /** The file to unfold and scroll to, or null for all folded. */
+    open: FileOpenRequest;
+    /** The line to scroll to in the open file. */
     focus: FileLineFocus;
-    onSelect: (file: F) => void;
   }) => ReactNode;
 };
 
@@ -325,7 +330,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     () =>
       ((requested.kind === "sessions" || requested.kind === "session") && !hasSessions) ||
       ((requested.kind === "commits" || requested.kind === "commit") && !hasCommits) ||
-      (requested.kind === "file" && !hasFiles)
+      ((requested.kind === "files" || requested.kind === "file") && !hasFiles)
         ? { kind: "summary" }
         : requested,
     [requested, hasSessions, hasCommits, hasFiles],
@@ -390,12 +395,24 @@ function ReviewWorkspace<F extends ReviewFile>({
   const comparing = Boolean(historyView.selection?.compare);
   const fileVersion = historicalOnly ? historyView.selection?.version : undefined;
   const fileList = filesSlot?.files ?? null;
+  const filesSelected = selection.kind === "files" || selection.kind === "file";
   const selectedFile =
     selection.kind === "file" ? fileList?.find((file) => file.id === selection.id) : undefined;
-  const selectedFileIndex = selectedFile
-    ? (fileList?.findIndex((file) => file.id === selectedFile.id) ?? -1)
-    : -1;
   const [diffFocus, setDiffFocus] = useState<FileLineFocus>(null);
+  // A click on a file already selected (folded since, say) has to open it
+  // again, so a click is stamped with when it was made. A file reached through
+  // the URL alone, a shared link or Back, opens with `at` 0.
+  const [fileClick, setFileClick] = useState<FileOpenRequest>(null);
+  const selectedFileID = selection.kind === "file" ? selection.id : null;
+  const fileOpen = useMemo<FileOpenRequest>(
+    () =>
+      selectedFileID === null
+        ? null
+        : fileClick?.id === selectedFileID
+          ? fileClick
+          : { id: selectedFileID, at: 0 },
+    [selectedFileID, fileClick],
+  );
   const sessionState = sessions?.state;
   const commitState = commits?.state;
   // A session id the pull request no longer lists — a stale link, a session
@@ -417,8 +434,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   }, [selection, commitState, selectedCommit, setSelection]);
   useEffect(() => {
     if (selection.kind !== "file" || !fileList || selectedFile) return;
-    const replacement = fileList.find((file) => !file.viewed) ?? fileList[0];
-    setSelection(replacement ? { kind: "file", id: replacement.id } : { kind: "summary" });
+    setSelection({ kind: "files" });
   }, [selection, selectedFile, fileList, setSelection]);
   const changes =
     comparing && document && historicalDocument
@@ -482,16 +498,17 @@ function ReviewWorkspace<F extends ReviewFile>({
   const selectSection = (id: string) => setSelection({ kind: "section", id });
   const selectRisk = (risk: TriageRisk) =>
     setSelection({ kind: "risk", section: risk.section, id: risk.id });
-  const selectFile = (file: F) => {
-    setDiffFocus(null);
-    setSelection({ kind: "file", id: file.id });
+  /** Opens one file in the Files pane, which otherwise lists every file
+   *  folded, at a line when one is given. */
+  const openFile = (id: string, line: FileLineFocus = null) => {
+    setDiffFocus(line);
+    setSelection({ kind: "file", id });
+    setFileClick({ id, at: Date.now() });
   };
+  const selectFile = (file: F) => openFile(file.id);
   const actions: ReviewViewerActions = {
     select: setSelection,
-    openFile: (id) => {
-      setDiffFocus(null);
-      setSelection({ kind: "file", id });
-    },
+    openFile: (id) => openFile(id),
   };
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
@@ -505,8 +522,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     }
     if (destination === "files") {
       setFolded((current) => ({ ...current, files: false }));
-      const first = fileList?.find((file) => !file.viewed) ?? fileList?.[0];
-      if (first) selectFile(first);
+      setSelection({ kind: "files" });
       return;
     }
     if (destination === "sessions" && !sessions) return;
@@ -575,21 +591,21 @@ function ReviewWorkspace<F extends ReviewFile>({
               ? "Commits"
               : selectedRisk
                 ? `Risk: ${riskCategory(selectedRisk)}`
-                : selectedFile
-                  ? `File: ${selectedFile.path}`
-                  : selection.kind === "file"
-                    ? "File changes"
-                    : (selected?.label ?? "Summary");
+                : filesSelected
+                  ? "Files changed"
+                  : (selected?.label ?? "Summary");
   // What the pane's arrival is keyed on: the place, not the data behind it.
   const selectionKey = JSON.stringify(selection);
+  // Every file shares one pane, which scrolls its own cards into view.
+  const paneKey = filesSelected ? "files" : selectionKey;
   // A new place starts at its top. The pane shares the page's scroll, so
   // one read far down would otherwise open the next part way through; the
   // page only moves when the pane's top has gone under the bar.
   useEffect(() => {
     const pane = reviewPane.current;
-    if (!selectionKey || !pane) return;
+    if (!paneKey || !pane) return;
     if (pane.getBoundingClientRect().top < REVIEW_BAR_PX) pane.scrollIntoView({ block: "start" });
-  }, [selectionKey]);
+  }, [paneKey]);
   const findFile = useCallback(
     (path: string) =>
       fileList?.find((candidate) => candidate.path === path || candidate.old_path === path),
@@ -598,8 +614,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const revealLine = (path: string, side: "LEFT" | "RIGHT", line: number) => {
     const file = findFile(path);
     if (!file) return;
-    setSelection({ kind: "file", id: file.id });
-    setDiffFocus({ side, line });
+    openFile(file.id, { side, line });
   };
   // Every code link in the panes opens the file here, at its line, rather
   // than leaving for GitHub. A path this pull request does not change has no
@@ -612,8 +627,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           if (!file) return false;
           // Unfold the rail's files so the one opened shows where it sits.
           setFolded((current) => ({ ...current, files: false }));
-          setSelection({ kind: "file", id: file.id });
-          setDiffFocus(line ? { side: "RIGHT" as const, line } : null);
+          openFile(file.id, line ? { side: "RIGHT", line } : null);
           return true;
         },
       }
@@ -727,7 +741,9 @@ function ReviewWorkspace<F extends ReviewFile>({
           <nav
             aria-label="Review sections"
             style={{ top: REVIEW_BAR_PX }}
-            className="min-w-0 border-b border-(--border-subtle) p-4 xl:sticky xl:h-[calc(100dvh-3rem)] xl:self-start xl:overflow-y-auto xl:border-b-0"
+            // Stacked above the pane on a narrower screen, the rail keeps its own
+            // scroll there too, so a long file list cannot push the pane away.
+            className="max-h-[60dvh] min-w-0 overflow-y-auto border-b border-(--border-subtle) p-4 xl:sticky xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-b-0"
           >
             <SideNavGroup label="Review">
               <SideNavButton
@@ -891,7 +907,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                     icon={SectionIcon}
                     busy={!comparing && filesSlot.loading && Boolean(fileList)}
                     expanded={open.files}
-                    active={selection.kind === "file"}
+                    active={filesSelected}
                     progress={
                       fileProgress && fileProgress.total > 0
                         ? `${fileProgress.done} of ${fileProgress.total}`
@@ -902,10 +918,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                     controls="review-section"
                     onSelect={(expanded) => {
                       setFolded((current) => ({ ...current, files: !expanded }));
-                      if (!comparing && expanded && selection.kind !== "file") {
-                        const first = fileList?.find((file) => !file.viewed) ?? fileList?.[0];
-                        if (first) selectFile(first);
-                      }
+                      if (!comparing && expanded && !filesSelected) setSelection({ kind: "files" });
                     }}
                   />
                   {open.files && (
@@ -1044,7 +1057,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 <PaneIn key={selectionKey}>
                   {commits.renderPane(selectedCommit ? selectedCommit.id : null, actions)}
                 </PaneIn>
-              ) : selection.kind === "file" && filesSlot ? (
+              ) : filesSelected && filesSlot ? (
                 comparing ? (
                   <Empty title="Files unavailable during comparison">
                     Close Compare to inspect one review version's file diff.
@@ -1058,23 +1071,16 @@ function ReviewWorkspace<F extends ReviewFile>({
                       Retry files
                     </Button>
                   </div>
-                ) : selectedFile && fileList ? (
-                  <PaneIn key={selectedFile.id}>
-                    {filesSlot.renderFile({
-                      file: selectedFile,
-                      previous: selectedFileIndex > 0 ? fileList[selectedFileIndex - 1] : undefined,
-                      next:
-                        selectedFileIndex >= 0 && selectedFileIndex < fileList.length - 1
-                          ? fileList[selectedFileIndex + 1]
-                          : undefined,
-                      focus: diffFocus,
-                      onSelect: selectFile,
-                    })}
+                ) : fileList?.length === 0 ? (
+                  <Empty title="No changed files">
+                    This pull request revision changes no files.
+                  </Empty>
+                ) : fileList && (selection.kind === "files" || selectedFile) ? (
+                  <PaneIn key="files">
+                    {filesSlot.renderFiles({ files: fileList, open: fileOpen, focus: diffFocus })}
                   </PaneIn>
                 ) : (
-                  <Empty title="File not found">
-                    This file is not part of the selected pull request revision.
-                  </Empty>
+                  <Skeleton height={280} />
                 )
               ) : document ? (
                 <ReviewHistory key={document.review.version} document={document} view={historyView}>
