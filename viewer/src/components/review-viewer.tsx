@@ -743,7 +743,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             style={{ top: REVIEW_BAR_PX }}
             // Stacked above the pane on a narrower screen, the rail keeps its own
             // scroll there too, so a long file list cannot push the pane away.
-            className="max-h-[60dvh] min-w-0 overflow-y-auto border-b border-(--border-subtle) p-4 xl:sticky xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-b-0"
+            className="max-h-[60dvh] min-w-0 overflow-x-hidden overflow-y-auto border-b border-(--border-subtle) p-4 xl:sticky xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-b-0"
           >
             <SideNavGroup label="Review">
               <SideNavButton
