@@ -123,7 +123,8 @@ baum supports every field it defines.
 ## Packages
 
 The Go packages other tools may import sit at public paths; only the CLI's
-own plumbing is under `internal/`.
+own plumbing is under `internal/`. [ARCHITECTURE.md](ARCHITECTURE.md)
+describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
