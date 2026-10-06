@@ -1,6 +1,7 @@
 package gitlocal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -500,30 +501,15 @@ func TestOperationsLeaveTheCloneUntouched(t *testing.T) {
 	if _, err := r.ReadBlob(ctx, f.head, "new.txt"); err != nil {
 		t.Fatal(err)
 	}
-	wt, err := r.AddWorktree(ctx, f.head)
-	if err != nil {
-		t.Fatal(err)
+	if got := tarFiles(t, bytes.NewReader(whole1(t, r, f.head)))["new.txt"]; got != "new\nfile\n" {
+		t.Fatalf("export content = %q", got)
 	}
-	if got, _ := os.ReadFile(filepath.Join(wt.Dir, "new.txt")); string(got) != "new\nfile\n" {
-		t.Fatalf("worktree content = %q", got)
-	}
-	if got := git(t, wt.Dir, "rev-parse", "HEAD"); got != f.head {
-		t.Fatalf("worktree HEAD = %s, want %s", got, f.head)
-	}
-	if inside(f.dir, wt.Dir) {
-		t.Fatalf("worktree %s is inside the clone", wt.Dir)
+	rc, err := r.ExportCommitPath(ctx, f.head, "new.txt")
+	if got := tarFiles(t, bytes.NewReader(readAll(t, rc, err))); len(got) != 1 {
+		t.Fatalf("path export = %q", got)
 	}
 	if after := snapshot(t, f.dir); after != before {
-		t.Fatalf("clone changed while the worktree is open:\n%s\n=== after ===\n%s", before, after)
-	}
-	if err := wt.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := wt.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
-	if _, err := os.Stat(wt.Dir); !os.IsNotExist(err) {
-		t.Fatalf("worktree dir remains: %v", err)
+		t.Fatalf("clone changed while exporting:\n%s\n=== after ===\n%s", before, after)
 	}
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
@@ -533,124 +519,6 @@ func TestOperationsLeaveTheCloneUntouched(t *testing.T) {
 	}
 	if after := snapshot(t, f.dir); after != before {
 		t.Fatalf("clone changed:\n%s\n=== after ===\n%s", before, after)
-	}
-}
-
-// mirrorWorktrees lists the private repository's worktree registrations.
-func mirrorWorktrees(t *testing.T, r *Repo) []os.DirEntry {
-	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(r.mirror, "worktrees"))
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	return entries
-}
-
-func TestWorktreeCleanedUpOnFailure(t *testing.T) {
-	f := newFixture(t)
-	before := snapshot(t, f.dir)
-	temp := t.TempDir()
-	r := open(t, f.dir, Options{TempDir: temp})
-	onlyMirror := func(t *testing.T) {
-		t.Helper()
-		entries, _ := os.ReadDir(temp)
-		if len(entries) != 1 || entries[0].Name() != filepath.Base(r.mirror) {
-			t.Fatalf("temp dir holds %v, want only the private repository", entries)
-		}
-		if got := mirrorWorktrees(t, r); len(got) != 0 {
-			t.Fatalf("registrations left: %v", got)
-		}
-	}
-	tests := []struct {
-		name       string
-		rev        string
-		config     []string
-		attributes string
-	}{
-		{"unknown commit", strings.Repeat("c", 40), nil, ""},
-		// A checkout that fails after the worktree is registered: a
-		// required filter whose smudge command fails. Only a test can set
-		// one up, by replacing the private repository's attributes.
-		{"checkout fails after registration", f.head, []string{"filter.broken.smudge=false", "filter.broken.required=true"}, "new.txt filter=broken\n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			worktreeConfig = tt.config
-			t.Cleanup(func() { worktreeConfig = nil })
-			if tt.attributes != "" {
-				path := filepath.Join(r.mirror, "info", "attributes")
-				saved, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				write(t, filepath.Dir(path), "attributes", tt.attributes, 0o600)
-				t.Cleanup(func() { write(t, filepath.Dir(path), "attributes", string(saved), 0o600) })
-			}
-			if _, err := r.AddWorktree(context.Background(), tt.rev); err == nil {
-				t.Fatal("expected an error")
-			}
-			onlyMirror(t)
-		})
-	}
-	// A cancelled context still cleans up a worktree that was created.
-	ctx, cancel := context.WithCancel(context.Background())
-	wt, err := r.AddWorktree(ctx, f.head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mirrorWorktrees(t, r)) != 1 {
-		t.Fatal("worktree not registered in the private repository")
-	}
-	cancel()
-	if err := wt.Close(); err != nil {
-		t.Fatal(err)
-	}
-	onlyMirror(t)
-	// Closing the repository closes a worktree left open.
-	open, err := r.AddWorktree(context.Background(), f.head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(open.Dir); !os.IsNotExist(err) {
-		t.Fatalf("worktree left after Repo.Close: %v", err)
-	}
-	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
-		t.Fatalf("temp dir not empty after Repo.Close: %v", entries)
-	}
-	if after := snapshot(t, f.dir); after != before {
-		t.Fatalf("clone changed:\n%s\n=== after ===\n%s", before, after)
-	}
-	// A temporary directory inside the clone is refused.
-	if err := os.MkdirAll(filepath.Join(f.dir, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(context.Background(), f.dir, Options{TempDir: filepath.Join(f.dir, "sub")}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
-	}
-	if entries, _ := os.ReadDir(filepath.Join(f.dir, "sub")); len(entries) != 0 {
-		t.Fatalf("refused open left %v", entries)
-	}
-}
-
-func TestWorktreeSkipsHooksAndUserFilters(t *testing.T) {
-	f := newFixture(t)
-	marker := filepath.Join(t.TempDir(), "ran")
-	hook := filepath.Join(f.dir, ".git", "hooks", "post-checkout")
-	write(t, filepath.Dir(hook), "post-checkout", "#!/bin/sh\ntouch "+marker+"\n", 0o755)
-	// A smudge filter configured in the clone does not run either.
-	git(t, f.dir, "config", "filter.mark.smudge", "touch "+marker+"; cat")
-	write(t, filepath.Join(f.dir, ".git", "info"), "attributes", "* filter=mark\n", 0o644)
-	r := open(t, f.dir, Options{})
-	wt, err := r.AddWorktree(context.Background(), f.head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = wt.Close() })
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("a hook or filter ran")
 	}
 }
 
@@ -916,57 +784,11 @@ func TestClosedRepoRefusesOperations(t *testing.T) {
 	if _, err := r.ResolvePull(ctx, PullRequest{Number: 1, BaseSHA: f.base, HeadSHA: f.head}); !errors.Is(err, ErrClosed) {
 		t.Errorf("ResolvePull err = %v, want ErrClosed", err)
 	}
-	if _, err := r.AddWorktree(ctx, f.head); !errors.Is(err, ErrClosed) {
-		t.Errorf("AddWorktree err = %v, want ErrClosed", err)
+	if _, err := r.ExportCommit(ctx, f.head); !errors.Is(err, ErrClosed) {
+		t.Errorf("ExportCommit err = %v, want ErrClosed", err)
 	}
-}
-
-// TestCloseWaitsForAddWorktree: Close called while a worktree is being
-// added waits for the add, then removes the worktree it produced.
-func TestCloseWaitsForAddWorktree(t *testing.T) {
-	f := newFixture(t)
-	temp := t.TempDir()
-	r := open(t, f.dir, Options{TempDir: temp})
-	registered := make(chan struct{})
-	release := make(chan struct{})
-	beforeWorktreeAdd = func() {
-		close(registered)
-		<-release
-	}
-	t.Cleanup(func() { beforeWorktreeAdd = nil })
-	type result struct {
-		wt  *Worktree
-		err error
-	}
-	added := make(chan result, 1)
-	go func() {
-		wt, err := r.AddWorktree(context.Background(), f.head)
-		added <- result{wt, err}
-	}()
-	<-registered
-	closed := make(chan error, 1)
-	go func() { closed <- r.Close() }()
-	// Close is blocked behind the add until the add is released. A Close
-	// that did not wait would return here, which this select would catch
-	// most of the time, and the final assertions would catch otherwise.
-	select {
-	case err := <-closed:
-		t.Fatalf("Close returned during AddWorktree: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(release)
-	res := <-added
-	if res.err != nil {
-		t.Fatal(res.err)
-	}
-	if err := <-closed; err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(res.wt.Dir); !os.IsNotExist(err) {
-		t.Fatalf("worktree left after Close: %v", err)
-	}
-	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
-		t.Fatalf("temp dir not empty after Close: %v", entries)
+	if _, err := r.ExportCommitPath(ctx, f.head, "new.txt"); !errors.Is(err, ErrClosed) {
+		t.Errorf("ExportCommitPath err = %v, want ErrClosed", err)
 	}
 }
 
@@ -1028,32 +850,5 @@ func TestCloseWaitsForWholeOperation(t *testing.T) {
 	}
 	if err := <-closed; err != nil {
 		t.Fatal(err)
-	}
-}
-
-// TestWorktreeWithoutSymlinkSupport: on a filesystem that cannot hold
-// symbolic links the private repository records core.symlinks = false, and
-// a tree containing a symlink still checks out, the link as a plain file.
-func TestWorktreeWithoutSymlinkSupport(t *testing.T) {
-	f := newFixture(t)
-	if err := os.Symlink("keep.txt", filepath.Join(f.dir, "link.txt")); err != nil {
-		t.Skip("cannot create symlinks:", err)
-	}
-	rev := commit(t, f.dir, "add link")
-	canSymlink = func(string) bool { return false }
-	t.Cleanup(func() { canSymlink = defaultCanSymlink })
-	r := open(t, f.dir, Options{TempDir: t.TempDir()})
-	cfg, err := os.ReadFile(filepath.Join(r.mirror, "config"))
-	if err != nil || !strings.Contains(string(cfg), "symlinks = false") {
-		t.Fatalf("config = %q, %v", cfg, err)
-	}
-	wt, err := r.AddWorktree(context.Background(), rev)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = wt.Close() })
-	info, err := os.Lstat(filepath.Join(wt.Dir, "link.txt"))
-	if err != nil || info.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("link.txt = %v, %v; want a regular file", info, err)
 	}
 }

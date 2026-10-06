@@ -1,7 +1,6 @@
 package gitlocal
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -323,8 +322,14 @@ func TestPartialCloneIsReportedNotFetched(t *testing.T) {
 			if _, err := r.TextPatch(ctx, f.base, f.head, "new.txt"); !errors.Is(err, ErrPartialClone) || errors.Is(err, bundle.ErrPatchUnreadable) {
 				t.Fatalf("TextPatch err = %v, want ErrPartialClone", err)
 			}
-			if _, err := r.AddWorktree(ctx, f.head); !errors.Is(err, ErrPartialClone) {
-				t.Fatalf("AddWorktree err = %v, want ErrPartialClone", err)
+			if rc, err := r.ExportCommit(ctx, f.head); err == nil {
+				_, err = io.Copy(io.Discard, rc)
+				_ = rc.Close()
+				if !errors.Is(err, ErrPartialClone) {
+					t.Fatalf("ExportCommit read err = %v, want ErrPartialClone", err)
+				}
+			} else if !errors.Is(err, ErrPartialClone) {
+				t.Fatalf("ExportCommit err = %v, want ErrPartialClone", err)
 			}
 			// A blob the clone does have still reads.
 			if blob, err := r.ReadBlob(ctx, f.base, "keep.txt"); err != nil || string(blob.Content) != "keep\n" {
@@ -348,67 +353,58 @@ func TestPartialCloneIsReportedNotFetched(t *testing.T) {
 	})
 }
 
-// TestWorktreeMatchesHostedExport: a commit whose .gitattributes asks for
-// checkout conversions (CRLF line endings, ident expansion, a working-tree
-// encoding) checks out to the committed bytes, the same files the hosted
-// mirror exports with git archive --worktree-attributes.
-func TestWorktreeMatchesHostedExport(t *testing.T) {
+// TestExportMatchesHostedArchive: for a commit whose .gitattributes asks for
+// conversions (CRLF line endings, ident expansion, a working-tree encoding)
+// and for export-ignore and export-subst, the export is byte for
+// byte what the hosted mirror's git archive --worktree-attributes produces
+// in its bare mirror, for the whole tree and for single paths.
+func TestExportMatchesHostedArchive(t *testing.T) {
 	f := newFixture(t)
 	git(t, f.dir, "checkout", "-q", "feature")
 	write(t, f.dir, "ident.txt", "$Id$\nline\n", 0o644)
 	write(t, f.dir, "utf16.txt", "plain\n", 0o644)
+	write(t, f.dir, "ignored.md", "ignored\n", 0o644)
+	write(t, f.dir, "subst.md", "$Format:%H$\n", 0o644)
+	write(t, f.dir, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = https://example.com/sub.git\n", 0o644)
 	commit(t, f.dir, "files")
 	// The attributes come last, so adding the files converts nothing.
-	write(t, f.dir, ".gitattributes", "*.txt text eol=crlf ident\nutf16.txt working-tree-encoding=UTF-16LE\n", 0o644)
+	write(t, f.dir, ".gitattributes", "*.txt text eol=crlf ident\nutf16.txt working-tree-encoding=UTF-16LE\nignored.md export-ignore\nsubst.md export-subst\n", 0o644)
 	head := commit(t, f.dir, "attributes")
 	git(t, f.dir, "checkout", "-q", "main")
 	mirror := hostedMirror(t, f.dir)
+	// The clone's own attributes and configuration do not reach the export.
+	write(t, filepath.Join(f.dir, ".git", "info"), "attributes", "* export-ignore text eol=crlf working-tree-encoding=UTF-32\n", 0o644)
+	git(t, f.dir, "config", "core.autocrlf", "true")
+	git(t, f.dir, "config", "filter.x.smudge", "false")
+	r := open(t, f.dir, Options{})
+	ctx := context.Background()
 
-	archive := hostedGit(t, mirror, "archive", "--format=tar", "--worktree-attributes", head)
-	want := map[string]string{}
-	reader := tar.NewReader(bytes.NewReader(archive))
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
+	check := func(name string, rc io.ReadCloser, err error, want []byte) {
+		t.Helper()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", name, err)
 		}
-		if header.Typeflag != tar.TypeReg {
-			continue
+		got, err := io.ReadAll(rc)
+		if err != nil || rc.Close() != nil {
+			t.Fatalf("%s: read: %v", name, err)
 		}
-		content, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatal(err)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s: export differs from the hosted archive (%d bytes, want %d)", name, len(got), len(want))
 		}
-		want[header.Name] = string(content)
 	}
-	if want["ident.txt"] != "$Id$\nline\n" {
-		t.Fatalf("the hosted export converted ident.txt: %q", want["ident.txt"])
+	whole := hostedGit(t, mirror, "archive", "--format=tar", "--worktree-attributes", head)
+	rc, err := r.ExportCommit(ctx, head)
+	check("whole tree", rc, err, whole)
+	// Whatever the hosted archive does with these attributes, the export
+	// does too. Record what that is, so a change in git shows up here.
+	files := tarFiles(t, bytes.NewReader(whole))
+	if files["ident.txt"] != "$Id$\nline\n" || files["ignored.md"] == "" || files["subst.md"] != "$Format:%H$\n" {
+		t.Errorf("hosted archive no longer leaves eol, ident, export-ignore and export-subst alone: %q", files)
 	}
-
-	wt, err := open(t, f.dir, Options{}).AddWorktree(context.Background(), head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]string{}
-	err = filepath.WalkDir(wt.Dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !d.Type().IsRegular() {
-			return err
-		}
-		rel, _ := filepath.Rel(wt.Dir, path)
-		if rel == ".git" {
-			return nil
-		}
-		content, err := os.ReadFile(path)
-		got[filepath.ToSlash(rel)] = string(content)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("worktree differs from the hosted export:\n got %q\nwant %q", got, want)
+	t.Logf("hosted utf16.txt (committed as %q) exports as %q", "plain\n", files["utf16.txt"])
+	for _, path := range []string{"ident.txt", "utf16.txt", "ignored.md", "subst.md", ".gitmodules", ".gitattributes", "dir"} {
+		want := hostedGit(t, mirror, "archive", "--format=tar", "--worktree-attributes", head, "--", ":(literal)"+path)
+		rc, err := r.ExportCommitPath(ctx, head, path)
+		check(path, rc, err, want)
 	}
 }
