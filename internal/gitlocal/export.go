@@ -112,7 +112,7 @@ func (r *Repo) export(ctx context.Context, commitOID, exportPath string) (io.Rea
 	// a reader that is never closed cannot hold Repo.Close up.
 	go func() {
 		<-ctx.Done()
-		a.reap()
+		_ = a.reap()
 	}()
 	return a, nil
 }
