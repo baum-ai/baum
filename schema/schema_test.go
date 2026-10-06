@@ -56,7 +56,8 @@ func TestValidateRejectsInvalidDocuments(t *testing.T) {
 			doc["review"].(map[string]any)["head"] = "not-a-sha"
 		},
 		"wrong type in a referenced definition": func(doc map[string]any) {
-			doc["sections"] = "none"
+			section := doc["sections"].([]any)[0].(map[string]any)
+			section["title"] = 42
 		},
 	}
 	for name, mutate := range cases {
