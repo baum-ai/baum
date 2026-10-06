@@ -10,7 +10,9 @@ changes) and the design tokens and primitives the components are built from.
 The package is private for now. Hosts consume it as TypeScript source through
 a `link:` dependency and compile it with their own bundler; there is no build
 step. It has no dependency on any server: it reads only the document and the
-versions a host hands it.
+versions a host hands it. The page composition around the components (the
+workspace, the rail and the panes) is not in the package yet; each host
+builds its own from them.
 
 ## Using it
 
@@ -46,7 +48,7 @@ A host connects it through props and context:
 | Seam | Required | How |
 | --- | --- | --- |
 | document source | yes | the `document` prop, and `loadVersion` (`LoadReviewVersion`), which answers a `ReviewVersionState` for an earlier version |
-| navigation | yes, for the selection and version hooks | `UrlStateProvider` with the URL's search params and a writer; `ViewerLinkProvider` with an in-app link component (a plain anchor without one) |
+| navigation | yes, for the selection and version hooks | `UrlStateProvider` with the URL's search params and a writer; `ViewerLinkProvider` with an in-app link component, which `ViewerLink` renders (a plain anchor without one). No component of the package links in-app yet; `ViewerLink` is there for hosts and for the page composition to come |
 | attachment URL | no | `AttachmentUrlProvider` resolves an attachment id to an address; without it `images` blocks draw nothing |
 | hunk patch source | no | `HunkPatchProvider` loads a file's patch for cited code whose stored excerpt was omitted |
 | file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
@@ -72,6 +74,7 @@ Requires Node.js 24 and pnpm.
 ```sh
 pnpm install
 pnpm check            # lint, format check, typecheck and unit tests
+just check            # the same, through this directory's justfile
 pnpm format           # format with Biome
 pnpm test:unit:watch  # watch the unit tests while editing
 ```
@@ -79,4 +82,5 @@ pnpm test:unit:watch  # watch the unit tests while editing
 Unit tests use Vitest and sit beside the code they cover; fixtures live in
 `test/`. The tests run with the locale forced to en-US, since the formatters
 follow the runtime locale. `src/typography.test.ts` fails on a font size
-outside the type scale in `viewer.css`.
+outside the type scale in `viewer.css`, and `src/dependencies.test.ts` on a
+shipped module importing a package that is not a peer dependency.
