@@ -548,12 +548,6 @@ func mirrorWorktrees(t *testing.T, r *Repo) []os.DirEntry {
 
 func TestWorktreeCleanedUpOnFailure(t *testing.T) {
 	f := newFixture(t)
-	// A head whose checkout fails after the worktree is registered: a
-	// required filter whose smudge command fails.
-	git(t, f.dir, "checkout", "-q", "feature")
-	write(t, f.dir, ".gitattributes", "new.txt filter=broken\n", 0o644)
-	filtered := commit(t, f.dir, "filtered")
-	git(t, f.dir, "checkout", "-q", "main")
 	before := snapshot(t, f.dir)
 	temp := t.TempDir()
 	r := open(t, f.dir, Options{TempDir: temp})
@@ -568,17 +562,30 @@ func TestWorktreeCleanedUpOnFailure(t *testing.T) {
 		}
 	}
 	tests := []struct {
-		name   string
-		rev    string
-		config []string
+		name       string
+		rev        string
+		config     []string
+		attributes string
 	}{
-		{"unknown commit", strings.Repeat("c", 40), nil},
-		{"checkout fails after registration", filtered, []string{"filter.broken.smudge=false", "filter.broken.required=true"}},
+		{"unknown commit", strings.Repeat("c", 40), nil, ""},
+		// A checkout that fails after the worktree is registered: a
+		// required filter whose smudge command fails. Only a test can set
+		// one up, by replacing the private repository's attributes.
+		{"checkout fails after registration", f.head, []string{"filter.broken.smudge=false", "filter.broken.required=true"}, "new.txt filter=broken\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			worktreeConfig = tt.config
 			t.Cleanup(func() { worktreeConfig = nil })
+			if tt.attributes != "" {
+				path := filepath.Join(r.mirror, "info", "attributes")
+				saved, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				write(t, filepath.Dir(path), "attributes", tt.attributes, 0o600)
+				t.Cleanup(func() { write(t, filepath.Dir(path), "attributes", string(saved), 0o600) })
+			}
 			if _, err := r.AddWorktree(context.Background(), tt.rev); err == nil {
 				t.Fatal("expected an error")
 			}
@@ -886,5 +893,101 @@ func TestRunTimeoutAndHermeticEnv(t *testing.T) {
 	_, err := run(context.Background(), runSpec{dir: dir, timeout: 1, env: userEnv()}, "status")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline error", err)
+	}
+}
+
+func TestClosedRepoRefusesOperations(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, err := r.Compare(ctx, f.base, f.head)
+	if !errors.Is(err, ErrClosed) || errors.Is(err, ErrObjectNotFound) {
+		t.Errorf("Compare err = %v, want ErrClosed", err)
+	}
+	if _, err := r.ReadBlob(ctx, f.head, "new.txt"); !errors.Is(err, ErrClosed) {
+		t.Errorf("ReadBlob err = %v, want ErrClosed", err)
+	}
+	if _, err := r.TextPatch(ctx, f.base, f.head, "new.txt"); !errors.Is(err, ErrClosed) {
+		t.Errorf("TextPatch err = %v, want ErrClosed", err)
+	}
+	if _, err := r.ResolvePull(ctx, PullRequest{Number: 1, BaseSHA: f.base, HeadSHA: f.head}); !errors.Is(err, ErrClosed) {
+		t.Errorf("ResolvePull err = %v, want ErrClosed", err)
+	}
+	if _, err := r.AddWorktree(ctx, f.head); !errors.Is(err, ErrClosed) {
+		t.Errorf("AddWorktree err = %v, want ErrClosed", err)
+	}
+}
+
+// TestCloseWaitsForAddWorktree: Close called while a worktree is being
+// added waits for the add, then removes the worktree it produced.
+func TestCloseWaitsForAddWorktree(t *testing.T) {
+	f := newFixture(t)
+	temp := t.TempDir()
+	r := open(t, f.dir, Options{TempDir: temp})
+	registered := make(chan struct{})
+	release := make(chan struct{})
+	beforeWorktreeAdd = func() {
+		close(registered)
+		<-release
+	}
+	t.Cleanup(func() { beforeWorktreeAdd = nil })
+	type result struct {
+		wt  *Worktree
+		err error
+	}
+	added := make(chan result, 1)
+	go func() {
+		wt, err := r.AddWorktree(context.Background(), f.head)
+		added <- result{wt, err}
+	}()
+	<-registered
+	closed := make(chan error, 1)
+	go func() { closed <- r.Close() }()
+	// Close is blocked behind the add until the add is released. A Close
+	// that did not wait would return here, which this select would catch
+	// most of the time, and the final assertions would catch otherwise.
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned during AddWorktree: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	res := <-added
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(res.wt.Dir); !os.IsNotExist(err) {
+		t.Fatalf("worktree left after Close: %v", err)
+	}
+	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
+		t.Fatalf("temp dir not empty after Close: %v", entries)
+	}
+}
+
+func TestSupportedGitVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		ok      bool
+	}{
+		{"git version 2.29.0", true},
+		{"git version 2.39.5 (Apple Git-154)", true},
+		{"git version 2.45.1.windows.1", true},
+		{"git version 3.0.0", true},
+		{"git version 2.28.1", false},
+		{"git version 1.9.5", false},
+		{"something else", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if err := supportedGitVersion(tt.version); (err == nil) != tt.ok {
+				t.Fatalf("err = %v, want ok %v", err, tt.ok)
+			}
+		})
 	}
 }

@@ -1,11 +1,14 @@
 package gitlocal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // emptyConfigName is the empty file a read uses as its global configuration.
@@ -49,6 +52,12 @@ func newMirror(tempDir, objects, objectFormat string) (string, error) {
 		"config":                  config,
 		emptyConfigName:           "",
 		"objects/info/alternates": filepath.ToSlash(objects) + "\n",
+		// info/attributes outranks every .gitattributes file in a tree,
+		// and linked worktrees read it from here. Unsetting the conversion
+		// attributes makes a checkout hold the committed bytes, as the
+		// hosted export of a bare mirror (git archive) does. Diffs read
+		// only the diff attribute, which this leaves alone.
+		"info/attributes": "* !text !eol !ident !filter !working-tree-encoding !crlf\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(content), 0o600); err != nil {
@@ -76,9 +85,55 @@ func syncShallow(mirror, shallow string) error {
 	return os.WriteFile(target, content, 0o600)
 }
 
-// isPartial reports whether the clone holds promisor packs, the mark of a
-// partial clone whose missing objects git would fetch on demand.
+// isPartial reports whether the clone, or a repository whose objects it
+// borrows through alternates, holds promisor packs: the mark of a partial
+// clone whose missing objects git would fetch on demand.
 func isPartial(objects string) bool {
-	matches, _ := filepath.Glob(filepath.Join(objects, "pack", "*.promisor"))
-	return len(matches) > 0
+	seen := map[string]bool{}
+	var walk func(dir string, depth int) bool
+	walk = func(dir string, depth int) bool {
+		if depth > 5 || seen[dir] {
+			return false
+		}
+		seen[dir] = true
+		if matches, _ := filepath.Glob(filepath.Join(dir, "pack", "*.promisor")); len(matches) > 0 {
+			return true
+		}
+		content, err := os.ReadFile(filepath.Join(dir, "info", "alternates"))
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "\"") {
+				continue
+			}
+			alt := filepath.FromSlash(line)
+			if !filepath.IsAbs(alt) {
+				alt = filepath.Join(dir, alt)
+			}
+			if walk(filepath.Clean(alt), depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(filepath.Clean(objects), 0)
+}
+
+// hasPromisorConfig reports whether the clone's configuration names a
+// promisor remote or the partial clone extension.
+func hasPromisorConfig(ctx context.Context, dir string, timeout time.Duration) bool {
+	out, err := run(ctx, runSpec{dir: dir, env: userEnv(), limit: 64 << 10, timeout: timeout},
+		"config", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name, value, _ := strings.Cut(line, " ")
+		if name == "extensions.partialclone" || strings.EqualFold(value, "true") {
+			return true
+		}
+	}
+	return false
 }

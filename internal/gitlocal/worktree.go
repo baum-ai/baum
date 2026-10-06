@@ -27,8 +27,12 @@ type Worktree struct {
 	err  error
 }
 
-// worktreeConfig are extra -c settings for the checkout; tests set it.
-var worktreeConfig []string
+// worktreeConfig are extra -c settings for the checkout, and
+// beforeWorktreeAdd runs just before it; tests set them.
+var (
+	worktreeConfig    []string
+	beforeWorktreeAdd func()
+)
 
 // AddWorktree checks commit rev out into a new temporary directory with
 // git worktree add --detach. The worktree belongs to the private
@@ -36,12 +40,22 @@ var worktreeConfig []string
 // branches, index and working tree are unchanged. The checkout runs with
 // default configuration: no hooks, and no clean, smudge or LFS filters, so
 // it cannot execute repository-supplied or configured programs or reach the
-// network. The repository's own .gitattributes still apply (line endings,
-// for example). On any failure nothing is left behind. The caller must
-// Close the result before closing the Repo.
+// network. The private repository's info/attributes switches off the
+// checkout conversions a commit's own .gitattributes could ask for (line
+// endings, ident, working-tree encoding, filters), so the files are the
+// committed bytes, as in the hosted mirror's export. On any failure nothing
+// is left behind. Closing the Repo closes the worktree too.
 func (r *Repo) AddWorktree(ctx context.Context, rev string) (*Worktree, error) {
 	if !validOID(rev) {
 		return nil, ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if err := checkTempDir(r.dir, r.opts.TempDir); err != nil {
+		return nil, err
 	}
 	root, err := os.MkdirTemp(r.opts.TempDir, "baum-worktree-*")
 	if err != nil {
@@ -52,19 +66,13 @@ func (r *Repo) AddWorktree(ctx context.Context, rev string) (*Worktree, error) {
 		_ = removeAll(root)
 		return nil, err
 	}
-	if inside(r.dir, root) {
-		_ = removeAll(root)
-		return nil, fmt.Errorf("%w: worktree directory %s is inside the repository; set TMPDIR elsewhere", ErrInvalidInput, root)
-	}
 	w := &Worktree{Dir: filepath.Join(root, "checkout"), repo: r, root: root}
 	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		_ = removeAll(root)
-		return nil, errors.New("adding worktree: repository is closed")
-	}
 	r.worktrees[w] = struct{}{}
 	r.mu.Unlock()
+	if beforeWorktreeAdd != nil {
+		beforeWorktreeAdd()
+	}
 	_, err = run(ctx, runSpec{
 		dir: r.mirror, env: mirrorEnv(r.mirror), timeout: r.opts.FetchTimeout,
 		config: append([]string{"core.hooksPath=" + filepath.Join(r.mirror, "hooks")}, worktreeConfig...),

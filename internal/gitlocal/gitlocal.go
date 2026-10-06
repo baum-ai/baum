@@ -23,14 +23,15 @@
 // lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
 // changed. A checkout is a detached worktree of the private repository in a
-// temporary directory outside the clone.
+// temporary directory outside the clone, holding the committed bytes as the
+// hosted mirror's git archive export does.
 //
 // Every git process runs without a shell, under a timeout, with its output
 // capped, and with prompts, pagers and editors disabled. Errors carry a short
 // sanitised stderr snippet and never the command line.
 //
 // It needs git 2.29 or newer (fetch --no-write-fetch-head and
-// --no-auto-maintenance).
+// --no-auto-maintenance); Open refuses an older one.
 package gitlocal
 
 import (
@@ -78,6 +79,8 @@ var (
 	ErrObjectNotFound = errors.New("git object not found")
 	// ErrPartialClone reports a partial clone that lacks objects a read
 	// needs. They are not fetched on demand.
+	// ErrClosed reports an operation on a Repo after Close.
+	ErrClosed       = errors.New("git repository is closed")
 	ErrPartialClone = errors.New("the partial clone is missing objects this pull request needs; use a full clone, or let git fetch them first, for example with git diff --stat <base> <head> in the clone")
 )
 
@@ -108,9 +111,75 @@ type Repo struct {
 	partial bool
 	opts    Options
 
+	// mu guards closed and worktrees; ops counts operations in flight,
+	// which Close waits for. ops.Add runs only under mu with closed false.
 	mu        sync.Mutex
 	closed    bool
 	worktrees map[*Worktree]struct{}
+	ops       sync.WaitGroup
+}
+
+// minGitMajor and minGitMinor are the oldest git this package supports:
+// fetch --no-write-fetch-head and --no-auto-maintenance arrived in 2.29.
+const (
+	minGitMajor = 2
+	minGitMinor = 29
+)
+
+var gitVersionPattern = regexp.MustCompile(`^git version (\d+)\.(\d+)`)
+
+// checkGitVersion fails clearly on a git too old for this package. An
+// unrecognised version string is let through.
+func checkGitVersion(ctx context.Context, dir string, timeout time.Duration) error {
+	out, err := run(ctx, runSpec{dir: dir, env: userEnv(), limit: 4096, timeout: timeout}, "version")
+	if err != nil {
+		return fmt.Errorf("running git: %w", err)
+	}
+	return supportedGitVersion(string(out))
+}
+
+func supportedGitVersion(version string) error {
+	m := gitVersionPattern.FindStringSubmatch(strings.TrimSpace(version))
+	if m == nil {
+		return nil
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < minGitMajor || (major == minGitMajor && minor < minGitMinor) {
+		return fmt.Errorf("git %d.%d is too old: baum needs git %d.%d or newer", major, minor, minGitMajor, minGitMinor)
+	}
+	return nil
+}
+
+// begin registers an operation in flight, or fails once the Repo is
+// closed. The caller must call the returned function when done.
+func (r *Repo) begin() (func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil, ErrClosed
+	}
+	r.ops.Add(1)
+	return r.ops.Done, nil
+}
+
+// checkTempDir refuses a temporary directory inside the clone before
+// anything is created there.
+func checkTempDir(clone, tempDir string) error {
+	if tempDir == "" {
+		tempDir = os.TempDir()
+	}
+	abs, err := filepath.Abs(tempDir)
+	if err != nil {
+		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	if inside(clone, abs) {
+		return fmt.Errorf("%w: temporary directory %s is inside the repository; set TMPDIR elsewhere", ErrInvalidInput, abs)
+	}
+	return nil
 }
 
 // Open checks that dir is inside a git repository with a working tree and
@@ -136,6 +205,9 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkGitVersion(ctx, abs, opts.CommandTimeout); err != nil {
+		return nil, err
+	}
 	out, err := run(ctx, runSpec{dir: abs, env: userEnv(), limit: 64 << 10, timeout: opts.CommandTimeout},
 		"rev-parse", "--show-toplevel", "--git-path", "objects", "--git-path", "shallow", "--show-object-format")
 	if err != nil {
@@ -155,24 +227,24 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 		dir: filepath.Clean(fields[0]), objects: absolute(fields[1]), shallow: absolute(fields[2]),
 		opts: opts, worktrees: map[*Worktree]struct{}{},
 	}
+	if err := checkTempDir(r.dir, opts.TempDir); err != nil {
+		return nil, err
+	}
 	r.mirror, err = newMirror(opts.TempDir, r.objects, fields[3])
 	if err != nil {
 		return nil, err
-	}
-	if inside(r.dir, r.mirror) {
-		_ = removeAll(r.mirror)
-		return nil, fmt.Errorf("%w: temporary directory %s is inside the repository; set TMPDIR elsewhere", ErrInvalidInput, r.mirror)
 	}
 	if err := syncShallow(r.mirror, r.shallow); err != nil {
 		_ = removeAll(r.mirror)
 		return nil, fmt.Errorf("copying the shallow file: %w", err)
 	}
-	r.partial = isPartial(r.objects)
+	r.partial = isPartial(r.objects) || hasPromisorConfig(ctx, abs, opts.CommandTimeout)
 	return r, nil
 }
 
-// Close removes the worktrees still open and the private repository. It is
-// safe to call more than once.
+// Close waits for operations in flight, then removes the worktrees still
+// open and the private repository. Later operations fail with ErrClosed.
+// It is safe to call more than once.
 func (r *Repo) Close() error {
 	r.mu.Lock()
 	if r.closed {
@@ -180,6 +252,9 @@ func (r *Repo) Close() error {
 		return nil
 	}
 	r.closed = true
+	r.mu.Unlock()
+	r.ops.Wait()
+	r.mu.Lock()
 	open := make([]*Worktree, 0, len(r.worktrees))
 	for w := range r.worktrees {
 		open = append(open, w)
@@ -208,6 +283,11 @@ func (r *Repo) Dir() string { return r.dir }
 // read runs a read-only command in the private repository. In a partial
 // clone, a failure to read an object is ErrPartialClone.
 func (r *Repo) read(ctx context.Context, limit int64, args ...string) ([]byte, error) {
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	out, err := run(ctx, runSpec{dir: r.mirror, env: mirrorEnv(r.mirror), limit: limit, timeout: r.opts.CommandTimeout}, args...)
 	return out, r.missingObjects(err)
 }
@@ -224,6 +304,12 @@ func (r *Repo) missingObjects(err error) error {
 		}
 	}
 	return err
+}
+
+// passThrough reports an error that is not about the object asked for, so
+// it must not be reported as ErrObjectNotFound.
+func passThrough(err error) bool {
+	return err != nil && (isContextError(err) || errors.Is(err, ErrPartialClone) || errors.Is(err, ErrClosed))
 }
 
 func isContextError(err error) bool {
@@ -279,6 +365,11 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 	if pr.Number <= 0 || !validOID(pr.BaseSHA) || !validOID(pr.HeadSHA) {
 		return Pull{}, ErrInvalidInput
 	}
+	done, err := r.begin()
+	if err != nil {
+		return Pull{}, err
+	}
+	defer done()
 	type want struct{ name, oid, ref string }
 	wants := []want{
 		{"head", pr.HeadSHA, fmt.Sprintf("refs/baum/pull/%d/head", pr.Number)},
@@ -363,7 +454,7 @@ func (r *Repo) fetch(ctx context.Context, refspecs []string) error {
 
 func (r *Repo) mergeBase(ctx context.Context, base, head string) (string, error) {
 	out, err := r.read(ctx, maxOIDOutputBytes, "merge-base", base, head)
-	if err != nil && (isContextError(err) || errors.Is(err, ErrPartialClone)) {
+	if passThrough(err) {
 		return "", err
 	}
 	if err != nil {
@@ -485,7 +576,7 @@ func (r *Repo) ReadBlob(ctx context.Context, rev, path string) (Blob, error) {
 		return Blob{}, ErrInvalidInput
 	}
 	out, err := r.read(ctx, maxSingleTreeEntrySize, "ls-tree", "-z", "-l", rev, "--", ":(literal)"+path)
-	if err != nil && (isContextError(err) || errors.Is(err, ErrPartialClone)) {
+	if passThrough(err) {
 		return Blob{}, err
 	}
 	if err != nil || len(out) == 0 {

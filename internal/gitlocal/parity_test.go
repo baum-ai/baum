@@ -1,15 +1,18 @@
 package gitlocal
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lastpersonlabs/baum/bundle"
 )
@@ -279,38 +282,133 @@ func TestOpenFindsTheObjects(t *testing.T) {
 // TestPartialCloneIsReportedNotFetched: a blobless clone lacks the pull
 // request's blobs. Reads report ErrPartialClone and fetch nothing.
 func TestPartialCloneIsReportedNotFetched(t *testing.T) {
+	tests := []struct {
+		name string
+		// dir returns the repository to open, given the partial clone.
+		dir func(t *testing.T, partial string) string
+	}{
+		{"partial clone", func(t *testing.T, partial string) string { return partial }},
+		{"clone borrowing a partial clone's objects", func(t *testing.T, partial string) string {
+			shared := filepath.Join(t.TempDir(), "shared")
+			git(t, partial, "clone", "-q", "--shared", "--no-checkout", partial, shared)
+			return shared
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			git(t, f.dir, "config", "uploadpack.allowFilter", "true")
+			partial := filepath.Join(t.TempDir(), "partial")
+			git(t, f.dir, "clone", "-q", "--filter=blob:none", "file://"+filepath.ToSlash(f.dir), partial)
+			git(t, partial, "fetch", "-q", "origin", "feature")
+			dir := tt.dir(t, partial)
+			// Any fetch from here on fails.
+			if err := os.Rename(f.dir, f.dir+"-gone"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Rename(f.dir+"-gone", f.dir) })
+			objects := func() string {
+				return tree(t, filepath.Join(partial, ".git", "objects")) + tree(t, filepath.Join(dir, ".git", "objects"))
+			}
+			before := objects()
+
+			r := open(t, dir, Options{})
+			ctx := context.Background()
+			if _, err := r.Compare(ctx, f.base, f.head); !errors.Is(err, ErrPartialClone) {
+				t.Fatalf("Compare err = %v, want ErrPartialClone", err)
+			}
+			if _, err := r.ReadBlob(ctx, f.head, "new.txt"); !errors.Is(err, ErrPartialClone) {
+				t.Fatalf("ReadBlob err = %v, want ErrPartialClone", err)
+			}
+			if _, err := r.TextPatch(ctx, f.base, f.head, "new.txt"); !errors.Is(err, ErrPartialClone) || errors.Is(err, bundle.ErrPatchUnreadable) {
+				t.Fatalf("TextPatch err = %v, want ErrPartialClone", err)
+			}
+			if _, err := r.AddWorktree(ctx, f.head); !errors.Is(err, ErrPartialClone) {
+				t.Fatalf("AddWorktree err = %v, want ErrPartialClone", err)
+			}
+			// A blob the clone does have still reads.
+			if blob, err := r.ReadBlob(ctx, f.base, "keep.txt"); err != nil || string(blob.Content) != "keep\n" {
+				t.Fatalf("present blob = %+v, %v", blob, err)
+			}
+			if objects() != before {
+				t.Fatal("objects were fetched")
+			}
+		})
+	}
+	t.Run("promisor configuration alone", func(t *testing.T) {
+		requireGit(t)
+		dir := initRepo(t)
+		if hasPromisorConfig(context.Background(), dir, time.Minute) {
+			t.Fatal("a plain repository reads as partial")
+		}
+		git(t, dir, "config", "remote.origin.promisor", "true")
+		if !hasPromisorConfig(context.Background(), dir, time.Minute) {
+			t.Fatal("remote.origin.promisor not detected")
+		}
+	})
+}
+
+// TestWorktreeMatchesHostedExport: a commit whose .gitattributes asks for
+// checkout conversions (CRLF line endings, ident expansion, a working-tree
+// encoding) checks out to the committed bytes, the same files the hosted
+// mirror exports with git archive --worktree-attributes.
+func TestWorktreeMatchesHostedExport(t *testing.T) {
 	f := newFixture(t)
-	git(t, f.dir, "config", "uploadpack.allowFilter", "true")
-	clone := filepath.Join(t.TempDir(), "partial")
-	git(t, f.dir, "clone", "-q", "--filter=blob:none", "file://"+filepath.ToSlash(f.dir), clone)
-	git(t, clone, "fetch", "-q", "origin", "feature")
-	// Any fetch from here on fails.
-	if err := os.Rename(f.dir, f.dir+"-gone"); err != nil {
+	git(t, f.dir, "checkout", "-q", "feature")
+	write(t, f.dir, "ident.txt", "$Id$\nline\n", 0o644)
+	write(t, f.dir, "utf16.txt", "plain\n", 0o644)
+	commit(t, f.dir, "files")
+	// The attributes come last, so adding the files converts nothing.
+	write(t, f.dir, ".gitattributes", "*.txt text eol=crlf ident\nutf16.txt working-tree-encoding=UTF-16LE\n", 0o644)
+	head := commit(t, f.dir, "attributes")
+	git(t, f.dir, "checkout", "-q", "main")
+	mirror := hostedMirror(t, f.dir)
+
+	archive := hostedGit(t, mirror, "archive", "--format=tar", "--worktree-attributes", head)
+	want := map[string]string{}
+	reader := tar.NewReader(bytes.NewReader(archive))
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		content, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[header.Name] = string(content)
+	}
+	if want["ident.txt"] != "$Id$\nline\n" {
+		t.Fatalf("the hosted export converted ident.txt: %q", want["ident.txt"])
+	}
+
+	wt, err := open(t, f.dir, Options{}).AddWorktree(context.Background(), head)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Rename(f.dir+"-gone", f.dir) })
-	objects := func() string { return tree(t, filepath.Join(clone, ".git", "objects")) }
-	before := objects()
-
-	r := open(t, clone, Options{})
-	ctx := context.Background()
-	if _, err := r.Compare(ctx, f.base, f.head); !errors.Is(err, ErrPartialClone) {
-		t.Fatalf("Compare err = %v, want ErrPartialClone", err)
+	got := map[string]string{}
+	err = filepath.WalkDir(wt.Dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !d.Type().IsRegular() {
+			return err
+		}
+		rel, _ := filepath.Rel(wt.Dir, path)
+		if rel == ".git" {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		got[filepath.ToSlash(rel)] = string(content)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := r.ReadBlob(ctx, f.head, "new.txt"); !errors.Is(err, ErrPartialClone) {
-		t.Fatalf("ReadBlob err = %v, want ErrPartialClone", err)
-	}
-	if _, err := r.TextPatch(ctx, f.base, f.head, "new.txt"); !errors.Is(err, ErrPartialClone) || errors.Is(err, bundle.ErrPatchUnreadable) {
-		t.Fatalf("TextPatch err = %v, want ErrPartialClone", err)
-	}
-	if _, err := r.AddWorktree(ctx, f.head); !errors.Is(err, ErrPartialClone) {
-		t.Fatalf("AddWorktree err = %v, want ErrPartialClone", err)
-	}
-	// A blob the clone does have still reads.
-	if blob, err := r.ReadBlob(ctx, f.base, "keep.txt"); err != nil || string(blob.Content) != "keep\n" {
-		t.Fatalf("present blob = %+v, %v", blob, err)
-	}
-	if objects() != before {
-		t.Fatal("objects were fetched into the clone")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("worktree differs from the hosted export:\n got %q\nwant %q", got, want)
 	}
 }
