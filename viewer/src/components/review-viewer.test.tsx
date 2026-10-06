@@ -224,7 +224,7 @@ describe("ReviewViewer with host slots", () => {
             failed: false,
             retry: () => {},
             renderTree: ({ files }) => <p>{files.length} file</p>,
-            renderFile: ({ file }) => <p>Diff of {file.path}</p>,
+            renderFiles: ({ files }) => <p>Diffs of {files.length} file</p>,
           }}
           sessions={{ state: { status: "loading" }, renderPane: () => null }}
           conversation={(place) => <p>Discussing {place.viewedSectionId}</p>}

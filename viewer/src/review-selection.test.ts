@@ -26,7 +26,8 @@ describe("readSelection", () => {
     ).toEqual({ kind: "risk", section: "sec_a", id: "rsk_1" });
   });
 
-  it("reads a file", () => {
+  it("reads the files list and one file", () => {
+    expect(readSelection(new URLSearchParams("pane=files"))).toEqual({ kind: "files" });
     expect(readSelection(new URLSearchParams("pane=file&file=file_1"))).toEqual({
       kind: "file",
       id: "file_1",
@@ -68,6 +69,7 @@ describe("withSelection", () => {
       { kind: "risks" as const },
       { kind: "section" as const, id: "sec_a" },
       { kind: "risk" as const, section: "sec_a", id: "rsk_1" },
+      { kind: "files" as const },
       { kind: "file" as const, id: "file_1" },
       { kind: "sessions" as const },
       { kind: "session" as const, id: "run_1" },

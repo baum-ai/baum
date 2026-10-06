@@ -61,8 +61,10 @@ review: the head, the version menu with comparison, the rail (Summary,
 Changes and Critical risks, folding as the reader goes), the pane for the
 selection, and a side pane with the document's Details and Activity. It keeps
 the selection and the version being read in the URL through
-`UrlStateProvider`, and remembers the side pane's tab, fold and width in
-`localStorage`.
+`UrlStateProvider`, and remembers the side pane's tab, fold and width, and
+the rail's width, in `localStorage`. Both the rail and the side pane resize
+from the border they share with the pane, by pointer or keyboard; the rail
+starts at 264px.
 
 ```tsx
 <UrlStateProvider value={{ search, update }}>
@@ -85,7 +87,7 @@ left out rather than shown empty or failed:
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
-| `files` | a Files group: the host's tree in the rail and its diff in the pane, with code links in the review opening the cited file there |
+| `files` | a Files group: the host's tree in the rail and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |

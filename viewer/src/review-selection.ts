@@ -1,5 +1,6 @@
 /** Where the reader is in the review pane: Summary, the Changes or Risks
- *  overview, one section or risk, one changed file, the linked sessions
+ *  overview, one section or risk, the changed files (all folded, or one
+ *  opened), the linked sessions
  *  (all of them, or one opened), or the pull request's commits (all, or one
  *  named by its sha). Kept in the URL rather than component
  *  state, the same way the pull request itself already is, so a section or
@@ -10,6 +11,7 @@ export type Selection =
   | { kind: "section"; id: string }
   | { kind: "risks" }
   | { kind: "risk"; section: string; id: string }
+  | { kind: "files" }
   | { kind: "file"; id: string }
   | { kind: "sessions" }
   | { kind: "session"; id: string }
@@ -41,6 +43,7 @@ export function readSelection(search: URLSearchParams): Selection {
     const id = search.get(PARAM.riskId);
     if (section && id) return { kind: "risk", section, id };
   }
+  if (pane === "files") return { kind: "files" };
   if (pane === "file") {
     const id = search.get(PARAM.file);
     if (id) return { kind: "file", id };
@@ -74,6 +77,7 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
   if (
     selection.kind === "changes" ||
     selection.kind === "risks" ||
+    selection.kind === "files" ||
     selection.kind === "sessions" ||
     selection.kind === "commits"
   ) {
