@@ -93,7 +93,8 @@ left out rather than shown empty or failed:
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 
 The document's own sessions are listed in the Activity tab; the Sessions
-group and its pane need the host's `sessions` slot.
+group and its pane need the host's `sessions` slot. The `baum` binary fills
+it from the session stores on the user's machine.
 
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a

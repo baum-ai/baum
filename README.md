@@ -118,7 +118,8 @@ downloads the signed price list for cost estimates. See
 
 Documents follow the `baum.review/1` JSON Schema in
 [`schema/review-1.json`](schema/review-1.json), published at
-<https://static.usebaum.com/schemas/review/1.json>; a test validates the
+<https://static.usebaum.com/schemas/review/1.json> (an identifier; baum never
+fetches it); a test validates the
 example document next to it. The hosted baum service reads the same file, and
 baum supports every field it defines.
 
