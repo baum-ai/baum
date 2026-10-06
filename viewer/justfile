@@ -1,0 +1,18 @@
+[private]
+default:
+    @just --list
+
+lint:
+    pnpm lint
+
+format-check:
+    pnpm format:check
+
+typecheck:
+    pnpm typecheck
+
+test:
+    pnpm test:unit
+
+# Run every check CI runs: lint, format check, typecheck and unit tests
+check: lint format-check typecheck test

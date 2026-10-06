@@ -139,11 +139,17 @@ describes how they fit together and what a host implements.
 | `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
 | `schema` | the review schema and its validator |
 
+[`viewer/`](viewer/README.md) is a pnpm package of the React components
+that render a review document and its versions, which the hosted service
+imports from this repository too.
+
 ## Development
 
 Requires Go (version in `go.mod`), [just](https://just.systems) and
 [golangci-lint](https://golangci-lint.run). `just check` runs formatting,
-vet, build, tests and lint; `just --list` shows the other recipes. See
+vet, build, tests and lint; `just --list` shows the other recipes. The
+viewer needs Node.js and pnpm; `pnpm install && pnpm check` in `viewer/`
+runs its lint, format check, typecheck and tests. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This repository is published from the `oss/` directory of the private baum

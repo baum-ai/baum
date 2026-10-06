@@ -218,9 +218,10 @@ through props and context:
 | Seam | Required | `baum view` | Notes |
 | --- | --- | --- | --- |
 | document source | yes | the file given, and versions from the local store | the current document, a version list and a loader for one version |
-| attachment URL | yes | served from the local cache | resolves an image ID to a URL |
+| attachment URL | no | served from the local cache | resolves an image ID to a URL; without it, image blocks draw nothing |
 | navigation | yes | in-app history | link component and the selection and version state in the URL |
 | hunk patch source | no | not used | the full patch for a hunk when the document does not carry it |
+| file opener | no | not used | opens a cited file in the host's own diff view instead of following its link |
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
 | header slots | no | not used | statistics, generation controls |
@@ -231,6 +232,10 @@ The viewer never decides who can see a document; that is the host's job.
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
 defaults to an open font bundled with the package. A host overrides the
 variable to restyle the viewer without forking it.
+
+The components and their seams are in [`viewer/`](viewer/README.md); the
+standalone app and the bundled font are not there yet, and until the font is
+the variable falls back to the system's sans-serif face.
 
 ## Running locally
 

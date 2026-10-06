@@ -1,0 +1,349 @@
+/* The review viewer's design tokens and type scale. A host imports this
+   after Tailwind and adds the viewer's sources with `@source`, so the
+   utilities its components use are generated:
+
+     @import "tailwindcss";
+     @import "@baum/viewer/viewer.css";
+     @source "<path to the package>/src";
+
+   The sans-serif family comes from `--viewer-font-sans`, which a host sets
+   to restyle the viewer; it falls back to the system's sans-serif face.
+   Dark mode follows `data-theme="dark"` on the root element. */
+
+@theme inline {
+  --font-sans: var(--viewer-font-sans, ui-sans-serif, system-ui, sans-serif);
+}
+
+@theme {
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* The type scale. Every size is one of these steps, written as
+     `text-<step>`; `typography.test.ts` fails the build on an arbitrary
+     `text-[Npx]` and on a retired step name, which is how the sizes drifted
+     apart before. Five steps carry the whole viewer: small print, body, a
+     pane title, a page title and a headline number, and nothing in between.
+     Line heights come with the step, so a smaller size does not inherit the
+     body's leading. A host may add steps of its own after this file.
+
+       3xs  11px  chart tick labels only
+       xs   13px  small print: captions, timestamps, badges, kickers
+       base 16px  everything else that is read: body, rows, cells, controls
+       lg   18px  pane titles
+       2xl  24px  page titles
+       3xl  28px  headline numbers */
+  --text-*: initial;
+  --text-3xs: 11px;
+  --text-3xs--line-height: 1.4;
+  --text-xs: 13px;
+  --text-xs--line-height: 1.5;
+  --text-base: 16px;
+  --text-base--line-height: 1.5;
+  --text-lg: 18px;
+  --text-lg--line-height: 1.4;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 1.2;
+}
+
+/* Quiet, precise, editorial, and out of the way of the review. The palette
+   is cream, forest and espresso, used sparingly: white surfaces, espresso
+   ink and one forest accent. Semantic colors are muted, never neon. */
+:root {
+  /* ---- Base: ink (espresso near-black neutrals) ----
+     Warm enough to sit with the cream rail, close enough to neutral that
+     long reading stays calm. On the white page secondary and tertiary text
+     hold 7.9:1 and 5.6:1, and tertiary still clears 4.5:1 on the sunken
+     paper. */
+  --ink-900: #1f1b17;
+  --ink-800: #2f2a25;
+  --ink-700: #47403a;
+  --ink-600: #57504a;
+  --ink-500: #6e665d;
+  --ink-400: #8c847a;
+  --ink-300: #b5aea4;
+  --ink-200: #dcd7cd;
+  --ink-150: #e7e3da;
+  --ink-100: #eeebe4;
+  --ink-50: #f5f3ee;
+
+  /* ---- Base: paper. The page is white; panels are cream. ---- */
+  --paper-0: #ffffff;
+  --paper-50: #f7f5ef;
+  --paper-100: #efece3;
+  --paper-200: #e6e2d6;
+
+  /* ---- Base: accent — forest ink over sand washes ----
+     The text steps are the brand's forest, darker and greyer than the status
+     green so a link never reads as "passed". The light steps are sand, so a
+     tinted row or chip is the landing page's warmth rather than a second
+     green. */
+  --accent-700: #233a2d;
+  --accent-600: #2f4a3a;
+  --accent-500: #3d5c48;
+  --accent-200: #e3cf9f;
+  --accent-100: #f2e6cc;
+  --accent-50: #f8f1e2;
+
+  /* ---- Base: semantic hues (muted) ---- */
+  --green-700: #1d6e47;
+  --green-600: #24824f;
+  --green-100: #deefe4;
+  --amber-700: #8f5b0a;
+  --amber-600: #a96c0c;
+  --amber-100: #f5ebd4;
+  --red-700: #a03028;
+  --red-600: #ba3a31;
+  --red-100: #f7e2e0;
+
+  /* ---- Vendor marks: the official colour of each harness's and model
+     maker's logo (`brand-logo.tsx`). Black and white marks (OpenAI, Cursor,
+     Grok) and Pi, which has no brand colour, follow the text colour. ---- */
+  --brand-mark-claude: #d97757; /* Anthropic's Claude orange */
+  --brand-mark-deepseek: #4d6bfe; /* DeepSeek blue */
+  --brand-mark-gemini: #3186ff; /* Gemini blue */
+  --brand-mark-cursor: var(--text-primary);
+  --brand-mark-grok: var(--text-primary);
+  --brand-mark-openai: var(--text-primary);
+  --brand-mark-pi: var(--text-primary);
+
+  /* ---- Semantic: text ---- */
+  --text-primary: var(--ink-900);
+  --text-secondary: var(--ink-600);
+  --text-tertiary: var(--ink-500);
+  --text-disabled: var(--ink-400);
+  --text-inverse: var(--paper-0);
+  --text-link: var(--accent-600);
+  --text-link-hover: var(--accent-700);
+
+  /* ---- Semantic: surfaces ---- */
+  /* White almost everywhere: the page and its panels share one white and are
+     told apart by hairlines, so the review is the only thing that stands
+     out. Cream is kept for the rail and for small sunken wells. */
+  --surface-page: var(--paper-0);
+  --surface-card: var(--paper-0);
+  --surface-sunken: var(--paper-50);
+  --surface-inverse: var(--ink-900);
+  /* Anything under the pointer warms to sand: a translucent wash, so it reads
+     on the page, the panel and the sunken paper alike. A bordered button
+     takes the stronger --action-secondary-hover. */
+  --surface-hover: rgba(242, 220, 173, 0.3);
+  --surface-pressed: rgba(31, 27, 23, 0.08);
+  /* A faint ink fill that is not a hover: a tile's header strip, a chip, the
+     chart's hover cursor, the skeleton's light band. */
+  --surface-wash: rgba(31, 27, 23, 0.04);
+  /* A picked row — the review rail's current section, the open file, the
+     summary's open row — is a firmer step of the same sand than a hover, so
+     the row you are on still stands out from the one under the pointer. */
+  --surface-selected: color-mix(in srgb, var(--brand-sand-100) 55%, var(--paper-0));
+  --surface-scrim: rgba(31, 27, 23, 0.44);
+  --control-thumb: #ffffff;
+
+  /* ---- Semantic: borders ---- */
+  --border-default: var(--ink-200);
+  --border-subtle: var(--ink-150);
+  --border-strong: var(--ink-300);
+  --border-focus: var(--accent-600);
+
+  /* ---- Semantic: interactive ----
+     The primary action is the brand's forest: dark enough to read as the same
+     weighty button, green enough to belong to the public pages. A secondary
+     or ghost action warms to sand under the pointer, as the public pages'
+     outline button does. */
+  --action-primary: var(--brand-forest);
+  --action-primary-hover: #223328;
+  --action-secondary-hover: var(--brand-sand-50);
+  --action-accent: var(--accent-600);
+  --action-accent-hover: var(--accent-700);
+
+  /* ---- Semantic: status ---- */
+  --status-positive: var(--green-600);
+  --status-positive-bg: var(--green-100);
+  --status-caution: var(--amber-600);
+  --status-caution-bg: var(--amber-100);
+  --status-critical: var(--red-600);
+  --status-critical-bg: var(--red-100);
+  --status-info: var(--accent-600);
+  --status-info-bg: var(--accent-100);
+  --status-neutral: var(--ink-600);
+  --status-neutral-bg: var(--ink-100);
+
+  /* ---- Data / agent identity (charts, agent chips) ----
+     Eight categorical slots in a FIXED order, assigned in sequence and never
+     cycled: the order is the colorblind-safety mechanism, so reordering these
+     invalidates the validation below. A ninth series folds into
+     --data-muted ("Other"), small multiples, or a composite encoding.
+
+     Earthy hues with no blue, so a chart sits with the cream and forest
+     around it. Validated with the dataviz six checks against the cream
+     sunken surface (#f7f5ef), the darkest a series sits on, against the
+     darker #efece3 step, and on the white page: lightness band, chroma floor, adjacent CVD (worst ΔE 8.8, deutan),
+     normal-vision floor (worst ΔE 17.5) and 3:1 contrast all PASS. The first
+     three slots also clear the all-pairs test (worst ΔE 8.2), which is what
+     caps scatter / bubble / small-multiple charts at three series.
+
+     Slot 1, the forest a single-series chart wears, is a bluer, darker green
+     than --status-positive and is never shown beside a status. Slots 1 and 8
+     are both greens; they are far apart in lightness and never neighbours. */
+  --data-1: #16704a; /* forest */
+  --data-2: #c94c86; /* rose   */
+  --data-3: #a3720a; /* ochre  */
+  --data-4: #7e3a9c; /* plum   */
+  --data-5: #e25a22; /* orange */
+  --data-6: #008f87; /* teal   */
+  --data-7: #94552a; /* espresso brown */
+  --data-8: #6b8f12; /* leaf   */
+
+  /* Not a ninth slot: the deliberate absence of identity. Unattributed
+     commits, "Other" rollups, and the held-previous-render state. */
+  --data-muted: var(--ink-400);
+
+  /* ---- Radii — flat. Surfaces are rectangles divided by hairlines; only
+     controls keep a 2px softening, and only Tag/Badge is pill-shaped. ---- */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 2px;
+  --radius-lg: 0;
+  --radius-full: 999px;
+
+  /* ---- Shadows — restrained, warm, mostly for overlays ---- */
+  --shadow-card: none;
+  --shadow-raised: 0 2px 8px rgba(31, 27, 23, 0.08), 0 1px 2px rgba(31, 27, 23, 0.05);
+  --shadow-overlay: 0 8px 32px rgba(31, 27, 23, 0.14), 0 2px 8px rgba(31, 27, 23, 0.08);
+  --focus-ring: 0 0 0 2px var(--paper-0), 0 0 0 4px var(--accent-600);
+
+  /* The strong rule that opens a masthead. */
+  --rule-masthead: var(--brand-forest);
+
+  /* ---- Brand: sand and forest ----
+     The viewer borrows the brand palette only for chrome: the
+     primary action, hover warmth, the picked row and masthead rules,
+     never for status or data. The steps themselves are not restated for
+     dark mode; the semantic tokens that use them are. */
+  --brand-sand-50: #f7ead0;
+  --brand-sand-100: #f2dcad;
+  --brand-forest: #0f1a14;
+}
+
+/* Dark mode.
+   A plain, neutral dark: charcoal surfaces and off-white ink, with the brand
+   only in its accents — sand for links, focus and the primary action, as on
+   the public pages' forest top bar. Nothing here is a new token. The base
+   ramps are restated and every semantic token above — and every component
+   that reached past them for an ink, a paper or an accent step — follows
+   without being touched.
+
+   Ink still runs weakest → strongest: --ink-900 is "the strongest ink", it is
+   simply the lightest colour once the surface is dark. The page and its panels
+   share one charcoal, told apart by hairlines.
+
+   The host sets `data-theme="dark"` on the root element, from the reader's
+   preference or the browser's own. Every view follows it. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* The blues sit a step lighter on the dark card to keep the mark clear. */
+  --brand-mark-deepseek: #6d86ff;
+  --brand-mark-gemini: #4a95ff;
+
+  /* ---- Base: ink, inverted.
+     The upper steps sit higher than a straight mirror of the light ramp would
+     put them. Light text on a dark surface renders thinner than dark text on a
+     light one at the same contrast, and this typeface is a light-weight
+     editorial face used down to 11px, so matching the light ratios reads dim.
+     Secondary and tertiary text land near 9.4:1 and 6.8:1 on the card, and
+     the steps stay far enough apart that the hierarchy still reads. ---- */
+  --ink-900: #f2f2f0;
+  --ink-800: #e2e2e0;
+  --ink-700: #d6d7db;
+  --ink-600: #bfc1c8;
+  --ink-500: #a2a5ad;
+  --ink-400: #83868f;
+  --ink-300: #676a72;
+  --ink-200: #3c3f46;
+  --ink-150: #33353b;
+  --ink-100: #2b2d32;
+  --ink-50: #232529;
+
+  /* ---- Base: paper, now the dark surfaces ---- */
+  --paper-0: #1c1d20;
+  --paper-50: #141517;
+  --paper-100: #26272b;
+  --paper-200: #2f3035;
+  --surface-card: var(--paper-0);
+  --text-inverse: var(--brand-forest);
+
+  /* ---- Brand chrome. Forest disappears into a dark page, so the primary
+     action turns sand with dark text, as the public top bar's action is,
+     and the masthead rule follows it. ---- */
+  --action-primary: var(--brand-sand-100);
+  --action-primary-hover: var(--brand-sand-50);
+  --action-secondary-hover: color-mix(in srgb, var(--brand-sand-100) 10%, var(--paper-0));
+  --surface-selected: color-mix(in srgb, var(--brand-sand-100) 12%, var(--paper-0));
+  --rule-masthead: var(--brand-sand-100);
+
+  /* ---- Base: accent, now sand. Links and focus carry at 9:1 and more on the
+     card; the tints are sand laid thin over charcoal. ---- */
+  --accent-700: #f2dcad;
+  --accent-600: #e6c98f;
+  --accent-500: #d9b878;
+  --accent-200: #5e5137;
+  --accent-100: #353024;
+  --accent-50: #2a2620;
+
+  /* ---- Categorical series, re-stepped for the dark card ----
+     The same hues, lifted into the dark lightness band and re-validated
+     against the sunken dark surface (#26272b) and the card: all six checks
+     PASS; the first three clear the all-pairs floor band (ΔE 7.6), which
+     scatter charts cover with direct labels. */
+  --data-1: #3a8d65;
+  --data-2: #e1629b;
+  --data-3: #ad7c1d;
+  --data-4: #9c58bc;
+  --data-5: #ea622b;
+  --data-6: #0f938b;
+  --data-7: #a9683e;
+  --data-8: #7fa432;
+
+  /* ---- Base: semantic hues. The hue reads on the text and the border; the
+     100s stop being washes of white and become tints of the surface. ---- */
+  --green-700: #8ad9ab;
+  --green-600: #6fca95;
+  --green-100: #18321f;
+  --amber-700: #eec06a;
+  --amber-600: #e0ac4a;
+  --amber-100: #372a11;
+  --red-700: #f2a09a;
+  --red-600: #e8837b;
+  --red-100: #3a1f1d;
+
+  /* ---- The surfaces laid over paper as a translucent wash rather than a step
+     on either ramp, so inverting the ramps does not reach them ---- */
+  --surface-hover: rgba(242, 220, 173, 0.07);
+  --surface-pressed: rgba(255, 255, 255, 0.1);
+  --surface-wash: rgba(255, 255, 255, 0.06);
+  --surface-scrim: rgba(0, 0, 0, 0.62);
+
+  /* ---- Shadows. A near-black shadow on a light page is a soft edge; on a dark
+     one it is invisible, so these carry more of it. ---- */
+  --shadow-card: none;
+  --shadow-raised: 0 2px 8px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --focus-ring: 0 0 0 2px var(--paper-0), 0 0 0 4px var(--accent-600);
+}
+
+/* A sideways strip whose scrollbar shows only while it is being scrolled:
+   the thumb is transparent at rest and `data-scrolling` (set by
+   `useScrollingFlag`) paints it. `scroll` rather than `auto`: every strip
+   reserves the same thin track whether it overflows or not, so one legend
+   that runs long does not sit taller than its neighbours. */
+.scroll-on-demand {
+  overflow-x: scroll;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.scroll-on-demand[data-scrolling] {
+  scrollbar-color: var(--border-strong) transparent;
+}
