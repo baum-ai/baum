@@ -1,0 +1,3 @@
+# Justified exceptions to guard_test.go, one "<path> <pattern id>" per line.
+# Prefer rewording the text over adding an entry here. Every entry needs a
+# comment saying why it is intentional; an entry that matches nothing fails.

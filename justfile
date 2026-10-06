@@ -3,7 +3,7 @@ default:
     @just --list
 
 # Run every check CI runs: format, vet, build, test, lint
-check: fmt-check vet build test lint
+check: fmt-check vet build test privacy lint
 
 # Fail on unformatted files
 fmt-check:
@@ -27,6 +27,10 @@ build:
 # Build the binary into ./bin
 install:
     CGO_ENABLED=0 go build -o ./bin/ ./cmd/baum
+
+# Fail when a tracked file mentions private monorepo or developer-machine material
+privacy:
+    go test ./internal/privacyguard/
 
 test *args:
     go test -race ./... {{ args }}
