@@ -991,3 +991,69 @@ func TestSupportedGitVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestCloseWaitsForWholeOperation: Close called between the git commands of
+// one Compare lets that Compare finish instead of failing with ErrClosed.
+func TestCloseWaitsForWholeOperation(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	afterMergeBase = func() {
+		close(reached)
+		<-release
+	}
+	t.Cleanup(func() { afterMergeBase = nil })
+	type result struct {
+		cmp bundle.Comparison
+		err error
+	}
+	compared := make(chan result, 1)
+	go func() {
+		cmp, err := r.Compare(context.Background(), f.base, f.head)
+		compared <- result{cmp, err}
+	}()
+	<-reached
+	closed := make(chan error, 1)
+	go func() { closed <- r.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned during Compare: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	res := <-compared
+	if res.err != nil || len(res.cmp.Files) == 0 {
+		t.Fatalf("Compare = %d files, %v", len(res.cmp.Files), res.err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorktreeWithoutSymlinkSupport: on a filesystem that cannot hold
+// symbolic links the private repository records core.symlinks = false, and
+// a tree containing a symlink still checks out, the link as a plain file.
+func TestWorktreeWithoutSymlinkSupport(t *testing.T) {
+	f := newFixture(t)
+	if err := os.Symlink("keep.txt", filepath.Join(f.dir, "link.txt")); err != nil {
+		t.Skip("cannot create symlinks:", err)
+	}
+	rev := commit(t, f.dir, "add link")
+	canSymlink = func(string) bool { return false }
+	t.Cleanup(func() { canSymlink = defaultCanSymlink })
+	r := open(t, f.dir, Options{TempDir: t.TempDir()})
+	cfg, err := os.ReadFile(filepath.Join(r.mirror, "config"))
+	if err != nil || !strings.Contains(string(cfg), "symlinks = false") {
+		t.Fatalf("config = %q, %v", cfg, err)
+	}
+	wt, err := r.AddWorktree(context.Background(), rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = wt.Close() })
+	info, err := os.Lstat(filepath.Join(wt.Dir, "link.txt"))
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("link.txt = %v, %v; want a regular file", info, err)
+	}
+}

@@ -30,11 +30,19 @@ func newMirror(tempDir, objects, objectFormat string) (string, error) {
 		_ = removeAll(dir)
 		return "", err
 	}
-	config := "[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
+	// git init and clone probe whether the filesystem can hold symbolic
+	// links and record core.symlinks = false when not (Windows without the
+	// privilege, some network shares); a hand-written config must too, or a
+	// checkout of a tree with a symlink fails.
+	symlinks := "true"
+	if !canSymlink(dir) {
+		symlinks = "false"
+	}
+	config := "[core]\n\trepositoryformatversion = 0\n\tbare = true\n\tsymlinks = " + symlinks + "\n"
 	switch objectFormat {
 	case "sha1":
 	case "sha256":
-		config = "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n"
+		config = "[core]\n\trepositoryformatversion = 1\n\tbare = true\n\tsymlinks = " + symlinks + "\n[extensions]\n\tobjectformat = sha256\n"
 	default:
 		_ = removeAll(dir)
 		return "", fmt.Errorf("%w: object format %q", ErrInvalidInput, objectFormat)
@@ -136,4 +144,16 @@ func hasPromisorConfig(ctx context.Context, dir string, timeout time.Duration) b
 		}
 	}
 	return false
+}
+
+// canSymlink reports whether a symbolic link can be created in dir.
+var canSymlink = defaultCanSymlink
+
+func defaultCanSymlink(dir string) bool {
+	link := filepath.Join(dir, "symlink-probe")
+	if err := os.Symlink("target", link); err != nil {
+		return false
+	}
+	_ = os.Remove(link)
+	return true
 }

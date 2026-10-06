@@ -280,14 +280,11 @@ func orDefault(v, d int64) int64 {
 // Dir is the clone's top-level directory.
 func (r *Repo) Dir() string { return r.dir }
 
-// read runs a read-only command in the private repository. In a partial
+// read runs a read-only command in the private repository. It does not
+// register an operation: every public method that calls it does, through
+// begin, for its whole duration, so Close waits for it. In a partial
 // clone, a failure to read an object is ErrPartialClone.
 func (r *Repo) read(ctx context.Context, limit int64, args ...string) ([]byte, error) {
-	done, err := r.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer done()
 	out, err := run(ctx, runSpec{dir: r.mirror, env: mirrorEnv(r.mirror), limit: limit, timeout: r.opts.CommandTimeout}, args...)
 	return out, r.missingObjects(err)
 }
@@ -467,6 +464,10 @@ func (r *Repo) mergeBase(ctx context.Context, base, head string) (string, error)
 	return oid, nil
 }
 
+// afterMergeBase runs between Compare's first and second git command; tests
+// set it.
+var afterMergeBase func()
+
 // Compare lists the files that differ between the merge base of base and
 // head and head, like the hosted comparison in its merge-base mode. Rename
 // detection is on (-M, limit 1000). Each file carries added and deleted line
@@ -476,9 +477,17 @@ func (r *Repo) Compare(ctx context.Context, base, head string) (bundle.Compariso
 	if !validOID(base) || !validOID(head) {
 		return bundle.Comparison{}, ErrInvalidInput
 	}
+	done, err := r.begin()
+	if err != nil {
+		return bundle.Comparison{}, err
+	}
+	defer done()
 	mergeBase, err := r.mergeBase(ctx, base, head)
 	if err != nil {
 		return bundle.Comparison{}, err
+	}
+	if afterMergeBase != nil {
+		afterMergeBase()
 	}
 	limit := r.opts.MaxComparisonBytes
 	raw, err := r.read(ctx, limit, "diff-tree", "-r", "--no-commit-id", "--raw", "-z", "-M", "-l1000", mergeBase, head)
@@ -542,6 +551,11 @@ func (r *Repo) TextPatch(ctx context.Context, baseOID, headOID string, paths ...
 			return nil, ErrInvalidInput
 		}
 	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--full-index", "-M", "-l1000", baseOID, headOID, "--"}
 	for _, p := range paths {
 		args = append(args, ":(literal)"+p)
@@ -575,6 +589,11 @@ func (r *Repo) ReadBlob(ctx context.Context, rev, path string) (Blob, error) {
 	if !validOID(rev) || !validGitPath(path) {
 		return Blob{}, ErrInvalidInput
 	}
+	done, err := r.begin()
+	if err != nil {
+		return Blob{}, err
+	}
+	defer done()
 	out, err := r.read(ctx, maxSingleTreeEntrySize, "ls-tree", "-z", "-l", rev, "--", ":(literal)"+path)
 	if passThrough(err) {
 		return Blob{}, err
