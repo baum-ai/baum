@@ -109,6 +109,11 @@ never as zero.
   agent unpacks it.
 - Sessions carry paraphrased command events, never raw command lines, tool
   output, local paths, e-mail addresses or tokens.
+- A host may give a session the decisions it extracted from the session's
+  transcript. A session without them was not extracted; an empty list means
+  it made none. They are redacted like other free text, and trimming cuts
+  superseded decisions after every prompt-text stage and current ones only
+  with their session.
 - The same inputs produce the same bundle and digest.
 
 ## `review`
