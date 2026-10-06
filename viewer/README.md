@@ -61,8 +61,10 @@ review: the head, the version menu with comparison, the rail (Summary,
 Changes and Critical risks, folding as the reader goes), the pane for the
 selection, and a side pane with the document's Details and Activity. It keeps
 the selection and the version being read in the URL through
-`UrlStateProvider`, and remembers the side pane's tab, fold and width in
-`localStorage`.
+`UrlStateProvider`, and remembers the side pane's tab, fold and width, and
+the rail's width, in `localStorage`. Both the rail and the side pane resize
+from the border they share with the pane, by pointer or keyboard; the rail
+starts at 264px.
 
 ```tsx
 <UrlStateProvider value={{ search, update }}>

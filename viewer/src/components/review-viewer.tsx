@@ -27,7 +27,7 @@ import { reviewVersionChanges } from "../review-versions";
 import { riskKey } from "../row-keys";
 import { useConversationCollapsed } from "../use-conversation-collapsed";
 import { type ConversationTab, useConversationTab } from "../use-conversation-tab";
-import { useConversationWidth } from "../use-conversation-width";
+import { RAIL_LIMITS, useConversationWidth, useRailWidth } from "../use-conversation-width";
 import { useReviewSelection } from "../use-review-selection";
 import { useHistoryView } from "../use-review-version";
 import { useSectionHistory } from "../use-section-history";
@@ -362,8 +362,10 @@ function ReviewWorkspace<F extends ReviewFile>({
   };
   const reviewPane = useRef<HTMLElement>(null);
   const conversationPane = useRef<HTMLElement>(null);
+  const railPane = useRef<HTMLElement>(null);
   const workspace = useVisibleHeight<HTMLDivElement>();
   const split = useConversationWidth();
+  const rail = useRailWidth();
   // The side pane can fold to a strip at the window's edge, so the review
   // pane has the width when the talk is not the point.
   const [chatCollapsed, setChatCollapsed] = useConversationCollapsed();
@@ -692,9 +694,12 @@ function ReviewWorkspace<F extends ReviewFile>({
   // The panes' columns: the rail, the review pane, and the side pane or the
   // strip it folds to.
   const columns = chatCollapsed
-    ? "xl:grid-cols-[264px_minmax(0,1fr)_3rem]"
-    : "xl:grid-cols-[264px_minmax(0,1fr)_10px_var(--conversation-width)]";
-  const columnStyle = { "--conversation-width": `${split.width}px` } as CSSProperties;
+    ? "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
+    : "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
+  const columnStyle = {
+    "--rail-width": `${rail.width}px`,
+    "--conversation-width": `${split.width}px`,
+  } as CSSProperties;
   const fileProgress =
     !comparing && fileList
       ? { done: fileList.filter((file) => file.viewed).length, total: fileList.length }
@@ -739,6 +744,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           )}
         >
           <nav
+            ref={railPane}
             aria-label="Review sections"
             style={{ top: REVIEW_BAR_PX }}
             // Stacked above the pane on a narrower screen, the rail keeps its own
@@ -1036,8 +1042,20 @@ function ReviewWorkspace<F extends ReviewFile>({
             ref={reviewPane}
             id="review-section"
             aria-label={paneLabel}
-            className="flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 xl:min-h-0 xl:border-b-0 xl:border-l"
+            className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 xl:min-h-0 xl:border-b-0 xl:border-l"
           >
+            {/* Laid over the pane's left border rather than given a column, so
+              the rail and the pane keep their places and only gain a grip. */}
+            <PaneDivider
+              width={rail.width}
+              onWidth={rail.choose}
+              reviewRef={reviewPane}
+              paneRef={railPane}
+              limits={RAIL_LIMITS}
+              side="before"
+              label="Resize the section rail"
+              className="absolute inset-y-0 -left-[5px] z-10 w-[10px]"
+            />
             <div className={cn("flex min-h-0 flex-1 flex-col", PANE_WIDTH)}>
               {sectionAside}
               {document && versionsFailed && (
@@ -1107,7 +1125,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               onWidth={split.choose}
               onFit={split.fit}
               reviewRef={reviewPane}
-              conversationRef={conversationPane}
+              paneRef={conversationPane}
               label={conversation ? "Resize the conversation pane" : "Resize the side pane"}
             />
           )}
