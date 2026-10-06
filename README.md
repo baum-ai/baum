@@ -35,7 +35,8 @@ go install github.com/lastpersonlabs/baum/cmd/baum@latest
 
 Or download an archive for linux, macOS or Windows from the
 [releases page](https://github.com/lastpersonlabs/baum/releases). Binaries
-are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`.
+are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
+2.29 or newer.
 
 ## Commands
 
