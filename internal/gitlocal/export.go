@@ -14,15 +14,16 @@ import (
 //	git archive --format=tar --worktree-attributes <commitOID>
 //
 // run in the private bare repository, so the clone's configuration,
-// attributes and .gitmodules do not reach it and the archive holds the
-// committed bytes. The archive streams from git's stdout; it is never
+// attributes and .gitmodules do not reach it, and the archive is byte for
+// byte the hosted one, including the attributes it applies (it still applies
+// working-tree-encoding from the tree; ENG-795). The archive streams from git's stdout; it is never
 // buffered whole. Reading more than Options.MaxArchiveBytes kills git and
 // fails with bundle.ErrOutputTooLarge, and Options.ArchiveTimeout bounds the
 // whole export. A git that fails part way is an error from Read, never a
 // silently truncated archive. An unknown commit is ErrObjectNotFound.
 //
 // The caller must Close the result, which kills git if it is still running
-// and waits for it. Repo.Close waits for exports still open.
+// and waits for it. Repo.Close cancels and reaps exports still open.
 func (r *Repo) ExportCommit(ctx context.Context, commitOID string) (io.ReadCloser, error) {
 	return r.export(ctx, commitOID, "")
 }
@@ -95,13 +96,29 @@ func (r *Repo) export(ctx context.Context, commitOID, exportPath string) (io.Rea
 		return nil, &Error{Command: "archive", Err: err}
 	}
 	started = true
-	return &archiveReader{
+	a := &archiveReader{
 		repo: r, ctx: ctx, cancel: cancel, done: done, cmd: cmd, stdout: stdout,
 		stderr: stderr, remaining: r.opts.MaxArchiveBytes,
-	}, nil
+	}
+	r.mu.Lock()
+	r.readers[a] = struct{}{}
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		cancel()
+	}
+	// Whatever ends the export's context (the timeout, the caller, Close,
+	// Repo.Close) kills git, and this reaps it and frees the Repo's slot, so
+	// a reader that is never closed cannot hold Repo.Close up.
+	go func() {
+		<-ctx.Done()
+		a.reap()
+	}()
+	return a, nil
 }
 
-// archiveReader streams git archive's stdout under a byte cap.
+// archiveReader streams git archive's stdout under a byte cap. Read is for
+// one goroutine at a time; Close may be called from another.
 type archiveReader struct {
 	repo   *Repo
 	ctx    context.Context
@@ -111,23 +128,30 @@ type archiveReader struct {
 	stdout io.ReadCloser
 	stderr *capWriter
 
+	// mu guards the fields below, and is not held across a blocking read.
+	mu        sync.Mutex
 	remaining int64
 	// err is what Read returns once the stream has ended.
-	err error
+	err    error
+	closed bool
 
+	// reap runs git's Wait exactly once; waitErr is valid after it returns.
 	once    sync.Once
 	waitErr error
-	closed  bool
 }
 
 func (a *archiveReader) Read(p []byte) (int, error) {
+	a.mu.Lock()
 	if a.err != nil {
+		defer a.mu.Unlock()
 		return 0, a.err
 	}
 	if a.closed {
+		a.mu.Unlock()
 		return 0, errors.New("read of a closed export")
 	}
 	if len(p) == 0 {
+		a.mu.Unlock()
 		return 0, nil
 	}
 	// Ask for one byte more than the cap allows, so a stream that ends
@@ -136,42 +160,56 @@ func (a *archiveReader) Read(p []byte) (int, error) {
 	if want > a.remaining+1 {
 		want = a.remaining + 1
 	}
+	a.mu.Unlock()
+
 	n, err := a.stdout.Read(p[:want])
+
+	a.mu.Lock()
 	if int64(n) > a.remaining {
 		a.err = errOutputTooLarge
+		a.mu.Unlock()
 		a.cancel()
-		return 0, a.err
+		return 0, errOutputTooLarge
 	}
 	a.remaining -= int64(n)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			// Only a successful exit makes this a complete archive.
-			if werr := a.wait(); werr != nil {
-				a.err = werr
-			} else {
-				a.err = io.EOF
-			}
-			return n, a.err
-		}
-		a.cancel()
-		if werr := a.wait(); werr != nil {
+	if err == nil {
+		a.mu.Unlock()
+		return n, nil
+	}
+	a.mu.Unlock()
+	if errors.Is(err, io.EOF) {
+		// Only a successful exit makes this a complete archive.
+		if werr := a.reap(); werr != nil {
 			err = werr
 		}
-		a.err = err
-		return n, a.err
+	} else {
+		a.cancel()
+		if werr := a.reap(); werr != nil {
+			err = werr
+		}
 	}
-	return n, nil
+	a.mu.Lock()
+	if a.err == nil {
+		a.err = err
+	}
+	err = a.err
+	a.mu.Unlock()
+	return n, err
 }
 
-// wait reaps git once, and reports its failure with the sanitised stderr and,
-// for a timeout or cancellation, the context's error.
-func (a *archiveReader) wait() error {
+// reap waits for git once, frees the Repo's slot, and reports git's failure
+// with the sanitised stderr and, for a timeout or cancellation, the
+// context's error.
+func (a *archiveReader) reap() error {
 	a.once.Do(func() {
 		err := a.cmd.Wait()
 		if err != nil {
 			a.waitErr = a.failure(err)
 		}
 		a.cancel()
+		a.repo.mu.Lock()
+		delete(a.repo.readers, a)
+		a.repo.mu.Unlock()
 		a.done()
 	})
 	return a.waitErr
@@ -185,23 +223,25 @@ func (a *archiveReader) failure(err error) error {
 }
 
 // Close kills git if it is still running and waits for it. It is safe to
-// call more than once. It reports git's failure only when git failed on its
-// own, not because Close stopped it.
+// call more than once, and from another goroutine while a Read is running,
+// which then ends with an error. It reports git's failure only when git
+// failed on its own, not because Close stopped it.
 func (a *archiveReader) Close() error {
+	a.mu.Lock()
 	if a.closed {
+		a.mu.Unlock()
 		return nil
 	}
 	a.closed = true
 	finished := a.err != nil
+	prior := a.err
+	a.mu.Unlock()
 	if !finished {
 		a.cancel()
 	}
 	_ = a.stdout.Close()
-	err := a.wait()
-	if !finished {
-		return nil
-	}
-	if errors.Is(a.err, io.EOF) || errors.Is(a.err, errOutputTooLarge) {
+	err := a.reap()
+	if !finished || errors.Is(prior, io.EOF) || errors.Is(prior, errOutputTooLarge) {
 		return nil
 	}
 	return err

@@ -23,8 +23,9 @@
 // lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
 // changed. An export is the hosted mirror's own git archive command run in
-// the private repository, so it holds the committed bytes and is byte for
-// byte the archive the hosted service produces.
+// the private repository, so it is byte for byte the archive the hosted
+// service produces, including whatever attributes that archive applies (it
+// still applies working-tree-encoding from the tree; ENG-795).
 //
 // Every git process runs without a shell, under a timeout, with its output
 // capped, and with prompts, pagers and editors disabled. Errors carry a short
@@ -120,9 +121,11 @@ type Repo struct {
 
 	// mu guards closed; ops counts operations in flight, which Close waits
 	// for. ops.Add runs only under mu with closed false.
-	mu     sync.Mutex
-	closed bool
-	ops    sync.WaitGroup
+	// readers are the exports still open, which Close cancels.
+	mu      sync.Mutex
+	closed  bool
+	readers map[*archiveReader]struct{}
+	ops     sync.WaitGroup
 }
 
 // minGitMajor and minGitMinor are the oldest git this package supports:
@@ -235,7 +238,7 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	}
 	r := &Repo{
 		dir: filepath.Clean(fields[0]), objects: absolute(fields[1]), shallow: absolute(fields[2]),
-		opts: opts,
+		opts: opts, readers: map[*archiveReader]struct{}{},
 	}
 	if err := checkTempDir(r.dir, opts.TempDir); err != nil {
 		return nil, err
@@ -252,8 +255,8 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	return r, nil
 }
 
-// Close waits for operations in flight, including exports whose reader is
-// still open, then removes the private repository. Later operations fail
+// Close cancels exports still open, waits for operations in flight, then
+// removes the private repository. Later operations fail
 // with ErrClosed. It is safe to call more than once.
 func (r *Repo) Close() error {
 	r.mu.Lock()
@@ -262,7 +265,16 @@ func (r *Repo) Close() error {
 		return nil
 	}
 	r.closed = true
+	open := make([]*archiveReader, 0, len(r.readers))
+	for a := range r.readers {
+		open = append(open, a)
+	}
 	r.mu.Unlock()
+	// An export nobody closed must not hold Close up: stop git, and the
+	// export's own goroutine reaps it and frees its slot.
+	for _, a := range open {
+		a.cancel()
+	}
 	r.ops.Wait()
 	var errs []error
 	if err := removeAll(r.mirror); err != nil {

@@ -269,51 +269,84 @@ func TestExportArchiveTimeout(t *testing.T) {
 	}
 }
 
-func TestCloseWaitsForOpenExport(t *testing.T) {
+// TestRepoCloseDoesNotWaitForAnUnclosedExport: a reader nobody closes does
+// not hold Repo.Close up, whether git was stopped by the timeout already or
+// is still streaming.
+func TestRepoCloseDoesNotWaitForAnUnclosedExport(t *testing.T) {
 	f := bigFixture(t)
-	temp := t.TempDir()
-	r := open(t, f.dir, Options{TempDir: temp})
-	rc, err := r.ExportCommit(context.Background(), f.head)
-	if err != nil {
-		t.Fatal(err)
+	for _, tt := range []struct {
+		name    string
+		timeout time.Duration
+		pause   time.Duration
+	}{
+		{"after the timeout", 300 * time.Millisecond, time.Second},
+		{"before the timeout", time.Minute, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			temp := t.TempDir()
+			r := open(t, f.dir, Options{TempDir: temp, ArchiveTimeout: tt.timeout})
+			rc, err := r.ExportCommit(context.Background(), f.head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.ReadFull(rc, make([]byte, 4096)); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(tt.pause)
+			closed := make(chan error, 1)
+			go func() { closed <- r.Close() }()
+			select {
+			case err := <-closed:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("Repo.Close is blocked by an unclosed export")
+			}
+			if _, err := io.Copy(io.Discard, rc); err == nil {
+				t.Fatal("the stopped export read to a clean end")
+			}
+			_ = rc.Close()
+			if rc.(*archiveReader).cmd.ProcessState == nil {
+				t.Fatal("git was not reaped")
+			}
+			if _, err := r.ExportCommit(context.Background(), f.head); !errors.Is(err, ErrClosed) {
+				t.Fatalf("ExportCommit err = %v, want ErrClosed", err)
+			}
+			if entries, _ := os.ReadDir(temp); len(entries) != 0 {
+				t.Fatalf("temp dir not empty after Close: %v", entries)
+			}
+		})
 	}
-	if _, err := io.ReadFull(rc, make([]byte, 4096)); err != nil {
-		t.Fatal(err)
-	}
-	closed := make(chan error, 1)
-	go func() { closed <- r.Close() }()
-	select {
-	case err := <-closed:
-		t.Fatalf("Close returned during an export: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-	// The repository refuses new work while Close waits, and the open
-	// export keeps streaming.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		_, err := r.ExportCommit(context.Background(), f.head)
-		if errors.Is(err, ErrClosed) {
-			break
+}
+
+// TestExportCloseFromAnotherGoroutine: Close while another goroutine reads
+// ends the read with an error, under -race.
+func TestExportCloseFromAnotherGoroutine(t *testing.T) {
+	f := bigFixture(t)
+	r := open(t, f.dir, Options{})
+	for range 5 {
+		rc, err := r.ExportCommit(context.Background(), f.head)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("ExportCommit err = %v, want ErrClosed", err)
+		copied := make(chan error, 1)
+		go func() {
+			_, err := io.Copy(io.Discard, rc)
+			copied <- err
+		}()
+		time.Sleep(5 * time.Millisecond)
+		if err := rc.Close(); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if _, err := io.ReadFull(rc, make([]byte, 4096)); err != nil {
-		t.Fatalf("open export stopped: %v", err)
-	}
-	if err := rc.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-closed; err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.ExportCommitPath(context.Background(), f.head, "new.txt"); !errors.Is(err, ErrClosed) {
-		t.Fatalf("ExportCommitPath err = %v, want ErrClosed", err)
-	}
-	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
-		t.Fatalf("temp dir not empty after Close: %v", entries)
+		select {
+		case <-copied:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the read did not end after Close")
+		}
+		if rc.(*archiveReader).cmd.ProcessState == nil {
+			t.Fatal("git was not reaped")
+		}
 	}
 }
 
