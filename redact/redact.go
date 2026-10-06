@@ -64,7 +64,9 @@ func validateEmail(window []byte, trigStart, trigEnd int) (start, end int, ok bo
 // boundary, so a trailing ".1", "-1" or "2" leaves the address itself
 // masked. Under (?i), "K" (U+212A) and "ſ" (U+017F) count as letters.
 // When the domain runs to the end of a window cut short (cut), the
-// address may go on past it, so the whole visible run is masked.
+// address may go on past it, so the whole visible run is masked, provided
+// it already holds a dot: a dotless run is no address, and an exact-fit
+// window must not turn it into one.
 func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) {
 	start = at
 	for start > 0 {
@@ -89,7 +91,7 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 			break
 		}
 	}
-	if cut && run == len(text) {
+	if cut && run == len(text) && after+1 < run && bytes.IndexByte(text[after+1:run], '.') >= 0 {
 		return start, run, true
 	}
 	end = -1
@@ -155,11 +157,21 @@ func foldedLetterBefore(text []byte, i int) int {
 // maskEmails masks, in out, every address in text in full. The rule's
 // window is bounded, so in a stream an address longer than it is masked
 // only within it; with the whole text in hand nothing is cut. Masking is
-// the format-preserving mask, which leaves masked bytes as they are.
-func maskEmails(text string, out []byte) {
+// the format-preserving mask, which leaves masked bytes as they are. It
+// returns how many addresses it found that nothing had masked yet, and stops
+// with ctx's error if ctx ends.
+func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 	src := []byte(text)
+	found := 0
 	for at := bytes.IndexByte(src, '@'); at >= 0; {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if start, end, ok := matchEmail(src, at, at+1, false); ok {
+			fresh := bytes.Equal(out[start:end], src[start:end])
+			if fresh {
+				found++
+			}
 			for i := start; i < end; i++ {
 				out[i] = formatMask(src[i])
 			}
@@ -170,6 +182,7 @@ func maskEmails(text string, out []byte) {
 		}
 		at += 1 + next
 	}
+	return found, nil
 }
 
 // formatMask is goredact's format-preserving mask of one byte.
@@ -269,15 +282,27 @@ func (e *Engine) RedactContext(ctx context.Context, text string) (string, Summar
 		return "", Summary{}, fmt.Errorf("redact: %w", err)
 	}
 	masked := out.Bytes()
+	summary := fromStats(stats)
 	if len(masked) == len(text) {
 		for i := 0; i < len(text); i++ {
 			if text[i] == '\n' {
 				masked[i] = '\n'
 			}
 		}
-		maskEmails(text, masked)
+		found, err := maskEmails(ctx, text, masked)
+		if err != nil {
+			return "", Summary{}, fmt.Errorf("redact: %w", err)
+		}
+		// Addresses the engine's window left untouched are new findings.
+		if found > 0 {
+			if summary.ByRule == nil {
+				summary.ByRule = map[string]int{}
+			}
+			summary.ByRule[EmailRuleID] += found
+			summary.Findings += found
+		}
 	}
-	return string(masked), fromStats(stats), nil
+	return string(masked), summary, nil
 }
 
 var mentionPattern = regexp.MustCompile(`(^|[^\w@/])@[A-Za-z0-9][A-Za-z0-9-]*`)

@@ -273,3 +273,36 @@ func TestIdentitiesRedactsEmailAndDefangsMention(t *testing.T) {
 		t.Fatalf("Identities changed clean text: %q, %v", got, changed)
 	}
 }
+
+func TestRedactContextCancelledDuringAddressPass(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("a@b.co\n", 1<<12)
+	// The engine pass asks Err a few times; a larger limit cancels in the address pass.
+	for n := 1; n < 100000; n *= 2 {
+		if _, _, err := e.RedactContext(&cancelAfter{Context: context.Background(), n: n}, text); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("n=%d: err = %v", n, err)
+			}
+			return
+		}
+	}
+	t.Fatal("RedactContext never observed cancellation")
+}
+
+func TestExactWindowWithoutDotIsNotAnAddress(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "a@" + strings.Repeat("b", emailLookahead)
+	got, _, err := e.Redact(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != text {
+		t.Fatalf("dotless exact-window run was masked: %q", got)
+	}
+}
