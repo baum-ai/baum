@@ -113,6 +113,8 @@ export type Decision = {
   by: "human" | "agent";
   text: string;
   rejected?: string;
+  /** Only on an agent decision a human explicitly accepted. */
+  approved_by_human?: true;
   anchors: Anchor[];
 };
 

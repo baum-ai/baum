@@ -608,3 +608,34 @@ func TestNormalizationDropsItemBlocksWithoutItems(t *testing.T) {
 		})
 	}
 }
+
+// approved_by_human marks an agent decision a human explicitly accepted; a
+// human decision cannot carry it.
+func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	for _, tc := range []struct {
+		by       string
+		approved any
+		valid    bool
+	}{
+		{"agent", true, true},
+		{"agent", nil, true},
+		{"human", nil, true},
+		{"human", true, false},
+		{"agent", false, false},
+	} {
+		doc, err := decodeObject(authoredFixture(), "candidate")
+		checkNoError(t, err)
+		item := map[string]any{"id": "dec_parser", "by": tc.by, "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
+		if tc.approved != nil {
+			item["approved_by_human"] = tc.approved
+		}
+		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
+		_, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+		if (findings == "") != tc.valid {
+			t.Errorf("by %s, approved_by_human %v: findings %q, want valid %v", tc.by, tc.approved, findings, tc.valid)
+		}
+	}
+}
