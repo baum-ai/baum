@@ -625,17 +625,33 @@ func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
 		{"human", nil, true},
 		{"human", true, false},
 		{"agent", false, false},
+		// Codex strict output sends null for an absent optional field;
+		// normalisation removes it.
+		{"agent", "null", true},
+		{"human", "null", true},
 	} {
 		doc, err := decodeObject(authoredFixture(), "candidate")
 		checkNoError(t, err)
 		item := map[string]any{"id": "dec_parser", "by": tc.by, "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
-		if tc.approved != nil {
+		switch tc.approved {
+		case nil:
+		case "null":
+			item["approved_by_human"] = nil
+		default:
 			item["approved_by_human"] = tc.approved
 		}
 		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
 		_, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
 		if (findings == "") != tc.valid {
 			t.Errorf("by %s, approved_by_human %v: findings %q, want valid %v", tc.by, tc.approved, findings, tc.valid)
+		}
+		// The lenient schema the model is given must take the null too.
+		if tc.approved == "null" {
+			var lenient any
+			checkNoError(t, json.Unmarshal(tileJSON(t, doc), &lenient))
+			if err := resolvedSchema(t, v.Schema).Validate(lenient); err != nil {
+				t.Errorf("by %s with a null approved_by_human: lenient schema rejects it: %v", tc.by, err)
+			}
 		}
 	}
 }
