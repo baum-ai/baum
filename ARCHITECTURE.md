@@ -224,7 +224,9 @@ through props and context:
 | file opener | no | not used | opens a cited file in the host's own diff view instead of following its link |
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
-| header slots | no | not used | statistics, generation controls |
+| header slots | no | not used | statistics, generation controls, approval state, a back link |
+| rail groups | no | not used | changed files, linked sessions and commits, each listed in the rail with the host's pane |
+| version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
 
 Optional seams default to absent, and the viewer renders the document alone.
 The viewer never decides who can see a document; that is the host's job.

@@ -432,6 +432,13 @@ export function riskCategory(risk: { category?: string | null }, fallback = "Ris
   return (risk.category ? humanize(risk.category) : "") || fallback;
 }
 
+/** A risk in one line of a 264px rail. The category leads because it is what
+ *  separates two risks in the same section, and the section title follows it
+ *  into the truncation. */
+export function riskLabel(risk: TriageRisk): string {
+  return `${riskCategory(risk)} · ${risk.sectionTitle}`;
+}
+
 /** The state of a live pull request, in the vocabulary this schema uses.
  *
  *  The browse API and this schema do not share one: the API carries four states
@@ -506,6 +513,13 @@ export function severityTone(severity: FindingSeverity): Tone {
 
 export function findingStateTone(state: FindingState): Tone {
   return state === "open" ? "caution" : state === "resolved" ? "positive" : "neutral";
+}
+
+/** The tone of a pull request's state wherever it is shown. A closed,
+ *  unmerged pull request is a product signal, not an error, so it does not
+ *  get the critical tone. */
+export function pullRequestStateTone(state: string): Tone {
+  return state === "merged" ? "positive" : state === "open" ? "info" : "neutral";
 }
 
 export function generationTone(state: GenerationState): Tone {
@@ -719,6 +733,16 @@ export function riskScoreView(
     })),
     limitations,
   };
+}
+
+/** The review's risk score when it assessed one, for the page's head and its
+ *  compact bar. Not assessed is null: the Summary says why, and a "not
+ *  assessed" mark there would read as a finding. */
+export function assessedRisk(
+  document: ReviewDocument | null,
+): Extract<RiskScoreView, { assessed: true }> | null {
+  const view = document ? riskScoreView(document) : null;
+  return view?.assessed ? view : null;
 }
 
 export type RiskSegment = { tier: RiskTier | "unrated"; lines: number; share: number };
