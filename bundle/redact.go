@@ -113,20 +113,32 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 			if err := json.Unmarshal(section.Content, &content); err != nil {
 				return err
 			}
-			var redactContent func(any, string) (any, error)
-			redactContent = func(value any, key string) (any, error) {
+			// line is set for an element of a "lines" array, whose text is
+			// redacted with its siblings' text.
+			var redactContent func(value any, key string, line bool) (any, error)
+			redactContent = func(value any, key string, line bool) (any, error) {
 				switch value := value.(type) {
 				case map[string]any:
-					for key, child := range value {
-						redacted, err := redactContent(child, key)
+					for childKey, child := range value {
+						if _, text := child.(string); text && line && childKey == "text" {
+							continue
+						}
+						redacted, err := redactContent(child, childKey, false)
 						if err != nil {
 							return nil, err
 						}
-						value[key] = redacted
+						value[childKey] = redacted
 					}
 				case []any:
+					if key == "lines" {
+						// A code excerpt's lines are one text, so a secret
+						// written across them is found as a whole.
+						if err := redactLineTexts(ctx, redactor, value, &total); err != nil {
+							return nil, err
+						}
+					}
 					for i, child := range value {
-						redacted, err := redactContent(child, key)
+						redacted, err := redactContent(child, key, key == "lines")
 						if err != nil {
 							return nil, err
 						}
@@ -143,7 +155,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 				}
 				return value, nil
 			}
-			redacted, err := redactContent(content, "")
+			redacted, err := redactContent(content, "", false)
 			if err != nil {
 				return err
 			}
@@ -160,6 +172,27 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	}
 
 	bundle.MaskedSpanCount = total
+	return nil
+}
+
+// redactLineTexts redacts the string text of each line object as one text.
+func redactLineTexts(ctx context.Context, redactor *Redactor, lines []any, total *int) error {
+	var texts []string
+	var owners []map[string]any
+	for _, raw := range lines {
+		line, _ := raw.(map[string]any)
+		if text, ok := line["text"].(string); ok {
+			texts, owners = append(texts, text), append(owners, line)
+		}
+	}
+	masked, count, err := redactor.RedactLines(ctx, texts)
+	if err != nil {
+		return err
+	}
+	for i, line := range owners {
+		line["text"] = masked[i]
+	}
+	*total += count
 	return nil
 }
 
@@ -212,4 +245,34 @@ func (r *Redactor) RedactString(ctx context.Context, s string) (string, int, err
 		return "", 0, err
 	}
 	return redacted, summary.Findings, nil
+}
+
+// RedactLines redacts lines that read as one text, such as a code excerpt's
+// lines, as their newline-joined text, so a secret written across several of
+// them is found as a whole. It returns as many lines as it was given, each
+// masked in place, and the spans masked in the joined text. A line may hold
+// a newline itself: each is cut back out at its own offsets. Should the mask
+// ever change the text's length, every line is masked whole instead.
+func (r *Redactor) RedactLines(ctx context.Context, lines []string) ([]string, int, error) {
+	joined := strings.Join(lines, "\n")
+	if joined == "" {
+		return append([]string(nil), lines...), 0, nil
+	}
+	redacted, count, err := r.RedactString(ctx, joined)
+	if err != nil {
+		return nil, 0, err
+	}
+	masked := make([]string, len(lines))
+	if len(redacted) != len(joined) {
+		for i, line := range lines {
+			masked[i] = strings.Repeat("*", len(line))
+		}
+		return masked, count, nil
+	}
+	offset := 0
+	for i, line := range lines {
+		masked[i] = redacted[offset : offset+len(line)]
+		offset += len(line) + 1
+	}
+	return masked, count, nil
 }

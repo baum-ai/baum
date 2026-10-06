@@ -96,6 +96,7 @@ never as zero.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
+  A previous section's code excerpt lines are redacted as one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
@@ -156,10 +157,15 @@ Given the previous version, `review` keeps sections stable:
 `Refresh` updates checks, threads, comments and evidence status in a stored
 document without a model call; `baum refresh` uses it.
 
-Everything a model returns is untrusted. Output redaction masks free text in
-the document, the findings and the diagnostics, and keeps only the fields the
-schema marks as references (IDs, paths, SHAs). If redaction fails, the text
-is dropped rather than kept.
+Everything a model returns is untrusted. Output redaction masks the document,
+the findings and the diagnostics. Every string of the document is scanned as
+one text, so a secret spread over code lines, table rows or steps is caught;
+a string keeps its exact text only if it is a reference that resolves to the
+redacted bundle or the checkout, or its value meets the schema's constant,
+enum, closed pattern or date-time format. Text scattered across unrelated
+fields, a token wrapped mid-value, or a lowercase token that fits a closed
+pattern (a SHA, a category, a prefixed ID) is not caught. If redaction fails,
+the text is dropped rather than kept.
 
 ### Tiles
 
