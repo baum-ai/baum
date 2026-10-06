@@ -1,0 +1,499 @@
+{
+  "$comment": "Tile kinds removed from the shared review schema (oss/schema/review-1.json). Generation never produces them, but stored documents may still carry them, so the UI validates and renders them behind ?tiles=1. $ref targets not defined here resolve against the shared schema's $defs.",
+  "$defs": {
+    "legacyTile": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "workflow-state-machine"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_workflow-state-machine"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "data-migration"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_data-migration"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "search-schema"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_search-schema"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "external-integration"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_external-integration"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "refactor"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_refactor"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "performance"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_performance"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^tile_[a-z0-9_]+$"
+            },
+            "kind": {
+              "const": "alternative-approach"
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              },
+              "minItems": 1
+            },
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileCodeFile"
+              },
+              "minItems": 0
+            },
+            "data": {
+              "$ref": "#/$defs/tileData_alternative-approach"
+            }
+          },
+          "required": ["id", "kind", "anchors", "code", "data"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "tileData_workflow-state-machine": {
+      "type": "object",
+      "properties": {
+        "primary_path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tileWorkflowStep"
+          },
+          "minItems": 1
+        },
+        "failure_path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tileWorkflowStep"
+          },
+          "minItems": 0
+        },
+        "new_transition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "terminal_state": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["primary_path", "failure_path", "new_transition", "retry", "terminal_state"],
+      "additionalProperties": false
+    },
+    "tileData_data-migration": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "before_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "transform": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "records": {
+          "type": "string",
+          "minLength": 1
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tileFact"
+          },
+          "minItems": 0
+        }
+      },
+      "required": ["source", "target", "before_fields", "transform", "records", "facts"],
+      "additionalProperties": false
+    },
+    "tileData_search-schema": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "state": {
+                "type": "string",
+                "enum": ["existing", "new", "changed", "removed"]
+              }
+            },
+            "required": ["name", "state"],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "query_before": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query_after": {
+          "type": "string",
+          "minLength": 1
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tileFact"
+          },
+          "minItems": 0
+        }
+      },
+      "required": ["index", "fields", "query_before", "query_after", "facts"],
+      "additionalProperties": false
+    },
+    "tileData_external-integration": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1
+        },
+        "response": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback_target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tileFact"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "source",
+        "provider",
+        "request",
+        "response",
+        "fallback",
+        "fallback_target",
+        "facts"
+      ],
+      "additionalProperties": false
+    },
+    "tileData_refactor": {
+      "type": "object",
+      "properties": {
+        "was": {
+          "type": "string",
+          "minLength": 1
+        },
+        "now": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["was", "now"],
+      "additionalProperties": false
+    },
+    "tileData_performance": {
+      "type": "object",
+      "properties": {
+        "overview": {
+          "$ref": "#/$defs/tileOverview"
+        },
+        "raised_on_review": {
+          "type": "boolean"
+        },
+        "before": {
+          "$ref": "#/$defs/tileComparedState"
+        },
+        "after": {
+          "$ref": "#/$defs/tileComparedState"
+        }
+      },
+      "required": ["overview", "before", "after"],
+      "additionalProperties": false
+    },
+    "tileData_alternative-approach": {
+      "type": "object",
+      "properties": {
+        "overview": {
+          "$ref": "#/$defs/tileOverview"
+        },
+        "landed": {
+          "$ref": "#/$defs/tileComparedState"
+        },
+        "proposed": {
+          "$ref": "#/$defs/tileComparedState"
+        },
+        "why_it_matters": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["overview", "landed", "proposed", "why_it_matters"],
+      "additionalProperties": false
+    },
+    "tileWorkflowStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["start", "active", "terminal", "failure"]
+        },
+        "change": {
+          "type": "string",
+          "enum": ["add"]
+        }
+      },
+      "required": ["id", "label", "kind"],
+      "additionalProperties": false
+    },
+    "tileComparedState": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["label", "detail"],
+      "additionalProperties": false
+    },
+    "tileFact": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["label", "value"],
+      "additionalProperties": false
+    }
+  }
+}

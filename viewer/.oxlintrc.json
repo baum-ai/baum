@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "plugins": ["typescript", "unicorn", "oxc", "import", "react", "jsx-a11y", "promise"],
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "settings": {
+    "react": {
+      "version": "19"
+    }
+  },
+  "ignorePatterns": ["coverage/**", "generated/**"],
+  "rules": {
+    "eqeqeq": ["error", "smart"],
+    "no-alert": "error",
+    "no-console": "error",
+    "no-debugger": "error",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "no-script-url": "error",
+    "no-throw-literal": "error",
+    "no-underscore-dangle": "error",
+    "prefer-const": "error",
+    "import/no-unassigned-import": "off",
+    "jsx-a11y/anchor-has-content": "off",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "promise/always-return": "off",
+    "react/jsx-no-script-url": "error",
+    "react/no-unstable-nested-components": "off",
+    "react/react-in-jsx-scope": "off",
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": [
+      "error",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "typescript/no-explicit-any": "error",
+    "unicorn/no-useless-spread": "off"
+  }
+}
