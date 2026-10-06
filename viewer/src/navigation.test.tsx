@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { NavAction } from "./components/ui";
 import {
   UrlStateProvider,
   useUrlState,
@@ -27,11 +26,11 @@ describe("navigation", () => {
     expect(renderToStaticMarkup(<ViewerLink href="/a">A</ViewerLink>)).toBe('<a href="/a">A</a>');
   });
 
-  it("renders links, NavAction included, through the host's link component", () => {
+  it("renders links through the host's link component", () => {
     const html = renderToStaticMarkup(
       <ViewerLinkProvider link={HostLink}>
         <ViewerLink href="/a">A</ViewerLink>
-        <NavAction href="/b">B</NavAction>
+        <ViewerLink href="/b">B</ViewerLink>
       </ViewerLinkProvider>,
     );
     expect(html).toContain('data-host-link="" href="/app/a"');

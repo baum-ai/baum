@@ -6,7 +6,6 @@ import type {
   ReactNode,
 } from "react";
 
-import { ViewerLink, type ViewerLinkProps } from "../navigation";
 import { cn, FOCUS_RING } from "./classnames";
 import { tabIds } from "./tabs";
 
@@ -234,16 +233,6 @@ type ActionLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & ActionOptions;
 
 export function ActionLink({ className, variant, size, grow, ...props }: ActionLinkProps) {
   return <a className={cn(actionClassName({ variant, size, grow }), className)} {...props} />;
-}
-
-type NavActionProps = ViewerLinkProps & ActionOptions;
-
-/** An action styled like {@link ActionLink} that navigates in-app, through the
- *  host's link component, instead of reloading. */
-export function NavAction({ className, variant, size, grow, ...props }: NavActionProps) {
-  return (
-    <ViewerLink className={cn(actionClassName({ variant, size, grow }), className)} {...props} />
-  );
 }
 
 type AlertProps = {

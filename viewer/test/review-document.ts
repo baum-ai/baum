@@ -1,6 +1,7 @@
 /** A generated review document for a sample repository, in the shape of
  *  `baum.review/1`, and one earlier version of it. Small on purpose: enough
- *  sections and blocks for the tests to exercise every core slot. */
+ *  sections and blocks for the tests to exercise every core slot. Hosts reuse
+ *  it in their own tests, so its section identifiers stay fixed. */
 
 const pull = "https://github.com/acme/widgets/pull/42";
 const hunk = (
