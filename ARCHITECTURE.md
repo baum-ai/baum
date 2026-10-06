@@ -249,6 +249,16 @@ variable to restyle the viewer without forking it.
 7. validates, derives and redacts the document, and stores it as the next
    version.
 
+Every git read (the comparison, patches, blobs and the worktree) runs in a
+private temporary bare repository that borrows the clone's objects and has
+default configuration, as the hosted git mirror does, so the clone's own
+configuration, attributes and replace refs cannot change the output and the
+clone's refs, configuration and worktree registrations are left as they
+were. Only a pull request commit the clone lacks is fetched into the clone,
+under `refs/baum/`, with the user's git configuration and no hooks. A
+partial clone missing the pull request's objects is reported rather than
+fetched from on demand.
+
 `baum bundle` stops after step 5. `baum validate` and `baum refresh` run the
 `review` steps on an existing document. `baum view` serves the viewer, the
 document, its versions and the cached images.

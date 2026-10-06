@@ -5,19 +5,32 @@
 // temporary worktree.
 //
 // The git invocations (diff flags, rename detection, status mapping, patch
-// formats and size limits) are the ones the hosted service's git mirror uses,
-// so the same pull request produces the same comparison and hunks locally and
-// hosted. The one deliberate difference: a clone has a working tree and
-// configuration, so every read runs with the user's configuration ignored and
-// no working-tree attributes.
+// formats and size limits) are the ones the hosted service's git mirror
+// uses, and they run in the same kind of repository: a private temporary
+// bare repository with default configuration and no refs, which borrows the
+// clone's objects through objects/info/alternates. So the clone's own
+// configuration (diff order files, submodule display, big-file threshold),
+// attributes (working tree, info/attributes), .gitmodules, replace refs,
+// grafts and promisor remote do not reach a read, nor do the user's global
+// and system configuration or GIT_ environment variables, and the same pull
+// request produces the same comparison, patches and blobs locally and
+// hosted. A partial clone missing objects a read needs is reported as
+// ErrPartialClone; nothing is fetched on demand.
 //
-// Nothing here touches the user's branches, HEAD, index or working tree.
-// Fetched pull request commits land under refs/baum/, and a checkout is a
-// detached worktree in a temporary directory outside the clone.
+// Only two operations run in the clone itself, with the user's
+// configuration so credentials, URL rewrites and safe.directory work:
+// finding the repository, and fetching a missing pull request commit, which
+// lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
+// index, working tree, configuration and worktree registrations are never
+// changed. A checkout is a detached worktree of the private repository in a
+// temporary directory outside the clone.
 //
 // Every git process runs without a shell, under a timeout, with its output
 // capped, and with prompts, pagers and editors disabled. Errors carry a short
 // sanitised stderr snippet and never the command line.
+//
+// It needs git 2.29 or newer (fetch --no-write-fetch-head and
+// --no-auto-maintenance).
 package gitlocal
 
 import (
@@ -37,6 +50,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lastpersonlabs/baum/bundle"
@@ -62,13 +76,17 @@ var (
 	// ErrObjectNotFound reports a commit, merge base or file that does not
 	// exist.
 	ErrObjectNotFound = errors.New("git object not found")
+	// ErrPartialClone reports a partial clone that lacks objects a read
+	// needs. They are not fetched on demand.
+	ErrPartialClone = errors.New("the partial clone is missing objects this pull request needs; use a full clone, or let git fetch them first, for example with git diff --stat <base> <head> in the clone")
 )
 
 // Options configure a Repo. The zero value uses the defaults.
 type Options struct {
 	// Remote is fetched from when a pull request commit is missing.
 	Remote string
-	// TempDir holds worktrees; empty uses the system temporary directory.
+	// TempDir holds the private repository and worktrees; empty uses the
+	// system temporary directory. It must be outside the clone.
 	TempDir string
 	// MaxComparisonBytes caps the output of each comparison command.
 	MaxComparisonBytes int64
@@ -81,13 +99,23 @@ type Options struct {
 	FetchTimeout   time.Duration
 }
 
-// Repo is a local clone.
+// Repo is a local clone. Close removes its private repository.
 type Repo struct {
-	dir  string
-	opts Options
+	dir     string
+	objects string
+	shallow string
+	mirror  string
+	partial bool
+	opts    Options
+
+	mu        sync.Mutex
+	closed    bool
+	worktrees map[*Worktree]struct{}
 }
 
-// Open checks that dir is inside a git repository and returns it.
+// Open checks that dir is inside a git repository with a working tree and
+// sets up the private repository reads run in. The caller must Close the
+// result.
 func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	if opts.Remote == "" {
 		opts.Remote = DefaultRemote
@@ -108,13 +136,63 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Repo{dir: abs, opts: opts}
-	out, err := r.read(ctx, maxOIDOutputBytes+4096, "rev-parse", "--show-toplevel")
+	out, err := run(ctx, runSpec{dir: abs, env: userEnv(), limit: 64 << 10, timeout: opts.CommandTimeout},
+		"rev-parse", "--show-toplevel", "--git-path", "objects", "--git-path", "shallow", "--show-object-format")
 	if err != nil {
 		return nil, fmt.Errorf("opening repository: %w", err)
 	}
-	r.dir = strings.TrimSpace(string(out))
+	fields := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(fields) != 4 {
+		return nil, errors.New("opening repository: unexpected rev-parse output")
+	}
+	absolute := func(path string) string {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path)
+		}
+		return filepath.Join(abs, path)
+	}
+	r := &Repo{
+		dir: filepath.Clean(fields[0]), objects: absolute(fields[1]), shallow: absolute(fields[2]),
+		opts: opts, worktrees: map[*Worktree]struct{}{},
+	}
+	r.mirror, err = newMirror(opts.TempDir, r.objects, fields[3])
+	if err != nil {
+		return nil, err
+	}
+	if inside(r.dir, r.mirror) {
+		_ = removeAll(r.mirror)
+		return nil, fmt.Errorf("%w: temporary directory %s is inside the repository; set TMPDIR elsewhere", ErrInvalidInput, r.mirror)
+	}
+	if err := syncShallow(r.mirror, r.shallow); err != nil {
+		_ = removeAll(r.mirror)
+		return nil, fmt.Errorf("copying the shallow file: %w", err)
+	}
+	r.partial = isPartial(r.objects)
 	return r, nil
+}
+
+// Close removes the worktrees still open and the private repository. It is
+// safe to call more than once.
+func (r *Repo) Close() error {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	open := make([]*Worktree, 0, len(r.worktrees))
+	for w := range r.worktrees {
+		open = append(open, w)
+	}
+	r.mu.Unlock()
+	var errs []error
+	for _, w := range open {
+		errs = append(errs, w.Close())
+	}
+	if err := removeAll(r.mirror); err != nil {
+		errs = append(errs, fmt.Errorf("removing private repository: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func orDefault(v, d int64) int64 {
@@ -127,12 +205,29 @@ func orDefault(v, d int64) int64 {
 // Dir is the clone's top-level directory.
 func (r *Repo) Dir() string { return r.dir }
 
-// read runs a read-only command with the hermetic configuration.
+// read runs a read-only command in the private repository. In a partial
+// clone, a failure to read an object is ErrPartialClone.
 func (r *Repo) read(ctx context.Context, limit int64, args ...string) ([]byte, error) {
-	return run(ctx, runSpec{
-		dir: r.dir, limit: limit, mode: envHermetic, timeout: r.opts.CommandTimeout,
-		config: hermeticConfig, global: []string{"--attr-source=" + emptyTreeOID},
-	}, args...)
+	out, err := run(ctx, runSpec{dir: r.mirror, env: mirrorEnv(r.mirror), limit: limit, timeout: r.opts.CommandTimeout}, args...)
+	return out, r.missingObjects(err)
+}
+
+func (r *Repo) missingObjects(err error) error {
+	var gitErr *Error
+	if !r.partial || !errors.As(err, &gitErr) || isContextError(err) {
+		return err
+	}
+	stderr := strings.ToLower(gitErr.Stderr)
+	for _, marker := range []string{"unable to read", "bad object", "bad file", "missing", "could not read"} {
+		if strings.Contains(stderr, marker) {
+			return fmt.Errorf("%w: %w", ErrPartialClone, err)
+		}
+	}
+	return err
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 var oidPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
@@ -174,33 +269,63 @@ type Pull struct {
 	MergeBaseOID string
 }
 
-// ResolvePull makes sure the base and head commits exist locally, fetching
-// refs/pull/<N>/head and the base branch from the remote into
-// refs/baum/pull/<N>/ when one is missing, and computes the merge base. A
-// clone with both commits makes no network call.
+// ResolvePull makes sure the base and head commits exist locally and
+// computes the merge base. A missing head is fetched from refs/pull/<N>/head
+// and a missing base from the base branch, into refs/baum/pull/<N>/; a
+// commit that is still missing (the pull request or branch has moved on
+// since the commit was recorded) is then fetched by its ID, as the hosted
+// mirror recovers one. A clone with both commits makes no network call.
 func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 	if pr.Number <= 0 || !validOID(pr.BaseSHA) || !validOID(pr.HeadSHA) {
 		return Pull{}, ErrInvalidInput
 	}
-	var refspecs []string
-	if !r.hasCommit(ctx, pr.HeadSHA) {
-		refspecs = append(refspecs, fmt.Sprintf("+refs/pull/%d/head:refs/baum/pull/%d/head", pr.Number, pr.Number))
+	type want struct{ name, oid, ref string }
+	wants := []want{
+		{"head", pr.HeadSHA, fmt.Sprintf("refs/baum/pull/%d/head", pr.Number)},
+		{"base", pr.BaseSHA, fmt.Sprintf("refs/baum/pull/%d/base", pr.Number)},
 	}
-	if !r.hasCommit(ctx, pr.BaseSHA) {
-		baseRef := strings.TrimPrefix(pr.BaseRef, "refs/heads/")
-		if !validRefName(baseRef) {
-			return Pull{}, fmt.Errorf("%w: base commit %s is missing and the base branch name is not usable", ErrInvalidInput, pr.BaseSHA)
+	missing := func() []want {
+		var out []want
+		for _, w := range wants {
+			if !r.hasCommit(ctx, w.oid) {
+				out = append(out, w)
+			}
 		}
-		refspecs = append(refspecs, fmt.Sprintf("+refs/heads/%s:refs/baum/pull/%d/base", baseRef, pr.Number))
+		return out
 	}
-	if len(refspecs) > 0 {
+	var fetchErrs []error
+	if absent := missing(); len(absent) > 0 {
+		var refspecs []string
+		for _, w := range absent {
+			if w.name == "head" {
+				refspecs = append(refspecs, fmt.Sprintf("+refs/pull/%d/head:%s", pr.Number, w.ref))
+				continue
+			}
+			baseRef := strings.TrimPrefix(pr.BaseRef, "refs/heads/")
+			if !validRefName(baseRef) {
+				return Pull{}, fmt.Errorf("%w: base commit %s is missing and the base branch name is not usable", ErrInvalidInput, pr.BaseSHA)
+			}
+			refspecs = append(refspecs, fmt.Sprintf("+refs/heads/%s:%s", baseRef, w.ref))
+		}
 		if err := r.fetch(ctx, refspecs); err != nil {
-			return Pull{}, fmt.Errorf("fetching pull request %d from %s: %w", pr.Number, r.opts.Remote, err)
+			fetchErrs = append(fetchErrs, err)
 		}
-	}
-	for name, oid := range map[string]string{"head": pr.HeadSHA, "base": pr.BaseSHA} {
-		if !r.hasCommit(ctx, oid) {
-			return Pull{}, fmt.Errorf("%w: %s commit %s is not available from %s", ErrObjectNotFound, name, oid, r.opts.Remote)
+		if absent = missing(); len(absent) > 0 {
+			refspecs = refspecs[:0]
+			for _, w := range absent {
+				refspecs = append(refspecs, "+"+w.oid+":"+w.ref)
+			}
+			if err := r.fetch(ctx, refspecs); err != nil {
+				fetchErrs = append(fetchErrs, err)
+			}
+		}
+		if absent = missing(); len(absent) > 0 {
+			remote := sanitize([]byte(r.opts.Remote))
+			err := fmt.Errorf("%w: %s commit %s is not available from %s", ErrObjectNotFound, absent[0].name, absent[0].oid, remote)
+			if len(fetchErrs) > 0 {
+				err = fmt.Errorf("%w: fetching pull request %d: %w", err, pr.Number, errors.Join(fetchErrs...))
+			}
+			return Pull{}, err
 		}
 	}
 	mergeBase, err := r.mergeBase(ctx, pr.BaseSHA, pr.HeadSHA)
@@ -215,20 +340,32 @@ func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 	return err == nil
 }
 
-// fetch brings refspecs into the private refs/baum/ namespace. It keeps the
-// user's configuration for credentials and URL rewrites, and writes no
-// FETCH_HEAD, tags, remote-tracking branches or auto-maintenance.
+// fetch brings refspecs into the private refs/baum/ namespace of the clone.
+// It keeps the user's configuration for credentials, URL rewrites and
+// safe.directory, and runs no hooks and writes no FETCH_HEAD, tags,
+// remote-tracking branches, commit-graph or auto-maintenance. In a partial
+// clone the fetch keeps the clone's filter.
 func (r *Repo) fetch(ctx context.Context, refspecs []string) error {
-	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", r.opts.Remote}
+	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-prune", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", r.opts.Remote}
 	_, err := run(ctx, runSpec{
-		dir: r.dir, mode: envUser, timeout: r.opts.FetchTimeout,
-		config: []string{"protocol.ext.allow=never", "gc.auto=0", "maintenance.auto=false", "fetch.recurseSubmodules=false"},
+		dir: r.dir, env: userEnv(), timeout: r.opts.FetchTimeout,
+		config: []string{
+			"core.hooksPath=" + filepath.Join(r.mirror, "hooks"), "protocol.ext.allow=never", "gc.auto=0",
+			"maintenance.auto=false", "fetch.recurseSubmodules=false", "fetch.writeCommitGraph=false",
+		},
 	}, append(args, refspecs...)...)
-	return err
+	if err != nil {
+		return err
+	}
+	// A fetch into a shallow clone can add shallow commits.
+	return syncShallow(r.mirror, r.shallow)
 }
 
 func (r *Repo) mergeBase(ctx context.Context, base, head string) (string, error) {
 	out, err := r.read(ctx, maxOIDOutputBytes, "merge-base", base, head)
+	if err != nil && (isContextError(err) || errors.Is(err, ErrPartialClone)) {
+		return "", err
+	}
 	if err != nil {
 		return "", fmt.Errorf("%w: no merge base for %s and %s (a shallow clone may lack history)", ErrObjectNotFound, base, head)
 	}
@@ -295,7 +432,8 @@ func (r *Repo) Compare(ctx context.Context, base, head string) (bundle.Compariso
 // returned. A binary change reads as git's "Binary files ... differ" line.
 // A patch over MaxPatchBytes is bundle.ErrOutputTooLarge; a git failure on
 // the file itself (exit status, not cancellation or timeout) is
-// bundle.ErrPatchUnreadable.
+// bundle.ErrPatchUnreadable, except that missing objects of a partial clone
+// are ErrPartialClone.
 func (r *Repo) PatchFetcher(ctx context.Context, comparison bundle.Comparison) bundle.PatchFetcher {
 	return func(paths ...string) ([]byte, error) {
 		return r.TextPatch(ctx, comparison.BaseOID, comparison.HeadOID, paths...)
@@ -319,7 +457,7 @@ func (r *Repo) TextPatch(ctx context.Context, baseOID, headOID string, paths ...
 	}
 	out, err := r.read(ctx, r.opts.MaxPatchBytes, args...)
 	var exit *exec.ExitError
-	if err != nil && ctx.Err() == nil && errors.As(err, &exit) && exit.Exited() {
+	if err != nil && !errors.Is(err, ErrPartialClone) && ctx.Err() == nil && errors.As(err, &exit) && exit.Exited() {
 		return nil, fmt.Errorf("%w: %v", bundle.ErrPatchUnreadable, err)
 	}
 	if err != nil {
@@ -335,14 +473,21 @@ type Blob struct {
 	Content []byte
 }
 
-// ReadBlob reads the regular file at path in commit rev. A missing path, or
-// one that is not a file, is ErrObjectNotFound; a file over MaxBlobBytes is
-// bundle.ErrOutputTooLarge.
+// ReadBlob reads the blob at path in commit rev: a regular or executable
+// file, or a symbolic link (its content is the link target), as the hosted
+// mirror reads one. A missing path, or a directory or submodule, is
+// ErrObjectNotFound; a file over MaxBlobBytes is bundle.ErrOutputTooLarge.
+// A timeout or cancellation is returned as the context's error, where the
+// hosted mirror reports ErrObjectNotFound, so a slow read is not mistaken
+// for a missing file.
 func (r *Repo) ReadBlob(ctx context.Context, rev, path string) (Blob, error) {
 	if !validOID(rev) || !validGitPath(path) {
 		return Blob{}, ErrInvalidInput
 	}
 	out, err := r.read(ctx, maxSingleTreeEntrySize, "ls-tree", "-z", "-l", rev, "--", ":(literal)"+path)
+	if err != nil && (isContextError(err) || errors.Is(err, ErrPartialClone)) {
+		return Blob{}, err
+	}
 	if err != nil || len(out) == 0 {
 		return Blob{}, ErrObjectNotFound
 	}
@@ -520,5 +665,5 @@ func diffStatus(value string) string {
 	}
 }
 
-// removeAll is os.RemoveAll, a seam for worktree cleanup.
+// removeAll is os.RemoveAll, a seam for cleanup.
 var removeAll = os.RemoveAll

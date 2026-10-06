@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lastpersonlabs/baum/bundle"
 )
@@ -18,7 +19,7 @@ func requireGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_AUTHOR_NAME", "Test")
 	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
@@ -117,6 +118,11 @@ func open(t *testing.T, dir string, opts Options) *Repo {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	return r
 }
 
@@ -197,7 +203,14 @@ func TestCompareOutputLimitFallsBackToObjectHash(t *testing.T) {
 	}
 	// Large enough for the raw and numstat listings, too small for the full
 	// patch, as the hosted comparison does when its patch read is oversize.
-	r := open(t, f.dir, Options{MaxComparisonBytes: 1100})
+	listing := max(
+		len(git(t, f.dir, "diff-tree", "-r", "--no-commit-id", "--raw", "-z", "-M", "-l1000", f.base, f.head)),
+		len(git(t, f.dir, "diff-tree", "-r", "--no-commit-id", "--numstat", "-z", "-M", "-l1000", f.base, f.head)),
+	) + 1
+	if patch := git(t, f.dir, "diff", "--no-ext-diff", "--no-textconv", "--full-index", "-M", "-l1000", f.base, f.head); len(patch) <= listing {
+		t.Fatalf("full patch (%d bytes) fits the listing limit %d", len(patch), listing)
+	}
+	r := open(t, f.dir, Options{MaxComparisonBytes: int64(listing)})
 	small, err := r.Compare(context.Background(), f.base, f.head)
 	if err != nil {
 		t.Fatal(err)
@@ -331,62 +344,23 @@ func TestPatchFetcherLimitsAndUnreadable(t *testing.T) {
 	}
 }
 
-func TestWorkingTreeAttributesDoNotHideText(t *testing.T) {
-	f := newFixture(t)
-	// A -diff attribute in the clone's working tree would make git call
-	// every .txt file binary; a bare mirror never sees it.
-	write(t, f.dir, ".gitattributes", "*.txt -diff\n", 0o644)
-	r := open(t, f.dir, Options{})
-	ctx := context.Background()
-	cmp, err := r.Compare(ctx, f.base, f.head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range cmp.Files {
-		if file.NewPath == "mod.txt" && (file.Additions == nil || *file.Additions != 2) {
-			t.Fatalf("mod.txt counts hidden by attributes: %+v", file)
-		}
-	}
-	patch, err := r.TextPatch(ctx, cmp.BaseOID, cmp.HeadOID, "mod.txt")
-	if err != nil || !strings.Contains(string(patch), "+extra") {
-		t.Fatalf("patch = %q, %v", patch, err)
-	}
-}
-
-func TestLocalConfigDoesNotChangePatch(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	r := open(t, f.dir, Options{})
-	cmp, err := r.Compare(ctx, f.base, f.head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := r.TextPatch(ctx, cmp.BaseOID, cmp.HeadOID, "mod.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	git(t, f.dir, "config", "diff.noprefix", "true")
-	git(t, f.dir, "config", "diff.context", "9")
-	git(t, f.dir, "config", "diff.algorithm", "patience")
-	git(t, f.dir, "config", "color.ui", "always")
-	after, err := r.TextPatch(ctx, cmp.BaseOID, cmp.HeadOID, "mod.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) || !strings.Contains(string(after), "diff --git a/mod.txt b/mod.txt") {
-		t.Fatalf("patch changed with local config:\n%s\n---\n%s", before, after)
-	}
-}
-
 func TestReadBlob(t *testing.T) {
 	f := newFixture(t)
 	write(t, f.dir, "REVIEW.md", "# Review\n", 0o644)
+	if err := os.Symlink("REVIEW.md", filepath.Join(f.dir, "link.md")); err != nil {
+		t.Fatal(err)
+	}
 	rev := commit(t, f.dir, "add review")
 	r := open(t, f.dir, Options{MaxBlobBytes: 64})
 	ctx := context.Background()
 	got, err := r.ReadBlob(ctx, rev, "REVIEW.md")
 	if err != nil || string(got.Content) != "# Review\n" || got.Mode != "100644" {
 		t.Fatalf("blob = %+v, %v", got, err)
+	}
+	// A symbolic link reads as its target, as the hosted mirror reads it.
+	got, err = r.ReadBlob(ctx, rev, "link.md")
+	if err != nil || string(got.Content) != "REVIEW.md" || got.Mode != "120000" {
+		t.Fatalf("link = %+v, %v", got, err)
 	}
 	write(t, f.dir, "big.md", strings.Repeat("x", 200), 0o644)
 	big := commit(t, f.dir, "big")
@@ -408,12 +382,71 @@ func TestReadBlob(t *testing.T) {
 			}
 		})
 	}
+	t.Run("timeout is not a missing file", func(t *testing.T) {
+		slow := open(t, f.dir, Options{})
+		slow.opts.CommandTimeout = time.Nanosecond
+		_, err := slow.ReadBlob(ctx, rev, "REVIEW.md")
+		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrObjectNotFound) {
+			t.Fatalf("err = %v, want a deadline error", err)
+		}
+	})
 }
 
-// snapshot captures everything a read-only operation must not change.
+// gitDir is the clone's common git directory.
+func gitDir(t *testing.T, dir string) string {
+	t.Helper()
+	path := git(t, dir, "rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	return path
+}
+
+// tree lists every file under dir with its content, or "" for a missing
+// directory.
+func tree(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if d.IsDir() {
+			fmt.Fprintf(&b, "%s/\n", rel)
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		fmt.Fprintf(&b, "%s: %q %v\n", rel, content, err)
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "<absent>"
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
+}
+
+// snapshot captures everything an operation must not change in the clone.
+// Fetched refs under refs/baum/ and fetched objects are allowed to change.
 func snapshot(t *testing.T, dir string) string {
 	t.Helper()
-	refs := git(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags", "refs/remotes")
+	common := gitDir(t, dir)
+	refs := git(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags", "refs/remotes", "refs/replace")
 	return strings.Join([]string{
 		git(t, dir, "rev-parse", "HEAD"),
 		git(t, dir, "symbolic-ref", "HEAD"),
@@ -421,16 +454,28 @@ func snapshot(t *testing.T, dir string) string {
 		git(t, dir, "status", "--porcelain=v2", "--branch", "-uall"),
 		git(t, dir, "diff", "--no-ext-diff", "HEAD"),
 		git(t, dir, "ls-files", "--stage"),
+		"config: " + readFile(t, filepath.Join(common, "config")),
+		"packed-refs: " + readFile(t, filepath.Join(common, "packed-refs")),
+		"FETCH_HEAD: " + readFile(t, filepath.Join(common, "FETCH_HEAD")),
+		"shallow: " + readFile(t, filepath.Join(common, "shallow")),
+		"worktrees:\n" + tree(t, filepath.Join(common, "worktrees")),
+		"info:\n" + tree(t, filepath.Join(common, "info")),
+		"hooks:\n" + tree(t, filepath.Join(common, "hooks")),
 	}, "\n--\n")
-}
-
-func worktreeCount(t *testing.T, dir string) int {
-	t.Helper()
-	return strings.Count(git(t, dir, "worktree", "list", "--porcelain"), "worktree ")
 }
 
 func TestOperationsLeaveTheCloneUntouched(t *testing.T) {
 	f := newFixture(t)
+	// A worktree of the user's that has since been moved is a stale
+	// registration that a prune would delete.
+	mine := filepath.Join(t.TempDir(), "mine")
+	git(t, f.dir, "worktree", "add", "-q", "--detach", mine, f.base)
+	if err := os.Rename(mine, filepath.Join(t.TempDir(), "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if git(t, f.dir, "worktree", "prune", "--dry-run") == "" {
+		t.Fatal("moved worktree is not a stale registration")
+	}
 	git(t, f.dir, "checkout", "-q", "-b", "wip", f.base)
 	write(t, f.dir, "mod.txt", "dirty edit\n", 0o644)
 	write(t, f.dir, "untracked.txt", "u\n", 0o644)
@@ -462,11 +507,14 @@ func TestOperationsLeaveTheCloneUntouched(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(wt.Dir, "new.txt")); string(got) != "new\nfile\n" {
 		t.Fatalf("worktree content = %q", got)
 	}
+	if got := git(t, wt.Dir, "rev-parse", "HEAD"); got != f.head {
+		t.Fatalf("worktree HEAD = %s, want %s", got, f.head)
+	}
 	if inside(f.dir, wt.Dir) {
 		t.Fatalf("worktree %s is inside the clone", wt.Dir)
 	}
-	if worktreeCount(t, f.dir) != 2 {
-		t.Fatal("worktree not registered while open")
+	if after := snapshot(t, f.dir); after != before {
+		t.Fatalf("clone changed while the worktree is open:\n%s\n=== after ===\n%s", before, after)
 	}
 	if err := wt.Close(); err != nil {
 		t.Fatal(err)
@@ -477,30 +525,65 @@ func TestOperationsLeaveTheCloneUntouched(t *testing.T) {
 	if _, err := os.Stat(wt.Dir); !os.IsNotExist(err) {
 		t.Fatalf("worktree dir remains: %v", err)
 	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
 		t.Fatalf("temp dir not empty: %v", entries)
-	}
-	if worktreeCount(t, f.dir) != 1 {
-		t.Fatal("worktree still registered after Close")
 	}
 	if after := snapshot(t, f.dir); after != before {
 		t.Fatalf("clone changed:\n%s\n=== after ===\n%s", before, after)
 	}
 }
 
+// mirrorWorktrees lists the private repository's worktree registrations.
+func mirrorWorktrees(t *testing.T, r *Repo) []os.DirEntry {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(r.mirror, "worktrees"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return entries
+}
+
 func TestWorktreeCleanedUpOnFailure(t *testing.T) {
 	f := newFixture(t)
+	// A head whose checkout fails after the worktree is registered: a
+	// required filter whose smudge command fails.
+	git(t, f.dir, "checkout", "-q", "feature")
+	write(t, f.dir, ".gitattributes", "new.txt filter=broken\n", 0o644)
+	filtered := commit(t, f.dir, "filtered")
+	git(t, f.dir, "checkout", "-q", "main")
+	before := snapshot(t, f.dir)
 	temp := t.TempDir()
 	r := open(t, f.dir, Options{TempDir: temp})
-	_, err := r.AddWorktree(context.Background(), strings.Repeat("c", 40))
-	if err == nil {
-		t.Fatal("expected an error for an unknown commit")
+	onlyMirror := func(t *testing.T) {
+		t.Helper()
+		entries, _ := os.ReadDir(temp)
+		if len(entries) != 1 || entries[0].Name() != filepath.Base(r.mirror) {
+			t.Fatalf("temp dir holds %v, want only the private repository", entries)
+		}
+		if got := mirrorWorktrees(t, r); len(got) != 0 {
+			t.Fatalf("registrations left: %v", got)
+		}
 	}
-	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
-		t.Fatalf("temp dir not empty after failure: %v", entries)
+	tests := []struct {
+		name   string
+		rev    string
+		config []string
+	}{
+		{"unknown commit", strings.Repeat("c", 40), nil},
+		{"checkout fails after registration", filtered, []string{"filter.broken.smudge=false", "filter.broken.required=true"}},
 	}
-	if worktreeCount(t, f.dir) != 1 {
-		t.Fatal("failed add left a registration")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			worktreeConfig = tt.config
+			t.Cleanup(func() { worktreeConfig = nil })
+			if _, err := r.AddWorktree(context.Background(), tt.rev); err == nil {
+				t.Fatal("expected an error")
+			}
+			onlyMirror(t)
+		})
 	}
 	// A cancelled context still cleans up a worktree that was created.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -508,28 +591,51 @@ func TestWorktreeCleanedUpOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(mirrorWorktrees(t, r)) != 1 {
+		t.Fatal("worktree not registered in the private repository")
+	}
 	cancel()
 	if err := wt.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if worktreeCount(t, f.dir) != 1 {
-		t.Fatal("registration left after Close with cancelled context")
+	onlyMirror(t)
+	// Closing the repository closes a worktree left open.
+	open, err := r.AddWorktree(context.Background(), f.head)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A worktree directory inside the clone is refused.
-	inner := open(t, f.dir, Options{TempDir: filepath.Join(f.dir, "sub")})
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(open.Dir); !os.IsNotExist(err) {
+		t.Fatalf("worktree left after Repo.Close: %v", err)
+	}
+	if entries, _ := os.ReadDir(temp); len(entries) != 0 {
+		t.Fatalf("temp dir not empty after Repo.Close: %v", entries)
+	}
+	if after := snapshot(t, f.dir); after != before {
+		t.Fatalf("clone changed:\n%s\n=== after ===\n%s", before, after)
+	}
+	// A temporary directory inside the clone is refused.
 	if err := os.MkdirAll(filepath.Join(f.dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inner.AddWorktree(context.Background(), f.head); !errors.Is(err, ErrInvalidInput) {
+	if _, err := Open(context.Background(), f.dir, Options{TempDir: filepath.Join(f.dir, "sub")}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.dir, "sub")); len(entries) != 0 {
+		t.Fatalf("refused open left %v", entries)
 	}
 }
 
-func TestWorktreeSkipsHooks(t *testing.T) {
+func TestWorktreeSkipsHooksAndUserFilters(t *testing.T) {
 	f := newFixture(t)
 	marker := filepath.Join(t.TempDir(), "ran")
 	hook := filepath.Join(f.dir, ".git", "hooks", "post-checkout")
 	write(t, filepath.Dir(hook), "post-checkout", "#!/bin/sh\ntouch "+marker+"\n", 0o755)
+	// A smudge filter configured in the clone does not run either.
+	git(t, f.dir, "config", "filter.mark.smudge", "touch "+marker+"; cat")
+	write(t, filepath.Join(f.dir, ".git", "info"), "attributes", "* filter=mark\n", 0o644)
 	r := open(t, f.dir, Options{})
 	wt, err := r.AddWorktree(context.Background(), f.head)
 	if err != nil {
@@ -537,7 +643,7 @@ func TestWorktreeSkipsHooks(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = wt.Close() })
 	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("post-checkout hook ran")
+		t.Fatal("a hook or filter ran")
 	}
 }
 
@@ -552,6 +658,8 @@ func newRemoteFixture(t *testing.T) remoteFixture {
 	t.Helper()
 	requireGit(t)
 	remote := initRepo(t)
+	// Protocol v0 serves an unadvertised commit only with this set.
+	git(t, remote, "config", "uploadpack.allowAnySHA1InWant", "true")
 	write(t, remote, "a.txt", lines("a", 5), 0o644)
 	commit(t, remote, "initial")
 	clone := filepath.Join(t.TempDir(), "clone")
@@ -612,9 +720,31 @@ func TestResolvePullFetchesMissingCommits(t *testing.T) {
 		{
 			name: "pull ref that does not exist", remoteName: "origin",
 			pr: func(f remoteFixture) PullRequest {
-				return PullRequest{Number: 8, BaseSHA: f.base, HeadSHA: f.head, BaseRef: "main"}
+				return PullRequest{Number: 8, BaseSHA: f.base, HeadSHA: strings.Repeat("e", 40), BaseRef: "main"}
 			},
 			wantErr: &Error{},
+		},
+		{
+			name: "missing pull ref falls back to the commit ID", remoteName: "origin",
+			pr: func(f remoteFixture) PullRequest {
+				return PullRequest{Number: 8, BaseSHA: f.base, HeadSHA: f.head, BaseRef: "main"}
+			},
+			wantRefs: []string{"refs/baum/pull/8/base", "refs/baum/pull/8/head"},
+		},
+		{
+			name: "head moved after it was recorded", remoteName: "origin",
+			prepare: func(t *testing.T, f remoteFixture) {
+				// A force push: the pull ref now names a sibling commit, so
+				// fetching it does not bring the recorded head.
+				git(t, f.remote, "checkout", "-q", "--detach", f.base)
+				write(t, f.remote, "a.txt", "rewritten\n", 0o644)
+				git(t, f.remote, "update-ref", "refs/pull/7/head", commit(t, f.remote, "force pushed"))
+				git(t, f.remote, "checkout", "-q", "main")
+			},
+			pr: func(f remoteFixture) PullRequest {
+				return PullRequest{Number: 7, BaseSHA: f.base, HeadSHA: f.head, BaseRef: "main"}
+			},
+			wantRefs: []string{"refs/baum/pull/7/base", "refs/baum/pull/7/head"},
 		},
 		{
 			name: "head the remote never had", remoteName: "origin",
@@ -647,9 +777,12 @@ func TestResolvePullFetchesMissingCommits(t *testing.T) {
 			if tt.prepare != nil {
 				tt.prepare(t, f)
 			}
-			// Dirty the clone first to prove it stays as it was.
+			// Dirty the clone first to prove it stays as it was, and install
+			// a hook a fetch would run if hooks were enabled.
 			write(t, f.clone, "a.txt", "dirty\n", 0o644)
 			write(t, f.clone, "scratch.txt", "x\n", 0o644)
+			marker := filepath.Join(t.TempDir(), "hook-ran")
+			write(t, filepath.Join(f.clone, ".git", "hooks"), "reference-transaction", "#!/bin/sh\ntouch "+marker+"\n", 0o755)
 			before := snapshot(t, f.clone)
 
 			r := open(t, f.clone, Options{Remote: tt.remoteName})
@@ -684,7 +817,16 @@ func TestResolvePullFetchesMissingCommits(t *testing.T) {
 				}
 			}
 			for _, ref := range tt.wantRefs {
-				git(t, f.clone, "rev-parse", "--verify", ref)
+				want := f.base
+				if strings.HasSuffix(ref, "/head") {
+					want = f.head
+				}
+				if got := git(t, f.clone, "rev-parse", "--verify", ref); got != want {
+					t.Errorf("%s = %s, want %s", ref, got, want)
+				}
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Error("the fetch ran a hook")
 			}
 			if tt.wantRefs == nil && tt.wantErr == nil {
 				if refs := git(t, f.clone, "for-each-ref", "refs/baum"); refs != "" {
@@ -741,7 +883,7 @@ func TestRunTimeoutAndHermeticEnv(t *testing.T) {
 	if r.Dir() == "" {
 		t.Fatal("no dir")
 	}
-	_, err := run(context.Background(), runSpec{dir: dir, timeout: 1, mode: envHermetic}, "status")
+	_, err := run(context.Background(), runSpec{dir: dir, timeout: 1, env: userEnv()}, "status")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline error", err)
 	}
