@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "database-schema",
+    "use_when": "Explain table, column, index or relationship changes."
+  },
+  {
+    "kind": "api-contract",
+    "use_when": "Explain one HTTP operation, its request/response and compatibility. Use separate tiles for distinct operations."
+  },
+  {
+    "kind": "architecture",
+    "use_when": "Show changed components, dependencies, boundaries or runtime interactions."
+  },
+  {
+    "kind": "access-model",
+    "use_when": "Explain effective permissions, permission changes or a permission risk."
+  },
+  {
+    "kind": "bug-fix",
+    "use_when": "Explain a defect and its correction."
+  }
+]

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useUrlState } from "./navigation";
 import type { LoadReviewVersion, ReviewVersionState } from "./review-document";
@@ -60,6 +60,10 @@ export function useHistoryView(currentVersion: number | undefined, loadVersion: 
     setRequested(value);
     writeSearch((current) => withHistorySelection(current, value), { preventScrollReset: true });
   };
+  // The latest loader, read when a version is asked for: a host that passes
+  // a new function on each render must not reload the version on screen.
+  const load = useRef(loadVersion);
+  load.current = loadVersion;
   const [loaded, setLoaded] = useState<{ version: number; state: ReviewVersionState } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const version = selection?.version;
@@ -67,7 +71,7 @@ export function useHistoryView(currentVersion: number | undefined, loadVersion: 
     if (version === undefined) return;
     let active = true;
     setLoaded({ version, state: { status: "loading" } });
-    void loadVersion(version).then(
+    void load.current(version).then(
       (state) => {
         if (active) setLoaded({ version, state });
       },
@@ -78,7 +82,7 @@ export function useHistoryView(currentVersion: number | undefined, loadVersion: 
     return () => {
       active = false;
     };
-  }, [version, loadVersion, attempt]);
+  }, [version, attempt]);
   const state = loaded?.version === version ? loaded?.state : null;
   return { selection, setSelection, state, retry: () => setAttempt((value) => value + 1) };
 }

@@ -118,7 +118,8 @@ downloads the signed price list for cost estimates. See
 
 Documents follow the `baum.review/1` JSON Schema in
 [`schema/review-1.json`](schema/review-1.json), published at
-<https://static.usebaum.com/schemas/review/1.json>; a test validates the
+<https://static.usebaum.com/schemas/review/1.json> (an identifier; baum never
+fetches it); a test validates the
 example document next to it. The hosted baum service reads the same file, and
 baum supports every field it defines.
 
@@ -131,6 +132,7 @@ describes how they fit together and what a host implements.
 | Package | What it does |
 | --- | --- |
 | `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, and the caps, input redaction, byte trimming and digest applied to a bundle |
+| `review` | the review document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh and the tile catalogue (`review/tilecatalogue`) |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
 | `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |

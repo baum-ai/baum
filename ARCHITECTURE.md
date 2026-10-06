@@ -6,12 +6,19 @@ and the hosted baum service, which imports them from this module. Both hosts
 support every field in the schema; they differ only in where evidence comes
 from and what they do with the result.
 
+The dependency runs one way. The hosted service imports these packages, but
+the `baum` binary never uses hosted baum data and never contacts a baum server:
+everything it reads comes from the user's machine, GitHub (with the user's own
+token) or the model provider the user configures. The one other contact is the
+public, signed price list described under "Running locally".
+
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, and the caps, input redaction, byte
-trimming and digest applied to a bundle, and `review`, `agent` and `viewer` do
-not exist yet. Until a package is complete, its section describes the intended
-shape.
+trimming and digest applied to a bundle, and `review` holds the document model,
+validation, history, refresh and the tile catalogue; output redaction, `agent`
+and `viewer` do not exist yet. Until a package is complete, its section
+describes the intended shape.
 
 ## Pipeline
 
@@ -234,7 +241,9 @@ through props and context:
 | file opener | no | not used | opens a cited file in the host's own diff view instead of following its link |
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
-| header slots | no | not used | statistics, generation controls |
+| header slots | no | not used | statistics, generation controls, approval state, a back link |
+| rail groups | no | linked sessions and commits from the local session stores | changed files, linked sessions and commits, each listed in the rail with the host's pane |
+| version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
 
 Optional seams default to absent, and the viewer renders the document alone.
 The viewer never decides who can see a document; that is the host's job.
@@ -279,7 +288,10 @@ fetched from on demand.
 
 `baum bundle` stops after step 5. `baum validate` and `baum refresh` run the
 `review` steps on an existing document. `baum view` serves the viewer, the
-document, its versions and the cached images.
+document, its versions, the cached images, and the sessions and commits linked
+to the pull request, read from the local session stores with `sessions` and
+`linkage`. When those sessions are not on this machine, the viewer shows the
+document's own session metadata.
 
 Estimated cost comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
