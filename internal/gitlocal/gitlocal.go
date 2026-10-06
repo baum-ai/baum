@@ -79,12 +79,27 @@ var (
 	ErrInvalidInput = errors.New("invalid git input")
 	// ErrObjectNotFound reports a commit, merge base or file that does not
 	// exist.
-	ErrObjectNotFound = errors.New("git object not found")
+	// It satisfies errors.Is(err, bundle.ErrNotFound), the contract of
+	// bundle.PinnedExport and bundle.BlobFetcher.
+	ErrObjectNotFound error = objectNotFoundError{}
 	// ErrPartialClone reports a partial clone that lacks objects a read
 	// needs. They are not fetched on demand.
 	// ErrClosed reports an operation on a Repo after Close.
 	ErrClosed       = errors.New("git repository is closed")
 	ErrPartialClone = errors.New("the partial clone is missing objects this pull request needs; use a full clone, or let git fetch them first, for example with git diff --stat <base> <head> in the clone")
+)
+
+// objectNotFoundError is ErrObjectNotFound's type; it matches
+// bundle.ErrNotFound as well as itself.
+type objectNotFoundError struct{}
+
+func (objectNotFoundError) Error() string { return "git object not found" }
+
+func (objectNotFoundError) Is(target error) bool { return target == bundle.ErrNotFound }
+
+var (
+	_ bundle.PinnedExport = (*Repo)(nil)
+	_ bundle.BlobFetcher  = (*Repo)(nil)
 )
 
 // Options configure a Repo. The zero value uses the defaults.
@@ -629,6 +644,16 @@ func (r *Repo) ReadBlob(ctx context.Context, rev, path string) (Blob, error) {
 		return Blob{}, fmt.Errorf("reading blob: %w", err)
 	}
 	return Blob{OID: fields[2], Mode: fields[0], Content: content}, nil
+}
+
+// Blob is ReadBlob's content, for bundle.BlobFetcher (LoadReviewConfig): a
+// missing file is an error that satisfies errors.Is(err, bundle.ErrNotFound).
+func (r *Repo) Blob(ctx context.Context, commitOID, path string) ([]byte, error) {
+	blob, err := r.ReadBlob(ctx, commitOID, path)
+	if err != nil {
+		return nil, err
+	}
+	return blob.Content, nil
 }
 
 func objectPatchHash(file bundle.FileChange) string {

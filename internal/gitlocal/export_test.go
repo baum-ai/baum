@@ -3,12 +3,14 @@ package gitlocal
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -377,5 +379,149 @@ func TestExportFailureIsNotATruncatedArchive(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), f.dir) {
 		t.Fatalf("error leaks a path: %v", err)
+	}
+}
+
+// TestNotFoundSatisfiesTheBundleContract: a missing .gitmodules, a path the
+// merge base lacks and an unknown commit are bundle.ErrNotFound, which is
+// what bundle.PinnedExport and bundle.BlobFetcher callers test for.
+func TestNotFoundSatisfiesTheBundleContract(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	ctx := context.Background()
+	if !errors.Is(ErrObjectNotFound, bundle.ErrNotFound) {
+		t.Fatal("ErrObjectNotFound is not bundle.ErrNotFound")
+	}
+	calls := map[string]func() error{
+		"missing .gitmodules":           func() error { _, err := r.ExportCommitPath(ctx, f.head, ".gitmodules"); return err },
+		"path absent at the merge base": func() error { _, err := r.ExportCommitPath(ctx, f.base, "new.txt"); return err },
+		"unknown commit":                func() error { _, err := r.ExportCommit(ctx, strings.Repeat("c", 40)); return err },
+		"blob":                          func() error { _, err := r.Blob(ctx, f.head, "REVIEW.md"); return err },
+	}
+	for name, call := range calls {
+		if err := call(); !errors.Is(err, bundle.ErrNotFound) || !errors.Is(err, ErrObjectNotFound) {
+			t.Errorf("%s: err = %v, want bundle.ErrNotFound", name, err)
+		}
+	}
+	// LoadReviewConfig takes the Repo as its BlobFetcher.
+	cfg, err := bundle.LoadReviewConfig(ctx, r, f.base)
+	if err != nil || cfg.Present {
+		t.Fatalf("absent REVIEW.md: %+v, %v", cfg, err)
+	}
+	git(t, f.dir, "checkout", "-q", "feature")
+	write(t, f.dir, "REVIEW.md", "Be kind.\n", 0o644)
+	rev := commit(t, f.dir, "review")
+	git(t, f.dir, "checkout", "-q", "main")
+	cfg, err = bundle.LoadReviewConfig(ctx, open(t, f.dir, Options{}), rev)
+	if err != nil || !cfg.Present {
+		t.Fatalf("present REVIEW.md: %+v, %v", cfg, err)
+	}
+}
+
+// TestCheckoutEndToEnd pipes the checkout builder's archive, built from a
+// local clone, into UnpackCheckout.
+func TestCheckoutEndToEnd(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	write(t, dir, "keep.txt", "keep\n", 0o644)
+	write(t, dir, "del.txt", "deleted by the pull request\n", 0o644)
+	write(t, dir, "unrelated.txt", "not in the diff\n", 0o644)
+	base := commit(t, dir, "base")
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	git(t, dir, "rm", "-q", "del.txt")
+	write(t, dir, "big.bin", strings.Repeat("x", 4096), 0o644)
+	write(t, dir, "added.txt", "added\n", 0o644)
+	write(t, dir, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = https://example.com/sub.git\n", 0o644)
+	git(t, dir, "add", "-A")
+	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",sub")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "checkout", "-q", "main")
+	before := snapshot(t, dir)
+
+	r := open(t, dir, Options{TempDir: t.TempDir()})
+	ctx := context.Background()
+	cfg := bundle.CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1 << 20, MaxTotalFiles: 100}
+	hunks := []bundle.Hunk{
+		{Path: "del.txt", Change: "removed"}, {Path: "big.bin", Change: "added"},
+		{Path: "added.txt", Change: "added"}, {Path: "sub", Change: "added"},
+	}
+	pr, pw := io.Pipe()
+	type built struct {
+		omissions []bundle.CheckoutOmission
+		err       error
+	}
+	result := make(chan built, 1)
+	go func() {
+		compressed := gzip.NewWriter(pw)
+		omissions, err := bundle.NewCheckoutBuilder(cfg).WriteArchive(ctx, r, head, base, hunks, compressed)
+		err = errors.Join(err, compressed.Close())
+		_ = pw.CloseWithError(err)
+		result <- built{omissions, err}
+	}()
+	archive := filepath.Join(t.TempDir(), "checkout.tar.gz")
+	out, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, pr); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res := <-result
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	wantOmissions := []bundle.CheckoutOmission{
+		{Path: "big.bin", Reason: bundle.OmittedSizeReason}, {Path: "sub", Reason: bundle.OmittedSubmoduleReason},
+	}
+	if !reflect.DeepEqual(res.omissions, wantOmissions) {
+		t.Fatalf("omissions = %+v, want %+v", res.omissions, wantOmissions)
+	}
+
+	out2 := t.TempDir()
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(out2, func(name string, _ os.DirEntry, _ error) error { return os.Chmod(name, 0o700) })
+	})
+	if err := bundle.UnpackCheckout(ctx, archive, out2, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	err = filepath.WalkDir(out2, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(out2, path)
+		content, err := os.ReadFile(path)
+		got[filepath.ToSlash(rel)] = string(content)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"head/keep.txt":      "keep\n",
+		"head/unrelated.txt": "not in the diff\n",
+		"head/added.txt":     "added\n",
+		"head/.gitmodules":   "[submodule \"sub\"]\n\tpath = sub\n\turl = https://example.com/sub.git\n",
+		"merge-base/del.txt": "deleted by the pull request\n",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("checkout = %q\nwant %q", got, want)
+	}
+	for name := range got {
+		for _, part := range strings.Split(name, "/") {
+			if strings.EqualFold(part, ".git") {
+				t.Errorf("checkout holds git metadata: %s", name)
+			}
+		}
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(t, dir); after != before {
+		t.Fatalf("clone changed:\n%s\n=== after ===\n%s", before, after)
 	}
 }
