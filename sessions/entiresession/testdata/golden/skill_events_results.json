@@ -3,57 +3,57 @@
     "graph": {
       "sessions": [
         {
-          "id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "3e33660c-c136-581c-970c-2740ea050114",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
           "started_at": "2026-07-26T21:24:40.319366587Z",
           "ended_at": "2026-07-26T21:24:40.319366587Z",
-          "git_branch": "dashboard",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "ab2d6993-6868-51f1-b887-ddb7f718ed07",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "e1ed3797-55b1-5a9d-9512-2a38c84848c8",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "agent",
           "value": "Codex",
           "valid_from": "2026-07-26T21:24:40.319366Z"
         },
         {
-          "id": "6dd214aa-6313-55e9-8927-813c6e18a6a5",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "2f413b53-df4b-5801-a1ad-646f09b10750",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "model",
           "value": "gpt-5.6-sol",
           "valid_from": "2026-07-26T21:24:40.319366Z"
         },
         {
-          "id": "51b42db7-7b0d-5153-82c5-fc51e67a43ee",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "1404774f-fb92-5d46-8958-8e0f8059d4c9",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "strategy",
           "value": "manual-commit",
           "valid_from": "2026-07-26T21:24:40.319366Z"
         },
         {
-          "id": "63a9c110-d22d-5fa5-8e84-91b80b6684e3",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "a6b01058-d0ef-546a-80d6-a7bcb3dac628",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "cli_version",
           "value": "0.8.42",
           "valid_from": "2026-07-26T21:24:40.319366Z"
         },
         {
-          "id": "aed0e51a-ba17-5b00-b49f-2f940b95114f",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "0cc06d5d-bd2b-5ce2-8f29-d77a8301e888",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "checkpoints_count",
           "value": 1,
           "valid_from": "2026-07-26T21:24:40.319366Z"
         },
         {
-          "id": "53d00510-09db-5e2c-b59e-9368824f3abb",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "eaecd095-81d5-578d-8324-8d7c60cb16c8",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:40.310354044Z",
+            "calculated_at": "2026-07-26T21:24:50.041450516Z",
             "agent_lines": 922,
             "agent_removed": 4,
             "human_added": 0,
@@ -76,37 +76,37 @@
       "token_usage": null,
       "vendor_ids": [
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "019f9f88-e029-7ed2-816d-0e738c297077",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "0192e4d7-3b18-7a05-8c6f-1d52a9e07b34",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         },
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         },
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "c4fca83e83ef",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "c7e20a94b3d1",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         }
       ]
     },
-    "session_id": "019f9f88-e029-7ed2-816d-0e738c297077",
+    "session_id": "0192e4d7-3b18-7a05-8c6f-1d52a9e07b34",
     "vendor": "codex",
-    "checkpoint_id": "03c505723235",
+    "checkpoint_id": "a41f7c09d2e8",
     "created_at": "2026-07-26T21:24:40.319366587Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
@@ -115,57 +115,57 @@
     "graph": {
       "sessions": [
         {
-          "id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
           "started_at": "2026-07-26T21:24:40.384779692Z",
           "ended_at": "2026-07-26T21:24:40.384779692Z",
-          "git_branch": "dashboard",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "09d3267a-cc4c-5e5c-b91b-50097f393d81",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "5382014b-a484-5349-92f2-9acc07b83b98",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "agent",
           "value": "Codex",
           "valid_from": "2026-07-26T21:24:40.384779Z"
         },
         {
-          "id": "80db4b2d-eeec-506d-bfb5-35fc62cd9e36",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "5253a882-21db-5985-befd-00e16c9d4865",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "model",
           "value": "gpt-5.6-sol",
           "valid_from": "2026-07-26T21:24:40.384779Z"
         },
         {
-          "id": "996641ff-f5ee-5a7a-b21b-e97d85ef64ee",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "13e6f5b0-8870-5415-8aad-c42e4cddf1a5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "strategy",
           "value": "manual-commit",
           "valid_from": "2026-07-26T21:24:40.384779Z"
         },
         {
-          "id": "aacf430e-617b-5309-842c-ce79e8cc8a8c",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "18a2ebdf-88c7-534c-a1bb-2ed1d31e27e2",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "cli_version",
           "value": "0.8.42",
           "valid_from": "2026-07-26T21:24:40.384779Z"
         },
         {
-          "id": "a96dcc74-464e-5f41-9d01-17b2a854516d",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "425a3aa1-bb99-5dee-8e3c-ad95c199bb06",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "checkpoints_count",
           "value": 1,
           "valid_from": "2026-07-26T21:24:40.384779Z"
         },
         {
-          "id": "dbe87d0f-3d65-5fa7-8576-189eae5c5b09",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "1cd9b160-a2f2-5a43-9d0b-56f52a553cb9",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:40.376289043Z",
+            "calculated_at": "2026-07-26T21:24:50.041450516Z",
             "agent_lines": 922,
             "agent_removed": 4,
             "human_added": 0,
@@ -188,37 +188,37 @@
       "token_usage": null,
       "vendor_ids": [
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "019fa02e-8f47-7192-93e6-aac3c6d02fb4",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "0192e4f1-6c90-7d42-9a1b-e83f05c7d296",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         },
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         },
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "66e74ea96706",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "c7e20a94b3d1",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         }
       ]
     },
-    "session_id": "019fa02e-8f47-7192-93e6-aac3c6d02fb4",
+    "session_id": "0192e4f1-6c90-7d42-9a1b-e83f05c7d296",
     "vendor": "codex",
-    "checkpoint_id": "03c505723235",
+    "checkpoint_id": "a41f7c09d2e8",
     "created_at": "2026-07-26T21:24:40.384779692Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
@@ -227,57 +227,57 @@
     "graph": {
       "sessions": [
         {
-          "id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
           "started_at": "2026-07-26T21:24:50.041450516Z",
           "ended_at": "2026-07-26T21:24:50.041450516Z",
-          "git_branch": "dashboard",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "1d3b6463-1d73-53fc-87b1-c22cd002728e",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "b78f1e35-7665-5c4e-aa84-03765914930b",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "agent",
           "value": "Claude Code",
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "a78e95d4-4795-56c8-b38c-46d4d8050949",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "e8406d9a-a722-5229-bbe7-cb105990cdd4",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "model",
           "value": "",
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "ec51b697-370e-5849-9c2c-00ea2c9b5e30",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "fb9d3791-5fb0-503e-93e5-6897734074bc",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "strategy",
           "value": "manual-commit",
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "8aaff056-099c-531d-a78e-e199086e0e68",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "c3bc3c83-6df3-59d7-a683-a8c3a7d0adff",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "cli_version",
           "value": "0.8.42",
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "d8e552aa-a38d-50e2-98f2-d6e64ec59a72",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "4284bf14-e79d-52e3-b4f1-f0e1b96a55d4",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "checkpoints_count",
           "value": 1,
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "646f7a27-421a-5ea1-ae25-d11c9728f8c3",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "6186d84f-08a5-5442-b3d5-a17d73b33783",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:49.897374202Z",
+            "calculated_at": "2026-07-26T21:24:50.041450516Z",
             "agent_lines": 607,
             "agent_removed": 3,
             "human_added": 315,
@@ -291,76 +291,76 @@
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "634a2c1c-65df-5654-9d22-9794fcd97d3e",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "d16e9af5-faa2-533d-a29e-93672b9e1520",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "skill_events_version",
           "value": 1,
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "9f3e7611-3792-5beb-9a76-c8f8db80b7b5",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "cb6496b1-ca7e-54e9-8875-1a1673e7f690",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "skill_events",
           "value": [
             {
-              "id": "claude-skill-toolu_0131sfczBp8MJUQmerXhbdRX",
+              "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a311",
               "event_type": "tool_invocation",
               "skill": {
-                "name": "dataviz"
+                "name": "chart-style"
               },
               "source": {
                 "agent": "claude-code",
                 "signal": "skill_tool_use",
                 "confidence": "explicit"
               },
-              "turn_id": "9cbbfec327c3",
+              "turn_id": "5f0d8e2a91c6",
               "transcript_anchor": {
                 "unit": "line",
                 "start": 423,
                 "end": 424,
                 "entry_ids": [
-                  "ca16e100-d67a-41d2-a12f-eeea4a0a5877"
+                  "e5c91a07-4b2d-4d86-93f0-7a1c58b2e6d3"
                 ],
-                "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+                "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
               },
               "native": {
                 "tool_name": "Skill",
-                "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+                "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
               },
               "collapse": {
                 "target": "tool_pair",
-                "label": "Skill: dataviz",
+                "label": "Skill: chart-style",
                 "default_collapsed": true
               }
             },
             {
-              "id": "claude-skill-toolu_017J2fgaxoWHxb6tfAg5wJs5",
+              "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a312",
               "event_type": "tool_invocation",
               "skill": {
-                "name": "claude-api"
+                "name": "api-review"
               },
               "source": {
                 "agent": "claude-code",
                 "signal": "skill_tool_use",
                 "confidence": "explicit"
               },
-              "turn_id": "9cbbfec327c3",
+              "turn_id": "5f0d8e2a91c6",
               "transcript_anchor": {
                 "unit": "line",
                 "start": 1252,
                 "end": 1253,
                 "entry_ids": [
-                  "4e84e5e6-3c0b-41ca-90ee-56adccfe0303"
+                  "1f8a3c6e-d2b9-4705-a4e1-9c60b7d35f82"
                 ],
-                "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+                "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
               },
               "native": {
                 "tool_name": "Skill",
-                "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+                "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
               },
               "collapse": {
                 "target": "tool_pair",
-                "label": "Skill: claude-api",
+                "label": "Skill: api-review",
                 "default_collapsed": true
               }
             }
@@ -368,8 +368,8 @@
           "valid_from": "2026-07-26T21:24:50.04145Z"
         },
         {
-          "id": "e555197e-e664-5b99-9c6b-95f693a133db",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "0ae3b2cf-8516-5a89-a2a7-46694b7d0d2e",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "token_usage",
           "value": {
             "input_tokens": 84,
@@ -389,8 +389,8 @@
       "file_touches": null,
       "token_usage": [
         {
-          "id": "63fc5d7a-ade0-578e-bde8-65f39c21b137",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "bfeff7d0-d5f8-544f-96ef-04ffbb1676fd",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "user_input_id": null,
           "scope": "session",
           "input_tokens": 84,
@@ -403,37 +403,37 @@
       ],
       "vendor_ids": [
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         },
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         },
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "9cbbfec327c3",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "5f0d8e2a91c6",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         }
       ]
     },
-    "session_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
+    "session_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
     "vendor": "claude_code",
-    "checkpoint_id": "03c505723235",
+    "checkpoint_id": "a41f7c09d2e8",
     "created_at": "2026-07-26T21:24:50.041450516Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
