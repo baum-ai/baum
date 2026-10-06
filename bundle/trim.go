@@ -11,6 +11,10 @@ import (
 )
 
 // Caps are the configured count and byte ceilings applied to a bundle.
+// ApplyCaps, CapAttachments and Fit read the comment, session, patch, image
+// and byte limits. MaxPromptsPerSession and MaxCommandEventsPerSession are
+// applied by the source that collects sessions, and DiffLimits gives the
+// limits diff assembly reads.
 type Caps struct {
 	MaxSessions                int
 	MaxPromptsPerSession       int
@@ -27,6 +31,36 @@ type Caps struct {
 	MaxDiffPatchBytes int64
 	// MaxImageAltBytes bounds each description image's alt text and heading.
 	MaxImageAltBytes int
+}
+
+// DiffLimits returns the limits BuildDiffIndexWithin reads.
+func (c Caps) DiffLimits() DiffLimits {
+	return DiffLimits{MaxFiles: c.MaxDiffFiles, MaxPatchBytes: c.MaxDiffPatchBytes, MaxHunkLines: c.MaxHunkPatchLines}
+}
+
+// CapAttachments bounds each attachment's alt text and heading to
+// MaxImageAltBytes and notes how many attachments it shortened. It runs after
+// redaction, so a cut cannot leave part of a secret unmasked.
+func CapAttachments(bundle *Bundle, caps Caps) {
+	limit := caps.MaxImageAltBytes
+	if limit <= 0 {
+		return
+	}
+	cut := 0
+	for i := range bundle.Attachments {
+		shortened := false
+		for _, text := range []*string{&bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading} {
+			if len(*text) > limit {
+				*text, shortened = strings.ToValidUTF8((*text)[:limit], ""), true
+			}
+		}
+		if shortened {
+			cut++
+		}
+	}
+	if cut > 0 {
+		bundle.Truncated = append(bundle.Truncated, fmt.Sprintf("alt text or heading capped to %d bytes for %d description image(s)", limit, cut))
+	}
 }
 
 // ApplyCaps enforces the count ceilings, after sorting, so the same rows in
@@ -142,8 +176,8 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // sessions from the lowest confidence. REVIEW.md content is cut first,
 // ahead of every documented stage, because it is supplementary guidance
 // rather than PR evidence, and because a fixed content cap would otherwise
-// make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no stage cuts
-// it: the files it lists reach the agent whole (the description-image rules).
+// make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no
+// stage cuts it: the files it lists reach the agent whole (the description-image rules).
 func Fit(bundle *Bundle, caps Caps) error {
 	if err := fitContent(bundle, caps); err != nil {
 		return err

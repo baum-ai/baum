@@ -139,7 +139,7 @@ func TestFitBytesStopsAsSoonAsItFits(t *testing.T) {
 		}}}
 	}
 	// Determine the exact size after only the assistant-reply cut (matching
-	// Fit' own sequencing: cut, then append the truncation note, then
+	// Fit's own sequencing: cut, then append the truncation note, then
 	// measure), and set MaxBytes to that — the cascade must stop there and
 	// go no further.
 	afterReplyCut := build()
@@ -314,9 +314,9 @@ func TestFitBytesCutsReviewConfigContentBeforeAnyDocumentedStage(t *testing.T) {
 }
 
 // plantedSecret is a syntactically valid (but fake) GitHub personal access
-// token goredact's balanced profile reliably detects — the same fixture
-// value, since goredact's validators reject secrets that merely look pattern-shaped without passing
-// their real format checks.
+// token goredact's balanced profile reliably detects. It is a fixture value
+// goredact's validators accept, since they reject secrets that merely look
+// pattern-shaped without passing their real format checks.
 const plantedSecret = "ghp" + "_JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM"
 
 func TestRedactStringMasksSecretAndCountsSpans(t *testing.T) {
@@ -650,5 +650,23 @@ func TestApplyCapsCutsExactlyAtTheBoundary(t *testing.T) {
 	}
 	if len(bundle.Truncated) == 0 {
 		t.Error("expected truncation notes recorded for the cuts made")
+	}
+}
+
+func TestCapAttachmentsShortensAltAndHeadingAndNotes(t *testing.T) {
+	bundle := &Bundle{Attachments: []Attachment{
+		{ID: "a", Alt: strings.Repeat("x", 50), Heading: "short"},
+		{ID: "b", Alt: "ok"},
+	}}
+	CapAttachments(bundle, Caps{MaxImageAltBytes: 10})
+	if len(bundle.Attachments[0].Alt) != 10 || bundle.Attachments[0].Heading != "short" || bundle.Attachments[1].Alt != "ok" {
+		t.Fatalf("attachments = %+v", bundle.Attachments)
+	}
+	if len(bundle.Truncated) != 1 || !strings.Contains(bundle.Truncated[0], "for 1 description image(s)") {
+		t.Fatalf("truncated = %v", bundle.Truncated)
+	}
+	CapAttachments(bundle, Caps{})
+	if len(bundle.Truncated) != 1 {
+		t.Fatal("a zero limit must not cap or note")
 	}
 }
