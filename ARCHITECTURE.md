@@ -14,11 +14,12 @@ public, signed price list described under "Running locally".
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
-the evidence types, the diff index, and the caps, input redaction, byte
-trimming and digest applied to a bundle, and `review` holds the document model,
-validation, history, refresh and the tile catalogue; output redaction, `agent`
-and `viewer` do not exist yet. Until a package is complete, its section
-describes the intended shape.
+the evidence types, the diff index, the `REVIEW.md` loader, reference
+extraction, the code checkout archive, description image handling, and the
+caps, input redaction, byte trimming and digest applied to a bundle, and
+`review` holds the document model, validation, history, refresh and the tile
+catalogue; output redaction, `agent` and `viewer` do not exist yet. Until a
+package is complete, its section describes the intended shape.
 
 ## Pipeline
 
