@@ -401,14 +401,14 @@ const prompt = (session: string, index: number): Anchor => ({ type: "prompt", se
 const intended: ReviewDocument = {
   ...document,
   sections: [
-    section("sec_a", "Candidate reading", [
-      { kind: "intent", text: "Compare every eligible session.", anchors: [prompt("s1", 3)] },
+    section("sec_a", "Retry policy and backoff", [
+      { kind: "intent", text: "Retry failed jobs with backoff.", anchors: [prompt("s1", 3)] },
       { kind: "behavior", steps: [] },
     ]),
-    section("sec_b", "Atomic review save", [
+    section("sec_b", "Dead-letter store", [
       {
         kind: "intent",
-        text: "Save one commit's decisions at once.",
+        text: "Bury exhausted jobs in one step.",
         anchors: [prompt("s2", 1), prompt("s1", 3)],
       },
     ]),
@@ -429,8 +429,8 @@ describe("summaryIntent", () => {
     expect(
       summaryIntent(intended).map(({ section: id, title, text }) => ({ id, title, text })),
     ).toEqual([
-      { id: "sec_a", title: "Candidate reading", text: "Compare every eligible session." },
-      { id: "sec_b", title: "Atomic review save", text: "Save one commit's decisions at once." },
+      { id: "sec_a", title: "Retry policy and backoff", text: "Retry failed jobs with backoff." },
+      { id: "sec_b", title: "Dead-letter store", text: "Bury exhausted jobs in one step." },
     ]);
   });
 
@@ -669,12 +669,12 @@ describe("triageRisks", () => {
     ...document,
     sections: [
       {
-        ...section("sec_a", "Candidate reading", []),
+        ...section("sec_a", "Retry policy and backoff", []),
         risks: [risk("high_a", "high"), risk("medium_a", "medium")],
         derived: { ...section("sec_a", "A", []).derived, state: "changed" },
       },
       {
-        ...section("sec_b", "Writer fencing", []),
+        ...section("sec_b", "Operator endpoints", []),
         risks: [risk("low_b", "low"), risk("critical_b", "critical")],
         derived: { ...section("sec_b", "B", []).derived, state: "unchanged" },
       },
@@ -1169,7 +1169,7 @@ describe("reviewDecisions", () => {
   const decided: ReviewDocument = {
     ...document,
     sections: [
-      section("sec_a", "Candidate reading", [
+      section("sec_a", "Retry policy and backoff", [
         {
           kind: "decisions",
           items: [
@@ -1179,7 +1179,7 @@ describe("reviewDecisions", () => {
           ],
         },
       ]),
-      section("sec_b", "Writer fencing", [
+      section("sec_b", "Operator endpoints", [
         {
           kind: "decisions",
           items: [
@@ -1201,10 +1201,10 @@ describe("reviewDecisions", () => {
 
   it("carries the section that stated each decision", () => {
     expect(reviewDecisions(decided).map((item) => [item.id, item.sectionTitle])).toEqual([
-      ["d_prompt", "Candidate reading"],
-      ["d_other", "Candidate reading"],
-      ["d_loose", "Candidate reading"],
-      ["d_event", "Writer fencing"],
+      ["d_prompt", "Retry policy and backoff"],
+      ["d_other", "Retry policy and backoff"],
+      ["d_loose", "Retry policy and backoff"],
+      ["d_event", "Operator endpoints"],
     ]);
   });
 

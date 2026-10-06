@@ -95,7 +95,7 @@ const reviewDocument = {
       anchors: [],
       observed_sessions: 1,
       observed_vendors: ["codex"],
-      observed_models: ["gpt-6-astra"],
+      observed_models: ["acme-model-1"],
     },
     risk_score: {
       rubric: "risk-v1",
@@ -531,7 +531,7 @@ const reviewDocument = {
       {
         id: "s_1",
         vendor: "codex",
-        models: ["gpt-6-astra"],
+        models: ["acme-model-1"],
         title: null,
         git_branch: "codex/age46-filters",
         started_at: "2026-07-29T11:20:31Z",
