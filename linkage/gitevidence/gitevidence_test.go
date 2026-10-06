@@ -11,7 +11,7 @@ func TestIsCommitCommand(t *testing.T) {
 		{"git add -A && git commit -m 'x'", true},
 		{"git commit --amend --no-edit", true},
 		{"git -c user.name=x commit -m 'y'", true},
-		{`git -c user.name="Daniel Perez" -c user.email=daniel@example.com commit -q -F -`, true},
+		{`git -c user.name="Ada Lovelace" -c user.email=ada@example.com commit -q -F -`, true},
 		{"git -C /repo --no-pager commit -m x", true},
 		{"git commit -q -F - <<'EOF'\nmessage\nEOF\ngit log --oneline -1", true},
 		{"echo $(git commit -m x)", true},
