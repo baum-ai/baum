@@ -149,12 +149,15 @@ Given the previous version, `review` keeps sections stable:
 `Refresh` updates checks, threads, comments and evidence status in a stored
 document without a model call; `baum refresh` uses it.
 
-Everything a model returns is untrusted. Output redaction masks free text in
-the document, the findings and the diagnostics, and keeps only the fields the
-schema marks as references (IDs, paths, SHAs). A document's free text is
-scanned as one text, so a secret spread over code lines, table rows or steps
-is caught; text scattered across unrelated fields, or a token wrapped
-mid-value, is not. If redaction fails, the text is dropped rather than kept.
+Everything a model returns is untrusted. Output redaction masks the document,
+the findings and the diagnostics. Every string of the document is scanned as
+one text, so a secret spread over code lines, table rows or steps is caught;
+a string keeps its exact text only if it is a reference that resolves to the
+redacted bundle or the checkout, or its value meets the schema's constant,
+enum, closed pattern or date-time format. Text scattered across unrelated
+fields, a token wrapped mid-value, or a lowercase token that fits a closed
+pattern (a SHA, a category, a prefixed ID) is not caught. If redaction fails,
+the text is dropped rather than kept.
 
 ### Tiles
 
