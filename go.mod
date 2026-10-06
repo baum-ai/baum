@@ -4,6 +4,7 @@ go 1.26.6
 
 require (
 	github.com/google/go-cmp v0.7.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/lastpersonlabs/goredact v0.1.0
 	github.com/pelletier/go-toml/v2 v2.4.3
