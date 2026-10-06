@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { LoadReviewVersion, ReviewDocument } from "./review-document";
 import { sectionActiveVersions } from "./review-versions";
@@ -13,11 +13,18 @@ export function useSectionHistory(
   load: LoadReviewVersion,
 ): { active: Map<string, number[]> } | null {
   const [loaded, setLoaded] = useState<{ key: string; active: Map<string, number[]> } | null>(null);
-  const key = document ? `${document.review.version}:${versions.join(",")}` : "";
+  // Keyed on the versions' values and read through the latest loader, so a
+  // host that passes a new array or function on each render reads nothing
+  // again.
+  const list = versions.join(",");
+  const key = document ? `${document.review.version}:${list}` : "";
+  const loader = useRef(load);
+  loader.current = load;
   useEffect(() => {
-    if (!document || versions.length === 0) return;
+    if (!document || !list) return;
     let cancelled = false;
-    void Promise.all(versions.map((version) => load(version))).then((states) => {
+    const wanted = list.split(",").map(Number);
+    void Promise.all(wanted.map((version) => loader.current(version))).then((states) => {
       if (cancelled) return;
       const previous = states.flatMap((state) =>
         state.status === "ready" ? [state.document] : [],
@@ -27,6 +34,6 @@ export function useSectionHistory(
     return () => {
       cancelled = true;
     };
-  }, [document, versions, load, key]);
+  }, [document, list, key]);
   return loaded?.key === key ? { active: loaded.active } : null;
 }

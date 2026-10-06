@@ -4,6 +4,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -188,6 +189,9 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The side pane's first tab, such as a discussion. Absent, the side pane
    *  holds only the document's details and activity. */
   conversation?: (context: ReviewConversationContext) => ReactNode;
+  /** Puts the cursor in the conversation's text box once the side pane has
+   *  unfolded on its tab, when the reader asks to discuss the review. */
+  focusConversation?: (pane: HTMLElement) => void;
   /** Loads the patch for cited code whose excerpt the document omitted. */
   hunkPatches?: HunkPatchSource | null;
   /** Called with the versions whose documents are on screen, each time that
@@ -305,10 +309,27 @@ function ReviewWorkspace<F extends ReviewFile>({
   sessions,
   commits,
   conversation,
+  focusConversation,
   hunkPatches = null,
   onVersionsShown,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
-  const [selection, setSelection] = useReviewSelection();
+  const [requested, setSelection] = useReviewSelection();
+  // A place whose group the host has not supplied reads as the Summary. The
+  // URL keeps what it asked for, so a host that mounts the slot later (or a
+  // link shared from a host that has it) still lands there, and nothing is
+  // written to the history on the reader's behalf.
+  const hasSessions = Boolean(sessions);
+  const hasCommits = Boolean(commits);
+  const hasFiles = Boolean(filesSlot);
+  const selection = useMemo<Selection>(
+    () =>
+      ((requested.kind === "sessions" || requested.kind === "session") && !hasSessions) ||
+      ((requested.kind === "commits" || requested.kind === "commit") && !hasCommits) ||
+      (requested.kind === "file" && !hasFiles)
+        ? { kind: "summary" }
+        : requested,
+    [requested, hasSessions, hasCommits, hasFiles],
+  );
   // Tiles are not ready for readers yet, so they stay hidden unless the URL
   // asks for them with `?tiles=1`, which keeps them reachable while built.
   const { search } = useUrlState();
@@ -354,11 +375,12 @@ function ReviewWorkspace<F extends ReviewFile>({
   // "Discuss this PR" asks for the composer; the focus waits for the render
   // that unfolds the side pane, since a folded pane hides the text box.
   const [composerFocus, setComposerFocus] = useState(0);
+  const focusComposer = useRef(focusConversation);
+  focusComposer.current = focusConversation;
   useEffect(() => {
-    if (composerFocus === 0) return;
-    conversationPane.current
-      ?.querySelector<HTMLTextAreaElement>("textarea[data-main-composer]")
-      ?.focus();
+    const pane = conversationPane.current;
+    if (composerFocus === 0 || !pane) return;
+    focusComposer.current?.(pane);
   }, [composerFocus]);
   const sectionHistory = useSectionHistory(document, versions, loadVersion);
   const historicalDocument =
@@ -379,12 +401,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   // A session id the pull request no longer lists — a stale link, a session
   // unlinked since — opens the list rather than a pane of closed cards.
   useEffect(() => {
-    if (selection.kind !== "session" && selection.kind !== "sessions") return;
-    if (!sessionState) {
-      setSelection({ kind: "summary" });
-      return;
-    }
-    if (selection.kind !== "session" || sessionState.status !== "ready") return;
+    if (selection.kind !== "session" || sessionState?.status !== "ready") return;
     if (!sessionState.items.some((item) => item.id === selection.id))
       setSelection({ kind: "sessions" });
   }, [selection, sessionState, setSelection]);
@@ -395,25 +412,14 @@ function ReviewWorkspace<F extends ReviewFile>({
       ? commitState.items.find((item) => item.id === selection.id)
       : undefined;
   useEffect(() => {
-    if (selection.kind !== "commit" && selection.kind !== "commits") return;
-    if (!commitState) {
-      setSelection({ kind: "summary" });
-      return;
-    }
-    if (selection.kind !== "commit" || commitState.status !== "ready") return;
+    if (selection.kind !== "commit" || commitState?.status !== "ready") return;
     if (!selectedCommit) setSelection({ kind: "commits" });
   }, [selection, commitState, selectedCommit, setSelection]);
-  const hasFiles = Boolean(filesSlot);
   useEffect(() => {
-    if (selection.kind !== "file") return;
-    if (!hasFiles) {
-      setSelection({ kind: "summary" });
-      return;
-    }
-    if (!fileList || selectedFile) return;
+    if (selection.kind !== "file" || !fileList || selectedFile) return;
     const replacement = fileList.find((file) => !file.viewed) ?? fileList[0];
     setSelection(replacement ? { kind: "file", id: replacement.id } : { kind: "summary" });
-  }, [selection, selectedFile, fileList, hasFiles, setSelection]);
+  }, [selection, selectedFile, fileList, setSelection]);
   const changes =
     comparing && document && historicalDocument
       ? reviewVersionChanges(document, historicalDocument)
@@ -632,7 +638,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
       <SegmentedControl
-        label="Conversation pane"
+        label={conversation ? "Conversation pane" : "Side pane"}
         variant="tabs"
         tablist="conversation"
         value={barTab}
@@ -641,7 +647,10 @@ function ReviewWorkspace<F extends ReviewFile>({
         className="min-w-0 flex-1"
       />
       <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) xl:flex">
-        <IconButton label="Collapse conversation" onClick={() => setChatCollapsed(true)}>
+        <IconButton
+          label={conversation ? "Collapse conversation" : "Collapse side pane"}
+          onClick={() => setChatCollapsed(true)}
+        >
           <ChevronRightIcon />
         </IconButton>
       </span>
@@ -722,7 +731,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           >
             <SideNavGroup label="Review">
               <SideNavButton
-                label="Summary / General"
+                label={conversation ? "Summary / General" : "Summary"}
                 icon={SummaryIcon}
                 tint="accent"
                 active={selection.kind === "summary"}
@@ -1093,13 +1102,13 @@ function ReviewWorkspace<F extends ReviewFile>({
               onFit={split.fit}
               reviewRef={reviewPane}
               conversationRef={conversationPane}
-              label="Resize the conversation pane"
+              label={conversation ? "Resize the conversation pane" : "Resize the side pane"}
             />
           )}
 
           <section
             ref={conversationPane}
-            aria-label="Conversation"
+            aria-label={conversation ? "Conversation" : "Side pane"}
             style={{ top: REVIEW_BAR_PX }}
             className={cn(
               "relative flex min-h-[22rem] min-w-0 flex-col bg-(--surface-aside) p-4 sm:p-5 xl:sticky xl:h-(--review-visible) xl:min-h-0 xl:self-start xl:overflow-hidden",
@@ -1116,7 +1125,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               )}
             >
               <IconButton
-                label="Expand conversation"
+                label={conversation ? "Expand conversation" : "Expand side pane"}
                 className="h-9 w-9 text-(--text-secondary)"
                 onClick={() => setChatCollapsed(false)}
               >

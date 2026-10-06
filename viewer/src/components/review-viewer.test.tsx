@@ -54,9 +54,20 @@ function earlier(): ReviewDocument {
 }
 
 /** The URL state a host keeps in its router, held here in component state. */
-function Host({ initial = "", children }: { initial?: string; children: ReactNode }) {
+function Host({
+  initial = "",
+  onUpdate,
+  children,
+}: {
+  initial?: string;
+  onUpdate?: () => void;
+  children: ReactNode;
+}) {
   const [search, setSearch] = useState(() => new URLSearchParams(initial));
-  const update = (change: SearchUpdate) => setSearch((value) => change(value));
+  const update = (change: SearchUpdate) => {
+    onUpdate?.();
+    setSearch((value) => change(value));
+  };
   return <UrlStateProvider value={{ search, update }}>{children}</UrlStateProvider>;
 }
 
@@ -114,6 +125,13 @@ describe("ReviewViewer without host slots", () => {
     expect(groups).toEqual(["Changes", "Critical risks"]);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Details", "Activity"]);
+    // Without a conversation nothing is named after one.
+    expect(container.querySelector('section[aria-label="Side pane"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("General");
+    const named = [...container.querySelectorAll("[aria-label]")].map((element) =>
+      element.getAttribute("aria-label"),
+    );
+    expect([container.textContent, ...named].join(" ")).not.toMatch(/[Cc]onversation/);
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -225,5 +243,50 @@ describe("ReviewViewer with host slots", () => {
     expect(groups).toEqual(["Changes", "Critical risks", "Files changed", "Sessions"]);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Chat", "Details", "Activity"]);
+    expect(container.querySelector('section[aria-label="Conversation"]')).not.toBeNull();
+    expect(container.textContent).toContain("Summary / General");
+  });
+});
+
+describe("ReviewViewer and its host's renders", () => {
+  it("reads nothing again when the host passes a new loader and version list", async () => {
+    const calls: number[] = [];
+    const view = () => (
+      <Host>
+        <ReviewViewer
+          document={current}
+          versions={[2]}
+          loadVersion={async (version) => {
+            calls.push(version);
+            return { status: "ready", document: earlier() };
+          }}
+        />
+      </Host>
+    );
+    const container = await render(view());
+    const compare = container.querySelector('[aria-label="Compare v2"]') as HTMLInputElement;
+    await act(async () => compare.click());
+    expect(container.textContent).toContain("Historical · Review v2 · Reviewed");
+    const before = calls.length;
+
+    await act(async () => root!.render(view()));
+
+    expect(calls).toHaveLength(before);
+    expect(container.textContent).not.toContain("Loading review v2");
+    expect(container.textContent).toContain("Historical · Review v2 · Reviewed");
+  });
+
+  it("shows the Summary for a group the host has not supplied, without writing the URL", async () => {
+    const update = vi.fn();
+    const container = await render(
+      <Host initial="pane=sessions" onUpdate={update}>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe("Summary");
+    expect(container.querySelector("#review-section")?.textContent).toContain(
+      current.summary.text.slice(0, 60),
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 });

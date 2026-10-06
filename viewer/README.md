@@ -87,12 +87,33 @@ left out rather than shown empty or failed:
 | `notices` | alerts at the top of the pane, such as a generation in progress |
 | `files` | a Files group: the host's tree in the rail and its diff in the pane, with code links in the review opening the cited file there |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
-| `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line |
+| `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
+| `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 
 The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot.
+
+A link to a group whose slot is absent (`?pane=sessions` without
+`sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
+host that is still loading a group should pass its slot in a loading state
+rather than leave it out: the link then opens the group once it arrives.
+
+The loader and the version list are read by value: a host may pass a new
+`loadVersion` function or `versions` array on each render without anything
+being loaded again. A host whose loader starts answering for a different
+pull request should remount the viewer, for example with a `key`.
+
+The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
+of the window. A host should pad the page's scroll by it, so that a jump
+does not land a heading under the bar:
+
+```css
+html:has([data-review-page]) {
+  scroll-padding-top: calc(48px + 0.5rem);
+}
+```
 
 ## Schema and tile types
 
