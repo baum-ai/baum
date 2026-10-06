@@ -44,12 +44,12 @@ afterEach(() => {
 
 const current = example as unknown as ReviewDocument;
 
-/** The same review one version earlier, before the commit picker was added. */
+/** The same review one version earlier, before the double-ack fix was added. */
 function earlier(): ReviewDocument {
   const document = structuredClone(current);
   document.review.version = 2;
   document.review.previous_version = 1;
-  document.sections = document.sections.filter((section) => section.id !== "sec_picker");
+  document.sections = document.sections.filter((section) => section.id !== "sec_ackfix");
   return document;
 }
 
@@ -83,6 +83,11 @@ function rows(container: HTMLElement, list: string) {
   return [...container.querySelectorAll(`#${list} button`)].map((row) => row.textContent);
 }
 
+/** A rail row's text without the review score badge that follows its title. */
+function titles(labels: (string | null)[]) {
+  return labels.map((label) => label?.replace(/\d+Review score.*$/, ""));
+}
+
 describe("ReviewViewer without host slots", () => {
   it("renders the example document on its own", async () => {
     const container = await render(
@@ -92,7 +97,7 @@ describe("ReviewViewer without host slots", () => {
     );
 
     expect(container.querySelector("h1")?.textContent).toBe(
-      "#191 Add commit-side session review and atomic corrections",
+      "#212 Add retry budgets and a dead-letter queue",
     );
     expect(container.textContent).toContain("Review v3 · Current");
     // The Summary opens by default and leads with the review's own summary.
@@ -100,20 +105,23 @@ describe("ReviewViewer without host slots", () => {
     expect(container.querySelector("#review-section")?.textContent).toContain(
       current.summary.text.slice(0, 60),
     );
-    // No section carries a review score, so the review's own order holds,
-    // with the mechanical section last.
-    expect(rows(container, "review-changes")).toEqual([
-      "Candidate reading",
-      "Atomic review save",
-      "Evidence snapshot",
-      "Writer fencing",
-      "Commit picker",
+    // Sections carry review scores, so the rail lists them from the highest
+    // score down, with the section that has no score (Obsolete) last.
+    expect(titles(rows(container, "review-changes"))).toEqual([
+      "Operator-only dead-letter endpoints",
+      "Retry policy and backoff",
+      "Dead-letter store and migration",
+      "Second ack is ignored",
+      "Docs and dependency bump",
       "Mechanical changes",
+      "Fixed retry delay",
     ]);
     // The rail lists the critical and high risks, each named with its section.
     const risks = rows(container, "review-risks");
     expect(risks.length).toBeGreaterThan(0);
-    expect(risks.some((label) => label?.includes("Atomic review save"))).toBe(true);
+    expect(risks.some((label) => label?.includes("Operator-only dead-letter endpoints"))).toBe(
+      true,
+    );
     // Without a resolver nothing is drawn for an attachment.
     expect(container.querySelectorAll("img")).toHaveLength(0);
     // One version only: no version menu.
@@ -135,18 +143,37 @@ describe("ReviewViewer without host slots", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("keeps the review's own order for a document without review scores", async () => {
+    const unscored = structuredClone(current);
+    for (const section of unscored.sections) delete section.derived.review_score;
+    const container = await render(
+      <Host>
+        <ReviewViewer document={unscored} />
+      </Host>,
+    );
+    expect(rows(container, "review-changes")).toEqual([
+      "Retry policy and backoff",
+      "Fixed retry delay",
+      "Operator-only dead-letter endpoints",
+      "Dead-letter store and migration",
+      "Docs and dependency bump",
+      "Mechanical changes",
+      "Second ack is ignored",
+    ]);
+  });
+
   it("opens a section from the rail", async () => {
     const container = await render(
       <Host>
         <ReviewViewer document={current} />
       </Host>,
     );
-    const row = [...container.querySelectorAll("#review-changes button")].find(
-      (button) => button.textContent === "Writer fencing",
+    const row = [...container.querySelectorAll("#review-changes button")].find((button) =>
+      button.textContent?.startsWith("Operator-only dead-letter endpoints"),
     ) as HTMLButtonElement;
     await act(async () => row.click());
     expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe(
-      "Writer fencing",
+      "Operator-only dead-letter endpoints",
     );
   });
 });
@@ -181,10 +208,10 @@ describe("ReviewViewer with an earlier version", () => {
     expect(container.textContent).toContain("1 new section");
     expect(container.textContent).toContain("Historical · Review v2");
     // The section only the current version has is marked new in the rail.
-    const picker = [...container.querySelectorAll("#review-changes button")].find((button) =>
-      button.textContent?.startsWith("Commit picker"),
+    const added = [...container.querySelectorAll("#review-changes button")].find((button) =>
+      button.textContent?.startsWith("Second ack is ignored"),
     );
-    expect(picker?.textContent).toContain("New");
+    expect(added?.textContent).toContain("New");
     expect(shown).toHaveBeenLastCalledWith([3, 2]);
   });
 
@@ -199,22 +226,22 @@ describe("ReviewViewer with an earlier version", () => {
       </Host>,
     );
     expect(container.textContent).toContain("Viewing historical review v2 · Read only");
-    // The rail follows the version being read, which has no commit picker.
-    expect(rows(container, "review-changes")).not.toContain("Commit picker");
+    // The rail follows the version being read, which has no double-ack fix.
+    expect(rows(container, "review-changes")).not.toContain("Second ack is ignored");
   });
 });
 
 describe("ReviewViewer with host slots", () => {
   it("draws what the host supplies beside the document", async () => {
     const container = await render(
-      <Host initial="pane=section&section=sec_fencing">
+      <Host initial="pane=section&section=sec_api">
         <ReviewViewer
           document={current}
           header={{ approval: <span>Approved</span>, statistics: <p>12 files</p> }}
           checks={{
             renderSection: ({ id }) => <input type="checkbox" aria-label={`Read ${id}`} />,
             renderRisk: () => null,
-            sectionRead: (id) => id === "sec_candidates",
+            sectionRead: (id) => id === "sec_retry",
             riskRead: () => false,
           }}
           renderSectionAside={(id) => <p>Approvers of {id}</p>}
@@ -233,9 +260,9 @@ describe("ReviewViewer with host slots", () => {
     );
     expect(container.textContent).toContain("Approved");
     expect(container.textContent).toContain("12 files");
-    expect(container.textContent).toContain("Approvers of sec_fencing");
-    expect(container.textContent).toContain("Discussing sec_fencing");
-    expect(container.querySelector('[aria-label="Read sec_picker"]')).not.toBeNull();
+    expect(container.textContent).toContain("Approvers of sec_api");
+    expect(container.textContent).toContain("Discussing sec_api");
+    expect(container.querySelector('[aria-label="Read sec_ackfix"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Changes, 1 of 6 read"]')).not.toBeNull();
     const groups = [
       ...container.querySelectorAll('nav[aria-label="Review sections"] button[aria-expanded]'),
