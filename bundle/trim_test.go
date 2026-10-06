@@ -411,6 +411,121 @@ func TestRedactPatchKeepsLinesAndFindsMultilineKeys(t *testing.T) {
 	}
 }
 
+// syntheticKeyLines returns a PEM private key block, one line per element,
+// assembled at run time so no secret-shaped literal sits in the source. No
+// line of it is detected on its own.
+func syntheticKeyLines() []string {
+	label := "RSA " + "PRIVATE KEY"
+	lines := []string{"-----BEGIN " + label + "-----"}
+	for i := range 6 {
+		lines = append(lines, strings.Repeat("Qz7"+"Lw3Kp"+string(rune('a'+i))+"Xb9", 8)[:64])
+	}
+	return append(lines, "-----END "+label+"-----")
+}
+
+func requireNoKeyLine(t *testing.T, where, text string) {
+	t.Helper()
+	for _, line := range syntheticKeyLines() {
+		if strings.Contains(text, line) {
+			t.Fatalf("%s keeps key line %q: %s", where, line, text)
+		}
+	}
+}
+
+// RedactLines finds a key spread over lines and returns every line in place.
+func TestRedactLinesMasksSecretsSpanningLines(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := syntheticKeyLines()
+	for _, line := range key {
+		if masked, count, err := redactor.RedactString(ctx, line); err != nil || count != 0 || masked != line {
+			t.Fatalf("a lone key line is masked, so the case proves nothing: %q %d %v", masked, count, err)
+		}
+	}
+	lines := append(append([]string{"const key = `"}, key...), "`", "")
+	masked, count, err := redactor.RedactLines(ctx, lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoKeyLine(t, "lines", strings.Join(masked, "\n"))
+	if count != 1 || len(masked) != len(lines) {
+		t.Fatalf("masked spans = %d, lines = %d, want 1 and %d", count, len(masked), len(lines))
+	}
+	for i, line := range masked {
+		if len(line) != len(lines[i]) {
+			t.Fatalf("line %d %q does not keep the place of %q", i, line, lines[i])
+		}
+	}
+	if masked[0] != lines[0] || masked[len(masked)-2] != "`" {
+		t.Fatalf("lines around the key changed: %q", masked)
+	}
+
+	plain := []string{"func main() {", "", "\tfmt.Println(\"hello\")", "}"}
+	if got, count, err := redactor.RedactLines(ctx, plain); err != nil || count != 0 || strings.Join(got, "\n") != strings.Join(plain, "\n") || len(got) != len(plain) {
+		t.Fatalf("plain lines changed: %q %d %v", got, count, err)
+	}
+	if got, count, err := redactor.RedactLines(ctx, nil); err != nil || count != 0 || len(got) != 0 {
+		t.Fatalf("no lines: %q %d %v", got, count, err)
+	}
+}
+
+// The previous review's code excerpts are redacted a line array at a time.
+func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := syntheticKeyLines()
+	var lines []any
+	for i, line := range key {
+		lines = append(lines, map[string]any{"kind": "add", "new_line": i + 1, "text": line})
+	}
+	content, err := json.Marshal(map[string]any{"tiles": []any{map[string]any{"id": "tile_key", "kind": "bug-fix", "code": []any{map[string]any{"path": "key.pem", "revision": strings.Repeat("a", 40), "why": "Adds the key", "review_version": 1, "diff": map[string]any{"hunks": []any{map[string]any{"header": fmt.Sprintf("@@ -0,0 +1,%d @@", len(key)), "lines": lines}}}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &Bundle{Previous: &PreviousVersion{Version: 1, Sections: []PreviousSection{{ID: "sec_key", Title: "Key", Content: content}}}}
+	if err := Redact(context.Background(), bundle, redactor); err != nil {
+		t.Fatal(err)
+	}
+	redacted := string(bundle.Previous.Sections[0].Content)
+	requireNoKeyLine(t, "previous section", redacted)
+	if bundle.MaskedSpanCount != 1 {
+		t.Fatalf("masked spans = %d, want 1", bundle.MaskedSpanCount)
+	}
+	var section struct {
+		Tiles []struct {
+			Code []struct {
+				Path string `json:"path"`
+				Diff struct {
+					Hunks []struct {
+						Lines []struct {
+							Kind string `json:"kind"`
+							Text string `json:"text"`
+						} `json:"lines"`
+					} `json:"hunks"`
+				} `json:"diff"`
+			} `json:"code"`
+		} `json:"tiles"`
+	}
+	if err := json.Unmarshal(bundle.Previous.Sections[0].Content, &section); err != nil {
+		t.Fatal(err)
+	}
+	code := section.Tiles[0].Code[0]
+	got := code.Diff.Hunks[0].Lines
+	if code.Path != "key.pem" || len(got) != len(key) {
+		t.Fatalf("source changed shape: %s", redacted)
+	}
+	for i, line := range got {
+		if line.Kind != "add" || len(line.Text) != len(key[i]) {
+			t.Fatalf("line %d does not keep its place: %+v", i, line)
+		}
+	}
+}
+
 // TestRedactCoversEveryBundleStringField guards against the
 // whole-bundle redact pass silently skipping a field: every string field of
 // the bundle type is masked for secrets and e-mail addresses — including
