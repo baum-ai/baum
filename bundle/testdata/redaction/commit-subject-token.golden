@@ -1,0 +1,5 @@
+field: commit.subject
+masked_spans: 1
+masked_bytes: [29,69)
+-- output --
+Remove hard-coded Stripe key xx_xxxx_xXXxXXXXxXxx9xXxxXXXXXxxXxXxxxxx

@@ -1,0 +1,5 @@
+field: session.prompt
+masked_spans: 2
+masked_bytes: [24,128) [153,176)
+-- output --
+Deploy with VAULT_TOKEN=xxx.xx9Xx-Xxx9xxxXx9xxXXXxXXxX9X9x99xx9X9Xxx9x999XXXxXXxxxXxXxXx99x-9X9x9XxXXxXxXXX9x9X_-XxxxXxxXxXxXXXx and email the result to xxxxxxx-xxx@xxxxxxx.xxx, then tell @alice.

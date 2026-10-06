@@ -1,0 +1,15 @@
+field: diff.patch
+masked_spans: 0
+masked_bytes: none
+-- output --
+@@ -10,6 +10,12 @@ class Service:
++    @property
++    @functools.cache
++    def client(self):
++        return Client()
+ # helpers
+-import "@types/node"
++import type { X } from "@acme/sdk";
++@media (max-width: 600px) { .a { color: red } }
++    @Override
++    @SuppressWarnings("unchecked")

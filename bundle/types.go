@@ -51,3 +51,14 @@ func ChangePaths(change FileChange) []string {
 	}
 	return paths
 }
+
+// ErrNotFound reports that a source has no such commit, path or repository.
+// A blob or export source returns it, or an error wrapping it, so the
+// REVIEW.md loader and the checkout export can treat the absence as an
+// ordinary outcome.
+var ErrNotFound = errors.New("not found")
+
+// ErrInvalidArchive reports a checkout or attachments archive that does not
+// have the shape this package writes: an unexpected entry, a path outside
+// the tree, a missing file or a corrupt stream.
+var ErrInvalidArchive = errors.New("invalid archive")

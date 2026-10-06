@@ -7,14 +7,41 @@ export const CONVERSATION_DEFAULT = 400;
  *  stops being a trade and the document just breaks. */
 const REVIEW_MIN = 520;
 
-const STORAGE_KEY = "baum.review.conversation-width";
+/** A pane beside the review pane that the reader can resize: its range, the
+ *  width it starts at, and where the reader's choice is remembered. */
+export type PaneLimits = { min: number; max: number; fallback: number; storageKey: string };
 
-/** Holds the conversation pane inside the range the row can honour. `available`
- *  is the width the two panes share, so on a narrower window the ceiling comes
+export const CONVERSATION_LIMITS: PaneLimits = {
+  min: CONVERSATION_MIN,
+  max: CONVERSATION_MAX,
+  fallback: CONVERSATION_DEFAULT,
+  storageKey: "baum.review.conversation-width",
+};
+
+/** The section rail: wide enough to widen for long file names, never so wide
+ *  that it stops being a rail. */
+export const RAIL_LIMITS: PaneLimits = {
+  min: 200,
+  max: 480,
+  fallback: 264,
+  storageKey: "baum.review.rail-width",
+};
+
+/** Holds a pane inside the range the row can honour. `available` is the width
+ *  it shares with the review pane, so on a narrower window the ceiling comes
  *  down with it rather than letting the review pane be squeezed out. */
+export function clampWidth(
+  width: number,
+  limits: PaneLimits,
+  available = Number.POSITIVE_INFINITY,
+): number {
+  const ceiling = Math.max(limits.min, Math.min(limits.max, available - REVIEW_MIN));
+  return Math.min(Math.max(Math.round(width), limits.min), ceiling);
+}
+
+/** `clampWidth` for the conversation pane. */
 export function clampPaneWidth(width: number, available = Number.POSITIVE_INFINITY): number {
-  const ceiling = Math.max(CONVERSATION_MIN, Math.min(CONVERSATION_MAX, available - REVIEW_MIN));
-  return Math.min(Math.max(Math.round(width), CONVERSATION_MIN), ceiling);
+  return clampWidth(width, CONVERSATION_LIMITS, available);
 }
 
 /** The reader's split: what they chose, and what the row can currently show.
@@ -28,16 +55,18 @@ export function clampPaneWidth(width: number, available = Number.POSITIVE_INFINI
  *  has no `localStorage`, and a width that differed between the two would
  *  hydrate into a mismatch. Every access is guarded because storage throws
  *  rather than returning null in a blocked-cookies browser. */
-export function useConversationWidth() {
-  const [width, setWidth] = useState(CONVERSATION_DEFAULT);
+export function usePaneWidth(limits: PaneLimits) {
+  const [width, setWidth] = useState(limits.fallback);
   // What the reader asked for, which outlives a window too narrow to show it.
-  const chosen = useRef(CONVERSATION_DEFAULT);
+  const chosen = useRef(limits.fallback);
+  // The limits are constants per pane; a ref keeps the callbacks stable.
+  const limitsRef = useRef(limits);
 
   useEffect(() => {
     try {
-      const stored = Number(localStorage.getItem(STORAGE_KEY));
+      const stored = Number(localStorage.getItem(limitsRef.current.storageKey));
       if (Number.isFinite(stored) && stored > 0) {
-        const remembered = clampPaneWidth(stored);
+        const remembered = clampWidth(stored, limitsRef.current);
         chosen.current = remembered;
         setWidth(remembered);
       }
@@ -51,7 +80,7 @@ export function useConversationWidth() {
     chosen.current = next;
     setWidth(next);
     try {
-      localStorage.setItem(STORAGE_KEY, String(next));
+      localStorage.setItem(limitsRef.current.storageKey, String(next));
     } catch {
       // Not remembering the split is better than failing the drag.
     }
@@ -59,8 +88,18 @@ export function useConversationWidth() {
 
   /** The chosen width brought inside what the row can give. Not remembered. */
   const fit = useCallback((available: number) => {
-    setWidth(clampPaneWidth(chosen.current, available));
+    setWidth(clampWidth(chosen.current, limitsRef.current, available));
   }, []);
 
   return { width, choose, fit };
+}
+
+/** The conversation pane's width. */
+export function useConversationWidth() {
+  return usePaneWidth(CONVERSATION_LIMITS);
+}
+
+/** The section rail's width. */
+export function useRailWidth() {
+  return usePaneWidth(RAIL_LIMITS);
 }

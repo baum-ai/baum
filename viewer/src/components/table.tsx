@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
-import { cn } from "./classnames";
+import { cn, FOCUS_RING } from "./classnames";
 import { formatCount } from "./format";
+import { ChevronDownIcon } from "./icons";
 import { Button } from "./ui";
 
 /** The dashboard's data table.
@@ -21,6 +22,9 @@ export type Column<T> = {
   cell: (row: T) => ReactNode;
   /** Applied to both the header cell and every body cell in the column. */
   className?: string;
+  /** Makes the header a control that orders the table by this column.
+   *  `direction` is null while another column orders it. */
+  sort?: { direction: "ascending" | "descending" | null; onSort: () => void };
 };
 
 const densities = {
@@ -90,6 +94,7 @@ export function Table<T>({
               <th
                 key={column.key}
                 scope="col"
+                aria-sort={column.sort?.direction ?? undefined}
                 className={cn(
                   spacing.head,
                   "font-medium",
@@ -97,7 +102,11 @@ export function Table<T>({
                   column.className,
                 )}
               >
-                {column.header}
+                {column.sort ? (
+                  <SortButton sort={column.sort}>{column.header}</SortButton>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
           </tr>
@@ -129,6 +138,39 @@ export function Table<T>({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** A sortable header. The arrow shows only on the column that orders the
+ *  table, so the header row does not read as a row of controls; the column
+ *  that does not yet order it shows one on hover. */
+function SortButton({
+  sort,
+  children,
+}: {
+  sort: NonNullable<Column<unknown>["sort"]>;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={sort.onSort}
+      className={cn(
+        "group inline-flex cursor-pointer items-center gap-1 rounded-(--radius-sm) uppercase hover:text-(--text-primary)",
+        FOCUS_RING,
+        sort.direction && "text-(--text-primary)",
+      )}
+    >
+      {children}
+      <ChevronDownIcon
+        size={12}
+        className={cn(
+          "flex-none transition-transform",
+          sort.direction === "ascending" && "rotate-180",
+          !sort.direction && "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+        )}
+      />
+    </button>
   );
 }
 

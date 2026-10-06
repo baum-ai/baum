@@ -161,7 +161,7 @@ func parseCommitTime(value string) (time.Time, bool) {
 }
 
 // endDistance is how far a run's end sits from the commit, which orders equal
-// scores: ENG-279 measured that as decisive on every tie in the bounce data. A
+// scores: it proved decisive on every tie in measured data. A
 // run that never recorded an end sorts last rather than winning the tie by
 // accident. So does every run when the commit timestamp will not parse, which
 // is defence rather than a live case: timeframe parses the same value first and

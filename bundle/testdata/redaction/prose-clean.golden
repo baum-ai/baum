@@ -1,0 +1,7 @@
+field: pull_request.body
+masked_spans: 0
+masked_bytes: none
+-- output --
+Refactor the retry loop so a failed upload is retried twice.
+
+No behaviour change for successful uploads.
