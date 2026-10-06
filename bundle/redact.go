@@ -3,7 +3,6 @@ package bundle
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/lastpersonlabs/baum/redact"
@@ -114,15 +113,17 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 			if err := json.Unmarshal(section.Content, &content); err != nil {
 				return err
 			}
-			var redactContent func(any, string) (any, error)
-			redactContent = func(value any, key string) (any, error) {
+			// line is set for an element of a "lines" array, whose text is
+			// redacted with its siblings' text.
+			var redactContent func(value any, key string, line bool) (any, error)
+			redactContent = func(value any, key string, line bool) (any, error) {
 				switch value := value.(type) {
 				case map[string]any:
 					for childKey, child := range value {
-						if _, text := child.(string); text && key == "lines" && childKey == "text" {
-							continue // redacted with its siblings' text
+						if _, text := child.(string); text && line && childKey == "text" {
+							continue
 						}
-						redacted, err := redactContent(child, childKey)
+						redacted, err := redactContent(child, childKey, false)
 						if err != nil {
 							return nil, err
 						}
@@ -137,7 +138,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 						}
 					}
 					for i, child := range value {
-						redacted, err := redactContent(child, key)
+						redacted, err := redactContent(child, key, key == "lines")
 						if err != nil {
 							return nil, err
 						}
@@ -154,7 +155,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 				}
 				return value, nil
 			}
-			redacted, err := redactContent(content, "")
+			redacted, err := redactContent(content, "", false)
 			if err != nil {
 				return err
 			}
@@ -246,14 +247,12 @@ func (r *Redactor) RedactString(ctx context.Context, s string) (string, int, err
 	return redacted, summary.Findings, nil
 }
 
-// errLineRedaction reports masked lines that no longer line up with their
-// input; they are dropped rather than kept unmasked.
-var errLineRedaction = errors.New("line redaction changed the number of lines")
-
 // RedactLines redacts lines that read as one text, such as a code excerpt's
 // lines, as their newline-joined text, so a secret written across several of
 // them is found as a whole. It returns as many lines as it was given, each
-// masked in place, and the spans masked in the joined text.
+// masked in place, and the spans masked in the joined text. A line may hold
+// a newline itself: each is cut back out at its own offsets. Should the mask
+// ever change the text's length, every line is masked whole instead.
 func (r *Redactor) RedactLines(ctx context.Context, lines []string) ([]string, int, error) {
 	joined := strings.Join(lines, "\n")
 	if joined == "" {
@@ -263,9 +262,17 @@ func (r *Redactor) RedactLines(ctx context.Context, lines []string) ([]string, i
 	if err != nil {
 		return nil, 0, err
 	}
-	masked := strings.Split(redacted, "\n")
-	if len(masked) != len(lines) {
-		return nil, 0, errLineRedaction
+	masked := make([]string, len(lines))
+	if len(redacted) != len(joined) {
+		for i, line := range lines {
+			masked[i] = strings.Repeat("*", len(line))
+		}
+		return masked, count, nil
+	}
+	offset := 0
+	for i, line := range lines {
+		masked[i] = redacted[offset : offset+len(line)]
+		offset += len(line) + 1
 	}
 	return masked, count, nil
 }

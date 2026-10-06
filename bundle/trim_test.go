@@ -472,6 +472,56 @@ func TestRedactLinesMasksSecretsSpanningLines(t *testing.T) {
 	}
 }
 
+// A line holding a newline itself is cut back out whole.
+func TestRedactLinesKeepsLinesHoldingNewlines(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := syntheticKeyLines()
+	lines := []string{key[0] + "\n" + key[1], strings.Join(key[2:], "\n"), "done"}
+	masked, count, err := redactor.RedactLines(context.Background(), lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoKeyLine(t, "lines", strings.Join(masked, "\n"))
+	if count != 1 || len(masked) != len(lines) || masked[2] != "done" {
+		t.Fatalf("masked = %q, %d spans", masked, count)
+	}
+	for i := range lines {
+		if len(masked[i]) != len(lines[i]) || strings.Count(masked[i], "\n") != strings.Count(lines[i], "\n") {
+			t.Fatalf("line %d %q does not keep the shape of %q", i, masked[i], lines[i])
+		}
+	}
+}
+
+// Only the elements of a "lines" array are redacted as one text; any other
+// text under a "lines" key is redacted as it is.
+func TestRedactPreviousTextUnderLinesObjects(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(map[string]any{
+		"x": map[string]any{"lines": map[string]any{"text": "token " + plantedSecret}},
+		"y": map[string]any{"lines": []any{map[string]any{"text": "a"}, "token " + plantedSecret}},
+		"z": map[string]any{"lines": []any{map[string]any{"text": "a", "note": map[string]any{"text": "token " + plantedSecret}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &Bundle{Previous: &PreviousVersion{Sections: []PreviousSection{{ID: "sec_x", Title: "X", Content: content}}}}
+	if err := Redact(context.Background(), bundle, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if redacted := string(bundle.Previous.Sections[0].Content); strings.Contains(redacted, plantedSecret) {
+		t.Fatalf("text under lines kept the secret: %s", redacted)
+	}
+	if bundle.MaskedSpanCount != 3 {
+		t.Fatalf("masked spans = %d, want 3", bundle.MaskedSpanCount)
+	}
+}
+
 // The previous review's code excerpts are redacted a line array at a time.
 func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
 	redactor, err := NewRedactor()

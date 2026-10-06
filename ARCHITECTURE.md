@@ -151,9 +151,10 @@ document without a model call; `baum refresh` uses it.
 
 Everything a model returns is untrusted. Output redaction masks free text in
 the document, the findings and the diagnostics, and keeps only the fields the
-schema marks as references (IDs, paths, SHAs). A code excerpt's lines are
-redacted as one text. If redaction fails, the text is dropped rather than
-kept.
+schema marks as references (IDs, paths, SHAs). A document's free text is
+scanned as one text, so a secret spread over code lines, table rows or steps
+is caught; text scattered across unrelated fields, or a token wrapped
+mid-value, is not. If redaction fails, the text is dropped rather than kept.
 
 ### Tiles
 
