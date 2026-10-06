@@ -44,6 +44,31 @@
   --text-2xl--line-height: 1.25;
   --text-3xl: 28px;
   --text-3xl--line-height: 1.2;
+
+  /* Motion. Short and one-directional: a pane that arrives settles in under
+     200ms, a skeleton's light band crosses it in about a second. Components
+     pair these with `motion-reduce:animate-none`. */
+  --animate-pane-in: pane-in 180ms ease-out both;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+
+  @keyframes pane-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
 }
 
 /* Quiet, precise, editorial, and out of the way of the review. The palette
@@ -137,6 +162,8 @@
      the row you are on still stands out from the one under the pointer. */
   --surface-selected: color-mix(in srgb, var(--brand-sand-100) 55%, var(--paper-0));
   --surface-scrim: rgba(31, 27, 23, 0.44);
+  /* The side pane beside the review is a panel like any other. */
+  --surface-aside: var(--paper-0);
   --control-thumb: #ffffff;
 
   /* ---- Semantic: borders ---- */
@@ -214,6 +241,11 @@
 
   /* The strong rule that opens a masthead. */
   --rule-masthead: var(--brand-forest);
+
+  /* The layer of a bar that sticks to the top of the page, such as the
+     review's compact pull request bar, used as `z-(--z-sticky)`. A host's
+     own page layers stack around it. */
+  --z-sticky: 30;
 
   /* ---- Brand: sand and forest ----
      The viewer borrows the brand palette only for chrome: the
@@ -323,6 +355,7 @@
   --surface-pressed: rgba(255, 255, 255, 0.1);
   --surface-wash: rgba(255, 255, 255, 0.06);
   --surface-scrim: rgba(0, 0, 0, 0.62);
+  --surface-aside: color-mix(in srgb, var(--brand-sand-100) 4%, var(--paper-50));
 
   /* ---- Shadows. A near-black shadow on a light page is a soft edge; on a dark
      one it is invisible, so these carry more of it. ---- */

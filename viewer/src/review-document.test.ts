@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { sha256Hex } from "./sha256";
 
 import {
+  pullRequestStateTone,
+  riskLabel,
   type Anchor,
   type Block,
   behaviourChanges,
@@ -38,6 +40,7 @@ import {
   triageRisks,
   riskScoreTone,
   riskScoreView,
+  type TriageRisk,
 } from "./review-document";
 
 const document = {
@@ -1446,5 +1449,30 @@ describe("sectionsInReviewOrder", () => {
   it("keeps a document generated before section scores in the review's order", () => {
     const legacy = [ordered("b"), ordered("a"), ordered("c", undefined, { state: "stale" })];
     expect(sectionsInReviewOrder(legacy)).toBe(legacy);
+  });
+});
+
+describe("pullRequestStateTone", () => {
+  it("colours merged and open, and leaves closed and unknown states neutral", () => {
+    expect(pullRequestStateTone("merged")).toBe("positive");
+    expect(pullRequestStateTone("open")).toBe("info");
+    expect(pullRequestStateTone("closed")).toBe("neutral");
+    expect(pullRequestStateTone("draft")).toBe("neutral");
+  });
+});
+
+describe("riskLabel", () => {
+  it("leads with the category and follows with the section", () => {
+    expect(
+      riskLabel({
+        id: "rsk_1",
+        tier: "high",
+        category: "data_integrity",
+        text: "",
+        anchors: [],
+        section: "sec_a",
+        sectionTitle: "Atomic save",
+      } as unknown as TriageRisk),
+    ).toBe("Data integrity · Atomic save");
   });
 });
