@@ -16,7 +16,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
+
+// unpackPathError classifies a failure to create an entry on the scratch
+// filesystem. Only errors an archive itself can cause, a path that clashes
+// with an earlier entry, are a malformed archive; host failures such as a full
+// disk or a permission error stay distinguishable so they are not retried as
+// bad input.
+func unpackPathError(err error) error {
+	for _, clash := range []error{syscall.ENOTDIR, syscall.EEXIST, syscall.EISDIR, syscall.ENAMETOOLONG} {
+		if errors.Is(err, clash) {
+			return ErrInvalidArchive
+		}
+	}
+	return fmt.Errorf("unpack checkout archive: %w", err)
+}
 
 // PinnedExport is one pinned snapshot's worth of exports: every call through
 // it, for as long as the checkout that holds it runs, reads the same
@@ -348,7 +363,7 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 		seen[name] = true
 		if entry.Typeflag == tar.TypeDir {
 			if err := os.MkdirAll(path, 0700); err != nil {
-				return ErrInvalidArchive
+				return unpackPathError(err)
 			}
 			continue
 		}
@@ -369,11 +384,11 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 		// A path that cannot be created inside the tree, such as a file
 		// below a path an earlier entry made a file, is a malformed archive.
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return ErrInvalidArchive
+			return unpackPathError(err)
 		}
 		output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
 		if err != nil {
-			return ErrInvalidArchive
+			return unpackPathError(err)
 		}
 		_, copyErr := io.CopyN(output, reader, entry.Size)
 		err = errors.Join(copyErr, output.Close())

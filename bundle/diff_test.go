@@ -118,6 +118,48 @@ func TestBinaryChangeYieldsOneTextlessHunk(t *testing.T) {
 	}
 }
 
+func TestBinaryPatchFormatsYieldOneTextlessHunk(t *testing.T) {
+	patches := map[string]string{
+		"plain":  "diff --git a/x.bin b/x.bin\nindex 1a23e4b..2e56c62 100644\nBinary files a/x.bin and b/x.bin differ\n",
+		"binary": "diff --git a/x.bin b/x.bin\nindex 1a23e4b..2e56c62 100644\nGIT binary patch\nliteral 4\nLcmYdfNa6wj0#*Rd\n\nliteral 4\nLcmYdhNZ|qi0%8Et\n\n",
+	}
+	for name, patch := range patches {
+		comparison := Comparison{Files: []FileChange{{NewPath: "x.bin", Status: "modified"}}}
+		hunks, err := BuildDiffIndex(comparison, fetcher(patchOf("x.bin", []byte(patch))), RoleForPath)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(hunks) != 1 || !hunks[0].Textless || hunks[0].Patch != "" || hunks[0].TextlessReason != "binary" {
+			t.Fatalf("%s: want one textless hunk with reason binary, got %+v", name, hunks)
+		}
+	}
+}
+
+// TestTextPatchQuotingBinaryMarkersKeepsHunks covers a text file whose added
+// lines quote git's binary markers: only header lines classify a patch.
+func TestTextPatchQuotingBinaryMarkersKeepsHunks(t *testing.T) {
+	patch := "diff --git a/g.go b/g.go\nnew file mode 100644\n--- /dev/null\n+++ b/g.go\n" +
+		"@@ -0,0 +1,3 @@\n" +
+		"+// git prints \"Binary files a/x and b/y differ\" for binaries.\n" +
+		"+var m = \"GIT binary patch\"\n" +
+		"+Binary files are skipped\n"
+	comparison := Comparison{Files: []FileChange{{NewPath: "g.go", Status: "added"}}}
+	hunks, err := BuildDiffIndex(comparison, fetcher(patchOf("g.go", []byte(patch))), RoleForPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hunks) != 1 {
+		t.Fatalf("want one hunk, got %d", len(hunks))
+	}
+	h := hunks[0]
+	if h.Textless || h.TextlessReason != "" || h.Patch == "" {
+		t.Fatalf("text patch must keep its hunk text, got %+v", h)
+	}
+	if h.StartLine != 1 || h.LineCount != 3 || h.Additions != 3 || h.Deletions != 0 {
+		t.Fatalf("wrong ranges, got %+v", h)
+	}
+}
+
 // TestPatchLineOverScannerLimitYieldsOneTextlessHunk covers a patch line
 // past the scanner's 16MiB buffer (the "textless hunk" contract
 // for content that cannot be read): scanner.Scan stops with

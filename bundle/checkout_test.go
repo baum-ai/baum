@@ -207,3 +207,19 @@ func (f fakeExport) ExportCommitPath(_ context.Context, commit, path string) (io
 	}
 	return f.archive(files), nil
 }
+
+func TestUnpackCheckoutKeepsScratchFilesystemErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	caps := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1024, MaxTotalFiles: 10}
+	err := UnpackCheckout(context.Background(), writeCheckoutArchive(t, "head/a"), dir, caps)
+	if err == nil || errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("err = %v, want a host filesystem error, not ErrInvalidArchive", err)
+	}
+}
