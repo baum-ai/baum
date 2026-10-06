@@ -129,6 +129,7 @@ describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
+| `bundle` | the evidence bundle types a generation run reads and the diff index (hunk IDs, roles, diff URLs) built from a comparison |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
 | `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
