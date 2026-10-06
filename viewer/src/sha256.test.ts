@@ -10,7 +10,7 @@ describe("sha256Hex", () => {
     );
     for (const text of [
       "",
-      "server/migrations/000017_linkage_eligibility.up.sql",
+      "migrations/0007_dead_letters.up.sql",
       "名前/ü.ts",
       "x".repeat(55),
       "x".repeat(56),
