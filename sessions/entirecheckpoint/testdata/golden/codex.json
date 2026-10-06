@@ -6,7 +6,7 @@
       "index": 0,
       "session_id": "0194c3a1-7e52-7b10-9d4e-3f6a8b2c5d71",
       "agent": "Codex",
-      "full_bytes": 24551,
+      "full_bytes": 25761,
       "compact_records": 9,
       "block_kinds": {
         "assistant_text": 4,
@@ -16,8 +16,8 @@
       "prompt_present": true,
       "skill_events": 0,
       "hash": {
-        "recorded": "sha256:57587bf031ed2a3b313fc9b328192baac7ad81a83d126422144b319933ef6342",
-        "actual": "sha256:57587bf031ed2a3b313fc9b328192baac7ad81a83d126422144b319933ef6342",
+        "recorded": "sha256:e05996b97a85b887e4cd381fc55d9ee177b599a3f30a21a9043c7cbc8145db95",
+        "actual": "sha256:e05996b97a85b887e4cd381fc55d9ee177b599a3f30a21a9043c7cbc8145db95",
         "checked": true,
         "mismatch": false
       }

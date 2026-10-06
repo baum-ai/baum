@@ -113,6 +113,45 @@
                   "path": "/home/dev/taskline"
                 },
                 "access": "write"
+              },
+              {
+                "path": {
+                  "type": "special",
+                  "value": {
+                    "kind": "slash_tmp"
+                  }
+                },
+                "access": "write"
+              },
+              {
+                "path": {
+                  "type": "special",
+                  "value": {
+                    "kind": "tmpdir"
+                  }
+                },
+                "access": "write"
+              },
+              {
+                "path": {
+                  "type": "path",
+                  "path": "/home/dev/taskline/.git"
+                },
+                "access": "read"
+              },
+              {
+                "path": {
+                  "type": "path",
+                  "path": "/home/dev/taskline/.codex"
+                },
+                "access": "read"
+              },
+              {
+                "path": {
+                  "type": "path",
+                  "path": "/home/dev/taskline/.agents"
+                },
+                "access": "read"
               }
             ]
           },
@@ -163,6 +202,45 @@
                     "path": "/home/dev/taskline"
                   },
                   "access": "write"
+                },
+                {
+                  "path": {
+                    "type": "special",
+                    "value": {
+                      "kind": "slash_tmp"
+                    }
+                  },
+                  "access": "write"
+                },
+                {
+                  "path": {
+                    "type": "special",
+                    "value": {
+                      "kind": "tmpdir"
+                    }
+                  },
+                  "access": "write"
+                },
+                {
+                  "path": {
+                    "type": "path",
+                    "path": "/home/dev/taskline/.git"
+                  },
+                  "access": "read"
+                },
+                {
+                  "path": {
+                    "type": "path",
+                    "path": "/home/dev/taskline/.codex"
+                  },
+                  "access": "read"
+                },
+                {
+                  "path": {
+                    "type": "path",
+                    "path": "/home/dev/taskline/.agents"
+                  },
+                  "access": "read"
                 }
               ]
             },
@@ -801,19 +879,14 @@
           "hunks": [
             {
               "old_start": 8,
-              "old_lines": 8,
+              "old_lines": 3,
               "new_start": 8,
-              "new_lines": 13,
+              "new_lines": 5,
               "lines": [
-                " func runList(args []string) error {",
                 "+\tasJSON := len(args) \u003e 0 \u0026\u0026 args[0] == \"--json\"",
                 " \ttasks, err := loadTasks()",
+                "+\t_ = asJSON",
                 " \tif err != nil {",
-                " \t\treturn err",
-                " \t}",
-                "+\tif asJSON {",
-                "+\t\treturn json.NewEncoder(os.Stdout).Encode(tasks)",
-                "+\t}",
                 ""
               ]
             }
@@ -837,17 +910,31 @@
           "hunks": [
             {
               "old_start": 1,
-              "old_lines": 6,
+              "old_lines": 5,
               "new_start": 1,
-              "new_lines": 7,
+              "new_lines": 6,
               "lines": [
                 " package main",
                 " ",
                 " import (",
                 "+\t\"encoding/json\"",
-                " \t\"fmt\"",
-                " \t\"os\"",
-                " )",
+                " \t\"fmt\""
+              ]
+            },
+            {
+              "old_start": 14,
+              "old_lines": 6,
+              "new_start": 15,
+              "new_lines": 9,
+              "lines": [
+                " \t\treturn err",
+                " \t}",
+                "+\tif asJSON {",
+                "+\t\treturn json.NewEncoder(os.Stdout).Encode(tasks)",
+                "+\t}",
+                " \tfor _, t := range tasks {",
+                " \t\tfmt.Fprintln(os.Stdout, t.Title)",
+                " \t}",
                 ""
               ]
             }
@@ -862,16 +949,43 @@
           "kind": "edit",
           "hunks": [
             {
-              "old_start": 6,
-              "old_lines": 3,
-              "new_start": 6,
+              "old_start": 1,
+              "old_lines": 5,
+              "new_start": 1,
               "new_lines": 6,
               "lines": [
+                " package main",
+                " ",
+                " import (",
+                "-\t\"os\"",
+                "+\t\"errors\"",
+                " \t\"testing\""
+              ]
+            },
+            {
+              "old_start": 10,
+              "old_lines": 12,
+              "new_start": 11,
+              "new_lines": 20,
+              "lines": [
+                " func TestRunListJSON(t *testing.T) {",
+                "+\tt.Helper()",
+                " \tif err := runList([]string{\"--json\"}); err != nil {",
                 " \t\tt.Fatal(err)",
                 " \t}",
-                "+\tif _, err := os.Stat(\".\"); err != nil {",
-                "+\t\tt.Fatal(err)",
+                "+\tif err := runList([]string{\"--bogus\"}); err == nil {",
+                "+\t\tt.Fatal(\"want an error for an unknown flag\")",
                 "+\t}",
+                "+\tif errors.Is(nil, nil) {",
+                "+\t\tt.Log(\"ok\")",
+                "+\t}",
+                "+\tt.Run(\"empty\", func(t *testing.T) {",
+                "+\t\tt.Parallel()",
+                "+\t})",
+                " ",
+                " \tt.Log(\"done\")",
+                " ",
+                " \t// end",
                 ""
               ]
             }
@@ -1490,7 +1604,7 @@
     "checkpoint_id": "3c9a1f7d2b64",
     "created_at": "2026-07-10T12:09:38.412Z",
     "checkpoints_count": 1,
-    "source_blob_hash": "sha256:57587bf031ed2a3b313fc9b328192baac7ad81a83d126422144b319933ef6342",
+    "source_blob_hash": "sha256:e05996b97a85b887e4cd381fc55d9ee177b599a3f30a21a9043c7cbc8145db95",
     "fidelity_rank": 2
   }
 ]
