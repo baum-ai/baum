@@ -94,6 +94,12 @@ left out rather than shown empty or failed:
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 
+Decisions show who took them: a section's Key decisions and the Activity
+tab's list badge each one Human or Agent, and an agent decision carrying
+`approved_by_human` reads "Agent · approved" with a tick, so the approval is
+in words rather than colour alone. It still counts as the agent's in the
+Activity tab's agent and person tally.
+
 The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot. The `baum` binary fills
 it from the session stores on the user's machine.

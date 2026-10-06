@@ -35,6 +35,7 @@ import { CheckIcon, ExternalLinkIcon, RiskIcon } from "./icons";
 import {
   AnchorChips,
   CommitLink,
+  DecisionByBadge,
   Item,
   ItemMeta,
   JumpLink,
@@ -615,9 +616,7 @@ function BlockView({
             {decisions.items.map((decision) => (
               <Item key={decision.id} id={itemId(decision.id)} className="space-y-1.5">
                 <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
-                  <Badge size="compact" tone={decision.by === "human" ? "info" : "neutral"}>
-                    {decision.by === "human" ? "Human" : "Agent"}
-                  </Badge>
+                  <DecisionByBadge decision={decision} />
                   <Markdown className="min-w-0 flex-1 text-(--text-primary)">
                     {decision.text}
                   </Markdown>

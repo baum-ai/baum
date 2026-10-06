@@ -223,6 +223,17 @@ const reviewDocument = {
                 { type: "prompt", session: "s_1", index: 2 },
               ],
             },
+            {
+              // The agent proposed it and the person said yes to the plan.
+              id: "dec_2",
+              by: "agent",
+              text: "Re-query the totals with the activity list's scope instead of filtering them client-side",
+              approved_by_human: true,
+              anchors: [
+                { type: "prompt", session: "s_1", index: 2 },
+                { type: "hunk", id: "h_picker" },
+              ],
+            },
           ],
         },
       ],

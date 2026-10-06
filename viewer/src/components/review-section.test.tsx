@@ -94,6 +94,37 @@ function header(tier: "unrated" | "high", state: "new" | "stale", keepRisks = fa
   );
 }
 
+describe("review section decisions", () => {
+  const anchors = [{ type: "hunk" as const, id: "h_picker" }];
+
+  it("says who took each decision, and that a person approved an agent's", () => {
+    const html = render([
+      {
+        kind: "decisions",
+        items: [
+          { id: "dec_h", by: "human", text: "Person chose", anchors },
+          { id: "dec_a", by: "agent", text: "Agent chose", anchors },
+          {
+            id: "dec_ok",
+            by: "agent",
+            text: "Agent proposed, person agreed",
+            approved_by_human: true,
+            anchors,
+          },
+        ],
+      },
+    ]);
+    const part = html.slice(html.indexOf('aria-label="Key decisions"'));
+    const badges = [
+      ...part.slice(0, part.indexOf("</section>")).matchAll(/rounded-full[^>]*>(.*?)<\/span>/g),
+    ].map((match) => match[1]!.replace(/<svg.*<\/svg>/, "").trim());
+    expect(badges).toEqual(["Human", "Agent", "Agent · approved"]);
+    // The approval is in words and a tick, not only a colour.
+    expect(html).toContain('title="Proposed by the agent and approved by a person"');
+    expect(html).toContain('aria-hidden="true"');
+  });
+});
+
 describe("review section tier", () => {
   it("says a section without any risk has none found, not that it is unrated", () => {
     const html = header("unrated", "new");

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { reviewDocumentFor } from "../../test/review-document";
-import type { ReviewDocument } from "../review-document";
+import type { Block, ReviewDocument } from "../review-document";
 import { ReviewActivity, ReviewDetails } from "./review-details";
 
 function fixture() {
@@ -45,5 +45,32 @@ describe("review activity sessions", () => {
       <ReviewActivity document={document} onSelectSection={() => {}} onViewSessions={() => {}} />,
     );
     expect(withLink).toContain("View all sessions");
+  });
+});
+
+describe("review activity decisions", () => {
+  it("marks an agent decision a person approved and leaves the others as they were", () => {
+    const html = renderToStaticMarkup(
+      <ReviewActivity document={fixture()} onSelectSection={() => {}} />,
+    );
+    expect(html).toContain("Agent · approved");
+    expect(html).toContain('title="Proposed by the agent and approved by a person"');
+    expect(html).toContain(">Human</span>");
+    // An approved decision is still the agent's in the tally.
+    expect(html).toContain("1 agent · 1 person");
+  });
+
+  it("does not mark a plain agent decision as approved", () => {
+    const document = fixture();
+    for (const section of document.sections)
+      for (const block of section.blocks)
+        if (block.kind === "decisions")
+          for (const item of (block as Extract<Block, { kind: "decisions" }>).items)
+            delete item.approved_by_human;
+    const html = renderToStaticMarkup(
+      <ReviewActivity document={document} onSelectSection={() => {}} />,
+    );
+    expect(html).not.toContain("approved");
+    expect(html).toContain(">Agent</span>");
   });
 });

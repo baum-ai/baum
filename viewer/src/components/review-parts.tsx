@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import {
   type Anchor,
   anchorFile,
+  type Decision,
   humanize,
   type ReviewDocument,
   resolveAnchor,
@@ -23,7 +24,7 @@ import {
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { CodeFileLink } from "./code-file-link";
-import { ExternalLinkIcon } from "./icons";
+import { CheckIcon, ExternalLinkIcon } from "./icons";
 import { Badge } from "./ui";
 
 /** The small pieces every pane of a review document is built from. */
@@ -278,6 +279,36 @@ export function None({ children }: { children: ReactNode }) {
       {children}
     </p>
   );
+}
+
+/** Who took a decision. An agent decision a person explicitly accepted (an
+ *  approved plan, a chosen option, a clear yes) is still the agent's, so it
+ *  keeps the agent's tone and says the approval in words and a tick rather
+ *  than in colour alone. */
+export function DecisionByBadge({
+  decision,
+}: {
+  decision: Pick<Decision, "by" | "approved_by_human">;
+}) {
+  if (decision.by === "human")
+    return (
+      <Badge size="compact" tone="info">
+        Human
+      </Badge>
+    );
+  if (decision.approved_by_human)
+    return (
+      <Badge
+        size="compact"
+        tone="neutral"
+        className="gap-1"
+        title="Proposed by the agent and approved by a person"
+      >
+        Agent · approved
+        <CheckIcon size={12} />
+      </Badge>
+    );
+  return <Badge size="compact">Agent</Badge>;
 }
 
 const chipClass = cn(

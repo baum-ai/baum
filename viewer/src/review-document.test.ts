@@ -1176,6 +1176,10 @@ describe("reviewDecisions", () => {
             decision("d_prompt", "human", [{ type: "prompt", session: "s1", index: 3 }]),
             decision("d_other", "agent", [{ type: "prompt", session: "s2", index: 1 }]),
             decision("d_loose", "agent", [{ type: "hunk", id: "h_1" }]),
+            {
+              ...decision("d_approved", "agent", [{ type: "prompt", session: "s1", index: 4 }]),
+              approved_by_human: true,
+            },
           ],
         },
       ]),
@@ -1195,8 +1199,17 @@ describe("reviewDecisions", () => {
       "d_prompt",
       "d_other",
       "d_loose",
+      "d_approved",
       "d_event",
     ]);
+  });
+
+  it("keeps a person's approval on the agent decision it was given to", () => {
+    expect(
+      reviewDecisions(decided)
+        .filter((item) => item.approved_by_human)
+        .map((item) => [item.id, item.by]),
+    ).toEqual([["d_approved", "agent"]]);
   });
 
   it("carries the section that stated each decision", () => {
@@ -1204,6 +1217,7 @@ describe("reviewDecisions", () => {
       ["d_prompt", "Retry policy and backoff"],
       ["d_other", "Retry policy and backoff"],
       ["d_loose", "Retry policy and backoff"],
+      ["d_approved", "Retry policy and backoff"],
       ["d_event", "Operator endpoints"],
     ]);
   });
