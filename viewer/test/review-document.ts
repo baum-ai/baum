@@ -73,7 +73,7 @@ const reviewDocument = {
     title: "Ship analytics filters",
     text: "Filter activity by repository and share the selected view with a teammate. A repository picker above the activity list updates the visible activity and totals together.",
     change_kind: "feature",
-    implements: [{ type: "issue", system: "linear", key: "AGE-46" }],
+    implements: [{ type: "issue", system: "linear", key: "WEB-46" }],
     release_note: null,
     breaking_change: null,
     review_exchange: {
@@ -181,7 +181,7 @@ const reviewDocument = {
           text: "Let a reader narrow the activity view to one repository without losing the totals that put it in context.",
           anchors: [
             { type: "prompt", session: "s_1", index: 1 },
-            { type: "issue", system: "linear", key: "AGE-46" },
+            { type: "issue", system: "linear", key: "WEB-46" },
           ],
         },
         {
@@ -554,7 +554,7 @@ const reviewDocument = {
             index: 1,
             id: "p_1",
             at: "2026-07-29T11:20:31Z",
-            text: "Implement AGE-46: repository filters on the activity view.",
+            text: "Implement WEB-46: repository filters on the activity view.",
           },
           {
             index: 2,

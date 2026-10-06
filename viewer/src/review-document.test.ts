@@ -328,8 +328,8 @@ describe("resolveAnchor", () => {
   });
 
   it("shows issue keys and spec assertions as text without inventing URLs", () => {
-    expect(resolve({ type: "issue", system: "linear", key: "AGE-14" })).toEqual({
-      label: "AGE-14",
+    expect(resolve({ type: "issue", system: "linear", key: "WEB-14" })).toEqual({
+      label: "WEB-14",
       title: "Linear issue",
       kind: "Issue",
     });
@@ -1235,16 +1235,16 @@ describe("implementsGroups", () => {
   it("groups by the tracker and page the document names, in its order", () => {
     const items: Implements[] = [
       { type: "spec", page: "REQ-117", assertion: "REQ-117-A01" },
-      { type: "issue", system: "linear", key: "AGE-14" },
+      { type: "issue", system: "linear", key: "WEB-14" },
       { type: "spec", page: "REQ-117", assertion: "REQ-117-A02" },
-      { type: "issue", system: "linear", key: "AGE-14" },
+      { type: "issue", system: "linear", key: "WEB-14" },
       { type: "issue", system: "jira", key: "OPS-3" },
       { type: "issue", system: "shortcut", key: "SC-9" },
       { type: "spec", page: "RFC-2", assertion: "RFC-2-A01" },
     ];
     expect(implementsGroups(items)).toEqual([
       { kind: "spec", label: "REQ-117", items: ["REQ-117-A01", "REQ-117-A02"] },
-      { kind: "issue", label: "Linear", items: ["AGE-14"] },
+      { kind: "issue", label: "Linear", items: ["WEB-14"] },
       { kind: "issue", label: "Jira", items: ["OPS-3"] },
       { kind: "issue", label: "Shortcut", items: ["SC-9"] },
       { kind: "spec", label: "RFC-2", items: ["RFC-2-A01"] },
