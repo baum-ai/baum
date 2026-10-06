@@ -15,9 +15,9 @@ import (
 //
 // run in the private bare repository, so the clone's configuration,
 // attributes and .gitmodules do not reach it, and the archive is byte for
-// byte the hosted one, including the attributes it applies (it still applies
-// working-tree-encoding from the tree; ENG-795). The archive streams from git's stdout; it is never
-// buffered whole. Reading more than Options.MaxArchiveBytes kills git and
+// byte the hosted one, including the attributes it applies: it still applies
+// working-tree-encoding from the tree. The archive streams from git's stdout;
+// it is never buffered whole. Reading more than Options.MaxArchiveBytes kills git and
 // fails with bundle.ErrOutputTooLarge, and Options.ArchiveTimeout bounds the
 // whole export. A git that fails part way is an error from Read, never a
 // silently truncated archive. An unknown commit is ErrObjectNotFound.

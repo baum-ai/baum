@@ -24,8 +24,8 @@
 // index, working tree, configuration and worktree registrations are never
 // changed. An export is the hosted mirror's own git archive command run in
 // the private repository, so it is byte for byte the archive the hosted
-// service produces, including whatever attributes that archive applies (it
-// still applies working-tree-encoding from the tree; ENG-795).
+// service produces, including whatever attributes that archive applies: it
+// still applies working-tree-encoding from the tree.
 //
 // Every git process runs without a shell, under a timeout, with its output
 // capped, and with prompts, pagers and editors disabled. Errors carry a short
