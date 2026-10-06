@@ -688,6 +688,13 @@ func (v *DocumentValidator) ValidHunkIDs(bundle *bundlepkg.Bundle) bool {
 // It never calls the model and never accepts derived fields from its output;
 // model names the generator recorded in the document.
 func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, directory string, model string, now time.Time) ([]byte, string) {
+	return v.CompleteWithPrompt(document, b, directory, model, "", now)
+}
+
+// CompleteWithPrompt is Complete for a host that versions its instruction
+// prompt: promptVersion is recorded as generator.prompt_version, and an empty
+// one records nothing. The model's output never sets it.
+func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
 	document, findings := v.Prepare(document, b, directory)
 	if findings != "" {
 		return nil, findings
@@ -790,7 +797,7 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 		MergedCommit: merged, Version: previous + 1, PreviousVersion: previousVersion,
 		GenerationState: "current", GeneratedAt: now.UTC().Format(time.RFC3339Nano), EvidenceRefreshedAt: now.UTC().Format(time.RFC3339Nano),
 		Relations: doc.Relations,
-		Generator: documentReviewGenerator{Model: model, ReviewMD: reviewMD, ReviewMDChanged: reviewMDChanged, Truncated: notes, SchemaRevision: v.Revision},
+		Generator: documentReviewGenerator{Model: model, ReviewMD: reviewMD, ReviewMDChanged: reviewMDChanged, Truncated: notes, SchemaRevision: v.Revision, PromptVersion: promptVersion},
 		Sources:   documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD != nil},
 	}
 	tiers := []string{"mechanical", "unrated", "low", "medium", "high", "critical"}

@@ -142,6 +142,54 @@ func TestCompleteRecordsReviewPolicyChange(t *testing.T) {
 	}
 }
 
+// The host's prompt version lands in generator.prompt_version; Complete,
+// for a host that does not version its prompt, records none, and a
+// prompt_version in the model's output never replaces the host's.
+func TestCompleteRecordsTheHostPromptVersion(t *testing.T) {
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &bundlepkg.Bundle{
+		Repository:  "org/repo",
+		PullRequest: bundlepkg.PullRequest{Number: 1, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb"},
+		Sources:     bundlepkg.Sources{"diff": true},
+		Diff:        []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "modified", Patch: "@@ -1 +1 @@\n-old\n+new"}},
+	}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, prompt := range []string{"review-v12", ""} {
+		published, findings := validator.CompleteWithPrompt(authoredFixture(), bundle, "", "fixture-model", prompt, now)
+		if findings != "" {
+			t.Fatal(findings)
+		}
+		document, err := decodeObject(published, "published")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, present := document["review"].(map[string]any)["generator"].(map[string]any)["prompt_version"]
+		if (prompt == "" && present) || (prompt != "" && got != prompt) {
+			t.Fatalf("prompt %q: generator.prompt_version = %v", prompt, got)
+		}
+	}
+	authored, err := decodeObject(authoredFixture(), "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authored["review"] = map[string]any{"generator": map[string]any{"prompt_version": "model-written"}}
+	encoded, _ := json.Marshal(authored)
+	published, findings := validator.CompleteWithPrompt(encoded, bundle, "", "fixture-model", "review-v12", now)
+	if findings != "" {
+		return
+	}
+	document, err := decodeObject(published, "published")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := document["review"].(map[string]any)["generator"].(map[string]any)["prompt_version"]; got != "review-v12" {
+		t.Fatalf("model-written prompt_version kept: %v", got)
+	}
+}
+
 func TestCompleteAndRefreshPreserveBlockVariants(t *testing.T) {
 	validator, bundle, _ := refreshFixture(t)
 	authored, err := decodeObject(authoredFixture(), "fixture")
