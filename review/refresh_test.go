@@ -203,3 +203,34 @@ func TestRefreshEvidencePrecedence(t *testing.T) {
 		})
 	}
 }
+
+// The prompt version is generation provenance: a refresh keeps the value the
+// refreshed version was generated with, and adds none to a document stored
+// without one.
+func TestRefreshKeepsThePromptVersion(t *testing.T) {
+	for _, recorded := range []string{"review-v12", ""} {
+		validator, bundle, published := refreshFixture(t)
+		doc, err := decodeObject(published, "published")
+		if err != nil {
+			t.Fatal(err)
+		}
+		generator := doc["review"].(map[string]any)["generator"].(map[string]any)
+		delete(generator, "prompt_version")
+		if recorded != "" {
+			generator["prompt_version"] = recorded
+		}
+		stored, _ := json.Marshal(doc)
+		refreshed, err := validator.Refresh(stored, bundle, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, _ := decodeObject(refreshed, "refreshed")
+		got, present := after["review"].(map[string]any)["generator"].(map[string]any)["prompt_version"]
+		if recorded == "" && present {
+			t.Errorf("refresh added prompt_version %v to a document without one", got)
+		}
+		if recorded != "" && got != recorded {
+			t.Errorf("refresh changed prompt_version to %v, want %s", got, recorded)
+		}
+	}
+}

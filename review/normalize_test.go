@@ -113,7 +113,7 @@ func TestLenientContractRelaxesUnionsOptionalsAndIdentifiers(t *testing.T) {
 	if _, capped := summaryText["maxLength"]; capped {
 		t.Fatal("summary text keeps its length cap")
 	}
-	if strings.Contains(string(v.Schema), `"observed_sessions"`) || strings.Contains(string(v.Schema), `"derived":`) {
+	if strings.Contains(string(v.Schema), `"observed_sessions"`) || strings.Contains(string(v.Schema), `"derived":`) || strings.Contains(string(v.Schema), `"prompt_version"`) {
 		t.Fatal("lenient contract exposes derived fields")
 	}
 	// A strict document is still a lenient one.

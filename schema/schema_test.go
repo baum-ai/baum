@@ -75,6 +75,37 @@ func TestValidateRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+// generator.prompt_version is optional: documents stored before the platform
+// recorded it still validate, and a recorded value must not be empty.
+func TestGeneratorPromptVersionIsOptional(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		valid bool
+	}{
+		{"absent", nil, true},
+		{"recorded", "review-v12", true},
+		{"empty", "", false},
+		{"not a string", 12, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, doc := readExample(t)
+			generator := doc["review"].(map[string]any)["generator"].(map[string]any)
+			delete(generator, "prompt_version")
+			if tc.value != nil {
+				generator["prompt_version"] = tc.value
+			}
+			encoded, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate(encoded); (err == nil) != tc.valid {
+				t.Fatalf("err = %v, want valid %v", err, tc.valid)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsMalformedJSON(t *testing.T) {
 	err := Validate([]byte(`{"schema":`))
 	if err == nil || !strings.Contains(err.Error(), "decoding") {

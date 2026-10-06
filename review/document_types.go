@@ -73,6 +73,10 @@ type documentReviewGenerator struct {
 	ReviewMDChanged bool     `json:"review_md_changed"`
 	Truncated       []string `json:"truncated"`
 	SchemaRevision  string   `json:"schema_revision"`
+	// PromptVersion names the instruction prompt that generated the
+	// document. The host records it; the model never writes it, and a
+	// refresh keeps the value of the version it refreshes.
+	PromptVersion string `json:"prompt_version,omitempty"`
 }
 
 type documentReviewSources struct {

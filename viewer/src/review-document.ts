@@ -356,6 +356,9 @@ export type ReviewDocument = {
       /** The pull request changes REVIEW.md; the base version was applied. */
       review_md_changed?: boolean;
       schema_revision: string;
+      /** The instruction prompt that generated the document, recorded by
+       *  the platform. Absent on older documents. */
+      prompt_version?: string;
       truncated: string[];
     };
     sources: Record<string, boolean | number>;
