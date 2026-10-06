@@ -14,7 +14,7 @@ var branchPrefixes = []string{"refs/heads/", "refs/remotes/origin/", "origin/"}
 
 // BranchStep excludes candidates whose Branches disagree with the commit's
 // BranchNames. If either side has no branch info, it does not exclude.
-// RunCandidate.Branches is a set — `agent_session_branches`, the branch
+// RunCandidate.Branches is a set: the branch
 // history sessioncorrelate derived: a session's branch can change mid-session, so this step keeps a candidate when
 // any of its branches is compatible with any of the commit's.
 type BranchStep struct{}

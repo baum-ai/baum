@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// Role is the relationship between a session and a commit SHA (mirrors
-// agent_session_commit_refs.role; kept as an independent string type here so
-// this package stays free of any DB import).
+// Role is the relationship between a session and a commit SHA (kept as an
+// independent string type here so this package stays free of any database
+// import).
 type Role string
 
 const (
@@ -24,9 +24,9 @@ type CommitRef struct {
 }
 
 // RunCandidate is the in-memory projection of one stored session tree and the
-// matcher evidence derived from it at ingest (specs/platform/session-ingest.md
-// §7.3). Callers build it from the ingest and evidence tables; the matcher
-// never touches Postgres.
+// matcher evidence derived from it at ingest.
+// Callers build it from stored ingest and evidence data; the matcher never
+// touches the database.
 type RunCandidate struct {
 	// RunID is the tree's root session id.
 	RunID string
@@ -47,7 +47,7 @@ type RunCandidate struct {
 	// for a missing EndedAt: an upload cannot hold activity later than itself,
 	// so a session that never recorded an end is still bounded.
 	IngestedAt *time.Time
-	// CommitRefs are this tree's agent_session_commit_refs rows.
+	// CommitRefs are this tree's stored commit refs.
 	CommitRefs []CommitRef
 	// StartingCommitSHA is the role=starting ref's SHA, if any (denormalized
 	// for the start_commit step; also present in CommitRefs).

@@ -1,48 +1,48 @@
 {
   "cli_version": "0.8.42",
-  "checkpoint_id": "03c505723235",
+  "checkpoint_id": "a41f7c09d2e8",
   "strategy": "manual-commit",
-  "branch": "dashboard",
+  "branch": "feature",
   "checkpoints_count": 3,
   "files_touched": [
-    "ui/app/components/charts/bucket-charts.tsx",
-    "ui/app/components/charts/chart-card.tsx",
-    "ui/app/components/charts/palette.ts",
-    "ui/app/components/charts/tooltip.tsx",
-    "ui/app/components/charts/use-mounted.ts",
-    "ui/app/routes/analytics/attribution.tsx",
-    "ui/app/routes/analytics/fixtures.ts",
-    "ui/package.json",
-    "ui/pnpm-lock.yaml"
+    "web/src/components/Chart.tsx",
+    "web/src/components/Chart.test.tsx",
+    "web/src/lib/format.ts",
+    "docs/charts.md",
+    "api/handlers/report.go",
+    "api/handlers/report_test.go",
+    "api/openapi.yaml",
+    "README.md",
+    "Makefile"
   ],
   "sessions": [
     {
-      "metadata": "/03/c505723235/0/metadata.json",
-      "transcript": "/03/c505723235/0/full.jsonl",
-      "compact_transcript": "/03/c505723235/0/transcript.jsonl",
-      "content_hash": "/03/c505723235/0/content_hash.txt",
+      "metadata": "/a4/1f7c09d2e8/0/metadata.json",
+      "transcript": "/a4/1f7c09d2e8/0/full.jsonl",
+      "compact_transcript": "/a4/1f7c09d2e8/0/transcript.jsonl",
+      "content_hash": "/a4/1f7c09d2e8/0/content_hash.txt",
       "prompt": ""
     },
     {
-      "metadata": "/03/c505723235/1/metadata.json",
-      "transcript": "/03/c505723235/1/full.jsonl",
-      "compact_transcript": "/03/c505723235/1/transcript.jsonl",
-      "content_hash": "/03/c505723235/1/content_hash.txt",
+      "metadata": "/a4/1f7c09d2e8/1/metadata.json",
+      "transcript": "/a4/1f7c09d2e8/1/full.jsonl",
+      "compact_transcript": "/a4/1f7c09d2e8/1/transcript.jsonl",
+      "content_hash": "/a4/1f7c09d2e8/1/content_hash.txt",
       "prompt": ""
     },
     {
-      "metadata": "/03/c505723235/2/metadata.json",
-      "transcript": "/03/c505723235/2/full.jsonl",
-      "compact_transcript": "/03/c505723235/2/transcript.jsonl",
-      "content_hash": "/03/c505723235/2/content_hash.txt",
+      "metadata": "/a4/1f7c09d2e8/2/metadata.json",
+      "transcript": "/a4/1f7c09d2e8/2/full.jsonl",
+      "compact_transcript": "/a4/1f7c09d2e8/2/transcript.jsonl",
+      "content_hash": "/a4/1f7c09d2e8/2/content_hash.txt",
       "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 84,
-    "cache_creation_tokens": 48003,
-    "cache_read_tokens": 12338927,
-    "output_tokens": 20108,
-    "api_call_count": 42
+    "input_tokens": 61,
+    "cache_creation_tokens": 31877,
+    "cache_read_tokens": 904512,
+    "output_tokens": 11236,
+    "api_call_count": 27
   }
 }

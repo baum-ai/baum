@@ -1,32 +1,32 @@
 {
   "cli_version": "0.8.42",
-  "checkpoint_id": "bffbbfa51e46",
-  "session_id": "019f4bee-154b-7c61-bbfc-9ff33eec7458",
+  "checkpoint_id": "3c9a1f7d2b64",
+  "session_id": "0194c3a1-7e52-7b10-9d4e-3f6a8b2c5d71",
   "strategy": "manual-commit",
-  "created_at": "2026-07-10T12:11:01.4026Z",
-  "branch": "cli-auth",
+  "created_at": "2026-07-10T12:09:38.412+00:00",
+  "branch": "main",
   "checkpoints_count": 1,
   "save_step_count": 1,
   "files_touched": [
-    "platform/internal/recountablecli/login.go",
-    "platform/internal/recountablecli/login_test.go"
+    "cmd/taskline/list.go",
+    "cmd/taskline/list_test.go"
   ],
   "agent": "Codex",
   "model": "gpt-5.6-sol",
-  "turn_id": "6c75fb17a472",
+  "turn_id": "b1f26d9e4a07",
   "compact_transcript_start": 0,
   "token_usage": {
-    "input_tokens": 20334,
+    "input_tokens": 10974,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 174848,
-    "output_tokens": 1898,
+    "cache_read_tokens": 163716,
+    "output_tokens": 1240,
     "api_call_count": 9
   },
   "session_metrics": {
     "turn_count": 1
   },
   "initial_attribution": {
-    "calculated_at": "2026-07-10T12:11:01.393712Z",
+    "calculated_at": "2026-07-10T12:09:38.601+00:00",
     "agent_lines": 25,
     "agent_removed": 2,
     "human_added": 0,
@@ -45,7 +45,7 @@
       "agent_lines_added": 0,
       "agent_lines_removed": 0,
       "user_added_per_file": {
-        "pr-notes.txt": 13
+        "notes.txt": 13
       }
     }
   ]

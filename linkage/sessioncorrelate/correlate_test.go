@@ -104,7 +104,7 @@ func paths(files []FileEvidence) []string {
 	return out
 }
 
-// The relativization cases the old internal/correlation/paths.go covered, now
+// The path relativization cases, checked
 // against a graph rather than against a mutated run.
 func TestCorrelateRelativizesFileTouches(t *testing.T) {
 	tree := newTree("/home/dev/repo", "main").
@@ -334,7 +334,7 @@ func TestCorrelateFallsBackToTheTreesWorkingDirs(t *testing.T) {
 	}
 }
 
-// The anchor rule from internal/correlation/entire: with no cwd anywhere, an
+// The anchor rule: with no cwd anywhere, an
 // absolute path whose tail is a spelling the tree itself produced resolves to
 // that spelling. Longest wins.
 func TestCorrelateAnchorsAbsolutePathsAgainstRelativeOnes(t *testing.T) {
@@ -407,7 +407,7 @@ func TestCorrelateIgnoresAbsoluteEditedFiles(t *testing.T) {
 	}
 }
 
-// agent_session_files is keyed on (root_session_id, path, kind), so the same
+// Stored file evidence is keyed on (root session, path, kind), so the same
 // file read twice is one row and the same file read and edited is two.
 func TestCorrelateDeduplicatesFilesOnPathAndKind(t *testing.T) {
 	tree := newTree("/repo", "").
@@ -573,7 +573,7 @@ func TestCorrelateKeepsOneSHAInTwoRoles(t *testing.T) {
 	}
 }
 
-// The reason this package exists rather than internal/correlation: the graph is
+// The reason this package never rewrites the session: the graph is
 // what gets stored, and it must still say what the vendor reported.
 func TestCorrelateNeverMutatesTheGraph(t *testing.T) {
 	tree := newTree("/repo", "main").

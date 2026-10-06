@@ -1,0 +1,10 @@
+# Justified exceptions to guard_test.go, one "<path> <pattern id>" per line.
+# Prefer rewording the text over adding an entry here. Every entry needs a
+# comment saying why it is intentional; an entry that matches nothing fails.
+
+# Ignores the directory where contributors keep local agent checkouts.
+.gitignore worktree
+
+# Synthetic Claude transcript lines that exercise worktree relocation records;
+# the path is the example repository's, not a developer's.
+sessions/claudesession/ingest_test.go worktree

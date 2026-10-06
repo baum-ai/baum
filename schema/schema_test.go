@@ -38,21 +38,6 @@ func TestExampleValidates(t *testing.T) {
 	}
 }
 
-// The schema and its example are published with the open-source module, so
-// neither may name a private path, repository or issue key.
-func TestPublishedFilesAreNeutral(t *testing.T) {
-	private := regexp.MustCompile(`platform/|ui/app|baum-monorepo|lastpersonlabs|\b(?:ENG|AGE)-\d+`)
-	for _, name := range []string{"review-1.json", "review-example.json"} {
-		raw, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if found := private.FindString(string(raw)); found != "" {
-			t.Errorf("%s mentions %q; published files must stay neutral", name, found)
-		}
-	}
-}
-
 func TestValidateRejectsInvalidDocuments(t *testing.T) {
 	cases := map[string]func(doc map[string]any){
 		"wrong schema name":       func(doc map[string]any) { doc["schema"] = "baum.review/0" },

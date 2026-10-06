@@ -3,68 +3,68 @@
     "graph": {
       "sessions": [
         {
-          "id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "3e33660c-c136-581c-970c-2740ea050114",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
-          "started_at": "2026-07-26T21:24:40.319366587Z",
-          "ended_at": "2026-07-26T21:24:40.319366587Z",
-          "git_branch": "dashboard",
+          "started_at": "2026-08-14T09:12:31.204118352Z",
+          "ended_at": "2026-08-14T09:12:31.204118352Z",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "ab2d6993-6868-51f1-b887-ddb7f718ed07",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "48250652-5ad0-5cdf-ba21-e7c840d29717",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "agent",
           "value": "Codex",
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         },
         {
-          "id": "6dd214aa-6313-55e9-8927-813c6e18a6a5",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "62a961d1-2cc9-54da-bdc8-9e0840890f67",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "model",
           "value": "gpt-5.6-sol",
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         },
         {
-          "id": "51b42db7-7b0d-5153-82c5-fc51e67a43ee",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "dc7d996d-64ee-5539-b947-40560baf9a31",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "strategy",
           "value": "manual-commit",
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         },
         {
-          "id": "63a9c110-d22d-5fa5-8e84-91b80b6684e3",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "a3426e84-a059-59e2-b5f9-0f9c6140f2f8",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "cli_version",
           "value": "0.8.42",
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         },
         {
-          "id": "aed0e51a-ba17-5b00-b49f-2f940b95114f",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "2ba7fd62-f4c8-5f24-b80a-a79d143badc0",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "checkpoints_count",
           "value": 1,
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         },
         {
-          "id": "53d00510-09db-5e2c-b59e-9368824f3abb",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "id": "844da659-0595-5e9c-9f5d-7abd46c2ffe6",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:40.310354044Z",
-            "agent_lines": 922,
-            "agent_removed": 4,
+            "calculated_at": "2026-08-14T09:12:41.882305731Z",
+            "agent_lines": 318,
+            "agent_removed": 2,
             "human_added": 0,
             "human_modified": 0,
             "human_removed": 0,
-            "total_committed": 922,
-            "total_lines_changed": 926,
+            "total_committed": 318,
+            "total_lines_changed": 320,
             "agent_percentage": 100,
             "metric_version": 2
           },
-          "valid_from": "2026-07-26T21:24:40.319366Z"
+          "valid_from": "2026-08-14T09:12:31.204118Z"
         }
       ],
       "user_inputs": null,
@@ -76,38 +76,38 @@
       "token_usage": null,
       "vendor_ids": [
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "019f9f88-e029-7ed2-816d-0e738c297077",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "0192e4d7-3b18-7a05-8c6f-1d52a9e07b34",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         },
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         },
         {
-          "our_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "our_id": "3e33660c-c136-581c-970c-2740ea050114",
           "our_type": "session",
-          "session_id": "4f05bbc9-9415-573f-8de7-ce1b52feeaa7",
+          "session_id": "3e33660c-c136-581c-970c-2740ea050114",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "c4fca83e83ef",
-          "source_ref": "03c505723235/0/metadata.json"
+          "vendor_id": "c7e20a94b3d1",
+          "source_ref": "a41f7c09d2e8/0/metadata.json"
         }
       ]
     },
-    "session_id": "019f9f88-e029-7ed2-816d-0e738c297077",
+    "session_id": "0192e4d7-3b18-7a05-8c6f-1d52a9e07b34",
     "vendor": "codex",
-    "checkpoint_id": "03c505723235",
-    "created_at": "2026-07-26T21:24:40.319366587Z",
+    "checkpoint_id": "a41f7c09d2e8",
+    "created_at": "2026-08-14T09:12:31.204118352Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
   },
@@ -115,68 +115,68 @@
     "graph": {
       "sessions": [
         {
-          "id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
-          "started_at": "2026-07-26T21:24:40.384779692Z",
-          "ended_at": "2026-07-26T21:24:40.384779692Z",
-          "git_branch": "dashboard",
+          "started_at": "2026-08-14T09:12:31.267940105Z",
+          "ended_at": "2026-08-14T09:12:31.267940105Z",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "09d3267a-cc4c-5e5c-b91b-50097f393d81",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "c7c6a500-b5ed-5055-a779-0d0fbeb0e272",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "agent",
           "value": "Codex",
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         },
         {
-          "id": "80db4b2d-eeec-506d-bfb5-35fc62cd9e36",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "11787943-af10-58a7-9c41-5a60452e62e4",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "model",
           "value": "gpt-5.6-sol",
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         },
         {
-          "id": "996641ff-f5ee-5a7a-b21b-e97d85ef64ee",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "68d4c08d-382c-537a-b7de-acb75f78f791",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "strategy",
           "value": "manual-commit",
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         },
         {
-          "id": "aacf430e-617b-5309-842c-ce79e8cc8a8c",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "e8106876-f1fd-50b7-9c96-903094cb5b96",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "cli_version",
           "value": "0.8.42",
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         },
         {
-          "id": "a96dcc74-464e-5f41-9d01-17b2a854516d",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "68e23ab7-1f0e-5216-9617-f5a698e6b2d6",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "checkpoints_count",
           "value": 1,
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         },
         {
-          "id": "dbe87d0f-3d65-5fa7-8576-189eae5c5b09",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "id": "ceb046bf-acc6-5dc3-82e7-2d79e497fa85",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:40.376289043Z",
-            "agent_lines": 922,
-            "agent_removed": 4,
+            "calculated_at": "2026-08-14T09:12:41.882305731Z",
+            "agent_lines": 318,
+            "agent_removed": 2,
             "human_added": 0,
             "human_modified": 0,
             "human_removed": 0,
-            "total_committed": 922,
-            "total_lines_changed": 926,
+            "total_committed": 318,
+            "total_lines_changed": 320,
             "agent_percentage": 100,
             "metric_version": 2
           },
-          "valid_from": "2026-07-26T21:24:40.384779Z"
+          "valid_from": "2026-08-14T09:12:31.26794Z"
         }
       ],
       "user_inputs": null,
@@ -188,38 +188,38 @@
       "token_usage": null,
       "vendor_ids": [
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "019fa02e-8f47-7192-93e6-aac3c6d02fb4",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "0192e4f1-6c90-7d42-9a1b-e83f05c7d296",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         },
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         },
         {
-          "our_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "our_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "our_type": "session",
-          "session_id": "c0c06513-30ce-5a23-8f35-9097c93451f5",
+          "session_id": "0eea6680-f71e-5989-bf8f-f056aaf2d67e",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "66e74ea96706",
-          "source_ref": "03c505723235/1/metadata.json"
+          "vendor_id": "c7e20a94b3d1",
+          "source_ref": "a41f7c09d2e8/1/metadata.json"
         }
       ]
     },
-    "session_id": "019fa02e-8f47-7192-93e6-aac3c6d02fb4",
+    "session_id": "0192e4f1-6c90-7d42-9a1b-e83f05c7d296",
     "vendor": "codex",
-    "checkpoint_id": "03c505723235",
-    "created_at": "2026-07-26T21:24:40.384779692Z",
+    "checkpoint_id": "a41f7c09d2e8",
+    "created_at": "2026-08-14T09:12:31.267940105Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
   },
@@ -227,158 +227,158 @@
     "graph": {
       "sessions": [
         {
-          "id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "parent_session_id": null,
           "spawned_by_tool_use_id": null,
-          "started_at": "2026-07-26T21:24:50.041450516Z",
-          "ended_at": "2026-07-26T21:24:50.041450516Z",
-          "git_branch": "dashboard",
+          "started_at": "2026-08-14T09:12:41.882305731Z",
+          "ended_at": "2026-08-14T09:12:41.882305731Z",
+          "git_branch": "feature",
           "outcome": "committed"
         }
       ],
       "session_attributes": [
         {
-          "id": "1d3b6463-1d73-53fc-87b1-c22cd002728e",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "0fbcfebd-8ca3-53d0-a789-30da6d9770a1",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "agent",
           "value": "Claude Code",
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "a78e95d4-4795-56c8-b38c-46d4d8050949",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "63c2b38b-c873-565b-8b54-63471a382ece",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "model",
           "value": "",
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "ec51b697-370e-5849-9c2c-00ea2c9b5e30",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "c968b04c-068b-5410-bf5e-c629d9718bc1",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "strategy",
           "value": "manual-commit",
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "8aaff056-099c-531d-a78e-e199086e0e68",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "60cad08d-747b-550d-975f-6f418c692e0c",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "cli_version",
           "value": "0.8.42",
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "d8e552aa-a38d-50e2-98f2-d6e64ec59a72",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "81ec0b8d-8477-581a-9db7-d30ec27e6a7a",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "checkpoints_count",
           "value": 1,
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "646f7a27-421a-5ea1-ae25-d11c9728f8c3",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "f3a461df-3523-5b8e-ab91-35f06b367e89",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "initial_attribution",
           "value": {
-            "calculated_at": "2026-07-26T21:24:49.897374202Z",
-            "agent_lines": 607,
-            "agent_removed": 3,
-            "human_added": 315,
+            "calculated_at": "2026-08-14T09:12:41.882305731Z",
+            "agent_lines": 201,
+            "agent_removed": 1,
+            "human_added": 117,
             "human_modified": 0,
             "human_removed": 0,
-            "total_committed": 922,
-            "total_lines_changed": 926,
-            "agent_percentage": 65.87473002159827,
+            "total_committed": 318,
+            "total_lines_changed": 320,
+            "agent_percentage": 63.20754716981132,
             "metric_version": 2
           },
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "634a2c1c-65df-5654-9d22-9794fcd97d3e",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "d7a410fd-c792-510c-92fc-fdb2fd47d724",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "skill_events_version",
           "value": 1,
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "9f3e7611-3792-5beb-9a76-c8f8db80b7b5",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "329a211c-4a0d-529e-9b66-1c01819ff777",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "skill_events",
           "value": [
             {
-              "id": "claude-skill-toolu_0131sfczBp8MJUQmerXhbdRX",
+              "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a311",
               "event_type": "tool_invocation",
               "skill": {
-                "name": "dataviz"
+                "name": "chart-style"
               },
               "source": {
                 "agent": "claude-code",
                 "signal": "skill_tool_use",
                 "confidence": "explicit"
               },
-              "turn_id": "9cbbfec327c3",
+              "turn_id": "5f0d8e2a91c6",
               "transcript_anchor": {
                 "unit": "line",
-                "start": 423,
-                "end": 424,
+                "start": 212,
+                "end": 213,
                 "entry_ids": [
-                  "ca16e100-d67a-41d2-a12f-eeea4a0a5877"
+                  "e5c91a07-4b2d-4d86-93f0-7a1c58b2e6d3"
                 ],
-                "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+                "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
               },
               "native": {
                 "tool_name": "Skill",
-                "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+                "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
               },
               "collapse": {
                 "target": "tool_pair",
-                "label": "Skill: dataviz",
+                "label": "Skill: chart-style",
                 "default_collapsed": true
               }
             },
             {
-              "id": "claude-skill-toolu_017J2fgaxoWHxb6tfAg5wJs5",
+              "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a312",
               "event_type": "tool_invocation",
               "skill": {
-                "name": "claude-api"
+                "name": "api-review"
               },
               "source": {
                 "agent": "claude-code",
                 "signal": "skill_tool_use",
                 "confidence": "explicit"
               },
-              "turn_id": "9cbbfec327c3",
+              "turn_id": "5f0d8e2a91c6",
               "transcript_anchor": {
                 "unit": "line",
-                "start": 1252,
-                "end": 1253,
+                "start": 318,
+                "end": 319,
                 "entry_ids": [
-                  "4e84e5e6-3c0b-41ca-90ee-56adccfe0303"
+                  "1f8a3c6e-d2b9-4705-a4e1-9c60b7d35f82"
                 ],
-                "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+                "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
               },
               "native": {
                 "tool_name": "Skill",
-                "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+                "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
               },
               "collapse": {
                 "target": "tool_pair",
-                "label": "Skill: claude-api",
+                "label": "Skill: api-review",
                 "default_collapsed": true
               }
             }
           ],
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         },
         {
-          "id": "e555197e-e664-5b99-9c6b-95f693a133db",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "cbbf029b-a8c0-5f8e-88af-c0d2f7ab0afc",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "key": "token_usage",
           "value": {
-            "input_tokens": 84,
-            "cache_creation_tokens": 48003,
-            "cache_read_tokens": 12338927,
-            "output_tokens": 20108,
-            "api_call_count": 42
+            "input_tokens": 61,
+            "cache_creation_tokens": 31877,
+            "cache_read_tokens": 904512,
+            "output_tokens": 11236,
+            "api_call_count": 27
           },
-          "valid_from": "2026-07-26T21:24:50.04145Z"
+          "valid_from": "2026-08-14T09:12:41.882305Z"
         }
       ],
       "user_inputs": null,
@@ -389,52 +389,52 @@
       "file_touches": null,
       "token_usage": [
         {
-          "id": "63fc5d7a-ade0-578e-bde8-65f39c21b137",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "id": "bfeff7d0-d5f8-544f-96ef-04ffbb1676fd",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "user_input_id": null,
           "scope": "session",
-          "input_tokens": 84,
-          "output_tokens": 20108,
-          "cache_read_tokens": 12338927,
-          "cache_write_tokens": 48003,
-          "total_tokens": 12407122,
-          "api_call_count": 42
+          "input_tokens": 61,
+          "output_tokens": 11236,
+          "cache_read_tokens": 904512,
+          "cache_write_tokens": 31877,
+          "total_tokens": 947686,
+          "api_call_count": 27
         }
       ],
       "vendor_ids": [
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "session_id",
-          "vendor_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         },
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "checkpoint_id",
-          "vendor_id": "03c505723235",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "a41f7c09d2e8",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         },
         {
-          "our_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "our_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "our_type": "session",
-          "session_id": "9ef79855-fa1f-59d2-97bf-cf338bc602ce",
+          "session_id": "6336393a-39af-506b-b234-ef0e4f2a82b5",
           "vendor": "entire",
           "vendor_id_kind": "turn_id",
-          "vendor_id": "9cbbfec327c3",
-          "source_ref": "03c505723235/2/metadata.json"
+          "vendor_id": "5f0d8e2a91c6",
+          "source_ref": "a41f7c09d2e8/2/metadata.json"
         }
       ]
     },
-    "session_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
+    "session_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
     "vendor": "claude_code",
-    "checkpoint_id": "03c505723235",
-    "created_at": "2026-07-26T21:24:50.041450516Z",
+    "checkpoint_id": "a41f7c09d2e8",
+    "created_at": "2026-08-14T09:12:41.882305731Z",
     "checkpoints_count": 1,
     "fidelity_rank": 4
   }

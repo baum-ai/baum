@@ -1,10 +1,10 @@
 {
-  "checkpoint_id": "03c505723235",
+  "checkpoint_id": "a41f7c09d2e8",
   "cli_version": "0.8.42",
   "sessions": [
     {
       "index": 0,
-      "session_id": "019f9f88-e029-7ed2-816d-0e738c297077",
+      "session_id": "0192e4d7-3b18-7a05-8c6f-1d52a9e07b34",
       "agent": "Codex",
       "full_bytes": 0,
       "compact_records": 0,
@@ -18,7 +18,7 @@
     },
     {
       "index": 1,
-      "session_id": "019fa02e-8f47-7192-93e6-aac3c6d02fb4",
+      "session_id": "0192e4f1-6c90-7d42-9a1b-e83f05c7d296",
       "agent": "Codex",
       "full_bytes": 0,
       "compact_records": 0,
@@ -32,7 +32,7 @@
     },
     {
       "index": 2,
-      "session_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
+      "session_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
       "agent": "Claude Code",
       "full_bytes": 0,
       "compact_records": 0,

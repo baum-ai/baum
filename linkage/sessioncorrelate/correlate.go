@@ -1,18 +1,16 @@
 // Package sessioncorrelate derives the evidence the commit matcher needs from a
 // session tree: repo-relative file paths, role-tagged commit refs, and the
-// branches and working directories the tree was seen in
-// (specs/platform/session-ingest.md §5).
+// branches and working directories the tree was seen in.
 //
 // It never mutates the graph. Rewriting file paths inside the session would
 // make the stored session stop saying what the tool actually reported, and
 // every consumer would inherit the matcher's view of a path. Vendor truth stays
-// in internal/session and the matcher-shaped view is a separate value the
+// in the session package and the matcher-shaped view is a separate value the
 // ingest layer stores beside it.
 //
 // The package is pure: no I/O, no database, and no mapper packages. The only
-// vendor knowledge in it is the attribute-key table in keys.go, which
-// specs/platform/session-ingest.md §8 allows as a per-vendor hook keyed by
-// slug.
+// vendor knowledge in it is the attribute-key table in keys.go, a
+// per-vendor hook keyed by slug.
 package sessioncorrelate
 
 import (
@@ -29,10 +27,10 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/sourcepath"
 )
 
-// Role mirrors agent_session_commit_refs.role. It is defined here rather than
-// imported from internal/linkage or internal/sessionstore so this package stays
-// decoupled from both the matcher and the repository; the ingest layer
-// translates at the persist boundary.
+// Role is how a session relates to a commit SHA: created it, mentioned it,
+// checked it out, and so on. It is defined here rather than imported from the
+// matcher or a session store so this package stays decoupled from both; the
+// ingest layer translates at the persist boundary.
 type Role string
 
 const (
@@ -512,7 +510,7 @@ type fileKey struct {
 }
 
 // fileEvidence relativizes every file touch and deduplicates on (path, kind),
-// which is what agent_session_files is keyed on. Externally reported edited
+// which is the key stored file evidence uses. Externally reported edited
 // paths are already repository-relative, so they are evidence directly and
 // also anchor the touches this tree could not relativize on its own.
 func fileEvidence(graph *session.Graph, dirs workingDirs, editedFiles, fileAnchors []string, movedTouches map[string]bool) ([]FileEvidence, []string) {
@@ -601,7 +599,7 @@ func stripLongestDir(path string, dirs []string) (string, bool) {
 	return bestRelative, bestDir != ""
 }
 
-// anchoredSuffix is the anchor rule ported from internal/correlation/entire: an
+// anchoredSuffix is the anchor rule used to resolve paths: an
 // absolute tool path whose tail is the repo-relative spelling of a file the
 // same tree already named is that file. It is the only signal that recovers a
 // session which reported no working directory at all, and a path-boundary
@@ -766,11 +764,12 @@ func attributeString(value json.RawMessage) (string, bool) {
 	return text, true
 }
 
-// clean prepares a value captured from an agent for the TEXT columns the
-// evidence tables are made of. A tool-reported path or branch can carry a NUL
-// or invalid UTF-8 exactly like the rest of a transcript, and one rejected
-// value would abort the whole ingest transaction (internal/dbtext). Scrubbing
-// happens on the way in so matching and deduplication see the stored spelling.
+// clean prepares a value captured from an agent for storage as text. A
+// tool-reported path or branch can carry a NUL or invalid UTF-8 exactly like the
+// rest of a transcript, and many text stores reject such values. clean returns
+// valid text with those bytes removed or replaced, so one bad value cannot fail
+// a whole ingest. Scrubbing happens on the way in so matching and deduplication
+// see the stored spelling.
 func clean(value string) string { return textclean.SafeText(value) }
 
 type commitRefKey struct {
@@ -779,8 +778,8 @@ type commitRefKey struct {
 }
 
 // commitRefSet keeps the first observation of each (SHA, role) pair, with the
-// SHA lowercased. agent_session_commit_refs is keyed on
-// (root_session_id, sha, role) and one commit legitimately shows up more than
+// SHA lowercased. the stored commit refs are keyed on
+// (root session id, sha, role) and one commit legitimately shows up more than
 // once — the same hash echoed by two successful commit commands — so a
 // duplicate would collide on insert, and two spellings of one hash would be two
 // rows saying the same thing.

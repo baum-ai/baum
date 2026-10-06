@@ -1,108 +1,108 @@
 {
   "cli_version": "0.8.42",
-  "checkpoint_id": "03c505723235",
-  "session_id": "479924a7-f86c-4baa-9f5e-7a41b8e06356",
+  "checkpoint_id": "a41f7c09d2e8",
+  "session_id": "7d3e91b2-5a4c-4f08-b6e1-2c9a07d85f43",
   "strategy": "manual-commit",
-  "created_at": "2026-07-26T21:24:50.041450516Z",
-  "branch": "dashboard",
+  "created_at": "2026-08-14T09:12:41.882305731Z",
+  "branch": "feature",
   "checkpoints_count": 1,
   "files_touched": [
-    "ui/app/components/charts/palette.ts",
-    "ui/app/components/charts/chart-card.tsx",
-    "ui/app/components/charts/tooltip.tsx",
-    "ui/app/components/charts/bucket-charts.tsx",
-    "ui/app/routes/analytics/fixtures.ts",
-    "ui/app/routes/analytics/attribution.tsx",
-    "ui/app/components/charts/use-mounted.ts"
+    "web/src/components/Chart.test.tsx",
+    "docs/charts.md",
+    "web/src/lib/format.ts",
+    "web/src/components/Chart.tsx",
+    "api/handlers/report.go",
+    "api/openapi.yaml",
+    "api/handlers/report_test.go"
   ],
   "agent": "Claude Code",
   "model": "",
-  "turn_id": "9cbbfec327c3",
-  "checkpoint_transcript_start": 640,
-  "transcript_lines_at_start": 640,
-  "compact_transcript_start": 193,
+  "turn_id": "5f0d8e2a91c6",
+  "checkpoint_transcript_start": 305,
+  "transcript_lines_at_start": 305,
+  "compact_transcript_start": 118,
   "token_usage": {
-    "input_tokens": 84,
-    "cache_creation_tokens": 48003,
-    "cache_read_tokens": 12338927,
-    "output_tokens": 20108,
-    "api_call_count": 42
+    "input_tokens": 61,
+    "cache_creation_tokens": 31877,
+    "cache_read_tokens": 904512,
+    "output_tokens": 11236,
+    "api_call_count": 27
   },
   "skill_events_version": 1,
   "skill_events": [
     {
-      "id": "claude-skill-toolu_0131sfczBp8MJUQmerXhbdRX",
+      "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a311",
       "event_type": "tool_invocation",
       "skill": {
-        "name": "dataviz"
+        "name": "chart-style"
       },
       "source": {
         "agent": "claude-code",
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "9cbbfec327c3",
+      "turn_id": "5f0d8e2a91c6",
       "transcript_anchor": {
         "unit": "line",
-        "start": 423,
-        "end": 424,
+        "start": 212,
+        "end": 213,
         "entry_ids": [
-          "ca16e100-d67a-41d2-a12f-eeea4a0a5877"
+          "e5c91a07-4b2d-4d86-93f0-7a1c58b2e6d3"
         ],
-        "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+        "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
       },
       "native": {
         "tool_name": "Skill",
-        "tool_use_id": "toolu_0131sfczBp8MJUQmerXhbdRX"
+        "tool_use_id": "toolu_01Qk7mRz4VnT8wXa2LbYc3Hd"
       },
       "collapse": {
         "target": "tool_pair",
-        "label": "Skill: dataviz",
+        "label": "Skill: chart-style",
         "default_collapsed": true
       }
     },
     {
-      "id": "claude-skill-toolu_017J2fgaxoWHxb6tfAg5wJs5",
+      "id": "b2a7c4e1-93d0-4f5a-8e16-0c7d52f9a312",
       "event_type": "tool_invocation",
       "skill": {
-        "name": "claude-api"
+        "name": "api-review"
       },
       "source": {
         "agent": "claude-code",
         "signal": "skill_tool_use",
         "confidence": "explicit"
       },
-      "turn_id": "9cbbfec327c3",
+      "turn_id": "5f0d8e2a91c6",
       "transcript_anchor": {
         "unit": "line",
-        "start": 1252,
-        "end": 1253,
+        "start": 318,
+        "end": 319,
         "entry_ids": [
-          "4e84e5e6-3c0b-41ca-90ee-56adccfe0303"
+          "1f8a3c6e-d2b9-4705-a4e1-9c60b7d35f82"
         ],
-        "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+        "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
       },
       "native": {
         "tool_name": "Skill",
-        "tool_use_id": "toolu_017J2fgaxoWHxb6tfAg5wJs5"
+        "tool_use_id": "toolu_01Ws5pNj9TcE6vUy4RhKa8Zf"
       },
       "collapse": {
         "target": "tool_pair",
-        "label": "Skill: claude-api",
+        "label": "Skill: api-review",
         "default_collapsed": true
       }
     }
   ],
   "initial_attribution": {
-    "calculated_at": "2026-07-26T21:24:49.897374202Z",
-    "agent_lines": 607,
-    "agent_removed": 3,
-    "human_added": 315,
+    "calculated_at": "2026-08-14T09:12:41.882305731Z",
+    "agent_lines": 201,
+    "agent_removed": 1,
+    "human_added": 117,
     "human_modified": 0,
     "human_removed": 0,
-    "total_committed": 922,
-    "total_lines_changed": 926,
-    "agent_percentage": 65.87473002159827,
+    "total_committed": 318,
+    "total_lines_changed": 320,
+    "agent_percentage": 63.20754716981132,
     "metric_version": 2
   }
 }

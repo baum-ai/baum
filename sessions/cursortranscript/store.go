@@ -1,6 +1,6 @@
 // Package cursortranscript reads Cursor's global SQLite conversation store as
 // typed records. It classifies source records but does not decide what they mean
-// in the shared session model; internal/cursorsession owns that mapping.
+// in the shared session model; the cursorsession package owns that mapping.
 package cursortranscript
 
 import (

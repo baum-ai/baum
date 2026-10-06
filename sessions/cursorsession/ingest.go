@@ -1,5 +1,5 @@
 // Package cursorsession maps Cursor's typed SQLite records into the shared
-// session model according to specs/platform/traceprocessing/cursor/session-mapping.md.
+// session model.
 package cursorsession
 
 import (

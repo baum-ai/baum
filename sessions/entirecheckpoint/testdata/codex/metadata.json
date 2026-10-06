@@ -1,27 +1,27 @@
 {
   "cli_version": "0.8.42",
-  "checkpoint_id": "bffbbfa51e46",
+  "checkpoint_id": "3c9a1f7d2b64",
   "strategy": "manual-commit",
-  "branch": "cli-auth",
+  "branch": "main",
   "checkpoints_count": 1,
   "files_touched": [
-    "platform/internal/recountablecli/login.go",
-    "platform/internal/recountablecli/login_test.go"
+    "cmd/taskline/list.go",
+    "cmd/taskline/list_test.go"
   ],
   "sessions": [
     {
-      "metadata": "/bf/fbbfa51e46/0/metadata.json",
-      "transcript": "/bf/fbbfa51e46/0/full.jsonl",
-      "compact_transcript": "/bf/fbbfa51e46/0/transcript.jsonl",
-      "content_hash": "/bf/fbbfa51e46/0/content_hash.txt",
-      "prompt": "/bf/fbbfa51e46/0/prompt.txt"
+      "metadata": "/3c/9a1f7d2b64/0/metadata.json",
+      "transcript": "/3c/9a1f7d2b64/0/full.jsonl",
+      "compact_transcript": "/3c/9a1f7d2b64/0/transcript.jsonl",
+      "content_hash": "/3c/9a1f7d2b64/0/content_hash.txt",
+      "prompt": "/3c/9a1f7d2b64/0/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 20334,
+    "input_tokens": 10974,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 174848,
-    "output_tokens": 1898,
+    "cache_read_tokens": 163716,
+    "output_tokens": 1240,
     "api_call_count": 9
   }
 }
