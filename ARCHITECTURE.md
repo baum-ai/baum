@@ -174,7 +174,8 @@ event log. Backends:
 | `cursor-agent` | `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
-container. [SECURITY.md](SECURITY.md) describes what that leaves open.
+container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
+leaves open.
 
 ### Prompts
 

@@ -108,9 +108,10 @@ environment variables are:
 `backend = "auto"` picks the first of `claude`, `codex` and `cursor-agent`
 found on `PATH`, and falls back to `anthropic` when `ANTHROPIC_API_KEY` is set.
 
-baum sends no telemetry and talks to no server other than GitHub and the
-model provider you configure. See [SECURITY.md](SECURITY.md) for what is sent
-to the provider.
+baum sends no telemetry and talks to no server other than GitHub, the
+model provider you configure and `static.usebaum.com`, from which it
+downloads the signed price list for cost estimates. See
+[SECURITY.md](SECURITY.md) for what is sent where.
 
 ## Review document schema
 

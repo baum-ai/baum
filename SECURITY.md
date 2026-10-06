@@ -20,9 +20,25 @@ Redaction is best effort. Review `baum bundle` output before using
 do not run it against repositories you are not allowed to share with your
 provider.
 
-baum sends no telemetry and contacts no server other than GitHub and the
-configured provider. Tokens are read from the environment, `gh auth token` or
-the 0600 config file and are never written anywhere else.
+baum sends no telemetry. Besides GitHub and the configured provider, it
+contacts only `static.usebaum.com`, to download the public price list used
+for cost estimates. That request is a plain download: it carries no token,
+repository, pull request or session data, and the list's signature is checked
+against a key built into the binary. When the list cannot be fetched or
+verified, baum uses a copy embedded at release. Tokens are read from the
+environment, `gh auth token` or the 0600 config file and are never written
+anywhere else.
+
+## Agent isolation
+
+The `claude`, `codex` and `cursor-agent` backends run on your machine under
+your user account, each in its own read-only mode, inside a temporary
+checkout of the pull request. baum adds no container or sandbox of its own,
+so isolation is only as strong as that tool's read-only mode. Repository
+content and pull request text are untrusted input to the agent: a pull
+request could try to persuade it to read files outside the checkout. Use
+baum on pull requests you are prepared to have an agent read under your
+account.
 
 ## Reporting a vulnerability
 
