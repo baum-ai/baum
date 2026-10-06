@@ -172,3 +172,13 @@ func TestEmptyAndProfile(t *testing.T) {
 		t.Errorf("profile = %q", e.Profile())
 	}
 }
+
+func TestIdentitiesRedactsEmailAndDefangsMention(t *testing.T) {
+	got, changed := Identities("ask @alice or bob@example.com, not user@host or a/@b")
+	if want := "ask alice or [redacted], not user@host or a/@b"; got != want || !changed {
+		t.Fatalf("Identities = %q, %v; want %q, true", got, changed, want)
+	}
+	if got, changed := Identities("nothing to see"); got != "nothing to see" || changed {
+		t.Fatalf("Identities changed clean text: %q, %v", got, changed)
+	}
+}

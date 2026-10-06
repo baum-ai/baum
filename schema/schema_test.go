@@ -1,12 +1,11 @@
 package schema
 
 import (
-	"errors"
+	"encoding/json"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
-
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestRevision(t *testing.T) {
@@ -24,47 +23,74 @@ func TestCompileRecordsID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compiled.ID != URL {
-		t.Errorf("$id = %q, want %q", compiled.ID, URL)
+	if compiled.Schema().ID != URL {
+		t.Errorf("$id = %q, want %q", compiled.Schema().ID, URL)
 	}
 }
 
 func TestExampleValidates(t *testing.T) {
-	example := readInstance(t, "review-example.json")
-	if err := Validate(example); err != nil {
-		var verr *jsonschema.ValidationError
-		if errors.As(err, &verr) {
-			t.Fatalf("review-example.json does not validate:\n%s", verr.GoString())
-		}
-		t.Fatal(err)
+	raw, doc := readExample(t)
+	if err := Validate(raw); err != nil {
+		t.Fatalf("review-example.json does not validate: %v", err)
 	}
-	doc, _ := example.(map[string]any)
 	if got := doc["schema"]; got != Name {
 		t.Errorf("example schema field = %v, want %q", got, Name)
 	}
 }
 
-func TestValidateRejectsWrongSchemaName(t *testing.T) {
-	example := readInstance(t, "review-example.json")
-	doc := example.(map[string]any)
-	doc["schema"] = "baum.review/0"
-	if err := Validate(doc); err == nil {
-		t.Fatal("a document with another schema name must not validate")
+func TestValidateRejectsInvalidDocuments(t *testing.T) {
+	cases := map[string]func(doc map[string]any){
+		"wrong schema name":       func(doc map[string]any) { doc["schema"] = "baum.review/0" },
+		"missing required field":  func(doc map[string]any) { delete(doc, "summary") },
+		"unknown top-level field": func(doc map[string]any) { doc["extra"] = true },
+		"wrong enum value": func(doc map[string]any) {
+			doc["review"].(map[string]any)["pr_state"] = "paused"
+		},
+		"wrong type": func(doc map[string]any) {
+			doc["review"].(map[string]any)["pull_request"] = "12"
+		},
+		"number below minimum": func(doc map[string]any) {
+			doc["review"].(map[string]any)["pull_request"] = 0
+		},
+		"pattern mismatch": func(doc map[string]any) {
+			doc["review"].(map[string]any)["head"] = "not-a-sha"
+		},
+		"wrong type in a referenced definition": func(doc map[string]any) {
+			section := doc["sections"].([]any)[0].(map[string]any)
+			section["title"] = 42
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, doc := readExample(t)
+			mutate(doc)
+			encoded, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate(encoded); err == nil {
+				t.Fatal("document must not validate")
+			}
+		})
 	}
 }
 
-func readInstance(t *testing.T, name string) any {
+func TestValidateRejectsMalformedJSON(t *testing.T) {
+	err := Validate([]byte(`{"schema":`))
+	if err == nil || !strings.Contains(err.Error(), "decoding") {
+		t.Fatalf("err = %v, want a decoding error", err)
+	}
+}
+
+func readExample(t *testing.T) ([]byte, map[string]any) {
 	t.Helper()
-	f, err := os.Open(name)
+	raw, err := os.ReadFile("review-example.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := jsonschema.UnmarshalJSON(f)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	return instance
+	return raw, doc
 }

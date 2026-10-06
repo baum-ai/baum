@@ -23,6 +23,10 @@ request. `just --list` shows the other recipes, including `release-snapshot`
 `CGO_ENABLED=0` must keep working; release binaries are built that way for
 linux, macOS and Windows.
 
+The viewer in `viewer/` is a pnpm package with checks of its own: run
+`pnpm install` and `pnpm check` there (lint, format check, typecheck and unit
+tests). Its [README](viewer/README.md) describes the seams a host connects.
+
 ## Coding conventions
 
 - Follow the shape of the code already in the package, and `gofmt` it.

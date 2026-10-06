@@ -35,7 +35,8 @@ go install github.com/lastpersonlabs/baum/cmd/baum@latest
 
 Or download an archive for linux, macOS or Windows from the
 [releases page](https://github.com/lastpersonlabs/baum/releases). Binaries
-are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`.
+are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
+2.29 or newer.
 
 ## Commands
 
@@ -129,19 +130,26 @@ describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
+| `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, and the caps, input redaction, byte trimming and digest applied to a bundle |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
 | `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
 | `linkage` | matches commits of a pull request to the sessions that produced them |
 | `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
-| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact) |
+| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
 | `schema` | the review schema and its validator |
+
+[`viewer/`](viewer/README.md) is a pnpm package of the React components
+that render a review document and its versions, which the hosted service
+imports from this repository too.
 
 ## Development
 
 Requires Go (version in `go.mod`), [just](https://just.systems) and
 [golangci-lint](https://golangci-lint.run). `just check` runs formatting,
-vet, build, tests and lint; `just --list` shows the other recipes. See
+vet, build, tests and lint; `just --list` shows the other recipes. The
+viewer needs Node.js and pnpm; `pnpm install && pnpm check` in `viewer/`
+runs its lint, format check, typecheck and tests. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This repository is published from the `oss/` directory of the private baum

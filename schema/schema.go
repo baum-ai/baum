@@ -9,12 +9,12 @@
 package schema
 
 import (
-	"bytes"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // URL is the schema's $id and the address it is published at.
@@ -44,37 +44,42 @@ func Revision() (string, error) {
 	return value, nil
 }
 
-// Compile returns the vendored schema compiled as JSON Schema draft 2020-12.
-func Compile() (*jsonschema.Schema, error) {
-	root, err := decode()
+// Compile returns the vendored schema resolved as JSON Schema draft 2020-12.
+// The result is safe for concurrent use.
+func Compile() (*jsonschema.Resolved, error) {
+	var root jsonschema.Schema
+	if err := json.Unmarshal(Document, &root); err != nil {
+		return nil, fmt.Errorf("schema: decoding review-1.json: %w", err)
+	}
+	resolved, err := root.Resolve(nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("schema: resolving: %w", err)
 	}
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-	if err := compiler.AddResource(URL, root); err != nil {
-		return nil, fmt.Errorf("schema: adding resource: %w", err)
-	}
-	compiled, err := compiler.Compile(URL)
-	if err != nil {
-		return nil, fmt.Errorf("schema: compiling: %w", err)
-	}
-	return compiled, nil
+	return resolved, nil
 }
 
-// Validate checks a decoded JSON instance against the schema. Decode the
-// instance with jsonschema.UnmarshalJSON so numbers keep their precision.
-func Validate(instance any) error {
+// Validate checks a JSON document against the schema.
+//
+// The library does not assert "format", so date-time and uri values are
+// validated by the caller where it matters. It also treats a json.Number as a
+// string, so the document is decoded to float64 numbers rather than with
+// UseNumber; integers beyond 2^53 lose precision, which no keyword in the
+// schema depends on.
+func Validate(document []byte) error {
 	compiled, err := Compile()
 	if err != nil {
 		return err
+	}
+	var instance any
+	if err := json.Unmarshal(document, &instance); err != nil {
+		return fmt.Errorf("schema: decoding document: %w", err)
 	}
 	return compiled.Validate(instance)
 }
 
 func decode() (any, error) {
-	root, err := jsonschema.UnmarshalJSON(bytes.NewReader(Document))
-	if err != nil {
+	var root any
+	if err := json.Unmarshal(Document, &root); err != nil {
 		return nil, fmt.Errorf("schema: decoding review-1.json: %w", err)
 	}
 	return root, nil
