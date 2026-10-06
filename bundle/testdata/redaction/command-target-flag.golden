@@ -1,0 +1,5 @@
+field: command.target
+masked_spans: 1
+masked_bytes: [44,57)
+-- output --
+mysql -h db.prod.internal -u app --password=xX9xX9xX9xXx9 app_db

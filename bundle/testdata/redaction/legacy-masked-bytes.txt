@@ -1,0 +1,32 @@
+attachment-alt: [40,109)
+check-url-token: [37,77)
+command-target-bearer: [31,63)
+command-target-cookie: [39,63)
+command-target-flag: [44,57)
+commit-subject-mention-email: [26,43)
+commit-subject-scoped-package: none
+commit-subject-token: [29,69)
+emails-partial-domain: [8,23) [30,45) [49,64) [72,86) [91,107) [111,127)
+emails-various: [5,29) [40,74) [90,115) [124,139) [168,184) [193,207) [262,282) [301,383)
+head-ref-token: [11,51)
+mentions-and-email-title: [34,49)
+mentions-prose: none
+multiline-escaped-key: [75,355) [373,422)
+multiline-json-secrets: [77,93) [128,156) [186,282) [301,486) [572,660)
+multiline-pem-comment: [50,339)
+patch-code-annotations: none
+patch-emails-partial-domain: [17,32) [36,52) [54,70) [72,86)
+patch-emails: [31,55) [72,89) [106,130) [143,163)
+patch-multiline-pem-context: none
+patch-multiline-pem: none
+patch-secrets: [47,67) [124,187) [223,251) [278,295)
+prose-clean: none
+prose-near-misses: none
+prose-provider-tokens: [78,98) [125,165) [183,223) [241,334) [347,410) [420,460) [485,581) [594,699) [709,745) [751,791) [806,843) [853,901) [925,964) [976,1045) [1066,1170) [1178,1273) [1294,1326)
+prose-title-token: [20,60)
+reference-authorship: [42,63) [69,174)
+review-comment-secret: [17,53) [87,121)
+review-suggestion-code: [95,135)
+session-prompt-prose: [24,128) [153,176)
+session-title: [23,63)
+urls-with-credentials: [40,68) [101,140) [226,266) [303,342) [431,468)
