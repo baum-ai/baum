@@ -70,7 +70,8 @@ describe("review activity decisions", () => {
     const html = renderToStaticMarkup(
       <ReviewActivity document={document} onSelectSection={() => {}} />,
     );
-    expect(html).not.toContain("approved");
+    expect(html).not.toContain("Agent · approved");
+    expect(html).not.toContain("Proposed by the agent and approved by a person");
     expect(html).toContain(">Agent</span>");
   });
 });

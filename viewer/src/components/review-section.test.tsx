@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { reviewDocumentFor } from "../../test/review-document";
-import type { Block, ReviewDocument } from "../review-document";
+import type { Block, Decision, ReviewDocument } from "../review-document";
 import { ReviewSummary } from "./review-summary";
 import { ReviewSection } from "./review-section";
 
@@ -96,32 +97,60 @@ function header(tier: "unrated" | "high", state: "new" | "stale", keepRisks = fa
 
 describe("review section decisions", () => {
   const anchors = [{ type: "hunk" as const, id: "h_picker" }];
+  const approval = "Proposed by the agent and approved by a person";
+
+  /** Each decision's badge, found by the decision's item id rather than by
+   *  how the badge is styled. */
+  function badges(items: Decision[]) {
+    const html = render([{ kind: "decisions", items }]);
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const part = page.querySelector('section[aria-label="Key decisions"]')!;
+    return Object.fromEntries(
+      items.map((item) => [item.id, part.querySelector(`[id$="-${item.id}"] span`)!]),
+    );
+  }
 
   it("says who took each decision, and that a person approved an agent's", () => {
-    const html = render([
+    const found = badges([
+      { id: "dec_h", by: "human", text: "Person chose", anchors },
+      { id: "dec_a", by: "agent", text: "Agent chose", anchors },
       {
-        kind: "decisions",
-        items: [
-          { id: "dec_h", by: "human", text: "Person chose", anchors },
-          { id: "dec_a", by: "agent", text: "Agent chose", anchors },
-          {
-            id: "dec_ok",
-            by: "agent",
-            text: "Agent proposed, person agreed",
-            approved_by_human: true,
-            anchors,
-          },
-        ],
+        id: "dec_ok",
+        by: "agent",
+        text: "Agent proposed, person agreed",
+        approved_by_human: true,
+        anchors,
       },
     ]);
-    const part = html.slice(html.indexOf('aria-label="Key decisions"'));
-    const badges = [
-      ...part.slice(0, part.indexOf("</section>")).matchAll(/rounded-full[^>]*>(.*?)<\/span>/g),
-    ].map((match) => match[1]!.replace(/<svg.*<\/svg>/, "").trim());
-    expect(badges).toEqual(["Human", "Agent", "Agent · approved"]);
-    // The approval is in words and a tick, not only a colour.
-    expect(html).toContain('title="Proposed by the agent and approved by a person"');
-    expect(html).toContain('aria-hidden="true"');
+    expect(found.dec_h!.textContent).toBe("Human");
+    expect(found.dec_a!.textContent).toBe("Agent");
+    expect(found.dec_h!.getAttribute("title")).toBeNull();
+    expect(found.dec_a!.getAttribute("title")).toBeNull();
+    // The approval is in words and a tick, not only a colour; the tick is
+    // decoration, so a screen reader hears the words alone.
+    const approved = found.dec_ok!;
+    expect(approved.textContent).toBe("Agent · approved");
+    expect(approved.getAttribute("title")).toBe(approval);
+    const tick = approved.querySelector("svg");
+    expect(tick).not.toBeNull();
+    expect(tick!.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  // The schema allows the flag only on an agent decision, but an old or
+  // hand-edited document can carry it on a person's own.
+  it("keeps a person's decision plainly Human even if it carries the approval flag", () => {
+    const found = badges([
+      {
+        id: "dec_bad",
+        by: "human",
+        text: "Person chose",
+        approved_by_human: true,
+        anchors,
+      } as Decision,
+    ]);
+    expect(found.dec_bad!.textContent).toBe("Human");
+    expect(found.dec_bad!.getAttribute("title")).toBeNull();
+    expect(found.dec_bad!.querySelector("svg")).toBeNull();
   });
 });
 
