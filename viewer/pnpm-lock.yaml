@@ -29,9 +29,6 @@ importers:
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
-      hast-util-sanitize:
-        specifier: ^5.0.2
-        version: 5.0.2
       jsdom:
         specifier: 30.1.0
         version: 30.1.0
