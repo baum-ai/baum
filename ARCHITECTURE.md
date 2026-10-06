@@ -229,6 +229,10 @@ The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
 defaults to an open font bundled with the package. A host overrides the
 variable to restyle the viewer without forking it.
 
+The components and their seams are in [`viewer/`](viewer/README.md); the
+standalone app and the bundled font are not there yet, and until the font is
+the variable falls back to the system's sans-serif face.
+
 ## Running locally
 
 `baum generate --pr N`:
