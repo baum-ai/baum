@@ -31,7 +31,11 @@ func requireGit(t *testing.T) {
 // git runs git in dir for test setup and returns trimmed stdout.
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// No automatic maintenance: a setup fetch or commit otherwise starts a
+	// detached "git maintenance run --auto" that holds objects/maintenance.lock
+	// in the repository after git returns, racing tests that snapshot the
+	// object directory and the removal of temporary directories.
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
