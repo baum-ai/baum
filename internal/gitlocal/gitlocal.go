@@ -1,8 +1,8 @@
 // Package gitlocal reads a pull request out of a local clone with git, for
 // a run on the user's machine. It resolves the pull request's commits,
 // computes the comparison and per-file patches that bundle.BuildDiffIndex
-// reads, reads single files at a revision, and checks a revision out into a
-// temporary worktree.
+// reads, reads single files at a revision, and exports a commit's tree, or
+// one path of it, as a tar archive.
 //
 // The git invocations (diff flags, rename detection, status mapping, patch
 // formats and size limits) are the ones the hosted service's git mirror
@@ -22,9 +22,10 @@
 // finding the repository, and fetching a missing pull request commit, which
 // lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
-// changed. A checkout is a detached worktree of the private repository in a
-// temporary directory outside the clone, holding the committed bytes as the
-// hosted mirror's git archive export does.
+// changed. An export is the hosted mirror's own git archive command run in
+// the private repository, so it is byte for byte the archive the hosted
+// service produces, including whatever attributes that archive applies: it
+// still applies working-tree-encoding from the tree.
 //
 // Every git process runs without a shell, under a timeout, with its output
 // capped, and with prompts, pagers and editors disabled. Errors carry a short
@@ -63,6 +64,8 @@ const (
 	DefaultMaxComparison   = 20 << 20
 	DefaultMaxPatchBytes   = 20 << 20
 	DefaultMaxBlobBytes    = 10 << 20
+	DefaultMaxArchiveBytes = 1 << 30
+	DefaultArchiveTimeout  = 10 * time.Minute
 	DefaultCommandTimeout  = 2 * time.Minute
 	DefaultFetchTimeout    = 10 * time.Minute
 	maxOIDOutputBytes      = 256
@@ -76,7 +79,9 @@ var (
 	ErrInvalidInput = errors.New("invalid git input")
 	// ErrObjectNotFound reports a commit, merge base or file that does not
 	// exist.
-	ErrObjectNotFound = errors.New("git object not found")
+	// It satisfies errors.Is(err, bundle.ErrNotFound), the contract of
+	// bundle.PinnedExport and bundle.BlobFetcher.
+	ErrObjectNotFound error = objectNotFoundError{}
 	// ErrPartialClone reports a partial clone that lacks objects a read
 	// needs. They are not fetched on demand.
 	// ErrClosed reports an operation on a Repo after Close.
@@ -84,11 +89,24 @@ var (
 	ErrPartialClone = errors.New("the partial clone is missing objects this pull request needs; use a full clone, or let git fetch them first, for example with git diff --stat <base> <head> in the clone")
 )
 
+// objectNotFoundError is ErrObjectNotFound's type; it matches
+// bundle.ErrNotFound as well as itself.
+type objectNotFoundError struct{}
+
+func (objectNotFoundError) Error() string { return "git object not found" }
+
+func (objectNotFoundError) Is(target error) bool { return target == bundle.ErrNotFound }
+
+var (
+	_ bundle.PinnedExport = (*Repo)(nil)
+	_ bundle.BlobFetcher  = (*Repo)(nil)
+)
+
 // Options configure a Repo. The zero value uses the defaults.
 type Options struct {
 	// Remote is fetched from when a pull request commit is missing.
 	Remote string
-	// TempDir holds the private repository and worktrees; empty uses the
+	// TempDir holds the private repository; empty uses the
 	// system temporary directory. It must be outside the clone.
 	TempDir string
 	// MaxComparisonBytes caps the output of each comparison command.
@@ -97,6 +115,11 @@ type Options struct {
 	MaxPatchBytes int64
 	// MaxBlobBytes caps one file read by Blob.
 	MaxBlobBytes int64
+	// MaxArchiveBytes caps the tar archive of one export.
+	MaxArchiveBytes int64
+	// ArchiveTimeout bounds one export from start to Close, however slowly
+	// the archive is read.
+	ArchiveTimeout time.Duration
 	// CommandTimeout bounds each local git command; FetchTimeout a fetch.
 	CommandTimeout time.Duration
 	FetchTimeout   time.Duration
@@ -111,12 +134,13 @@ type Repo struct {
 	partial bool
 	opts    Options
 
-	// mu guards closed and worktrees; ops counts operations in flight,
-	// which Close waits for. ops.Add runs only under mu with closed false.
-	mu        sync.Mutex
-	closed    bool
-	worktrees map[*Worktree]struct{}
-	ops       sync.WaitGroup
+	// mu guards closed; ops counts operations in flight, which Close waits
+	// for. ops.Add runs only under mu with closed false.
+	// readers are the exports still open, which Close cancels.
+	mu      sync.Mutex
+	closed  bool
+	readers map[*archiveReader]struct{}
+	ops     sync.WaitGroup
 }
 
 // minGitMajor and minGitMinor are the oldest git this package supports:
@@ -195,6 +219,10 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	opts.MaxComparisonBytes = orDefault(opts.MaxComparisonBytes, DefaultMaxComparison)
 	opts.MaxPatchBytes = orDefault(opts.MaxPatchBytes, DefaultMaxPatchBytes)
 	opts.MaxBlobBytes = orDefault(opts.MaxBlobBytes, DefaultMaxBlobBytes)
+	opts.MaxArchiveBytes = orDefault(opts.MaxArchiveBytes, DefaultMaxArchiveBytes)
+	if opts.ArchiveTimeout <= 0 {
+		opts.ArchiveTimeout = DefaultArchiveTimeout
+	}
 	if opts.CommandTimeout <= 0 {
 		opts.CommandTimeout = DefaultCommandTimeout
 	}
@@ -225,7 +253,7 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	}
 	r := &Repo{
 		dir: filepath.Clean(fields[0]), objects: absolute(fields[1]), shallow: absolute(fields[2]),
-		opts: opts, worktrees: map[*Worktree]struct{}{},
+		opts: opts, readers: map[*archiveReader]struct{}{},
 	}
 	if err := checkTempDir(r.dir, opts.TempDir); err != nil {
 		return nil, err
@@ -242,9 +270,9 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	return r, nil
 }
 
-// Close waits for operations in flight, then removes the worktrees still
-// open and the private repository. Later operations fail with ErrClosed.
-// It is safe to call more than once.
+// Close cancels exports still open, waits for operations in flight, then
+// removes the private repository. Later operations fail
+// with ErrClosed. It is safe to call more than once.
 func (r *Repo) Close() error {
 	r.mu.Lock()
 	if r.closed {
@@ -252,18 +280,18 @@ func (r *Repo) Close() error {
 		return nil
 	}
 	r.closed = true
+	open := make([]*archiveReader, 0, len(r.readers))
+	for a := range r.readers {
+		open = append(open, a)
+	}
 	r.mu.Unlock()
+	// An export nobody closed must not hold Close up: stop git, and the
+	// export's own goroutine reaps it and frees its slot.
+	for _, a := range open {
+		a.cancel()
+	}
 	r.ops.Wait()
-	r.mu.Lock()
-	open := make([]*Worktree, 0, len(r.worktrees))
-	for w := range r.worktrees {
-		open = append(open, w)
-	}
-	r.mu.Unlock()
 	var errs []error
-	for _, w := range open {
-		errs = append(errs, w.Close())
-	}
 	if err := removeAll(r.mirror); err != nil {
 		errs = append(errs, fmt.Errorf("removing private repository: %w", err))
 	}
@@ -295,7 +323,7 @@ func (r *Repo) missingObjects(err error) error {
 		return err
 	}
 	stderr := strings.ToLower(gitErr.Stderr)
-	for _, marker := range []string{"unable to read", "bad object", "bad file", "missing", "could not read"} {
+	for _, marker := range []string{"unable to read", "bad object", "bad file", "missing", "could not read", "cannot read"} {
 		if strings.Contains(stderr, marker) {
 			return fmt.Errorf("%w: %w", ErrPartialClone, err)
 		}
@@ -618,6 +646,16 @@ func (r *Repo) ReadBlob(ctx context.Context, rev, path string) (Blob, error) {
 	return Blob{OID: fields[2], Mode: fields[0], Content: content}, nil
 }
 
+// Blob is ReadBlob's content, for bundle.BlobFetcher (LoadReviewConfig): a
+// missing file is an error that satisfies errors.Is(err, bundle.ErrNotFound).
+func (r *Repo) Blob(ctx context.Context, commitOID, path string) ([]byte, error) {
+	blob, err := r.ReadBlob(ctx, commitOID, path)
+	if err != nil {
+		return nil, err
+	}
+	return blob.Content, nil
+}
+
 func objectPatchHash(file bundle.FileChange) string {
 	digest := sha256.New()
 	for _, value := range []string{file.Status, file.OldMode, file.NewMode, file.OldOID, file.NewOID} {
@@ -777,3 +815,12 @@ func diffStatus(value string) string {
 
 // removeAll is os.RemoveAll, a seam for cleanup.
 var removeAll = os.RemoveAll
+
+// inside reports whether child is parent or below it.
+func inside(parent, child string) bool {
+	if p, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = p
+	}
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}

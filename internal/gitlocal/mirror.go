@@ -30,42 +30,30 @@ func newMirror(tempDir, objects, objectFormat string) (string, error) {
 		_ = removeAll(dir)
 		return "", err
 	}
-	// git init and clone probe whether the filesystem can hold symbolic
-	// links and record core.symlinks = false when not (Windows without the
-	// privilege, some network shares); a hand-written config must too, or a
-	// checkout of a tree with a symlink fails.
-	symlinks := "true"
-	if !canSymlink(dir) {
-		symlinks = "false"
-	}
-	config := "[core]\n\trepositoryformatversion = 0\n\tbare = true\n\tsymlinks = " + symlinks + "\n"
+	config := "[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
 	switch objectFormat {
 	case "sha1":
 	case "sha256":
-		config = "[core]\n\trepositoryformatversion = 1\n\tbare = true\n\tsymlinks = " + symlinks + "\n[extensions]\n\tobjectformat = sha256\n"
+		config = "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n"
 	default:
 		_ = removeAll(dir)
 		return "", fmt.Errorf("%w: object format %q", ErrInvalidInput, objectFormat)
 	}
-	// hooks stays empty: the fetch and the worktree checkout point
-	// core.hooksPath at it.
+	// hooks stays empty: the fetch points core.hooksPath at it.
 	for _, name := range []string{"refs/heads", "refs/tags", "objects/info", "objects/pack", "hooks", "info", "xdg"} {
 		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(name)), 0o700); err != nil {
 			_ = removeAll(dir)
 			return "", fmt.Errorf("creating private repository: %w", err)
 		}
 	}
+	// There is no info/attributes: a bare mirror's export applies whatever
+	// attributes git archive reads there, and the private repository must
+	// apply exactly the same, so it adds none of its own.
 	files := map[string]string{
 		"HEAD":                    "ref: refs/heads/main\n",
 		"config":                  config,
 		emptyConfigName:           "",
 		"objects/info/alternates": filepath.ToSlash(objects) + "\n",
-		// info/attributes outranks every .gitattributes file in a tree,
-		// and linked worktrees read it from here. Unsetting the conversion
-		// attributes makes a checkout hold the committed bytes, as the
-		// hosted export of a bare mirror (git archive) does. Diffs read
-		// only the diff attribute, which this leaves alone.
-		"info/attributes": "* !text !eol !ident !filter !working-tree-encoding !crlf\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(content), 0o600); err != nil {
@@ -144,16 +132,4 @@ func hasPromisorConfig(ctx context.Context, dir string, timeout time.Duration) b
 		}
 	}
 	return false
-}
-
-// canSymlink reports whether a symbolic link can be created in dir.
-var canSymlink = defaultCanSymlink
-
-func defaultCanSymlink(dir string) bool {
-	link := filepath.Join(dir, "symlink-probe")
-	if err := os.Symlink("target", link); err != nil {
-		return false
-	}
-	_ = os.Remove(link)
-	return true
 }

@@ -71,7 +71,7 @@ implementation of each source:
 | --- | --- | --- |
 | revision | base, head and merge-base SHAs | the local clone and GitHub |
 | comparison | the merge-base-to-head diff and per-commit changes | the local clone |
-| export | file trees at head and merge base | a temporary `git worktree` |
+| export | file trees at head and merge base | `git archive` in a private repository |
 | blob | a file at a given commit (`REVIEW.md`) | the local clone |
 | pull request | title, body, author, labels, commits | GitHub, with the user's token |
 | checks | check runs and commit statuses at head | GitHub |
@@ -262,8 +262,9 @@ the variable falls back to the system's sans-serif face.
 `baum generate --pr N`:
 
 1. resolves the pull request with the user's GitHub token;
-2. creates a temporary `git worktree` at the head and exports the checkout
-   from it under the same limits as above, then removes the worktree;
+2. exports the head and merge-base trees with `git archive` from a private
+   repository that borrows the clone's objects, and writes the checkout under the
+   same limits as above;
 3. collects sessions from the home directory and Entire checkpoints and
    links them to the pull request's commits;
 4. fetches description images with the user's token and caches them by
@@ -274,13 +275,14 @@ the variable falls back to the system's sans-serif face.
 7. validates, derives and redacts the document, and stores it as the next
    version.
 
-Git reads (the comparison, patches, blobs and the worktree) run in a private
+Git reads (the comparison, patches, blobs and the exports) run in a private
 temporary bare repository that borrows the clone's objects and has default
 configuration, like the hosted git mirror. The clone's configuration,
 attributes and replace refs cannot change the output, and its refs,
-configuration and worktree registrations are left as they were. The worktree
-holds the committed bytes, as the hosted export does: line-ending, ident,
-encoding and filter attributes are not applied.
+configuration and worktree registrations are left as they were. An export is
+the hosted service's own command, `git archive --format=tar
+--worktree-attributes`, so it is the same archive: the clone's attributes and
+filters are not applied.
 
 The clone is written to only when it lacks a pull request commit: baum
 fetches it under `refs/baum/`, with the user's git configuration and no
