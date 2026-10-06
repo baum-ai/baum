@@ -179,7 +179,7 @@ func TestCompleteRecordsTheHostPromptVersion(t *testing.T) {
 	encoded, _ := json.Marshal(authored)
 	published, findings := validator.CompleteWithPrompt(encoded, bundle, "", "fixture-model", "review-v12", now)
 	if findings != "" {
-		return
+		t.Fatal(findings)
 	}
 	document, err := decodeObject(published, "published")
 	if err != nil {
