@@ -24,8 +24,8 @@ type CommitRef struct {
 }
 
 // RunCandidate is the in-memory projection of one stored session tree and the
-// matcher evidence derived from it at ingest (specs/platform/session-ingest.md
-// §7.3). Callers build it from the ingest and evidence tables; the matcher
+// matcher evidence derived from it at ingest (see ARCHITECTURE.md).
+// Callers build it from the ingest and evidence tables; the matcher
 // never touches Postgres.
 type RunCandidate struct {
 	// RunID is the tree's root session id.

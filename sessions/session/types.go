@@ -1,7 +1,6 @@
 // Package session defines the vendor-agnostic session model described in
-// specs/platform/traceprocessing/session-model.md. It is the shape we store: adapters read a
-// vendor transcript and emit a Graph, and internal/sessionstore writes that
-// Graph to Postgres.
+// ARCHITECTURE.md. It is the shape we store: adapters read a vendor transcript
+// and emit a Graph, and a store writes that Graph to a database.
 //
 // The package has no I/O and no vendor knowledge. Every id in a Graph is one of
 // ours (see ids.go); vendor identifiers live only in VendorID rows.
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-// Outcome is the session end label (specs/platform/traceprocessing/session-model.md §5.1).
+// Outcome is the session end label.
 // Exactly one value is stored per session, and commit evidence outranks
 // interrupt evidence.
 type Outcome string

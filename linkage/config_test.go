@@ -115,8 +115,8 @@ func TestDefaultAgentAliasesMapToKnownSources(t *testing.T) {
 	}
 }
 
-// Alias keys must be the agent slugs internal/gitrepository's commit
-// enrichment actually emits (it identifies agents by trailer email, never by
+// Alias keys must be the agent slugs the commit enrichment
+// actually emits (it identifies agents by trailer email, never by
 // display name), or coauthor_agent can never hit them.
 func TestDefaultAgentAliasKeysAreEnrichmentSlugs(t *testing.T) {
 	enrichmentSlugs := map[string]bool{

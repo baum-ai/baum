@@ -87,7 +87,7 @@ type TimingConfig struct {
 }
 
 // Config holds every matcher tunable. It owns the defaults and validation;
-// platform/internal/config only decodes the external representation into it.
+// callers only decode the external representation into it.
 type Config struct {
 	ExcludeMergeCommits bool
 
@@ -215,7 +215,7 @@ func (c Config) Validate() error {
 // What the prefilter still moves when this holds is the diagnostic on an
 // unmatched edge, never the edge: reason and candidates_remaining are read off
 // a set timeframe's rejects were never loaded into
-// (specs/platform/linkage/resolver.md).
+// (see ARCHITECTURE.md).
 func (c Config) CandidatePrefilterSound() bool {
 	timeframeEnabled := false
 	for _, id := range c.EnabledMatchSteps {

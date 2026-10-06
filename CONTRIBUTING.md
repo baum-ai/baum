@@ -45,7 +45,7 @@ tests). Its [README](viewer/README.md) describes the seams a host connects.
 
 - Imperative subject lines under about 70 characters ("Add X", not "Added
   X"), with a body explaining why when it is not self-evident.
-- Reference the Linear issue in the message, for example `Closes ENG-532`.
+- Reference the issue the change fixes, for example `Fixes #12`.
 - Describe what changed, why, and which checks you ran.
 - CI must pass before merge.
 - This repository is published from the `oss/` directory of the baum

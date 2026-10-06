@@ -1,18 +1,17 @@
 // Package sessioncorrelate derives the evidence the commit matcher needs from a
 // session tree: repo-relative file paths, role-tagged commit refs, and the
 // branches and working directories the tree was seen in
-// (specs/platform/session-ingest.md §5).
+// (see ARCHITECTURE.md).
 //
 // It never mutates the graph. Rewriting file paths inside the session would
 // make the stored session stop saying what the tool actually reported, and
 // every consumer would inherit the matcher's view of a path. Vendor truth stays
-// in internal/session and the matcher-shaped view is a separate value the
+// in the session package and the matcher-shaped view is a separate value the
 // ingest layer stores beside it.
 //
 // The package is pure: no I/O, no database, and no mapper packages. The only
-// vendor knowledge in it is the attribute-key table in keys.go, which
-// specs/platform/session-ingest.md §8 allows as a per-vendor hook keyed by
-// slug.
+// vendor knowledge in it is the attribute-key table in keys.go, a
+// per-vendor hook keyed by slug.
 package sessioncorrelate
 
 import (
@@ -30,8 +29,8 @@ import (
 )
 
 // Role mirrors agent_session_commit_refs.role. It is defined here rather than
-// imported from internal/linkage or internal/sessionstore so this package stays
-// decoupled from both the matcher and the repository; the ingest layer
+// imported from the matcher or a session store so this package stays decoupled
+// from both; the ingest layer
 // translates at the persist boundary.
 type Role string
 
@@ -601,7 +600,7 @@ func stripLongestDir(path string, dirs []string) (string, bool) {
 	return bestRelative, bestDir != ""
 }
 
-// anchoredSuffix is the anchor rule ported from internal/correlation/entire: an
+// anchoredSuffix is the anchor rule used to resolve paths: an
 // absolute tool path whose tail is the repo-relative spelling of a file the
 // same tree already named is that file. It is the only signal that recovers a
 // session which reported no working directory at all, and a path-boundary
@@ -769,7 +768,7 @@ func attributeString(value json.RawMessage) (string, bool) {
 // clean prepares a value captured from an agent for the TEXT columns the
 // evidence tables are made of. A tool-reported path or branch can carry a NUL
 // or invalid UTF-8 exactly like the rest of a transcript, and one rejected
-// value would abort the whole ingest transaction (internal/dbtext). Scrubbing
+// value would abort the whole ingest transaction (the text must be valid for the database). Scrubbing
 // happens on the way in so matching and deduplication see the stored spelling.
 func clean(value string) string { return textclean.SafeText(value) }
 

@@ -29,7 +29,7 @@ type EnvelopeData struct {
 	// multi-session checkpoint it often hands every session the same list. No
 	// FileTouch row can carry them (see FilesUnrepresentable below); the ingest
 	// layer decides whether they become session-scoped evidence
-	// (specs/platform/traceprocessing/entire/session-mapping.md §5.2).
+	// (see ARCHITECTURE.md).
 	MetadataFiles []string `json:"metadata_files,omitempty"`
 	// MetadataFilesShared is true when another session in the same checkpoint
 	// reports the identical non-empty files_touched list. The list is then the
