@@ -46,7 +46,7 @@ func refreshConversation(index *documentIndex, conversation []bundlepkg.Conversa
 	reports := []documentReport{}
 	for _, c := range conversation {
 		if c.BotReport {
-			reports = append(reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: JSONString(c.ID), Summary: c.Body})
+			reports = append(reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
 		}
 	}
 	index.Reports = reports
@@ -64,7 +64,7 @@ func refreshConversation(index *documentIndex, conversation []bundlepkg.Conversa
 		if kind == "comment" {
 			kind = "issue"
 		}
-		comments = append(comments, documentComment{ID: JSONString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: true, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
+		comments = append(comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: true, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
 	}
 	index.Comments = comments
 }

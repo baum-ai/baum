@@ -12,10 +12,10 @@ import (
 )
 
 // lenientContract derives the model-facing schema from the strict authored
-// contract. It asks the model for less than the platform stores: oneOf/anyOf
+// contract. It asks the model for less than the host stores: oneOf/anyOf
 // unions become discriminated allOf/if/then chains so a wrong branch is
 // reported by name, optional fields accept null, fields with a canonical empty
-// value or a platform-derived value are not required, prefixed identifiers
+// value or a host-derived value are not required, prefixed identifiers
 // accept any spelling, and code sources name their revision by role and an
 // excerpt by its hunk headers. normalizeAuthored maps a document this schema
 // accepts onto the strict contract before it is validated.
@@ -44,7 +44,7 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 
 // requireEvidenceHunkAnchors keeps risk and behavior evidence selection as the
 // model's job. Each item must name at least one hunk, while an optional lines
-// range may narrow that hunk further. The platform must not guess this evidence
+// range may narrow that hunk further. The host must not guess this evidence
 // from the enclosing section.
 func requireEvidenceHunkAnchors(lenient, strict map[string]any) error {
 	lenientDefs, _ := lenient["$defs"].(map[string]any)
@@ -159,7 +159,7 @@ func walkSchema(value any, visit func(map[string]any)) {
 }
 
 // relaxTileCodeFile lets a source name its revision as head or merge_base and
-// an excerpt by hunk headers alone; the platform resolves the SHA, sets
+// an excerpt by hunk headers alone; the host resolves the SHA, sets
 // review_version and fills the excerpt lines from the bundle's comparison.
 func relaxTileCodeFile(defs map[string]any) {
 	file, _ := defs["tileCodeFile"].(map[string]any)
@@ -519,6 +519,8 @@ func anchorsProperty(name string, prop map[string]any, defs map[string]any) bool
 
 // ResolveSchema follows a $ref in a schema node through defs and returns the
 // node it names, or the node itself when it has no reference.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func ResolveSchema(schema map[string]any, defs map[string]any) map[string]any {
 	for range 8 {
 		ref, ok := schema["$ref"].(string)
@@ -567,6 +569,8 @@ func containsString(list []string, value string) bool { return slices.Contains(l
 // authored value selects, or nil when none does. Callers that walk an authored
 // document beside its schema use it to follow the same branch normalisation
 // takes.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func SchemaBranch(defs map[string]any, value any, schema map[string]any) map[string]any {
 	return (&authoredNormalizer{defs: defs}).branch(value, schema)
 }

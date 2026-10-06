@@ -14,7 +14,7 @@ import (
 func TestSchemaWithoutTilesChangesNothingButTiles(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
-	without, err := SchemaWithoutTiles(v.Schema)
+	without, err := schemaWithoutTiles(v.Schema)
 	checkNoError(t, err)
 	var got, want map[string]any
 	checkNoError(t, json.Unmarshal(without, &got))

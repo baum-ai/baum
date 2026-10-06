@@ -10,9 +10,11 @@ import (
 // Without kinds it has no tiles at all. Otherwise the authored contract keeps
 // only those kinds' tile variants, and each definition only the removed
 // variants used, before the model-facing contract is derived from it.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func (v *DocumentValidator) ModelSchema(kinds []string) ([]byte, error) {
 	if len(kinds) == 0 {
-		return SchemaWithoutTiles(v.Schema)
+		return schemaWithoutTiles(v.Schema)
 	}
 	encoded, err := json.Marshal(v.strict)
 	if err != nil {
@@ -53,11 +55,11 @@ func (v *DocumentValidator) ModelSchema(kinds []string) ([]byte, error) {
 	return json.Marshal(lenient)
 }
 
-// SchemaWithoutTiles is the model schema for a prompt that offers no tiles:
+// schemaWithoutTiles is the model schema for a prompt that offers no tiles:
 // every tiles property is gone, and so is each definition only a tile used,
 // so the model is neither shown tiles nor able to return them. Everything
 // else is the model schema unchanged.
-func SchemaWithoutTiles(schema []byte) ([]byte, error) {
+func schemaWithoutTiles(schema []byte) ([]byte, error) {
 	var root map[string]any
 	if err := json.Unmarshal(schema, &root); err != nil {
 		return nil, err
@@ -142,6 +144,8 @@ func dropTileProperties(node any) {
 // offered, from its sections and their risks, and a tiles list left empty.
 // A document that is not the expected shape is returned unchanged for the
 // validator to report.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func DocumentWithTileKinds(document []byte, kinds []string) []byte {
 	var value map[string]any
 	if json.Unmarshal(document, &value) != nil {

@@ -1,3 +1,7 @@
+// Package review owns the review document model: the document types, the
+// strict, lenient and stored views of the baum.review/1 schema, normalisation of
+// model output, validation with located findings, derived fields, version
+// history and model-free refresh, plus the tile catalogue.
 package review
 
 import (
@@ -24,7 +28,7 @@ var reviewSchema = reviewschema.Document
 // DocumentValidator holds three views of the review schema: Schema is the
 // lenient contract the model writes against, strict is the authored contract
 // a normalized document must satisfy before completion, and full is the
-// stored document with the platform's derived fields.
+// stored document with the host's derived fields.
 type DocumentValidator struct {
 	Schema   []byte
 	Revision string
@@ -39,9 +43,21 @@ type DocumentValidator struct {
 	items *sectionItemSchemas
 }
 
-// Contract is the strict schema as a decoded tree, with its $defs. It is shared
-// with the validator, so callers must not change it.
-func (v *DocumentValidator) Contract() map[string]any { return v.strict }
+// Contract returns a copy of the strict authored schema as a decoded tree, with
+// its $defs; changing it does not affect the validator.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
+func (v *DocumentValidator) Contract() map[string]any {
+	encoded, err := json.Marshal(v.strict)
+	if err != nil {
+		return nil
+	}
+	var contract map[string]any
+	if json.Unmarshal(encoded, &contract) != nil {
+		return nil
+	}
+	return contract
+}
 
 // NewDocumentValidator compiles the embedded review schema once. The result is
 // read-only, so it may be shared between goroutines.
@@ -133,12 +149,12 @@ func NewDocumentValidator() (*DocumentValidator, error) {
 	if err != nil {
 		return nil, err
 	}
-	ModelSchema, err := json.Marshal(lenient)
+	modelSchema, err := json.Marshal(lenient)
 	if err != nil {
 		return nil, err
 	}
 	var check jsonschema.Schema
-	if err := json.Unmarshal(ModelSchema, &check); err != nil {
+	if err := json.Unmarshal(modelSchema, &check); err != nil {
 		return nil, err
 	}
 	if _, err := check.Resolve(nil); err != nil {
@@ -149,7 +165,7 @@ func NewDocumentValidator() (*DocumentValidator, error) {
 		return nil, err
 	}
 	revision := defs["schemaRevision"].(map[string]any)["const"].(string)
-	return &DocumentValidator{Schema: ModelSchema, Revision: revision, strict: contract, resolved: resolved, section: section, rest: rest, full: full, items: items}, nil
+	return &DocumentValidator{Schema: modelSchema, Revision: revision, strict: contract, resolved: resolved, section: section, rest: rest, full: full, items: items}, nil
 }
 
 // schemaFindings locates a schema violation. The library reports only the
@@ -481,7 +497,7 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	if err := json.Unmarshal(document, &value); err != nil {
 		return document, "output is not a JSON document"
 	}
-	// The model wrote against the lenient contract; everything the platform
+	// The model wrote against the lenient contract; everything the host
 	// can decide for it is decided here, before the strict contract applies.
 	value, derived := normalizeAuthored(value, v.strict, bundle)
 	if normalized, err := json.Marshal(value); err == nil {
@@ -668,7 +684,7 @@ func (v *DocumentValidator) ValidHunkIDs(bundle *bundlepkg.Bundle) bool {
 	return true
 }
 
-// Complete derives platform-owned fields, then validates the full document.
+// Complete derives host-owned fields, then validates the full document.
 // It never calls the model and never accepts derived fields from its output;
 // model names the generator recorded in the document.
 func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, directory string, model string, now time.Time) ([]byte, string) {
@@ -681,7 +697,7 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 		return nil, err.Error()
 	}
 	var doc struct {
-		Document
+		reviewDocument
 		Relations json.RawMessage `json:"relations"`
 	}
 	if err := json.Unmarshal(document, &doc); err != nil {
@@ -720,9 +736,9 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 		if kind == "comment" {
 			kind = "issue"
 		}
-		index.Comments = append(index.Comments, documentComment{ID: JSONString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
+		index.Comments = append(index.Comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
 		if c.BotReport {
-			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: JSONString(c.ID), Summary: c.Body})
+			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
 		}
 	}
 	sessions, vendors, models := sessionIndex(b)
@@ -924,10 +940,10 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 	summary.RiskScore = riskScore(doc.Sections, b.Diff)
 	doc.Index, doc.AgentReviews, doc.UnassignedHunks = index, agentReviews(b, doc.Sections, doc.Review.Head), unassigned
 	doc.Review.Sources.AgentReviews = len(doc.AgentReviews)
-	countFindings(&doc.Document)
+	countFindings(&doc.reviewDocument)
 	doc.Review.Generator.Truncated = notes
-	setReviewExchange(&doc.Document, b)
-	encoded, err := v.encodeFullDocument(&doc.Document)
+	setReviewExchange(&doc.reviewDocument, b)
+	encoded, err := v.encodeFullDocument(&doc.reviewDocument)
 	if err != nil {
 		return nil, err.Error()
 	}

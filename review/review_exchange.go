@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// legacyExchangeNote is what versions stated before the platform derived
+	// legacyExchangeNote is what versions stated before the host derived
 	// these counts; a refresh drops it along with the nulls it explained.
 	legacyExchangeNote  = "Review-exchange counts cover exported reviews; back-and-forth cycles, critical findings and changes after opening are unavailable in this input."
 	exchangeUnknownNote = "Commit times or line counts are unavailable in this input, so the review exchange leaves back-and-forths or changes after opening unknown."
@@ -17,7 +17,7 @@ const (
 // setReviewExchange derives the review exchange's figures from the bundle and
 // the document's agent reviews; the model writes only its summary. It runs
 // after agentReviews, whose must-fix findings are the critical issues.
-func setReviewExchange(doc *Document, b *bundlepkg.Bundle) {
+func setReviewExchange(doc *reviewDocument, b *bundlepkg.Bundle) {
 	exchange := &doc.Summary.ReviewExchange
 	exchange.Reviews = 0
 	for _, c := range b.Conversation {
@@ -85,11 +85,11 @@ func backAndForths(b *bundlepkg.Bundle) *int {
 // changesAfterOpen sums the commits made after the pull request was opened.
 // It is unknown when the opening time, a commit's time or an after-open
 // commit's line counts are missing.
-func changesAfterOpen(pr bundlepkg.PullRequest) *ChangesAfterOpen {
+func changesAfterOpen(pr bundlepkg.PullRequest) *documentChangesAfterOpen {
 	if pr.OpenedAt == nil {
 		return nil
 	}
-	changes := &ChangesAfterOpen{}
+	changes := &documentChangesAfterOpen{}
 	for _, c := range pr.Commits {
 		if c.CommittedAt == nil {
 			return nil

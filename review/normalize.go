@@ -256,7 +256,7 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 		if summary, ok := section["summary"].(map[string]any); ok {
 			fillAnchors(summary, "anchors", anchors)
 		}
-		// The platform rates a mechanical section itself, and a section with
+		// The host rates a mechanical section itself, and a section with
 		// no current hunks takes no part in the score, so an assessment the
 		// model gave either is dropped rather than repaired.
 		if section["kind"] == "mechanical" || len(hunks) == 0 {
@@ -415,6 +415,8 @@ func fillAnchors(owner map[string]any, key string, fallback []any) {
 }
 
 // Objects returns the JSON objects in a decoded list, skipping other items.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func Objects(value any) []map[string]any {
 	list, _ := value.([]any)
 	result := make([]map[string]any, 0, len(list))

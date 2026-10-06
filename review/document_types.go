@@ -34,9 +34,9 @@ func labelBlankSectionTitles(document map[string]any) {
 // Polymorphic content that passes through unchanged remains raw JSON; the
 // pinned JSON schema validates it before and after document updates.
 
-// Document is a stored review document as the generation and refresh code
+// reviewDocument is a stored review document as the generation and refresh code
 // reads it.
-type Document struct {
+type reviewDocument struct {
 	Schema          string                `json:"schema"`
 	Review          documentReview        `json:"review"`
 	Summary         documentSummary       `json:"summary"`
@@ -121,15 +121,15 @@ type documentRiskLimitation struct {
 }
 
 type documentReviewExchange struct {
-	Summary             string            `json:"summary"`
-	Reviews             int               `json:"reviews"`
-	BackAndForths       *int              `json:"back_and_forths"`
-	CriticalIssuesFound *int              `json:"critical_issues_found"`
-	ChangesAfterOpen    *ChangesAfterOpen `json:"changes_after_open"`
+	Summary             string                    `json:"summary"`
+	Reviews             int                       `json:"reviews"`
+	BackAndForths       *int                      `json:"back_and_forths"`
+	CriticalIssuesFound *int                      `json:"critical_issues_found"`
+	ChangesAfterOpen    *documentChangesAfterOpen `json:"changes_after_open"`
 }
 
-// ChangesAfterOpen counts what the pull request gained after it was opened.
-type ChangesAfterOpen struct {
+// documentChangesAfterOpen counts what the pull request gained after it was opened.
+type documentChangesAfterOpen struct {
 	Commits      int `json:"commits"`
 	LinesAdded   int `json:"lines_added"`
 	LinesRemoved int `json:"lines_removed"`
@@ -455,12 +455,6 @@ func (a documentAnchor) identifier() string {
 	return string(a.ID)
 }
 
-// JSONString encodes a string as raw JSON.
-func JSONString(value string) json.RawMessage {
-	encoded, _ := json.Marshal(value)
-	return encoded
-}
-
 func documentTime(value *time.Time) optionalJSON[*string] {
 	if value == nil {
 		return presentJSON[*string](nil)
@@ -468,7 +462,7 @@ func documentTime(value *time.Time) optionalJSON[*string] {
 	return presentJSON(new(value.UTC().Format(time.RFC3339Nano)))
 }
 
-func (v *DocumentValidator) decodeFullDocument(data []byte) (*Document, error) {
+func (v *DocumentValidator) decodeFullDocument(data []byte) (*reviewDocument, error) {
 	value, err := decodeObject(data, "stored review")
 	if err != nil {
 		return nil, err
@@ -477,7 +471,7 @@ func (v *DocumentValidator) decodeFullDocument(data []byte) (*Document, error) {
 	if err := v.full.Validate(value); err != nil {
 		return nil, err
 	}
-	var doc Document
+	var doc reviewDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
@@ -504,7 +498,7 @@ func (v *DocumentValidator) decodeFullDocument(data []byte) (*Document, error) {
 	return &doc, nil
 }
 
-func (v *DocumentValidator) encodeFullDocument(doc *Document) ([]byte, error) {
+func (v *DocumentValidator) encodeFullDocument(doc *reviewDocument) ([]byte, error) {
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		return nil, err
@@ -518,4 +512,9 @@ func (v *DocumentValidator) encodeFullDocument(doc *Document) ([]byte, error) {
 		return nil, err
 	}
 	return encoded, nil
+}
+
+func jsonString(value string) json.RawMessage {
+	encoded, _ := json.Marshal(value)
+	return encoded
 }

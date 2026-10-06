@@ -36,7 +36,7 @@ func exchangeBundle() *bundlepkg.Bundle {
 }
 
 func TestSetReviewExchangeDerivesEveryFigure(t *testing.T) {
-	doc := &Document{}
+	doc := &reviewDocument{}
 	doc.Review.Generator.Truncated = []string{legacyExchangeNote, "kept"}
 	doc.AgentReviews = []documentAgentReview{
 		{Counts: documentAgentReviewCounts{MustFix: 2, ShouldFix: 1}},
@@ -56,7 +56,7 @@ func TestSetReviewExchangeDerivesEveryFigure(t *testing.T) {
 	if exchange.CriticalIssuesFound == nil || *exchange.CriticalIssuesFound != 3 {
 		t.Errorf("critical_issues_found = %v, want 3", exchange.CriticalIssuesFound)
 	}
-	want := ChangesAfterOpen{Commits: 2, LinesAdded: 16, LinesRemoved: 3}
+	want := documentChangesAfterOpen{Commits: 2, LinesAdded: 16, LinesRemoved: 3}
 	if exchange.ChangesAfterOpen == nil || *exchange.ChangesAfterOpen != want {
 		t.Errorf("changes_after_open = %+v, want %+v", exchange.ChangesAfterOpen, want)
 	}
@@ -68,7 +68,7 @@ func TestSetReviewExchangeDerivesEveryFigure(t *testing.T) {
 func TestSetReviewExchangeLeavesUnknownCommitFiguresNull(t *testing.T) {
 	b := exchangeBundle()
 	b.PullRequest.Commits[2].Additions = nil
-	doc := &Document{}
+	doc := &reviewDocument{}
 	setReviewExchange(doc, b)
 	if doc.Summary.ReviewExchange.ChangesAfterOpen != nil {
 		t.Errorf("changes_after_open = %+v, want null for an uncompared commit", doc.Summary.ReviewExchange.ChangesAfterOpen)

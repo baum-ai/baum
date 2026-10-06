@@ -171,6 +171,8 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 // PreserveRiskOmissionsForRepair removes prior risks that were absent from the
 // provider's first assessment. A validation repair must not turn those
 // omissions into explicit reactivations.
+//
+// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
 func PreserveRiskOmissionsForRepair(previous *bundlepkg.PreviousVersion, assessed, repaired []byte) []byte {
 	if previous == nil {
 		return repaired
@@ -326,7 +328,7 @@ func objectsByID(values []any, name string) (map[string]map[string]any, []string
 	return result, order, nil
 }
 
-// dropUnlistedImages removes, from a section the platform carries over for a
+// dropUnlistedImages removes, from a section the host carries over for a
 // model that left it out, images the description no longer offers, and an
 // images block left empty. The model cannot repair a section it did not write.
 func dropUnlistedImages(section map[string]any, attachments []bundlepkg.Attachment) {

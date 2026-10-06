@@ -41,8 +41,8 @@ func TestDocumentRoundTripPreservesOptionalFields(t *testing.T) {
     {"type":"session_event","session":"s","event":"e"},
     {"type":"check","id":"ci","test":""}, {"type":"bot_report","id":"report"},
     {"type":"issue","system":"github","key":"1"},
-    {"type":"spec","page":"SPEC-130"}, {"type":"spec","page":"SPEC-130","assertion":null},
-    {"type":"spec","page":"SPEC-130","assertion":"SPEC-130-A01"},
+    {"type":"spec","page":"SPEC-1"}, {"type":"spec","page":"SPEC-1","assertion":null},
+    {"type":"spec","page":"SPEC-1","assertion":"SPEC-1-A01"},
     {"type":"external_url","url":"https://example.com","label":""},
     {"type":"attachment","url":"https://example.com/image.png"}
    ]`)
@@ -171,7 +171,7 @@ func TestCompleteAndRefreshPreserveBlockVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, encoded := range [][]byte{completed, refreshed} {
-		var doc Document
+		var doc reviewDocument
 		if err := json.Unmarshal(encoded, &doc); err != nil {
 			t.Fatal(err)
 		}

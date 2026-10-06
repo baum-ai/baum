@@ -69,7 +69,7 @@ func agentReviews(b *bundlepkg.Bundle, sections []documentSection, head string) 
 		entries[i].Verdict = agentVerdict(c.State)
 		// The index lists only comments with a time, so only those anchor.
 		if c.CreatedAt != nil {
-			entries[i].Anchors = append(entries[i].Anchors, documentAnchor{Type: "pr_comment", ID: JSONString(c.ID)})
+			entries[i].Anchors = append(entries[i].Anchors, documentAnchor{Type: "pr_comment", ID: jsonString(c.ID)})
 		}
 		reviewEntry[c.ID] = i
 	}
@@ -91,7 +91,7 @@ func agentReviews(b *bundlepkg.Bundle, sections []documentSection, head string) 
 		}
 		var line *int
 		if c.Thread != "" {
-			finding.Anchors = append(finding.Anchors, documentAnchor{Type: "review_thread", ID: JSONString(c.Thread)})
+			finding.Anchors = append(finding.Anchors, documentAnchor{Type: "review_thread", ID: jsonString(c.Thread)})
 			for _, t := range b.Threads {
 				if t.ID == c.Thread && lineUsable {
 					line = t.Line
@@ -100,7 +100,7 @@ func agentReviews(b *bundlepkg.Bundle, sections []documentSection, head string) 
 		}
 		if section, hunk := findingLocation(b, sections, c.Path, line); section != "" {
 			finding.Section = new(section)
-			finding.Anchors = append(finding.Anchors, documentAnchor{Type: "hunk", ID: JSONString(hunk)})
+			finding.Anchors = append(finding.Anchors, documentAnchor{Type: "hunk", ID: jsonString(hunk)})
 		}
 		switch finding.Severity {
 		case "must_fix":
@@ -224,7 +224,7 @@ func threadNotes(notes []string, b *bundlepkg.Bundle) []string {
 
 // countFindings derives the document's finding totals by state and each
 // current section's open findings from its agent reviews.
-func countFindings(doc *Document) {
+func countFindings(doc *reviewDocument) {
 	totals := documentStatsAgentFindings{}
 	open := map[string]int{}
 	for _, review := range doc.AgentReviews {

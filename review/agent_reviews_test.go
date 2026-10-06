@@ -28,7 +28,7 @@ func TestRefreshIndexesReviewThreadsAndAgentReviews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc Document
+	var doc reviewDocument
 	if err := json.Unmarshal(refreshed, &doc); err != nil {
 		t.Fatal(err)
 	}
