@@ -18,7 +18,8 @@ the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle, and
 `review` holds the document model, validation, history, refresh, output
-redaction and the tile catalogue; `agent` and `viewer` do not exist yet. Until a
+redaction and the tile catalogue; `agent` does not exist yet, and the Go side of
+`viewer` only embeds the built app. Until a
 package is complete, its section describes the intended shape.
 
 ## Pipeline
@@ -320,8 +321,10 @@ defaults to Inter, bundled with the package under the SIL Open Font License.
 A host overrides the variable to restyle the viewer without forking it; the
 hosted service sets its own licensed face this way.
 
-The components and their seams are in [`viewer/`](viewer/README.md); the
-standalone app is not there yet.
+The components and their seams are in [`viewer/`](viewer/README.md). The
+package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
+into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
+built output is committed. The server that serves it, `baum view`, comes later.
 
 ## Running locally
 
