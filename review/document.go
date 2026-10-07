@@ -46,7 +46,8 @@ type DocumentValidator struct {
 // Contract returns a copy of the strict authored schema as a decoded tree, with
 // its $defs; changing it does not affect the validator.
 //
-// It is exported for hosts that run the generate-and-repair loop themselves.
+// It is exported for hosts that inspect the authored contract, such as in
+// their tests.
 func (v *DocumentValidator) Contract() map[string]any {
 	encoded, err := json.Marshal(v.strict)
 	if err != nil {

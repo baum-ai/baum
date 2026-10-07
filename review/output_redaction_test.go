@@ -21,7 +21,7 @@ const (
 	redactionBaseSHA  = "89e6c98d92887913cadf06b2adb97f26cde4849b"
 	// plantedSecret is a syntactically valid (but fake) GitHub personal access
 	// token.
-	plantedSecret = "ghp_JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM"
+	plantedSecret = "ghp" + "_JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM"
 )
 
 // The patch line carries a token, which bundle redaction masks before the
@@ -152,6 +152,15 @@ func TestOutputRedactorFailsWithTheContext(t *testing.T) {
 	if _, err := o.Text(ctx, leakedProviderKey); !errors.Is(err, context.Canceled) {
 		t.Fatalf("text redaction under a cancelled context: %v", err)
 	}
+}
+
+func TestOutputRedactorMasksWithoutABundle(t *testing.T) {
+	o := newTestOutputRedactor(t, testRedactor(t), nil, nil)
+	document := []byte(`{"summary":{"text":"` + leakedProviderKey + `"}}`)
+	redacted, err := o.Document(context.Background(), document)
+	checkNoError(t, err)
+	requireNoLeakedSecret(t, "document", redacted)
+	checkEqual(t, 1, o.Masked())
 }
 
 func TestOutputRedactionJoinsLineArrays(t *testing.T) {

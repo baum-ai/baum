@@ -174,9 +174,9 @@ a prompt only an earlier refresh added is not carried again.
 
 Everything a model returns is untrusted. `review.OutputRedactor` masks a
 document, or any other text a host passes it (the findings, the diagnostics);
-a host applies it to everything its generation returns. Every string of the document is scanned as
-one text, so a secret spread over code lines, table rows or steps is caught;
-a string keeps its exact text only if it is a reference that resolves to the
+a host applies it to everything its generation returns. Every string of the
+document is scanned as one text, so a secret spread over code lines, table
+rows or steps is caught; a string keeps its exact text only if it is a reference that resolves to the
 redacted bundle or the checkout, or its value meets the schema's constant,
 enum, closed pattern or date-time format. Text scattered across unrelated
 fields, a token wrapped mid-value, or a lowercase token that fits a closed

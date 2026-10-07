@@ -25,8 +25,8 @@ type OutputRedactor struct {
 }
 
 // NewOutputRedactor returns a redactor for output about the bundle, which must
-// be redacted already. checkout lists the repository paths of the run's
-// checkout, either tree.
+// be redacted already; with a nil bundle no reference resolves. checkout lists
+// the repository paths of the run's checkout, either tree.
 func NewOutputRedactor(v *DocumentValidator, redactor *bundlepkg.Redactor, b *bundlepkg.Bundle, checkout map[string]bool) (*OutputRedactor, error) {
 	o := outputRedaction{redactor: redactor, schema: v.strict, bundle: b, checkout: checkout}
 	o.defs, _ = o.schema["$defs"].(map[string]any)

@@ -211,7 +211,7 @@ func validateTileSources(sections []authoredSection, bundle *bundlepkg.Bundle, d
 // inheritedTileSources lists the code sources of the previous review's
 // sections, which a new review may carry forward unchanged.
 func inheritedTileSources(bundle *bundlepkg.Bundle) ([]tileCode, error) {
-	if bundle.Previous == nil {
+	if bundle == nil || bundle.Previous == nil {
 		return nil, nil
 	}
 	var inherited []tileCode
