@@ -299,10 +299,17 @@ func TestDecisionPromptAnchorsResolveToTheirText(t *testing.T) {
 	if cited, absent := stored.Sections[0].Evidence[0].Status, stored.Sections[0].Evidence[1].Status; cited != "reported" || absent != "asserted" {
 		t.Fatalf("evidence on a carried turn is %s, on an absent turn %s; want reported and asserted", cited, absent)
 	}
-	if got := DecisionPromptTurns(published); !reflect.DeepEqual(got, map[string][]int{"session": {3, 4}}) {
-		t.Fatalf("decision prompt turns = %v", got)
+	// The indexed prompts (1, 3, 6) and the decision anchors (3, 4).
+	if got := RefreshPromptTurns(published); !reflect.DeepEqual(got, map[string][]int{"session": {1, 3, 4, 6}}) {
+		t.Fatalf("refresh prompt turns = %v", got)
 	}
-	if got := DecisionPromptTurns([]byte("not json")); got != nil {
+	// A model that anchored its decisions only to hunks still keeps the
+	// prompts its generation carried.
+	indexOnly := []byte(`{"index":{"sessions":[{"id":"s","prompts":[{"index":2},{"index":9},{"index":0}]}]},"sections":[{"blocks":[{"kind":"decisions","items":[{"anchors":[{"type":"hunk","id":"h_0123456789ab"}]}]}]}]}`)
+	if got := RefreshPromptTurns(indexOnly); !reflect.DeepEqual(got, map[string][]int{"s": {2, 9}}) {
+		t.Fatalf("refresh prompt turns without prompt anchors = %v", got)
+	}
+	if got := RefreshPromptTurns([]byte("not json")); got != nil {
 		t.Fatalf("an unreadable document cites %v", got)
 	}
 }

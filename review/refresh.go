@@ -188,14 +188,24 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 	}
 }
 
-// DecisionPromptTurns returns, by session ID, the turns that a stored
-// document's decision items anchor with prompt anchors, sorted and distinct.
-// A refresh loads the prompts at those turns as well as each session's first
-// and latest, so a decision's prompt text survives it; repository scope
+// RefreshPromptTurns returns, by session ID, the turns whose prompts a
+// refresh of a stored document reads again, sorted and distinct: those its
+// session index lists, which include the prompts its generation's extracted
+// decisions cited, and those its decision items anchor with prompt anchors.
+// A refresh loads them as well as each session's first and latest, so the
+// prompt text a version was generated with survives it; repository scope
 // still decides which sessions carry any. A document it cannot read cites
 // none.
-func DecisionPromptTurns(document []byte) map[string][]int {
+func RefreshPromptTurns(document []byte) map[string][]int {
 	var stored struct {
+		Index struct {
+			Sessions []struct {
+				ID      string `json:"id"`
+				Prompts []struct {
+					Index int `json:"index"`
+				} `json:"prompts"`
+			} `json:"sessions"`
+		} `json:"index"`
 		Sections []struct {
 			Blocks []struct {
 				Kind  string `json:"kind"`
@@ -209,6 +219,17 @@ func DecisionPromptTurns(document []byte) map[string][]int {
 		return nil
 	}
 	var turns map[string][]int
+	for _, session := range stored.Index.Sessions {
+		for _, prompt := range session.Prompts {
+			if session.ID == "" || prompt.Index < 1 {
+				continue
+			}
+			if turns == nil {
+				turns = map[string][]int{}
+			}
+			turns[session.ID] = append(turns[session.ID], prompt.Index)
+		}
+	}
 	for _, section := range stored.Sections {
 		for _, block := range section.Blocks {
 			if block.Kind != "decisions" {
