@@ -220,13 +220,22 @@ type Prompt struct {
 // later decision of the session reversed or replaced. Turns are prompt
 // indexes of the session, the turns where it was proposed, made or
 // implemented; Files are repository-relative paths edited in those turns.
+// Trigger is what prompted it (request, review, failure, finding or
+// initiative), Rationale why as the session states it, DecidedTurn the turn
+// the choice was made, and Evidence a verbatim quote from EvidenceTurn
+// showing it; each is empty when not extracted.
 type SessionDecision struct {
 	Summary             string   `json:"summary"`
 	Who                 string   `json:"who"`
 	Category            string   `json:"category"`
+	Trigger             string   `json:"trigger,omitempty"`
+	Rationale           string   `json:"rationale,omitempty"`
 	RejectedAlternative string   `json:"rejected_alternative,omitempty"`
 	Superseded          bool     `json:"superseded,omitempty"`
 	Turns               []int    `json:"turns"`
+	DecidedTurn         int      `json:"decided_turn,omitempty"`
+	Evidence            string   `json:"evidence,omitempty"`
+	EvidenceTurn        int      `json:"evidence_turn,omitempty"`
 	Files               []string `json:"files,omitempty"`
 }
 
