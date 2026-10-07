@@ -936,7 +936,7 @@ func TestFitBytesCutsDecisionsAfterPromptTextAndOnlySupersededOnesBeforeSessions
 	}
 	afterPrompts := build()
 	cutOlderPrompts(afterPrompts)
-	afterPrompts.Truncated = []string{"older prompts omitted to fit the size limit; the first and latest prompts of each session are kept"}
+	afterPrompts.Truncated = []string{citedPromptsNote}
 	afterSuperseded := build()
 	cutOlderPrompts(afterSuperseded)
 	cutSupersededDecisions(afterSuperseded)
@@ -947,7 +947,7 @@ func TestFitBytesCutsDecisionsAfterPromptTextAndOnlySupersededOnesBeforeSessions
 		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterPrompts)}); err != nil {
 			t.Fatal(err)
 		}
-		if len(*bundle.Sessions[0].Decisions) != 2 || len(bundle.Sessions[0].Prompts) != 2 {
+		if len(*bundle.Sessions[0].Decisions) != 2 || len(bundle.Sessions[0].Prompts) != 3 {
 			t.Fatalf("decisions were cut before prompt text: %+v", bundle.Sessions[0])
 		}
 	})
@@ -978,5 +978,118 @@ func TestBundleWithoutDecisionsEncodesWithoutTheField(t *testing.T) {
 	encoded := string(mustJSON(t, &Bundle{Sessions: []Session{{RootSessionID: "s1", Prompts: []Prompt{{ID: "p1", Index: 1, Text: "go"}}}}}))
 	if strings.Contains(encoded, "decisions") {
 		t.Fatalf("a session without extracted decisions changed the encoding: %s", encoded)
+	}
+}
+
+const citedPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and those its current decisions cite are kept"
+
+// The older-prompts stage spares the turns a session's current decisions
+// cite; a superseded decision's turns get no such protection.
+func TestCutOlderPromptsKeepsThePromptsCurrentDecisionsCite(t *testing.T) {
+	var prompts []Prompt
+	for i := 1; i <= 6; i++ {
+		prompts = append(prompts, Prompt{ID: fmt.Sprint("p", i), Index: i})
+	}
+	bundle := &Bundle{Sessions: []Session{
+		{RootSessionID: "s1", Prompts: prompts, Decisions: decisionsOf(
+			SessionDecision{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{3, 6}},
+			SessionDecision{Summary: "Chose a map.", Who: "agent", Category: "implementation", Superseded: true, Turns: []int{4}},
+		)},
+		{RootSessionID: "s2", Prompts: slices.Clone(prompts)},
+	}}
+	if !cutOlderPrompts(bundle) {
+		t.Fatal("expected a cut")
+	}
+	indexes := func(session Session) []int {
+		var got []int
+		for _, p := range session.Prompts {
+			got = append(got, p.Index)
+		}
+		return got
+	}
+	if got := indexes(bundle.Sessions[0]); !slices.Equal(got, []int{1, 3, 6}) {
+		t.Fatalf("decided session kept %v, want [1 3 6]", got)
+	}
+	if got := indexes(bundle.Sessions[1]); !slices.Equal(got, []int{1, 6}) {
+		t.Fatalf("session without decisions kept %v, want [1 6]", got)
+	}
+	if cutOlderPrompts(bundle) {
+		t.Error("expected no further cut once only kept prompts remain")
+	}
+}
+
+// Within any budget, a prompt a current decision cites survives as long as
+// the decision does: it goes only with its whole session.
+func TestFitBytesKeepsCitedPromptsWhileTheirDecisionsSurvive(t *testing.T) {
+	build := func() *Bundle {
+		session := func(id string, confidence float64) Session {
+			var prompts []Prompt
+			for i := 1; i <= 8; i++ {
+				prompts = append(prompts, Prompt{ID: fmt.Sprint(id, i), Index: i, Text: strings.Repeat("prompt text ", 30), Reply: strings.Repeat("reply ", 30)})
+			}
+			return Session{RootSessionID: id, Confidence: confidence, Prompts: prompts, Decisions: decisionsOf(
+				SessionDecision{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{3, 5}},
+			)}
+		}
+		return &Bundle{Sessions: []Session{session("high", 0.9), session("low", 0.1)}}
+	}
+	full, droppedSession := contentBytes(t, build()), false
+	for limit := full; ; limit -= 97 {
+		bundle := build()
+		if err := Fit(bundle, Caps{MaxBytes: limit}); err != nil {
+			// Below what a bundle without sessions and with its notes needs.
+			if !droppedSession {
+				t.Fatalf("limit %d: %v before any session was dropped", limit, err)
+			}
+			break
+		}
+		droppedSession = droppedSession || len(bundle.Sessions) < 2
+		if got := contentBytes(t, bundle); got > limit {
+			t.Fatalf("limit %d: content %d bytes over the budget", limit, got)
+		}
+		for _, session := range bundle.Sessions {
+			kept := map[int]bool{}
+			for _, p := range session.Prompts {
+				kept[p.Index] = true
+			}
+			for turn := range currentDecisionTurns(session) {
+				if !kept[turn] {
+					t.Fatalf("limit %d: session %s keeps its decision but lost the prompt at turn %d", limit, session.RootSessionID, turn)
+				}
+			}
+		}
+		if limit < full && len(bundle.Sessions) == 2 && len(bundle.Sessions[0].Prompts) < 8 && !slices.Contains(bundle.Truncated, citedPromptsNote) {
+			t.Fatalf("limit %d: older prompts cut without the cited-prompts note: %q", limit, bundle.Truncated)
+		}
+	}
+}
+
+// A bundle without decisions trims and encodes exactly as before decisions
+// cited prompts: the digest below was recorded before the change.
+func TestFitWithoutDecisionsKeepsItsDigest(t *testing.T) {
+	var prompts []Prompt
+	for i := 1; i <= 6; i++ {
+		prompts = append(prompts, Prompt{ID: fmt.Sprint("p", i), Index: i, At: mkCreatedAt(i), Text: strings.Repeat("prompt text ", 20), Reply: "reply"})
+	}
+	bundle := &Bundle{
+		Repository: "org/repo",
+		Sessions:   []Session{{RootSessionID: "s1", Vendor: "claude_code", Confidence: 0.9, Prompts: prompts, CommandEvents: []CommandEvent{{ID: "e1", Outcome: "succeeded"}}}},
+		Conversation: []ConversationItem{
+			{ID: "1", Kind: "comment", Body: strings.Repeat("comment ", 30), CreatedAt: mkCreatedAt(1)},
+			{ID: "2", Kind: "review", State: "approved", Body: "ok", CreatedAt: mkCreatedAt(2)},
+		},
+	}
+	limit := contentBytes(t, bundle) - 400
+	if err := Fit(bundle, Caps{MaxBytes: limit}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(bundle.Truncated, "older prompts omitted to fit the size limit; the first and latest prompts of each session are kept") {
+		t.Fatalf("fixture no longer reaches the older-prompts stage: %q", bundle.Truncated)
+	}
+	if err := SetDigest(bundle); err != nil {
+		t.Fatal(err)
+	}
+	if want := "584b8c31a78525735be159d78a3cd67b42269e4a48274b600ba2f08e090d5d8b"; bundle.Digest != want {
+		t.Fatalf("digest = %s, want %s", bundle.Digest, want)
 	}
 }

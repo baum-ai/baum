@@ -2,7 +2,9 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -232,5 +234,75 @@ func TestRefreshKeepsThePromptVersion(t *testing.T) {
 		if recorded != "" && got != recorded {
 			t.Errorf("refresh changed prompt_version to %v, want %s", got, recorded)
 		}
+	}
+}
+
+// A decision's turn that the bundle carries as a prompt, intermediate or
+// not, resolves: the index lists it with its text, and a refresh learns
+// from the stored document which turns its decisions anchor.
+func TestDecisionPromptAnchorsResolveToTheirText(t *testing.T) {
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var prompts []bundlepkg.Prompt
+	for _, index := range []int{1, 3, 6} {
+		prompts = append(prompts, bundlepkg.Prompt{Index: index, ID: fmt.Sprint("prompt-", index), At: &now, Text: fmt.Sprint("Turn ", index)})
+	}
+	decisions := []bundlepkg.SessionDecision{{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{3}}}
+	bundle := &bundlepkg.Bundle{Repository: "org/repo", PullRequest: bundlepkg.PullRequest{Number: 1, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb"}, Sources: bundlepkg.Sources{"diff": true}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}},
+		Sessions: []bundlepkg.Session{{RootSessionID: "session", Vendor: "claude", Prompts: prompts, Decisions: &decisions}}}
+	doc, err := decodeObject(authoredFixture(), "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := doc["sections"].([]any)[0].(map[string]any)
+	section["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{map[string]any{
+		"id": "dec_slice", "by": "human", "text": "Chose a slice.",
+		"anchors": []any{map[string]any{"type": "prompt", "session": "session", "index": 3}, map[string]any{"type": "prompt", "session": "session", "index": 4}, map[string]any{"type": "hunk", "id": testHunk}},
+	}}}}
+	evidence := func(id string, index int) map[string]any {
+		return map[string]any{"id": id, "kind": "run", "claim": "The human chose a slice", "status": "reported", "source": "author_human", "anchors": []any{map[string]any{"type": "prompt", "session": "session", "index": index}}}
+	}
+	section["evidence"] = []any{evidence("ev_cited", 3), evidence("ev_absent", 4)}
+	authored, _ := json.Marshal(doc)
+	published, findings := validator.Complete(authored, bundle, "", "fixture-model", now)
+	if findings != "" {
+		t.Fatal(findings)
+	}
+	var stored struct {
+		Index struct {
+			Sessions []struct {
+				Prompts []struct {
+					Index int    `json:"index"`
+					Text  string `json:"text"`
+				} `json:"prompts"`
+			} `json:"sessions"`
+		} `json:"index"`
+		Sections []struct {
+			Evidence []struct {
+				Status string `json:"status"`
+			} `json:"evidence"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(published, &stored); err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, prompt := range stored.Index.Sessions[0].Prompts {
+		texts = append(texts, fmt.Sprint(prompt.Index, ":", prompt.Text))
+	}
+	if !slices.Equal(texts, []string{"1:Turn 1", "3:Turn 3", "6:Turn 6"}) {
+		t.Fatalf("indexed prompts = %v", texts)
+	}
+	if cited, absent := stored.Sections[0].Evidence[0].Status, stored.Sections[0].Evidence[1].Status; cited != "reported" || absent != "asserted" {
+		t.Fatalf("evidence on a carried turn is %s, on an absent turn %s; want reported and asserted", cited, absent)
+	}
+	if got := DecisionPromptTurns(published); !reflect.DeepEqual(got, map[string][]int{"session": {3, 4}}) {
+		t.Fatalf("decision prompt turns = %v", got)
+	}
+	if got := DecisionPromptTurns([]byte("not json")); got != nil {
+		t.Fatalf("an unreadable document cites %v", got)
 	}
 }

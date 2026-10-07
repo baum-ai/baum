@@ -113,7 +113,9 @@ never as zero.
   transcript. A session without them was not extracted; an empty list means
   it made none. They are redacted like other free text, and trimming cuts
   superseded decisions after every prompt-text stage and current ones only
-  with their session.
+  with their session. The prompts at the turns current decisions cite are
+  kept like a session's first and latest prompts: the older-prompts stage
+  spares them, so they go only with their session.
 - The same inputs produce the same bundle and digest.
 
 ## `review`

@@ -1,6 +1,8 @@
 package review
 
 import (
+	"encoding/json"
+	"slices"
 	"time"
 
 	bundlepkg "github.com/lastpersonlabs/baum/bundle"
@@ -184,4 +186,50 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 	default:
 		return ""
 	}
+}
+
+// DecisionPromptTurns returns, by session ID, the turns that a stored
+// document's decision items anchor with prompt anchors, sorted and distinct.
+// A refresh loads the prompts at those turns as well as each session's first
+// and latest, so a decision's prompt text survives it; repository scope
+// still decides which sessions carry any. A document it cannot read cites
+// none.
+func DecisionPromptTurns(document []byte) map[string][]int {
+	var stored struct {
+		Sections []struct {
+			Blocks []struct {
+				Kind  string `json:"kind"`
+				Items []struct {
+					Anchors []documentAnchor `json:"anchors"`
+				} `json:"items"`
+			} `json:"blocks"`
+		} `json:"sections"`
+	}
+	if json.Unmarshal(document, &stored) != nil {
+		return nil
+	}
+	var turns map[string][]int
+	for _, section := range stored.Sections {
+		for _, block := range section.Blocks {
+			if block.Kind != "decisions" {
+				continue
+			}
+			for _, item := range block.Items {
+				for _, anchor := range item.Anchors {
+					if anchor.Type != "prompt" || anchor.Session == nil || anchor.Index == nil {
+						continue
+					}
+					if turns == nil {
+						turns = map[string][]int{}
+					}
+					turns[*anchor.Session] = append(turns[*anchor.Session], *anchor.Index)
+				}
+			}
+		}
+	}
+	for session := range turns {
+		slices.Sort(turns[session])
+		turns[session] = slices.Compact(turns[session])
+	}
+	return turns
 }

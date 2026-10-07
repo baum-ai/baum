@@ -176,7 +176,10 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // session decisions, then whole sessions from the lowest confidence. A
 // session's current decisions go only with the session: they are a short,
 // reviewed account of what its prompts decided, so they outlast every cut of
-// raw prompt text. REVIEW.md content is cut first,
+// raw prompt text. The prompts at the turns they cite are kept with them, as
+// the first and latest prompts are: the older-prompts stage spares them, and
+// they go only with the session, so a surviving decision's prompt anchors
+// always resolve to text. REVIEW.md content is cut first,
 // ahead of every documented stage, because it is supplementary guidance
 // rather than PR evidence, and because a fixed content cap would otherwise
 // make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no
@@ -196,13 +199,17 @@ func fitContent(bundle *Bundle, caps Caps) error {
 	if limit <= 0 || fits(bundle, limit) {
 		return nil
 	}
+	olderPromptsNote := "older prompts omitted to fit the size limit; the first and latest prompts of each session are kept"
+	if citesTurns(bundle) {
+		olderPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and those its current decisions cite are kept"
+	}
 	stages := []struct {
 		cut  func(*Bundle) bool
 		note string
 	}{
 		{cutReviewConfigContent, "REVIEW.md content omitted to fit the size limit"},
 		{cutAssistantReplies, "assistant replies omitted to fit the size limit"},
-		{cutOlderPrompts, "older prompts omitted to fit the size limit; the first and latest prompts of each session are kept"},
+		{cutOlderPrompts, olderPromptsNote},
 		{cutCommandEvents, "command paraphrases omitted to fit the size limit"},
 		{cutOldestComments, "older comments omitted to fit the size limit; review verdicts are kept"},
 		{cutGeneratedOrVendoredPatches, "generated and vendored patch text omitted to fit the size limit"},
@@ -304,16 +311,55 @@ func cutAssistantReplies(bundle *Bundle) bool {
 	return cut
 }
 
+// cutOlderPrompts keeps each session's first and latest prompts and those at
+// the turns its current decisions cite.
 func cutOlderPrompts(bundle *Bundle) bool {
 	cut := false
 	for i := range bundle.Sessions {
 		prompts := bundle.Sessions[i].Prompts
-		if len(prompts) > 2 {
-			bundle.Sessions[i].Prompts = append([]Prompt{prompts[0]}, prompts[len(prompts)-1])
+		if len(prompts) <= 2 {
+			continue
+		}
+		cited := currentDecisionTurns(bundle.Sessions[i])
+		kept := make([]Prompt, 0, 2+len(cited))
+		for p, prompt := range prompts {
+			if p == 0 || p == len(prompts)-1 || cited[prompt.Index] {
+				kept = append(kept, prompt)
+			}
+		}
+		if len(kept) < len(prompts) {
+			bundle.Sessions[i].Prompts = kept
 			cut = true
 		}
 	}
 	return cut
+}
+
+// currentDecisionTurns is the set of turns a session's current (not
+// superseded) decisions cite.
+func currentDecisionTurns(session Session) map[int]bool {
+	if session.Decisions == nil {
+		return nil
+	}
+	turns := map[int]bool{}
+	for _, decision := range *session.Decisions {
+		if !decision.Superseded {
+			for _, turn := range decision.Turns {
+				turns[turn] = true
+			}
+		}
+	}
+	return turns
+}
+
+// citesTurns reports whether any session's current decisions cite a turn.
+func citesTurns(bundle *Bundle) bool {
+	for _, session := range bundle.Sessions {
+		if len(currentDecisionTurns(session)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func cutCommandEvents(bundle *Bundle) bool {
