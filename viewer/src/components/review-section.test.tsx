@@ -168,6 +168,13 @@ describe("review section decisions", () => {
             anchors,
           },
           { id: "dec_bare", by: "human", text: "Person chose", anchors },
+          {
+            id: "dec_own",
+            by: "human",
+            text: "Person chose unprompted",
+            trigger: "initiative",
+            anchors,
+          },
         ],
       },
     ]);
@@ -184,6 +191,11 @@ describe("review section decisions", () => {
     const bare = page.querySelector('[id$="-dec_bare"]')!;
     expect(bare.querySelector("blockquote")).toBeNull();
     expect(bare.textContent).not.toContain("Prompted");
+    // An initiative label reads right beside either badge, a person's included.
+    const own = page.querySelector('[id$="-dec_own"]')!;
+    const ownWhy = [...own.querySelectorAll("p")].find((p) => p.textContent === "Own initiative");
+    expect(ownWhy).toBeDefined();
+    expect(own.querySelector("span")!.textContent).toBe("Human");
   });
 });
 
