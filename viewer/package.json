@@ -54,6 +54,7 @@
     "./components/tabs": "./src/components/tabs.ts",
     "./components/ui": "./src/components/ui.tsx",
     "./components/use-scrolling-flag": "./src/components/use-scrolling-flag.ts",
+    "./highlight": "./src/highlight.ts",
     "./host": "./src/host.ts",
     "./navigation": "./src/navigation.ts",
     "./package.json": "./package.json",
@@ -94,7 +95,8 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
@@ -115,6 +117,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.0",
     "typescript": "~6.0.2",
     "vitest": "4.1.10"
   }

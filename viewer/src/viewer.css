@@ -195,6 +195,25 @@
   --status-neutral: var(--ink-600);
   --status-neutral-bg: var(--ink-100);
 
+  /* ---- Semantic: syntax ----
+     The variables `highlight.ts`'s shiki CSS-variables theme paints code with.
+     Muted, and at least 4.5:1 on the card and on both diff row tints. Plain
+     code and operators stay in the text colour; keywords, strings and
+     functions carry the only hues beyond the status ones. ---- */
+  --syntax-foreground: var(--text-primary);
+  --syntax-token-keyword: #8a3a6a;
+  --syntax-token-string: #1f6a4f;
+  --syntax-token-string-expression: var(--syntax-token-string);
+  --syntax-token-comment: var(--ink-500);
+  --syntax-token-constant: var(--amber-700);
+  --syntax-token-function: #2d5a8c;
+  --syntax-token-parameter: var(--ink-700);
+  --syntax-token-punctuation: var(--ink-600);
+  --syntax-token-link: #2d5a8c;
+  --syntax-token-inserted: var(--green-700);
+  --syntax-token-deleted: var(--red-700);
+  --syntax-token-changed: var(--amber-700);
+
   /* ---- Data / agent identity (charts, agent chips) ----
      Eight categorical slots in a FIXED order, assigned in sequence and never
      cycled: the order is the colorblind-safety mechanism, so reordering these
@@ -356,6 +375,13 @@
   --surface-wash: rgba(255, 255, 255, 0.06);
   --surface-scrim: rgba(0, 0, 0, 0.62);
   --surface-aside: color-mix(in srgb, var(--brand-sand-100) 4%, var(--paper-50));
+
+  /* ---- Semantic: syntax, lifted for the dark card and its row tints (all
+     at least 6.8:1) ---- */
+  --syntax-token-keyword: #e0a3c8;
+  --syntax-token-string: #9fd6b4;
+  --syntax-token-function: #9cc2ee;
+  --syntax-token-link: #9cc2ee;
 
   /* ---- Shadows. A near-black shadow on a light page is a soft edge; on a dark
      one it is invisible, so these carry more of it. ---- */
