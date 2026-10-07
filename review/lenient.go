@@ -278,10 +278,17 @@ func identifierPattern(pattern string) *identifierRule {
 
 var identifierSeparators = regexp.MustCompile(`[^a-z0-9]+`)
 
+// identifierToken respells a value as normalization does before it applies a
+// rule: lowercase, one underscore for each run of other characters, none at
+// either end.
+func identifierToken(value string) string {
+	return strings.Trim(identifierSeparators.ReplaceAllString(strings.ToLower(value), "_"), "_")
+}
+
 // normalizeIdentifier maps any spelling onto the contract's identifier shape:
 // lowercase, underscores for punctuation and spaces, one required prefix.
 func (rule *identifierRule) normalize(value string) string {
-	token := strings.Trim(identifierSeparators.ReplaceAllString(strings.ToLower(value), "_"), "_")
+	token := identifierToken(value)
 	switch {
 	case rule.prefix != "":
 		token = strings.TrimPrefix(token, rule.prefix+"_")

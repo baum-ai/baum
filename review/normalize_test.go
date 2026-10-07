@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -659,4 +660,40 @@ func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
 			t.Errorf("by %s, approved_by_human %v: prepared %s, want flag kept %v", tc.by, tc.approved, prepared, tc.kept)
 		}
 	}
+}
+
+var dedupeItems = map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string", "pattern": "^rsk_[a-z0-9_]+$"}}}
+
+func dedupeIDs(ids []string) []string {
+	list := make([]any, 0, len(ids))
+	for _, id := range ids {
+		list = append(list, map[string]any{"id": id})
+	}
+	(&authoredNormalizer{}).dedupe(list, dedupeItems)
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		out = append(out, item.(map[string]any)["id"].(string))
+	}
+	return out
+}
+
+// Repeats take the lowest free suffix from 2, as trying each in turn would,
+// including around IDs that already carry one.
+func TestDedupeTakesTheLowestFreeSuffix(t *testing.T) {
+	ids := []string{"rsk_a", "rsk_a", "rsk_a_3", "rsk_a", "rsk_a", "rsk_b", "rsk_a_2", "rsk_b", "rsk_a_4", "rsk_a"}
+	// The suffixes trying 2, 3, ... for each repeat gives.
+	want := []string{"rsk_a", "rsk_a_2", "rsk_a_3", "rsk_a_4", "rsk_a_5", "rsk_b", "rsk_a_2_2", "rsk_b_2", "rsk_a_4_2", "rsk_a_6"}
+	checkEqual(t, strings.Join(want, " "), strings.Join(dedupeIDs(ids), " "))
+}
+
+// A megabyte of one repeated ID is renamed in linear time, not by trying
+// every taken suffix again for each repeat.
+func TestDedupeIsLinearInRepeats(t *testing.T) {
+	ids := slices.Repeat([]string{"rsk_r"}, 1<<20/len(`{"id":"rsk_r"},`))
+	start := time.Now()
+	got := dedupeIDs(ids)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("deduplicating %d repeats took %s", len(ids), elapsed)
+	}
+	checkEqual(t, "rsk_r_"+strconv.Itoa(len(ids)), got[len(got)-1])
 }

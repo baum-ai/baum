@@ -1,6 +1,7 @@
 package review
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"math"
@@ -27,8 +28,9 @@ type authoredNormalizer struct {
 	hunks    map[string]bundlepkg.Hunk
 	findings []string
 	// identifier, when set, sees each value walk respells as an identifier,
-	// as it was before the respelling.
-	identifier func(string)
+	// as it was before the respelling, with the respelling and the schema
+	// node that closes it.
+	identifier func(value, normalized string, schema map[string]any)
 }
 
 func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundle) (any, []string) {
@@ -50,21 +52,34 @@ func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundl
 	return root, n.findings
 }
 
+// authoredIdentifier is a value normalizeAuthored respells as an identifier:
+// its text as the model wrote it, the respelling, and the maxLength the
+// strict schema bounds the respelling to, or 0 without one.
+type authoredIdentifier struct {
+	text, normalized string
+	limit            int
+}
+
 // authoredIdentifiers lists, sorted and once each, the values that
 // normalizeAuthored respells as identifiers (see identifierRule.normalize), as
 // the model wrote them. It takes them from the same walk, so it names exactly
 // the positions normalization rewrites. The walk changes value as
 // normalization does, so callers pass a copy they discard.
-func authoredIdentifiers(value any, strict map[string]any) []string {
+func authoredIdentifiers(value any, strict map[string]any) []authoredIdentifier {
 	root, ok := value.(map[string]any)
 	if !ok {
 		return nil
 	}
 	defs, _ := strict["$defs"].(map[string]any)
-	seen := map[string]bool{}
-	n := &authoredNormalizer{defs: defs, identifier: func(s string) { seen[s] = true }}
+	seen := map[authoredIdentifier]bool{}
+	n := &authoredNormalizer{defs: defs, identifier: func(value, normalized string, schema map[string]any) {
+		limit, _ := jsonInt(schema["maxLength"])
+		seen[authoredIdentifier{text: value, normalized: normalized, limit: max(limit, 0)}] = true
+	}}
 	n.walk(root, strict)
-	return slices.Sorted(maps.Keys(seen))
+	return slices.SortedFunc(maps.Keys(seen), func(a, b authoredIdentifier) int {
+		return cmp.Or(strings.Compare(a.text, b.text), strings.Compare(a.normalized, b.normalized), cmp.Compare(a.limit, b.limit))
+	})
 }
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A
@@ -166,10 +181,11 @@ func (n *authoredNormalizer) walk(value any, schema map[string]any) any {
 	case string:
 		if pattern, ok := schema["pattern"].(string); ok {
 			if rule := identifierPattern(pattern); rule != nil {
+				normalized := rule.normalize(v)
 				if n.identifier != nil {
-					n.identifier(v)
+					n.identifier(v, normalized, schema)
 				}
-				return rule.normalize(v)
+				return normalized
 			}
 		}
 	}
@@ -227,6 +243,7 @@ func (n *authoredNormalizer) branch(value any, schema map[string]any) map[string
 // must merge, and the previous-order rules depend on the IDs as written.
 func (n *authoredNormalizer) dedupe(list []any, items map[string]any) {
 	seen := map[string]bool{}
+	next := map[string]int{}
 	for _, raw := range list {
 		object, ok := raw.(map[string]any)
 		if !ok {
@@ -244,9 +261,15 @@ func (n *authoredNormalizer) dedupe(list []any, items map[string]any) {
 		if rule == nil || rule.prefix == "" || rule.prefix == "sec" || !isString {
 			continue
 		}
+		// The first free suffix only grows, so each repeat resumes from the
+		// last one taken instead of trying 2, 3, ... again.
 		candidate := id
-		for suffix := 2; seen[candidate]; suffix++ {
-			candidate = id + "_" + strconv.Itoa(suffix)
+		if seen[candidate] {
+			suffix := max(next[id], 2)
+			for candidate = id + "_" + strconv.Itoa(suffix); seen[candidate]; candidate = id + "_" + strconv.Itoa(suffix) {
+				suffix++
+			}
+			next[id] = suffix + 1
 		}
 		seen[candidate] = true
 		object["id"] = candidate

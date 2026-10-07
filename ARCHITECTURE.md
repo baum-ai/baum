@@ -180,23 +180,31 @@ rows or steps is caught; a string keeps its exact text only if it is a reference
 redacted bundle or the checkout, or its value meets the schema's constant,
 enum, closed pattern or date-time format. A value kept only by a closed
 pattern or date-time is still free lowercase text, so each is also scanned on
-its own, whole and from after every character in it that is not a letter or
-digit, and masked in place; `MaskedClosed` counts such values, and a host
-should reject the run when it is not zero. A value longer than its schema's
-`maxLength` (128 characters for identifiers and categories) cannot be valid and
-is masked whole without the scan. A value whose schema sets no `maxLength`,
-such as a SHA, hunk ID or date-time, is scanned at any length, but after at
-most 16 boundaries; one with more fits none of those patterns and is masked
-whole, so the scan stays linear in the document's size.
+its own, whole and from after every run of characters in it that are not
+letters or digits, and masked in place; `MaskedClosed` counts the values
+masked for a secret, and a host should reject the run when it is not zero. A
+value longer than its schema's `maxLength` (128 characters for identifiers
+and categories) cannot be valid and is masked whole without the scan. A value
+whose schema sets no `maxLength`, such as a SHA, hunk ID or date-time, is
+scanned at any length, but from after at most 16 runs; one with more fits none
+of those patterns and is masked whole, so the scan stays linear in the
+document's size. A value masked whole holds nothing detected and counts
+nowhere.
 
 Normalisation respells every identifier, category and tile-local name the
-model writes in lowercase with underscores, and a secret respelled that way
-(`sk-ant-api03-AbC…` as `sk_ant_api03_abc…`) is one no rule detects. So a host
-runs the redactor's `Identifiers` on the document as the model wrote it,
-before `Prepare`: the values normalisation respells, taken from its own walk,
-are scanned the same way and masked in place with the format-preserving mask,
-which normalisation then respells to `x`, `9` and underscores, and they count
-in `MaskedClosed` too. The order is `Identifiers`, `Prepare`, `Document` on
+model writes in lowercase with one underscore for each run of other
+characters, and a secret respelled that way (`sk-ant-api03-AbC…` as
+`sk_ant_api03_abc…`) is one no rule detects. So a host runs the redactor's
+`Identifiers` on the document as the model wrote it, before `Prepare`: the
+values normalisation respells, taken from its own walk, are scanned the same
+way, bounded by the length of their respelling, and masked in place with the
+format-preserving mask, which normalisation then respells to `x`, `9` and
+underscores; they count in `MaskedClosed` too. One whose respelling is over
+its bound is masked whole without a count, as validation rejects it anyway.
+The same secret written in another spelling, upper case or already
+respelled, is not detected again, so every identifier whose respelling
+contains a masked secret's respelling is masked whole and counted. The order
+is `Identifiers`, `Prepare`, `Document` on
 what `Prepare` returned, with one redactor, then the `MaskedClosed` check. Text
 scattered across unrelated fields, a token wrapped mid-value, or a secret no
 rule detects on its own, such as a bare hex string, which reads as a SHA, is
