@@ -16,6 +16,7 @@
     "./components/code-file-link": "./src/components/code-file-link.tsx",
     "./components/editorial": "./src/components/editorial.tsx",
     "./components/format": "./src/components/format.ts",
+    "./components/highlighted-text": "./src/components/highlighted-text.tsx",
     "./components/hunk-evidence": "./src/components/hunk-evidence.tsx",
     "./components/icons": "./src/components/icons.tsx",
     "./components/markdown": "./src/components/markdown.tsx",

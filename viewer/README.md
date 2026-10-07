@@ -127,7 +127,11 @@ html:has([data-review-page]) {
 ## Syntax highlighting
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
-(`src/highlight.ts`). It highlights in the browser only: the server render and
+(`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
+calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
+not tokenised). Both render a line through `HighlightedText`
+(`@baum/viewer/components/highlighted-text`), which wraps each token in an
+inline span inside the existing code cell. It highlights in the browser only: the server render and
 the first client render are the plain text, exactly as before, and the colours
 replace it once they are ready, with no change of layout. Each hunk's old side
 (context and removed lines) and new side (context and added lines) are

@@ -1,8 +1,7 @@
-import type { CSSProperties } from "react";
-
-import { type HighlightToken, useHighlightedHunks } from "../../highlight";
+import { useHighlightedHunks } from "../../highlight";
 import { cn } from "../classnames";
 import { CodeFileLink } from "../code-file-link";
+import { HighlightedText } from "../highlighted-text";
 
 export type CodeDiffLine = {
   kind: "context" | "add" | "remove";
@@ -36,36 +35,6 @@ const mark: Record<CodeDiffLine["kind"], string> = {
   add: "+",
   remove: "−",
 };
-
-const FONT_ITALIC = 1;
-const FONT_BOLD = 2;
-const FONT_UNDERLINE = 4;
-const FONT_STRIKETHROUGH = 8;
-
-function tokenStyle({ color, fontStyle = 0 }: HighlightToken): CSSProperties {
-  const decoration = [
-    fontStyle & FONT_UNDERLINE ? "underline" : "",
-    fontStyle & FONT_STRIKETHROUGH ? "line-through" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return {
-    color,
-    fontStyle: fontStyle & FONT_ITALIC ? "italic" : undefined,
-    fontWeight: fontStyle & FONT_BOLD ? 700 : undefined,
-    textDecoration: decoration || undefined,
-  };
-}
-
-/** A line's text, coloured when tokens are available; the same text either way. */
-function LineText({ text, tokens }: { text: string; tokens?: readonly HighlightToken[] }) {
-  if (!tokens) return text;
-  return tokens.map((token, index) => (
-    <span key={index} style={tokenStyle(token)}>
-      {token.content}
-    </span>
-  ));
-}
 
 /** One file's hunks. Highlighting is client-only: the first render is the
  *  plain text, and the tokens replace it once they are ready. */
@@ -108,7 +77,7 @@ function CodeDiffTable({ file }: { file: CodeDiffFile }) {
                   {mark[line.kind]}
                 </td>
                 <td className="pr-3 whitespace-pre-wrap text-(--text-primary) [overflow-wrap:anywhere]">
-                  <LineText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
+                  <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
                 </td>
               </tr>
             )),
