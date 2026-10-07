@@ -18,6 +18,7 @@ import { ReviewExchange } from "./review-exchange";
 import {
   AnchorChips,
   DecisionByBadge,
+  DecisionContext,
   Facts,
   Item,
   JumpLink,
@@ -236,6 +237,7 @@ export function ReviewActivity({
                     Instead of <Markdown className="inline-block">{decision.rejected}</Markdown>
                   </div>
                 )}
+                <DecisionContext decision={decision} />
                 <JumpLink className="text-xs" onClick={() => onSelectSection(decision.section)}>
                   {decision.sectionTitle} →
                 </JumpLink>

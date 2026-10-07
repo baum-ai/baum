@@ -36,6 +36,7 @@ import {
   AnchorChips,
   CommitLink,
   DecisionByBadge,
+  DecisionContext,
   Item,
   ItemMeta,
   JumpLink,
@@ -626,6 +627,7 @@ function BlockView({
                     Rejected: <Markdown className="inline-block">{decision.rejected}</Markdown>
                   </div>
                 )}
+                <DecisionContext decision={decision} />
                 <AnchorChips document={document} anchors={decision.anchors} />
               </Item>
             ))}

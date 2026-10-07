@@ -304,6 +304,13 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 					if decision["approved_by_human"] == false {
 						delete(decision, "approved_by_human")
 					}
+					// An empty string says what an absent field says: no
+					// rationale, trigger or evidence was extracted.
+					for _, key := range []string{"rationale", "trigger", "evidence"} {
+						if text, ok := decision[key].(string); ok && strings.TrimSpace(text) == "" {
+							delete(decision, key)
+						}
+					}
 				}
 			case "entities", "groups", "dependency":
 				for _, item := range jsonObjects(block["items"]) {

@@ -25,10 +25,10 @@ import (
 // text and an image/video reference copies the matched URL, so a secret
 // masked in Body/Title could otherwise still surface here — and branch
 // names, check names/URLs, requested-reviewer logins, comment paths and a
-// session decision's summary, rejected alternative and files, none of which
-// are structurally constrained enough to skip. SHA, ID and closed-enum
-// fields (Kind, State, Role, Change, Outcome, a decision's Who and
-// Category, ...) are not redacted: they are not free text, and running
+// session decision's summary, rationale, rejected alternative, evidence and
+// files, none of which are structurally constrained enough to skip. SHA, ID
+// and closed-enum fields (Kind, State, Role, Change, Outcome, a decision's
+// Who, Category and Trigger, ...) are not redacted: they are not free text, and running
 // secret detection on a hex SHA risks a false-positive match corrupting
 // the hash a hunk/commit anchor resolves against. DiffURL is a generated
 // hash fragment, reference Source is a fixed tag with a numeric comment ID,
@@ -105,7 +105,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		if session.Decisions != nil {
 			for d := range *session.Decisions {
 				decision := &(*session.Decisions)[d]
-				fields = append(fields, &decision.Summary, &decision.RejectedAlternative)
+				fields = append(fields, &decision.Summary, &decision.Rationale, &decision.RejectedAlternative, &decision.Evidence)
 				for f := range decision.Files {
 					fields = append(fields, &decision.Files[f])
 				}

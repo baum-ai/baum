@@ -113,10 +113,19 @@ export type Decision = {
   by: "human" | "agent";
   text: string;
   rejected?: string;
+  /** Why, as the session states it. */
+  rationale?: string;
+  /** What prompted the decision. */
+  trigger?: DecisionTrigger;
+  /** A verbatim quote from the session showing the choice; its turn is the
+   *  first prompt anchor. */
+  evidence?: string;
   /** Only on an agent decision a human explicitly accepted. */
   approved_by_human?: true;
   anchors: Anchor[];
 };
+
+export type DecisionTrigger = "request" | "review" | "failure" | "finding" | "initiative";
 
 export type Group = {
   id: string;

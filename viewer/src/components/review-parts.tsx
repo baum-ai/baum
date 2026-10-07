@@ -311,6 +311,46 @@ export function DecisionByBadge({
   return <Badge size="compact">Agent</Badge>;
 }
 
+const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
+  request: "Requested",
+  review: "Prompted by review",
+  failure: "Prompted by a failure",
+  finding: "Prompted by a finding",
+  initiative: "Agent's own call",
+};
+
+/** What prompted a decision and why, then the session's own words for it.
+ *  Both come from the session as plain text, so neither is rendered as
+ *  Markdown. Renders nothing for a decision that carries neither. */
+export function DecisionContext({
+  decision,
+}: {
+  decision: Pick<Decision, "trigger" | "rationale" | "evidence">;
+}) {
+  const trigger = decision.trigger ? TRIGGER_LABEL[decision.trigger] : undefined;
+  if (!trigger && !decision.rationale && !decision.evidence) return null;
+  return (
+    <div className="space-y-1 text-base">
+      {(trigger || decision.rationale) && (
+        <p className="text-(--text-secondary)">
+          {trigger && (
+            <span className="text-(--text-tertiary)">
+              {trigger}
+              {decision.rationale ? ": " : ""}
+            </span>
+          )}
+          {decision.rationale}
+        </p>
+      )}
+      {decision.evidence && (
+        <blockquote className="border-l-2 border-(--border-subtle) pl-2 text-(--text-tertiary)">
+          “{decision.evidence}”
+        </blockquote>
+      )}
+    </div>
+  );
+}
+
 const chipClass = cn(
   "inline-flex max-w-full min-w-0 items-center gap-1 rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-sunken) px-1.5 py-0.5 text-xs leading-[1.4] text-(--text-secondary)",
 );

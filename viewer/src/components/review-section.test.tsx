@@ -152,6 +152,39 @@ describe("review section decisions", () => {
     expect(found.dec_bad!.getAttribute("title")).toBeNull();
     expect(found.dec_bad!.querySelector("svg")).toBeNull();
   });
+
+  it("shows what prompted a decision, why, and the session's words, as plain text", () => {
+    const html = render([
+      {
+        kind: "decisions",
+        items: [
+          {
+            id: "dec_ctx",
+            by: "agent",
+            text: "Retry with backoff",
+            trigger: "failure",
+            rationale: "The upload test **flaked** twice",
+            evidence: "retry with backoff instead",
+            anchors,
+          },
+          { id: "dec_bare", by: "human", text: "Person chose", anchors },
+        ],
+      },
+    ]);
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const withContext = page.querySelector('[id$="-dec_ctx"]')!;
+    const why = [...withContext.querySelectorAll("p")].find((p) =>
+      p.textContent!.startsWith("Prompted"),
+    );
+    expect(why!.textContent).toBe("Prompted by a failure: The upload test **flaked** twice");
+    expect(withContext.querySelector("strong")).toBeNull();
+    expect(withContext.querySelector("blockquote")!.textContent).toBe(
+      "“retry with backoff instead”",
+    );
+    const bare = page.querySelector('[id$="-dec_bare"]')!;
+    expect(bare.querySelector("blockquote")).toBeNull();
+    expect(bare.textContent).not.toContain("Prompted");
+  });
 });
 
 describe("review section tier", () => {

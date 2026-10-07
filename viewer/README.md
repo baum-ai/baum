@@ -98,7 +98,9 @@ Decisions show who took them: a section's Key decisions and the Activity
 tab's list badge each one Human or Agent, and an agent decision carrying
 `approved_by_human` reads "Agent · approved" with a tick, so the approval is
 in words rather than colour alone. It still counts as the agent's in the
-Activity tab's agent and person tally.
+Activity tab's agent and person tally. A decision that carries them also
+shows what prompted it and why ("Prompted by review: …") and the session's
+own words as a quote; both are plain text from the session, never Markdown.
 
 The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot. The `baum` binary fills
