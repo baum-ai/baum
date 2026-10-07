@@ -611,10 +611,17 @@ func TestDistinctFindings(t *testing.T) {
 	}
 }
 
+// Tokens match as whole words of a respelling only.
 func TestTokenMatcher(t *testing.T) {
-	m := newTokenMatcher([]string{"he", "she", "hers", "akia_key", ""})
-	for text, want := range map[string]bool{"ushers": true, "xsh": false, "": false, "ev_akia_key_2": true, "akia_ke": false, "h": false, "ahishe": true} {
-		checkEqual(t, want, m.contains(text))
+	m := newTokenMatcher([]string{"he", "she_is", "hers", "akia_key", "x_y_io", ""})
+	for text, want := range map[string]bool{
+		"he": true, "a_he_b": true, "she_is_here": true, "ushers": false, "she": false, "ahishe": false,
+		"ev_akia_key_2": true, "ev_akia_key2": false, "akia_ke": false, "": false, "h": false,
+		"rsk_fix_y_io_timeout": false, "rsk_x_y_io_timeout": true, "x_y_io": true,
+	} {
+		if got := m.contains(text); got != want {
+			t.Errorf("contains(%q) = %v, want %v", text, got, want)
+		}
 	}
 	checkEqual(t, false, newTokenMatcher(nil).contains("anything"))
 }
@@ -1032,40 +1039,56 @@ func TestOutputRedactionKeepsSideBySideFindingsApart(t *testing.T) {
 	checkEqual(t, 2, o.MaskedClosed())
 }
 
-// A secret the model wrote in free text is a source too: an identifier that
-// holds it in a spelling no rule detects is masked and counted, while the
-// free text is left for Document.
-func TestOutputRedactionMasksIdentifiersHoldingAFreeTextSecret(t *testing.T) {
-	upper := "EV-" + strings.ToUpper(leakedProviderKey)
-	_, count, err := testRedactor(t).RedactString(context.Background(), upper)
-	checkNoError(t, err)
-	checkEqual(t, 0, count)
-	freeText, _, err := testRedactor(t).RedactString(context.Background(), leakedProviderKey)
-	checkNoError(t, err)
-	document := `{"sections":[{"evidence":[{"id":"` + upper + `"}],"title":"uses ` + leakedProviderKey + `"}]}`
+// A secret written only in free text is left to Document: an identifier
+// that merely shares its words is no source of anything, so a clean run
+// stays clean.
+func TestOutputRedactionTakesNoSourcesFromFreeText(t *testing.T) {
+	remote := "git" + "@github.com"
+	document := `{"sections":[{"evidence":[{"id":"ev_noreply_github_com_author"}],"risks":[{"id":"rsk_git_github_com_ssh_remote"}],"title":"Push to ` + remote + ` as noreply` + "@github.com" + `"}]}`
 	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
-	raw, _, redacted := identifiersThenPrepare(t, o, document)
-	checkEqual(t, `{"sections":[{"evidence":[{"id":"`+testFormatMask(upper)+`"}],"title":"uses `+leakedProviderKey+`"}]}`, raw)
-	checkEqual(t, preparedOutput(`{"attention":null,"blocks":[],"evidence":[{"anchors":[],"id":"ev_`+identifierToken(testFormatMask(upper))+`"}],"hunks":[],"risks":[],"title":"uses `+freeText+`"}`), redacted)
-	// The identifier, then the free text Document masks.
-	checkEqual(t, 2, o.Masked())
-	checkEqual(t, 1, o.MaskedClosed())
+	_, _, redacted := identifiersThenPrepare(t, o, document)
+	if !strings.Contains(redacted, `"id":"rsk_git_github_com_ssh_remote"`) || !strings.Contains(redacted, `"id":"ev_noreply_github_com_author"`) {
+		t.Fatalf("an identifier was masked: %s", redacted)
+	}
+	checkEqual(t, 0, o.MaskedClosed())
 }
 
-// Any number of sources is looked for in one pass: of a hundred addresses in
-// free text, the two that identifiers spell out are masked there.
-func TestOutputRedactionMatchesManySources(t *testing.T) {
-	var addresses []string
-	for i := range 100 {
-		addresses = append(addresses, fmt.Sprintf("user%d@example%d.com", i, i))
+// accessKey returns the i-th of a run of distinct AWS-shaped access key IDs.
+func accessKey(i int) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	key := []byte("AKIA" + "Z3MQ5TNV2XWB7KDL")
+	for k := range 4 {
+		key[19-k] = alphabet[i%32]
+		i /= 32
 	}
-	document := `{"sections":[{"evidence":[{"id":"Mail user42 example42 com"},{"id":"user99-example99-com"},{"id":"user7 example8 com"}],"title":"` + strings.Join(addresses, " ") + `"}]}`
+	return string(key)
+}
+
+// Any number of sources is looked for in one pass: of a hundred keys in
+// identifiers, the respelled copies of two are masked, as whole words only.
+func TestOutputRedactionMatchesManySources(t *testing.T) {
+	var evidence []string
+	for i := range 100 {
+		_, count, err := testRedactor(t).RedactString(context.Background(), accessKey(i))
+		checkNoError(t, err)
+		checkEqual(t, 1, count)
+		evidence = append(evidence, `{"id":"`+accessKey(i)+`"}`)
+	}
+	lower := func(i int) string { return strings.ToLower(accessKey(i)) }
+	refs := []string{"rsk_" + lower(42) + "_reuse", lower(99), "x" + lower(7), lower(8) + "x"}
+	document := `{"sections":[{"attention":{"refs":["` + strings.Join(refs, `","`) + `"],"text":"Look."},"evidence":[` + strings.Join(evidence, ",") + `]}]}`
 	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
 	raw, err := o.Identifiers(context.Background(), []byte(document))
 	checkNoError(t, err)
-	checkEqual(t, `{"sections":[{"evidence":[{"id":"`+testFormatMask("Mail user42 example42 com")+`"},{"id":"`+testFormatMask("user99-example99-com")+`"},{"id":"user7 example8 com"}],"title":"`+strings.Join(addresses, " ")+`"}]}`, string(raw))
-	checkEqual(t, 2, o.Masked())
-	checkEqual(t, 2, o.MaskedClosed())
+	var masked []string
+	for i := range 100 {
+		masked = append(masked, `{"id":"`+testFormatMask(accessKey(i))+`"}`)
+	}
+	// A key inside a longer word is not that key's spelling.
+	wantRefs := []string{testFormatMask(refs[0]), testFormatMask(refs[1]), refs[2], refs[3]}
+	checkEqual(t, `{"sections":[{"attention":{"refs":["`+strings.Join(wantRefs, `","`)+`"],"text":"Look."},"evidence":[`+strings.Join(masked, ",")+`]}]}`, string(raw))
+	checkEqual(t, 102, o.Masked())
+	checkEqual(t, 102, o.MaskedClosed())
 }
 
 // One text at two positions, within its bound at one (a category) and over

@@ -202,14 +202,29 @@ way, bounded by the length of their respelling, and masked with the
 format-preserving mask, which normalisation then respells to `x`, `9` and
 underscores; they count in `MaskedClosed` too. The same secret written in
 another spelling, upper case or already respelled, is not detected again. So
-every finding, each on its own, in an identifier or anywhere else in the
-document as written, is a source, and every identifier whose respelling
-contains a source's respelling is masked whole and counted; free text is left
-for `Document`. The order is `Identifiers`, `Prepare`, `Document` on
-what `Prepare` returned, with one redactor, then the `MaskedClosed` check. Text
-scattered across unrelated fields, a token wrapped mid-value, or a secret no
-rule detects on its own, such as a bare hex string, which reads as a SHA, is
-not caught. If redaction fails, the text is dropped rather than kept.
+the respelling of each secret found in an identifier, taken per finding and
+from 8 to 128 bytes long, is a source, and every identifier whose respelling
+holds a source as whole words (from an underscore or its start to an
+underscore or its end) is masked whole and counted. Free text is neither
+scanned nor masked by `Identifiers`; `Document` masks it after `Prepare`. The
+order is `Identifiers`, `Prepare`, `Document` on what `Prepare` returned, with
+one redactor, then the `MaskedClosed` check. Text scattered across unrelated
+fields, a token wrapped mid-value, or a secret no rule detects on its own,
+such as a bare hex string, which reads as a SHA, is not caught. If redaction
+fails, the text is dropped rather than kept.
+
+Known limits of the identifier pass:
+
+- A secret found only in free text is masked there, but an identifier that
+  holds it in a spelling no rule detects is not matched to it.
+- A key the redactor finds as part of a larger span, a URL with credentials,
+  an e-mail address or a greedy hyphenated tail, is a source only as that
+  whole span, so another spelling of the key alone is not matched.
+- In an identifier over its bound, a key past the first 16 runs of
+  separators, behind an underscore, is masked with the rest of the value but
+  not found, so it is neither counted nor a source.
+- Free text that repeats an identifier's secret in another spelling is left
+  to `Document`, which finds it only if a rule detects that spelling.
 
 ### Tiles
 

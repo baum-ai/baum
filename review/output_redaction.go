@@ -60,13 +60,13 @@ func (r *OutputRedactor) Document(ctx context.Context, document []byte) ([]byte,
 // anyway, is scanned whole and from its first closedCopyLimit restarts, then
 // masked whole, counted only if a secret was found in it.
 //
-// The same secret may be written in another spelling that no rule detects,
-// in upper case or already respelled. So every finding, in an identifier or
-// anywhere else in the document as written, is a source, and every
-// identifier whose respelling contains a source's respelling is masked whole
-// and counted. Free text is not masked here; Document masks it after
-// Prepare. Every other string value of the document equal to a masked
-// identifier is masked as it is, so a reference to it still matches.
+// The same secret may be written in another identifier in a spelling that
+// no rule detects, in upper case or already respelled. So the respelling of
+// each finding in an identifier is a source, and every identifier whose
+// respelling holds a source as whole words is masked whole and counted. Free
+// text is neither scanned nor masked here; Document masks it after Prepare.
+// Every other string value of the document equal to a masked identifier is
+// masked as it is, so a reference to it still matches.
 //
 // A value masked for a secret counts in Masked as its spans and once in
 // MaskedClosed, however many places hold it, and a host rejects the run when
@@ -118,8 +118,8 @@ type outputRedaction struct {
 	// masked.
 	maskedClosed int
 	changed      bool
-	// sources are the respelled findings Identifiers collects, nil
-	// otherwise; scanned is the text the closed-value and source scans
+	// sources are the respelled findings Identifiers collects in
+	// identifiers, nil otherwise; scanned is the text the closed-value scans
 	// joined, which tests read to bound their cost.
 	sources map[string]bool
 	scanned int
@@ -644,13 +644,21 @@ func distinctFindings(ranges [][2]int) int {
 	return count
 }
 
+// closedSourceMin and closedSourceMax bound the respelled findings kept as
+// sources. A shorter one is too common a word run to stand for a secret, and
+// a longer one cannot fit in an identifier within its bound, 128 bytes.
+const (
+	closedSourceMin = 8
+	closedSourceMax = 128
+)
+
 // addSource records, while Identifiers runs, the respelling of a finding's
 // text, which otherSpellings looks for in every identifier.
 func (o *outputRedaction) addSource(text string) {
 	if o.sources == nil {
 		return
 	}
-	if token := identifierToken(text); token != "" {
+	if token := identifierToken(text); len(token) >= closedSourceMin && len(token) <= closedSourceMax {
 		o.sources[token] = true
 	}
 }
@@ -732,10 +740,9 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 }
 
 // identifiers is Identifiers: it scans the values normalization respells, as
-// slotClosed slots of their own bounded by their respelling, collects the
-// findings of the whole document as sources (see documentSources), masks the
-// other spellings of them (see otherSpellings), and masks each string value
-// of the document equal to an identifier it masked.
+// slotClosed slots of their own bounded by their respelling, masks the other
+// spellings of what it found in them (see otherSpellings), and masks each
+// string value of the document equal to an identifier it masked.
 func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
@@ -770,9 +777,6 @@ func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 	if err := o.maskClosed(indexes); err != nil {
 		return document, err
 	}
-	if err := o.documentSources(raw); err != nil {
-		return document, err
-	}
 	o.otherSpellings(masks)
 	if len(masks) == 0 {
 		return document, nil
@@ -780,58 +784,17 @@ func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 	return json.Marshal(replaceStrings(raw, masks))
 }
 
-// documentSources adds as sources the findings in every key and string of
-// the document as the model wrote it, joined by newlines into one scan, so a
-// secret written in free text is known when an identifier holds it in a
-// spelling no rule detects. Nothing is masked here: Document masks free text
-// after Prepare.
-func (o *outputRedaction) documentSources(value any) error {
-	var builder strings.Builder
-	write := func(s string) {
-		if builder.Len() > 0 {
-			builder.WriteByte('\n')
-		}
-		builder.WriteString(s)
-	}
-	var collect func(any)
-	collect = func(value any) {
-		switch v := value.(type) {
-		case map[string]any:
-			for key, child := range v {
-				write(key)
-				collect(child)
-			}
-		case []any:
-			for _, child := range v {
-				collect(child)
-			}
-		case string:
-			write(v)
-		}
-	}
-	collect(value)
-	joined := builder.String()
-	o.scanned += len(joined)
-	spans, err := o.redactor.Find(o.ctx, joined)
-	if err != nil {
-		return err
-	}
-	for _, span := range spans {
-		o.addSource(joined[span.Start:span.End])
-	}
-	return nil
-}
-
 // otherSpellings masks whole, and counts, each identifier slot no finding
-// counted yet whose respelling (identifierToken) contains a source: the
-// respelling of a finding in another identifier or in the document's other
-// text. That is the same secret upper-cased, already respelled or behind a
-// prefix, which no rule may detect. Containment is plain substring, so no
-// spelling of the secret survives, and a value masked whole uncounted counts
-// once it holds one. An identifier it masks that held no secret changes no
-// outcome that matters: a source in an identifier fails the run already, and
-// one in free text is a secret the model wrote. The sources are matched all
-// at once (see tokenMatcher), so the work is linear in the document's size.
+// counted yet whose respelling (identifierToken) holds a source: the
+// respelling of a finding in another identifier. That is the same secret
+// upper-cased, already respelled or behind a prefix, which no rule may
+// detect. A source matches only as whole words of the respelling, from an
+// underscore or its start to an underscore or its end, so it cannot match
+// inside a longer word. A value masked whole uncounted counts once it holds
+// one. An identifier it masks that held no secret changes no outcome that
+// matters: the finding that made the source fails the run already. The
+// sources are matched all at once (see tokenMatcher), so the work is linear
+// in the identifiers' size.
 func (o *outputRedaction) otherSpellings(masks map[string]string) {
 	if len(o.sources) == 0 {
 		return
@@ -849,68 +812,89 @@ func (o *outputRedaction) otherSpellings(masks map[string]string) {
 	}
 }
 
-// tokenMatcher finds any of a set of byte strings in a text in one pass over
-// it: an Aho-Corasick automaton over the strings.
+// tokenMatcher finds any of a set of respelled tokens, as whole words, in a
+// respelling in one pass over it: an Aho-Corasick automaton over the tokens,
+// each framed by underscores, run over the respelling framed the same way.
+// Each state keeps its first child and next sibling instead of a map, as a
+// respelling has 37 symbols at most, so a large set of tokens costs a few
+// bytes per byte of them.
 type tokenMatcher struct {
-	next []map[byte]int
-	fail []int
-	out  []bool
+	label          []byte
+	child, sibling []int32
+	fail           []int32
+	out            []bool
 }
 
-func newTokenMatcher(patterns []string) *tokenMatcher {
-	m := &tokenMatcher{next: []map[byte]int{{}}, fail: []int{0}, out: []bool{false}}
-	for _, pattern := range patterns {
-		state := 0
-		for i := range len(pattern) {
-			child, ok := m.next[state][pattern[i]]
+func newTokenMatcher(tokens []string) *tokenMatcher {
+	m := &tokenMatcher{label: []byte{0}, child: []int32{0}, sibling: []int32{0}, fail: []int32{0}, out: []bool{false}}
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		state := int32(0)
+		for _, b := range []byte("_" + token + "_") {
+			next, ok := m.step(state, b)
 			if !ok {
-				child = len(m.next)
-				m.next = append(m.next, map[byte]int{})
+				next = int32(len(m.label))
+				m.label = append(m.label, b)
+				m.child = append(m.child, 0)
+				m.sibling = append(m.sibling, m.child[state])
 				m.fail = append(m.fail, 0)
 				m.out = append(m.out, false)
-				m.next[state][pattern[i]] = child
+				m.child[state] = next
 			}
-			state = child
+			state = next
 		}
-		m.out[state] = m.out[state] || pattern != ""
+		m.out[state] = true
 	}
 	// Breadth first, each state falls back to the longest proper suffix of
-	// its string that is a prefix of some pattern.
-	queue := slices.Collect(maps.Values(m.next[0]))
-	for len(queue) > 0 {
-		state := queue[0]
-		queue = queue[1:]
-		for b, child := range m.next[state] {
+	// its string that is a prefix of some token.
+	var queue []int32
+	for c := m.child[0]; c != 0; c = m.sibling[c] {
+		queue = append(queue, c)
+	}
+	for k := 0; k < len(queue); k++ {
+		state := queue[k]
+		for c := m.child[state]; c != 0; c = m.sibling[c] {
 			fallback := m.fail[state]
-			for fallback > 0 {
-				if _, ok := m.next[fallback][b]; ok {
-					break
-				}
+			target, ok := m.step(fallback, m.label[c])
+			for !ok && fallback > 0 {
 				fallback = m.fail[fallback]
+				target, ok = m.step(fallback, m.label[c])
 			}
-			if target, ok := m.next[fallback][b]; ok && target != child {
-				m.fail[child] = target
+			if ok && target != c {
+				m.fail[c] = target
 			}
-			m.out[child] = m.out[child] || m.out[m.fail[child]]
-			queue = append(queue, child)
+			m.out[c] = m.out[c] || m.out[m.fail[c]]
+			queue = append(queue, c)
 		}
 	}
 	return m
 }
 
-// contains reports whether text holds any of the patterns.
-func (m *tokenMatcher) contains(text string) bool {
-	state := 0
-	for i := range len(text) {
-		b := text[i]
-		for state > 0 {
-			if _, ok := m.next[state][b]; ok {
-				break
-			}
-			state = m.fail[state]
+// step follows the edge labelled b out of a state.
+func (m *tokenMatcher) step(state int32, b byte) (int32, bool) {
+	for c := m.child[state]; c != 0; c = m.sibling[c] {
+		if m.label[c] == b {
+			return c, true
 		}
-		if child, ok := m.next[state][b]; ok {
-			state = child
+	}
+	return 0, false
+}
+
+// contains reports whether a respelling holds any of the tokens as whole
+// words.
+func (m *tokenMatcher) contains(respelling string) bool {
+	state := int32(0)
+	framed := "_" + respelling + "_"
+	for i := range len(framed) {
+		next, ok := m.step(state, framed[i])
+		for !ok && state > 0 {
+			state = m.fail[state]
+			next, ok = m.step(state, framed[i])
+		}
+		if ok {
+			state = next
 		}
 		if m.out[state] {
 			return true
