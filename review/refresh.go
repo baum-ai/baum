@@ -23,7 +23,7 @@ func (v *DocumentValidator) Refresh(document []byte, b *bundlepkg.Bundle, now ti
 	// index looking for checks on a revision none of them ran on.
 	checks, checkCounts := checkIndex(b, review.Head)
 	sessions, vendors, models := sessionIndex(b)
-	carryPrompts(sessions, index.Sessions)
+	carryPrompts(sessions, index.Sessions, review.GeneratedAt)
 	index.Checks, index.Sessions, index.Threads = checks, sessions, threadIndex(b)
 	refreshConversation(index, b.Conversation)
 	summary := &doc.Summary
@@ -217,12 +217,29 @@ func (e refreshEvidence) indexedPrompt(anchor documentAnchor) bool {
 // ones its extracted decisions cited included, survive a refresh whose
 // bundle has no decisions. Their text was bounded and redacted when the
 // version was generated, and is never read again: a refresh cannot lengthen
-// it. A turn both list keeps the refresh bundle's entry, except that a
-// stored text the refreshed one starts with, which generation's byte
-// trimming shortened, stays shortened. A restricted session, or one the
-// refresh bundle no longer links, carries nothing. Prompts stay in turn
-// order and the session's prompt count includes the carried ones.
-func carryPrompts(refreshed, stored []documentSession) {
+// it, nor redact it again.
+//
+// Only an entry timestamped at or before the version's generated_at is
+// carried, so a prompt that only a refresh added (an earlier refresh's
+// latest, say) is dropped once the bundle stops listing it, and the index
+// stays bounded by generation's prompts plus the bundle's own. A prompt
+// ingested late, after generation but timestamped before it, that a refresh
+// listed is carried too; the prompts timestamped before generation bound
+// those. A stored document whose generated_at does not parse carries nothing.
+//
+// The bundle wins over a stale entry: one whose turn the bundle lists with
+// another prompt ID, or whose prompt ID the bundle lists at another turn (a
+// renumbered session), is dropped. A turn both list with the same prompt
+// keeps the bundle's entry, except that a stored text the bundle's starts
+// with, which generation's byte trimming shortened, stays shortened. A
+// restricted session, or one the refresh bundle no longer links, carries
+// nothing. Prompts stay in turn order and the session's prompt count
+// includes the carried ones.
+func carryPrompts(refreshed, stored []documentSession, generatedAt string) {
+	generated, err := time.Parse(time.RFC3339Nano, generatedAt)
+	if err != nil {
+		return
+	}
 	storedPrompts := map[string][]documentPrompt{}
 	for _, session := range stored {
 		if _, seen := storedPrompts[session.ID]; !seen && !session.Restricted {
@@ -235,21 +252,24 @@ func carryPrompts(refreshed, stored []documentSession) {
 		if session.Restricted || len(previous) == 0 {
 			continue
 		}
-		listed := make(map[int]int, len(session.Prompts))
+		turns, ids := make(map[int]int, len(session.Prompts)), make(map[string]bool, len(session.Prompts))
 		for p, prompt := range session.Prompts {
-			listed[prompt.Index] = p
+			turns[prompt.Index], ids[prompt.ID] = p, true
 		}
 		for _, prompt := range previous {
-			p, ok := listed[prompt.Index]
-			if !ok {
-				listed[prompt.Index] = len(session.Prompts)
-				session.Prompts = append(session.Prompts, prompt)
+			if p, listed := turns[prompt.Index]; listed {
+				current := &session.Prompts[p]
+				if current.ID == prompt.ID && len(prompt.Text) < len(current.Text) && strings.HasPrefix(current.Text, prompt.Text) {
+					current.Text = prompt.Text
+				}
 				continue
 			}
-			current := &session.Prompts[p]
-			if current.ID == prompt.ID && len(prompt.Text) < len(current.Text) && strings.HasPrefix(current.Text, prompt.Text) {
-				current.Text = prompt.Text
+			at, err := time.Parse(time.RFC3339Nano, prompt.At)
+			if err != nil || at.After(generated) || (prompt.ID != "" && ids[prompt.ID]) {
+				continue
 			}
+			turns[prompt.Index], ids[prompt.ID] = len(session.Prompts), true
+			session.Prompts = append(session.Prompts, prompt)
 		}
 		slices.SortStableFunc(session.Prompts, func(a, b documentPrompt) int { return cmp.Compare(a.Index, b.Index) })
 		session.PromptCount = new(len(session.Prompts))

@@ -444,3 +444,89 @@ func TestRefreshWithoutCarriedPromptsUsesTheBundlePrompts(t *testing.T) {
 		t.Fatalf("refreshed prompts = %+v, want %+v", got.Prompts, want)
 	}
 }
+
+// carriedFixture publishes a document generated at generatedAt from one
+// session whose prompts are at the turns given, the middle ones cited.
+func carriedFixture(t *testing.T, generatedAt time.Time, turns ...int) (*DocumentValidator, *bundlepkg.Bundle, []byte) {
+	t.Helper()
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompts []bundlepkg.Prompt
+	for _, index := range turns {
+		at := generatedAt.Add(time.Duration(index-100) * time.Minute)
+		prompts = append(prompts, bundlepkg.Prompt{Index: index, ID: fmt.Sprint("prompt-", index), At: &at, Text: fmt.Sprint("Turn ", index)})
+	}
+	decisions := []bundlepkg.SessionDecision{{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: turns[1 : len(turns)-1]}}
+	bundle := &bundlepkg.Bundle{Repository: "org/repo", PullRequest: bundlepkg.PullRequest{Number: 1, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb"}, Sources: bundlepkg.Sources{"diff": true}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}},
+		Sessions: []bundlepkg.Session{{RootSessionID: "session", Vendor: "claude", Prompts: prompts, Decisions: &decisions}}}
+	published, findings := validator.Complete(authoredFixture(), bundle, "", "fixture-model", generatedAt)
+	if findings != "" {
+		t.Fatal(findings)
+	}
+	return validator, bundle, published
+}
+
+func promptTurns(t *testing.T, document []byte) []string {
+	t.Helper()
+	session := decodeRefreshedIndex(t, document).Index.Sessions[0]
+	var turns []string
+	for _, prompt := range session.Prompts {
+		turns = append(turns, fmt.Sprint(prompt.Index, ":", prompt.ID))
+	}
+	if session.PromptCount == nil || *session.PromptCount != len(turns) {
+		t.Fatalf("prompt count %v for %v", session.PromptCount, turns)
+	}
+	return turns
+}
+
+// Only prompts timestamped at or before generation are carried: a latest
+// prompt that only a refresh added is dropped once the bundle moves past it,
+// so refreshes with a moving latest prompt keep the index bounded by
+// generation's prompts and the bundle's current ones.
+func TestRefreshDoesNotAccumulatePromptsOnlyRefreshesAdded(t *testing.T) {
+	generatedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	validator, generated, document := carriedFixture(t, generatedAt, 1, 3, 5)
+	first := generated.Sessions[0].Prompts[0]
+	for _, latest := range []int{6, 7, 8, 9} {
+		at := generatedAt.Add(time.Duration(latest) * time.Minute)
+		refresh := *generated
+		refresh.Sessions = slices.Clone(generated.Sessions)
+		refresh.Sessions[0].Decisions = nil
+		refresh.Sessions[0].Prompts = []bundlepkg.Prompt{first, {Index: latest, ID: fmt.Sprint("prompt-", latest), At: &at, Text: strings.Repeat("long ", 1000)}}
+		var err error
+		if document, err = validator.Refresh(document, &refresh, at); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"1:prompt-1", "3:prompt-3", "5:prompt-5", fmt.Sprint(latest, ":prompt-", latest)}
+		if got := promptTurns(t, document); !slices.Equal(got, want) {
+			t.Fatalf("prompts after the refresh listing turn %d = %v, want %v", latest, got, want)
+		}
+	}
+}
+
+// The refresh bundle wins over a stale stored entry: a prompt it lists at
+// another turn, or a turn it lists with another prompt, drops the stored one.
+func TestRefreshDropsStoredPromptsTheBundleRenumbered(t *testing.T) {
+	generatedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	validator, generated, document := carriedFixture(t, generatedAt, 1, 3, 4, 6)
+	at := generatedAt.Add(-time.Hour)
+	refresh := *generated
+	refresh.Sessions = slices.Clone(generated.Sessions)
+	refresh.Sessions[0].Decisions = nil
+	// After a re-ingest prompt-3 is turn 2 and turn 6 is another prompt.
+	refresh.Sessions[0].Prompts = []bundlepkg.Prompt{
+		{Index: 1, ID: "prompt-1", At: &at, Text: "Turn 1"},
+		{Index: 2, ID: "prompt-3", At: &at, Text: "Turn 3"},
+		{Index: 6, ID: "prompt-other", At: &at, Text: "Another turn"},
+	}
+	refreshed, err := validator.Refresh(document, &refresh, generatedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1:prompt-1", "2:prompt-3", "4:prompt-4", "6:prompt-other"}
+	if got := promptTurns(t, refreshed); !slices.Equal(got, want) {
+		t.Fatalf("prompts after a renumbering refresh = %v, want %v", got, want)
+	}
+}
