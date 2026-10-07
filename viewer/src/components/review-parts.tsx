@@ -316,7 +316,7 @@ const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
   review: "Prompted by review",
   failure: "Prompted by a failure",
   finding: "Prompted by a finding",
-  initiative: "Agent's own call",
+  initiative: "Own initiative",
 };
 
 /** What prompted a decision and why, then the session's own words for it.

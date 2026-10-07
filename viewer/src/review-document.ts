@@ -117,8 +117,8 @@ export type Decision = {
   rationale?: string;
   /** What prompted the decision. */
   trigger?: DecisionTrigger;
-  /** A verbatim quote from the session showing the choice; its turn is the
-   *  first prompt anchor. */
+  /** A verbatim quote from the session showing the choice. Generation anchors
+   *  its turn first, but nothing enforces that order. */
   evidence?: string;
   /** Only on an agent decision a human explicitly accepted. */
   approved_by_human?: true;
