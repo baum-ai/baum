@@ -307,8 +307,8 @@ fetched from on demand.
 
 `baum bundle` stops after step 5. `baum validate` checks a stored document with
 `review.DocumentValidator.ValidateStored`, against its bundle when one is given,
-and `baum refresh` runs the `review` steps on an existing document. `baum view` serves the viewer, the
-document, its versions, the cached images, and the sessions and commits linked
+and `baum refresh` runs the `review` steps on an existing document. `baum view`
+serves the viewer, the document, its versions, the cached images, and the sessions and commits linked
 to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the
 document's own session metadata.

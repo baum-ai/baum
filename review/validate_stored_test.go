@@ -61,10 +61,14 @@ func TestValidateStoredNotJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{"not json", "null", "[]"} {
+	for input, want := range map[string]string{
+		"not json": "document is not valid JSON: invalid character",
+		"[]":       "document is not valid JSON: json: cannot unmarshal array",
+		"null":     "document must be an object",
+	} {
 		findings := validator.ValidateStored([]byte(input), nil)
-		if len(findings) != 1 || !strings.Contains(findings[0], "not a JSON object") {
-			t.Errorf("%q: findings = %q", input, findings)
+		if len(findings) != 1 || !strings.Contains(findings[0], want) {
+			t.Errorf("%q: findings = %q, want %q", input, findings, want)
 		}
 	}
 }

@@ -66,7 +66,7 @@ func TestValidateBadBundleNamesTheFile(t *testing.T) {
 }
 
 func TestValidateNeedsOneDocument(t *testing.T) {
-	if _, _, err := run(t, "validate"); err == nil {
-		t.Fatal("expected an error without a document")
+	if _, _, err := run(t, "validate"); err == nil || !strings.Contains(err.Error(), "accepts 1 arg") {
+		t.Fatalf("validate without a document: %v", err)
 	}
 }

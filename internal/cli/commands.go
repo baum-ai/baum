@@ -50,7 +50,8 @@ func newValidateCommand() *cobra.Command {
 		Long: `Validate checks a stored baum.review/1 document against the schema and the
 document's own rules, and prints one finding per line to stderr. It exits
 non-zero when the document is invalid. With --bundle it also checks the
-document against the generation bundle it was written from.`,
+document against that bundle: its hunks, checks and sessions, so a session
+restricted since the document was written is reported.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bundlePath, _ := cmd.Flags().GetString("bundle")

@@ -316,9 +316,9 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 // when it is valid. Images are checked against the document's own index. The
 // rules that need the generation bundle run only when bundle is non-nil.
 func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {
-	var value map[string]any
-	if err := json.Unmarshal(document, &value); err != nil || value == nil {
-		return []string{"document is not a JSON object"}
+	value, err := decodeObject(document, "document")
+	if err != nil {
+		return []string{err.Error()}
 	}
 	labelBlankSectionTitles(value)
 	if err := v.full.Validate(value); err != nil {
