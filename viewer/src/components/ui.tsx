@@ -8,6 +8,7 @@ import type {
 
 import { cn, FOCUS_RING } from "./classnames";
 import { tabIds } from "./tabs";
+import { SEGMENT_BASE, SEGMENTED_TRACK, segmentedTileClass } from "./segmented";
 
 type CardSize = "standard" | "compact" | "panel";
 
@@ -326,7 +327,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       className={cn(
         variant === "segmented"
-          ? "inline-flex items-center gap-0.5 rounded-(--radius-md) bg-(--surface-sunken) p-[3px]"
+          ? SEGMENTED_TRACK
           : // Scrolls sideways when the pane is at its narrowest, without a
             // scrollbar of its own: a tab cut off at the edge is the cue.
             "flex items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-(--border-subtle) [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -351,17 +352,12 @@ export function SegmentedControl<T extends string>({
               : { "aria-pressed": selected })}
             onClick={() => onChange(item.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className={cn(
-              "inline-flex cursor-pointer items-center gap-1.5 text-base whitespace-nowrap transition-colors duration-150",
-              FOCUS_RING,
+            className={
               variant === "segmented"
-                ? cn(
-                    "h-7 rounded-(--radius-sm) px-2.5",
-                    selected
-                      ? "bg-(--surface-card) font-medium text-(--text-primary) shadow-(--shadow-card)"
-                      : "text-(--text-secondary) hover:text-(--text-primary)",
-                  )
+                ? segmentedTileClass(selected)
                 : cn(
+                    SEGMENT_BASE,
+                    FOCUS_RING,
                     "-mb-px h-9 border-b-2 px-2 transition-[border-color,color] duration-150",
                     selected
                       ? cn(
@@ -369,8 +365,8 @@ export function SegmentedControl<T extends string>({
                           item.tone ? TAB_TONES[item.tone].rule : "border-b-(--action-accent)",
                         )
                       : "border-b-transparent text-(--text-secondary) hover:border-b-(--border-strong) hover:text-(--text-primary)",
-                  ),
-            )}
+                  )
+            }
           >
             {/* A ruled strip has no room for glyphs: five labelled tabs already
                 fill a 400px pane. */}
