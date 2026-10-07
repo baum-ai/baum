@@ -21,9 +21,9 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, review schema, release pipeline and `baum sessions` exist;
-`generate`, `bundle`, `view`, `validate` and `refresh` print their help and
-exit non-zero until their phase lands.
+layout, review schema, release pipeline, `baum sessions` and
+`baum validate` exist; `generate`, `bundle`, `view` and `refresh` print their
+help and exit non-zero until their phase lands.
 
 ## Install
 
@@ -50,9 +50,17 @@ baum bundle --pr 191 -o bundle.json
 
 # Serve the viewer for a document on localhost and open it in the browser.
 baum view review.json
+
+# Check a stored document against the schema and its own rules. Findings
+# print to stderr, one per line, and the exit status is non-zero when there
+# are any.
+baum validate review.json
+
+# Also check it against the bundle it was generated from: hunk line ranges,
+# section outlines, evidence against checks, and restricted sessions.
+baum validate review.json --bundle bundle.json
 ```
 
-`baum validate` checks a document against the schema and its rules and
 `baum refresh` updates checks, threads and session evidence without a
 model call. Run any command with `--help` for its flags.
 

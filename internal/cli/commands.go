@@ -47,7 +47,15 @@ func newValidateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate <document.json>",
 		Short: "Validate a review document against the schema and its rules",
-		RunE:  notImplemented,
+		Long: `Validate checks a stored baum.review/1 document against the schema and the
+document's own rules, and prints one finding per line to stderr. It exits
+non-zero when the document is invalid. With --bundle it also checks the
+document against the generation bundle it was written from.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bundlePath, _ := cmd.Flags().GetString("bundle")
+			return runValidate(cmd, args[0], bundlePath)
+		},
 	}
 	cmd.Flags().String("bundle", "", "generation bundle to check the document against")
 	return cmd

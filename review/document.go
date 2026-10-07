@@ -298,25 +298,77 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 	if err := json.Unmarshal(document, &doc); err != nil {
 		return err.Error()
 	}
-	findings := validateTileReferences(doc.Sections)
-	hunks := map[string]bundlepkg.Hunk{}
-	for _, h := range bundle.Diff {
-		hunks[h.ID] = h
-	}
-	checks := map[string]bundlepkg.Check{}
-	for _, check := range bundle.Checks {
-		checks[check.ID] = check
-	}
-	restricted := map[string]bool{}
-	for _, session := range bundle.Sessions {
-		restricted[session.RootSessionID] = session.Restricted
-	}
 	attachments := map[string]bool{}
-	for _, attachment := range bundle.Attachments {
-		attachments[attachment.ID] = true
+	if bundle != nil {
+		for _, attachment := range bundle.Attachments {
+			attachments[attachment.ID] = true
+		}
+	}
+	findings, err := ruleFindings(value, doc.Sections, bundle, attachments)
+	if err != nil {
+		return err.Error()
+	}
+	return strings.Join(findings, "\n")
+}
+
+// ValidateStored checks a stored baum.review/1 document against the full
+// schema and the document's semantic rules, and returns every finding, or nil
+// when it is valid. Images are checked against the document's own index. The
+// rules that need the generation bundle run only when bundle is non-nil.
+func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {
+	var value map[string]any
+	if err := json.Unmarshal(document, &value); err != nil || value == nil {
+		return []string{"document is not a JSON object"}
+	}
+	labelBlankSectionTitles(value)
+	if err := v.full.Validate(value); err != nil {
+		return []string{conciseSchemaError(err)}
+	}
+	var doc struct {
+		Sections []authoredSection `json:"sections"`
+		Index    struct {
+			Attachments []struct {
+				ID string `json:"id"`
+			} `json:"attachments"`
+		} `json:"index"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil {
+		return []string{err.Error()}
+	}
+	listed := map[string]bool{}
+	for _, attachment := range doc.Index.Attachments {
+		listed[attachment.ID] = true
+	}
+	findings, err := ruleFindings(value, doc.Sections, bundle, listed)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return findings
+}
+
+// ruleFindings applies the semantic rules shared by the authored and stored
+// views of a document. The rules that need the generation bundle (hunk line
+// ranges, the section outline, evidence against checks, restricted sessions)
+// run only when bundle is non-nil; attachments lists the image IDs a document
+// may name.
+func ruleFindings(value any, sections []authoredSection, bundle *bundlepkg.Bundle, attachments map[string]bool) ([]string, error) {
+	findings := validateTileReferences(sections)
+	hunks := map[string]bundlepkg.Hunk{}
+	checks := map[string]bundlepkg.Check{}
+	restricted := map[string]bool{}
+	if bundle != nil {
+		for _, h := range bundle.Diff {
+			hunks[h.ID] = h
+		}
+		for _, check := range bundle.Checks {
+			checks[check.ID] = check
+		}
+		for _, session := range bundle.Sessions {
+			restricted[session.RootSessionID] = session.Restricted
+		}
 	}
 	walkJSON(value, func(candidate map[string]any) {
-		if candidate["type"] != "hunk" || candidate["lines"] == nil {
+		if bundle == nil || candidate["type"] != "hunk" || candidate["lines"] == nil {
 			return
 		}
 		encoded, err := json.Marshal(candidate)
@@ -333,12 +385,14 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 			}
 		}
 	})
-	outlines := make([]sectionOutline, 0, len(doc.Sections))
-	for _, section := range doc.Sections {
+	outlines := make([]sectionOutline, 0, len(sections))
+	for _, section := range sections {
 		outlines = append(outlines, sectionOutline{ID: section.ID, Kind: section.Kind, Hunks: section.Hunks})
 	}
-	findings = append(findings, sectionOutlineFindings(outlines, bundle)...)
-	for sectionIndex, section := range doc.Sections {
+	if bundle != nil {
+		findings = append(findings, sectionOutlineFindings(outlines, bundle)...)
+	}
+	for sectionIndex, section := range sections {
 		items := map[string]bool{}
 		addID := func(id string) bool {
 			if items[id] {
@@ -359,7 +413,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 			if !addID(evidence.ID) {
 				findings = append(findings, "duplicate evidence ID: "+evidence.ID)
 			}
-			if evidence.Status == "verified" {
+			if bundle != nil && evidence.Status == "verified" {
 				success, test := false, false
 				for _, anchor := range evidence.Anchors {
 					id := anchor.identifier()
@@ -390,7 +444,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 		dataKinds := map[string]bool{}
 		var blocks []map[string]any
 		if err := json.Unmarshal(section.Blocks, &blocks); err != nil {
-			return err.Error()
+			return nil, err
 		}
 		for _, block := range blocks {
 			kind, _ := block["kind"].(string)
@@ -432,7 +486,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 			Refs []string `json:"refs"`
 		}
 		if err := json.Unmarshal(section.Attention, &attention); err != nil {
-			return err.Error()
+			return nil, err
 		}
 		if attention != nil {
 			for _, id := range attention.Refs {
@@ -460,7 +514,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 	if invalid != "" {
 		findings = append(findings, invalid)
 	}
-	return strings.Join(findings, "\n")
+	return findings, nil
 }
 
 // unlistedImageFinding reports an images block item naming an attachment the

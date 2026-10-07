@@ -35,7 +35,7 @@ func TestUnknownCommandPrintsUsage(t *testing.T) {
 }
 
 func TestStubsPrintHelpAndFail(t *testing.T) {
-	for _, name := range []string{"generate", "bundle", "view", "validate", "refresh"} {
+	for _, name := range []string{"generate", "bundle", "view", "refresh"} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, err := run(t, name)
 			if !errors.Is(err, ErrNotImplemented) {
