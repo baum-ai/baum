@@ -176,7 +176,10 @@ type outputSlot struct {
 	// key marks an object key, whose setter renames its entry; paired marks
 	// one whose value is a string, the slot right after it.
 	key, paired bool
-	set         func(string)
+	// limit is a slotClosed value's maxLength, or 0 when its schema sets
+	// none.
+	limit int
+	set   func(string)
 }
 
 // errOutputMaskLength reports a mask that changed the length of the text,
@@ -239,10 +242,11 @@ func (o *outputRedaction) value(value any, schema map[string]any, scope string, 
 			o.value(child, items, scope, excerpt, slotFree, func(s string) { v[i] = s })
 		}
 	case string:
+		limit := 0
 		if kind == slotFree && schema != nil {
-			kind = o.closedValue(schema, v)
+			kind, limit = o.closedValue(schema, v)
 		}
-		o.slots = append(o.slots, outputSlot{text: v, kind: kind, set: set})
+		o.slots = append(o.slots, outputSlot{text: v, kind: kind, limit: limit, set: set})
 	}
 }
 
@@ -382,8 +386,14 @@ func (o *outputRedaction) maskSlots() error {
 }
 
 // closedValueLimit is the length the schema bounds its identifier patterns
-// to. A closed value longer than that cannot be valid.
+// to, the bound Identifiers applies to an identifier as the model wrote it.
 const closedValueLimit = 128
+
+// closedCopyLimit caps the boundaries a closed value without a maxLength is
+// scanned again after. No such value the schema closes has more than a few
+// (a date-time has six at most), and the cap keeps the copies of one value
+// linear in its length.
+const closedCopyLimit = 16
 
 // closedScanBatch caps the text one scan of closed values joins, so the copies
 // of a document's values never sit in memory all at once.
@@ -403,9 +413,14 @@ const closedScanBatch = 1 << 20
 // lowercase identifiers, but not one of hex digits, which then fails
 // validation.
 //
-// A value longer than closedValueLimit cannot be valid, and its copies would
-// grow with the square of its length, so it is masked whole instead, byte by
-// byte, as one span.
+// A value longer than its schema's maxLength cannot be valid, and its copies
+// would grow with the square of its length, so it is masked whole instead,
+// byte by byte, as one span. A value within its maxLength is scanned after
+// every boundary, which costs at most maxLength+1 copies of it. A value whose
+// schema sets no maxLength (a SHA, a rubric, a hunk ID, a date-time) may be
+// valid at any length, so it is scanned whatever its length, but only when it
+// has at most closedCopyLimit boundaries; one with more fits no such pattern
+// the schema has, and is masked whole too.
 //
 // A value counts as its spans: runs of masked bytes, where a gap of characters
 // the mask leaves as they are (the separators it keeps, x and 9) does not
@@ -416,7 +431,8 @@ func (o *outputRedaction) maskClosed(indexes []int) error {
 	size := 0
 	for _, i := range indexes {
 		slot := o.slots[i]
-		if len(slot.text) > closedValueLimit {
+		boundaries := scanBoundaries(slot.text)
+		if slot.limit > 0 && len(slot.text) > slot.limit || slot.limit == 0 && boundaries > closedCopyLimit {
 			masked := make([]byte, len(slot.text))
 			for j := range masked {
 				masked[j] = formatMaskByte(slot.text[j])
@@ -429,7 +445,7 @@ func (o *outputRedaction) maskClosed(indexes []int) error {
 		}
 		batch = append(batch, i)
 		// A value of n bytes with k boundaries joins about n*(k+1) bytes.
-		size += len(slot.text) * (scanBoundaries(slot.text) + 1)
+		size += len(slot.text) * (boundaries + 1)
 		if size >= closedScanBatch {
 			if err := o.scanClosed(batch); err != nil {
 				return err
@@ -474,7 +490,7 @@ func formatMaskByte(b byte) byte {
 }
 
 // scanClosed masks the secrets in one batch of values of at most
-// closedValueLimit bytes (see maskClosed).
+// their maxLength, or with at most closedCopyLimit boundaries (see maskClosed).
 func (o *outputRedaction) scanClosed(indexes []int) error {
 	if len(indexes) == 0 {
 		return nil
@@ -635,7 +651,7 @@ func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 	var indexes []int
 	for _, text := range authoredIdentifiers(value, o.schema) {
 		indexes = append(indexes, len(o.slots))
-		o.slots = append(o.slots, outputSlot{text: text, kind: slotClosed, set: func(masked string) { masks[text] = masked }})
+		o.slots = append(o.slots, outputSlot{text: text, kind: slotClosed, limit: closedValueLimit, set: func(masked string) { masks[text] = masked }})
 	}
 	err := o.maskClosed(indexes)
 	o.slots = nil
@@ -764,14 +780,20 @@ func canonicalHunkHeader(value any) bool {
 // slotKept when it equals the constant or is one of the enum, slotClosed when
 // it fully matches a closed pattern (see closedPattern) or is a date-time, and
 // slotFree when it does not, which makes it free text. Under oneOf or anyOf,
-// it is the first branch's that closes it.
-func (o *outputRedaction) closedValue(schema map[string]any, value string) slotKind {
+// it is the first branch's that closes it. For slotClosed it also returns the
+// maxLength of the schema that closed the value, or of the one around that
+// branch, and 0 when neither sets one.
+func (o *outputRedaction) closedValue(schema map[string]any, value string) (slotKind, int) {
 	schema = resolveSchema(schema, o.defs)
+	limit := 0
+	if maxLength, ok := jsonInt(schema["maxLength"]); ok && maxLength > 0 {
+		limit = maxLength
+	}
 	if constant, ok := schema["const"]; ok {
-		return keptIf(constant == value)
+		return keptIf(constant == value), 0
 	}
 	if enum, ok := schema["enum"].([]any); ok {
-		return keptIf(slices.Contains(enum, any(value)))
+		return keptIf(slices.Contains(enum, any(value))), 0
 	}
 	if pattern, _ := schema["pattern"].(string); closedPattern(pattern) {
 		compiled, ok := o.patterns[pattern]
@@ -782,23 +804,26 @@ func (o *outputRedaction) closedValue(schema map[string]any, value string) slotK
 			}
 			o.patterns[pattern] = compiled
 		}
-		return closedIf(compiled != nil && compiled.MatchString(value))
+		return closedIf(compiled != nil && compiled.MatchString(value)), limit
 	}
 	if schema["format"] == "date-time" {
 		_, err := time.Parse(time.RFC3339Nano, value)
-		return closedIf(err == nil)
+		return closedIf(err == nil), limit
 	}
 	for _, key := range []string{"oneOf", "anyOf"} {
 		branches, _ := schema[key].([]any)
 		for _, raw := range branches {
 			if branch, _ := raw.(map[string]any); branch != nil && acceptsString(resolveSchema(branch, o.defs)) {
-				if kind := o.closedValue(branch, value); kind != slotFree {
-					return kind
+				if kind, branchLimit := o.closedValue(branch, value); kind != slotFree {
+					if branchLimit == 0 {
+						branchLimit = limit
+					}
+					return kind, branchLimit
 				}
 			}
 		}
 	}
-	return slotFree
+	return slotFree, 0
 }
 
 func keptIf(ok bool) slotKind {

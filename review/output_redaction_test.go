@@ -413,8 +413,28 @@ func TestClosedValue(t *testing.T) {
 		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, redactionHeadSHA, slotClosed},
 		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, "head", slotFree},
 	} {
-		if got := o.closedValue(c.schema, c.value); got != c.kind {
+		if got, _ := o.closedValue(c.schema, c.value); got != c.kind {
 			t.Errorf("closedValue(%v, %q) = %d, want %d", c.schema, c.value, got, c.kind)
+		}
+	}
+	// The bound is the closing schema's maxLength, or the one around its
+	// branch, and 0 without either.
+	for _, c := range []struct {
+		schema map[string]any
+		limit  int
+	}{
+		{map[string]any{"type": "string", "pattern": "^[a-z_]+$", "maxLength": float64(128)}, 128},
+		{map[string]any{"type": "string", "pattern": "^[a-z_]+$"}, 0},
+		{map[string]any{"maxLength": float64(64), "anyOf": []any{map[string]any{"type": "string", "pattern": "^[a-z_]+$"}, map[string]any{"type": "null"}}}, 64},
+		{map[string]any{"maxLength": float64(64), "anyOf": []any{map[string]any{"type": "string", "pattern": "^[a-z_]+$", "maxLength": float64(32)}}}, 32},
+		{map[string]any{"type": "string", "format": "date-time"}, 0},
+	} {
+		value := "abc"
+		if c.schema["format"] != nil {
+			value = "2026-10-06T16:00:00Z"
+		}
+		if kind, limit := o.closedValue(c.schema, value); kind != slotClosed || limit != c.limit {
+			t.Errorf("closedValue(%v) = %d, %d, want closed, %d", c.schema, kind, limit, c.limit)
 		}
 	}
 }
@@ -629,12 +649,53 @@ func TestOutputRedactionMasksOverlongClosedValuesWhole(t *testing.T) {
 	checkEqual(t, 1, o.Masked())
 	checkEqual(t, 1, o.MaskedClosed())
 
-	// Underscores in a huge value do not make the work grow with its square.
-	huge := strings.Repeat("a_", 1<<18)
+	// A few KiB of underscores are masked whole, not scanned after each.
+	huge := strings.Repeat("a_", 2048)
 	redacted, err = o.Document(context.Background(), []byte(document(huge)))
 	checkNoError(t, err)
-	checkEqual(t, document(strings.Repeat("x_", 1<<18)), string(redacted))
+	checkEqual(t, document(strings.Repeat("x_", 2048)), string(redacted))
 	checkEqual(t, 2, o.MaskedClosed())
+}
+
+// A closed value whose schema sets no maxLength may be valid at any length,
+// so a long one is scanned rather than masked whole.
+func TestOutputRedactionKeepsLongClosedValuesWithoutABound(t *testing.T) {
+	// A hunk ID's pattern, ^h_[0-9a-f]{12}(-[0-9]+)?$, bounds no length.
+	document := `{"sections":[{"hunks":["h_4ec3b2a1f9d8-` + strings.Repeat("7", 130) + `"]}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	redacted, err := o.Document(context.Background(), []byte(document))
+	checkNoError(t, err)
+	checkEqual(t, document, string(redacted))
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+	// The hunk ID was closed by its pattern, with no bound.
+	closed := false
+	for _, slot := range o.o.slots {
+		closed = closed || strings.HasPrefix(slot.text, "h_") && slot.kind == slotClosed && slot.limit == 0
+	}
+	checkEqual(t, true, closed)
+}
+
+// A closed value without a maxLength is scanned again after at most
+// closedCopyLimit boundaries; one with more is masked whole, so its copies
+// stay linear in its length.
+func TestOutputRedactionCapsCopiesOfUnboundedClosedValues(t *testing.T) {
+	schema := map[string]any{"type": "object", "properties": map[string]any{"v": map[string]any{"type": "string", "pattern": "^[a-z_]+$"}}}
+	redactor := testRedactor(t)
+	document := func(v string) string { return `{"v":"` + v + `"}` }
+	within := strings.Repeat("ab_", closedCopyLimit) + "ab"
+	o := &OutputRedactor{o: outputRedaction{redactor: redactor, schema: schema}}
+	redacted, err := o.Document(context.Background(), []byte(document(within)))
+	checkNoError(t, err)
+	checkEqual(t, document(within), string(redacted))
+	checkEqual(t, 0, o.MaskedClosed())
+
+	over := strings.Repeat("ab_", closedCopyLimit+1) + "ab"
+	redacted, err = o.Document(context.Background(), []byte(document(over)))
+	checkNoError(t, err)
+	checkEqual(t, document(strings.Repeat("xx_", closedCopyLimit+1)+"xx"), string(redacted))
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
 }
 
 // testFormatMask is the format-preserving mask written out for the tests:

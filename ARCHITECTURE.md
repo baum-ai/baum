@@ -182,9 +182,12 @@ enum, closed pattern or date-time format. A value kept only by a closed
 pattern or date-time is still free lowercase text, so each is also scanned on
 its own, whole and from after every character in it that is not a letter or
 digit, and masked in place; `MaskedClosed` counts such values, and a host
-should reject the run when it is not zero. The schema bounds those identifiers
-to 128 characters, and a longer value, which cannot be valid, is masked whole
-without the scan.
+should reject the run when it is not zero. A value longer than its schema's
+`maxLength` (128 characters for identifiers and categories) cannot be valid and
+is masked whole without the scan. A value whose schema sets no `maxLength`,
+such as a SHA, hunk ID or date-time, is scanned at any length, but after at
+most 16 boundaries; one with more fits none of those patterns and is masked
+whole, so the scan stays linear in the document's size.
 
 Normalisation respells every identifier, category and tile-local name the
 model writes in lowercase with underscores, and a secret respelled that way
