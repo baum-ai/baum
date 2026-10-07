@@ -178,10 +178,14 @@ a host applies it to everything its generation returns. Every string of the
 document is scanned as one text, so a secret spread over code lines, table
 rows or steps is caught; a string keeps its exact text only if it is a reference that resolves to the
 redacted bundle or the checkout, or its value meets the schema's constant,
-enum, closed pattern or date-time format. Text scattered across unrelated
-fields, a token wrapped mid-value, or a lowercase token that fits a closed
-pattern (a SHA, a category, a prefixed ID) is not caught. If redaction fails,
-the text is dropped rather than kept.
+enum, closed pattern or date-time format. A value kept only by a closed
+pattern or date-time is still free lowercase text, so each is also scanned on
+its own, whole and from after every underscore in it, and masked in place;
+`MaskedClosed` counts such values, and a host should reject the run when it
+is not zero. The schema bounds those identifiers to 128 characters. Text
+scattered across unrelated fields, a token wrapped mid-value, or a secret no
+rule detects on its own, such as a bare hex string, which reads as a SHA, is
+not caught. If redaction fails, the text is dropped rather than kept.
 
 ### Tiles
 

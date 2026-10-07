@@ -135,3 +135,22 @@ func TestValidateStoredRestrictedSession(t *testing.T) {
 		}
 	}
 }
+
+// Identifier patterns admit any lowercase text, so the schema also bounds
+// their length (see maskClosed in output_redaction.go).
+func TestValidateStoredBoundsIdentifierLength(t *testing.T) {
+	for _, field := range []string{"id", "category"} {
+		prefix := ""
+		if field == "id" {
+			prefix = "rsk_"
+		}
+		for length, tooLong := range map[int]bool{128: false, 129: true} {
+			doc := storedExample(t)
+			firstSection(doc)["risks"].([]any)[0].(map[string]any)[field] = prefix + strings.Repeat("a", length-len(prefix))
+			findings := validateStored(t, doc, nil)
+			if got := strings.Contains(strings.Join(findings, "\n"), "maxLength"); got != tooLong {
+				t.Errorf("%s of %d bytes: findings %q, want a maxLength finding: %t", field, length, findings, tooLong)
+			}
+		}
+	}
+}

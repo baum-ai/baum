@@ -398,22 +398,22 @@ func TestClosedValue(t *testing.T) {
 	for _, c := range []struct {
 		schema map[string]any
 		value  string
-		closed bool
+		kind   slotKind
 	}{
-		{map[string]any{"const": "logical"}, "logical", true},
-		{map[string]any{"const": "logical"}, "logical " + leakedProviderKey, false},
-		{map[string]any{"enum": []any{"feature", "fix"}}, "fix", true},
-		{map[string]any{"enum": []any{"feature", "fix"}}, "fix!", false},
-		{map[string]any{"$ref": "#/$defs/id"}, "sec_parser", true},
-		{map[string]any{"$ref": "#/$defs/id"}, "sec_parser " + leakedProviderKey, false},
-		{map[string]any{"type": "string", "pattern": `\S`}, "anything", false},
-		{map[string]any{"type": "string", "format": "date-time"}, "2026-10-06T16:00:00Z", true},
-		{map[string]any{"type": "string", "format": "date-time"}, "2026-10-06 " + leakedProviderKey, false},
-		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, redactionHeadSHA, true},
-		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, "head", false},
+		{map[string]any{"const": "logical"}, "logical", slotKept},
+		{map[string]any{"const": "logical"}, "logical " + leakedProviderKey, slotFree},
+		{map[string]any{"enum": []any{"feature", "fix"}}, "fix", slotKept},
+		{map[string]any{"enum": []any{"feature", "fix"}}, "fix!", slotFree},
+		{map[string]any{"$ref": "#/$defs/id"}, "sec_parser", slotClosed},
+		{map[string]any{"$ref": "#/$defs/id"}, "sec_parser " + leakedProviderKey, slotFree},
+		{map[string]any{"type": "string", "pattern": `\S`}, "anything", slotFree},
+		{map[string]any{"type": "string", "format": "date-time"}, "2026-10-06T16:00:00Z", slotClosed},
+		{map[string]any{"type": "string", "format": "date-time"}, "2026-10-06 " + leakedProviderKey, slotFree},
+		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, redactionHeadSHA, slotClosed},
+		{map[string]any{"anyOf": []any{map[string]any{"type": "string", "pattern": "^[0-9a-f]{7,64}$"}, map[string]any{"type": "null"}}}, "head", slotFree},
 	} {
-		if got := o.closedValue(c.schema, c.value); got != c.closed {
-			t.Errorf("closedValue(%v, %q) = %t, want %t", c.schema, c.value, got, c.closed)
+		if got := o.closedValue(c.schema, c.value); got != c.kind {
+			t.Errorf("closedValue(%v, %q) = %d, want %d", c.schema, c.value, got, c.kind)
 		}
 	}
 }
@@ -484,4 +484,108 @@ func TestOutputRedactionScansKeysWithTheirValues(t *testing.T) {
 			t.Fatalf("document changed:\n%s\n%s", document, redacted)
 		}
 	})
+}
+
+// A model that copies a token from the checkout into a value a lowercase
+// pattern closes keeps no secret: the value is scanned on its own, whole and
+// from after each underscore, and masked in place.
+func TestOutputRedactionMasksSecretsInClosedPatternValues(t *testing.T) {
+	const (
+		token  = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+		masked = "xx_xxxx_9xx9x9x9x9x99x9x9x9x9x9x9x9x9x9x"
+	)
+	redactor := testRedactor(t)
+	// The mask is format-preserving: lowercase to x, digits to 9, separators kept.
+	bare, count, err := redactor.RedactString(context.Background(), token)
+	checkNoError(t, err)
+	checkEqual(t, 1, count)
+	checkEqual(t, masked, bare)
+	// document puts values in a section's ID, a risk category and an
+	// architecture edge, with its keys in the order a re-encoding writes them.
+	document := func(id, category, edge string) string {
+		return `{"sections":[{"id":"` + id + `","risks":[{"category":"` + category + `","id":"rsk_a"}],"tiles":[{"data":{"edges":[{"from":"api","to":"` + edge + `"}]},"id":"tile_a","kind":"architecture"}]}]}`
+	}
+	for _, c := range []struct {
+		name, document, want string
+		spans                int
+	}{
+		{"after the section prefix", document("sec_"+token, "security", "db"), document("sec_"+masked, "security", "db"), 1},
+		{"after a later underscore", document("sec_auth_"+token, "security", "db"), document("sec_auth_"+masked, "security", "db"), 1},
+		{"in a category", document("sec_a", token, "db"), document("sec_a", masked, "db"), 1},
+		{"in an architecture edge", document("sec_a", "security", token), document("sec_a", "security", masked), 1},
+		{"in several values", document("sec_"+token, token, token), document("sec_"+masked, masked, masked), 3},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			o := newTestOutputRedactor(t, redactor, &bundlepkg.Bundle{}, nil)
+			redacted, err := o.Document(context.Background(), []byte(c.document))
+			checkNoError(t, err)
+			checkEqual(t, c.want, string(redacted))
+			checkEqual(t, c.spans, o.Masked())
+			checkEqual(t, c.spans, o.MaskedClosed())
+		})
+	}
+}
+
+// Values the schema fixes or closes keep their exact text when they hold
+// nothing detected, and cost no count.
+func TestOutputRedactionKeepsOrdinaryClosedValues(t *testing.T) {
+	const (
+		sha40 = "4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a7f6e5d4c"
+		sha64 = "4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c"
+	)
+	document := `{"schema":"baum.review/1",` +
+		`"review":{"head":"` + sha40 + `","base":"` + sha64 + `","generated_at":"2026-10-07T09:30:15.123Z"},` +
+		`"sections":[{"id":"sec_auth_flow","title":"Auth","risks":[{"id":"rsk_token_reuse","category":"data_integrity","tier":"high","source":"model","finding":"fnd_reviewbot_7102"}],` +
+		`"evidence":[{"id":"ev_retry_boundary"}],` +
+		`"tiles":[{"kind":"architecture","id":"tile_session_summary_for_auth_flow","data":{"edges":[{"from":"api","to":"session_store"}]}}],` +
+		`"blocks":[{"kind":"intent","text":"Plain.","anchors":[{"type":"hunk","hunk":"h_4ec3b2a1f9d8-2"}]}]}],` +
+		`"index":{"attachments":[{"id":"att_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"}]}}`
+	// A clean document comes back byte for byte, so any change shows.
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	redacted, err := o.Document(context.Background(), []byte(document))
+	checkNoError(t, err)
+	checkEqual(t, document, string(redacted))
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+
+	// A reference that resolves keeps its text whatever it holds.
+	const secret = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	o = newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, map[string]bool{"deploy/" + secret + ".env": true})
+	reference := `{"sections":[{"blocks":[{"kind":"intent","anchors":[{"type":"file","path":"deploy/` + secret + `.env"}]}]}]}`
+	redacted, err = o.Document(context.Background(), []byte(reference))
+	checkNoError(t, err)
+	checkEqual(t, reference, string(redacted))
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+}
+
+func TestOutputRedactorCountsClosedValuesAcrossCalls(t *testing.T) {
+	const token = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	for range 2 {
+		_, err := o.Document(context.Background(), []byte(`{"sections":[{"risks":[{"category":"`+token+`"}]}]}`))
+		checkNoError(t, err)
+	}
+	_, err := o.Document(context.Background(), []byte(`{"sections":[{"risks":[{"category":"auth"}],"blocks":[{"kind":"intent","text":"dsn `+leakedDatabaseURL+`"}]}]}`))
+	checkNoError(t, err)
+	checkEqual(t, 3, o.Masked())
+	// Free text the model wrote does not count as a closed value.
+	checkEqual(t, 2, o.MaskedClosed())
+}
+
+func TestMaskedSpans(t *testing.T) {
+	for _, c := range []struct {
+		text, masked string
+		spans        int
+	}{
+		{"auth", "auth", 0},
+		{"sk_live_ab", "xx_xxxx_xx", 1},
+		{"abc_def", "xxx_def", 1},
+		// A gap that holds a letter the mask changes splits spans.
+		{"ab_cd_ef", "xx_cd_xx", 2},
+		// A gap of x, 9 and separators does not.
+		{"ab_x9_cd", "xx_x9_xx", 1},
+	} {
+		checkEqual(t, c.spans, maskedSpans(c.text, c.masked))
+	}
 }

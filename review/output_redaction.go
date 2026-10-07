@@ -53,6 +53,14 @@ func (r *OutputRedactor) Text(ctx context.Context, s string) (string, error) {
 // Masked returns the number of spans masked so far.
 func (r *OutputRedactor) Masked() int { return r.o.masked }
 
+// MaskedClosed returns the number of values masked so far that a schema closes
+// by pattern or date-time format: identifiers, categories, SHAs and the like.
+// They are free lowercase text, so a secret the model copied into one is
+// masked in place, but a value that held one is not what the model was asked
+// to write, and a host rejects the run when this is not zero. Each value
+// counts once, however many spans it holds; the spans are in Masked as well.
+func (r *OutputRedactor) MaskedClosed() int { return r.o.maskedClosed }
+
 type outputRedaction struct {
 	ctx      context.Context
 	redactor *bundlepkg.Redactor
@@ -67,7 +75,10 @@ type outputRedaction struct {
 	slots    []outputSlot
 	patterns map[string]*regexp.Regexp
 	masked   int
-	changed  bool
+	// maskedClosed counts the values a pattern or date-time closed that were
+	// masked.
+	maskedClosed int
+	changed      bool
 }
 
 func (o *outputRedaction) text(s string) (string, error) {
@@ -118,8 +129,15 @@ const (
 	// unless a span reaching into model-written text touches it.
 	slotBundle
 	// slotKept keeps its exact text: a reference that resolves to something
-	// the redacted bundle or the checkout holds, or a value the schema closes.
+	// the redacted bundle or the checkout holds, a key the schema names, a
+	// canonical hunk header, or a value the schema fixes (a constant or an
+	// enum member).
 	slotKept
+	// slotClosed is context for the strings around it, like slotKept, but kept
+	// only because it fully matches a closed pattern or is a date-time. Such a
+	// pattern still admits any lowercase text, so the value is also scanned
+	// on its own (see maskClosed).
+	slotClosed
 )
 
 // outputSlot is one string of a document: its text, its kind, and how to
@@ -141,7 +159,8 @@ var errOutputMaskLength = errors.New("output redaction changed the text length")
 // sorted, arrays in order), and collects every string for maskSlots. A string
 // keeps its exact text only when it is a reference that resolves (see
 // resolvedReference) or its value meets the schema's closing constraint (see
-// closedValue); every other string is free text. Within a code source's
+// closedValue), though a value closed only by a pattern or date-time is still
+// scanned on its own; every other string is free text. Within a code source's
 // excerpt, excerpt holds the lines the bundle supplies, whose text is the
 // bundle's, and a canonical hunk header holds only line numbers.
 func (o *outputRedaction) value(value any, schema map[string]any, scope string, excerpt map[tileLine]bool, kind slotKind, set func(string)) {
@@ -192,8 +211,8 @@ func (o *outputRedaction) value(value any, schema map[string]any, scope string, 
 			o.value(child, items, scope, excerpt, slotFree, func(s string) { v[i] = s })
 		}
 	case string:
-		if kind == slotFree && schema != nil && o.closedValue(schema, v) {
-			kind = slotKept
+		if kind == slotFree && schema != nil {
+			kind = o.closedValue(schema, v)
 		}
 		o.slots = append(o.slots, outputSlot{text: v, kind: kind, set: set})
 	}
@@ -286,7 +305,8 @@ func (o *outputRedaction) resolvedReference(scope, key, value string) bool {
 // them. A string is masked where either scan masks it, and the larger scan's
 // count is recorded.
 //
-// A kept string never changes. An excerpt line the bundle supplied keeps its
+// A kept string never changes, except that a value closed only by a pattern or
+// date-time is then masked on its own (see maskClosed). An excerpt line the bundle supplied keeps its
 // text unless a span reaching into model-written text touches it: the bundle
 // was redacted already, and the line must keep matching it. A bundle line
 // that such a span does mask no longer matches the bundle, so completion
@@ -299,7 +319,7 @@ func (o *outputRedaction) maskSlots() error {
 	var all, unkept []int
 	for i, slot := range o.slots {
 		all = append(all, i)
-		if slot.kind != slotKept && !slot.key {
+		if slot.kind != slotKept && slot.kind != slotClosed && !slot.key {
 			unkept = append(unkept, i)
 		}
 	}
@@ -312,7 +332,11 @@ func (o *outputRedaction) maskSlots() error {
 		return err
 	}
 	o.masked += max(contextCount, unkeptCount)
+	var closed []int
 	for i, slot := range o.slots {
+		if slot.kind == slotClosed {
+			closed = append(closed, i)
+		}
 		text := []byte(slot.text)
 		for _, masked := range []string{withContext[i], withoutKept[i]} {
 			for j := range min(len(masked), len(text)) {
@@ -326,7 +350,93 @@ func (o *outputRedaction) maskSlots() error {
 			o.changed = true
 		}
 	}
+	return o.maskClosed(closed)
+}
+
+// maskClosed scans on their own the values a pattern or date-time closed,
+// which the joined scans keep whole. A lowercase pattern such as a risk
+// category or a prefixed ID admits any text the model copies, a secret
+// included, and the prefix or the words around it can hide the secret from a
+// rule that needs a word boundary (sec_sk_live_...). Each value is scanned
+// whole and from after every underscore in it, so sec_sk_live_... and
+// sec_auth_sk_live_... both expose sk_live_...; all the copies are one text
+// joined by newlines, as in scan. A byte any copy masks is masked in the
+// value, which keeps its length. The mask writes only x, 9 and the characters
+// it keeps, so a masked value still fits a pattern of lowercase identifiers,
+// but not one of hex digits, which then fails validation.
+//
+// A value counts as its spans: runs of masked bytes, where a gap of characters
+// the mask leaves as they are (the separators it keeps, x and 9) does not
+// split a run. Copies that mask the same secret, or a secret with an x in it,
+// are one span. maskedClosed counts the values masked.
+func (o *outputRedaction) maskClosed(indexes []int) error {
+	if len(indexes) == 0 {
+		return nil
+	}
+	type copyOf struct{ slot, from, at int }
+	var copies []copyOf
+	var builder strings.Builder
+	for _, i := range indexes {
+		text := o.slots[i].text
+		for from := range len(text) {
+			if from > 0 && text[from-1] != '_' {
+				continue
+			}
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			copies = append(copies, copyOf{i, from, builder.Len()})
+			builder.WriteString(text[from:])
+		}
+	}
+	joined := builder.String()
+	masked, _, err := o.redactor.RedactString(o.ctx, joined)
+	if err != nil {
+		return err
+	}
+	if len(masked) != len(joined) {
+		return errOutputMaskLength
+	}
+	out := make(map[int][]byte, len(indexes))
+	for _, c := range copies {
+		text := o.slots[c.slot].text
+		if out[c.slot] == nil {
+			out[c.slot] = []byte(text)
+		}
+		for j := range len(text) - c.from {
+			if got := masked[c.at+j]; got != text[c.from+j] && out[c.slot][c.from+j] == text[c.from+j] {
+				out[c.slot][c.from+j] = got
+			}
+		}
+	}
+	for _, i := range indexes {
+		slot := o.slots[i]
+		if spans := maskedSpans(slot.text, string(out[i])); spans > 0 {
+			slot.set(string(out[i]))
+			o.masked += spans
+			o.maskedClosed++
+			o.changed = true
+		}
+	}
 	return nil
+}
+
+// maskedSpans counts the runs of bytes that differ between a text and its mask.
+// A run goes on through bytes the mask leaves as they are.
+func maskedSpans(text, masked string) int {
+	spans, inRun := 0, false
+	for j := range len(text) {
+		switch {
+		case masked[j] != text[j]:
+			if !inRun {
+				spans++
+			}
+			inRun = true
+		case !strings.ContainsRune("x9-_.:/+=@", rune(text[j])):
+			inRun = false
+		}
+	}
+	return spans
 }
 
 // scan redacts the joined text of the slots it is given and returns, by slot
@@ -392,7 +502,7 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 		end := offset + len(slot.text)
 		text := masked[offset:end]
 		switch slot.kind {
-		case slotKept:
+		case slotKept, slotClosed:
 			text = slot.text
 		case slotBundle:
 			if protectedOnly == "" || protectedOnly[offset:end] == text {
@@ -495,17 +605,18 @@ func canonicalHunkHeader(value any) bool {
 	return ok && header == fmt.Sprintf("@@ -%d,%d +%d,%d @@", old, oldCount, next, newCount)
 }
 
-// closedValue reports a value that meets its schema's closing constraint:
-// it equals the constant, is one of the enum, fully matches a closed pattern
-// (see closedPattern) or is a date-time; under oneOf or anyOf, it meets one
-// branch's. A value at a closed position that does not is free text.
-func (o *outputRedaction) closedValue(schema map[string]any, value string) bool {
+// closedValue reports how a value meets its schema's closing constraint:
+// slotKept when it equals the constant or is one of the enum, slotClosed when
+// it fully matches a closed pattern (see closedPattern) or is a date-time, and
+// slotFree when it does not, which makes it free text. Under oneOf or anyOf,
+// it is the first branch's that closes it.
+func (o *outputRedaction) closedValue(schema map[string]any, value string) slotKind {
 	schema = resolveSchema(schema, o.defs)
 	if constant, ok := schema["const"]; ok {
-		return constant == value
+		return keptIf(constant == value)
 	}
 	if enum, ok := schema["enum"].([]any); ok {
-		return slices.Contains(enum, any(value))
+		return keptIf(slices.Contains(enum, any(value)))
 	}
 	if pattern, _ := schema["pattern"].(string); closedPattern(pattern) {
 		compiled, ok := o.patterns[pattern]
@@ -516,21 +627,37 @@ func (o *outputRedaction) closedValue(schema map[string]any, value string) bool 
 			}
 			o.patterns[pattern] = compiled
 		}
-		return compiled != nil && compiled.MatchString(value)
+		return closedIf(compiled != nil && compiled.MatchString(value))
 	}
 	if schema["format"] == "date-time" {
 		_, err := time.Parse(time.RFC3339Nano, value)
-		return err == nil
+		return closedIf(err == nil)
 	}
 	for _, key := range []string{"oneOf", "anyOf"} {
 		branches, _ := schema[key].([]any)
 		for _, raw := range branches {
-			if branch, _ := raw.(map[string]any); branch != nil && acceptsString(resolveSchema(branch, o.defs)) && o.closedValue(branch, value) {
-				return true
+			if branch, _ := raw.(map[string]any); branch != nil && acceptsString(resolveSchema(branch, o.defs)) {
+				if kind := o.closedValue(branch, value); kind != slotFree {
+					return kind
+				}
 			}
 		}
 	}
-	return false
+	return slotFree
+}
+
+func keptIf(ok bool) slotKind {
+	if ok {
+		return slotKept
+	}
+	return slotFree
+}
+
+func closedIf(ok bool) slotKind {
+	if ok {
+		return slotClosed
+	}
+	return slotFree
 }
 
 // closedPattern reports a pattern that pins a whole string to a closed
