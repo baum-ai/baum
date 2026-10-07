@@ -1,10 +1,16 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { highlightCode, languageForFence, type HighlightedLine, type Lang } from "../highlight";
+import {
+  highlightCode,
+  languageForFence,
+  withinHighlightLimits,
+  type HighlightedLine,
+  type Lang,
+} from "../highlight";
 import { cn } from "./classnames";
 import { HighlightedText } from "./highlighted-text";
 
@@ -25,6 +31,16 @@ const REHYPE_PLUGINS = [
 
 const linesText = (lines: readonly HighlightedLine[]) =>
   lines.map((line) => line.map((token) => token.content).join("")).join("\n");
+
+/** The text of a code block's children when they are only text, else null: a
+ *  block holding raw HTML elements is rendered as it is, never as a string. */
+function textOf(children: ReactNode): string | null {
+  if (typeof children === "string") return children;
+  if (Array.isArray(children) && children.every((child) => typeof child === "string")) {
+    return children.join("");
+  }
+  return null;
+}
 
 /** A fenced block in a known language. It renders the plain text on the server
  *  and the first client render, then colours it once the highlighter is ready;
@@ -105,8 +121,12 @@ const COMPONENTS: Components = {
       // Only a fence's own `language-*` class names a language.
       const info = /(?:^|\s)language-(\S+)/.exec(className ?? "")?.[1];
       const lang = languageForFence(info);
-      return lang ? (
-        <HighlightedCodeBlock code={text} lang={lang} className={className} />
+      const code = textOf(children);
+      // Over the limits it never schedules highlighting.
+      const highlight =
+        lang && code !== null && withinHighlightLimits(code.split("\n").length, code.length);
+      return highlight ? (
+        <HighlightedCodeBlock code={code} lang={lang} className={className} />
       ) : (
         <code className={className}>{children}</code>
       );
