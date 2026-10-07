@@ -140,6 +140,17 @@ on an unchanged line is coloured on both the removed and the added lines that
 follow it. The text is never altered; a line whose tokens do not add up to it
 renders plain.
 
+`Markdown` highlights fenced code blocks the same way. A fence whose info
+string `languageForFence` knows (the `language-*` class that survives
+`rehype-sanitize`) renders through a small client component: the plain text on
+the server and the first client render, then the coloured spans once
+`highlightCode` resolves. Results for an earlier block or an unmounted tree are
+dropped, and tokens that do not add up to the source leave the block plain. The
+`<pre>` and `<code>` markup and the block's text are unchanged. Inline code,
+fences with no or an unknown language, and blocks over the limits render as
+before. Text reaches the page only as React text children, and colours only as
+`var(--syntax-*)`, so the highlighter adds no path for contributor markup.
+
 - **Languages** are a fixed allow-list, picked by extension or file name
   (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
   Rust, Java, Kotlin, Ruby, PHP, C, C++, C#, Swift, SQL, shell, YAML, TOML,
