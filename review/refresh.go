@@ -1,8 +1,9 @@
 package review
 
 import (
-	"encoding/json"
+	"cmp"
 	"slices"
+	"strings"
 	"time"
 
 	bundlepkg "github.com/lastpersonlabs/baum/bundle"
@@ -22,6 +23,7 @@ func (v *DocumentValidator) Refresh(document []byte, b *bundlepkg.Bundle, now ti
 	// index looking for checks on a revision none of them ran on.
 	checks, checkCounts := checkIndex(b, review.Head)
 	sessions, vendors, models := sessionIndex(b)
+	carryPrompts(sessions, index.Sessions)
 	index.Checks, index.Sessions, index.Threads = checks, sessions, threadIndex(b)
 	refreshConversation(index, b.Conversation)
 	summary := &doc.Summary
@@ -94,6 +96,9 @@ type refreshEvidence struct {
 	checks      map[string]string
 	reports     map[string]bool
 	testHunks   map[string]bool
+	// prompts are the refreshed index's prompts, carried ones included, by
+	// session ID and turn.
+	prompts map[string]map[int]bool
 }
 
 func newRefreshEvidence(index *documentIndex, b *bundlepkg.Bundle, reviewedHead string) refreshEvidence {
@@ -103,6 +108,18 @@ func newRefreshEvidence(index *documentIndex, b *bundlepkg.Bundle, reviewedHead 
 		checks:      map[string]string{},
 		reports:     map[string]bool{},
 		testHunks:   map[string]bool{},
+		prompts:     map[string]map[int]bool{},
+	}
+	for _, session := range index.Sessions {
+		if session.Restricted {
+			continue
+		}
+		for _, prompt := range session.Prompts {
+			if evidence.prompts[session.ID] == nil {
+				evidence.prompts[session.ID] = map[int]bool{}
+			}
+			evidence.prompts[session.ID][prompt.Index] = true
+		}
 	}
 	for _, check := range index.Checks {
 		evidence.checks[check.ID] = check.Conclusion
@@ -160,7 +177,7 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 				failed = true
 			}
 		case "prompt", "session_event":
-			if !resolveDocumentAnchor(anchor, e.bundle, "") {
+			if !resolveDocumentAnchor(anchor, e.bundle, "") && !e.indexedPrompt(anchor) {
 				return "asserted"
 			}
 		case "bot_report":
@@ -188,69 +205,53 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 	}
 }
 
-// RefreshPromptTurns returns, by session ID, the turns whose prompts a
-// refresh of a stored document reads again, sorted and distinct: those its
-// session index lists, which include the prompts its generation's extracted
-// decisions cited, and those its decision items anchor with prompt anchors.
-// A refresh loads them as well as each session's first and latest, so the
-// prompt text a version was generated with survives it; repository scope
-// still decides which sessions carry any. A document it cannot read cites
-// none.
-func RefreshPromptTurns(document []byte) map[string][]int {
-	var stored struct {
-		Index struct {
-			Sessions []struct {
-				ID      string `json:"id"`
-				Prompts []struct {
-					Index int `json:"index"`
-				} `json:"prompts"`
-			} `json:"sessions"`
-		} `json:"index"`
-		Sections []struct {
-			Blocks []struct {
-				Kind  string `json:"kind"`
-				Items []struct {
-					Anchors []documentAnchor `json:"anchors"`
-				} `json:"items"`
-			} `json:"blocks"`
-		} `json:"sections"`
-	}
-	if json.Unmarshal(document, &stored) != nil {
-		return nil
-	}
-	var turns map[string][]int
-	for _, session := range stored.Index.Sessions {
-		for _, prompt := range session.Prompts {
-			if session.ID == "" || prompt.Index < 1 {
-				continue
-			}
-			if turns == nil {
-				turns = map[string][]int{}
-			}
-			turns[session.ID] = append(turns[session.ID], prompt.Index)
+// indexedPrompt reports whether a prompt anchor names a prompt the refreshed
+// index lists, one carried from the stored index included.
+func (e refreshEvidence) indexedPrompt(anchor documentAnchor) bool {
+	return anchor.Type == "prompt" && anchor.Session != nil && anchor.Index != nil && e.prompts[*anchor.Session][*anchor.Index]
+}
+
+// carryPrompts adds to each readable refreshed session the prompt entries
+// the stored index lists for the same session at turns the refresh bundle
+// lacks, copied as stored, so the prompts a version was generated with, the
+// ones its extracted decisions cited included, survive a refresh whose
+// bundle has no decisions. Their text was bounded and redacted when the
+// version was generated, and is never read again: a refresh cannot lengthen
+// it. A turn both list keeps the refresh bundle's entry, except that a
+// stored text the refreshed one starts with, which generation's byte
+// trimming shortened, stays shortened. A restricted session, or one the
+// refresh bundle no longer links, carries nothing. Prompts stay in turn
+// order and the session's prompt count includes the carried ones.
+func carryPrompts(refreshed, stored []documentSession) {
+	storedPrompts := map[string][]documentPrompt{}
+	for _, session := range stored {
+		if _, seen := storedPrompts[session.ID]; !seen && !session.Restricted {
+			storedPrompts[session.ID] = session.Prompts
 		}
 	}
-	for _, section := range stored.Sections {
-		for _, block := range section.Blocks {
-			if block.Kind != "decisions" {
+	for i := range refreshed {
+		session := &refreshed[i]
+		previous := storedPrompts[session.ID]
+		if session.Restricted || len(previous) == 0 {
+			continue
+		}
+		listed := make(map[int]int, len(session.Prompts))
+		for p, prompt := range session.Prompts {
+			listed[prompt.Index] = p
+		}
+		for _, prompt := range previous {
+			p, ok := listed[prompt.Index]
+			if !ok {
+				listed[prompt.Index] = len(session.Prompts)
+				session.Prompts = append(session.Prompts, prompt)
 				continue
 			}
-			for _, item := range block.Items {
-				for _, anchor := range item.Anchors {
-					if anchor.Type != "prompt" || anchor.Session == nil || anchor.Index == nil {
-						continue
-					}
-					if turns == nil {
-						turns = map[string][]int{}
-					}
-					turns[*anchor.Session] = append(turns[*anchor.Session], *anchor.Index)
-				}
+			current := &session.Prompts[p]
+			if current.ID == prompt.ID && len(prompt.Text) < len(current.Text) && strings.HasPrefix(current.Text, prompt.Text) {
+				current.Text = prompt.Text
 			}
 		}
+		slices.SortStableFunc(session.Prompts, func(a, b documentPrompt) int { return cmp.Compare(a.Index, b.Index) })
+		session.PromptCount = new(len(session.Prompts))
 	}
-	for session := range turns {
-		slices.Sort(turns[session])
-		turns[session] = slices.Compact(turns[session])
-	}
-	return turns
 }

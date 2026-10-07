@@ -164,7 +164,11 @@ Given the previous version, `review` keeps sections stable:
 ### Refresh and redaction
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
-document without a model call; `baum refresh` uses it.
+document without a model call; `baum refresh` uses it. It rebuilds the
+session index from the bundle and carries over, for each readable session
+the bundle still links, the stored index's prompts at turns the bundle
+lacks, as stored, so prompts that decisions cited at generation keep their
+bounded text.
 
 Everything a model returns is untrusted. Output redaction masks the document,
 the findings and the diagnostics. Every string of the document is scanned as

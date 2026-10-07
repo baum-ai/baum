@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,8 +239,7 @@ func TestRefreshKeepsThePromptVersion(t *testing.T) {
 }
 
 // A decision's turn that the bundle carries as a prompt, intermediate or
-// not, resolves: the index lists it with its text, and a refresh learns
-// from the stored document which turns its decisions anchor.
+// not, resolves: the index lists it with its text.
 func TestDecisionPromptAnchorsResolveToTheirText(t *testing.T) {
 	validator, err := sharedValidator()
 	if err != nil {
@@ -299,17 +299,148 @@ func TestDecisionPromptAnchorsResolveToTheirText(t *testing.T) {
 	if cited, absent := stored.Sections[0].Evidence[0].Status, stored.Sections[0].Evidence[1].Status; cited != "reported" || absent != "asserted" {
 		t.Fatalf("evidence on a carried turn is %s, on an absent turn %s; want reported and asserted", cited, absent)
 	}
-	// The indexed prompts (1, 3, 6) and the decision anchors (3, 4).
-	if got := RefreshPromptTurns(published); !reflect.DeepEqual(got, map[string][]int{"session": {1, 3, 4, 6}}) {
-		t.Fatalf("refresh prompt turns = %v", got)
+}
+
+type refreshedPrompt struct {
+	Index int    `json:"index"`
+	ID    string `json:"id"`
+	At    string `json:"at"`
+	Text  string `json:"text"`
+}
+
+type refreshedIndex struct {
+	Index struct {
+		Sessions []struct {
+			ID          string            `json:"id"`
+			Restricted  bool              `json:"restricted"`
+			PromptCount *int              `json:"prompt_count"`
+			Prompts     []refreshedPrompt `json:"prompts"`
+		} `json:"sessions"`
+	} `json:"index"`
+	Sections []struct {
+		Evidence []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"evidence"`
+	} `json:"sections"`
+}
+
+func decodeRefreshedIndex(t *testing.T, document []byte) refreshedIndex {
+	t.Helper()
+	var decoded refreshedIndex
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatal(err)
 	}
-	// A model that anchored its decisions only to hunks still keeps the
-	// prompts its generation carried.
-	indexOnly := []byte(`{"index":{"sessions":[{"id":"s","prompts":[{"index":2},{"index":9},{"index":0}]}]},"sections":[{"blocks":[{"kind":"decisions","items":[{"anchors":[{"type":"hunk","id":"h_0123456789ab"}]}]}]}]}`)
-	if got := RefreshPromptTurns(indexOnly); !reflect.DeepEqual(got, map[string][]int{"s": {2, 9}}) {
-		t.Fatalf("refresh prompt turns without prompt anchors = %v", got)
+	return decoded
+}
+
+// A refresh, whose bundle has no decisions, carries the stored index's
+// prompts the bundle lacks as they were generated: a cited prompt that byte
+// trimming shortened stays shortened, it survives although the decisions
+// anchor only hunks, evidence on it still resolves, and a session that is
+// restricted or no longer linked carries nothing.
+func TestRefreshCarriesTheStoredIndexPrompts(t *testing.T) {
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := RefreshPromptTurns([]byte("not json")); got != nil {
-		t.Fatalf("an unreadable document cites %v", got)
+	generatedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	refreshedAt := generatedAt.Add(time.Minute)
+	prompt := func(index int, text string) bundlepkg.Prompt {
+		return bundlepkg.Prompt{Index: index, ID: fmt.Sprint("prompt-", index), At: &generatedAt, Text: text}
+	}
+	long := strings.Repeat("x", 4*bundlepkg.CitedPromptHeadBytes)
+	head := long[:bundlepkg.CitedPromptHeadBytes]
+	decisions := []bundlepkg.SessionDecision{{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{1, 3}}}
+	sessions := func(restrictedNow bool) []bundlepkg.Session {
+		return []bundlepkg.Session{
+			{RootSessionID: "session", Vendor: "claude", Prompts: []bundlepkg.Prompt{prompt(1, "First "+head), prompt(3, head), prompt(6, "Turn 6")}, Decisions: &decisions},
+			{RootSessionID: "restricted", Vendor: "claude", Prompts: []bundlepkg.Prompt{prompt(1, "Mine 1"), prompt(2, "Mine 2"), prompt(4, "Mine 4")}, Restricted: restrictedNow},
+			{RootSessionID: "unlinked", Vendor: "claude", Prompts: []bundlepkg.Prompt{prompt(1, "Gone 1"), prompt(5, "Gone 5")}},
+		}
+	}
+	generated := &bundlepkg.Bundle{Repository: "org/repo", PullRequest: bundlepkg.PullRequest{Number: 1, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb"}, Sources: bundlepkg.Sources{"diff": true}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}},
+		Sessions: sessions(false)}
+	doc, err := decodeObject(authoredFixture(), "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := doc["sections"].([]any)[0].(map[string]any)
+	// The model anchored its decision only to a hunk.
+	section["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{map[string]any{
+		"id": "dec_slice", "by": "human", "text": "Chose a slice.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}},
+	}}}}
+	evidence := func(id, session string, index int) map[string]any {
+		return map[string]any{"id": id, "kind": "run", "claim": "The human chose a slice", "status": "reported", "source": "author_human", "anchors": []any{map[string]any{"type": "prompt", "session": session, "index": index}}}
+	}
+	section["evidence"] = []any{evidence("ev_cited", "session", 3), evidence("ev_restricted", "restricted", 2)}
+	authored, _ := json.Marshal(doc)
+	published, findings := validator.Complete(authored, generated, "", "fixture-model", generatedAt)
+	if findings != "" {
+		t.Fatal(findings)
+	}
+
+	// The refresh bundle reads the first and latest prompts at full length,
+	// has no decisions, finds one session restricted and no longer links
+	// another.
+	refresh := *generated
+	refresh.Sessions = sessions(true)[:2]
+	refresh.Sessions[0].Decisions = nil
+	refresh.Sessions[0].Prompts = []bundlepkg.Prompt{prompt(1, "First "+long), prompt(7, "Turn 7")}
+	refreshed, err := validator.Refresh(published, &refresh, refreshedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeRefreshedIndex(t, refreshed)
+	if len(got.Index.Sessions) != 2 || got.Index.Sessions[0].ID != "session" || got.Index.Sessions[1].ID != "restricted" {
+		t.Fatalf("refreshed sessions = %+v", got.Index.Sessions)
+	}
+	at := generatedAt.Format(time.RFC3339Nano)
+	want := []refreshedPrompt{
+		{Index: 1, ID: "prompt-1", At: at, Text: "First " + head},
+		{Index: 3, ID: "prompt-3", At: at, Text: head},
+		{Index: 6, ID: "prompt-6", At: at, Text: "Turn 6"},
+		{Index: 7, ID: "prompt-7", At: at, Text: "Turn 7"},
+	}
+	if carried := got.Index.Sessions[0]; !reflect.DeepEqual(carried.Prompts, want) || carried.PromptCount == nil || *carried.PromptCount != len(want) {
+		t.Fatalf("refreshed prompts = %+v (count %v), want %+v", carried.Prompts, carried.PromptCount, want)
+	}
+	if restricted := got.Index.Sessions[1]; !restricted.Restricted || len(restricted.Prompts) != 0 {
+		t.Fatalf("a session restricted since generation carries %+v", restricted)
+	}
+	statuses := map[string]string{}
+	for _, item := range got.Sections[0].Evidence {
+		statuses[item.ID] = item.Status
+	}
+	if statuses["ev_cited"] != "reported" || statuses["ev_restricted"] != "asserted" {
+		t.Fatalf("evidence statuses after refresh = %v, want a carried prompt reported and a restricted one asserted", statuses)
+	}
+
+	// A second refresh carries the same prompts again: nothing grows.
+	again, err := validator.Refresh(refreshed, &refresh, refreshedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompts := decodeRefreshedIndex(t, again).Index.Sessions[0].Prompts; !reflect.DeepEqual(prompts, want) {
+		t.Fatalf("prompts after a second refresh = %+v", prompts)
+	}
+}
+
+// A stored index whose prompts the refresh bundle lists too refreshes as it
+// did before prompts were carried: the bundle's entries, its text included,
+// replace the stored ones.
+func TestRefreshWithoutCarriedPromptsUsesTheBundlePrompts(t *testing.T) {
+	validator, bundle, published := refreshFixture(t)
+	later := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	refresh := *bundle
+	refresh.Sessions = slices.Clone(bundle.Sessions)
+	refresh.Sessions[0].Prompts = []bundlepkg.Prompt{{Index: 1, ID: "prompt", At: &later, Text: "Implement that"}}
+	refreshed, err := validator.Refresh(published, &refresh, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []refreshedPrompt{{Index: 1, ID: "prompt", At: later.Format(time.RFC3339Nano), Text: "Implement that"}}
+	if got := decodeRefreshedIndex(t, refreshed).Index.Sessions[0]; !reflect.DeepEqual(got.Prompts, want) || *got.PromptCount != 1 {
+		t.Fatalf("refreshed prompts = %+v, want %+v", got.Prompts, want)
 	}
 }
