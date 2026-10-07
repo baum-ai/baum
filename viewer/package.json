@@ -81,6 +81,7 @@
   "scripts": {
     "generate": "node scripts/generate-review-types.mjs",
     "typecheck": "pnpm generate && tsc --noEmit",
+    "build:app": "pnpm generate && vite build --config vite.app.config.ts",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives .",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -102,6 +103,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "@tailwindcss/vite": "^4.3.2",
     "@types/node": "24.13.2",
     "@types/pluralize": "^0.0.33",
     "@types/react": "19.2.17",
@@ -120,7 +122,9 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.0",
+    "tailwindcss": "^4.3.2",
     "typescript": "~6.0.2",
+    "vite": "^8.1.1",
     "vitest": "4.1.10"
   }
 }

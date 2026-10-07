@@ -192,6 +192,27 @@ retired, so stored tiles of those kinds still render. `pnpm generate` writes
 the tile types to `generated/review-tile-types.d.ts` from both files;
 `pnpm typecheck` runs it first, and the output is not committed.
 
+## Standalone app
+
+`app/` is a single-page app that renders one review document with
+`ReviewViewer`. It is meant to be served by `baum view`, and talks only to the
+page's own origin:
+
+- `GET /api/document` returns the `baum.review/1` document.
+- `GET /api/events` is a Server-Sent Events stream. A `document` event means
+  the document changed, so the app fetches it again and keeps the URL, and with
+  it the selection. Other events are ignored.
+
+The app follows the system colour scheme, keeps the reader's place in the
+URL's search parameters, and has no file picker, no upload and no requests to
+any other host.
+
+`pnpm build:app` builds it with Vite into `../internal/viewer/dist`, the Go
+package that embeds it. That output is committed, so `go install` needs
+nothing but Go: rebuild and commit it whenever the viewer's source changes. The
+build writes no sourcemaps, and two builds of the same source are
+byte-identical.
+
 ## Development
 
 Requires Node.js 24 and pnpm.
@@ -201,6 +222,7 @@ pnpm install
 pnpm check            # lint, format check, typecheck and unit tests
 just check            # the same, through this directory's justfile
 pnpm format           # format with Biome
+pnpm build:app        # build the standalone app into ../internal/viewer/dist
 pnpm test:unit:watch  # watch the unit tests while editing
 ```
 
@@ -209,6 +231,7 @@ Unit tests use Vitest and sit beside the code they cover; fixtures live in
 follow the runtime locale. `src/components/review-viewer.test.tsx` renders
 `ReviewViewer` with the schema's example document
 (`../schema/review-example.json`) alone and with an earlier version to
-compare. `src/typography.test.ts` fails on a font size outside the type scale
+compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` and
+`EventSource`. `src/typography.test.ts` fails on a font size outside the type scale
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.
