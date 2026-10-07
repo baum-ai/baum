@@ -64,11 +64,11 @@ func CapAttachments(bundle *Bundle, caps Caps) {
 }
 
 // ApplyCaps enforces the count ceilings, after sorting, so the same rows in
-// any order produce the same selection: sessions by
-// confidence then earliest start; each session's prompts to first+latest;
-// each session's command events already capped to latest N by the SQL
-// layer; comments to the newest N plus every review verdict; each hunk's
-// patch to its leading lines.
+// any order produce the same selection: sessions by confidence then earliest
+// start; comments to the newest N plus every review verdict; each hunk's
+// patch to its leading lines. It does not cap prompts or command events: the
+// source that collects sessions already selected them (MaxPromptsPerSession,
+// MaxCommandEventsPerSession).
 func ApplyCaps(bundle *Bundle, caps Caps) {
 	var notes []string
 
@@ -173,13 +173,15 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // alone never exceeds the content limit. The documented order is assistant
 // replies, older prompts, command paraphrases, comment bodies oldest first
 // (keeping review verdicts), generated and vendored patch text, superseded
-// session decisions, then whole sessions from the lowest confidence. A
-// session's current decisions go only with the session: they are a short,
-// reviewed account of what its prompts decided, so they outlast every cut of
-// raw prompt text. The prompts at the turns they cite are kept with them, as
-// the first and latest prompts are: the older-prompts stage spares them, and
-// they go only with the session, so a surviving decision's prompt anchors
-// always resolve to text. REVIEW.md content is cut first,
+// session decisions, the text of cited prompts, then whole sessions from the
+// lowest confidence. A session's current decisions go only with the session:
+// they are a short, reviewed account of what its prompts decided, so they
+// outlast every cut of raw prompt text. The prompts at the turns they cite
+// are kept with them: the older-prompts stage spares them, and before any
+// session is dropped their text is shortened, longest first, to a leading
+// CitedPromptHeadBytes and then, if still needed, emptied, keeping each
+// prompt's entry and index so a surviving decision's prompt anchors still
+// resolve. REVIEW.md content is cut first,
 // ahead of every documented stage, because it is supplementary guidance
 // rather than PR evidence, and because a fixed content cap would otherwise
 // make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no
@@ -201,7 +203,7 @@ func fitContent(bundle *Bundle, caps Caps) error {
 	}
 	olderPromptsNote := "older prompts omitted to fit the size limit; the first and latest prompts of each session are kept"
 	if citesTurns(bundle) {
-		olderPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and those its current decisions cite are kept"
+		olderPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and the prompts their current decisions cite are kept"
 	}
 	stages := []struct {
 		cut  func(*Bundle) bool
@@ -214,6 +216,7 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		{cutOldestComments, "older comments omitted to fit the size limit; review verdicts are kept"},
 		{cutGeneratedOrVendoredPatches, "generated and vendored patch text omitted to fit the size limit"},
 		{cutSupersededDecisions, "superseded session decisions omitted to fit the size limit; current decisions are kept"},
+		{shortenCitedPrompts, "text of prompts that current decisions cite shortened to fit the size limit, longest first; the prompts and their decisions are kept"},
 		{cutLowestConfidenceSession, ""},
 	}
 	for _, stage := range stages {
@@ -427,6 +430,35 @@ func cutSupersededDecisions(bundle *Bundle) bool {
 		}
 	}
 	return cut
+}
+
+// CitedPromptHeadBytes is how much of a cited prompt's text the first
+// shortening keeps.
+const CitedPromptHeadBytes = 1024
+
+// shortenCitedPrompts shortens one prompt a current decision cites per call:
+// the longest one over CitedPromptHeadBytes to its leading bytes, or, once
+// none is, the longest one with text to empty text. Ties go to the earlier
+// session, then the earlier prompt, so the result is deterministic. The
+// prompt's entry and index stay.
+func shortenCitedPrompts(bundle *Bundle) bool {
+	for _, over := range []int{CitedPromptHeadBytes, 0} {
+		var longest *Prompt
+		for i := range bundle.Sessions {
+			cited := currentDecisionTurns(bundle.Sessions[i])
+			for p := range bundle.Sessions[i].Prompts {
+				prompt := &bundle.Sessions[i].Prompts[p]
+				if cited[prompt.Index] && len(prompt.Text) > over && (longest == nil || len(prompt.Text) > len(longest.Text)) {
+					longest = prompt
+				}
+			}
+		}
+		if longest != nil {
+			longest.Text = strings.ToValidUTF8(longest.Text[:over], "")
+			return true
+		}
+	}
+	return false
 }
 
 func cutLowestConfidenceSession(bundle *Bundle) bool {

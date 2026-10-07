@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // These test the individual trim-order steps directly (Fit:
 // assistant replies, older prompts, command paraphrases,
 // comment bodies oldest-first keeping review verdicts, generated/vendored
-// patch text, superseded session decisions, then whole sessions from lowest
-// confidence), which is more
+// patch text, superseded session decisions, cited prompt text, then whole
+// sessions from lowest confidence), which is more
 // robust than reverse-engineering exact byte thresholds for the cascading
 // Fit driver. TestFitBytesStopsAsSoonAsItFits below checks the
 // cascade itself stops at the first stage that satisfies the limit.
@@ -941,6 +942,12 @@ func TestFitBytesCutsDecisionsAfterPromptTextAndOnlySupersededOnesBeforeSessions
 	cutOlderPrompts(afterSuperseded)
 	cutSupersededDecisions(afterSuperseded)
 	afterSuperseded.Truncated = append(slices.Clone(afterPrompts.Truncated), "superseded session decisions omitted to fit the size limit; current decisions are kept")
+	afterShortened := build()
+	cutOlderPrompts(afterShortened)
+	cutSupersededDecisions(afterShortened)
+	for shortenCitedPrompts(afterShortened) {
+	}
+	afterShortened.Truncated = append(slices.Clone(afterSuperseded.Truncated), shortenedNote)
 
 	t.Run("prompt text goes first", func(t *testing.T) {
 		bundle := build()
@@ -965,10 +972,10 @@ func TestFitBytesCutsDecisionsAfterPromptTextAndOnlySupersededOnesBeforeSessions
 	})
 	t.Run("then current decisions only with their session", func(t *testing.T) {
 		bundle := build()
-		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterSuperseded) - 1}); err != nil {
+		if err := Fit(bundle, Caps{MaxBytes: contentBytes(t, afterShortened) - 1}); err != nil {
 			t.Fatal(err)
 		}
-		if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" || len(*bundle.Sessions[0].Decisions) != 1 {
+		if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" || len(*bundle.Sessions[0].Decisions) != 1 || len(bundle.Sessions[0].Prompts) != 3 {
 			t.Fatalf("want the low-confidence session dropped whole and the other's current decision kept, got %+v", bundle.Sessions)
 		}
 	})
@@ -981,7 +988,7 @@ func TestBundleWithoutDecisionsEncodesWithoutTheField(t *testing.T) {
 	}
 }
 
-const citedPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and those its current decisions cite are kept"
+const citedPromptsNote = "older prompts omitted to fit the size limit; the first and latest prompts of each session and the prompts their current decisions cite are kept"
 
 // The older-prompts stage spares the turns a session's current decisions
 // cite; a superseded decision's turns get no such protection.
@@ -1091,5 +1098,77 @@ func TestFitWithoutDecisionsKeepsItsDigest(t *testing.T) {
 	}
 	if want := "584b8c31a78525735be159d78a3cd67b42269e4a48274b600ba2f08e090d5d8b"; bundle.Digest != want {
 		t.Fatalf("digest = %s, want %s", bundle.Digest, want)
+	}
+}
+
+const shortenedNote = "text of prompts that current decisions cite shortened to fit the size limit, longest first; the prompts and their decisions are kept"
+
+// An oversized cited prompt is shortened, longest first, before any session
+// goes: it costs neither its own session nor a lower-confidence one, and its
+// entry and index stay so the decision's anchor still resolves.
+func TestFitBytesShortensAnOversizedCitedPromptBeforeDroppingSessions(t *testing.T) {
+	build := func() *Bundle {
+		session := func(id string, confidence float64, text string) Session {
+			return Session{RootSessionID: id, Confidence: confidence, Prompts: []Prompt{
+				{ID: id + "1", Index: 1, Text: "first"},
+				{ID: id + "4", Index: 4, Text: text},
+				{ID: id + "9", Index: 9, Text: "latest"},
+			}, Decisions: decisionsOf(SessionDecision{Summary: "Chose a parser.", Who: "human", Category: "implementation", Turns: []int{4}})}
+		}
+		return &Bundle{Sessions: []Session{
+			session("high", 0.9, strings.Repeat("é pasted log ", 20000)),
+			session("low", 0.1, strings.Repeat("medium ", 300)),
+		}}
+	}
+	for _, tc := range []struct {
+		name  string
+		limit func(*Bundle) int
+		high  func(string) bool
+		low   int
+	}{
+		{"to its head", func(b *Bundle) int { return contentBytes(t, b) - 200000 }, func(text string) bool {
+			return len(text) <= CitedPromptHeadBytes && len(text) > CitedPromptHeadBytes-4 && utf8.ValidString(text)
+		}, len(strings.Repeat("medium ", 300))},
+		{"then both heads", func(b *Bundle) int {
+			shortened := build()
+			shortenCitedPrompts(shortened)
+			shortenCitedPrompts(shortened)
+			shortened.Truncated = []string{shortenedNote}
+			return contentBytes(t, shortened)
+		}, func(text string) bool { return len(text) <= CitedPromptHeadBytes }, CitedPromptHeadBytes},
+		{"then to empty text", func(b *Bundle) int {
+			empty := build()
+			for _, s := range empty.Sessions {
+				s.Prompts[1].Text = ""
+			}
+			empty.Truncated = []string{shortenedNote}
+			return contentBytes(t, empty)
+		}, func(text string) bool { return text == "" }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := build()
+			limit := tc.limit(bundle)
+			if err := Fit(bundle, Caps{MaxBytes: limit}); err != nil {
+				t.Fatal(err)
+			}
+			if got := contentBytes(t, bundle); got > limit {
+				t.Fatalf("content %d bytes over the %d budget", got, limit)
+			}
+			if len(bundle.Sessions) != 2 || len(*bundle.Sessions[0].Decisions) != 1 || len(bundle.Sessions[0].Prompts) != 3 || len(bundle.Sessions[1].Prompts) != 3 {
+				t.Fatalf("a session, decision or prompt entry was dropped: %+v", bundle.Sessions)
+			}
+			if bundle.Sessions[0].Prompts[1].Index != 4 || !tc.high(bundle.Sessions[0].Prompts[1].Text) {
+				t.Fatalf("high session's cited prompt is %d bytes", len(bundle.Sessions[0].Prompts[1].Text))
+			}
+			if got := len(bundle.Sessions[1].Prompts[1].Text); got != tc.low && !(tc.low == CitedPromptHeadBytes && got <= tc.low) {
+				t.Fatalf("low session's cited prompt is %d bytes, want %d", got, tc.low)
+			}
+			if bundle.Sessions[0].Prompts[0].Text != "first" || bundle.Sessions[0].Prompts[2].Text != "latest" {
+				t.Fatalf("uncited prompts were shortened: %+v", bundle.Sessions[0].Prompts)
+			}
+			if !slices.Contains(bundle.Truncated, shortenedNote) {
+				t.Fatalf("shortening not noted: %q", bundle.Truncated)
+			}
+		})
 	}
 }

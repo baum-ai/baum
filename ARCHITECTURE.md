@@ -115,7 +115,9 @@ never as zero.
   superseded decisions after every prompt-text stage and current ones only
   with their session. The prompts at the turns current decisions cite are
   kept like a session's first and latest prompts: the older-prompts stage
-  spares them, so they go only with their session.
+  spares them, and before any session is dropped their text is shortened,
+  longest first, to a bounded head and then to empty text, keeping each
+  prompt's entry so its anchor still resolves.
 - The same inputs produce the same bundle and digest.
 
 ## `review`
