@@ -163,18 +163,26 @@ func foldedLetterBefore(text []byte, i int) int {
 func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 	src := []byte(text)
 	found := 0
+	err := eachEmail(ctx, src, func(start, end int) {
+		if bytes.Equal(out[start:end], src[start:end]) {
+			found++
+		}
+		for i := start; i < end; i++ {
+			out[i] = formatMask(src[i])
+		}
+	})
+	return found, err
+}
+
+// eachEmail calls visit with the offsets of every address in src, in full,
+// and stops with ctx's error if ctx ends.
+func eachEmail(ctx context.Context, src []byte, visit func(start, end int)) error {
 	for at := bytes.IndexByte(src, '@'); at >= 0; {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return err
 		}
 		if start, end, ok := matchEmail(src, at, at+1, false); ok {
-			fresh := bytes.Equal(out[start:end], src[start:end])
-			if fresh {
-				found++
-			}
-			for i := start; i < end; i++ {
-				out[i] = formatMask(src[i])
-			}
+			visit(start, end)
 		}
 		next := bytes.IndexByte(src[at+1:], '@')
 		if next < 0 {
@@ -182,7 +190,7 @@ func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 		}
 		at += 1 + next
 	}
-	return found, nil
+	return nil
 }
 
 // formatMask is goredact's format-preserving mask of one byte.
@@ -233,7 +241,21 @@ func (s *Summary) Add(other Summary) {
 // Engine redacts with Config. It is immutable and safe for concurrent use.
 type Engine struct {
 	inner *goredact.Engine
+	// finders holds idle engines that report findings for FindContext; one
+	// is compiled whenever every other is busy.
+	finders chan *finder
 }
+
+// finder is a goredact engine whose OnFinding collects into spans, used by
+// one FindContext call at a time.
+type finder struct {
+	engine *goredact.Engine
+	spans  []Span
+}
+
+// Span is the byte offsets [Start, End) of one secret or address the engine
+// masks.
+type Span struct{ Start, End int }
 
 // New compiles the redaction rules.
 func New() (*Engine, error) {
@@ -241,7 +263,58 @@ func New() (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redact: constructing engine: %w", err)
 	}
-	return &Engine{inner: inner}, nil
+	return &Engine{inner: inner, finders: make(chan *finder, 4)}, nil
+}
+
+func newFinder() (*finder, error) {
+	f := &finder{}
+	config := Config
+	config.RecordAligned = false
+	config.OnFinding = func(found goredact.Finding) {
+		f.spans = append(f.spans, Span{Start: int(found.Start), End: int(found.End)})
+	}
+	engine, err := goredact.New(config)
+	if err != nil {
+		return nil, fmt.Errorf("redact: constructing engine: %w", err)
+	}
+	f.engine = engine
+	return f, nil
+}
+
+// FindContext returns, in input order, the spans RedactContext masks in
+// text, one per finding: two secrets side by side are two spans however
+// little lies between them. An e-mail address is reported in full, and
+// may also be reported as the rule's window saw it. It stops with ctx's
+// error if ctx ends first.
+func (e *Engine) FindContext(ctx context.Context, text string) ([]Span, error) {
+	if text == "" {
+		return nil, nil
+	}
+	var f *finder
+	select {
+	case f = <-e.finders:
+	default:
+		var err error
+		if f, err = newFinder(); err != nil {
+			return nil, err
+		}
+	}
+	defer func() {
+		f.spans = nil
+		select {
+		case e.finders <- f:
+		default:
+		}
+	}()
+	if _, err := f.engine.Redact(ctx, io.Discard, strings.NewReader(text)); err != nil {
+		return nil, fmt.Errorf("redact: %w", err)
+	}
+	spans := f.spans
+	err := eachEmail(ctx, []byte(text), func(start, end int) { spans = append(spans, Span{Start: start, End: end}) })
+	if err != nil {
+		return nil, fmt.Errorf("redact: %w", err)
+	}
+	return spans, nil
 }
 
 // Profile describes the configuration for a document's generator notes.

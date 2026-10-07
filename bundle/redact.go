@@ -258,6 +258,12 @@ func (r *Redactor) RedactString(ctx context.Context, s string) (string, int, err
 	return redacted, summary.Findings, nil
 }
 
+// Find returns the spans RedactString masks in s, one per finding, so two
+// secrets written side by side are told apart.
+func (r *Redactor) Find(ctx context.Context, s string) ([]redact.Span, error) {
+	return r.engine.FindContext(ctx, s)
+}
+
 // RedactLines redacts lines that read as one text, such as a code excerpt's
 // lines, as their newline-joined text, so a secret written across several of
 // them is found as a whole. It returns as many lines as it was given, each

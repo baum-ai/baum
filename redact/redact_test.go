@@ -292,6 +292,43 @@ func TestRedactContextCancelledDuringAddressPass(t *testing.T) {
 	t.Fatal("RedactContext never observed cancellation")
 }
 
+// FindContext reports one span per finding, covering the bytes
+// RedactContext masks, so secrets side by side stay apart.
+func TestFindContextReportsEachFinding(t *testing.T) {
+	e := engine(t)
+	key := "AKIA" + "Z3MQ5TNV2XWB7KDL"
+	in := "mail " + email + " keys " + key + "-" + key + " and " + plantedURL
+	out, summary, err := e.Redact(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spans, err := e.FindContext(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := make([]bool, len(in))
+	keys := 0
+	for _, span := range spans {
+		if in[span.Start:span.End] == key {
+			keys++
+		}
+		for i := span.Start; i < span.End; i++ {
+			covered[i] = true
+		}
+	}
+	if keys != 2 || len(spans) < summary.Findings {
+		t.Fatalf("spans %v for %d findings", spans, summary.Findings)
+	}
+	for i := range in {
+		if out[i] != in[i] && !covered[i] {
+			t.Fatalf("byte %d masked outside every span: %v", i, spans)
+		}
+	}
+	if spans, err := e.FindContext(context.Background(), "plain text"); err != nil || len(spans) != 0 {
+		t.Fatalf("plain text: %v %v", spans, err)
+	}
+}
+
 func TestExactWindowWithoutDotIsNotAnAddress(t *testing.T) {
 	e, err := New()
 	if err != nil {

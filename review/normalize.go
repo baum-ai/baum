@@ -27,6 +27,9 @@ type authoredNormalizer struct {
 	version  int
 	hunks    map[string]bundlepkg.Hunk
 	findings []string
+	// probes counts the taken suffixes dedupe tried, which tests read to
+	// bound its work.
+	probes int
 	// identifier, when set, sees each value walk respells as an identifier,
 	// as it was before the respelling, with the respelling and the schema
 	// node that closes it.
@@ -268,6 +271,7 @@ func (n *authoredNormalizer) dedupe(list []any, items map[string]any) {
 			suffix := max(next[id], 2)
 			for candidate = id + "_" + strconv.Itoa(suffix); seen[candidate]; candidate = id + "_" + strconv.Itoa(suffix) {
 				suffix++
+				n.probes++
 			}
 			next[id] = suffix + 1
 		}

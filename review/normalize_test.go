@@ -686,14 +686,20 @@ func TestDedupeTakesTheLowestFreeSuffix(t *testing.T) {
 	checkEqual(t, strings.Join(want, " "), strings.Join(dedupeIDs(ids), " "))
 }
 
-// A megabyte of one repeated ID is renamed in linear time, not by trying
-// every taken suffix again for each repeat.
+// A megabyte of one repeated ID is renamed in linear work: each repeat
+// resumes from the last suffix taken instead of trying every taken one again.
 func TestDedupeIsLinearInRepeats(t *testing.T) {
 	ids := slices.Repeat([]string{"rsk_r"}, 1<<20/len(`{"id":"rsk_r"},`))
-	start := time.Now()
-	got := dedupeIDs(ids)
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("deduplicating %d repeats took %s", len(ids), elapsed)
+	ids = append(ids, "rsk_r_5", "rsk_r_7")
+	list := make([]any, 0, len(ids))
+	for _, id := range ids {
+		list = append(list, map[string]any{"id": id})
 	}
-	checkEqual(t, "rsk_r_"+strconv.Itoa(len(ids)), got[len(got)-1])
+	n := &authoredNormalizer{}
+	n.dedupe(list, dedupeItems)
+	if n.probes > len(ids) {
+		t.Fatalf("deduplicating %d IDs tried %d taken suffixes", len(ids), n.probes)
+	}
+	got := list[len(ids)-3].(map[string]any)["id"].(string)
+	checkEqual(t, "rsk_r_"+strconv.Itoa(len(ids)-2), got)
 }

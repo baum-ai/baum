@@ -9,6 +9,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,13 +57,16 @@ func (r *OutputRedactor) Document(ctx context.Context, document []byte) ([]byte,
 // respells as one underscore), and is masked in place with the
 // format-preserving mask, which Prepare respells to x, 9 and underscores. A
 // value whose respelling is over its maxLength, which validation rejects
-// anyway, is masked whole without the scan and without a count.
+// anyway, is scanned whole and from its first closedCopyLimit restarts, then
+// masked whole, counted only if a secret was found in it.
 //
 // The same secret may be written in another spelling that no rule detects,
-// in upper case or already respelled. So every identifier whose respelling
-// contains the respelling of a masked span is masked whole too. Every other
-// string value of the document equal to a masked identifier is masked as it
-// is, so a reference to it still matches.
+// in upper case or already respelled. So every finding, in an identifier or
+// anywhere else in the document as written, is a source, and every
+// identifier whose respelling contains a source's respelling is masked whole
+// and counted. Free text is not masked here; Document masks it after
+// Prepare. Every other string value of the document equal to a masked
+// identifier is masked as it is, so a reference to it still matches.
 //
 // A value masked for a secret counts in Masked as its spans and once in
 // MaskedClosed, however many places hold it, and a host rejects the run when
@@ -114,6 +118,11 @@ type outputRedaction struct {
 	// masked.
 	maskedClosed int
 	changed      bool
+	// sources are the respelled findings Identifiers collects, nil
+	// otherwise; scanned is the text the closed-value and source scans
+	// joined, which tests read to bound their cost.
+	sources map[string]bool
+	scanned int
 }
 
 func (o *outputRedaction) text(s string) (string, error) {
@@ -187,13 +196,15 @@ type outputSlot struct {
 	// none, and length is the length it bounds: the value's own, or for an
 	// identifier as the model wrote it, its respelling's.
 	limit, length int
-	set           func(string)
+	// counted marks a closed value a finding masked and counted.
+	counted bool
+	set     func(string)
 }
 
-// maskedWhole reports a closed value maskClosed masks whole without scanning
-// it or counting it: one longer than its maxLength, which validation rejects,
-// or, without a maxLength, one with more than closedCopyLimit scan restarts,
-// which fits none of the schema's patterns.
+// maskedWhole reports a closed value maskClosed masks whole, after a scan
+// capped at closedCopyLimit restarts: one longer than its maxLength, which
+// validation rejects, or, without a maxLength, one with more than
+// closedCopyLimit restarts, which fits none of the schema's patterns.
 func (s outputSlot) maskedWhole() bool {
 	if s.limit > 0 {
 		return s.length > s.limit
@@ -404,20 +415,21 @@ func (o *outputRedaction) maskSlots() error {
 	return o.maskClosed(closed)
 }
 
-// closedCopyLimit caps the restarts of the scan of a closed value without a
-// maxLength. No such value the schema closes has more than a few (a date-time
-// has six at most), and the cap keeps the copies of one value linear in its
-// length.
+// closedCopyLimit caps the restarts of the scan of a closed value its bound
+// does not cap: one whose schema sets no maxLength, or one over its
+// maxLength. No value the schema closes without a maxLength has more than a
+// few restarts (a date-time has six at most).
 const closedCopyLimit = 16
 
-// closedSecretLimit caps the masked spans Identifiers looks for in the other
-// spellings of identifiers. With more, a secret was found already, so the run
-// fails, and every other identifier is masked whole uncounted instead, which
-// keeps the search linear in the document's size.
-const closedSecretLimit = 64
+// closedScanWindow is how much of a value a copy from a restart holds. It is
+// well over the longest secret a rule detects, and the copy from the start of
+// the value holds all of it, so a long value costs the scan its own length
+// plus a window per restart, not a copy of every suffix.
+const closedScanWindow = 4096
 
 // closedScanBatch caps the text one scan of closed values joins, so the copies
-// of a document's values never sit in memory all at once.
+// of a document's values never sit in memory all at once; a single value
+// longer than it is scanned in a batch of its own.
 const closedScanBatch = 1 << 20
 
 // maskClosed scans on their own the values a pattern or date-time closed,
@@ -425,43 +437,34 @@ const closedScanBatch = 1 << 20
 // category or a prefixed ID admits any text the model copies, a secret
 // included, and the prefix or the words around it can hide the secret from a
 // rule that needs a word boundary (sec_sk_live_...). Each value is scanned
-// whole and from after every run of characters in it that are not letters or
-// digits (see scanRestart), so sec_sk_live_... and sec_auth_sk_live_... both
-// expose sk_live_...; the copies are one text joined by newlines, as in scan,
-// in batches of at most closedScanBatch. A byte any copy masks is masked in
-// the value with formatMaskByte, which keeps its length. The mask writes only
-// x, X, 9 and the characters it keeps, so a masked value still fits a pattern
-// of lowercase identifiers, but not one of hex digits, which then fails
-// validation.
+// whole and, a window of closedScanWindow bytes at a time, from after every
+// run of characters in it that are not letters or digits (see scanRestart),
+// so sec_sk_live_... and sec_auth_sk_live_... both expose sk_live_...; the
+// copies are one text joined by newlines, as in scan, in batches of at most
+// closedScanBatch. Each finding is masked in the value with formatMaskByte,
+// which keeps its length. The mask writes only x, X, 9 and the characters it
+// keeps, so a masked value still fits a pattern of lowercase identifiers, but
+// not one of hex digits, which then fails validation.
 //
-// A value within its maxLength restarts at most once per character of its
-// bounded length, so its copies cost at most maxLength+1 times its length. A
-// value whose schema sets no maxLength (a SHA, a hunk ID, a date-time) may be
-// valid at any length and is scanned whatever its length, with at most
-// closedCopyLimit restarts. A value maskedWhole names, over its maxLength or
-// over that cap, is masked whole instead, byte by byte: validation rejects it
-// or no pattern admits it, so nothing is lost, and without a detection it
-// counts nowhere.
+// A value within its maxLength has at most one restart per character of its
+// bounded length, so its copies cost at most maxLength+1 windows. A value
+// whose schema sets no maxLength (a SHA, a hunk ID, a date-time) may be valid
+// at any length and is scanned whatever its length. A value maskedWhole
+// names, over its maxLength or with more than closedCopyLimit restarts and no
+// maxLength, is scanned whole and from its first closedCopyLimit restarts,
+// then masked whole: validation rejects it or no pattern admits it, so
+// nothing is lost.
 //
-// A value counts as its spans: runs of masked bytes, where a gap of characters
-// the mask leaves as they are (the separators it keeps, x and 9) does not
-// split a run. Copies that mask the same secret, or a secret with an x in it,
-// are one span. maskedClosed counts the values masked for a secret.
+// A value counts when a finding masked it: as its distinct findings in
+// masked, and once in maskedClosed. A value masked whole with nothing found
+// counts nowhere. Each finding's text is also a source for Identifiers (see
+// addSource).
 func (o *outputRedaction) maskClosed(indexes []int) error {
 	var batch []int
 	size := 0
 	for _, i := range indexes {
-		slot := o.slots[i]
-		if slot.maskedWhole() {
-			if masked := formatMask(slot.text); masked != slot.text {
-				slot.set(masked)
-				o.changed = true
-			}
-			continue
-		}
 		batch = append(batch, i)
-		// A value of n bytes with k restarts joins about n*(k+1) bytes.
-		size += len(slot.text) * (scanRestarts(slot.text) + 1)
+		size += closedCopiesLength(o.slots[i])
 		if size >= closedScanBatch {
 			if err := o.scanClosed(batch); err != nil {
 				return err
@@ -472,10 +475,40 @@ func (o *outputRedaction) maskClosed(indexes []int) error {
 	return o.scanClosed(batch)
 }
 
-// scanBoundary reports a byte that is not an ASCII letter or digit: the
-// bytes normalization respells, a run of them as one underscore.
-func scanBoundary(b byte) bool {
-	return (b < 'a' || b > 'z') && (b < 'A' || b > 'Z') && (b < '0' || b > '9')
+// closedScanStarts lists the offsets a closed value is scanned from: its
+// start and its restarts, at most closedCopyLimit of them for a value its
+// bound does not cap.
+func closedScanStarts(slot outputSlot) []int {
+	starts := []int{0}
+	capped := slot.maskedWhole()
+	for from := range len(slot.text) {
+		if capped && len(starts) > closedCopyLimit {
+			break
+		}
+		if scanRestart(slot.text, from) {
+			starts = append(starts, from)
+		}
+	}
+	return starts
+}
+
+// closedCopy is one copy of a closed value in the joined text of a scan:
+// the value's bytes from..from+n at offset at.
+type closedCopy struct{ slot, from, at, n int }
+
+func closedCopiesLength(slot outputSlot) int {
+	size := 0
+	for k, from := range closedScanStarts(slot) {
+		size += closedCopyLength(slot.text, k, from) + 1
+	}
+	return size
+}
+
+func closedCopyLength(text string, k, from int) int {
+	if k == 0 {
+		return len(text)
+	}
+	return min(len(text)-from, closedScanWindow)
 }
 
 // scanRestart reports an offset a closed value is scanned again from: the end
@@ -487,6 +520,12 @@ func scanRestart(text string, from int) bool {
 	return from > 0 && from < len(text) && scanBoundary(text[from-1]) && !scanBoundary(text[from])
 }
 
+// scanBoundary reports a byte that is not an ASCII letter or digit: the
+// bytes normalization respells, a run of them as one underscore.
+func scanBoundary(b byte) bool {
+	return (b < 'a' || b > 'z') && (b < 'A' || b > 'Z') && (b < '0' || b > '9')
+}
+
 func scanRestarts(text string) int {
 	count := 0
 	for from := range len(text) {
@@ -495,15 +534,6 @@ func scanRestarts(text string) int {
 		}
 	}
 	return count
-}
-
-// formatMask masks every byte of a text with formatMaskByte.
-func formatMask(text string) string {
-	masked := []byte(text)
-	for j := range masked {
-		masked[j] = formatMaskByte(masked[j])
-	}
-	return string(masked)
 }
 
 // formatMaskByte is goredact's format-preserving mask of one byte.
@@ -521,83 +551,108 @@ func formatMaskByte(b byte) byte {
 	return '*'
 }
 
-// scanClosed masks the secrets in one batch of values of at most
-// their maxLength, or with at most closedCopyLimit boundaries (see maskClosed).
+// formatMask masks every byte of a text with formatMaskByte.
+func formatMask(text string) string {
+	masked := []byte(text)
+	for j := range masked {
+		masked[j] = formatMaskByte(masked[j])
+	}
+	return string(masked)
+}
+
+// scanClosed masks the findings in one batch of closed values (see
+// maskClosed).
 func (o *outputRedaction) scanClosed(indexes []int) error {
 	if len(indexes) == 0 {
 		return nil
 	}
-	type copyOf struct{ slot, from, at int }
-	var copies []copyOf
+	var copies []closedCopy
 	var builder strings.Builder
 	for _, i := range indexes {
 		text := o.slots[i].text
-		for from := range len(text) {
-			if from > 0 && !scanRestart(text, from) {
-				continue
-			}
+		for k, from := range closedScanStarts(o.slots[i]) {
+			n := closedCopyLength(text, k, from)
 			if builder.Len() > 0 {
 				builder.WriteByte('\n')
 			}
-			copies = append(copies, copyOf{i, from, builder.Len()})
-			builder.WriteString(text[from:])
+			copies = append(copies, closedCopy{i, from, builder.Len(), n})
+			builder.WriteString(text[from : from+n])
 		}
 	}
 	joined := builder.String()
-	masked, _, err := o.redactor.RedactString(o.ctx, joined)
+	o.scanned += len(joined)
+	spans, err := o.redactor.Find(o.ctx, joined)
 	if err != nil {
 		return err
 	}
-	if len(masked) != len(joined) {
-		return errOutputMaskLength
-	}
-	out := make(map[int][]byte, len(indexes))
-	for _, c := range copies {
-		text := o.slots[c.slot].text
-		if out[c.slot] == nil {
-			out[c.slot] = []byte(text)
-		}
-		for j := range len(text) - c.from {
-			if masked[c.at+j] != text[c.from+j] {
-				out[c.slot][c.from+j] = formatMaskByte(text[c.from+j])
+	// Each finding is cut back to the copies it lies in, as offsets into
+	// their values.
+	found := map[int][][2]int{}
+	for _, span := range spans {
+		k := sort.Search(len(copies), func(k int) bool { return copies[k].at+copies[k].n > span.Start })
+		for ; k < len(copies) && copies[k].at < span.End; k++ {
+			c := copies[k]
+			start, end := max(span.Start, c.at)-c.at+c.from, min(span.End, c.at+c.n)-c.at+c.from
+			if start < end {
+				found[c.slot] = append(found[c.slot], [2]int{start, end})
 			}
 		}
 	}
 	for _, i := range indexes {
-		slot := o.slots[i]
-		if spans := maskedSpans(slot.text, string(out[i])); spans > 0 {
-			slot.set(string(out[i]))
-			o.masked += spans
-			o.maskedClosed++
+		slot := &o.slots[i]
+		ranges := found[i]
+		for _, r := range ranges {
+			o.addSource(slot.text[r[0]:r[1]])
+		}
+		whole := slot.maskedWhole()
+		masked := []byte(slot.text)
+		if whole {
+			masked = []byte(formatMask(slot.text))
+		} else {
+			for _, r := range ranges {
+				for j := r[0]; j < r[1]; j++ {
+					masked[j] = formatMaskByte(slot.text[j])
+				}
+			}
+		}
+		changed := string(masked) != slot.text
+		if changed {
+			slot.set(string(masked))
 			o.changed = true
+		}
+		if len(ranges) > 0 && (whole || changed) {
+			o.masked += distinctFindings(ranges)
+			o.maskedClosed++
+			slot.counted = true
 		}
 	}
 	return nil
 }
 
-// maskedSpans counts the runs of bytes that differ between a text and its mask.
-// A run goes on through bytes the mask leaves as they are: x, X, 9 and the
-// separators it keeps.
-func maskedSpans(text, masked string) int { return len(maskedRanges(text, masked)) }
-
-// maskedRanges returns the runs maskedSpans counts, as [start, end) offsets
-// from the first to the last byte the mask changed.
-func maskedRanges(text, masked string) [][2]int {
-	var ranges [][2]int
-	inRun := false
-	for j := range len(text) {
-		switch {
-		case masked[j] != text[j]:
-			if !inRun {
-				ranges = append(ranges, [2]int{j, j + 1})
-			}
-			ranges[len(ranges)-1][1] = j + 1
-			inRun = true
-		case !strings.ContainsRune("xX9-_.:/+=@", rune(text[j])):
-			inRun = false
+// distinctFindings counts the findings in a value, where the copies that
+// found the same secret overlap and count once.
+func distinctFindings(ranges [][2]int) int {
+	sorted := slices.Clone(ranges)
+	slices.SortFunc(sorted, func(a, b [2]int) int { return a[0] - b[0] })
+	count, end := 0, -1
+	for _, r := range sorted {
+		if r[0] >= end {
+			count++
 		}
+		end = max(end, r[1])
 	}
-	return ranges
+	return count
+}
+
+// addSource records, while Identifiers runs, the respelling of a finding's
+// text, which otherSpellings looks for in every identifier.
+func (o *outputRedaction) addSource(text string) {
+	if o.sources == nil {
+		return
+	}
+	if token := identifierToken(text); token != "" {
+		o.sources[token] = true
+	}
 }
 
 // scan redacts the joined text of the slots it is given and returns, by slot
@@ -677,16 +732,25 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 }
 
 // identifiers is Identifiers: it scans the values normalization respells, as
-// slotClosed slots of their own bounded by their respelling, masks the other
-// spellings of what it found (see otherSpellings), and masks each string
-// value of the document equal to one it masked.
+// slotClosed slots of their own bounded by their respelling, collects the
+// findings of the whole document as sources (see documentSources), masks the
+// other spellings of them (see otherSpellings), and masks each string value
+// of the document equal to an identifier it masked.
 func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return document, nil
 	}
+	// The walk normalizes value; raw keeps the document as written.
+	var raw any
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
 	masks := map[string]string{}
-	o.slots = nil
+	o.slots, o.sources = nil, map[string]bool{}
+	defer func() { o.slots, o.sources = nil, nil }()
 	var indexes []int
 	for _, id := range authoredIdentifiers(value, o.schema) {
 		text := id.text
@@ -703,61 +767,156 @@ func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 		indexes = append(indexes, len(o.slots))
 		o.slots = append(o.slots, slot)
 	}
-	err := o.maskClosed(indexes)
-	if err == nil {
-		o.otherSpellings(masks)
-	}
-	o.slots = nil
-	if err != nil || len(masks) == 0 {
+	if err := o.maskClosed(indexes); err != nil {
 		return document, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(document))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
+	if err := o.documentSources(raw); err != nil {
+		return document, err
 	}
-	return json.Marshal(replaceStrings(value, masks))
+	o.otherSpellings(masks)
+	if len(masks) == 0 {
+		return document, nil
+	}
+	return json.Marshal(replaceStrings(raw, masks))
 }
 
-// otherSpellings masks whole, and counts, each identifier slot not masked yet
-// whose respelling (identifierToken) contains the respelling of a span masked
-// for a secret in another: the same secret upper-cased, already respelled or
-// behind a prefix, which no rule may detect. Containment is plain substring,
-// so no spelling of the secret survives; an identifier it masks that held no
-// secret changes no outcome, since the secret found fails the run already.
-// Over closedSecretLimit spans, every identifier left is masked whole
-// uncounted instead.
-func (o *outputRedaction) otherSpellings(masks map[string]string) {
-	var secrets []string
-	for _, slot := range o.slots {
-		masked, ok := masks[slot.text]
-		if !ok || slot.maskedWhole() {
-			continue
+// documentSources adds as sources the findings in every key and string of
+// the document as the model wrote it, joined by newlines into one scan, so a
+// secret written in free text is known when an identifier holds it in a
+// spelling no rule detects. Nothing is masked here: Document masks free text
+// after Prepare.
+func (o *outputRedaction) documentSources(value any) error {
+	var builder strings.Builder
+	write := func(s string) {
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
 		}
-		for _, r := range maskedRanges(slot.text, masked) {
-			if token := identifierToken(slot.text[r[0]:r[1]]); token != "" && !slices.Contains(secrets, token) {
-				secrets = append(secrets, token)
+		builder.WriteString(s)
+	}
+	var collect func(any)
+	collect = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			for key, child := range v {
+				write(key)
+				collect(child)
 			}
+		case []any:
+			for _, child := range v {
+				collect(child)
+			}
+		case string:
+			write(v)
 		}
 	}
-	if len(secrets) == 0 {
+	collect(value)
+	joined := builder.String()
+	o.scanned += len(joined)
+	spans, err := o.redactor.Find(o.ctx, joined)
+	if err != nil {
+		return err
+	}
+	for _, span := range spans {
+		o.addSource(joined[span.Start:span.End])
+	}
+	return nil
+}
+
+// otherSpellings masks whole, and counts, each identifier slot no finding
+// counted yet whose respelling (identifierToken) contains a source: the
+// respelling of a finding in another identifier or in the document's other
+// text. That is the same secret upper-cased, already respelled or behind a
+// prefix, which no rule may detect. Containment is plain substring, so no
+// spelling of the secret survives, and a value masked whole uncounted counts
+// once it holds one. An identifier it masks that held no secret changes no
+// outcome that matters: a source in an identifier fails the run already, and
+// one in free text is a secret the model wrote. The sources are matched all
+// at once (see tokenMatcher), so the work is linear in the document's size.
+func (o *outputRedaction) otherSpellings(masks map[string]string) {
+	if len(o.sources) == 0 {
 		return
 	}
-	for _, slot := range o.slots {
-		if _, ok := masks[slot.text]; ok {
+	matcher := newTokenMatcher(slices.Sorted(maps.Keys(o.sources)))
+	for i := range o.slots {
+		slot := &o.slots[i]
+		if slot.counted || !matcher.contains(identifierToken(slot.text)) {
 			continue
 		}
-		if len(secrets) > closedSecretLimit {
-			masks[slot.text] = formatMask(slot.text)
-			continue
+		masks[slot.text] = formatMask(slot.text)
+		o.masked++
+		o.maskedClosed++
+		slot.counted = true
+	}
+}
+
+// tokenMatcher finds any of a set of byte strings in a text in one pass over
+// it: an Aho-Corasick automaton over the strings.
+type tokenMatcher struct {
+	next []map[byte]int
+	fail []int
+	out  []bool
+}
+
+func newTokenMatcher(patterns []string) *tokenMatcher {
+	m := &tokenMatcher{next: []map[byte]int{{}}, fail: []int{0}, out: []bool{false}}
+	for _, pattern := range patterns {
+		state := 0
+		for i := range len(pattern) {
+			child, ok := m.next[state][pattern[i]]
+			if !ok {
+				child = len(m.next)
+				m.next = append(m.next, map[byte]int{})
+				m.fail = append(m.fail, 0)
+				m.out = append(m.out, false)
+				m.next[state][pattern[i]] = child
+			}
+			state = child
 		}
-		token := identifierToken(slot.text)
-		if slices.ContainsFunc(secrets, func(secret string) bool { return strings.Contains(token, secret) }) {
-			masks[slot.text] = formatMask(slot.text)
-			o.masked++
-			o.maskedClosed++
+		m.out[state] = m.out[state] || pattern != ""
+	}
+	// Breadth first, each state falls back to the longest proper suffix of
+	// its string that is a prefix of some pattern.
+	queue := slices.Collect(maps.Values(m.next[0]))
+	for len(queue) > 0 {
+		state := queue[0]
+		queue = queue[1:]
+		for b, child := range m.next[state] {
+			fallback := m.fail[state]
+			for fallback > 0 {
+				if _, ok := m.next[fallback][b]; ok {
+					break
+				}
+				fallback = m.fail[fallback]
+			}
+			if target, ok := m.next[fallback][b]; ok && target != child {
+				m.fail[child] = target
+			}
+			m.out[child] = m.out[child] || m.out[m.fail[child]]
+			queue = append(queue, child)
 		}
 	}
+	return m
+}
+
+// contains reports whether text holds any of the patterns.
+func (m *tokenMatcher) contains(text string) bool {
+	state := 0
+	for i := range len(text) {
+		b := text[i]
+		for state > 0 {
+			if _, ok := m.next[state][b]; ok {
+				break
+			}
+			state = m.fail[state]
+		}
+		if child, ok := m.next[state][b]; ok {
+			state = child
+		}
+		if m.out[state] {
+			return true
+		}
+	}
+	return false
 }
 
 // replaceStrings replaces each string value of a decoded document found in

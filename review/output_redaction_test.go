@@ -594,21 +594,29 @@ func TestOutputRedactorCountsClosedValuesAcrossCalls(t *testing.T) {
 	checkEqual(t, 2, o.MaskedClosed())
 }
 
-func TestMaskedSpans(t *testing.T) {
+func TestDistinctFindings(t *testing.T) {
 	for _, c := range []struct {
-		text, masked string
-		spans        int
+		ranges [][2]int
+		count  int
 	}{
-		{"auth", "auth", 0},
-		{"sk_live_ab", "xx_xxxx_xx", 1},
-		{"abc_def", "xxx_def", 1},
-		// A gap that holds a letter the mask changes splits spans.
-		{"ab_cd_ef", "xx_cd_xx", 2},
-		// A gap of x, 9 and separators does not.
-		{"ab_x9_cd", "xx_x9_xx", 1},
+		{nil, 0},
+		{[][2]int{{0, 10}}, 1},
+		// Copies that found the same secret overlap.
+		{[][2]int{{4, 10}, {0, 10}}, 1},
+		// Secrets side by side are apart.
+		{[][2]int{{0, 20}, {21, 41}}, 2},
+		{[][2]int{{0, 20}, {20, 41}}, 2},
 	} {
-		checkEqual(t, c.spans, maskedSpans(c.text, c.masked))
+		checkEqual(t, c.count, distinctFindings(c.ranges))
 	}
+}
+
+func TestTokenMatcher(t *testing.T) {
+	m := newTokenMatcher([]string{"he", "she", "hers", "akia_key", ""})
+	for text, want := range map[string]bool{"ushers": true, "xsh": false, "": false, "ev_akia_key_2": true, "akia_ke": false, "h": false, "ahishe": true} {
+		checkEqual(t, want, m.contains(text))
+	}
+	checkEqual(t, false, newTokenMatcher(nil).contains("anything"))
 }
 
 // Attention refs are closed by a pattern with a group of literal prefixes.
@@ -963,4 +971,142 @@ func TestOutputRedactionNeverCountsHarmlessIdentifiers(t *testing.T) {
 	requireNoLeakedSecret(t, "prepared", []byte(prepared))
 	checkEqual(t, 1, o.Masked())
 	checkEqual(t, 1, o.MaskedClosed())
+}
+
+// leakedAccessKey is an AWS-shaped access key ID the test redactor detects.
+const leakedAccessKey = "AKIA" + "Z3MQ5TNV2XWB7KDL"
+
+// preparedOutput is what Prepare writes around one section, as these tests
+// build it.
+func preparedOutput(section string) string {
+	return `{"relations":[],"schema":"baum.review/1","sections":[` + section + `]}`
+}
+
+// An identifier over its bound is still scanned: a secret found in it is
+// counted, the value is masked whole, and every other spelling of the secret
+// is masked whole and counted too.
+func TestOutputRedactionScansIdentifiersOverTheirBound(t *testing.T) {
+	m := strings.ToLower(testFormatMask(leakedAccessKey))
+	lower := strings.ToLower(leakedAccessKey)
+	document := `{"sections":[{"attention":{"refs":["ev_` + lower + `"],"text":"Look."},"evidence":[{"id":"` + leakedAccessKey + `-` + strings.Repeat("pad", 40) + `"}],"risks":[{"id":"` + lower + `-risk"}]}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, _, redacted := identifiersThenPrepare(t, o, document)
+	checkEqual(t, `{"sections":[{"attention":{"refs":["xx_`+m+`"],"text":"Look."},"evidence":[{"id":"`+testFormatMask(leakedAccessKey)+`-`+strings.Repeat("xxx", 40)+`"}],"risks":[{"id":"`+m+`-xxxx"}]}]}`, raw)
+	// Prepare respells the evidence ID over its bound, and Document masks
+	// it whole again, uncounted.
+	checkEqual(t, preparedOutput(`{"attention":{"refs":["xx_`+m+`"],"text":"Look."},"blocks":[],"evidence":[{"anchors":[],"id":"xx_`+m+`_`+strings.Repeat("x", 120)+`"}],"hunks":[],"risks":[{"id":"rsk_`+m+`_xxxx"}]}`), redacted)
+	checkEqual(t, 3, o.Masked())
+	checkEqual(t, 3, o.MaskedClosed())
+
+	// The same holds for a closed value Document alone scans over its
+	// maxLength.
+	const stripe = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	category := strings.Repeat("a", 100) + "_" + stripe
+	o = newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	masked, err := o.Document(context.Background(), []byte(`{"sections":[{"risks":[{"category":"`+category+`"}]}]}`))
+	checkNoError(t, err)
+	checkEqual(t, `{"sections":[{"risks":[{"category":"`+testFormatMask(category)+`"}]}]}`, string(masked))
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+
+	// A mixed-case token behind an underscore, over the bound as written.
+	o = newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	_, prepared, _ := identifiersThenPrepare(t, o, `{"sections":[{"risks":[{"category":"`+strings.Repeat("a", 100)+"_"+plantedSecret+`"}]}]}`)
+	if strings.Contains(strings.ToLower(prepared), strings.ToLower(plantedSecret[4:])) {
+		t.Fatalf("prepared keeps the token: %s", prepared)
+	}
+	checkEqual(t, 1, o.MaskedClosed())
+}
+
+// Two secrets side by side in one identifier are two findings, and each is a
+// source on its own, so a spelling holding either alone is masked.
+func TestOutputRedactionKeepsSideBySideFindingsApart(t *testing.T) {
+	m := strings.ToLower(testFormatMask(leakedAccessKey))
+	document := `{"sections":[{"attention":{"refs":["ev_` + strings.ToLower(leakedAccessKey) + `"],"text":"Look."},"evidence":[{"id":"` + leakedAccessKey + `-` + leakedAccessKey + `"}]}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, _, redacted := identifiersThenPrepare(t, o, document)
+	checkEqual(t, `{"sections":[{"attention":{"refs":["xx_`+m+`"],"text":"Look."},"evidence":[{"id":"`+testFormatMask(leakedAccessKey)+`-`+testFormatMask(leakedAccessKey)+`"}]}]}`, raw)
+	checkEqual(t, preparedOutput(`{"attention":{"refs":["xx_`+m+`"],"text":"Look."},"blocks":[],"evidence":[{"anchors":[],"id":"ev_`+m+`_`+m+`"}],"hunks":[],"risks":[]}`), redacted)
+	// Two findings in the evidence ID, one other spelling.
+	checkEqual(t, 3, o.Masked())
+	checkEqual(t, 2, o.MaskedClosed())
+}
+
+// A secret the model wrote in free text is a source too: an identifier that
+// holds it in a spelling no rule detects is masked and counted, while the
+// free text is left for Document.
+func TestOutputRedactionMasksIdentifiersHoldingAFreeTextSecret(t *testing.T) {
+	upper := "EV-" + strings.ToUpper(leakedProviderKey)
+	_, count, err := testRedactor(t).RedactString(context.Background(), upper)
+	checkNoError(t, err)
+	checkEqual(t, 0, count)
+	freeText, _, err := testRedactor(t).RedactString(context.Background(), leakedProviderKey)
+	checkNoError(t, err)
+	document := `{"sections":[{"evidence":[{"id":"` + upper + `"}],"title":"uses ` + leakedProviderKey + `"}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, _, redacted := identifiersThenPrepare(t, o, document)
+	checkEqual(t, `{"sections":[{"evidence":[{"id":"`+testFormatMask(upper)+`"}],"title":"uses `+leakedProviderKey+`"}]}`, raw)
+	checkEqual(t, preparedOutput(`{"attention":null,"blocks":[],"evidence":[{"anchors":[],"id":"ev_`+identifierToken(testFormatMask(upper))+`"}],"hunks":[],"risks":[],"title":"uses `+freeText+`"}`), redacted)
+	// The identifier, then the free text Document masks.
+	checkEqual(t, 2, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+}
+
+// Any number of sources is looked for in one pass: of a hundred addresses in
+// free text, the two that identifiers spell out are masked there.
+func TestOutputRedactionMatchesManySources(t *testing.T) {
+	var addresses []string
+	for i := range 100 {
+		addresses = append(addresses, fmt.Sprintf("user%d@example%d.com", i, i))
+	}
+	document := `{"sections":[{"evidence":[{"id":"Mail user42 example42 com"},{"id":"user99-example99-com"},{"id":"user7 example8 com"}],"title":"` + strings.Join(addresses, " ") + `"}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, err := o.Identifiers(context.Background(), []byte(document))
+	checkNoError(t, err)
+	checkEqual(t, `{"sections":[{"evidence":[{"id":"`+testFormatMask("Mail user42 example42 com")+`"},{"id":"`+testFormatMask("user99-example99-com")+`"},{"id":"user7 example8 com"}],"title":"`+strings.Join(addresses, " ")+`"}]}`, string(raw))
+	checkEqual(t, 2, o.Masked())
+	checkEqual(t, 2, o.MaskedClosed())
+}
+
+// One text at two positions, within its bound at one (a category) and over
+// it at the other (a section ID, which takes a prefix), is scanned once: kept
+// when it holds nothing, counted once when it holds a secret.
+func TestOutputRedactionScansATextAtTwoBoundsOnce(t *testing.T) {
+	document := func(text string) string {
+		return `{"sections":[{"id":"` + text + `","risks":[{"category":"` + text + `"}]}]}`
+	}
+	plain := strings.Repeat("b", 126)
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, err := o.Identifiers(context.Background(), []byte(document(plain)))
+	checkNoError(t, err)
+	checkEqual(t, document(plain), string(raw))
+	checkEqual(t, 0, o.MaskedClosed())
+
+	secret := leakedProviderKey + "-bbbb"
+	if len(identifierToken(secret)) != 126 {
+		t.Fatalf("the respelling is %d bytes", len(identifierToken(secret)))
+	}
+	raw, err = o.Identifiers(context.Background(), []byte(document(secret)))
+	checkNoError(t, err)
+	// The key's rule takes the hyphenated tail as part of the key.
+	checkEqual(t, document(testFormatMask(secret)), string(raw))
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+}
+
+// A value long as written but short once respelled costs its length and a
+// window per restart, not a copy of every suffix.
+func TestOutputRedactionScansLongValuesInLinearWork(t *testing.T) {
+	category := strings.Repeat("a-", 60) + "a" + strings.Repeat("*", 1<<20) + "z"
+	document := `{"sections":[{"risks":[{"category":"` + category + `"}]}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, err := o.Identifiers(context.Background(), []byte(document))
+	checkNoError(t, err)
+	checkEqual(t, document, string(raw))
+	// The closed-value scan joins the value once plus a window per restart;
+	// the source scan joins the document once.
+	if bound := 2*len(document) + 128*closedScanWindow; o.o.scanned > bound {
+		t.Fatalf("scanned %d bytes, over %d", o.o.scanned, bound)
+	}
+	checkEqual(t, 0, o.MaskedClosed())
 }
