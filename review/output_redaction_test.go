@@ -306,9 +306,6 @@ func TestOutputRedactionJoinsUndescribedText(t *testing.T) {
 }
 
 // A code line holding a newline is masked in place; it does not fail the run.
-// At d8ee42aa the failure was in bundle.Redactor.RedactLines, which split the
-// joined text on newlines; this fails there, not with output_redaction.go
-// alone reverted.
 func TestOutputRedactionKeepsCodeLinesHoldingNewlines(t *testing.T) {
 	redactor := testRedactor(t)
 	key := syntheticKeyLines()
