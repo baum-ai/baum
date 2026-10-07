@@ -1,9 +1,18 @@
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import {
+  highlightCode,
+  languageForFence,
+  withinHighlightLimits,
+  type HighlightedLine,
+  type Lang,
+} from "../highlight";
 import { cn } from "./classnames";
+import { HighlightedText } from "./highlighted-text";
 
 const REHYPE_PLUGINS = [
   // GitHub comments routinely mix raw HTML into the markdown — bold tags,
@@ -19,6 +28,62 @@ const REHYPE_PLUGINS = [
   rehypeRaw,
   rehypeSanitize,
 ];
+
+const linesText = (lines: readonly HighlightedLine[]) =>
+  lines.map((line) => line.map((token) => token.content).join("")).join("\n");
+
+/** The text of a code block's children when they are only text, else null: a
+ *  block holding raw HTML elements is rendered as it is, never as a string. */
+function textOf(children: ReactNode): string | null {
+  if (typeof children === "string") return children;
+  if (Array.isArray(children) && children.every((child) => typeof child === "string")) {
+    return children.join("");
+  }
+  return null;
+}
+
+/** A fenced block in a known language. It renders the plain text on the server
+ *  and the first client render, then colours it once the highlighter is ready;
+ *  the text never changes, so nothing shifts. The tokens are only ever
+ *  rendered as React text and `var(--syntax-*)` colours, never as markup. */
+function HighlightedCodeBlock({
+  code,
+  lang,
+  className,
+}: {
+  code: string;
+  lang: Lang;
+  className?: string;
+}) {
+  const [result, setResult] = useState<{ key: string; lines: HighlightedLine[] } | null>(null);
+  const key = `${lang}\0${code}`;
+
+  useEffect(() => {
+    let current = true;
+    void highlightCode(code, lang).then((lines) => {
+      // Tokens that do not add up to the source would change what is shown.
+      if (current && lines && linesText(lines) === code) setResult({ key, lines });
+    });
+    return () => {
+      current = false;
+    };
+    // `key` stands for `lang` and `code`.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const lines = result?.key === key ? result.lines : null;
+  if (!lines) return <code className={className}>{code}</code>;
+  return (
+    <code className={className}>
+      {lines.map((tokens, index) => (
+        <Fragment key={index}>
+          {index > 0 ? "\n" : null}
+          <HighlightedText text={tokens.map((token) => token.content).join("")} tokens={tokens} />
+        </Fragment>
+      ))}
+    </code>
+  );
+}
 
 const COMPONENTS: Components = {
   a: ({ href, children }) => (
@@ -50,14 +115,28 @@ const COMPONENTS: Components = {
   // that — not the class — is what actually tells them apart: a block keeps
   // its language class (if any) and leaves the box styling to `pre` above;
   // only a genuinely inline span gets its own pill.
-  code: ({ className, children }) =>
-    String(children).includes("\n") ? (
-      <code className={className}>{children}</code>
-    ) : (
+  code: ({ className, children }) => {
+    const text = String(children);
+    if (text.includes("\n")) {
+      // Only a fence's own `language-*` class names a language.
+      const info = /(?:^|\s)language-(\S+)/.exec(className ?? "")?.[1];
+      const lang = languageForFence(info);
+      const code = textOf(children);
+      // Over the limits it never schedules highlighting.
+      const highlight =
+        lang && code !== null && withinHighlightLimits(code.split("\n").length, code.length);
+      return highlight ? (
+        <HighlightedCodeBlock code={code} lang={lang} className={className} />
+      ) : (
+        <code className={className}>{children}</code>
+      );
+    }
+    return (
       <code className="rounded-(--radius-sm) bg-(--surface-sunken) px-1 py-0.5 text-base">
         {children}
       </code>
-    ),
+    );
+  },
   // A comment body usually breaks anywhere so a long path cannot widen the
   // pane; a table cell inheriting that shrinks to a letter a line on a phone.
   // It keeps whole words instead and scrolls inside its own positioned box.

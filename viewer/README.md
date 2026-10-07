@@ -15,9 +15,9 @@ review page, and a host fills its optional slots with features of its own.
 
 ## Using it
 
-React, React DOM and the Markdown, sanitising, validation and pluralisation
-libraries are peer dependencies (see `package.json`), so the host and the
-viewer share one copy of each. A host that links the package should resolve
+React, React DOM and the Markdown, sanitising, syntax highlighting (`shiki`),
+validation and pluralisation libraries are peer dependencies (see
+`package.json`), so the host and the viewer share one copy of each. A host that links the package should resolve
 those imports from its own `node_modules` (in Vite, `resolve.dedupe`).
 
 Modules are imported by path, for example
@@ -123,6 +123,58 @@ html:has([data-review-page]) {
   scroll-padding-top: calc(48px + 0.5rem);
 }
 ```
+
+## Syntax highlighting
+
+`CodeDiff` colours the code in a file's hunks by the language of its path
+(`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
+calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
+not tokenised). Both render a line through `HighlightedText`
+(`@baum/viewer/components/highlighted-text`), which wraps each token in an
+inline span inside the existing code cell. It highlights in the browser only:
+the server render and the first client render are the plain text, exactly as
+before, and the colours replace it once they are ready, with no change of
+layout. Each hunk's old side (context and removed lines) and new side (context
+and added lines) are tokenised separately, so a comment or string that starts
+on an unchanged line is coloured on both the removed and the added lines that
+follow it. The text is never altered; a line whose tokens do not add up to it
+renders plain.
+
+- **Languages** are a fixed allow-list, picked by extension or file name
+  (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
+  Rust, Java, Kotlin, Ruby, PHP, C, C++, C#, Swift, SQL, shell, YAML, TOML,
+  Markdown, HTML, CSS, SCSS, Dockerfile, Makefile, Protocol Buffers, GraphQL,
+  Vue and Svelte. `languageForFence` maps a Markdown fence's info string
+  (`ts`, `golang`, `shell`, `yml`, case-insensitive, first word) to the same
+  set. Any other file renders plain.
+- **Loading.** `shiki` and each grammar are reached only through dynamic
+  `import()`, so a host's bundler splits them out of its initial bundle, and
+  only the grammars a page shows are fetched. The engine is shiki's JavaScript
+  regex engine (no WebAssembly). The synchronous exports of `highlight.ts` do
+  not load it.
+- **Colours** are CSS variables, `--syntax-*` in `viewer.css`, with light and
+  dark values at least 4.5:1 on the card and on the added and removed row
+  tints (the lowest is 4.5:1, for comments, constants and changed text in the
+  light theme on the removed-row tint). A host restyles the code by overriding
+  them.
+- **Fallbacks.** Diffs over 3,000 lines or 200,000 characters
+  (`MAX_HIGHLIGHT_LINES`, `MAX_HIGHLIGHT_CHARS`), unknown languages and any
+  failure to load or run the highlighter render plain.
+- **API.** `useHighlightedHunks(path, hunks)` returns the tokens per hunk and
+  line, or null; `highlightCode(code, lang)` returns the tokens per line of one
+  block, or null.
+
+`Markdown` highlights fenced code blocks the same way. A fence whose info
+string `languageForFence` knows (the `language-*` class that survives
+`rehype-sanitize`) renders through a small client component: the plain text on
+the server and the first client render, then the coloured spans once
+`highlightCode` resolves. Results for earlier content of the block, or for an
+unmounted tree, are dropped, and tokens that do not add up to the source leave
+the block plain. The `<pre>` and `<code>` markup and the block's text are
+unchanged. Inline code, fences with no or an unknown language, blocks over the
+limits and blocks holding raw HTML elements render as before. Text reaches the
+page only as React text children, and colours only as `var(--syntax-*)`, so
+the highlighter adds no path for contributor markup.
 
 ## Schema and tile types
 

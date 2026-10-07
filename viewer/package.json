@@ -16,6 +16,7 @@
     "./components/code-file-link": "./src/components/code-file-link.tsx",
     "./components/editorial": "./src/components/editorial.tsx",
     "./components/format": "./src/components/format.ts",
+    "./components/highlighted-text": "./src/components/highlighted-text.tsx",
     "./components/hunk-evidence": "./src/components/hunk-evidence.tsx",
     "./components/icons": "./src/components/icons.tsx",
     "./components/markdown": "./src/components/markdown.tsx",
@@ -54,6 +55,7 @@
     "./components/tabs": "./src/components/tabs.ts",
     "./components/ui": "./src/components/ui.tsx",
     "./components/use-scrolling-flag": "./src/components/use-scrolling-flag.ts",
+    "./highlight": "./src/highlight.ts",
     "./host": "./src/host.ts",
     "./navigation": "./src/navigation.ts",
     "./package.json": "./package.json",
@@ -94,7 +96,8 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
@@ -115,6 +118,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.0",
     "typescript": "~6.0.2",
     "vitest": "4.1.10"
   }

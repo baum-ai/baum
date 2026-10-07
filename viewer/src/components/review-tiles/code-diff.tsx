@@ -1,5 +1,7 @@
+import { useHighlightedHunks } from "../../highlight";
 import { cn } from "../classnames";
 import { CodeFileLink } from "../code-file-link";
+import { HighlightedText } from "../highlighted-text";
 
 export type CodeDiffLine = {
   kind: "context" | "add" | "remove";
@@ -33,6 +35,58 @@ const mark: Record<CodeDiffLine["kind"], string> = {
   add: "+",
   remove: "−",
 };
+
+/** One file's hunks. Highlighting is client-only: the first render is the
+ *  plain text, and the tokens replace it once they are ready. */
+function CodeDiffTable({ file }: { file: CodeDiffFile }) {
+  const highlighted = useHighlightedHunks(file.path, file.hunks);
+  return (
+    <div className="relative min-w-0 overflow-x-auto">
+      <table className="w-full table-fixed border-collapse font-mono text-xs leading-[1.55] sm:text-base">
+        <colgroup>
+          <col className="w-10" />
+          <col className="w-10" />
+          <col className="w-5 sm:w-6" />
+          <col />
+        </colgroup>
+        <tbody>
+          {file.hunks.flatMap((hunk, hunkIndex) => [
+            <tr key={`${file.path}:${hunk.header}:${hunkIndex}`} className="bg-(--accent-50)">
+              <td colSpan={4} className="px-3 py-1 text-(--accent-700)">
+                {hunk.header}
+              </td>
+            </tr>,
+            ...hunk.lines.map((line, index) => (
+              <tr
+                key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
+                className={cn("align-top", lineStyle[line.kind])}
+              >
+                <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
+                  {line.oldLine ?? ""}
+                </td>
+                <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
+                  {line.newLine ?? ""}
+                </td>
+                <td
+                  className={cn(
+                    "w-5 px-1 text-center select-none sm:w-6",
+                    line.kind === "add" && "text-(--status-positive)",
+                    line.kind === "remove" && "text-(--status-critical)",
+                  )}
+                >
+                  {mark[line.kind]}
+                </td>
+                <td className="pr-3 whitespace-pre-wrap text-(--text-primary) [overflow-wrap:anywhere]">
+                  <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
+                </td>
+              </tr>
+            )),
+          ])}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /** A compact GitHub-style unified diff for evidence that benefits from reading in place.
  *  `bare` leaves off the heading and totals, for a caller that already names them. */
@@ -83,53 +137,7 @@ export function CodeDiff({
                 <span className="text-(--status-critical)">−{file.deletions}</span>
               </span>
             </header>
-            <div className="relative min-w-0 overflow-x-auto">
-              <table className="w-full table-fixed border-collapse font-mono text-xs leading-[1.55] sm:text-base">
-                <colgroup>
-                  <col className="w-10" />
-                  <col className="w-10" />
-                  <col className="w-5 sm:w-6" />
-                  <col />
-                </colgroup>
-                <tbody>
-                  {file.hunks.flatMap((hunk, hunkIndex) => [
-                    <tr
-                      key={`${file.path}:${hunk.header}:${hunkIndex}`}
-                      className="bg-(--accent-50)"
-                    >
-                      <td colSpan={4} className="px-3 py-1 text-(--accent-700)">
-                        {hunk.header}
-                      </td>
-                    </tr>,
-                    ...hunk.lines.map((line, index) => (
-                      <tr
-                        key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
-                        className={cn("align-top", lineStyle[line.kind])}
-                      >
-                        <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
-                          {line.oldLine ?? ""}
-                        </td>
-                        <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
-                          {line.newLine ?? ""}
-                        </td>
-                        <td
-                          className={cn(
-                            "w-5 px-1 text-center select-none sm:w-6",
-                            line.kind === "add" && "text-(--status-positive)",
-                            line.kind === "remove" && "text-(--status-critical)",
-                          )}
-                        >
-                          {mark[line.kind]}
-                        </td>
-                        <td className="pr-3 whitespace-pre-wrap text-(--text-primary) [overflow-wrap:anywhere]">
-                          {line.text}
-                        </td>
-                      </tr>
-                    )),
-                  ])}
-                </tbody>
-              </table>
-            </div>
+            <CodeDiffTable file={file} />
           </article>
         ))}
       </div>
