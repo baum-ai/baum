@@ -35,9 +35,13 @@ add its sources so the utilities its components use are generated:
 
 `viewer.css` defines the type scale, the colour ramps and semantic tokens
 with their dark variants (applied under `:root[data-theme="dark"]`), the
-categorical series, and the pane and skeleton animations. The sans-serif family comes from `--viewer-font-sans`,
-which falls back to the system's sans-serif face; set it on `:root` to
-restyle the viewer.
+categorical series, and the pane and skeleton animations. The sans-serif
+family comes from `--viewer-font-sans`; set it on `:root` to restyle the
+viewer. Without it the viewer uses Inter
+(variable weight, Latin and Latin Extended), bundled as woff2 in `src/fonts/`
+with its SIL Open Font License (`src/fonts/OFL.txt`). The host's bundler
+resolves the files from `viewer.css`, and a browser downloads them only when
+a page renders in Inter, so a host that sets the variable never fetches them.
 
 ## Host seams
 
