@@ -353,23 +353,82 @@ func (o *outputRedaction) maskSlots() error {
 	return o.maskClosed(closed)
 }
 
+// closedValueLimit is the length the schema bounds its identifier patterns
+// to. A closed value longer than that cannot be valid.
+const closedValueLimit = 128
+
+// closedScanBatch caps the text one scan of closed values joins, so the copies
+// of a document's values never sit in memory all at once.
+const closedScanBatch = 1 << 20
+
 // maskClosed scans on their own the values a pattern or date-time closed,
 // which the joined scans keep whole. A lowercase pattern such as a risk
 // category or a prefixed ID admits any text the model copies, a secret
 // included, and the prefix or the words around it can hide the secret from a
 // rule that needs a word boundary (sec_sk_live_...). Each value is scanned
 // whole and from after every underscore in it, so sec_sk_live_... and
-// sec_auth_sk_live_... both expose sk_live_...; all the copies are one text
-// joined by newlines, as in scan. A byte any copy masks is masked in the
-// value, which keeps its length. The mask writes only x, 9 and the characters
-// it keeps, so a masked value still fits a pattern of lowercase identifiers,
-// but not one of hex digits, which then fails validation.
+// sec_auth_sk_live_... both expose sk_live_...; the copies are one text
+// joined by newlines, as in scan, in batches of at most closedScanBatch. A
+// byte any copy masks is masked in the value, which keeps its length. The
+// mask writes only x, 9 and the characters it keeps, so a masked value still
+// fits a pattern of lowercase identifiers, but not one of hex digits, which
+// then fails validation.
+//
+// A value longer than closedValueLimit cannot be valid, and its copies would
+// grow with the square of its length, so it is masked whole instead, byte by
+// byte, as one span.
 //
 // A value counts as its spans: runs of masked bytes, where a gap of characters
 // the mask leaves as they are (the separators it keeps, x and 9) does not
 // split a run. Copies that mask the same secret, or a secret with an x in it,
 // are one span. maskedClosed counts the values masked.
 func (o *outputRedaction) maskClosed(indexes []int) error {
+	var batch []int
+	size := 0
+	for _, i := range indexes {
+		slot := o.slots[i]
+		if len(slot.text) > closedValueLimit {
+			masked := make([]byte, len(slot.text))
+			for j := range masked {
+				masked[j] = formatMaskByte(slot.text[j])
+			}
+			slot.set(string(masked))
+			o.masked++
+			o.maskedClosed++
+			o.changed = true
+			continue
+		}
+		batch = append(batch, i)
+		// A value of n bytes with k underscores joins about n*(k+1) bytes.
+		size += len(slot.text) * (strings.Count(slot.text, "_") + 1)
+		if size >= closedScanBatch {
+			if err := o.scanClosed(batch); err != nil {
+				return err
+			}
+			batch, size = nil, 0
+		}
+	}
+	return o.scanClosed(batch)
+}
+
+// formatMaskByte is goredact's format-preserving mask of one byte.
+func formatMaskByte(b byte) byte {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return 'X'
+	case b >= 'a' && b <= 'z':
+		return 'x'
+	case b >= '0' && b <= '9':
+		return '9'
+	case strings.IndexByte("-_.:/+=@", b) >= 0:
+		return b
+	}
+	return '*'
+}
+
+// scanClosed masks the secrets in one batch of values of at most
+// closedValueLimit bytes (see maskClosed).
+func (o *outputRedaction) scanClosed(indexes []int) error {
 	if len(indexes) == 0 {
 		return nil
 	}
@@ -660,12 +719,21 @@ func closedIf(ok bool) slotKind {
 	return slotFree
 }
 
+// literalAlternatives matches the inside of a group of plain alternatives.
+var literalAlternatives = regexp.MustCompile(`^[A-Za-z0-9_]+(\|[A-Za-z0-9_]+)*$`)
+
 // closedPattern reports a pattern that pins a whole string to a closed
 // alphabet, such as an identifier, SHA or prefixed ID: anchored at both ends,
 // with no wildcard, negated class or negated shorthand that would let free
 // text through. A pattern such as \S only asks for some text and closes
-// nothing.
+// nothing. One group of plain literal alternatives, as in ^(ev|rsk)_[a-z]+$,
+// is closed; any other alternation is not.
 func closedPattern(pattern string) bool {
+	if open := strings.IndexByte(pattern, '('); open >= 0 {
+		if end := strings.IndexByte(pattern[open:], ')'); end > 0 && literalAlternatives.MatchString(pattern[open+1:open+end]) {
+			pattern = pattern[:open] + "x" + pattern[open+end+1:]
+		}
+	}
 	if len(pattern) < 2 || pattern[0] != '^' || pattern[len(pattern)-1] != '$' || strings.Contains(pattern, "[^") || strings.Contains(pattern, "|") {
 		return false
 	}

@@ -238,6 +238,7 @@ func relaxSchema(node map[string]any, defs map[string]any) {
 	}
 	if pattern, ok := node["pattern"].(string); ok && identifierPattern(pattern) != nil {
 		delete(node, "pattern")
+		delete(node, "maxLength")
 		node["minLength"] = 1
 	}
 }

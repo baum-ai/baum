@@ -340,7 +340,8 @@ func TestClosedPattern(t *testing.T) {
 	for pattern, closed := range map[string]bool{
 		`^[a-z][a-z0-9_]*$`: true, `^[0-9a-f]{7,64}$`: true, `^h_[0-9a-f]{12}(-[0-9]+)?$`: true, `^SPEC-\d+$`: true,
 		`^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.[0-9]+)?$`: true, `^tile_[a-z0-9_]+$`: true,
-		`\S`: false, `^\S`: false, `.+`: false, `^.+$`: false, `^[^/\s]+/[^/\s]+$`: false, `^[a-z]+`: false, `^\w+$`: true, `^\W+$`: false, ``: false, `^a|.+$`: false, `^(a|b)$`: false,
+		`\S`: false, `^\S`: false, `.+`: false, `^.+$`: false, `^[^/\s]+/[^/\s]+$`: false, `^[a-z]+`: false, `^\w+$`: true, `^\W+$`: false, ``: false, `^a|.+$`: false, `^(a|b)$`: true, `^(ev|rsk|dec)_[a-z0-9_]+$`: true,
+		`^(a|.*)$`: false, `^(a|b)_(c|d)$`: false, `^(a|b)|c$`: false, `^(a|b|)$`: false, `^(?:a|b)$`: false,
 	} {
 		if closedPattern(pattern) != closed {
 			t.Errorf("closedPattern(%q) = %t, want %t", pattern, !closed, closed)
@@ -588,4 +589,50 @@ func TestMaskedSpans(t *testing.T) {
 	} {
 		checkEqual(t, c.spans, maskedSpans(c.text, c.masked))
 	}
+}
+
+// Attention refs are closed by a pattern with a group of literal prefixes.
+func TestOutputRedactionMasksSecretsInAttentionRefs(t *testing.T) {
+	const (
+		token  = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+		masked = "xx_xxxx_9xx9x9x9x9x99x9x9x9x9x9x9x9x9x9x"
+	)
+	document := func(a, b string) string {
+		return `{"sections":[{"attention":{"refs":["` + a + `","` + b + `"],"text":"Look."}}]}`
+	}
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	redacted, err := o.Document(context.Background(), []byte(document("ev_"+token, "rsk_a_"+token)))
+	checkNoError(t, err)
+	checkEqual(t, document("ev_"+masked, "rsk_a_"+masked), string(redacted))
+	checkEqual(t, 2, o.Masked())
+	checkEqual(t, 2, o.MaskedClosed())
+}
+
+// A closed value over the schema's bound cannot be valid and is masked whole,
+// as one span, without the scan of its suffixes; one at the bound is kept.
+func TestOutputRedactionMasksOverlongClosedValuesWhole(t *testing.T) {
+	document := func(category string) string {
+		return `{"sections":[{"risks":[{"category":"` + category + `"}]}]}`
+	}
+	exact := strings.Repeat("a_", 64)
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	redacted, err := o.Document(context.Background(), []byte(document(exact)))
+	checkNoError(t, err)
+	checkEqual(t, document(exact), string(redacted))
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+
+	long := exact + "b"
+	redacted, err = o.Document(context.Background(), []byte(document(long)))
+	checkNoError(t, err)
+	checkEqual(t, document(strings.Repeat("x_", 64)+"x"), string(redacted))
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+
+	// Underscores in a huge value do not make the work grow with its square.
+	huge := strings.Repeat("a_", 1<<18)
+	redacted, err = o.Document(context.Background(), []byte(document(huge)))
+	checkNoError(t, err)
+	checkEqual(t, document(strings.Repeat("x_", 1<<18)), string(redacted))
+	checkEqual(t, 2, o.MaskedClosed())
 }
