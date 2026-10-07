@@ -179,9 +179,22 @@ export function mapHunkTokens(
     const tokens = line.kind === "remove" ? oldTokens[oldIndex] : newTokens[newIndex];
     if (fromOld) oldIndex++;
     if (fromNew) newIndex++;
-    if (tokens && tokens.map((token) => token.content).join("") === line.text) return [...tokens];
-    return [{ content: line.text }];
+    const text = withoutCarriageReturn(line.text);
+    if (!tokens || tokens.map((token) => token.content).join("") !== text) {
+      return [{ content: line.text }];
+    }
+    if (text === line.text) return [...tokens];
+    // Shiki reads a CRLF as a line break, so the `\r` went in as none.
+    const last = tokens.at(-1);
+    return last
+      ? [...tokens.slice(0, -1), { ...last, content: `${last.content}\r` }]
+      : [{ content: "\r" }];
   });
+}
+
+/** A line's text as the highlighter reads it: without one trailing `\r`. */
+function withoutCarriageReturn(text: string): string {
+  return text.endsWith("\r") ? text.slice(0, -1) : text;
 }
 
 /** The two sides of a hunk as the source text a highlighter reads. */
@@ -189,11 +202,11 @@ export function hunkSides(lines: readonly CodeDiffLine[]): { old: string; new: s
   return {
     old: lines
       .filter((line) => line.kind !== "add")
-      .map((line) => line.text)
+      .map((line) => withoutCarriageReturn(line.text))
       .join("\n"),
     new: lines
       .filter((line) => line.kind !== "remove")
-      .map((line) => line.text)
+      .map((line) => withoutCarriageReturn(line.text))
       .join("\n"),
   };
 }
@@ -282,11 +295,23 @@ export async function tokenize(
   }
 }
 
+/** One load per language, shared by concurrent calls; a failure is dropped so
+ *  the next call retries. */
+const grammarLoads = new Map<Lang, Promise<void>>();
+
 async function shikiTokenize(code: string, lang: Lang): Promise<HighlightedLine[]> {
   const shiki = await getHighlighter();
-  if (!shiki.getLoadedLanguages().includes(lang)) {
-    await shiki.loadLanguage((await GRAMMARS[lang]()).default);
+  let loading = grammarLoads.get(lang);
+  if (!loading) {
+    loading = (async () => {
+      if (!shiki.getLoadedLanguages().includes(lang)) {
+        await shiki.loadLanguage((await GRAMMARS[lang]()).default);
+      }
+    })();
+    grammarLoads.set(lang, loading);
+    loading.catch(() => grammarLoads.delete(lang));
   }
+  await loading;
   return shiki.codeToTokensBase(code, {
     lang,
     theme: THEME,

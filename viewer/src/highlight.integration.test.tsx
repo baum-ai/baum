@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CodeDiff, type CodeDiffFile } from "./components/review-tiles/code-diff";
 import { highlightCode, highlightHunks } from "./highlight";
@@ -35,8 +35,9 @@ const file = (path: string): CodeDiffFile => ({
       lines: [
         { kind: "context", oldLine: 1, newLine: 1, text: "/* start" },
         { kind: "remove", oldLine: 2, text: "   old */" },
-        { kind: "add", newLine: 2, text: "   new */" },
-        { kind: "context", oldLine: 3, newLine: 3, text: 'const answer: number = 42; // "x"' },
+        { kind: "remove", oldLine: 3, text: "const old = 1;" },
+        { kind: "add", newLine: 2, text: "   new text" },
+        { kind: "add", newLine: 3, text: "   more text" },
       ],
     },
   ],
@@ -55,14 +56,16 @@ describe("syntax highlighting with shiki", () => {
     expect(lines![0]!.some((token) => token.color?.startsWith("var(--syntax-"))).toBe(true);
   });
 
-  it("colours both sides of a multi-line comment", async () => {
+  it("colours each side from its own stream", async () => {
+    // The old side closes the comment and goes on with code; the new side
+    // keeps it open through both added lines.
     const tokens = await highlightHunks("a.ts", file("a.ts").hunks);
-    const [start, removed, added] = tokens![0]!;
-    for (const tokensOfLine of [start!, removed!, added!]) {
-      expect(tokensOfLine.every((token) => token.color === "var(--syntax-token-comment)")).toBe(
-        true,
-      );
+    const [start, closed, code, added, more] = tokens![0]!;
+    const comment = "var(--syntax-token-comment)";
+    for (const tokensOfLine of [start!, closed!, added!, more!]) {
+      expect(tokensOfLine.every((token) => token.color === comment)).toBe(true);
     }
+    expect(code!.some((token) => token.color !== comment)).toBe(true);
   });
 
   it("renders plain text first and coloured spans after the effect", async () => {
@@ -72,27 +75,30 @@ describe("syntax highlighting with shiki", () => {
     root = createRoot(container);
     act(() => root!.render(<CodeDiff files={[file("a.ts")]} />));
     expect(spans()).toHaveLength(0);
-    expect(container.textContent).toContain("const answer: number = 42;");
+    expect(container.textContent).toContain("const old = 1;");
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+    await vi.waitFor(() => {
+      act(() => {});
+      expect(spans().some((span) => span.style.color.startsWith("var(--syntax-"))).toBe(true);
     });
-    expect(spans().some((span) => span.style.color.startsWith("var(--syntax-"))).toBe(true);
     const cells = [...container.querySelectorAll("tr td:last-child")];
     expect(cells.map((cell) => cell.textContent).slice(1)).toEqual([
       "/* start",
       "   old */",
-      "   new */",
-      'const answer: number = 42; // "x"',
+      "const old = 1;",
+      "   new text",
+      "   more text",
     ]);
   });
 
   it("leaves an unknown language plain", async () => {
     const container = document.body.appendChild(document.createElement("div"));
     root = createRoot(container);
+    // Shiki is loaded by now (earlier tests), so a TypeScript file proves the
+    // wait below is long enough to tell: it colours, this one does not.
     await act(async () => root!.render(<CodeDiff files={[file("notes.txt")]} />));
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await highlightCode("let a", "typescript");
     });
     expect(spans()).toHaveLength(0);
   });

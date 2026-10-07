@@ -5,6 +5,7 @@ import {
   type HighlightedLine,
   highlightCode,
   highlightHunks,
+  hunkSides,
   languageForFence,
   languageForPath,
   mapHunkTokens,
@@ -160,6 +161,17 @@ describe("mapHunkTokens", () => {
     mapped.forEach((tokens, index) => {
       expect(joined(tokens)).toBe(lines[index]!.text);
     });
+  });
+
+  it("keeps a trailing carriage return out of the tokenizer and in the text", () => {
+    const lines = [line("context", "a = 1\r"), line("add", "\r"), line("add", "b\r")];
+    expect(hunkSides(lines).new).toBe("a = 1\n\nb");
+    const mapped = mapHunkTokens(lines, [], [tagged("a = 1", "x"), [], tagged("b", "x")]);
+    mapped.forEach((tokens, index) => {
+      expect(joined(tokens)).toBe(lines[index]!.text);
+    });
+    expect(mapped[0]!.every((token) => token.color === "x")).toBe(true);
+    expect(mapped[2]![0]!.color).toBe("x");
   });
 
   it("falls back to plain text for a line whose tokens do not match or are missing", () => {

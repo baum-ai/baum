@@ -16,8 +16,8 @@ review page, and a host fills its optional slots with features of its own.
 ## Using it
 
 React, React DOM and the Markdown, sanitising, syntax highlighting (`shiki`),
-validation and pluralisation libraries are peer dependencies (see `package.json`), so the host and the
-viewer share one copy of each. A host that links the package should resolve
+validation and pluralisation libraries are peer dependencies (see
+`package.json`), so the host and the viewer share one copy of each. A host that links the package should resolve
 those imports from its own `node_modules` (in Vite, `resolve.dedupe`).
 
 Modules are imported by path, for example
@@ -149,7 +149,9 @@ never altered; a line whose tokens do not add up to it renders plain.
   not load it.
 - **Colours** are CSS variables, `--syntax-*` in `viewer.css`, with light and
   dark values at least 4.5:1 on the card and on the added and removed row
-  tints. A host restyles the code by overriding them.
+  tints (the lowest is 4.5:1, for comments, constants and changed text in the
+  light theme on the removed-row tint). A host restyles the code by overriding
+  them.
 - **Fallbacks.** Diffs over 3,000 lines or 200,000 characters
   (`MAX_HIGHLIGHT_LINES`, `MAX_HIGHLIGHT_CHARS`), unknown languages and any
   failure to load or run the highlighter render plain.
