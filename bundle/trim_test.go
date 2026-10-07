@@ -1160,7 +1160,7 @@ func TestFitBytesShortensAnOversizedCitedPromptBeforeDroppingSessions(t *testing
 			if bundle.Sessions[0].Prompts[1].Index != 4 || !tc.high(bundle.Sessions[0].Prompts[1].Text) {
 				t.Fatalf("high session's cited prompt is %d bytes", len(bundle.Sessions[0].Prompts[1].Text))
 			}
-			if got := len(bundle.Sessions[1].Prompts[1].Text); got != tc.low && !(tc.low == CitedPromptHeadBytes && got <= tc.low) {
+			if got := len(bundle.Sessions[1].Prompts[1].Text); got != tc.low && (tc.low != CitedPromptHeadBytes || got > tc.low) {
 				t.Fatalf("low session's cited prompt is %d bytes, want %d", got, tc.low)
 			}
 			if bundle.Sessions[0].Prompts[0].Text != "first" || bundle.Sessions[0].Prompts[2].Text != "latest" {
