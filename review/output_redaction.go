@@ -456,9 +456,10 @@ const closedScanBatch = 1 << 20
 // nothing is lost.
 //
 // A value counts when a finding masked it: as its distinct findings in
-// masked, and once in maskedClosed. A value masked whole with nothing found
-// counts nowhere. Each finding's text is also a source for Identifiers (see
-// addSource).
+// masked, and once in maskedClosed. A finding whose text already reads as
+// its mask, such as an address the redactor wrote, is no finding, and a
+// value masked whole with nothing found counts nowhere. Each finding that
+// counts is also a source for Identifiers (see addSources).
 func (o *outputRedaction) maskClosed(indexes []int) error {
 	var batch []int
 	size := 0
@@ -589,6 +590,9 @@ func (o *outputRedaction) scanClosed(indexes []int) error {
 	// their values.
 	found := map[int][][2]int{}
 	for _, span := range spans {
+		if alreadyMasked(joined[span.Start:span.End], span.Email) {
+			continue
+		}
 		k := sort.Search(len(copies), func(k int) bool { return copies[k].at+copies[k].n > span.Start })
 		for ; k < len(copies) && copies[k].at < span.End; k++ {
 			c := copies[k]
@@ -601,9 +605,6 @@ func (o *outputRedaction) scanClosed(indexes []int) error {
 	for _, i := range indexes {
 		slot := &o.slots[i]
 		ranges := found[i]
-		for _, r := range ranges {
-			o.addSource(slot.text[r[0]:r[1]])
-		}
 		whole := slot.maskedWhole()
 		masked := []byte(slot.text)
 		if whole {
@@ -624,9 +625,28 @@ func (o *outputRedaction) scanClosed(indexes []int) error {
 			o.masked += distinctFindings(ranges)
 			o.maskedClosed++
 			slot.counted = true
+			// Only a finding that counts, and so fails the run, is a source.
+			for _, r := range ranges {
+				o.addSources(slot.text, r)
+			}
 		}
 	}
 	return nil
+}
+
+// alreadyMasked reports a finding that is the redactor's own output found
+// again, and so no finding: text that already reads as its mask, or an
+// address whose domain does (ev-author-xxxxx.xxx@xxxxxxx.xxx), which no
+// real address has.
+func alreadyMasked(text string, email bool) bool {
+	if formatMask(text) == text {
+		return true
+	}
+	if at := strings.LastIndexByte(text, '@'); email && at >= 0 {
+		domain := text[at+1:]
+		return formatMask(domain) == domain
+	}
+	return false
 }
 
 // distinctFindings counts the findings in a value, where the copies that
@@ -644,22 +664,32 @@ func distinctFindings(ranges [][2]int) int {
 	return count
 }
 
-// closedSourceMin and closedSourceMax bound the respelled findings kept as
-// sources. A shorter one is too common a word run to stand for a secret, and
-// a longer one cannot fit in an identifier within its bound, 128 bytes.
-const (
-	closedSourceMin = 8
-	closedSourceMax = 128
-)
+// closedSourceMax bounds the respelled findings kept as sources: a longer one
+// cannot fit in an identifier within its bound, 128 bytes. There is no
+// lower bound: a source exists only once a finding has failed the run, so
+// masking more spellings costs nothing more.
+const closedSourceMax = 128
 
-// addSource records, while Identifiers runs, the respelling of a finding's
-// text, which otherSpellings looks for in every identifier.
-func (o *outputRedaction) addSource(text string) {
+// addSources records, while Identifiers runs, the respellings otherSpellings
+// looks for in every identifier: of a counted finding's text, and of that
+// text widened to the words of the value it lies in, so a key glued to
+// letters in its own identifier (evAKIA...) is still found in another
+// spelling of that identifier (evakia...).
+func (o *outputRedaction) addSources(text string, r [2]int) {
 	if o.sources == nil {
 		return
 	}
-	if token := identifierToken(text); len(token) >= closedSourceMin && len(token) <= closedSourceMax {
-		o.sources[token] = true
+	start, end := r[0], r[1]
+	for start > 0 && !scanBoundary(text[start-1]) {
+		start--
+	}
+	for end < len(text) && !scanBoundary(text[end]) {
+		end++
+	}
+	for _, source := range []string{text[r[0]:r[1]], text[start:end]} {
+		if token := identifierToken(source); token != "" && len(token) <= closedSourceMax {
+			o.sources[token] = true
+		}
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1132,4 +1134,79 @@ func TestOutputRedactionScansLongValuesInLinearWork(t *testing.T) {
 		t.Fatalf("scanned %d bytes, over %d", o.o.scanned, bound)
 	}
 	checkEqual(t, 0, o.MaskedClosed())
+}
+
+// An address the redactor already masked reads as its own mask; finding it
+// again is no finding, so it neither counts nor becomes a source.
+func TestOutputRedactionIgnoresAlreadyMaskedFindings(t *testing.T) {
+	address := "xxxxx.xxx" + "@xxxxxxx.xxx"
+	document := `{"sections":[{"evidence":[{"id":"ev-author-` + address + `"}],"risks":[{"category":"xxx-xxxx` + "@xxxxxxx.xxx" + `","id":"Author"}],"title":"T"}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, _, _ := identifiersThenPrepare(t, o, document)
+	checkEqual(t, document, raw)
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+}
+
+// A key glued to letters in its own identifier is a source also widened to
+// that identifier's words, so the identifier's other spellings are masked.
+func TestOutputRedactionWidensSourcesToTheirWords(t *testing.T) {
+	lower := strings.ToLower(leakedAccessKey)
+	for _, c := range []struct{ id, other string }{
+		{"ev" + leakedAccessKey, "ev" + lower},
+		{leakedAccessKey + "x", "rsk_" + lower + "x"},
+	} {
+		t.Run(c.id, func(t *testing.T) {
+			document := `{"sections":[{"evidence":[{"id":"` + c.id + `"}],"risks":[{"id":"` + c.other + `"}]}]}`
+			o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+			raw, err := o.Identifiers(context.Background(), []byte(document))
+			checkNoError(t, err)
+			var doc struct {
+				Sections []struct {
+					Evidence []struct{ ID string } `json:"evidence"`
+					Risks    []struct{ ID string } `json:"risks"`
+				} `json:"sections"`
+			}
+			checkNoError(t, json.Unmarshal(raw, &doc))
+			if strings.Contains(strings.ToLower(doc.Sections[0].Evidence[0].ID), lower) {
+				t.Fatalf("the key survives in %s", raw)
+			}
+			checkEqual(t, testFormatMask(c.other), doc.Sections[0].Risks[0].ID)
+			checkEqual(t, 2, o.Masked())
+			checkEqual(t, 2, o.MaskedClosed())
+		})
+	}
+}
+
+// A short secret is a source however few bytes it respells to, and one whose
+// respelling is over 128 bytes, which no identifier within its bound could
+// hold, is not.
+func TestOutputRedactionSourceLengths(t *testing.T) {
+	document := func(id, ref string) string {
+		return `{"sections":[{"attention":{"refs":["` + ref + `"],"text":"Look."},"evidence":[{"id":"` + id + `"}]}]}`
+	}
+	// The keyword rule finds the value after --password.
+	short := "--password Kx9$Lm2"
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, err := o.Identifiers(context.Background(), []byte(document(short, "ev_kx9_lm2")))
+	checkNoError(t, err)
+	checkEqual(t, document("--password Xx9*Xx9", "xx_xx9_xx9"), string(raw))
+	checkEqual(t, 2, o.MaskedClosed())
+
+	// The bound is on the respelling: 128 bytes are kept, 129 are not, for
+	// the finding and for it widened to its words.
+	for _, c := range []struct {
+		text  string
+		r     [2]int
+		wants []string
+	}{
+		{strings.Repeat("a", 128), [2]int{0, 128}, []string{strings.Repeat("a", 128)}},
+		{strings.Repeat("a", 129), [2]int{0, 129}, nil},
+		{"Pre-" + strings.Repeat("A", 123) + "-post", [2]int{10, 20}, []string{strings.Repeat("a", 10), strings.Repeat("a", 123)}},
+		{"Pre-" + strings.Repeat("A", 129) + "-post", [2]int{10, 20}, []string{strings.Repeat("a", 10)}},
+	} {
+		o := &outputRedaction{sources: map[string]bool{}}
+		o.addSources(c.text, c.r)
+		checkEqual(t, fmt.Sprint(c.wants), fmt.Sprint(slices.Sorted(maps.Keys(o.sources))))
+	}
 }

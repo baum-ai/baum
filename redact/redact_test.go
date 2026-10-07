@@ -307,16 +307,22 @@ func TestFindContextReportsEachFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	covered := make([]bool, len(in))
-	keys := 0
+	keys, emails := 0, 0
 	for _, span := range spans {
 		if in[span.Start:span.End] == key {
 			keys++
+		}
+		if in[span.Start:span.End] == key && span.Email {
+			t.Fatalf("key span marked as an address")
+		}
+		if in[span.Start:span.End] == email && span.Email {
+			emails++
 		}
 		for i := span.Start; i < span.End; i++ {
 			covered[i] = true
 		}
 	}
-	if keys != 2 || len(spans) < summary.Findings {
+	if keys != 2 || emails == 0 || len(spans) < summary.Findings {
 		t.Fatalf("spans %v for %d findings", spans, summary.Findings)
 	}
 	for i := range in {

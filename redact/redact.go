@@ -254,8 +254,11 @@ type finder struct {
 }
 
 // Span is the byte offsets [Start, End) of one secret or address the engine
-// masks.
-type Span struct{ Start, End int }
+// masks; Email marks an address.
+type Span struct {
+	Start, End int
+	Email      bool
+}
 
 // New compiles the redaction rules.
 func New() (*Engine, error) {
@@ -271,7 +274,7 @@ func newFinder() (*finder, error) {
 	config := Config
 	config.RecordAligned = false
 	config.OnFinding = func(found goredact.Finding) {
-		f.spans = append(f.spans, Span{Start: int(found.Start), End: int(found.End)})
+		f.spans = append(f.spans, Span{Start: int(found.Start), End: int(found.End), Email: found.RuleID == EmailRuleID})
 	}
 	engine, err := goredact.New(config)
 	if err != nil {
@@ -310,7 +313,7 @@ func (e *Engine) FindContext(ctx context.Context, text string) ([]Span, error) {
 		return nil, fmt.Errorf("redact: %w", err)
 	}
 	spans := f.spans
-	err := eachEmail(ctx, []byte(text), func(start, end int) { spans = append(spans, Span{Start: start, End: end}) })
+	err := eachEmail(ctx, []byte(text), func(start, end int) { spans = append(spans, Span{Start: start, End: end, Email: true}) })
 	if err != nil {
 		return nil, fmt.Errorf("redact: %w", err)
 	}

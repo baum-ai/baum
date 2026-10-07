@@ -184,13 +184,15 @@ its own: whole, and from after every run of characters in it that are not
 letters or digits, a 4 KiB window at a time, so a long value costs its length
 plus a window per restart. Each finding is masked in place; `MaskedClosed`
 counts the values a finding masked, and a host should reject the run when it
-is not zero. A value longer than its schema's `maxLength` (128 characters for
+is not zero; a finding whose text already reads as its mask, such as an
+address the redactor wrote, is no finding. A value longer than its schema's
+`maxLength` (128 characters for
 identifiers and categories) cannot be valid; a value whose schema sets no
 `maxLength`, such as a SHA, hunk ID or date-time, may be valid at any length,
 and one with more than 16 runs fits none of those patterns. Either is scanned
 whole and from its first 16 runs, then masked whole, and counts only if a
 secret was found in it, so the scan stays linear in the document's size and a
-harmless value never fails the run.
+harmless value never fails the run on its own.
 
 Normalisation respells every identifier, category and tile-local name the
 model writes in lowercase with one underscore for each run of other
@@ -202,10 +204,13 @@ way, bounded by the length of their respelling, and masked with the
 format-preserving mask, which normalisation then respells to `x`, `9` and
 underscores; they count in `MaskedClosed` too. The same secret written in
 another spelling, upper case or already respelled, is not detected again. So
-the respelling of each secret found in an identifier, taken per finding and
-from 8 to 128 bytes long, is a source, and every identifier whose respelling
+the respelling of each secret found and counted in an identifier, taken per
+finding and again widened to the words of that identifier it lies in, is a
+source when at most 128 bytes long, and every identifier whose respelling
 holds a source as whole words (from an underscore or its start to an
-underscore or its end) is masked whole and counted. Free text is neither
+underscore or its end) is masked whole and counted. A source exists only
+once a finding has failed the run, so a harmless identifier is masked this
+way only in a run that fails already. Free text is neither
 scanned nor masked by `Identifiers`; `Document` masks it after `Prepare`. The
 order is `Identifiers`, `Prepare`, `Document` on what `Prepare` returned, with
 one redactor, then the `MaskedClosed` check. Text scattered across unrelated
@@ -225,6 +230,8 @@ Known limits of the identifier pass:
   not found, so it is neither counted nor a source.
 - Free text that repeats an identifier's secret in another spelling is left
   to `Document`, which finds it only if a rule detects that spelling.
+- Matching is by whole words, so a key glued without a separator to letters
+  or digits in another identifier (`xakia…`) is not matched there.
 
 ### Tiles
 
