@@ -81,6 +81,76 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 	return json.Marshal(next)
 }
 
+// RestoreOmittedPreviousSections returns the authored document with each
+// previous section it omits restored as completion would restore it: the
+// previous content with no hunks, only offered images and no risk lifecycle
+// fields, with the previous sections first in their order and the new ones
+// after. Sections the document carries are left as they are, so a risk
+// omitted from them still reads as omitted. A stale section's risks keep
+// their recorded state either way, so a host may restore early to edit
+// restored content, and completion keeps the edited section. Unlike a section
+// completion restores itself, the restored content is then normalized like
+// any authored section: it loses its assessment, as every section without
+// hunks does, since none takes part in the risk score. The document is
+// returned unchanged when it omits no previous section.
+func RestoreOmittedPreviousSections(document []byte, previous *bundlepkg.PreviousVersion, attachments []bundlepkg.Attachment) ([]byte, error) {
+	if previous == nil || len(previous.Sections) == 0 {
+		return document, nil
+	}
+	next, err := decodeObject(document, "generated review")
+	if err != nil {
+		return nil, err
+	}
+	generated, err := arrayField(next, "sections")
+	if err != nil {
+		return nil, err
+	}
+	byID, order, err := objectsByID(generated, "generated section")
+	if err != nil {
+		return nil, err
+	}
+	priorSections, err := previousSections(previous)
+	if err != nil {
+		return nil, err
+	}
+	sections := make([]any, 0, len(priorSections)+len(generated))
+	restored := false
+	for _, value := range priorSections {
+		prior := value.(map[string]any)
+		id, err := stringField(prior, "id")
+		if err != nil {
+			return nil, err
+		}
+		current, found := byID[id]
+		if !found {
+			current = cloneObject(prior)
+			current["hunks"] = []any{}
+			dropUnlistedImages(current, attachments)
+			risks, _ := current["risks"].([]any)
+			for _, value := range risks {
+				if risk, ok := value.(map[string]any); ok {
+					delete(risk, "state")
+					delete(risk, "introduced_version")
+					delete(risk, "mitigated_version")
+				}
+			}
+			restored = true
+		}
+		sections = append(sections, current)
+		delete(byID, id)
+	}
+	if !restored {
+		return document, nil
+	}
+	for _, id := range order {
+		if current, ok := byID[id]; ok {
+			sections = append(sections, current)
+		}
+	}
+	next["sections"] = sections
+	return json.Marshal(next)
+}
+
 func previousSections(previous *bundlepkg.PreviousVersion) ([]any, error) {
 	sections := []any{}
 	if previous == nil {
