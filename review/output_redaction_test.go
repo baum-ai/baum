@@ -636,3 +636,153 @@ func TestOutputRedactionMasksOverlongClosedValuesWhole(t *testing.T) {
 	checkEqual(t, document(strings.Repeat("x_", 1<<18)), string(redacted))
 	checkEqual(t, 2, o.MaskedClosed())
 }
+
+// testFormatMask is the format-preserving mask written out for the tests:
+// upper and lower case letters to X and x, digits to 9, separators kept.
+func testFormatMask(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			return 'X'
+		case r >= 'a' && r <= 'z':
+			return 'x'
+		case r >= '0' && r <= '9':
+			return '9'
+		}
+		return r
+	}, s)
+}
+
+// identifiersThenPrepare runs the host's order: Identifiers on the document
+// as the model wrote it, Prepare, then Document on what Prepare returned.
+func identifiersThenPrepare(t *testing.T, o *OutputRedactor, document string) (raw, prepared, redacted string) {
+	t.Helper()
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	masked, err := o.Identifiers(context.Background(), []byte(document))
+	checkNoError(t, err)
+	normalized, _ := v.Prepare(masked, &bundlepkg.Bundle{}, "")
+	final, err := o.Document(context.Background(), normalized)
+	checkNoError(t, err)
+	return string(masked), string(normalized), string(final)
+}
+
+// A secret the model writes into an identifier in a spelling Prepare
+// respells (mixed case, hyphens) is one no rule detects once respelled, so it
+// is masked as written, before Prepare, and Prepare respells the mask.
+func TestOutputRedactionMasksIdentifiersBeforeNormalization(t *testing.T) {
+	key := leakedProviderKey
+	if len("db-"+key) > closedValueLimit {
+		t.Fatalf("the key is too long for these cases: %d", len(key))
+	}
+	// Prepare's respelling of the raw key is not detected: this is the leak.
+	respelled := "sec_" + strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	_, count, err := testRedactor(t).RedactString(context.Background(), respelled)
+	checkNoError(t, err)
+	checkEqual(t, 0, count)
+
+	document := func(id, category string) string {
+		return `{"sections":[{"id":"` + id + `","risks":[{"category":"` + category + `","id":"Token-Reuse"}],"title":"T"}]}`
+	}
+	normalizedMask := func(prefix, value string) string {
+		return prefix + strings.ToLower(strings.ReplaceAll(value, "-", "_"))
+	}
+	const stripe = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	for _, c := range []struct {
+		name, id, category string
+		wantID, wantCat    string
+		values             int
+	}{
+		// One value written twice is scanned and counted once.
+		{"raw in an ID and a category", key, key, testFormatMask(key), testFormatMask(key), 1},
+		{"after a hyphen", "db-" + key, "Auth", "db-" + testFormatMask(key), "Auth", 1},
+		// An underscore is a word character: only the copy after it exposes
+		// the token to a rule that needs a word boundary.
+		{"after an underscore", "Auth_" + stripe, "Auth", "Auth_" + testFormatMask(stripe), "Auth", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+			raw, prepared, redacted := identifiersThenPrepare(t, o, document(c.id, c.category))
+			checkEqual(t, document(c.wantID, c.wantCat), raw)
+			requireNoLeakedSecret(t, "prepared", []byte(prepared))
+			if strings.Contains(prepared, stripe) || strings.Contains(prepared, respelled) {
+				t.Fatalf("prepared keeps a respelled secret: %s", prepared)
+			}
+			var doc struct {
+				Sections []struct {
+					ID    string `json:"id"`
+					Risks []struct {
+						ID       string `json:"id"`
+						Category string `json:"category"`
+					} `json:"risks"`
+				} `json:"sections"`
+			}
+			checkNoError(t, json.Unmarshal([]byte(prepared), &doc))
+			section := doc.Sections[0]
+			checkEqual(t, normalizedMask("sec_", c.wantID), section.ID)
+			checkEqual(t, normalizedMask("", c.wantCat), section.Risks[0].Category)
+			checkEqual(t, "rsk_token_reuse", section.Risks[0].ID)
+			// Document finds nothing more in the respelled mask.
+			checkEqual(t, prepared, redacted)
+			checkEqual(t, c.values, o.Masked())
+			checkEqual(t, c.values, o.MaskedClosed())
+		})
+	}
+}
+
+// A reference to an identifier holding a secret is masked as the identifier
+// is, so it still resolves after Prepare.
+func TestOutputRedactionMasksIdentifierReferencesAlike(t *testing.T) {
+	key := leakedProviderKey
+	document := func(id string) string {
+		return `{"sections":[{"attention":{"refs":["` + id + `"],"text":"Look."},"evidence":[{"id":"` + id + `"}]}]}`
+	}
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	masked, err := o.Identifiers(context.Background(), []byte(document(key)))
+	checkNoError(t, err)
+	checkEqual(t, document(testFormatMask(key)), string(masked))
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+}
+
+// Ordinary identifiers in any spelling, and documents that are not JSON,
+// come back byte for byte and cost no count.
+func TestOutputRedactionKeepsOrdinaryAuthoredIdentifiers(t *testing.T) {
+	document := `{"sections":[{"id":"Auth-Flow", "risks":[{"category":"Retry.Policy","id":"Token Reuse"}],` +
+		`"tiles":[{"data":{"edges":[{"from":"API-Gateway","to":"Session.Store"}]},"id":"Tile-A","kind":"architecture"}],` +
+		`"attention":{"refs":["EV-Retry"],"text":"Look."},"evidence":[{"id":"EV-Retry"}]}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	for _, input := range []string{document, "not json " + leakedProviderKey} {
+		masked, err := o.Identifiers(context.Background(), []byte(input))
+		checkNoError(t, err)
+		checkEqual(t, input, string(masked))
+	}
+	checkEqual(t, 0, o.Masked())
+	checkEqual(t, 0, o.MaskedClosed())
+}
+
+// The values scanned are those normalization respells, and no others.
+func TestAuthoredIdentifiers(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	var value any
+	checkNoError(t, json.Unmarshal([]byte(`{"sections":[{"id":"Auth-Flow","title":"Title","hunks":["h_4ec3b2a1f9d8"],"risks":[{"category":"Retry.Policy","id":"Token Reuse","finding":"F-1"}],`+
+		`"tiles":[{"data":{"edges":[{"from":"API","to":"DB"}]},"id":"Tile-A","kind":"architecture"}],`+
+		`"attention":{"refs":["EV-Retry"],"text":"Look."},"unknown":"Key"}]}`), &value))
+	checkEqual(t, fmt.Sprint([]string{"API", "Auth-Flow", "DB", "EV-Retry", "F-1", "Retry.Policy", "Tile-A", "Token Reuse"}), fmt.Sprint(authoredIdentifiers(value, v.strict)))
+}
+
+// A raw identifier over the bound is masked whole, as one span, even one
+// Prepare would respell within the bound, and Prepare respells the mask.
+func TestOutputRedactionMasksOverlongAuthoredIdentifiersWhole(t *testing.T) {
+	long := strings.Repeat("Auth--", 22)
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, prepared, redacted := identifiersThenPrepare(t, o, `{"sections":[{"id":"`+long+`","title":"T"}]}`)
+	checkEqual(t, `{"sections":[{"id":"`+strings.Repeat("Xxxx--", 22)+`","title":"T"}]}`, raw)
+	checkEqual(t, prepared, redacted)
+	if !strings.Contains(prepared, `"id":"sec_`+strings.Repeat("xxxx_", 21)+`xxxx"`) {
+		t.Fatalf("prepared does not respell the mask: %s", prepared)
+	}
+	checkEqual(t, 1, o.Masked())
+	checkEqual(t, 1, o.MaskedClosed())
+}

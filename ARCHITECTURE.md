@@ -180,10 +180,21 @@ rows or steps is caught; a string keeps its exact text only if it is a reference
 redacted bundle or the checkout, or its value meets the schema's constant,
 enum, closed pattern or date-time format. A value kept only by a closed
 pattern or date-time is still free lowercase text, so each is also scanned on
-its own, whole and from after every underscore in it, and masked in place;
-`MaskedClosed` counts such values, and a host should reject the run when it
-is not zero. The schema bounds those identifiers to 128 characters, and a longer
-value, which cannot be valid, is masked whole without the scan. Text
+its own, whole and from after every character in it that is not a letter or
+digit, and masked in place; `MaskedClosed` counts such values, and a host
+should reject the run when it is not zero. The schema bounds those identifiers
+to 128 characters, and a longer value, which cannot be valid, is masked whole
+without the scan.
+
+Normalisation respells every identifier, category and tile-local name the
+model writes in lowercase with underscores, and a secret respelled that way
+(`sk-ant-api03-AbC…` as `sk_ant_api03_abc…`) is one no rule detects. So a host
+runs the redactor's `Identifiers` on the document as the model wrote it,
+before `Prepare`: the values normalisation respells, taken from its own walk,
+are scanned the same way and masked in place with the format-preserving mask,
+which normalisation then respells to `x`, `9` and underscores, and they count
+in `MaskedClosed` too. The order is `Identifiers`, `Prepare`, `Document` on
+what `Prepare` returned, with one redactor, then the `MaskedClosed` check. Text
 scattered across unrelated fields, a token wrapped mid-value, or a secret no
 rule detects on its own, such as a bare hex string, which reads as a SHA, is
 not caught. If redaction fails, the text is dropped rather than kept.

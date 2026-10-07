@@ -26,6 +26,9 @@ type authoredNormalizer struct {
 	version  int
 	hunks    map[string]bundlepkg.Hunk
 	findings []string
+	// identifier, when set, sees each value walk respells as an identifier,
+	// as it was before the respelling.
+	identifier func(string)
 }
 
 func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundle) (any, []string) {
@@ -45,6 +48,23 @@ func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundl
 	n.hunkAnchorLines(root)
 	n.sections(root)
 	return root, n.findings
+}
+
+// authoredIdentifiers lists, sorted and once each, the values that
+// normalizeAuthored respells as identifiers (see identifierRule.normalize), as
+// the model wrote them. It takes them from the same walk, so it names exactly
+// the positions normalization rewrites. The walk changes value as
+// normalization does, so callers pass a copy they discard.
+func authoredIdentifiers(value any, strict map[string]any) []string {
+	root, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	defs, _ := strict["$defs"].(map[string]any)
+	seen := map[string]bool{}
+	n := &authoredNormalizer{defs: defs, identifier: func(s string) { seen[s] = true }}
+	n.walk(root, strict)
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A
@@ -146,6 +166,9 @@ func (n *authoredNormalizer) walk(value any, schema map[string]any) any {
 	case string:
 		if pattern, ok := schema["pattern"].(string); ok {
 			if rule := identifierPattern(pattern); rule != nil {
+				if n.identifier != nil {
+					n.identifier(v)
+				}
 				return rule.normalize(v)
 			}
 		}
