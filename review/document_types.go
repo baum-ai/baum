@@ -313,7 +313,7 @@ type documentHunk struct {
 	Additions int       `json:"additions"`
 	Deletions int       `json:"deletions"`
 	GitHubURL *string   `json:"github_url,omitempty"`
-	Diff      *TileHunk `json:"diff,omitempty"`
+	Diff      *tileHunk `json:"diff,omitempty"`
 }
 
 type documentCheck struct {

@@ -315,7 +315,7 @@ func TestExcerptDerivationNarrowsHeadersAndReportsUnusableOnes(t *testing.T) {
 			if len(n.findings) != 0 || hunk["header"] != tc.want {
 				t.Fatalf("findings=%v header=%v", n.findings, hunk["header"])
 			}
-			var derived TileCode
+			var derived tileCode
 			checkNoError(t, json.Unmarshal(tileJSON(t, map[string]any{"path": "main.go", "revision": head, "review_version": 1, "diff": source["diff"]}), &derived))
 			checkEqual(t, "", validateTileSource(derived, bundle, directory, 1, nil))
 		})

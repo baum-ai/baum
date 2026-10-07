@@ -17,8 +17,8 @@ implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle, and
-`review` holds the document model, validation, history, refresh and the tile
-catalogue; output redaction, `agent` and `viewer` do not exist yet. Until a
+`review` holds the document model, validation, history, refresh, output
+redaction and the tile catalogue; `agent` and `viewer` do not exist yet. Until a
 package is complete, its section describes the intended shape.
 
 ## Pipeline
@@ -172,8 +172,9 @@ that are timestamped at or before the document's `generated_at`, as stored,
 so prompts that decisions cited at generation keep their bounded text while
 a prompt only an earlier refresh added is not carried again.
 
-Everything a model returns is untrusted. Output redaction masks the document,
-the findings and the diagnostics. Every string of the document is scanned as
+Everything a model returns is untrusted. `review.OutputRedactor` masks a
+document, or any other text a host passes it (the findings, the diagnostics);
+a host applies it to everything its generation returns. Every string of the document is scanned as
 one text, so a secret spread over code lines, table rows or steps is caught;
 a string keeps its exact text only if it is a reference that resolves to the
 redacted bundle or the checkout, or its value meets the schema's constant,

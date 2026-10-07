@@ -19,34 +19,28 @@ type reviewTile struct {
 	ID   string         `json:"id"`
 	Kind string         `json:"kind"`
 	Data map[string]any `json:"data"`
-	Code []TileCode     `json:"code"`
+	Code []tileCode     `json:"code"`
 }
 
-// TileCode is one code source of a tile: a file at a revision with the
+// tileCode is one code source of a tile: a file at a revision with the
 // excerpt it shows.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-type TileCode struct {
+type tileCode struct {
 	Path     string `json:"path"`
 	Revision string `json:"revision"`
 	Version  int    `json:"review_version"`
 	Diff     *struct {
-		Hunks []TileHunk `json:"hunks"`
+		Hunks []tileHunk `json:"hunks"`
 	} `json:"diff,omitempty"`
 }
 
-// TileHunk is one excerpt hunk of a tile code source.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-type TileHunk struct {
+// tileHunk is one excerpt hunk of a tile code source.
+type tileHunk struct {
 	Header string     `json:"header"`
-	Lines  []TileLine `json:"lines"`
+	Lines  []tileLine `json:"lines"`
 }
 
-// TileLine is one line of an excerpt hunk.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-type TileLine struct {
+// tileLine is one line of an excerpt hunk.
+type tileLine struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`
 	Old  int    `json:"old_line,omitempty"`
@@ -189,7 +183,7 @@ func validateTileSources(sections []authoredSection, bundle *bundlepkg.Bundle, d
 	if bundle.Previous != nil {
 		version += bundle.Previous.Version
 	}
-	inherited, err := InheritedTileSources(bundle)
+	inherited, err := inheritedTileSources(bundle)
 	if err != nil {
 		return []string{err.Error()}
 	}
@@ -214,15 +208,13 @@ func validateTileSources(sections []authoredSection, bundle *bundlepkg.Bundle, d
 	return findings
 }
 
-// InheritedTileSources lists the code sources of the previous review's
+// inheritedTileSources lists the code sources of the previous review's
 // sections, which a new review may carry forward unchanged.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func InheritedTileSources(bundle *bundlepkg.Bundle) ([]TileCode, error) {
+func inheritedTileSources(bundle *bundlepkg.Bundle) ([]tileCode, error) {
 	if bundle.Previous == nil {
 		return nil, nil
 	}
-	var inherited []TileCode
+	var inherited []tileCode
 	for _, previous := range bundle.Previous.Sections {
 		var section authoredSection
 		if err := json.Unmarshal(previous.Content, &section); err != nil {
@@ -243,7 +235,7 @@ func InheritedTileSources(bundle *bundlepkg.Bundle) ([]TileCode, error) {
 	return inherited, nil
 }
 
-func validateTileSource(source TileCode, bundle *bundlepkg.Bundle, directory string, version int, inherited []TileCode) string {
+func validateTileSource(source tileCode, bundle *bundlepkg.Bundle, directory string, version int, inherited []tileCode) string {
 	if !filepath.IsLocal(source.Path) || strings.Contains(source.Path, "\\") || strings.IndexFunc(source.Path, func(r rune) bool { return r < 32 }) >= 0 {
 		return "invalid repository path"
 	}
@@ -279,13 +271,13 @@ func validateTileSource(source TileCode, bundle *bundlepkg.Bundle, directory str
 		return ""
 	}
 	// Bundle patches are the exact head/merge-base comparison, not model text.
-	lines := map[TileLine]bool{}
-	for _, line := range ComparisonLines(bundle, source.Path, root) {
+	lines := map[tileLine]bool{}
+	for _, line := range comparisonLines(bundle, source.Path, root) {
 		lines[line] = true
 	}
 	previousOld, previousNew := 0, 0
 	for _, hunk := range source.Diff.Hunks {
-		old, oldCount, next, newCount, ok := TileHunkRange(hunk.Header)
+		old, oldCount, next, newCount, ok := tileHunkRange(hunk.Header)
 		if !ok || old < previousOld || next < previousNew {
 			return "invalid excerpt hunk ranges"
 		}
@@ -315,12 +307,10 @@ func validateTileSource(source TileCode, bundle *bundlepkg.Bundle, directory str
 	return ""
 }
 
-// ComparisonLines lists the numbered lines the bundle's patches show for one
+// comparisonLines lists the numbered lines the bundle's patches show for one
 // path, in patch order.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func ComparisonLines(bundle *bundlepkg.Bundle, path, root string) []TileLine {
-	var lines []TileLine
+func comparisonLines(bundle *bundlepkg.Bundle, path, root string) []tileLine {
+	var lines []tileLine
 	for _, hunk := range comparisonHunks(bundle, path, root) {
 		lines = append(lines, hunk...)
 	}
@@ -329,14 +319,14 @@ func ComparisonLines(bundle *bundlepkg.Bundle, path, root string) []TileLine {
 
 // comparisonHunks lists the same lines grouped by the patch hunk that shows
 // them, so an excerpt can be confined to one hunk.
-func comparisonHunks(bundle *bundlepkg.Bundle, path, root string) [][]TileLine {
-	var hunks [][]TileLine
+func comparisonHunks(bundle *bundlepkg.Bundle, path, root string) [][]tileLine {
+	var hunks [][]tileLine
 	for _, hunk := range bundle.Diff {
 		if hunk.Path != path && (root != "merge-base" || hunk.OldPath != path) {
 			continue
 		}
 		oldLine, newLine := 0, 0
-		var current []TileLine
+		var current []tileLine
 		flush := func() {
 			if len(current) > 0 {
 				hunks = append(hunks, current)
@@ -344,7 +334,7 @@ func comparisonHunks(bundle *bundlepkg.Bundle, path, root string) [][]TileLine {
 			}
 		}
 		for _, line := range strings.Split(hunk.Patch, "\n") {
-			if old, _, next, _, ok := TileHunkRange(line); ok {
+			if old, _, next, _, ok := tileHunkRange(line); ok {
 				flush()
 				oldLine, newLine = old, next
 				continue
@@ -352,7 +342,7 @@ func comparisonHunks(bundle *bundlepkg.Bundle, path, root string) [][]TileLine {
 			if len(line) == 0 || oldLine == 0 && newLine == 0 {
 				continue
 			}
-			item := TileLine{Text: line[1:]}
+			item := tileLine{Text: line[1:]}
 			switch line[0] {
 			case ' ':
 				item.Kind, item.Old, item.New = "context", oldLine, newLine
@@ -376,10 +366,8 @@ func comparisonHunks(bundle *bundlepkg.Bundle, path, root string) [][]TileLine {
 
 var tileRangePattern = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$`)
 
-// TileHunkRange parses a hunk header into its old and new start and count.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func TileHunkRange(header string) (old, oldCount, next, newCount int, ok bool) {
+// tileHunkRange parses a hunk header into its old and new start and count.
+func tileHunkRange(header string) (old, oldCount, next, newCount int, ok bool) {
 	match := tileRangePattern.FindStringSubmatch(header)
 	if match == nil {
 		return

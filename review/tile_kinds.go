@@ -11,7 +11,7 @@ import (
 // only those kinds' tile variants, and each definition only the removed
 // variants used, before the model-facing contract is derived from it.
 //
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
+// It is exported for hosts that run the generate-and-repair loop themselves.
 func (v *DocumentValidator) ModelSchema(kinds []string) ([]byte, error) {
 	if len(kinds) == 0 {
 		return schemaWithoutTiles(v.Schema)
@@ -145,7 +145,7 @@ func dropTileProperties(node any) {
 // A document that is not the expected shape is returned unchanged for the
 // validator to report.
 //
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
+// It is exported for hosts that run the generate-and-repair loop themselves.
 func DocumentWithTileKinds(document []byte, kinds []string) []byte {
 	var value map[string]any
 	if json.Unmarshal(document, &value) != nil {

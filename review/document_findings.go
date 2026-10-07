@@ -89,14 +89,14 @@ func (s *sectionItemSchemas) findings(location string, section map[string]any, s
 			remainder["attention"] = nil
 		}
 	}
-	evidence := Objects(section["evidence"])
+	evidence := jsonObjects(section["evidence"])
 	for _, item := range evidence {
 		if err := s.evidence.Validate(item); err != nil {
 			findings = append(findings, fmt.Sprintf("%s evidence %v: %s", location, item["id"], evidenceFinding(item, err)))
 			remainder["evidence"] = []any{}
 		}
 	}
-	for _, risk := range Objects(section["risks"]) {
+	for _, risk := range jsonObjects(section["risks"]) {
 		where := fmt.Sprintf("%s risk %v", location, risk["id"])
 		tiles := s.tileFindings(where, risk["tiles"])
 		withoutTiles := maps.Clone(risk)
@@ -109,7 +109,7 @@ func (s *sectionItemSchemas) findings(location string, section map[string]any, s
 			remainder["risks"] = []any{}
 		}
 	}
-	for i, block := range Objects(section["blocks"]) {
+	for i, block := range jsonObjects(section["blocks"]) {
 		where := fmt.Sprintf("%s block %d", location, i+1)
 		variant, known := s.blocks[fmt.Sprint(block["kind"])]
 		if !known {
@@ -167,7 +167,7 @@ func attentionFindings(location string, value any, validationErr error) []string
 
 func (s *sectionItemSchemas) tileFindings(location string, value any) []string {
 	var findings []string
-	for _, tile := range Objects(value) {
+	for _, tile := range jsonObjects(value) {
 		where := fmt.Sprintf("%s tile %v", location, tile["id"])
 		variant, known := s.tiles[fmt.Sprint(tile["kind"])]
 		if !known {

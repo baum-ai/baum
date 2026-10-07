@@ -106,14 +106,14 @@ func TestTileSourcesVerifyPinnedComparisonAndCarryOlderExcerpts(t *testing.T) {
 	}
 	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	bundle := &bundlepkg.Bundle{PullRequest: bundlepkg.PullRequest{HeadSHA: head, MergeBaseSHA: base}, Diff: []bundlepkg.Hunk{{Path: "main.go", Patch: "@@ -1 +1 @@\n-before\n+after\n"}}}
-	var original TileCode
+	var original tileCode
 	checkNoError(t, json.Unmarshal([]byte(`{"path":"main.go","revision":"`+head+`","review_version":1,"diff":{"hunks":[{"header":"@@ -1 +1 @@","lines":[{"kind":"remove","old_line":1,"text":"before"},{"kind":"add","new_line":1,"text":"after"}]}]}}`), &original))
 	for _, name := range []string{"valid", "deleted file", "wrong revision", "future version", "unsafe path", "wrong text", "wrong line", "wrong header", "inherited", "tampered inherited", "unverified older"} {
 		t.Run(name, func(t *testing.T) {
-			var source TileCode
+			var source tileCode
 			checkNoError(t, json.Unmarshal(tileJSON(t, original), &source))
 			version := 1
-			var inherited []TileCode
+			var inherited []tileCode
 			switch name {
 			case "deleted file":
 				source.Revision = base
@@ -131,10 +131,10 @@ func TestTileSourcesVerifyPinnedComparisonAndCarryOlderExcerpts(t *testing.T) {
 				source.Diff.Hunks[0].Header = "@@ -1,3 +1,3 @@"
 			case "inherited":
 				version = 2
-				inherited = []TileCode{original}
+				inherited = []tileCode{original}
 			case "tampered inherited":
 				version = 2
-				inherited = []TileCode{original}
+				inherited = []tileCode{original}
 				source.Diff.Hunks[0].Lines[1].Text = "invented"
 			case "unverified older":
 				version = 2

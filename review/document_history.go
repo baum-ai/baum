@@ -172,7 +172,7 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 // provider's first assessment. A validation repair must not turn those
 // omissions into explicit reactivations.
 //
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
+// It is exported for hosts that run the generate-and-repair loop themselves.
 func PreserveRiskOmissionsForRepair(previous *bundlepkg.PreviousVersion, assessed, repaired []byte) []byte {
 	if previous == nil {
 		return repaired
@@ -348,7 +348,7 @@ func dropUnlistedImages(section map[string]any, attachments []bundlepkg.Attachme
 			continue
 		}
 		items := []any{}
-		for _, item := range Objects(block["items"]) {
+		for _, item := range jsonObjects(block["items"]) {
 			if id, _ := item["attachment"].(string); listed[id] {
 				items = append(items, item)
 			}

@@ -492,7 +492,7 @@ func defaultable(name string, prop map[string]any, defs map[string]any) bool {
 }
 
 func defaultValue(prop map[string]any, defs map[string]any) (any, bool) {
-	resolved := ResolveSchema(prop, defs)
+	resolved := resolveSchema(prop, defs)
 	if value, ok := resolved["const"]; ok {
 		return value, true
 	}
@@ -514,14 +514,12 @@ func anchorsProperty(name string, prop map[string]any, defs map[string]any) bool
 	if name != "anchors" && name != "source" {
 		return false
 	}
-	return ResolveSchema(prop, defs)["type"] == "array"
+	return resolveSchema(prop, defs)["type"] == "array"
 }
 
-// ResolveSchema follows a $ref in a schema node through defs and returns the
+// resolveSchema follows a $ref in a schema node through defs and returns the
 // node it names, or the node itself when it has no reference.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func ResolveSchema(schema map[string]any, defs map[string]any) map[string]any {
+func resolveSchema(schema map[string]any, defs map[string]any) map[string]any {
 	for range 8 {
 		ref, ok := schema["$ref"].(string)
 		if !ok || !strings.HasPrefix(ref, "#/$defs/") {
@@ -565,12 +563,10 @@ func removeStrings(value any, removed ...string) []any {
 
 func containsString(list []string, value string) bool { return slices.Contains(list, value) }
 
-// SchemaBranch picks the branch of a schema, resolved through defs, that the
+// schemaBranch picks the branch of a schema, resolved through defs, that the
 // authored value selects, or nil when none does. Callers that walk an authored
 // document beside its schema use it to follow the same branch normalisation
 // takes.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func SchemaBranch(defs map[string]any, value any, schema map[string]any) map[string]any {
+func schemaBranch(defs map[string]any, value any, schema map[string]any) map[string]any {
 	return (&authoredNormalizer{defs: defs}).branch(value, schema)
 }

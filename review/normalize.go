@@ -95,7 +95,7 @@ func jsonIntegerNumber(value any) (float64, bool) {
 // null removal, defaults for missing required fields, identifier spelling and
 // duplicate identifiers within one array.
 func (n *authoredNormalizer) walk(value any, schema map[string]any) any {
-	schema = ResolveSchema(schema, n.defs)
+	schema = resolveSchema(schema, n.defs)
 	if branch := n.branch(value, schema); branch != nil {
 		schema = branch
 	}
@@ -115,7 +115,7 @@ func (n *authoredNormalizer) walk(value any, schema map[string]any) any {
 				continue
 			}
 			if child == nil {
-				if !acceptsNull(ResolveSchema(prop, n.defs)) {
+				if !acceptsNull(resolveSchema(prop, n.defs)) {
 					delete(v, key)
 				}
 				continue
@@ -172,7 +172,7 @@ func (n *authoredNormalizer) branch(value any, schema map[string]any) map[string
 		if !ok {
 			continue
 		}
-		branch = ResolveSchema(branch, n.defs)
+		branch = resolveSchema(branch, n.defs)
 		if branch["type"] == "object" || branch["properties"] != nil {
 			objects = append(objects, branch)
 		}
@@ -209,7 +209,7 @@ func (n *authoredNormalizer) dedupe(list []any, items map[string]any) {
 		if !ok {
 			continue
 		}
-		schema := ResolveSchema(items, n.defs)
+		schema := resolveSchema(items, n.defs)
 		if branch := n.branch(object, schema); branch != nil {
 			schema = branch
 		}
@@ -262,7 +262,7 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 		if section["kind"] == "mechanical" || len(hunks) == 0 {
 			delete(section, "assessment")
 		} else if assessment, ok := section["assessment"].(map[string]any); ok {
-			for _, reason := range Objects(assessment["reasons"]) {
+			for _, reason := range jsonObjects(assessment["reasons"]) {
 				fillAnchors(reason, "anchors", anchors)
 			}
 			if factors, ok := assessment["factors"].([]any); ok {
@@ -278,24 +278,24 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 		items := map[string]bool{}
 		// A risk keeps the anchors the model gave it: they decide which lines
 		// the risk rates in the stored statistics, so they are never guessed.
-		for _, risk := range Objects(section["risks"]) {
+		for _, risk := range jsonObjects(section["risks"]) {
 			items[fmt.Sprint(risk["id"])] = true
 			riskAnchors, _ := risk["anchors"].([]any)
 			n.tiles(location+" risk "+fmt.Sprint(risk["id"]), risk["tiles"], riskAnchors)
 		}
-		for _, evidence := range Objects(section["evidence"]) {
+		for _, evidence := range jsonObjects(section["evidence"]) {
 			items[fmt.Sprint(evidence["id"])] = true
 			n.supportEvidenceStatus(evidence)
 		}
 		dropEmptyItemBlocks(section)
-		for _, block := range Objects(section["blocks"]) {
+		for _, block := range jsonObjects(section["blocks"]) {
 			switch block["kind"] {
 			case "behavior":
 				// Behavior anchors drive the inline code evidence. Keep their
 				// selection model-authored instead of widening a missing choice
 				// to every hunk in the section.
 			case "decisions":
-				for _, decision := range Objects(block["items"]) {
+				for _, decision := range jsonObjects(block["items"]) {
 					items[fmt.Sprint(decision["id"])] = true
 					fillAnchors(decision, "anchors", anchors)
 					// false says what an absent flag says. A human decision
@@ -306,7 +306,7 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 					}
 				}
 			case "entities", "groups", "dependency":
-				for _, item := range Objects(block["items"]) {
+				for _, item := range jsonObjects(block["items"]) {
 					if _, present := item["hunks"]; present {
 						item["hunks"] = n.knownHunks(item["hunks"])
 					}
@@ -367,7 +367,7 @@ func dropEmptyItemBlocks(section map[string]any) {
 // when anchors are resolved. A verified item without granularity verifies its
 // job.
 func (n *authoredNormalizer) supportEvidenceStatus(evidence map[string]any) {
-	anchors := Objects(evidence["anchors"])
+	anchors := jsonObjects(evidence["anchors"])
 	cites := func(accept func(kind, id string) bool) bool {
 		return slices.ContainsFunc(anchors, func(anchor map[string]any) bool {
 			id, _ := anchor["id"].(string)
@@ -445,10 +445,8 @@ func fillAnchors(owner map[string]any, key string, fallback []any) {
 	owner[key] = copied
 }
 
-// Objects returns the JSON objects in a decoded list, skipping other items.
-//
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
-func Objects(value any) []map[string]any {
+// jsonObjects returns the JSON objects in a decoded list, skipping other items.
+func jsonObjects(value any) []map[string]any {
 	list, _ := value.([]any)
 	result := make([]map[string]any, 0, len(list))
 	for _, item := range list {
@@ -464,9 +462,9 @@ func Objects(value any) []map[string]any {
 // by hunk headers gets its lines from the bundle's comparison. Inherited
 // sources from earlier reviews are carried unchanged.
 func (n *authoredNormalizer) tiles(location string, value any, fallbackAnchors []any) {
-	for _, tile := range Objects(value) {
+	for _, tile := range jsonObjects(value) {
 		fillAnchors(tile, "anchors", fallbackAnchors)
-		for i, source := range Objects(tile["code"]) {
+		for i, source := range jsonObjects(tile["code"]) {
 			where := fmt.Sprintf("%s tile %v source %d (%v)", location, tile["id"], i+1, source["path"])
 			switch source["revision"] {
 			case tileRevisionHead:
@@ -499,7 +497,7 @@ func (n *authoredNormalizer) tiles(location string, value any, fallbackAnchors [
 
 func (n *authoredNormalizer) deriveExcerpt(where string, source map[string]any, path, root string) {
 	diff, _ := source["diff"].(map[string]any)
-	hunks := Objects(diff["hunks"])
+	hunks := jsonObjects(diff["hunks"])
 	if len(hunks) == 0 {
 		return
 	}
@@ -509,7 +507,7 @@ func (n *authoredNormalizer) deriveExcerpt(where string, source map[string]any, 
 	kept := make([]any, 0, len(hunks))
 	for i, hunk := range hunks {
 		header, _ := hunk["header"].(string)
-		old, oldCount, next, newCount, ok := TileHunkRange(header)
+		old, oldCount, next, newCount, ok := tileHunkRange(header)
 		if !ok {
 			n.findings = append(n.findings, fmt.Sprintf("%s: hunk %d header %q is not of the form @@ -old,count +new,count @@", where, i+1, header))
 			continue
@@ -518,11 +516,11 @@ func (n *authoredNormalizer) deriveExcerpt(where string, source map[string]any, 
 		// are placed by old numbers and additions by new ones, so a selection
 		// touching two hunks, or leaving a hole inside one, would splice lines
 		// the comparison never showed together.
-		var selected []TileLine
+		var selected []tileLine
 		sources := 0
 		adjacent := true
 		for _, patchHunk := range available {
-			var picked []TileLine
+			var picked []tileLine
 			first, last := -1, -1
 			for j, line := range patchHunk {
 				inOld := line.Kind != "add" && line.Old >= old && line.Old < old+oldCount
@@ -564,7 +562,7 @@ func (n *authoredNormalizer) deriveExcerpt(where string, source map[string]any, 
 
 // excerptFromLines writes the header the selected lines actually cover and the
 // lines in the contract's shape.
-func excerptFromLines(oldStart, newStart int, lines []TileLine) (string, []any) {
+func excerptFromLines(oldStart, newStart int, lines []tileLine) (string, []any) {
 	oldCount, newCount := 0, 0
 	encoded := make([]any, 0, len(lines))
 	for _, line := range lines {

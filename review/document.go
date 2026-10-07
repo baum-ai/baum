@@ -46,7 +46,7 @@ type DocumentValidator struct {
 // Contract returns a copy of the strict authored schema as a decoded tree, with
 // its $defs; changing it does not affect the validator.
 //
-// It is exported for hosts that run output redaction or the generate-and-repair loop themselves.
+// It is exported for hosts that run the generate-and-repair loop themselves.
 func (v *DocumentValidator) Contract() map[string]any {
 	encoded, err := json.Marshal(v.strict)
 	if err != nil {
@@ -469,7 +469,7 @@ func unlistedImageFinding(block map[string]any, listed map[string]bool) string {
 	if block["kind"] != "images" {
 		return ""
 	}
-	for _, item := range Objects(block["items"]) {
+	for _, item := range jsonObjects(block["items"]) {
 		if id, _ := item["attachment"].(string); !listed[id] {
 			return fmt.Sprintf("images block names attachment %q, which the attachments part does not list; use only listed attachment IDs", id)
 		}
@@ -961,16 +961,16 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 // structured line shape the UI already uses for model-selected tile excerpts.
 // A missing or over-trimmed patch stays absent so readers get a source link,
 // never a partial excerpt presented as complete.
-func indexedHunkDiff(hunk bundlepkg.Hunk) *TileHunk {
+func indexedHunkDiff(hunk bundlepkg.Hunk) *tileHunk {
 	if hunk.Patch == "" {
 		return nil
 	}
 	header, _, _ := strings.Cut(hunk.Patch, "\n")
-	oldLine, oldCount, newLine, newCount, ok := TileHunkRange(header)
+	oldLine, oldCount, newLine, newCount, ok := tileHunkRange(header)
 	if !ok {
 		return nil
 	}
-	var lines []TileLine
+	var lines []tileLine
 	actualOld, actualNew := 0, 0
 	body := strings.Split(hunk.Patch, "\n")[1:]
 	canMarkNoNewline := false
@@ -985,7 +985,7 @@ func indexedHunkDiff(hunk bundlepkg.Hunk) *TileHunk {
 		if line == "" {
 			return nil
 		}
-		item := TileLine{Text: line[1:]}
+		item := tileLine{Text: line[1:]}
 		switch line[0] {
 		case ' ':
 			item.Kind, item.Old, item.New = "context", oldLine, newLine
@@ -1012,7 +1012,7 @@ func indexedHunkDiff(hunk bundlepkg.Hunk) *TileHunk {
 	if len(lines) == 0 || actualOld != oldCount || actualNew != newCount {
 		return nil
 	}
-	return &TileHunk{Header: header, Lines: lines}
+	return &tileHunk{Header: header, Lines: lines}
 }
 
 // checkIndex lists the bundle's checks as the document indexes them. head is
