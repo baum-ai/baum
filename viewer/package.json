@@ -49,6 +49,7 @@
     "./components/review-tiles/tile-questions": "./src/components/review-tiles/tile-questions.tsx",
     "./components/review-tiles/workflow": "./src/components/review-tiles/workflow.tsx",
     "./components/review-viewer": "./src/components/review-viewer.tsx",
+    "./components/segmented": "./src/components/segmented.ts",
     "./components/side-nav": "./src/components/side-nav.tsx",
     "./components/states": "./src/components/states.tsx",
     "./components/table": "./src/components/table.tsx",
