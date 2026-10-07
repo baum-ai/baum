@@ -266,12 +266,12 @@ Optional seams default to absent, and the viewer renders the document alone.
 The viewer never decides who can see a document; that is the host's job.
 
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
-defaults to an open font bundled with the package. A host overrides the
-variable to restyle the viewer without forking it.
+defaults to Inter, bundled with the package under the SIL Open Font License.
+A host overrides the variable to restyle the viewer without forking it; the
+hosted service sets its own licensed face this way.
 
 The components and their seams are in [`viewer/`](viewer/README.md); the
-standalone app and the bundled font are not there yet, and until the font is
-the variable falls back to the system's sans-serif face.
+standalone app is not there yet.
 
 ## Running locally
 
