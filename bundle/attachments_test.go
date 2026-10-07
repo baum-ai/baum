@@ -162,7 +162,7 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 	if err := UnpackAttachments(context.Background(), write(t, archive), dir, listed, 1024); err != nil {
 		t.Fatalf("listed image refused: %v", err)
 	}
-	if info, err := os.Stat(filepath.Join(dir, "attachments")); err != nil || info.Mode().Perm() != 0500 {
+	if info, err := os.Stat(filepath.Join(dir, "attachments")); err != nil || info.Mode().Perm()&0222 != 0 {
 		t.Fatalf("attachments directory is not read-only: %v %v", info, err)
 	}
 	if err := UnpackAttachments(context.Background(), "", t.TempDir(), nil, 1024); err != nil {

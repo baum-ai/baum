@@ -47,6 +47,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -346,7 +347,9 @@ var oidPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 func validOID(value string) bool { return oidPattern.MatchString(value) }
 
 func validGitPath(value string) bool {
-	if value == "" || filepath.IsAbs(value) || filepath.ToSlash(filepath.Clean(value)) != value || value == "." || strings.ContainsRune(value, 0) {
+	// Git paths are slash-separated on every OS, so validate with path, not
+	// filepath: on Windows filepath.IsAbs("/etc/passwd") is false.
+	if value == "" || path.IsAbs(value) || path.Clean(value) != value || value == "." || strings.ContainsRune(value, 0) {
 		return false
 	}
 	return !slices.Contains(strings.Split(value, "/"), "..")
