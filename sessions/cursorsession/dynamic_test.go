@@ -62,7 +62,6 @@ func TestDynamicToolsMapToTheirRealNamesAndVerbs(t *testing.T) {
 		{"mcp", "user-tracker", "save_issue", `{"title":"t"}`, session.VerbOther},
 		{"mcp", "user-tracker", "list_issues", `{}`, session.VerbOther},
 		{"mcp", "user-tracker", "prepare_attachment_upload", `{"name":"a.png"}`, session.VerbOther},
-		{"mcp tool named like a builtin", "user-tracker", "Delete", `{"id":"1"}`, session.VerbOther},
 	}
 	var inputs []string
 	for _, test := range tests {
@@ -83,6 +82,21 @@ func TestDynamicToolsMapToTheirRealNamesAndVerbs(t *testing.T) {
 		if err := json.Unmarshal(use.Metadata, &metadata); err != nil ||
 			metadata.Dynamic["wrapper"] != "CallDynamicTool" || metadata.Dynamic["toolName"] != test.tool || metadata.Dynamic["namespace"] != test.namespace {
 			t.Errorf("%s metadata = %s", test.tool, use.Metadata)
+		}
+	}
+}
+
+func TestMCPToolsSharingABuiltinNameAreQualified(t *testing.T) {
+	graph := buildDynamic(t,
+		dynamicCallInput("user-tracker", "Task", `{"id":"1"}`),
+		dynamicCallInput("user-tracker", "Agent", `{}`),
+		dynamicCallInput("user-tracker", "Delete", `{"id":"1"}`),
+		dynamicCallInput("user-tracker", "save_issue", `{}`),
+	)
+	want := []string{"mcp__user-tracker__Task", "mcp__user-tracker__Agent", "mcp__user-tracker__Delete", "save_issue"}
+	for i, name := range want {
+		if use := graph.ToolUses[i]; use.Name != name || use.Verb != session.VerbOther {
+			t.Errorf("tool %d = %q / %q, want %q / other", i, use.Name, use.Verb, name)
 		}
 	}
 }

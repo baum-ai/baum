@@ -56,7 +56,7 @@ func resolvePortableTool(name string, input json.RawMessage) resolvedTool {
 			}
 			base["dynamic_tool"] = dynamic
 			if knownDynamicTool(call) {
-				resolved.Name = call.ToolName
+				resolved.Name = storedDynamicName(call)
 				resolved.Input = dynamicArguments(call.Arguments)
 				resolved.Verb = dynamicVerb(call)
 			}
@@ -64,6 +64,21 @@ func resolvePortableTool(name string, input json.RawMessage) resolvedTool {
 	}
 	resolved.Metadata, _ = json.Marshal(base)
 	return resolved
+}
+
+// storedDynamicName is the stored name of a recognised dynamic tool. A tool from
+// another namespace that shares a builtin's name, or the name of a subagent tool
+// the platform matches by name (Agent, Task, spawn_agent), is stored as
+// mcp__<namespace>__<tool>, so it cannot be mistaken for the builtin.
+func storedDynamicName(call dynamicCall) string {
+	if call.Namespace == "" || call.Namespace == builtinNamespace {
+		return call.ToolName
+	}
+	if builtinDynamicTools[call.ToolName] || call.ToolName == "Agent" || call.ToolName == "spawn_agent" ||
+		traceprocessing.GenericToolVerb(call.ToolName) != session.VerbOther {
+		return "mcp__" + call.Namespace + "__" + call.ToolName
+	}
+	return call.ToolName
 }
 
 func knownDynamicTool(call dynamicCall) bool {
