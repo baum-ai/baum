@@ -126,8 +126,9 @@ type Commit struct {
 // Link is one session matched to a commit.
 type Link struct {
 	Session string `json:"session"`
-	// Method is the linkage step that matched: commit_ref, start_commit or
-	// files_overlap.
+	// Method is how the link was made: entire_checkpoint when the commit's
+	// Entire-Checkpoint trailer names a checkpoint recording the session, or
+	// the linkage step that matched: commit_ref, start_commit or files_overlap.
 	Method     string  `json:"method"`
 	Confidence float64 `json:"confidence"`
 }
@@ -238,12 +239,14 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 			_, _ = fmt.Fprintf(req.Warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	return match(ctx, engine, found, commits)
+	truth, extra := checkpointLinks(ctx, dir, commits, found, req.Warn)
+	return match(ctx, engine, append(found, extra...), commits, truth)
 }
 
-// match links sessions to commits with the matcher's default steps and
-// builds the redacted result.
-func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit) (Result, error) {
+// match links sessions to commits and builds the redacted result. A commit
+// with ground truth, the sessions its Entire checkpoint records, is linked to
+// exactly those; every other commit goes through the matcher's default steps.
+func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
 	// An Entire session has one snapshot per checkpoint, each fuller than the
 	// last, and the matcher identifies a run by its id, so only the newest
 	// snapshot of each id is matched.
@@ -274,14 +277,20 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
 	}
 
-	enriched := make([]linkage.EnrichedCommit, len(commits))
-	for i, c := range commits {
-		enriched[i] = enrichedOf(c)
+	var edges []linkage.Edge
+	enriched := make([]linkage.EnrichedCommit, 0, len(commits))
+	for _, c := range commits {
+		if linked := truth[c.OID]; len(linked) > 0 {
+			edges = append(edges, entireEdges(c.OID, linked)...)
+			continue
+		}
+		enriched = append(enriched, enrichedOf(c))
 	}
-	edges, err := linkage.MatchCommits(enriched, candidates, linkage.DefaultConfig(), steps.Default())
+	matched, err := linkage.MatchCommits(enriched, candidates, linkage.DefaultConfig(), steps.Default())
 	if err != nil {
 		return Result{}, fmt.Errorf("matching commits: %w", err)
 	}
+	edges = append(edges, matched...)
 
 	links := map[string][]Link{}
 	linked := map[string]bool{}
