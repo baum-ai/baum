@@ -15,9 +15,12 @@ go vet ./...
 go test ./...
 ```
 
-`just check` runs the same steps CI runs: `gofmt` check, vet, build, tests
-with the race detector and `golangci-lint`. Run it before opening a pull
-request. `just --list` shows the other recipes, including `release-snapshot`
+`just check` runs the same steps CI runs: `gofmt` check, `go mod tidy -diff`,
+vet, build, tests with the race detector and `golangci-lint`. Run it before
+opening a pull request. The built viewer in `internal/viewer/dist` is committed,
+and CI fails when it differs from a fresh build: after changing the viewer's
+source, run `just viewer-build` and commit the result, and `just viewer-fresh`
+runs the same check CI does. `just --list` shows the other recipes, including `release-snapshot`
 (a local goreleaser build for every target).
 
 `CGO_ENABLED=0` must keep working; release binaries are built that way for

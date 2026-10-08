@@ -197,7 +197,7 @@ otherwise compiles with `new Function`, which a page under a strict
 Content-Security-Policy (as `baum view` serves) cannot run. No other script
 rewrites the file, so a unit test fails when it is out of date: run
 `pnpm generate:validators` after changing either schema file, then rebuild the
-standalone app.
+standalone app; `just viewer-build` from the module root does both.
 
 ## Standalone app
 
@@ -216,7 +216,10 @@ any other host.
 
 `pnpm build:app` builds it with Vite into `../internal/viewer/dist`, the Go
 package that embeds it. That output is committed, so `go install` needs
-nothing but Go: rebuild and commit it whenever the viewer's source changes. The
+nothing but Go: run `just viewer-build` from the module root and commit the
+result whenever the viewer's source or the schema changes. It runs
+`pnpm generate:validators` and `pnpm build:app`, and `just viewer-fresh` fails
+when the committed output differs from a fresh build, as CI does. The
 build writes no sourcemaps, and two builds of the same source are
 byte-identical.
 

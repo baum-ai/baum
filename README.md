@@ -183,9 +183,9 @@ The viewer that `baum view` serves is committed, so `go install` needs no
 Node.js: `internal/viewer/dist` holds the built app and
 `viewer/src/precompiled` the precompiled tile validators. `just viewer-build`
 rebuilds both, and `just viewer-fresh` rebuilds them and fails, listing the
-changed paths, when they differ from what is committed. CI and the release
-workflow run that check before they compile `baum`, and the goreleaser before
-hook does too. `just release-snapshot` builds the five release archives into
+changed paths, when they differ from what is committed. CI fails on a stale
+bundle, the release snapshot and the release wait for that check, and the
+goreleaser before hook runs it too. `just release-snapshot` builds the five release archives into
 `dist/`, and `just release-verify` checks that each binary was built with CGO
 off and embeds the committed bundle. `just clean-install` runs
 `scripts/clean-install.sh`, which installs `baum` from a module zip of the
