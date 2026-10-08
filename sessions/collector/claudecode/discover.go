@@ -28,7 +28,14 @@ type Files = model.Files
 
 // FindSessions scans the Claude Code project store.
 func FindSessions(projectsDir string, roots []string) ([]model.Session, model.ScanReport, error) {
-	candidates, report, err := loadCandidates(projectsDir, roots)
+	return FindSessionsSince(projectsDir, roots, time.Time{})
+}
+
+// FindSessionsSince is FindSessions without the transcripts last modified
+// before since, which are skipped before they are opened. A zero since keeps
+// every transcript.
+func FindSessionsSince(projectsDir string, roots []string, since time.Time) ([]model.Session, model.ScanReport, error) {
+	candidates, report, err := loadCandidates(projectsDir, roots, since)
 	if err != nil {
 		return nil, report, err
 	}
@@ -49,7 +56,12 @@ func FindSessions(projectsDir string, roots []string) ([]model.Session, model.Sc
 
 // loadCandidates walks the project store for top-level .jsonl files under
 // project directories that encode one of the roots (or a path beneath it).
-func loadCandidates(projectsDir string, roots []string) ([]candidate, model.ScanReport, error) {
+// Claude Code names a project directory after the directory a session started
+// in, with every character but a letter or digit replaced by '-', so a
+// directory's name can also be the prefix of an unrelated sibling's
+// (/repo and /repo-other). Those are listed here and ruled out by the working
+// directory the transcript records.
+func loadCandidates(projectsDir string, roots []string, since time.Time) ([]candidate, model.ScanReport, error) {
 	var report model.ScanReport
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -63,8 +75,7 @@ func loadCandidates(projectsDir string, roots []string) ([]candidate, model.Scan
 	for _, root := range roots {
 		encoded := EncodeProjectDir(root)
 		for _, entry := range entries {
-			if !entry.IsDir() || scanned[entry.Name()] ||
-				(entry.Name() != encoded && !strings.HasPrefix(entry.Name(), encoded+"-")) {
+			if !entry.IsDir() || scanned[entry.Name()] || !encodesWithin(encoded, entry.Name()) {
 				continue
 			}
 			scanned[entry.Name()] = true
@@ -84,6 +95,9 @@ func loadCandidates(projectsDir string, roots []string) ([]candidate, model.Scan
 				info, err := file.Info()
 				if err != nil {
 					report.Add(path, err.Error())
+					continue
+				}
+				if !since.IsZero() && info.ModTime().Before(since) {
 					continue
 				}
 				candidates = append(candidates, candidate{
@@ -148,6 +162,16 @@ func SessionFiles(mainPath string) Files {
 	}
 	sort.Slice(files[1:], func(i, j int) bool { return files[i+1].Name < files[j+1].Name })
 	return files
+}
+
+// encodesWithin reports whether a project directory name could be the root
+// directory encoded, or a directory beneath it. On Windows, whose paths ignore
+// case, the comparison does too.
+func encodesWithin(encoded, name string) bool {
+	if len(name) < len(encoded) || !model.SameText(name[:len(encoded)], encoded, model.FoldCase) {
+		return false
+	}
+	return len(name) == len(encoded) || name[len(encoded)] == '-'
 }
 
 func EncodeProjectDir(path string) string {
