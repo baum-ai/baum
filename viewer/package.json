@@ -80,6 +80,7 @@
   },
   "scripts": {
     "generate": "node scripts/generate-review-types.mjs",
+    "generate:validators": "node scripts/generate-review-tile-validators.mjs",
     "typecheck": "pnpm generate && tsc --noEmit",
     "build:app": "pnpm generate && vite build --config vite.app.config.ts",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives .",

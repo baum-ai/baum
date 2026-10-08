@@ -190,12 +190,14 @@ canonical. Tiles are validated against it at runtime, and
 `src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
 retired, so stored tiles of those kinds still render. `pnpm generate` writes
 the tile types to `generated/review-tile-types.d.ts` from both files, which is
-not committed, and the validators to `src/precompiled/review-tile-validators.js`
-with Ajv's standalone code generation, which is. The validators are
-precompiled because Ajv otherwise compiles with `new Function`, which a page
-under a strict Content-Security-Policy (as `baum view` serves) cannot run. A
-unit test fails when the committed file is out of date: run `pnpm generate`
-after changing either schema file.
+not committed. `pnpm generate:validators` writes the validators to
+`src/precompiled/review-tile-validators.js` with Ajv's standalone code
+generation, and that file is committed. They are precompiled because Ajv
+otherwise compiles with `new Function`, which a page under a strict
+Content-Security-Policy (as `baum view` serves) cannot run. No other script
+rewrites the file, so a unit test fails when it is out of date: run
+`pnpm generate:validators` after changing either schema file, then rebuild the
+standalone app.
 
 ## Standalone app
 
