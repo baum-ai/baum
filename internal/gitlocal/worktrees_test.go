@@ -164,9 +164,9 @@ func TestWorktreesIgnorePlantedEntries(t *testing.T) {
 }
 
 func TestTrustedWorktreesRefusesBroadMainEntries(t *testing.T) {
-	home := filepath.FromSlash("/srv/home")
-	listed := []Worktree{{Path: filepath.FromSlash("/srv/home"), Main: true}}
-	if got := trustedWorktrees(listed, filepath.FromSlash("/srv/home/.git"), home); len(got) != 0 {
+	home := filepath.FromSlash("/srv/user")
+	listed := []Worktree{{Path: filepath.FromSlash("/srv/user"), Main: true}}
+	if got := trustedWorktrees(listed, filepath.FromSlash("/srv/user/.git"), home); len(got) != 0 {
 		t.Errorf("home as the main worktree = %+v", got)
 	}
 	root := string(filepath.Separator)
