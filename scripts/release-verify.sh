@@ -17,7 +17,10 @@ targets="linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64"
 status=0
 for target in $targets; do
   # goreleaser puts each build in dist/baum_<os>_<arch>[_<variant>]/.
-  binary=$(ls dist/baum_"$target"*/baum dist/baum_"$target"*/baum.exe 2>/dev/null | head -n 1 || true)
+  binary=
+  for candidate in dist/baum_"$target"*/baum dist/baum_"$target"*/baum.exe; do
+    if [ -f "$candidate" ]; then binary=$candidate; fi
+  done
   if [ -z "$binary" ]; then
     echo "FAIL $target: no binary under dist/" >&2
     status=1

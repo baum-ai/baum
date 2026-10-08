@@ -53,15 +53,19 @@ proxy_dir=$work/proxy/$module/@v
 mkdir -p "$proxy_dir" "$work/bin" "$work/gopath"
 
 step "build the module zip from the committed files at HEAD"
+# The zip builder only accepts a repository whose .git is a directory, which a
+# linked worktree's is not, so it reads a local clone. Nothing is checked out:
+# the zip is built from the commit, as the module proxy builds it from a tag.
+git clone --quiet --no-checkout "$repo_root" "$work/src"
 go -C "$module_dir/scripts/zipmod" run . \
-  "$module" "$version" "$(native "$repo_root")" "$subdir" \
+  "$module" "$version" "$(native "$work/src")" "$subdir" \
   "$(native "$proxy_dir")/$version.zip" internal/viewer/dist/index.html
-git show "HEAD:${subdir:+$subdir/}go.mod" >"$proxy_dir/$version.mod"
+git -C "$work/src" show "HEAD:${subdir:+$subdir/}go.mod" >"$proxy_dir/$version.mod"
 printf '%s\n' "$version" >"$proxy_dir/list"
 printf '{"Version":"%s","Time":"2024-01-01T00:00:00Z"}\n' "$version" >"$proxy_dir/$version.info"
 echo "zip contains internal/viewer/dist/index.html"
 
-# A file URL is file:// plus an absolute path: file:///home/... on Unix and
+# A file URL is file:// plus an absolute path: file:///usr/... on Unix and
 # file:///C:/... on Windows, where the native path has no leading slash.
 proxy_path=$(native "$work/proxy")
 case "$proxy_path" in
@@ -69,22 +73,30 @@ case "$proxy_path" in
   *) proxy_url=file:///$proxy_path ;;
 esac
 
-# Everything but go, git and curl comes from the system directories, and any
-# directory that holds node, npm or pnpm is dropped, so the build cannot lean
-# on Node.
+# The install runs with a PATH of its own: a directory holding only go, git and
+# curl, so nothing the build could use Node from is reachable. A system
+# directory would not do: Node is often installed beside git and curl.
 goroot=$(go env GOROOT)
-clean_path=
-old_ifs=$IFS
-IFS=:
-for dir in $PATH; do
-  [ -d "$dir" ] || continue
-  skip=
-  for tool in node node.exe npm npm.cmd npx pnpm pnpm.cmd pnpm.exe corepack; do
-    if [ -e "$dir/$tool" ]; then skip=1; fi
-  done
-  [ -n "$skip" ] || clean_path=${clean_path:+$clean_path:}$dir
-done
-IFS=$old_ifs
+# GOROOT is C:\... on Windows; Git Bash wants /c/...
+if command -v cygpath >/dev/null 2>&1; then
+  goroot_unix=$(cygpath -u "$goroot")
+else
+  goroot_unix=$goroot
+fi
+tools=$work/tools
+mkdir -p "$tools"
+link_tool() {
+  local src=$1 name
+  [ -f "$src" ] || src=$src.exe
+  [ -f "$src" ] || fail "cannot find $1"
+  name=$(basename "$src")
+  # Git Bash copies where it cannot link; go finds its root through GOROOT.
+  ln -s "$src" "$tools/$name" 2>/dev/null || cp "$src" "$tools/$name"
+}
+link_tool "$goroot_unix/bin/go"
+link_tool "$(command -v git)"
+link_tool "$(command -v curl)"
+clean_path=$tools
 
 step "install with no Node on PATH"
 (
@@ -149,6 +161,7 @@ if [ -z "$port" ]; then
   fail "baum view did not start"
 fi
 url=$(head -n 1 "$work/stdout" | tr -d '\r')
+url=${url%/}
 echo "serving $url"
 
 fetch() { curl --silent --show-error --fail --max-time 20 "$@"; }
