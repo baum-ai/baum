@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,5 +206,38 @@ func TestInvocationSpeedFollowsThreadServiceTier(t *testing.T) {
 		if (got == nil) != (tier.want == "") || got != nil && *got != tier.want {
 			t.Errorf("speedForServiceTier(%q) = %v, want %q", tier.tier, got, tier.want)
 		}
+	}
+}
+
+// A token_count that cannot be attributed to one invocation becomes a usage
+// row of exactly one request, at the thread's tier. A settings snapshot with no
+// service_tier clears the tier, so the next row has no speed.
+func TestUnattributedTokenCountIsOneRequestAtTheThreadTier(t *testing.T) {
+	count := func(at string, total int) string {
+		usage := fmt.Sprintf(`{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":5,"total_tokens":%d}`, total, total+5)
+		return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+usage+`,"last_token_usage":`+usage+`}}`)
+	}
+	settings := func(at, tier string) string {
+		return envelope(at, "event_msg", `{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5"`+tier+`}}`)
+	}
+	graph, _ := buildLines(t, append(basicStart(),
+		settings("2026-08-01T12:00:04Z", `,"service_tier":"priority"`),
+		count("2026-08-01T12:00:05Z", 100),
+		settings("2026-08-01T12:00:06Z", ``),
+		count("2026-08-01T12:00:07Z", 200),
+	)...)
+	if len(graph.TokenUsage) != 2 {
+		t.Fatalf("token usage rows = %+v, want 2", graph.TokenUsage)
+	}
+	for i, row := range graph.TokenUsage {
+		if row.APICallCount == nil || *row.APICallCount != 1 {
+			t.Errorf("row %d api_call_count = %v, want 1", i, row.APICallCount)
+		}
+	}
+	if s := graph.TokenUsage[0].Speed; s == nil || *s != session.SpeedFast {
+		t.Errorf("row under priority has speed %v, want fast", s)
+	}
+	if s := graph.TokenUsage[1].Speed; s != nil {
+		t.Errorf("row after a snapshot without service_tier has speed %q, want nil", *s)
 	}
 }

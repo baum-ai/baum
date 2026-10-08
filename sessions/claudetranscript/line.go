@@ -127,12 +127,10 @@ type Usage struct {
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
 
-	// CacheWrite1h and CacheWrite5m are usage.cache_creation's
-	// ephemeral_1h_input_tokens and ephemeral_5m_input_tokens. Nil means the
-	// transcript did not report that field (an absent cache_creation object
-	// leaves both nil).
+	// CacheWrite1h is usage.cache_creation.ephemeral_1h_input_tokens. Nil means
+	// the transcript did not report it (no cache_creation object, or a value
+	// that is not an integer).
 	CacheWrite1h *int64
-	CacheWrite5m *int64
 	// Speed is usage.speed verbatim ("standard", "fast"); empty when absent.
 	Speed string
 }

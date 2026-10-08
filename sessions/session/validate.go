@@ -468,6 +468,9 @@ func (v *validator) tokenUsage(g *Graph, sessions, userInputs map[string]bool) {
 		if u.TokenBasis != "" && !u.TokenBasis.Valid() {
 			v.addf("token usage %s has unknown token basis %q", u.ID, u.TokenBasis)
 		}
+		if u.Speed != nil && !SpeedValid(*u.Speed) {
+			v.addf("token usage %s has unknown speed %q", u.ID, *u.Speed)
+		}
 	}
 }
 

@@ -825,3 +825,35 @@ func TestInvocationsCarryCacheTTLSplitAndSpeed(t *testing.T) {
 		}
 	}
 }
+
+// A split or speed the transcript reports in a shape we cannot use is
+// recorded as not reported: neither a failed decode nor a rejected graph.
+func TestUnusableCacheSplitAndSpeedAreLeftUnreported(t *testing.T) {
+	const sid = `"sessionId":"11111111-2222-4333-8444-555555555555"`
+	assistant := func(id, at, usage string) string {
+		return `{"parentUuid":null,"isSidechain":false,"type":"assistant","uuid":"` + id + `","timestamp":"` + at + `",` + sid +
+			`,"message":{"id":"` + id + `","role":"assistant","model":"claude-opus-5","stop_reason":"end_turn","usage":` + usage + `,"content":[{"type":"text","text":"ok"}]}}`
+	}
+	graph, _ := buildClaudeLines(t,
+		`{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"user-1","timestamp":"2026-08-06T10:00:00Z","promptId":"p1",`+sid+`,"message":{"role":"user","content":"Go"}}`,
+		// 1-hour part above the cache writes.
+		assistant("m1", "2026-08-06T10:00:01Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":50},"speed":"fast"}`),
+		// Wrong types: the counts beside them still count.
+		assistant("m2", "2026-08-06T10:00:02Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":"3"},"speed":7}`),
+		assistant("m3", "2026-08-06T10:00:03Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":"none","speed":"turbo"}`),
+	)
+	if len(graph.ModelInvocations) != 3 {
+		t.Fatalf("invocations = %d, want 3", len(graph.ModelInvocations))
+	}
+	for i, m := range graph.ModelInvocations {
+		if m.CacheWriteTokens != 10 || m.OutputTokens != 2 {
+			t.Errorf("invocation %d lost its counts: %+v", i, m)
+		}
+		if m.CacheWrite1hTokens != nil {
+			t.Errorf("invocation %d 1h = %d, want nil", i, *m.CacheWrite1hTokens)
+		}
+		if want := i == 0; (m.Speed != nil) != want {
+			t.Errorf("invocation %d speed = %v", i, m.Speed)
+		}
+	}
+}

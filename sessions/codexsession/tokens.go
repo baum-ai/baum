@@ -40,11 +40,15 @@ func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextra
 		return accountMerged, "", nil
 	}
 
+	one := int64(1)
 	row := &session.TokenUsage{
 		ID: f.ids.Mint("token_usage", fmt.Sprintf("%d", line.Ordinal)), SessionID: f.session.ID,
 		Scope: session.UsageScopeSession, InputTokens: cloneInt64(last.InputTokens),
 		OutputTokens: cloneInt64(last.OutputTokens), CacheReadTokens: cloneInt64(last.CachedInputTokens),
 		CacheWriteTokens: cloneInt64(last.CacheWriteInputTokens), TotalTokens: cloneInt64(last.TotalTokens),
+		// A token_count is one request's last_token_usage, whichever invocation
+		// it belongs to, and the thread's tier at that point is known.
+		APICallCount: cloneInt64(&one), Speed: speedForServiceTier(f.serviceTier),
 	}
 	owner := f.activeInput
 	if owner == nil {

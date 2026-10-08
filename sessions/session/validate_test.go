@@ -239,6 +239,11 @@ func TestValidateRejects(t *testing.T) {
 			want:   "its user input is in s-nested",
 		},
 		{
+			name:   "token usage with an unknown speed",
+			break_: func(g *Graph) { g.TokenUsage[0].Speed = new("turbo") },
+			want:   `token usage usage-input has unknown speed "turbo"`,
+		},
+		{
 			name:   "negative aggregate token usage",
 			break_: func(g *Graph) { g.TokenUsage[0].InputTokens = new(int64(-1)) },
 			want:   "want a non-negative count",

@@ -358,6 +358,10 @@ type TokenUsage struct {
 	TotalTokens      *int64     `json:"total_tokens,omitempty"`
 	APICallCount     *int64     `json:"api_call_count,omitempty"`
 	TokenBasis       TokenBasis `json:"token_basis,omitempty"`
+	// Speed is SpeedStandard or SpeedFast when every request the row counts ran
+	// at that speed (a row of one request, such as Codex's unattributed
+	// token_count). Nil means not reported.
+	Speed *string `json:"speed,omitempty"`
 }
 
 // VendorID maps one of our entities to one vendor identifier (§6). Internal
