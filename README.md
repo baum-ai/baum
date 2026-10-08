@@ -88,7 +88,10 @@ fork clone, whose `origin` is the fork and whose `upstream` remote is the pull
 request's repository, matches. It reads the
 sessions recorded on this machine, as `baum sessions` does, but only those last
 written within two days of the pull request's first commit, and links them to
-those commits with the same matcher the hosted service uses.
+those commits with the same matcher the hosted service uses. A commit whose
+`Entire-Checkpoint` trailer names a checkpoint the clone's checkpoint branch
+holds is linked to the sessions that checkpoint recorded, as the hosted service
+does, instead of by the matcher.
 Only sessions linked to at least one commit are shown, and all their text is
 redacted like `baum sessions` output. It never fetches, not even in a partial
 clone: a clone without the
@@ -115,6 +118,14 @@ baum sessions --since 72h --json --previous-path ~/old/checkout
 # The normalised session graph of one session, redacted, for debugging.
 baum sessions --dump <session-id>
 ```
+
+A session belongs to the repository when it ran in any working tree of the
+clone: the main checkout or any of its `git worktree` checkouts, including
+ones since deleted, and directories inside them. `baum sessions` and
+`baum view` give the same answer from any of them. A directory that merely
+shares a name prefix (`~/src/repo-other` beside `~/src/repo`) is not part of
+it. Each Entire session is listed once, from the newest checkpoint that
+recorded it, and not at all when its agent's own store already has it.
 
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.

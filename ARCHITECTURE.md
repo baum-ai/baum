@@ -411,7 +411,22 @@ inside the clone and the session store overrides, and does this:
    a checkpoint whose objects are missing is skipped with a warning. Only the
    remotes' URLs are read from configuration, never contacted.
 4. Loads the sessions with `sessions.Load`, only those last modified within
-   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread, and
+   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread.
+   `sessions.Load` finds a session recorded in any working tree of the clone:
+   it lists them with `gitlocal.Worktrees` (`git worktree list --porcelain
+   -z`, run against the clone's repository directory with the read
+   environment; deleted worktrees included), and a session whose recorded
+   working directory is one of them, the checkout containing the directory, a
+   previous path, or a directory inside one, belongs to the repository. Path
+   matching stops at a separator, so `/repo-other` is not inside `/repo`, and
+   ignores case on Windows. The answer is the same from the main checkout and
+   from any worktree. Each Entire session is mapped once, from the newest
+   checkpoint holding it: one `git cat-file --batch` reads the metadata of every
+   checkpoint in the window and another the metadata of their sessions, and
+   only the checkpoints holding the newest snapshot of a session no
+   home-directory store has are read whole (an unreadable newest snapshot falls
+   back to the next). Sessions and those checkpoints are mapped up to eight at
+   a time. It then
    projects each into a
    `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
    `Agent` the vendor that ran, `Source` the store it came from, branches, files
@@ -422,7 +437,23 @@ inside the clone and the session store overrides, and does this:
    `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
    agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
    empty, which the branch step reads as unknown.
-6. Matches every commit with `linkage.MatchCommits`, the default config and
+6. Reads each commit's `Entire-Checkpoint` trailer as the hosted resolver
+   does: one 12-hex id, case-insensitive key, repeated ids allowed; a malformed
+   value or two distinct ids is unusable. A usable id is looked up on the
+   clone's checkpoint branch (the local branch, else a remote-tracking copy),
+   reading only its metadata in the private repository, and maps to the
+   sessions the checkpoint records. Such a commit is linked to exactly those
+   sessions with `method` `entire_checkpoint` and confidence 1, as the hosted
+   `entireEdges` writes them, and skips the heuristic steps. Every linked
+   session is listed: when loading did not return it (it was last written
+   outside the window, or only Entire holds it), it is mapped from that
+   checkpoint. A session that already came from a home-directory store under
+   the same id is listed once, from that store, since its transcript is the
+   fuller record. An unusable trailer, a checkpoint the clone does not hold,
+   or one whose sessions cannot be mapped leaves the commit to the heuristics.
+   Unlike the hosted resolver, no further heuristic link is added beside the
+   checkpoint's.
+7. Matches every other commit with `linkage.MatchCommits`, the default config and
    `steps.Default`, and keeps only matched edges. A session with several
    snapshots (Entire records one per checkpoint, each fuller than the last) is
    matched once, as its newest snapshot.
@@ -464,7 +495,7 @@ address or session store path.
 `sessions` holds only sessions with at least one matched commit, ordered by when
 their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
-`method` is `commit_ref`, `start_commit` or `files_overlap`, and `source` is
+`method` is `entire_checkpoint`, `commit_ref`, `start_commit` or `files_overlap`, and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
 `vendor` for a session an Entire checkpoint recorded. A pull request none of
 whose commits match still answers `available` with `"sessions": []`. A subject
