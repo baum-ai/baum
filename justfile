@@ -2,8 +2,8 @@
 default:
     @just --list
 
-# Run every check CI runs: format, vet, build, test, lint
-check: fmt-check vet build test privacy lint
+# Run every check CI runs: format, tidy, vet, build, test, lint
+check: fmt-check tidy-check vet build test privacy lint
 
 # Fail on unformatted files
 fmt-check:
@@ -17,6 +17,11 @@ fmt-check:
 
 fmt:
     gofmt -w .
+
+# Fail when go.mod or go.sum is not tidy; the release build runs go mod tidy
+# and would otherwise compile from files that differ from the tag
+tidy-check:
+    go mod tidy -diff
 
 vet:
     go vet ./...

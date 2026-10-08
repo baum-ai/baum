@@ -46,6 +46,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check go.mod is tidy
+        run: go mod tidy -diff
+
       - name: Vet
         run: go vet ./...
 
