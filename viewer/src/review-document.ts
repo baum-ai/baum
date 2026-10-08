@@ -536,6 +536,23 @@ export function pullRequestStateTone(state: string): Tone {
   return state === "merged" ? "positive" : state === "open" ? "info" : "neutral";
 }
 
+/** Where the review's generation stands, as far as the page knows: the state
+ *  a host reports, else the document's own, whether a new review is being
+ *  written, and when the evidence was last refreshed. */
+export function reviewGeneration(
+  document: ReviewDocument | null,
+  generation?: { state?: GenerationState; rewriting?: boolean },
+) {
+  const state = generation?.state ?? document?.review.generation_state;
+  const rewriting = Boolean(generation?.rewriting);
+  return {
+    state,
+    rewriting,
+    generating: state === "pending" || rewriting,
+    updated: document?.review.evidence_refreshed_at || document?.review.generated_at,
+  };
+}
+
 export function generationTone(state: GenerationState): Tone {
   switch (state) {
     case "current":

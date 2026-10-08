@@ -31,6 +31,7 @@
     "./components/review-header": "./src/components/review-header.tsx",
     "./components/review-history": "./src/components/review-history.tsx",
     "./components/review-images": "./src/components/review-images.tsx",
+    "./components/review-navigator": "./src/components/review-navigator.tsx",
     "./components/review-parts": "./src/components/review-parts.tsx",
     "./components/review-risk": "./src/components/review-risk.tsx",
     "./components/review-section": "./src/components/review-section.tsx",

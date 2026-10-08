@@ -70,6 +70,19 @@ the rail's width, in `localStorage`. Both the rail and the side pane resize
 from the border they share with the pane, by pointer or keyboard; the rail
 starts at 264px.
 
+Below `xl` (1280px) the panes stack, and the rail becomes a sheet from the
+bottom of the window. A bar sticks over the pane in its place: it names
+where the reader is ("Behavior changes, 1 of 5"), opens the sheet, carries
+the host's read mark for the section on screen, and steps to the previous
+and next place in reading order: the Summary, then each section as the rail
+lists them. The foot of the pane offers the same steps, so a reader who
+reaches the end of a section goes straight on to the next. A step lands the
+new place at its top, under the bar. The side pane is a sheet too, nearly the
+window's height, opened from the bar's last button (named after the pane,
+and flagged while CI is failing) rather than stacked under the review, so
+the page ends where the review does. Going anywhere, from either sheet,
+closes it.
+
 ```tsx
 <UrlStateProvider value={{ search, update }}>
   <ReviewViewer document={document} versions={[2, 1]} loadVersion={load} />
@@ -144,14 +157,27 @@ being loaded again. A host whose loader starts answering for a different
 pull request should remount the viewer, for example with a `key`.
 
 The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
-of the window. A host should pad the page's scroll by it, so that a jump
-does not land a heading under the bar:
+of the window from `lg` (1024px). Below `xl` the navigator bar, 48px too,
+sticks under it; below `lg`, where there is no compact bar, it sticks under
+the host's own sticky bar, whose height the host gives as
+`--review-host-bar` (0 without one). A host should pad the page's scroll by
+the bars, so that a jump does not land a heading under them:
 
 ```css
 html:has([data-review-page]) {
-  scroll-padding-top: calc(48px + 0.5rem);
+  --review-host-bar: 53px; /* the host's phone bar, if any */
+  scroll-padding-top: calc(53px + 48px + 0.5rem);
+}
+@media (width >= 64rem) {
+  html:has([data-review-page]) { scroll-padding-top: calc(48px + 48px + 0.5rem); }
+}
+@media (width >= 80rem) {
+  html:has([data-review-page]) { scroll-padding-top: calc(48px + 0.5rem); }
 }
 ```
+
+The section sheet and its scrim sit at `--z-sheet` (40), over the sticky
+bars (`--z-sticky`, 30).
 
 ## Syntax highlighting
 
