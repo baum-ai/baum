@@ -28,6 +28,12 @@ const Name = "baum.review/1"
 //go:embed review-1.json
 var Document []byte
 
+// Example is a complete example document that validates against the schema. It
+// is what "baum view --sample" serves.
+//
+//go:embed review-example.json
+var Example []byte
+
 // Revision returns the schema revision at $defs/schemaRevision/const.
 func Revision() (string, error) {
 	root, err := decode()
