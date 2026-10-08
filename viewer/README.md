@@ -208,6 +208,10 @@ limits and blocks holding raw HTML elements render as before. Text reaches the
 page only as React text children, and colours only as `var(--syntax-*)`, so
 the highlighter adds no path for contributor markup.
 
+`Markdown` parses raw HTML into sanitized elements, as GitHub renders a
+comment. With `html={false}` it skips that step and raw HTML prints as the
+text it is, for prose that names tags rather than containing them.
+
 ## Schema and tile types
 
 The document types in `src/review-document.ts` mirror

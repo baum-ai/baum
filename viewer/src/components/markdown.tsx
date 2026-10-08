@@ -184,7 +184,7 @@ export function Markdown({
   title?: string;
   /** Parses raw HTML into elements, as GitHub does in a comment. Off for
    *  text that talks about markup rather than containing it, such as an
-   *  agent's reply naming `<SessionCard>`: the tag then reads as written. */
+   *  agent's reply naming `<Button>`: the tag then reads as written. */
   html?: boolean;
 }) {
   return (
