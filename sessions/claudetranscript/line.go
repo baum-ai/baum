@@ -119,13 +119,22 @@ type Message struct {
 	Content    json.RawMessage
 }
 
-// Usage is the token accounting of one reply. Only these four disjoint buckets
-// are read.
+// Usage is the token accounting of one reply: four disjoint buckets, plus the
+// cache-write TTL split and the service speed when the transcript reports them.
 type Usage struct {
 	InputTokens              int64
 	OutputTokens             int64
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
+
+	// CacheWrite1h and CacheWrite5m are usage.cache_creation's
+	// ephemeral_1h_input_tokens and ephemeral_5m_input_tokens. Nil means the
+	// transcript did not report that field (an absent cache_creation object
+	// leaves both nil).
+	CacheWrite1h *int64
+	CacheWrite5m *int64
+	// Speed is usage.speed verbatim ("standard", "fast"); empty when absent.
+	Speed string
 }
 
 // Control is the union of the control-line payloads.

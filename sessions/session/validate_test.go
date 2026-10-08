@@ -74,6 +74,18 @@ func TestValidateAcceptsAWellFormedTree(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsCacheTTLSplitAndSpeed(t *testing.T) {
+	g := validGraph()
+	g.ModelInvocations[0].CacheWriteTokens = 5
+	g.ModelInvocations[0].CacheWrite1hTokens = new(int64(5))
+	g.ModelInvocations[0].Speed = new(SpeedFast)
+	g.ModelInvocations[1].CacheWrite1hTokens = new(int64(0))
+	g.ModelInvocations[1].Speed = new(SpeedStandard)
+	if err := Validate(g); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidateAcceptsUnknownStatusWithResult(t *testing.T) {
 	g := validGraph()
 	g.ToolUses[0].Status = StatusUnknown
@@ -182,6 +194,24 @@ func TestValidateRejects(t *testing.T) {
 			name:   "a consequence in one session under another session's ask",
 			break_: func(g *Graph) { g.ModelInvocations[3].UserInputID = "u-2" },
 			want:   "model invocation m-4 is in session s-nested but its user input is in s-root",
+		},
+		{
+			name: "a 1-hour cache write above the cache writes",
+			break_: func(g *Graph) {
+				g.ModelInvocations[0].CacheWriteTokens = 5
+				g.ModelInvocations[0].CacheWrite1hTokens = new(int64(6))
+			},
+			want: "has cache_write_1h_tokens 6",
+		},
+		{
+			name:   "a negative 1-hour cache write",
+			break_: func(g *Graph) { g.ModelInvocations[0].CacheWrite1hTokens = new(int64(-1)) },
+			want:   "has cache_write_1h_tokens -1",
+		},
+		{
+			name:   "an unknown speed",
+			break_: func(g *Graph) { g.ModelInvocations[0].Speed = new("turbo") },
+			want:   `has unknown speed "turbo"`,
 		},
 		{
 			name:   "a negative token count",

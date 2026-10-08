@@ -113,6 +113,11 @@ type rawUsage struct {
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreation            *struct {
+		Ephemeral1h *int64 `json:"ephemeral_1h_input_tokens"`
+		Ephemeral5m *int64 `json:"ephemeral_5m_input_tokens"`
+	} `json:"cache_creation"`
+	Speed string `json:"speed"`
 }
 
 func decodeLine(raw []byte, ordinal int) (Line, error) {
@@ -172,6 +177,11 @@ func decodeLine(raw []byte, ordinal int) (Line, error) {
 				OutputTokens:             u.OutputTokens,
 				CacheCreationInputTokens: u.CacheCreationInputTokens,
 				CacheReadInputTokens:     u.CacheReadInputTokens,
+				Speed:                    u.Speed,
+			}
+			if c := u.CacheCreation; c != nil {
+				line.Message.Usage.CacheWrite1h = c.Ephemeral1h
+				line.Message.Usage.CacheWrite5m = c.Ephemeral5m
 			}
 		}
 	}

@@ -240,6 +240,7 @@
       "output_tokens": 41,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1101,
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:01:00Z"
@@ -254,7 +255,9 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 30,
       "total_tokens": 1068,
+      "speed": "fast",
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:04:00Z"
     },
@@ -268,7 +271,9 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 40,
       "total_tokens": 1068,
+      "speed": "standard",
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:12:00Z"
     },
@@ -282,6 +287,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:14:00Z"
@@ -310,6 +316,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:20:00Z"
@@ -338,6 +345,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:05:00Z"
@@ -352,6 +360,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "end_turn",
       "started_at": "2026-07-30T09:08:00Z"
@@ -366,6 +375,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "tool_use",
       "started_at": "2026-07-30T09:06:00Z"
@@ -380,6 +390,7 @@
       "output_tokens": 8,
       "cache_read_tokens": 900,
       "cache_write_tokens": 40,
+      "cache_write_1h_tokens": 0,
       "total_tokens": 1068,
       "stop_reason": "end_turn",
       "started_at": "2026-07-30T09:07:00Z"

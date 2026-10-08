@@ -2,6 +2,7 @@ package claudesession
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -791,4 +792,36 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// The fixture mixes cache TTLs and speeds: msg_A reports an all-5-minute split
+// and no speed, msg_B a 30/10 split in fast mode, msg_C all 1-hour at standard
+// speed, and msg_E neither split nor speed, which stays unreported rather than
+// becoming 0 or "standard".
+func TestInvocationsCarryCacheTTLSplitAndSpeed(t *testing.T) {
+	graph, _ := buildFixture(t)
+	describe := func(m session.ModelInvocation) string {
+		hour, speed := "nil", "nil"
+		if m.CacheWrite1hTokens != nil {
+			hour = fmt.Sprint(*m.CacheWrite1hTokens)
+		}
+		if m.Speed != nil {
+			speed = *m.Speed
+		}
+		return fmt.Sprintf("write=%d 1h=%s speed=%s", m.CacheWriteTokens, hour, speed)
+	}
+	seen := map[string]int{}
+	for _, m := range graph.ModelInvocations {
+		seen[describe(m)]++
+	}
+	for _, want := range []string{
+		"write=40 1h=0 speed=nil",
+		"write=40 1h=30 speed=fast",
+		"write=40 1h=40 speed=standard",
+		"write=40 1h=nil speed=nil",
+	} {
+		if seen[want] == 0 {
+			t.Errorf("no invocation with %q; have %v", want, seen)
+		}
+	}
 }

@@ -77,6 +77,7 @@ func TestCodex0129LifecycleFixtures(t *testing.T) {
 		{name: "basic_rollout.jsonl", inputs: 2},
 		{name: "commit_rollout.jsonl", inputs: 1},
 		{name: "aborted_rollout.jsonl", inputs: 1, interrupted: true},
+		{name: "fast_mode_rollout.jsonl", inputs: 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,5 +163,47 @@ func TestTriggerTurnFalseStaysParentContext(t *testing.T) {
 	graph, report := buildLines(t, lines...)
 	if len(graph.UserInputs) != 1 || len(graph.AssistantMessages) != 1 || report.UnsupportedTurns != 0 {
 		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+// Codex reports fast mode as the thread's service tier: every invocation whose
+// usage arrives after a "priority" settings event is fast, and after "default"
+// standard. A rollout that never names a tier leaves the speed unreported, and
+// so do invocations whose usage could not be attributed to one (basic_rollout's
+// first turn has two token counts for three invocations).
+func TestInvocationSpeedFollowsThreadServiceTier(t *testing.T) {
+	read := func(name string) *session.Graph {
+		data, err := os.ReadFile(filepath.Join("testdata", "lifecycle", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		graph, _ := buildLines(t, strings.Split(strings.TrimSpace(string(data)), "\n")...)
+		return graph
+	}
+	speeds := func(graph *session.Graph) []string {
+		var out []string
+		for _, m := range graph.ModelInvocations {
+			if m.CacheWrite1hTokens != nil {
+				t.Errorf("invocation %s has a cache TTL split; Codex reports none", m.ID)
+			}
+			if m.Speed == nil {
+				out = append(out, "nil")
+			} else {
+				out = append(out, *m.Speed)
+			}
+		}
+		return out
+	}
+	if got, want := strings.Join(speeds(read("fast_mode_rollout.jsonl")), ","), "fast,nil,nil,standard"; got != want {
+		t.Errorf("speeds with priority then default = %s, want %s", got, want)
+	}
+	if got, want := strings.Join(speeds(read("basic_rollout.jsonl")), ","), "nil,nil,nil,nil"; got != want {
+		t.Errorf("speeds with no service tier = %s, want %s", got, want)
+	}
+	for _, tier := range []struct{ tier, want string }{{"priority", "fast"}, {"default", "standard"}, {"flex", ""}, {"", ""}} {
+		got := speedForServiceTier(tier.tier)
+		if (got == nil) != (tier.want == "") || got != nil && *got != tier.want {
+			t.Errorf("speedForServiceTier(%q) = %v, want %q", tier.tier, got, tier.want)
+		}
 	}
 }

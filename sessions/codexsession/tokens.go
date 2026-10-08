@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/lastpersonlabs/baum/sessions/codextranscript"
@@ -33,6 +34,7 @@ func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextra
 	}
 	if len(turn.unaccounted) == 1 {
 		applyInvocationUsage(turn.unaccounted[0], last)
+		turn.unaccounted[0].Speed = speedForServiceTier(f.serviceTier)
 		turn.unaccounted = nil
 		f.b.report.Tokens.AssignedInvocations++
 		return accountMerged, "", nil
@@ -106,6 +108,34 @@ func applyInvocationUsage(row *session.ModelInvocation, usage codextranscript.Us
 	row.CacheReadTokens = int64Value(usage.CachedInputTokens)
 	row.CacheWriteTokens = int64Value(usage.CacheWriteInputTokens)
 	row.TotalTokens = int64Value(usage.TotalTokens)
+}
+
+// serviceTierOf reads service_tier from a thread_settings_applied snapshot.
+// Every snapshot replaces the previous tier, so a snapshot without one clears it.
+func serviceTierOf(settings json.RawMessage) string {
+	var parsed struct {
+		ServiceTier string `json:"service_tier"`
+	}
+	if json.Unmarshal(settings, &parsed) != nil {
+		return ""
+	}
+	return parsed.ServiceTier
+}
+
+// speedForServiceTier maps Codex's service tier to an invocation speed: the
+// "priority" tier is fast mode, "default" is standard, and anything else (or no
+// tier ever set) is not reported. Codex reports no cache TTL.
+func speedForServiceTier(tier string) *string {
+	var speed string
+	switch tier {
+	case "priority":
+		speed = session.SpeedFast
+	case "default":
+		speed = session.SpeedStandard
+	default:
+		return nil
+	}
+	return &speed
 }
 
 func int64Value(value *int64) int64 {
