@@ -153,12 +153,15 @@ func entireEdges(commitSHA string, sessionIDs []string) []linkage.Edge {
 	return edges
 }
 
-// checkpointCommitEdges links a commit with ground truth as the hosted
-// resolver does: the checkpoint's sessions first, then, while the files those
-// sessions edited do not cover the commit's, the heuristic matcher over the
-// other sessions, and finally only the links at or above the review
-// confidence once one is (the checkpoint's always are).
-func checkpointCommitEdges(commit linkage.EnrichedCommit, linked []string, candidates []linkage.RunCandidate, cfg linkage.Config) ([]linkage.Edge, error) {
+// commitEdges links one commit as the hosted resolver does: the sessions its
+// Entire checkpoint records first (linked; none for a commit without one),
+// then, while the files the linked sessions edited do not cover the commit's,
+// the heuristic matcher again over the other sessions, up to the link cap,
+// and finally only the links at or above the review confidence once one is
+// (a checkpoint's always are). Only matched edges are returned: the hosted
+// resolver's unmatched edge and its reasons, and a trailer-only attribution,
+// name no session and have nothing to show here.
+func commitEdges(commit linkage.EnrichedCommit, linked []string, candidates []linkage.RunCandidate, cfg linkage.Config) ([]linkage.Edge, error) {
 	edges := entireEdges(commit.OID, linked)
 	byID := make(map[string]linkage.RunCandidate, len(candidates))
 	for _, candidate := range candidates {

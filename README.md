@@ -88,10 +88,11 @@ fork clone, whose `origin` is the fork and whose `upstream` remote is the pull
 request's repository, matches. It reads the
 sessions recorded on this machine, as `baum sessions` does, but only those last
 written within two days of the pull request's first commit, and links them to
-those commits with the same matcher the hosted service uses. A commit whose
-`Entire-Checkpoint` trailer names a checkpoint the clone's checkpoint branch
-holds is linked to the sessions that checkpoint recorded, as the hosted service
-does; the matcher then adds only confident links, and only for files those
+those commits the way the hosted service does: a commit can link to several
+sessions when each edited part of it, and a weak guess is dropped once the
+commit has a confident link. A commit whose `Entire-Checkpoint` trailer names
+a checkpoint the clone's checkpoint branch holds is linked to the sessions that
+checkpoint recorded first; the matcher then looks only for the files those
 sessions did not edit.
 Only sessions linked to at least one commit are shown, and all their text is
 redacted like `baum sessions` output. It never fetches, not even in a partial

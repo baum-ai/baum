@@ -29,7 +29,6 @@ import (
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/linkage"
 	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/linkage/steps"
 	"github.com/lastpersonlabs/baum/redact"
 	"github.com/lastpersonlabs/baum/sessions"
 	"github.com/lastpersonlabs/baum/sessions/session"
@@ -244,9 +243,10 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 	return match(ctx, engine, append(found, extra...), commits, truth)
 }
 
-// match links sessions to commits and builds the redacted result. A commit
-// with ground truth, the sessions its Entire checkpoint records, is linked to
-// exactly those; every other commit goes through the matcher's default steps.
+// match links sessions to commits and builds the redacted result. Each commit
+// is linked as the hosted resolver links it (commitEdges): to the sessions its
+// Entire checkpoint records, if any, then by the matcher's default steps until
+// its files are explained.
 func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
 	// A session can arrive more than once under one id, and the matcher
 	// identifies a run by its id, so only the best reading of each id is
@@ -280,23 +280,16 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 
 	var edges []linkage.Edge
 	cfg := linkage.DefaultConfig()
-	enriched := make([]linkage.EnrichedCommit, 0, len(commits))
 	for _, c := range commits {
-		if linked := truth[c.OID]; len(linked) > 0 {
-			checkpointed, err := checkpointCommitEdges(enrichedOf(c), linked, candidates, cfg)
-			if err != nil {
-				return Result{}, fmt.Errorf("matching commit %s: %w", c.OID, err)
-			}
-			edges = append(edges, checkpointed...)
-			continue
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
 		}
-		enriched = append(enriched, enrichedOf(c))
+		commitEdges, err := commitEdges(enrichedOf(c), truth[c.OID], candidates, cfg)
+		if err != nil {
+			return Result{}, fmt.Errorf("matching commit %s: %w", c.OID, err)
+		}
+		edges = append(edges, commitEdges...)
 	}
-	matched, err := linkage.MatchCommits(enriched, candidates, cfg, steps.Default())
-	if err != nil {
-		return Result{}, fmt.Errorf("matching commits: %w", err)
-	}
-	edges = append(edges, matched...)
 
 	links := map[string][]Link{}
 	linked := map[string]bool{}

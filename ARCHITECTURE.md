@@ -446,21 +446,27 @@ inside the clone and the session store overrides, and does this:
    reading only its metadata in the private repository, and maps to the
    sessions the checkpoint records. Such a commit is linked to those sessions
    with `method` `entire_checkpoint` and confidence 1, as the hosted
-   `entireEdges` writes them. Then, as the hosted `matchRemaining` does, while
-   the files those sessions edited do not cover every file the commit changed,
-   `linkage.MatchCommit` runs again over the sessions not yet linked (up to the
-   files-overlap link cap), and finally, as `dropSupersededGuesses` does, a
-   heuristic link below `linkage.ReviewConfidence` is dropped, since the
-   checkpoint's links are above it. The checkpoint is read whatever
-   `Sessions.Sources` asks for. Every linked
+   `entireEdges` writes them, and then goes through step 7 with those sessions
+   already linked and the files they edited already explained. The
+   checkpoint is read whatever `Sessions.Sources` asks for. Every linked
    session is listed: when loading did not return it (it was last written
    outside the window, or only Entire holds it), it is mapped from that
    checkpoint. A session that already came from a home-directory store under
    the same id is listed once, from that store, since its transcript is the
    fuller record. An unusable trailer, a checkpoint the clone does not hold,
    or one whose sessions cannot be mapped leaves the commit to the heuristics.
-7. Matches every other commit with `linkage.MatchCommits`, the default config and
-   `steps.Default`, and keeps only matched edges. A session that arrives more
+7. Matches each commit the way the hosted resolver does, with the default
+   config and `steps.Default`. As its `matchRemaining` does,
+   `linkage.MatchCommit` runs over the sessions not yet linked, and runs
+   again, without the ones it linked, while the files the linked sessions
+   edited do not cover every file the commit changed, until nothing more
+   matches or the files-overlap link cap (three) is reached, a tie that would
+   pass the cap being cut to it. Then, as its `dropSupersededGuesses` does,
+   once the commit has a link at or above `linkage.ReviewConfidence` (0.7) the
+   links below it are dropped. So two sessions that each edited part of a
+   commit are both linked, and a weak guess beside a confident link is not.
+   Only matched edges are kept: the hosted resolver's unmatched edge, its
+   reasons and a trailer-only attribution name no session. A session that arrives more
    than once under one id is matched once, as its best reading: one with a
    transcript, then the newest.
 
