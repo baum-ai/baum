@@ -179,6 +179,18 @@ viewer needs Node.js and pnpm; `pnpm install && pnpm check` in `viewer/`
 runs its lint, format check, typecheck and tests. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The viewer that `baum view` serves is committed, so `go install` needs no
+Node.js: `internal/viewer/dist` holds the built app and
+`viewer/src/precompiled` the precompiled tile validators. `just viewer-build`
+rebuilds both, and `just viewer-fresh` rebuilds them and fails, listing the
+changed paths, when they differ from what is committed. CI and the release
+workflow run that check before they compile `baum`, and the goreleaser before
+hook does too. `just release-snapshot` builds the five release archives into
+`dist/`, and `just release-verify` checks that each binary was built with CGO
+off and embeds the committed bundle. `just clean-install` runs
+`scripts/clean-install.sh`, which installs `baum` from a module zip of the
+committed files with no Node.js on `PATH` and smoke tests `baum view --sample`.
+
 This repository is published from the `oss/` directory of the private baum
 monorepo, where the hosted service imports these packages. Pull requests are
 reviewed and merged here as usual and then pulled into the monorepo.
