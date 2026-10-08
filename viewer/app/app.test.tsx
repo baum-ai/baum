@@ -120,6 +120,14 @@ beforeAll(() => {
       return [];
     }
   } as unknown as typeof IntersectionObserver;
+  // Nor does it match media: every query reads as false, a narrow window.
+  window.matchMedia ??= (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
   Element.prototype.scrollIntoView ??= () => {};
   HTMLElement.prototype.hidePopover ??= () => {};
 });
