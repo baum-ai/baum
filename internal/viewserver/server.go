@@ -3,6 +3,9 @@
 //
 // The server only ever serves the embedded app and the single document it was
 // given; request paths never reach the file system. It never fetches anything.
+// The one thing it computes from this machine is GET /api/sessions, the
+// sessions linked to the document's pull request, through the function a host
+// supplies in Options.Sessions.
 // Host checking, security headers and routing are fixed here; a host such as a
 // later "baum ui" extends the server through Mux and Use.
 package viewserver
@@ -26,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lastpersonlabs/baum/internal/locallink"
 	"github.com/lastpersonlabs/baum/internal/viewer"
 )
 
@@ -61,12 +65,32 @@ type Options struct {
 	// Assets is the app to serve, with index.html at its root. It defaults to
 	// the embedded viewer.
 	Assets fs.FS
+	// Sample marks the document as the built-in sample, which belongs to no
+	// clone: /api/sessions then answers that sessions are unavailable.
+	Sample bool
+	// Sessions links the sessions on this machine to the document's pull
+	// request. It is called on the first request for /api/sessions, never at
+	// start-up, and its available answers are kept until the document's
+	// repository, head or base changes. Unset, /api/sessions is unavailable.
+	Sessions SessionsFunc
 	// PollInterval is how often a watched file is checked; it defaults to
 	// 500ms. PingInterval is how often an idle event stream sends a comment
 	// line; it defaults to 20s.
 	PollInterval time.Duration
 	PingInterval time.Duration
 }
+
+// Review names the pull request a document reviews.
+type Review struct {
+	Repository  string
+	PullRequest int
+	Head, Base  string
+}
+
+// SessionsFunc links local sessions to a pull request. It may run twice at
+// once when the document changes during a computation, and it should stop
+// when ctx ends.
+type SessionsFunc func(ctx context.Context, review Review) (locallink.Result, error)
 
 // Server serves the viewer and a document. Create it with New, call Listen,
 // then Serve.
@@ -78,7 +102,16 @@ type Server struct {
 
 	mu       sync.RWMutex
 	document []byte
+	review   Review
 	hub      hub
+
+	// sessions is the answer for /api/sessions, computed on demand.
+	sessionsMu sync.Mutex
+	sessions   *sessionsEntry
+	// life ends when the server stops, and bounds sessions computations,
+	// which outlive the request that started them.
+	life       context.Context
+	lifeCancel context.CancelFunc
 
 	// baseline is the file as it was when the served document was read, so the
 	// watcher compares against what is actually being served.
@@ -110,6 +143,7 @@ func New(opts Options) (*Server, error) {
 		opts.PingInterval = defaultPingInterval
 	}
 	s := &Server{opts: opts, assets: opts.Assets, done: make(chan struct{})}
+	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	if s.assets == nil {
 		s.assets = viewer.Assets()
 	}
@@ -128,12 +162,14 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("viewserver: the document is not valid JSON")
 	}
 	s.document = document
+	s.review = parseReview(document)
 	s.hash = sha256.Sum256(document)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/document", s.handleDocument)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
+	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	s.mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	s.mux.HandleFunc("GET /", s.handleAsset)
 	return s, nil
@@ -202,7 +238,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	go func() {
 		defer helpers.Done()
 		<-ctx.Done()
-		s.stop.Do(func() { close(s.done) })
+		s.stop.Do(func() {
+			close(s.done)
+			s.lifeCancel()
+		})
 		shutdown, release := context.WithTimeout(context.Background(), shutdownGrace)
 		defer release()
 		if err := srv.Shutdown(shutdown); err != nil {
@@ -354,8 +393,10 @@ func contentType(name string) string {
 
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
+	review := parseReview(document)
 	s.mu.Lock()
 	s.document = document
+	s.review = review
 	s.mu.Unlock()
 	s.hub.broadcast()
 }

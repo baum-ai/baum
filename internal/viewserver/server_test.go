@@ -317,7 +317,7 @@ func TestUnknownAPIIsNotFound(t *testing.T) {
 
 func TestOnlyGetAndHeadAreAllowed(t *testing.T) {
 	_, base := start(t, Options{Document: []byte(fixture)})
-	for _, p := range []string{"/api/document", "/api/events", "/api/health", "/", "/foo", "/api/nope"} {
+	for _, p := range []string{"/api/document", "/api/events", "/api/health", "/api/sessions", "/", "/foo", "/api/nope"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 			req, _ := http.NewRequest(method, base+p, strings.NewReader("{}"))
 			resp, err := http.DefaultClient.Do(req)
@@ -459,7 +459,7 @@ func TestTraversalNeverReachesDisk(t *testing.T) {
 
 func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 	_, base := start(t, Options{Document: []byte(fixture)})
-	for _, p := range []string{"/", "/foo", "/api/document", "/api/health", "/api/nope", "/assets/missing.js"} {
+	for _, p := range []string{"/", "/foo", "/api/document", "/api/health", "/api/sessions", "/api/nope", "/assets/missing.js"} {
 		resp, _ := get(t, base+p)
 		csp := resp.Header.Get("Content-Security-Policy")
 		if !strings.Contains(csp, "default-src 'self'") || strings.Contains(csp, "unsafe") || strings.Contains(csp, "*") {
