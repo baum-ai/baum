@@ -45,9 +45,9 @@ const (
 	CodeNoHead = "no_head"
 	// CodeNotAClone is a directory outside a git clone with a working tree.
 	CodeNotAClone = "not_a_clone"
-	// CodeOriginMismatch is a clone whose origin is not the document's
+	// CodeRemoteMismatch is a clone none of whose remotes is the document's
 	// repository.
-	CodeOriginMismatch = "origin_mismatch"
+	CodeRemoteMismatch = "remote_mismatch"
 	// CodeCommitsMissing is a clone that lacks the pull request's commits.
 	CodeCommitsMissing = "commits_missing"
 	// CodePartialClone is a partial clone that has the pull request's commits
@@ -187,12 +187,12 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	origin, err := repo.RemoteURL(ctx)
+	remotes, err := repo.RemoteURLs(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading the clone's origin: %w", err)
+		return Result{}, fmt.Errorf("reading the clone's remotes: %w", err)
 	}
-	if !SameRepository(origin, req.Repository) {
-		return Unavailable(CodeOriginMismatch, originReason(origin, req.Repository)), nil
+	if !anyRemoteIs(remotes, req.Repository) {
+		return Unavailable(CodeRemoteMismatch, remoteReason(remotes, req.Repository)), nil
 	}
 	head, start, unavailable, err := resolveBounds(ctx, repo, req)
 	if err != nil {

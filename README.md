@@ -80,19 +80,19 @@ local version store, which is not in this build.
 
 From local data only, `baum view` can also show the coding-agent sessions
 linked to the pull request. When the viewer asks, `baum view` reads the clone
-containing the current directory, but only if its `origin` remote is the
+containing the current directory, but only if one of its remotes is the
 document's repository (`owner/name`, whether the remote is HTTPS or SSH), and
 only if the clone already has the pull request's head and merge base (or base)
 commits; abbreviated commit ids in the document are expanded in the clone. A
-fork clone, whose `origin` is the fork and whose upstream remote is the pull
-request's repository, is not matched: only `origin` is checked. It reads the
+fork clone, whose `origin` is the fork and whose `upstream` remote is the pull
+request's repository, matches. It reads the
 sessions recorded on this machine, as `baum sessions` does, but only those last
 written within two days of the pull request's first commit, and links them to
 those commits with the same matcher the hosted service uses.
 Only sessions linked to at least one commit are shown, and all their text is
 redacted like `baum sessions` output. It never fetches, not even in a partial
 clone: a clone without the
-commits, a different origin, a directory outside a clone and `--sample` show
+commits, a clone with no remote for the repository, a directory outside a clone and `--sample` show
 no local sessions, with the reason, and the viewer falls back to the sessions
 in the document. Run `git fetch` yourself to make missing commits available,
 then reload the viewer. Run `baum view` from inside the clone.

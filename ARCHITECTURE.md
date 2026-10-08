@@ -366,13 +366,14 @@ inside the clone and the session store overrides, and does this:
 
 1. Opens the clone containing the directory. A directory outside a clone is
    `not_a_clone`.
-2. Compares the clone's `origin` URL with the repository. `owner/name` is taken
+2. Compares the URL of each of the clone's remotes with the repository. `owner/name` is taken
    from an HTTPS, HTTP, SSH, `git://` or scp-like URL, ignoring case, a `.git`
    suffix, credentials, host and port; a local path or `file://` URL names no
-   repository. A different or missing origin is `origin_mismatch`, and its
-   reason names the `owner/name` origin points at and the document's. Only
-   `origin` is checked, so a fork clone (origin the fork, the pull request's
-   repository as `upstream`) is `origin_mismatch`; this is deliberate.
+   repository. Any matching remote links, so a fork clone (origin the fork,
+   the pull request's repository as `upstream`) works. If none matches the
+   answer is `remote_mismatch`, and its reason lists up to five remotes as
+   `name → owner/name` (never a URL or its credentials); a clone with no
+   remotes says so.
 3. Expands the document's head, and its merge base (else its base), which the
    schema allows to be abbreviated to 7 hex digits, with
    `gitlocal.ResolveCommit` in the clone; an abbreviation matching several
@@ -388,7 +389,7 @@ inside the clone and the session store overrides, and does this:
    which has no remote and no promisor configuration, with
    `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot download an object;
    a checkpoint whose objects are missing is skipped with a warning. Only the
-   origin's URL is read, never contacted.
+   remotes' URLs are read from configuration, never contacted.
 4. Loads the sessions with `sessions.Load`, only those last modified within
    `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread, and
    projects each into a
@@ -457,7 +458,7 @@ Unavailable:
 
 `code` is one of `sample` (the built-in example, which belongs to no clone),
 `no_head` (the document lacks a repository, head or base, or they are not hex
-commit ids), `ambiguous_commit`, `not_a_clone`, `origin_mismatch`,
+commit ids), `ambiguous_commit`, `not_a_clone`, `remote_mismatch`,
 `commits_missing`, `partial_clone`, `too_many_commits` (over 2000) and `error`
 (anything else, including a computation that took more than two minutes; the
 cause is printed to stderr, not sent).

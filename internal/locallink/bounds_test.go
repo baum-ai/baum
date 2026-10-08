@@ -114,12 +114,12 @@ func TestSessionsSince(t *testing.T) {
 	}
 }
 
-func TestResolveNamesBothRepositoriesOnAMismatch(t *testing.T) {
+func TestResolveNamesTheRemotesOnAMismatch(t *testing.T) {
 	f := linktest.New(t)
 	req := request(f)
 	req.Repository = "upstream/widgets"
 	result := resolve(t, req)
-	if result.Code != CodeOriginMismatch || !strings.Contains(result.Reason, "acme/widgets") || !strings.Contains(result.Reason, "upstream/widgets") {
+	if result.Code != CodeRemoteMismatch || !strings.Contains(result.Reason, "origin \u2192 acme/widgets") || !strings.Contains(result.Reason, "upstream/widgets") {
 		t.Errorf("reason = %q", result.Reason)
 	}
 	if strings.Contains(result.Reason, "192.0.2.1") {

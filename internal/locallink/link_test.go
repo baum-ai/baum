@@ -114,7 +114,7 @@ func TestResolveUnavailable(t *testing.T) {
 		change func(*Request)
 		code   string
 	}{
-		{"another repository", func(r *Request) { r.Repository = "acme/other" }, CodeOriginMismatch},
+		{"another repository", func(r *Request) { r.Repository = "acme/other" }, CodeRemoteMismatch},
 		{"a missing head", func(r *Request) { r.Head = absent }, CodeCommitsMissing},
 		{"a missing base", func(r *Request) { r.Base = absent }, CodeCommitsMissing},
 		{"no head recorded", func(r *Request) { r.Head = "" }, CodeNoHead},
@@ -137,10 +137,10 @@ func TestResolveUnavailable(t *testing.T) {
 	}
 }
 
-func TestResolveWithoutAnOrigin(t *testing.T) {
+func TestResolveWithoutRemotes(t *testing.T) {
 	f := linktest.New(t)
 	linktest.Git(t, f.Repo, "remote", "remove", "origin")
-	if result := resolve(t, request(f)); result.Available || result.Code != CodeOriginMismatch {
+	if result := resolve(t, request(f)); result.Available || result.Code != CodeRemoteMismatch {
 		t.Errorf("result = %+v", result)
 	}
 }

@@ -87,8 +87,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 // sessionsResult answers for the document being served. The first request
 // for a pull request starts the computation; requests that arrive meanwhile
 // wait for that one. Only an available answer is kept: one that is not (the
-// clone lacks the commits, the origin differs) is worked out again on the next
-// request, so fetching the commits or fixing the origin takes effect without
+// clone lacks the commits, no remote matches) is worked out again on the next
+// request, so fetching the commits or adding the remote takes effect without
 // restarting. It reports false when ctx ends before an answer.
 func (s *Server) sessionsResult(ctx context.Context) (locallink.Result, bool) {
 	switch {

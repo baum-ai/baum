@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
@@ -93,15 +94,37 @@ func resolveBounds(ctx context.Context, repo *gitlocal.Repo, req Request) (head,
 	return fail(CodeCommitsMissing, "this clone does not have the pull request's base commit; fetch it with git to see linked sessions")
 }
 
-// originReason says which repository the clone's origin names and which one
-// the document is for, as owner/name only: a remote URL can carry credentials.
-func originReason(origin, repository string) string {
-	switch got, ok := NormalizeRepository(origin); {
-	case origin == "":
-		return "this clone has no origin remote, so it cannot be matched to " + repository
-	case !ok:
-		return "this clone's origin is not a repository URL that can be matched to " + repository
-	default:
-		return "this clone's origin is " + got + ", not " + repository + "; only the origin remote is checked"
+// maxRemotesListed bounds the remotes a reason names.
+const maxRemotesListed = 5
+
+// anyRemoteIs reports whether any remote URL names the repository "owner/name".
+func anyRemoteIs(remotes []gitlocal.Remote, repository string) bool {
+	for _, remote := range remotes {
+		if SameRepository(remote.URL, repository) {
+			return true
+		}
 	}
+	return false
+}
+
+// remoteReason says that no remote is the document's repository and what the
+// remotes are, as name and owner/name only: a remote URL can carry
+// credentials.
+func remoteReason(remotes []gitlocal.Remote, repository string) string {
+	if len(remotes) == 0 {
+		return "this clone has no remotes, so it cannot be matched to " + repository
+	}
+	var listed []string
+	for i, remote := range remotes {
+		if i == maxRemotesListed {
+			listed = append(listed, fmt.Sprintf("and %d more", len(remotes)-maxRemotesListed))
+			break
+		}
+		target := "not a repository URL"
+		if got, ok := NormalizeRepository(remote.URL); ok {
+			target = got
+		}
+		listed = append(listed, remote.Name+" \u2192 "+target)
+	}
+	return "no remote of this clone points at " + repository + " (" + strings.Join(listed, ", ") + ")"
 }
