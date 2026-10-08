@@ -610,8 +610,9 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 			RootSessionID: "s1",
 			Title:         "Fix the outage using token " + plantedSecret,
 			Decisions: decisionsOf(SessionDecision{
-				Summary: "Rotate " + plantedSecret, Who: "human", Category: "behavior", Turns: []int{1},
-				RejectedAlternative: "Keep " + plantedSecret, Files: []string{"config/" + plantedSecret + ".toml"},
+				Summary: "Rotate " + plantedSecret, Who: "human", Category: "behavior", Trigger: "failure", Turns: []int{1},
+				Rationale: "Leaked " + plantedSecret, RejectedAlternative: "Keep " + plantedSecret,
+				Evidence: "rotate " + plantedSecret + " now", EvidenceTurn: 1, Files: []string{"config/" + plantedSecret + ".toml"},
 			}),
 			CommandEvents: []CommandEvent{{
 				ID: "e1", Outcome: "succeeded",
@@ -628,12 +629,15 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 		t.Errorf("session title was not redacted: %q", bundle.Sessions[0].Title)
 	}
 	decision := (*bundle.Sessions[0].Decisions)[0]
-	for name, text := range map[string]string{"summary": decision.Summary, "rejected alternative": decision.RejectedAlternative, "file": decision.Files[0]} {
+	for name, text := range map[string]string{
+		"summary": decision.Summary, "rationale": decision.Rationale, "rejected alternative": decision.RejectedAlternative,
+		"evidence": decision.Evidence, "file": decision.Files[0],
+	} {
 		if strings.Contains(text, plantedSecret) {
 			t.Errorf("session decision %s was not redacted: %q", name, text)
 		}
 	}
-	if decision.Who != "human" || decision.Category != "behavior" {
+	if decision.Who != "human" || decision.Category != "behavior" || decision.Trigger != "failure" {
 		t.Errorf("session decision enums changed: %+v", decision)
 	}
 	entry := bundle.Sessions[0].CommandEvents[0].Commands[0]

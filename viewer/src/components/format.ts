@@ -162,6 +162,16 @@ export function formatDate(iso: string | null | undefined): string {
   return Number.isNaN(at.getTime()) ? EM_DASH : fullLabel.format(at);
 }
 
+const timeLabel = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** The time of day an instant falls at, in the reader's own zone, for a row
+ *  that already sits under its day. */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return EM_DASH;
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? EM_DASH : timeLabel.format(at);
+}
+
 /** Relative time for "synced 4 minutes ago" style captions. */
 export function formatRelative(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return EM_DASH;

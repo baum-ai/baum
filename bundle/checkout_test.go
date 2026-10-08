@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -211,6 +212,9 @@ func (f fakeExport) ExportCommitPath(_ context.Context, commit, path string) (io
 func TestUnpackCheckoutKeepsScratchFilesystemErrors(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ignores the read-only attribute on directories")
 	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0500); err != nil {

@@ -110,6 +110,9 @@ func newFixture(t *testing.T) fixture {
 	if err := os.Chmod(filepath.Join(dir, "mode.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Windows has no executable bit and Git there sets core.fileMode false,
+	// so record the mode change in the index directly.
+	git(t, dir, "update-index", "--chmod=+x", "mode.sh")
 	git(t, dir, "rm", "-q", "del.txt")
 	write(t, dir, "new.txt", "new\nfile\n", 0o644)
 	head := commit(t, dir, "head")

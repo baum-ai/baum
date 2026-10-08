@@ -35,9 +35,13 @@ add its sources so the utilities its components use are generated:
 
 `viewer.css` defines the type scale, the colour ramps and semantic tokens
 with their dark variants (applied under `:root[data-theme="dark"]`), the
-categorical series, and the pane and skeleton animations. The sans-serif family comes from `--viewer-font-sans`,
-which falls back to the system's sans-serif face; set it on `:root` to
-restyle the viewer.
+categorical series, and the pane and skeleton animations. The sans-serif
+family comes from `--viewer-font-sans`; set it on `:root` to restyle the
+viewer. Without it the viewer uses Inter
+(variable weight, Latin and Latin Extended), bundled as woff2 in `src/fonts/`
+with its SIL Open Font License (`src/fonts/OFL.txt`). The host's bundler
+resolves the files from `viewer.css`, and a browser downloads them only when
+a page renders in Inter, so a host that sets the variable never fetches them.
 
 ## Host seams
 
@@ -98,7 +102,9 @@ Decisions show who took them: a section's Key decisions and the Activity
 tab's list badge each one Human or Agent, and an agent decision carrying
 `approved_by_human` reads "Agent · approved" with a tick, so the approval is
 in words rather than colour alone. It still counts as the agent's in the
-Activity tab's agent and person tally.
+Activity tab's agent and person tally. A decision that carries them also
+shows what prompted it and why ("Prompted by review: …") and the session's
+own words as a quote; both are plain text from the session, never Markdown.
 
 The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot. The `baum` binary fills

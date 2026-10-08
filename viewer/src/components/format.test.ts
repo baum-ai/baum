@@ -12,6 +12,7 @@ import {
   formatHours,
   formatSHA,
   formatShare,
+  formatTime,
   formatUSD,
   initialsFor,
 } from "./format";
@@ -55,6 +56,9 @@ describe("format helpers", () => {
 
   it("handles invalid dates and time intervals", () => {
     expect(formatDate("not-a-date")).toBe(EM_DASH);
+    expect(formatTime("not-a-date")).toBe(EM_DASH);
+    expect(formatTime(null)).toBe(EM_DASH);
+    expect(formatTime("2026-07-01T10:05:00Z")).toMatch(/\d{1,2}:05/);
     expect(durationSeconds("2026-07-01T10:00:00Z", "2026-07-01T10:01:30Z")).toBe(90);
     expect(durationSeconds("2026-07-02", "2026-07-01")).toBeNull();
   });

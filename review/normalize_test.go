@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -702,4 +703,54 @@ func TestDedupeIsLinearInRepeats(t *testing.T) {
 	}
 	got := list[len(ids)-3].(map[string]any)["id"].(string)
 	checkEqual(t, "rsk_r_"+strconv.Itoa(len(ids)-2), got)
+}
+
+// A decision may carry its extracted trigger, rationale and evidence; an
+// empty or null value reads as absent, and an unknown trigger is invalid.
+func TestDecisionContextFieldsAreOptional(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	for _, tc := range []struct {
+		name   string
+		fields map[string]any
+		valid  bool
+		kept   []string
+	}{
+		{"all set", map[string]any{"trigger": "review", "rationale": "The reviewer asked.", "evidence": "use the parser"}, true,
+			[]string{`"trigger":"review"`, `"rationale":"The reviewer asked."`, `"evidence":"use the parser"`}},
+		{"empty", map[string]any{"trigger": "", "rationale": " ", "evidence": ""}, true, nil},
+		{"null", map[string]any{"trigger": nil, "rationale": nil, "evidence": nil}, true, nil},
+		{"unknown trigger", map[string]any{"trigger": "boss"}, false, nil},
+	} {
+		doc, err := decodeObject(authoredFixture(), "candidate")
+		checkNoError(t, err)
+		item := map[string]any{"id": "dec_parser", "by": "agent", "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
+		maps.Copy(item, tc.fields)
+		doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
+		prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+		if (findings == "") != tc.valid {
+			t.Errorf("%s: findings %q, want valid %v", tc.name, findings, tc.valid)
+			continue
+		}
+		if !tc.valid {
+			continue
+		}
+		for _, want := range tc.kept {
+			if !strings.Contains(string(prepared), want) {
+				t.Errorf("%s: prepared %s lacks %s", tc.name, prepared, want)
+			}
+		}
+		if tc.kept == nil {
+			out, err := decodeObject(prepared, "prepared")
+			checkNoError(t, err)
+			block := out["sections"].([]any)[0].(map[string]any)["blocks"].([]any)[0].(map[string]any)
+			decision := block["items"].([]any)[0].(map[string]any)
+			for _, key := range []string{"trigger", "rationale", "evidence"} {
+				if _, ok := decision[key]; ok {
+					t.Errorf("%s: prepared decision %v keeps an empty %s", tc.name, decision, key)
+				}
+			}
+		}
+	}
 }

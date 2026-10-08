@@ -124,3 +124,57 @@ func TestStaleSectionRisksKeepTheirRecordedState(t *testing.T) {
 	checkEqual(t, 4, second["introduced_version"])
 	checkEqual(t, nil, second["mitigated_version"])
 }
+
+// Restoring an omitted previous section early leaves completion's history
+// reconciliation unchanged: the restored section is stale, so its risks keep
+// their recorded state, while a risk omitted from a section the model wrote
+// still reads as mitigated rather than reactivated.
+func TestRestoreOmittedPreviousSectionsKeepsRiskHistory(t *testing.T) {
+	gone := historySection("gone", testHunk, "rsk_gone_active", "rsk_gone_mitigated")
+	goneRisks := gone["risks"].([]any)
+	goneRisks[0].(map[string]any)["state"], goneRisks[0].(map[string]any)["introduced_version"] = "active", float64(1)
+	goneRisks[1].(map[string]any)["state"], goneRisks[1].(map[string]any)["introduced_version"], goneRisks[1].(map[string]any)["mitigated_version"] = "mitigated", float64(1), float64(1)
+	kept := historySection("kept", testHunk, "rsk_kept_omitted")
+	kept["risks"].([]any)[0].(map[string]any)["state"], kept["risks"].([]any)[0].(map[string]any)["introduced_version"] = "active", float64(1)
+	previous := &bundlepkg.PreviousVersion{Version: 1}
+	for _, section := range []map[string]any{gone, kept} {
+		content, err := json.Marshal(section)
+		checkNoError(t, err)
+		previous.Sections = append(previous.Sections, bundlepkg.PreviousSection{ID: section["id"].(string), Content: content})
+	}
+	// The model omits sec_gone and writes sec_kept without its risk.
+	written := historySection("kept", testHunk)
+	candidate := historyCandidate(t, []any{written, historySection("new", testHunk)})
+
+	restored, err := RestoreOmittedPreviousSections(candidate, previous, nil)
+	checkNoError(t, err)
+	var sections struct {
+		Sections []struct {
+			ID    string           `json:"id"`
+			Hunks []any            `json:"hunks"`
+			Risks []map[string]any `json:"risks"`
+		} `json:"sections"`
+	}
+	checkNoError(t, json.Unmarshal(restored, &sections))
+	checkEqual(t, 3, len(sections.Sections))
+	checkEqual(t, "sec_gone", sections.Sections[0].ID)
+	checkEqual(t, 0, len(sections.Sections[0].Hunks))
+	checkEqual(t, nil, sections.Sections[0].Risks[0]["state"])
+	checkEqual(t, 0, len(sections.Sections[1].Risks))
+
+	direct, err := reconcileAuthoredHistory(candidate, previous, nil, true)
+	checkNoError(t, err)
+	early, err := reconcileAuthoredHistory(restored, previous, nil, true)
+	checkNoError(t, err)
+	var want, got any
+	checkNoError(t, json.Unmarshal(direct, &want))
+	checkNoError(t, json.Unmarshal(early, &got))
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("completion after early restoration differs:\n%s\nwant\n%s", early, direct)
+	}
+
+	unchanged := historyCandidate(t, []any{historySection("gone", testHunk), historySection("kept", testHunk)})
+	if same, err := RestoreOmittedPreviousSections(unchanged, previous, nil); err != nil || string(same) != string(unchanged) {
+		t.Fatalf("a document omitting nothing changed: %v", err)
+	}
+}
