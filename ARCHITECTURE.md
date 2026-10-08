@@ -424,8 +424,10 @@ inside the clone and the session store overrides, and does this:
    checkpoint holding it: one `git cat-file --batch` reads the metadata of every
    checkpoint in the window and another the metadata of their sessions, and
    only the checkpoints holding the newest snapshot of a session no
-   home-directory store has are read whole (an unreadable newest snapshot falls
-   back to the next). Sessions and those checkpoints are mapped up to eight at
+   home-directory store has are read whole. A newest snapshot that cannot be
+   mapped, or that carries no transcript (Entire sometimes writes a checkpoint
+   with only metadata and the prompt), gives way to the next newest; a
+   snapshot is not necessarily fuller than the one before it. Sessions and those checkpoints are mapped up to eight at
    a time. It then
    projects each into a
    `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
@@ -454,9 +456,9 @@ inside the clone and the session store overrides, and does this:
    Unlike the hosted resolver, no further heuristic link is added beside the
    checkpoint's.
 7. Matches every other commit with `linkage.MatchCommits`, the default config and
-   `steps.Default`, and keeps only matched edges. A session with several
-   snapshots (Entire records one per checkpoint, each fuller than the last) is
-   matched once, as its newest snapshot.
+   `steps.Default`, and keeps only matched edges. A session that arrives more
+   than once under one id is matched once, as its best reading: one with a
+   transcript, then the newest.
 
 The result is redacted with the engine and the row summary that `baum sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail

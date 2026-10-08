@@ -261,3 +261,20 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		return nil, nil, fmt.Errorf("no mapper for %q sessions", s.Source)
 	}
 }
+
+// HasTranscript reports whether a graph records anything the agent did: a
+// model call, an assistant message or a tool use. A snapshot Entire wrote with
+// only its metadata and the prompt has none.
+func HasTranscript(graph *session.Graph) bool {
+	return graph != nil &&
+		len(graph.ModelInvocations)+len(graph.AssistantMessages)+len(graph.ToolUses) > 0
+}
+
+// Fuller reports whether a is a better reading of a session than b: one with
+// a transcript over one without, and otherwise the one written later.
+func Fuller(a, b Session) bool {
+	if ha, hb := HasTranscript(a.Graph), HasTranscript(b.Graph); ha != hb {
+		return ha
+	}
+	return a.ModifiedAt.After(b.ModifiedAt)
+}

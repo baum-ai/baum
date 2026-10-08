@@ -247,9 +247,9 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // with ground truth, the sessions its Entire checkpoint records, is linked to
 // exactly those; every other commit goes through the matcher's default steps.
 func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
-	// An Entire session has one snapshot per checkpoint, each fuller than the
-	// last, and the matcher identifies a run by its id, so only the newest
-	// snapshot of each id is matched.
+	// A session can arrive more than once under one id, and the matcher
+	// identifies a run by its id, so only the best reading of each id is
+	// matched: one with a transcript, then the newest.
 	latest := make(map[string]snapshot, len(found))
 	var ids []string
 	for _, s := range found {
@@ -364,12 +364,16 @@ type snapshot struct {
 	correlated sessioncorrelate.Result
 }
 
-// newerThan reports whether s is the later reading of the same session: the
-// one written last, and when they were written together the one that knows of
-// more commits.
+// newerThan reports whether s is the better reading of the same session: one
+// with a transcript over one without (a snapshot need not be fuller than the
+// one before it), then the one written last, and when they were written
+// together the one that knows of more commits.
 func (s snapshot) newerThan(other snapshot) bool {
-	if c := s.session.ModifiedAt.Compare(other.session.ModifiedAt); c != 0 {
-		return c > 0
+	if sessions.Fuller(s.session, other.session) {
+		return true
+	}
+	if sessions.Fuller(other.session, s.session) {
+		return false
 	}
 	return len(s.correlated.CommitRefs) > len(other.correlated.CommitRefs)
 }

@@ -130,16 +130,17 @@ type pick struct {
 }
 
 // loadEntire returns the sessions the clone's checkpoint branch records, each
-// once. A checkpoint holds the whole transcript of every session it records
-// as it stood when the checkpoint was written, so a long session appears in
-// many checkpoints, each fuller than the last, and reading them is the slow
-// part. Only the newest snapshot of each session is mapped: the metadata of
-// every checkpoint written since opts.Since is read first, which says which
-// session each holds and when, and only the checkpoints holding a newest
-// snapshot are read whole. A session discovery already found in the agent's
-// own store is skipped: the native transcript is the fuller record. When the
-// newest snapshot cannot be mapped the next newest is tried, and a checkpoint
-// whose metadata cannot be read is read whole.
+// once. A checkpoint usually holds the whole transcript of every session it
+// records as it stood when the checkpoint was written, so a long session
+// appears in many checkpoints, and reading them is the slow part. Only the
+// newest snapshot of each session is mapped: the metadata of every checkpoint
+// written since opts.Since is read first, which says which session each holds
+// and when, and only the checkpoints holding a newest snapshot are read whole.
+// A session discovery already found in the agent's own store is skipped: the
+// native transcript is the fuller record. A newest snapshot that cannot be
+// mapped, or that carries no transcript (Entire sometimes writes only the
+// metadata and the prompt), gives way to the next newest; a checkpoint whose
+// metadata cannot be read is read whole.
 func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool) ([]Session, string, []Failure, error) {
 	store, ok, err := openCheckpoints(ctx, root)
 	if err != nil || !ok {
@@ -220,13 +221,14 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	}
 	best := map[string]Session{}
 	offer := func(checkpoint string, result entiresession.Result) {
-		if current, ok := best[result.SessionID]; ok && !result.CreatedAt.After(current.ModifiedAt) {
-			return
-		}
-		best[result.SessionID] = Session{
+		next := Session{
 			Source: Entire, Vendor: result.Vendor, ID: result.SessionID, Path: checkpoint,
 			RepoRoot: root, ModifiedAt: result.CreatedAt, Graph: result.Graph, Notes: result.Warnings,
 		}
+		if current, ok := best[result.SessionID]; ok && !Fuller(next, current) {
+			return
+		}
+		best[result.SessionID] = next
 	}
 	for _, id := range whole {
 		outcome := outcomes[id]
@@ -245,6 +247,8 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 			}
 		}
 	}
+	// The newest snapshot with a transcript wins. One without (Entire wrote
+	// only metadata and a prompt) is kept only while nothing older has one.
 	for _, sessionID := range sessionIDs {
 		for _, p := range picks[sessionID] {
 			outcome, read := outcomes[p.checkpoint]
@@ -268,7 +272,9 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 				continue
 			} else if result.Graph != nil {
 				offer(p.checkpoint, result)
-				break
+				if HasTranscript(result.Graph) {
+					break
+				}
 			}
 		}
 	}

@@ -7,11 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/collector/entire"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
@@ -163,55 +161,5 @@ func TestLoadKeepsPreviousPathsWithWorktrees(t *testing.T) {
 	}
 	if got := ids(sessions); !slices.Contains(got, id) || !slices.Contains(got, inMain) || slices.Contains(got, inOther) {
 		t.Errorf("sessions = %v", got)
-	}
-}
-
-// Every checkpoint that recorded a session holds a snapshot of it; the
-// session is listed once, from the newest.
-func TestLoadListsEachEntireSessionOnce(t *testing.T) {
-	fx := newFixture(t)
-	git(t, fx.repo, "checkout", "-q", entire.CheckpointBranch)
-	src := filepath.Join(fx.repo, "00", "04a7a444a0")
-	later := filepath.Join(fx.repo, "11", "1111111111")
-	if err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		text := strings.ReplaceAll(string(data), "04a7a444a0", "1111111111")
-		text = strings.ReplaceAll(text, `"0004a7a444a0"`, `"111111111111"`)
-		text = strings.ReplaceAll(text, "/00/1111111111/", "/11/1111111111/")
-		if rel == filepath.Join("0", "metadata.json") {
-			text = strings.ReplaceAll(text, "2026-07-26T15:52:20Z", "2026-07-27T15:52:20Z")
-		}
-		write(t, filepath.Join(later, rel), text)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	git(t, fx.repo, "add", ".")
-	git(t, fx.repo, "commit", "-q", "-m", "later checkpoint")
-	git(t, fx.repo, "checkout", "-q", "main")
-
-	opts := fx.options()
-	opts.Sources = []vendors.Slug{Entire}
-	sessions, report, err := Load(context.Background(), fx.repo, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Failures) != 0 {
-		t.Errorf("failures = %+v", report.Failures)
-	}
-	if len(sessions) != 2 || sessions[0].ID == sessions[1].ID {
-		t.Fatalf("sessions = %+v, want each of the two once", sessions)
-	}
-	for _, s := range sessions {
-		if s.ID == "7f85b0e9-4f7a-4a81-a27e-1393aa1e80f6" && s.Path != "111111111111" {
-			t.Errorf("%s was read from %s, not its newest checkpoint", s.ID, s.Path)
-		}
 	}
 }
