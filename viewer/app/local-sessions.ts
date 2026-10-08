@@ -196,8 +196,8 @@ function documentSessionViews(document: ReviewDocument): SessionView[] | null {
     .map((session) => ({
       id: session.id,
       vendor: typeof session.vendor === "string" ? session.vendor : "",
-      // A restricted session carries no title the reader may see.
-      title: session.restricted ? null : session.title,
+      // A restricted session carries no title the reader may see; say so.
+      title: session.restricted ? "Details restricted" : session.title,
       branch: session.restricted ? null : session.git_branch,
       startedAt: session.started_at,
       endedAt: session.ended_at,

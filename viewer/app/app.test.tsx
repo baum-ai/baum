@@ -475,6 +475,8 @@ describe("sessions and commits", () => {
     // The reason is text, never markup.
     expect(container.querySelector("#review-section b")).toBeNull();
     expect(pane()).toContain(recorded.title!);
+    // A restricted session says so instead of showing an empty card.
+    expect(pane()).toContain("Details restricted");
     await openGroup("Sessions");
     expect(rows(recorded.title!)).toHaveLength(1);
   });
