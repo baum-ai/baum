@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -51,14 +53,19 @@ func runView(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--port %d is out of range", port)
 	}
 
-	validator, err := review.NewDocumentValidator()
-	if err != nil {
-		return err
-	}
+	// Building the validator compiles the schema, which takes a moment; it
+	// waits for the first document, after the cheap checks have passed.
+	validator := sync.OnceValues(review.NewDocumentValidator)
 	opts := viewserver.Options{
-		Watch:    watch,
-		Warn:     cmd.ErrOrStderr(),
-		Validate: func(document []byte) []string { return validator.ValidateStored(document, nil) },
+		Watch: watch,
+		Warn:  cmd.ErrOrStderr(),
+		Validate: func(document []byte) []string {
+			v, err := validator()
+			if err != nil {
+				return []string{fmt.Sprintf("cannot build the document validator: %v", err)}
+			}
+			return v.ValidateStored(document, nil)
+		},
 	}
 	if sample {
 		opts.Document = schema.Example
@@ -71,7 +78,7 @@ func runView(cmd *cobra.Command, args []string) error {
 	}
 	url, err := server.Listen(port)
 	if err != nil {
-		if errors.Is(err, syscall.EADDRINUSE) {
+		if addrInUse(err) {
 			return fmt.Errorf("port %d is already in use; pick another with --port or omit it for a free one", port)
 		}
 		return fmt.Errorf("listen: %w", err)
@@ -88,4 +95,14 @@ func runView(cmd *cobra.Command, args []string) error {
 	ctx, stop := viewContext()
 	defer stop()
 	return server.Serve(ctx)
+}
+
+// addrInUse reports whether err says the port is taken. Windows reports it as
+// WSAEADDRINUSE, which is not syscall.EADDRINUSE there.
+func addrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	const wsaEADDRINUSE = syscall.Errno(10048)
+	return runtime.GOOS == "windows" && errors.Is(err, wsaEADDRINUSE)
 }

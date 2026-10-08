@@ -141,17 +141,22 @@ func TestViewArgumentsAreExclusive(t *testing.T) {
 	stubViewSeams(t)
 	path := filepath.Join(t.TempDir(), "review.json")
 	writeFile(t, path, "{}")
-	for _, args := range [][]string{
-		{"view"},
-		{"view", path, "--sample"},
-		{"view", path, "--pr", "1"},
-		{"view", "--sample", "--pr", "1"},
-		{"view", path, path},
-		{"view", "--sample", "--watch"},
-		{"view", "--sample", "--port", "70000"},
+	const exactlyOne = "give exactly one of a document file, --sample and --pr"
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"view"}, exactlyOne},
+		{[]string{"view", path, "--sample"}, exactlyOne},
+		{[]string{"view", path, "--pr", "1"}, exactlyOne},
+		{[]string{"view", "--sample", "--pr", "1"}, exactlyOne},
+		{[]string{"view", path, path}, "accepts at most 1 arg(s), received 2"},
+		{[]string{"view", "--sample", "--watch"}, "--watch needs a document file"},
+		{[]string{"view", "--sample", "--port", "70000"}, "--port 70000 is out of range"},
 	} {
-		if _, _, err := run(t, args...); err == nil {
-			t.Errorf("%v succeeded", args)
+		_, _, err := run(t, tt.args...)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%v: err = %v, want it to contain %q", tt.args, err, tt.want)
 		}
 	}
 }
