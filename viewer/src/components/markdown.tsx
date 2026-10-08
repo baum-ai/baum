@@ -177,10 +177,15 @@ export function Markdown({
   children,
   className,
   title,
+  html = true,
 }: {
   children: string;
   className?: string;
   title?: string;
+  /** Parses raw HTML into elements, as GitHub does in a comment. Off for
+   *  text that talks about markup rather than containing it, such as an
+   *  agent's reply naming `<SessionCard>`: the tag then reads as written. */
+  html?: boolean;
 }) {
   return (
     <div className={cn("space-y-2", className)} title={title}>
@@ -190,7 +195,7 @@ export function Markdown({
        *  multi-line comment collapses into a single run-on paragraph. */}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={REHYPE_PLUGINS}
+        rehypePlugins={html ? REHYPE_PLUGINS : undefined}
         components={COMPONENTS}
       >
         {children}
