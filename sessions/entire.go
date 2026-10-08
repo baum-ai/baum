@@ -359,4 +359,3 @@ func (c *Checkpoints) Load(ctx context.Context, id string) ([]Session, []Failure
 	}
 	return sessions, failures, nil
 }
-
