@@ -9,6 +9,7 @@ import {
   pullRequestUrl,
   type ReviewDocument,
   assessedRisk,
+  reviewGeneration,
   shortSha,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
@@ -74,15 +75,82 @@ function Dot() {
 
 /** A small bordered label: a branch, a count, a fact the header states in
  *  passing. */
-function Chip({ children, mono = false }: { children: ReactNode; mono?: boolean }) {
+function Chip({
+  children,
+  mono = false,
+  className,
+}: {
+  children: ReactNode;
+  mono?: boolean;
+  className?: string;
+}) {
   return (
     <span
       className={cn(
         "inline-flex h-7 items-center gap-1.5 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) px-2 text-base text-(--text-secondary)",
         mono && "font-mono text-xs",
+        className,
       )}
     >
       {children}
+    </span>
+  );
+}
+
+/** A branch as a chip. `fit` lets a long name shrink to an ellipsis, for a
+ *  row that must stay one line; the full name is the chip's title. */
+function BranchChip({
+  name,
+  fit = false,
+  className,
+}: {
+  name: string;
+  fit?: boolean;
+  className?: string;
+}) {
+  return (
+    <Chip mono className={cn(fit && "min-w-0", className)}>
+      <BranchIcon size={13} className="flex-none text-(--text-tertiary)" />
+      <span className={fit ? "truncate" : undefined} title={name}>
+        {name}
+      </span>
+    </Chip>
+  );
+}
+
+/** The review's age beside the version menu, which on a phone stands in for
+ *  the head's version line: when its evidence was refreshed, a live dot while
+ *  a new review is being written, and a badge only for a review that needs
+ *  attention (outdated or failed). */
+export function ReviewFreshness({
+  document,
+  generation,
+  className,
+}: {
+  document: ReviewDocument;
+  generation?: GenerationView;
+  className?: string;
+}) {
+  const { state, generating, updated } = reviewGeneration(document, generation);
+  return (
+    <span
+      className={cn("inline-flex items-center gap-2 text-base text-(--text-tertiary)", className)}
+    >
+      {generating ? (
+        <span
+          title="A new review is being generated"
+          className="inline-flex items-center text-(--status-info)"
+        >
+          <LiveDot />
+          <span className="sr-only">A new review is being generated</span>
+        </span>
+      ) : null}
+      {updated ? (
+        <span title={`Evidence refreshed ${formatDate(updated)}`}>{formatRelative(updated)}</span>
+      ) : null}
+      {state === "outdated" || state === "failed" ? (
+        <Badge tone={generationTone(state)}>{humanize(state)}</Badge>
+      ) : null}
     </span>
   );
 }
@@ -121,10 +189,12 @@ export function ReviewHeader({
   // tell which. What it can say is the state the review was generated
   // against, which is true either way.
   const superseded = Boolean(state && generatedFor && state !== generatedFor);
-  const generationState = slots.generation?.state ?? document?.review.generation_state;
-  const rewriting = Boolean(slots.generation?.rewriting);
-  const generating = generationState === "pending" || rewriting;
-  const updated = document?.review.evidence_refreshed_at || document?.review.generated_at;
+  const {
+    state: generationState,
+    rewriting,
+    generating,
+    updated,
+  } = reviewGeneration(document, slots.generation);
   // The page scrolls as one: the head goes with the content, and once it has
   // gone a single line keeps the pull request in view. The bar is always in
   // the document so that it can fade, and hidden from readers and the tab
@@ -212,101 +282,118 @@ export function ReviewHeader({
         </div>
       </div>
       <header ref={head} className={cn(REVIEW_GUTTER, "border-b border-(--border-subtle)")}>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
-          <h1 className="text-2xl font-medium tracking-[-0.015em]">
-            {number !== undefined ? (
-              <>
-                <span className="text-(--text-tertiary)">#{number}</span>
-                {title ? ` ${title}` : ""}
-              </>
-            ) : (
-              "Review preview"
-            )}
-          </h1>
-          {state ? (
-            <Badge tone={pullRequestStateTone(state)}>
-              <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
-              {humanize(state)}
-            </Badge>
-          ) : null}
-          {slots.approval ? <span aria-label="Review approval state">{slots.approval}</span> : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
-          {repositoryFullName ? <span>{repositoryFullName}</span> : null}
-          {/* Not on a phone: two branch chips there take a line of their own
-            above the review, for a fact a reader on a phone rarely needs. */}
+        <div className="pb-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
+            <h1 className="text-2xl font-medium tracking-[-0.015em]">
+              {number !== undefined ? (
+                <>
+                  <span className="text-(--text-tertiary)">#{number}</span>
+                  {title ? ` ${title}` : ""}
+                </>
+              ) : (
+                "Review preview"
+              )}
+            </h1>
+            {state ? (
+              <Badge tone={pullRequestStateTone(state)}>
+                <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
+                {humanize(state)}
+              </Badge>
+            ) : null}
+            {slots.approval ? (
+              <span aria-label="Review approval state">{slots.approval}</span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
+            {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+            {/* Beside the repository from sm; on a phone, a row of their own. */}
+            {facts.branches ? (
+              <span className="hidden sm:contents">
+                <Dot />
+                <BranchChip name={facts.branches.head} />
+                <span aria-hidden className="text-(--text-tertiary)">
+                  →
+                </span>
+                <BranchChip name={facts.branches.base} />
+              </span>
+            ) : null}
+            {githubUrl ? (
+              <a
+                href={githubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View on GitHub"
+                title="View on GitHub"
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary)",
+                  FOCUS_RING,
+                )}
+              >
+                <GitHubIcon size={16} />
+              </a>
+            ) : null}
+          </div>
+          {/* One line on a phone: the branches shrink to an ellipsis rather
+          than wrapping onto a second line. */}
           {facts.branches ? (
-            <span className="hidden sm:contents">
-              <Dot />
-              <Chip mono>
-                <BranchIcon size={13} className="text-(--text-tertiary)" />
-                {facts.branches.head}
-              </Chip>
-              <span aria-hidden className="text-(--text-tertiary)">
+            <div className="flex min-w-0 items-center gap-2 pt-2 sm:hidden">
+              <BranchChip name={facts.branches.head} fit />
+              <span aria-hidden className="flex-none text-(--text-tertiary)">
                 →
               </span>
-              <Chip mono>
-                <BranchIcon size={13} className="text-(--text-tertiary)" />
-                {facts.branches.base}
-              </Chip>
-            </span>
+              {/* The branch it merges into is the one a reader checks, so it
+                keeps up to half the row and the head branch gives way. */}
+              <BranchChip name={facts.branches.base} fit className="max-w-1/2 flex-none" />
+            </div>
           ) : null}
-          {githubUrl ? (
-            <a
-              href={githubUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="View on GitHub"
-              title="View on GitHub"
-              className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary)",
-                FOCUS_RING,
-              )}
-            >
-              <GitHubIcon size={16} />
-            </a>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 pt-3 pb-4 text-base text-(--text-tertiary)">
-          {document && generationState ? (
-            <>
-              {/* A current review is the expected state and reads as plain
+          {/* On a phone the version menu's line says this, shorter
+          (`ReviewFreshness`), so the head leaves it out there. */}
+          <div
+            className={cn(
+              "flex-wrap items-center gap-x-2 gap-y-2 pt-3 text-base text-(--text-tertiary)",
+              document && generationState ? "hidden sm:flex" : "flex",
+            )}
+          >
+            {document && generationState ? (
+              <>
+                {/* A current review is the expected state and reads as plain
                 text; only one that needs attention earns a badge. */}
-              {generationState === "current" && !generating ? (
-                <span title={versionTitle}>Review v{document.review.version} · Current</span>
-              ) : (
-                <Badge tone={generationTone(generationState)} title={versionTitle}>
-                  {generating ? <LiveDot className="mr-1.5" /> : null}
-                  Review v{document.review.version} · {humanize(generationState)}
-                  {rewriting ? " · Generating" : ""}
-                </Badge>
-              )}
-              {/* Only when the two disagree, because a review that still
+                {generationState === "current" && !generating ? (
+                  <span title={versionTitle}>Review v{document.review.version} · Current</span>
+                ) : (
+                  <Badge tone={generationTone(generationState)} title={versionTitle}>
+                    {generating ? <LiveDot className="mr-1.5" /> : null}
+                    Review v{document.review.version} · {humanize(generationState)}
+                    {rewriting ? " · Generating" : ""}
+                  </Badge>
+                )}
+                {/* Only when the two disagree, because a review that still
                 describes the pull request in front of the reader needs no
                 caveat — and one that describes an earlier one cannot be left
                 claiming to be current. */}
-              {superseded && state && generatedFor && (
-                <Badge
-                  tone="caution"
-                  title={`Review v${document.review.version} was generated against this pull request as ${humanize(
-                    generatedFor,
-                  ).toLowerCase()}. This page has it as ${humanize(state).toLowerCase()}.`}
-                >
-                  Generated while {humanize(generatedFor).toLowerCase()}
-                </Badge>
-              )}
-              {updated ? (
-                <>
-                  <Dot />
-                  <span title={`Evidence refreshed ${formatDate(updated)}`}>
-                    Updated {formatRelative(updated)}
-                  </span>
-                </>
-              ) : null}
-            </>
-          ) : number !== undefined ? (
-            <Badge tone="info">Preview</Badge>
-          ) : null}
+                {superseded && state && generatedFor && (
+                  <Badge
+                    tone="caution"
+                    title={`Review v${document.review.version} was generated against this pull request as ${humanize(
+                      generatedFor,
+                    ).toLowerCase()}. This page has it as ${humanize(state).toLowerCase()}.`}
+                  >
+                    Generated while {humanize(generatedFor).toLowerCase()}
+                  </Badge>
+                )}
+                {updated ? (
+                  <>
+                    <Dot />
+                    <span title={`Evidence refreshed ${formatDate(updated)}`}>
+                      Updated {formatRelative(updated)}
+                    </span>
+                  </>
+                ) : null}
+              </>
+            ) : number !== undefined ? (
+              <Badge tone="info">Preview</Badge>
+            ) : null}
+          </div>
         </div>
         {slots.statistics ? (
           <div className="border-t border-(--border-subtle) py-3">{slots.statistics}</div>

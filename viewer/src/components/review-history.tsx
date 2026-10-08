@@ -126,11 +126,14 @@ export function HistoryToolbar({
   currentVersion,
   versions,
   view,
+  status,
   children,
 }: {
   currentVersion: number;
   versions: number[];
   view: ReturnType<typeof useHistoryView>;
+  /** Drawn right after the menu, such as how old the review is. */
+  status?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -150,6 +153,7 @@ export function HistoryToolbar({
           <CloseIcon />
         </IconButton>
       )}
+      {status}
       {/* The current version is already named in the head; on a phone the
         menu's own label says it again, and this line would only repeat it. */}
       <span

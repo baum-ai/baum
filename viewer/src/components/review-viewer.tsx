@@ -53,6 +53,7 @@ import { ChangesOverview, RisksOverview } from "./review-groups";
 import {
   REVIEW_BAR_PX,
   REVIEW_GUTTER,
+  ReviewFreshness,
   ReviewHeader,
   type ReviewHeaderSlots,
 } from "./review-header";
@@ -307,6 +308,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   loadVersion = noVersion,
   view: historyView,
   versionsFailed,
+  header,
   placeholder,
   asidePlaceholder,
   fallbackSections,
@@ -367,6 +369,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const conversationPane = useRef<HTMLElement>(null);
   const railPane = useRef<HTMLElement>(null);
   const navigator = useRef<HTMLDivElement>(null);
+  const scrim = useRef<HTMLButtonElement>(null);
   // Where the panes stack (below xl) the rail and the side pane are sheets
   // over the page, opened from the navigator bar: the rail rather than a
   // screen of rows above the pane, the side pane rather than a second page
@@ -630,31 +633,67 @@ function ReviewWorkspace<F extends ReviewFile>({
   // A sheet has done its job once the reader has gone somewhere, including
   // a file already selected and picked again, or a link out of the side pane.
   useEffect(() => setSheet(null), [selectionKey, fileClick]);
-  /** Closes the open sheet and returns focus to the bar button that opened it. */
-  const closeSheet = () => {
-    if (sheet)
-      navigator.current?.querySelector<HTMLElement>(`[aria-controls="review-${sheet}"]`)?.focus();
-    setSheet(null);
-  };
+  const closeSheet = () => setSheet(null);
+  // A sheet only exists below xl; one left open across a resize past it would
+  // leave the page behind it inert beside the column it has become.
+  useEffect(() => {
+    const wide = window.matchMedia("(width >= 80rem)");
+    const onChange = () => {
+      if (wide.matches) setSheet(null);
+    };
+    wide.addEventListener("change", onChange);
+    return () => wide.removeEventListener("change", onChange);
+  }, []);
   useEffect(() => {
     if (!sheet) return;
     const pane = sheet === "rail" ? railPane.current : conversationPane.current;
+    if (!pane) return;
+    // A modal in all but name: everything but the sheet and its scrim is
+    // inert while it is open, so neither a keyboard nor a screen reader can
+    // reach the page it covers. The sheet stays where it is in the document
+    // (from xl the same element is a column), so rather than a dialog, each
+    // of its ancestors' other children is made inert, and only those this
+    // sheet made inert are released.
+    const keep = new Set<Element | null>([pane, scrim.current]);
+    const made: Element[] = [];
+    // Only while it covers the page: an element styled as the column has
+    // nothing over which to be modal.
+    if (getComputedStyle(pane).position === "fixed") {
+      for (let node: Element | null = pane; node?.parentElement; node = node.parentElement) {
+        for (const sibling of node.parentElement.children) {
+          if (sibling === node || keep.has(sibling) || sibling.hasAttribute("inert")) continue;
+          sibling.setAttribute("inert", "");
+          made.push(sibling);
+        }
+        if (node.parentElement === window.document.body) break;
+      }
+    }
     // Start on the row being read, or the tab on show, unless something in
     // the sheet already asked for the focus (the composer, for "Discuss").
-    if (pane && !pane.contains(window.document.activeElement)) {
+    if (!pane.contains(window.document.activeElement)) {
       const start = pane.querySelector<HTMLElement>(
-        sheet === "rail" ? '[aria-pressed="true"]' : '[role="tab"][aria-selected="true"]',
+        sheet === "rail"
+          ? '[aria-pressed="true"][aria-controls~="review-section"]'
+          : '[role="tab"][aria-selected="true"]',
       );
       start?.focus({ preventScroll: true });
       start?.scrollIntoView({ block: "nearest" });
     }
+    const opener = navigator.current?.querySelector<HTMLElement>(
+      `[aria-controls="review-${sheet}"]`,
+    );
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setSheet(null);
-      navigator.current?.querySelector<HTMLElement>(`[aria-controls="review-${sheet}"]`)?.focus();
+      if (event.key === "Escape") setSheet(null);
     };
     window.document.addEventListener("keydown", onKeyDown);
-    return () => window.document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.document.removeEventListener("keydown", onKeyDown);
+      for (const element of made) element.removeAttribute("inert");
+      // However it closed (Escape, the scrim, a place picked in it), focus
+      // left in the hidden sheet goes back to the bar button that opened it.
+      const active = window.document.activeElement;
+      if (!active || active === window.document.body || pane.contains(active)) opener?.focus();
+    };
   }, [sheet]);
   // Reading order, for the navigator's previous and next: the Summary, then
   // each section as the rail lists it. A risk is read inside its section, and
@@ -806,11 +845,21 @@ function ReviewWorkspace<F extends ReviewFile>({
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <div className="flex min-h-0 flex-1 flex-col gap-3">
-        {document && (versions.length > 0 || historyView.selection) && (
+        {/* On a phone the head leaves out its version line, and the review's
+          age sits beside the version menu instead; a review with no earlier
+          version has no menu, so its number stands in for it. */}
+        {document && (versions.length > 0 || historyView.selection) ? (
           <HistoryToolbar
             currentVersion={document.review.version}
             versions={versions}
             view={historyView}
+            status={
+              <ReviewFreshness
+                document={document}
+                generation={header?.generation}
+                className="sm:hidden"
+              />
+            }
           >
             {changes && (
               <span className="text-base text-(--text-secondary)">
@@ -820,7 +869,12 @@ function ReviewWorkspace<F extends ReviewFile>({
               </span>
             )}
           </HistoryToolbar>
-        )}
+        ) : document ? (
+          <div className="flex items-center gap-3 text-base text-(--text-tertiary) sm:hidden">
+            Review v{document.review.version}
+            <ReviewFreshness document={document} generation={header?.generation} />
+          </div>
+        ) : null}
         {/* One ruled rectangle divided by hairlines rather than three floating
           cards: the rail, the pane and the side pane are one workspace, and
           the lines between them are where the reader's eye already draws them. */}
@@ -864,6 +918,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             it is a real control, as the application drawer's is. */}
           {sheet ? (
             <button
+              ref={scrim}
               type="button"
               aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
               onClick={closeSheet}
