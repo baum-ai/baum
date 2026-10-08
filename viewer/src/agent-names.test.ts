@@ -8,5 +8,7 @@ describe("harnessName", () => {
     expect(harnessName("pi")).toBe("Pi");
     expect(harnessName("some_agent")).toBe("Some agent");
     expect(harnessName("")).toBe("Unknown");
+    expect(harnessName("constructor")).toBe("Constructor");
+    expect(harnessName("toString")).toBe("ToString");
   });
 });

@@ -71,6 +71,28 @@ describe("CommitList", () => {
     expect(text).toContain("(no subject)");
   });
 
+  it("keeps a confidence outside 0 to 1 within a percentage", () => {
+    render({
+      status: "ready",
+      commits: [
+        {
+          id: ONE,
+          subject: "x",
+          links: [
+            { session: "s1", label: "A", method: "constructor", confidence: 5 },
+            { session: "s2", label: "B", method: "commit_ref", confidence: -1 },
+          ],
+        },
+      ],
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("100% confidence");
+    expect(text).toContain("0% confidence");
+    expect(text).not.toContain("500%");
+    expect(text).toContain("Constructor");
+  });
+
   it("opens a linked session, and a commit from the list", () => {
     render({ status: "ready", commits });
 

@@ -42,7 +42,7 @@ const METHODS: Record<string, string> = {
 };
 
 function methodLabel(method: string): string {
-  return METHODS[method] ?? humanize(method);
+  return (Object.hasOwn(METHODS, method) ? METHODS[method] : undefined) ?? humanize(method);
 }
 
 function CommitCard({
@@ -96,7 +96,7 @@ function CommitCard({
               </JumpLink>
               <Badge size="compact">{methodLabel(link.method)}</Badge>
               <span className="text-xs text-(--text-tertiary)">
-                {Math.round(link.confidence * 100)}% confidence
+                {Math.round(Math.min(1, Math.max(0, link.confidence)) * 100)}% confidence
               </span>
             </li>
           ))}
