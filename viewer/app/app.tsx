@@ -151,7 +151,14 @@ function useSessions(refresh: number): SessionsLoad {
     fetchSessions(abort.signal).then(
       (answer) => {
         if (abort.signal.aborted) return;
-        setLoad(answer ? { state: "answered", answer } : { state: "request-failed" });
+        // A refetch that fails keeps the last answer; only a first one has nothing to keep.
+        setLoad((last) =>
+          answer
+            ? { state: "answered", answer }
+            : last.state === "answered"
+              ? last
+              : { state: "request-failed" },
+        );
       },
       () => {},
     );

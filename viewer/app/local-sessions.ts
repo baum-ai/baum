@@ -107,6 +107,12 @@ function parseCommit(value: unknown): LocalCommit | null {
   };
 }
 
+/** The first of each key: an id or oid listed twice would repeat a React key. */
+function firsts<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => !seen.has(key(item)) && seen.add(key(item)));
+}
+
 /** The answer in a response body, or null when it is not one: the wrong
  *  shape or a field of the wrong type anywhere in it. Fields it does not know
  *  are ignored. */
@@ -129,8 +135,8 @@ export function parseSessionsAnswer(body: unknown): SessionsAnswer | null {
   if (sessions.includes(null) || commits.includes(null)) return null;
   return {
     available: true,
-    sessions: sessions as LocalSession[],
-    commits: commits as LocalCommit[],
+    sessions: firsts(sessions as LocalSession[], (session) => session.id),
+    commits: firsts(commits as LocalCommit[], (commit) => commit.oid),
   };
 }
 

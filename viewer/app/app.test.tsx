@@ -481,6 +481,18 @@ describe("sessions and commits", () => {
     expect(rows(recorded.title!)).toHaveLength(1);
   });
 
+  it("lists a session or commit once when the answer repeats it", async () => {
+    const twice = structuredClone(local);
+    twice.sessions.push(structuredClone(twice.sessions[0]!));
+    twice.commits.push(structuredClone(twice.commits[0]!));
+    sessionsMock.mockImplementation(async () => respond(twice));
+    window.history.replaceState(null, "", "/?pane=commits");
+    await mount();
+
+    expect(railText()).toContain("Sessions1");
+    expect(railText()).toContain("Commits2");
+  });
+
   it("keeps a deep link to Commits in the URL when there are none to show", async () => {
     window.history.replaceState(null, "", "/?pane=commits");
     await mount();
@@ -604,6 +616,53 @@ describe("sessions and commits", () => {
     expect(pane()).toContain("No agent session is linked");
     await openGroup("Commits");
     expect(rows("Only")).toHaveLength(1);
+  });
+
+  it("keeps the last answer when a later request fails", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", `/?pane=commit&commit=${OID_ONE}`);
+    await mount();
+    expect(pane()).toContain("1 of 2 commits");
+
+    sessionsMock.mockImplementation(async () => respond({ error: "boom" }, 500));
+    await act(async () => source().emit("document"));
+    expect(sessionsMock).toHaveBeenCalledTimes(2);
+    expect(railText()).toContain("Commits2");
+    expect(pane()).toContain("1 of 2 commits");
+    expect(pane()).not.toContain("recorded in the review");
+
+    // A real answer that says unavailable still drops to the fallback.
+    sessionsMock.mockImplementation(async () =>
+      respond({ available: false, code: "commits_missing", reason: "gone" }),
+    );
+    await act(async () => source().emit("document"));
+    expect(railText()).not.toContain("Commits");
+  });
+
+  it("ignores an older response that arrives after a newer one", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", "/?pane=commits");
+    await mount();
+
+    const first = deferred();
+    const second = deferred();
+    sessionsMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await act(async () => source().emit("document"));
+    await act(async () => source().emit("document"));
+    expect(sessionsMock).toHaveBeenCalledTimes(3);
+
+    await act(async () =>
+      second.resolve(
+        respond({
+          available: true,
+          sessions: [],
+          commits: [{ oid: OID_TWO, subject: "Newer", links: [] }],
+        }),
+      ),
+    );
+    await act(async () => first.resolve(respond(local)));
+    expect(pane()).toContain("Newer");
+    expect(pane()).not.toContain("Add the retry budget");
   });
 
   it("does not ask again when the stream merely opens", async () => {

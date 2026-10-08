@@ -338,12 +338,13 @@ keeps the last answer on screen while it does.
 - Available: the Sessions group lists the linked sessions, each with the
   commits it is linked to, and the Commits group lists every commit with the
   sessions matched to it, the method and the confidence. Each opens the other.
-- Unavailable, or a request that fails (network error, a status other than 200,
-  a body that is not an answer, a field of the wrong type): the Sessions group
-  lists the sessions the document itself recorded, under a note giving the
-  server's `reason` as plain text (a failed request says it could not be
-  read), and the Commits group is left out. Only a failed request with no
-  session in the document shows the group as failed.
+- Unavailable, or a first request that fails (network error, a status other
+  than 200, a body that is not an answer, a field of the wrong type): the
+  Sessions group lists the sessions the document itself recorded, under a note
+  giving the server's `reason` as plain text (a failed request says it could
+  not be read), and the Commits group is left out. Only a failed request with
+  no session in the document shows the group as failed. A later request that
+  fails keeps the last answer; a server answer of unavailable replaces it.
 
 ### How `baum view` serves it
 
