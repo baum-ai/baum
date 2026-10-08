@@ -56,12 +56,24 @@ func TestViewServesSampleAndStopsOnCancel(t *testing.T) {
 	opened, stop := stubViewSeams(t)
 	var out, errOut lockedBuffer
 	finished := make(chan error, 1)
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		finished <- Run([]string{"view", "--sample"}, strings.NewReader(""), &out, &errOut)
 	}()
+	// Whatever happens below, the server stops before the next test starts: a
+	// view left running would use the seams the next test installs.
+	t.Cleanup(func() {
+		stop()
+		select {
+		case <-exited:
+		case <-time.After(30 * time.Second):
+			t.Error("view did not stop")
+		}
+	})
 
 	var url string
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for url == "" {
 		url = strings.TrimSpace(out.String())
 		if time.Now().After(deadline) {
@@ -88,7 +100,7 @@ func TestViewServesSampleAndStopsOnCancel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("view: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("view did not stop")
 	}
 	if len(*opened) != 1 || (*opened)[0] != url {

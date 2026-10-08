@@ -50,6 +50,12 @@ const (
 	CodeOriginMismatch = "origin_mismatch"
 	// CodeCommitsMissing is a clone that lacks the pull request's commits.
 	CodeCommitsMissing = "commits_missing"
+	// CodePartialClone is a partial clone that has the pull request's commits
+	// but not the trees or blobs reading them needs.
+	CodePartialClone = "partial_clone"
+	// CodeAmbiguousCommit is an abbreviated head or base that names more than
+	// one commit in the clone.
+	CodeAmbiguousCommit = "ambiguous_commit"
 	// CodeTooManyCommits is a pull request with more commits than are listed.
 	CodeTooManyCommits = "too_many_commits"
 	// CodeError is anything else that stopped the read.
@@ -62,8 +68,11 @@ type Request struct {
 	Dir string
 	// Repository is the pull request's "owner/name".
 	Repository string
-	// Head and Base are the full commit ids that bound the pull request.
-	Head, Base string
+	// Head, Base and MergeBase bound the pull request, as full or abbreviated
+	// (7 or more hex digits) commit ids. The pull request's commits are those
+	// from the merge base to the head, so MergeBase is used when the clone
+	// has it, and Base otherwise. MergeBase may be empty.
+	Head, Base, MergeBase string
 	// Sessions narrows or redirects the stores read; the zero value reads
 	// the defaults.
 	Sessions sessions.Options
@@ -161,7 +170,7 @@ const maxSubject = 200
 // Result, not an error; an error is a failure to read something that should
 // have been readable.
 func Resolve(ctx context.Context, req Request) (Result, error) {
-	if req.Repository == "" || req.Head == "" || req.Base == "" {
+	if req.Repository == "" || req.Head == "" || (req.Base == "" && req.MergeBase == "") {
 		return Unavailable(CodeNoHead, "the document does not name its repository and head and base commits"), nil
 	}
 	dir := req.Dir
@@ -183,25 +192,41 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("reading the clone's origin: %w", err)
 	}
 	if !SameRepository(origin, req.Repository) {
-		return Unavailable(CodeOriginMismatch, "this clone's origin is not "+req.Repository), nil
+		return Unavailable(CodeOriginMismatch, originReason(origin, req.Repository)), nil
 	}
-	commits, err := repo.Commits(ctx, req.Base, req.Head)
+	head, start, unavailable, err := resolveBounds(ctx, repo, req)
+	if err != nil {
+		return Result{}, err
+	}
+	if unavailable != nil {
+		return *unavailable, nil
+	}
+	commits, err := repo.Commits(ctx, start, head)
 	switch {
 	case errors.Is(err, gitlocal.ErrInvalidInput):
-		return Unavailable(CodeNoHead, "the document's head and base are not full commit ids"), nil
-	case errors.Is(err, gitlocal.ErrObjectNotFound), errors.Is(err, gitlocal.ErrPartialClone):
+		return Unavailable(CodeNoHead, "the document's head and base are not commit ids"), nil
+	case errors.Is(err, gitlocal.ErrPartialClone):
+		return Unavailable(CodePartialClone, "this is a partial clone that lacks objects needed to read the pull request; fetch them with git to see linked sessions"), nil
+	case errors.Is(err, gitlocal.ErrObjectNotFound):
 		return Unavailable(CodeCommitsMissing, "this clone does not have the pull request's commits; fetch them with git to see linked sessions"), nil
 	case errors.Is(err, bundle.ErrOutputTooLarge):
 		return Unavailable(CodeTooManyCommits, "the pull request has too many commits to link here"), nil
 	case err != nil:
 		return Result{}, fmt.Errorf("reading the pull request's commits: %w", err)
 	}
-
 	engine, err := redact.New()
 	if err != nil {
 		return Result{}, err
 	}
-	found, report, err := sessions.Load(ctx, dir, req.Sessions)
+	if len(commits) == 0 {
+		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
+	}
+
+	load := req.Sessions
+	if since, ok := sessionsSince(commits); ok && load.Since.Before(since) {
+		load.Since = since
+	}
+	found, report, err := sessions.Load(ctx, dir, load)
 	if err != nil {
 		return Result{}, fmt.Errorf("reading sessions: %w", err)
 	}
@@ -213,25 +238,40 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 			_, _ = fmt.Fprintf(req.Warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	return match(engine, found, commits)
+	return match(ctx, engine, found, commits)
 }
 
 // match links sessions to commits with the matcher's default steps and
 // builds the redacted result.
-func match(engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit) (Result, error) {
-	rows := make(map[string]Row, len(found))
-	candidates := make([]linkage.RunCandidate, 0, len(found))
+func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit) (Result, error) {
+	// An Entire session has one snapshot per checkpoint, each fuller than the
+	// last, and the matcher identifies a run by its id, so only the newest
+	// snapshot of each id is matched.
+	latest := make(map[string]snapshot, len(found))
+	var ids []string
 	for _, s := range found {
-		if _, dup := rows[s.ID]; dup {
-			continue // the matcher identifies a run by this id
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
 		}
-		correlated := sessioncorrelate.Correlate(s.Graph, s.Vendor)
-		row, err := rowOf(engine, s, correlated)
+		next := snapshot{session: s, correlated: sessioncorrelate.Correlate(s.Graph, s.Vendor)}
+		current, seen := latest[s.ID]
+		if !seen {
+			ids = append(ids, s.ID)
+		}
+		if !seen || next.newerThan(current) {
+			latest[s.ID] = next
+		}
+	}
+	rows := make(map[string]Row, len(latest))
+	candidates := make([]linkage.RunCandidate, 0, len(latest))
+	for _, id := range ids {
+		snap := latest[id]
+		row, err := rowOf(engine, snap.session, snap.correlated)
 		if err != nil {
 			return Result{}, err
 		}
-		rows[s.ID] = row
-		candidates = append(candidates, candidateOf(s, correlated))
+		rows[id] = row
+		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
 	}
 
 	enriched := make([]linkage.EnrichedCommit, len(commits))
@@ -256,12 +296,11 @@ func match(engine *redact.Engine, found []sessions.Session, commits []gitlocal.C
 	}
 
 	result := Result{Available: true, Sessions: []Session{}, Commits: make([]Commit, 0, len(commits))}
-	for _, s := range found {
-		row, ok := rows[s.ID]
-		if !ok || !linked[s.ID] {
+	for _, id := range ids {
+		row, ok := rows[id]
+		if !ok || !linked[id] {
 			continue
 		}
-		delete(rows, s.ID) // each id once
 		result.Sessions = append(result.Sessions, Session{
 			ID: row.ID, Source: row.Source, Vendor: row.Vendor, Title: row.Title, Branch: row.Branch,
 			StartedAt: row.StartedAt, EndedAt: row.EndedAt, Outcome: row.Outcome, EditedFiles: row.EditedFiles,
@@ -308,4 +347,20 @@ func truncate(s string, limit int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:limit-1]) + "…"
+}
+
+// snapshot is one reading of a session, with its matcher evidence.
+type snapshot struct {
+	session    sessions.Session
+	correlated sessioncorrelate.Result
+}
+
+// newerThan reports whether s is the later reading of the same session: the
+// one written last, and when they were written together the one that knows of
+// more commits.
+func (s snapshot) newerThan(other snapshot) bool {
+	if c := s.session.ModifiedAt.Compare(other.session.ModifiedAt); c != 0 {
+		return c > 0
+	}
+	return len(s.correlated.CommitRefs) > len(other.correlated.CommitRefs)
 }

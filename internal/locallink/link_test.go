@@ -118,7 +118,8 @@ func TestResolveUnavailable(t *testing.T) {
 		{"a missing head", func(r *Request) { r.Head = absent }, CodeCommitsMissing},
 		{"a missing base", func(r *Request) { r.Base = absent }, CodeCommitsMissing},
 		{"no head recorded", func(r *Request) { r.Head = "" }, CodeNoHead},
-		{"an abbreviated head", func(r *Request) { r.Head = f.Head[:10] }, CodeNoHead},
+		{"a head that is not a commit id", func(r *Request) { r.Head = "feature" }, CodeNoHead},
+		{"a missing merge base and base", func(r *Request) { r.MergeBase, r.Base = absent, absent }, CodeCommitsMissing},
 		{"outside a clone", func(r *Request) { r.Dir = t.TempDir() }, CodeNotAClone},
 	}
 	for _, tt := range tests {

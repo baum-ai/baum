@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
@@ -55,6 +56,18 @@ func TestLoadNeverFetchesFromAPartialClone(t *testing.T) {
 	}
 	if len(report.Failures) != 1 || report.Failures[0].Source != Entire {
 		t.Errorf("failures = %+v, want the one unreadable checkpoint", report.Failures)
+	}
+
+	// A Since after the checkpoint was written skips it without reading it.
+	_, report, err = Load(context.Background(), clone, Options{
+		Sources:           []vendors.Slug{Entire},
+		Since:             time.Now().Add(time.Hour),
+		ClaudeProjectsDir: filepath.Join(base, "claude"),
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+	})
+	if err != nil || len(report.Failures) != 0 {
+		t.Errorf("with Since: failures = %+v, err = %v; the old checkpoint should not be read", report.Failures, err)
 	}
 }
 

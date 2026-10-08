@@ -223,6 +223,8 @@ func TestOnlyAvailableAnswersAreKept(t *testing.T) {
 		}
 		return locallink.Result{Available: true}, nil
 	}}
+	failureTTL = time.Millisecond
+	t.Cleanup(func() { failureTTL = 30 * time.Second })
 	_, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Sessions: l.fn, Warn: &warnings})
 	if _, got := fetchSessions(t, base); got["code"] != "commits_missing" || got["reason"] != "fetch them" {
 		t.Errorf("first = %v", got)
@@ -231,6 +233,7 @@ func TestOnlyAvailableAnswersAreKept(t *testing.T) {
 	if got["available"] != false || got["code"] != "error" || strings.Contains(fmt.Sprint(got), "disk") {
 		t.Errorf("an error must be a generic unavailable answer, got %v", got)
 	}
+	time.Sleep(20 * time.Millisecond) // the failure is kept only briefly
 	if !strings.Contains(warnings.String(), "disk on fire") {
 		t.Errorf("warnings = %q", warnings.String())
 	}

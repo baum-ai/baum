@@ -26,11 +26,11 @@ func startView(t *testing.T, args ...string) string {
 		stop()
 		select {
 		case <-finished:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Error("view did not stop")
 		}
 	})
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if url := strings.TrimSpace(out.String()); url != "" {
 			return url

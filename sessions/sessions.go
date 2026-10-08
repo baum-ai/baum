@@ -140,6 +140,9 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 	var sessions []Session
 	native := map[string]bool{}
 	for _, s := range found {
+		if err := ctx.Err(); err != nil {
+			return nil, report, err
+		}
 		if !opts.wants(s.Source) || (!opts.Since.IsZero() && s.ModifiedAt.Before(opts.Since)) {
 			continue
 		}
@@ -265,9 +268,24 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	if err != nil {
 		return nil, commit, nil, err
 	}
+	// Reading a checkpoint is the slow part, and a store holds checkpoints for
+	// every session ever recorded, so with a Since the ones last written
+	// before it are skipped unread. If they cannot be dated, all are read.
+	var written map[string]time.Time
+	if !opts.Since.IsZero() {
+		if written, err = entire.Touched(ctx, objects, commit); err != nil {
+			written = nil
+		}
+	}
 	var sessions []Session
 	var failures []Failure
 	for _, checkpoint := range checkpoints {
+		if err := ctx.Err(); err != nil {
+			return nil, commit, failures, err
+		}
+		if at, dated := written[checkpoint.ID]; dated && at.Before(opts.Since) {
+			continue
+		}
 		fsys, err := entire.Read(ctx, objects, commit, checkpoint.ID)
 		if err != nil {
 			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})

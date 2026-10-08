@@ -85,6 +85,8 @@ type Review struct {
 	Repository  string
 	PullRequest int
 	Head, Base  string
+	// MergeBase is the merge base the document records, when it does.
+	MergeBase string
 }
 
 // SessionsFunc links local sessions to a pull request. It may run twice at
@@ -106,8 +108,10 @@ type Server struct {
 	hub      hub
 
 	// sessions is the answer for /api/sessions, computed on demand.
-	sessionsMu sync.Mutex
-	sessions   *sessionsEntry
+	sessionsMu     sync.Mutex
+	sessions       *sessionsEntry
+	sessionsClosed bool
+	compute        sync.WaitGroup
 	// life ends when the server stops, and bounds sessions computations,
 	// which outlive the request that started them.
 	life       context.Context
@@ -251,6 +255,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	err := srv.Serve(s.listener)
 	cancel()
 	helpers.Wait()
+	s.finishSessions()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

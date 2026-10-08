@@ -369,15 +369,29 @@ inside the clone and the session store overrides, and does this:
 2. Compares the clone's `origin` URL with the repository. `owner/name` is taken
    from an HTTPS, HTTP, SSH, `git://` or scp-like URL, ignoring case, a `.git`
    suffix, credentials, host and port; a local path or `file://` URL names no
-   repository. A different or missing origin is `origin_mismatch`.
-3. Lists the commits in `base..head` with `gitlocal.Commits`: oid, author,
-   committer date, parents, subject, trailers and the files each changed. A
-   head or base the clone lacks is `commits_missing`; full commit ids are
-   required, or the answer is `no_head`. It never fetches: the reads run in the
-   private repository `gitlocal` makes, which has no remote and no promisor
-   configuration, with `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot
-   download an object. Only the origin's URL is read, never contacted.
-4. Loads the sessions with `sessions.Load` and projects each into a
+   repository. A different or missing origin is `origin_mismatch`, and its
+   reason names the `owner/name` origin points at and the document's. Only
+   `origin` is checked, so a fork clone (origin the fork, the pull request's
+   repository as `upstream`) is `origin_mismatch`; this is deliberate.
+3. Expands the document's head, and its merge base (else its base), which the
+   schema allows to be abbreviated to 7 hex digits, with
+   `gitlocal.ResolveCommit` in the clone; an abbreviation matching several
+   commits is `ambiguous_commit` and anything that is not hex is `no_head`. The
+   merge base is preferred because it gives the same range and is more likely
+   to be local. It then lists the commits in `merge_base..head` with
+   `gitlocal.Commits`: oid, author, committer date, parents, subject, trailers
+   and the files each changed (without rename detection, which would need
+   blobs, so a rename lists both paths). A head or start the clone lacks is
+   `commits_missing`; a partial clone that has the commits but not the trees
+   is `partial_clone`. It never fetches: every read of objects, including the
+   Entire checkpoint branch, runs in the private repository `gitlocal` makes,
+   which has no remote and no promisor configuration, with
+   `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot download an object;
+   a checkpoint whose objects are missing is skipped with a warning. Only the
+   origin's URL is read, never contacted.
+4. Loads the sessions with `sessions.Load`, only those last modified within
+   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread, and
+   projects each into a
    `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
    `Agent` the vendor that ran, `Source` the store it came from, branches, files
    touched and edited, and role-tagged commit refs from `sessioncorrelate`,
@@ -388,7 +402,9 @@ inside the clone and the session store overrides, and does this:
    agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
    empty, which the branch step reads as unknown.
 6. Matches every commit with `linkage.MatchCommits`, the default config and
-   `steps.Default`, and keeps only matched edges.
+   `steps.Default`, and keeps only matched edges. A session with several
+   snapshots (Entire records one per checkpoint, each fuller than the last) is
+   matched once, as its newest snapshot.
 
 The result is redacted with the engine and the row summary that `baum sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
@@ -424,8 +440,8 @@ address or session store path.
 }
 ```
 
-`sessions` holds only sessions with at least one matched commit, oldest first;
-`commits` holds every commit of the pull request, oldest first, with `links`
+`sessions` holds only sessions with at least one matched commit, ordered by when
+their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
 `method` is `commit_ref`, `start_commit` or `files_overlap`, and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
@@ -440,17 +456,22 @@ Unavailable:
 ```
 
 `code` is one of `sample` (the built-in example, which belongs to no clone),
-`no_head` (the document lacks a repository or full head and base ids),
-`not_a_clone`, `origin_mismatch`, `commits_missing`, `too_many_commits` (over
-2000) and `error` (anything else; the cause is printed to stderr, not sent).
+`no_head` (the document lacks a repository, head or base, or they are not hex
+commit ids), `ambiguous_commit`, `not_a_clone`, `origin_mismatch`,
+`commits_missing`, `partial_clone`, `too_many_commits` (over 2000) and `error`
+(anything else, including a computation that took more than two minutes; the
+cause is printed to stderr, not sent).
 The viewer then falls back to the document's own sessions.
 
 The route is lazy and cached. Nothing is computed at start-up; the first
 request starts the computation, and requests that arrive meanwhile wait for it
 instead of starting another. An available answer is kept until the document's
 repository, head or base changes, which with `--watch` happens when the file
-is rewritten with a new head; an unavailable answer is not kept, so fetching
-the commits takes effect on the next request. The route sits behind the same
+is rewritten with a new head. An unavailable answer is not kept, so fetching
+the commits takes effect on the next request, except an `error`, which is kept
+for 30 seconds so that reloading does not start a slow computation again each
+time. When the server stops, it cancels a running computation and waits up to
+ten seconds for it to remove its private repository. The route sits behind the same
 host check and security headers as the others, and only `GET` and `HEAD` are
 allowed.
 

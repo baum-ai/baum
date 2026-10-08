@@ -75,7 +75,7 @@ func runView(cmd *cobra.Command, args []string) error {
 	stores.CursorStorePaths, _ = flags.GetStringArray("cursor-store")
 	opts.Sessions = func(ctx context.Context, review viewserver.Review) (locallink.Result, error) {
 		return locallink.Resolve(ctx, locallink.Request{
-			Repository: review.Repository, Head: review.Head, Base: review.Base,
+			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase,
 			Sessions: stores, Warn: cmd.ErrOrStderr(),
 		})
 	}
