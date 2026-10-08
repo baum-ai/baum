@@ -90,7 +90,8 @@ func (r *ScanReport) Merge(other ScanReport) {
 
 // PathWithin reports whether path is root or a path inside it. Both arguments
 // must be cleaned absolute paths. The match ends at a path separator, so
-// /repo-other is not within /repo. On Windows, where the file system ignores
+// /repo-other is not within /repo, and a file system root contains nothing
+// but itself. On Windows, where the file system ignores
 // case and agents record a drive letter in either case, case is ignored too.
 func PathWithin(root, path string) bool {
 	return pathWithin(root, path, FoldCase)
@@ -103,9 +104,12 @@ func pathWithin(root, path string, fold bool) bool {
 	if len(path) < len(root) || !SameText(path[:len(root)], root, fold) {
 		return false
 	}
-	// A volume root such as / or C:\ already ends in a separator.
-	return len(path) == len(root) || path[len(root)] == filepath.Separator ||
-		strings.HasSuffix(root, string(filepath.Separator))
+	// A root ending in a separator is a volume root such as / or C:\, which
+	// would contain every session on the machine; it matches only itself.
+	if len(path) == len(root) {
+		return true
+	}
+	return !strings.HasSuffix(root, string(filepath.Separator)) && path[len(root)] == filepath.Separator
 }
 
 // SameText compares two path spellings, ignoring case when fold is set.

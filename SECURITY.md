@@ -56,7 +56,11 @@ The list of the clone's worktrees, which says where else its sessions may have
 been recorded, comes from `git worktree list` run against the clone's
 repository directory with that same environment: no global or system
 configuration, no `GIT_` variable of yours, and nothing that reads an object
-or runs a program. An `Entire-Checkpoint` trailer in a commit is looked up on
+or runs a program. Because whoever made the clone controls that bookkeeping,
+an entry is used only when the worktree's own `.git` file points back at this
+repository (or its directory is gone), and never when it is the file system
+root, your home directory, or a directory containing the repository, so a
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
 the checkpoint branch already in your clone, in the private repository; a
 checkpoint you have not fetched is not fetched for it.
 

@@ -121,11 +121,18 @@ baum sessions --dump <session-id>
 
 A session belongs to the repository when it ran in any working tree of the
 clone: the main checkout or any of its `git worktree` checkouts, including
-ones since deleted, and directories inside them. `baum sessions` and
-`baum view` give the same answer from any of them. A directory that merely
-shares a name prefix (`~/src/repo-other` beside `~/src/repo`) is not part of
-it. Each Entire session is listed once, from the newest checkpoint that
-recorded it, and not at all when its agent's own store already has it.
+ones since deleted, and directories inside them. For an ordinary clone and its
+worktrees, `baum sessions` and `baum view` give the same answer from any of
+them. A directory that merely shares a name prefix (`~/src/repo-other` beside
+`~/src/repo`) is not part of it, but a separate repository nested inside a
+checkout is, because sessions are placed by directory. A worktree entry is
+used only when its directory points back at this repository (or is gone), and
+never when it is the file system root, your home directory, or a directory
+above the repository. In a clone made with `--separate-git-dir`, and in a
+submodule, git may report the main working tree at an unexpected place, so the
+answer can depend on where you run. Each Entire session is listed once, from
+the newest checkpoint holding its transcript (a checkpoint can hold only the
+prompt), and not at all when its agent's own store already has it.
 
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.

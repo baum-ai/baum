@@ -87,3 +87,90 @@ func TestParseWorktrees(t *testing.T) {
 		t.Errorf("empty output = %+v", got)
 	}
 }
+
+// plant writes a worktree bookkeeping entry by hand, naming gitFile as the
+// worktree's .git file, the way anyone who controls the clone could.
+func plant(t *testing.T, common, name, gitFile string) {
+	t.Helper()
+	dir := filepath.Join(common, "worktrees", name)
+	write(t, dir, "gitdir", gitFile+"\n", 0o644)
+	write(t, dir, "HEAD", "ref: refs/heads/main\n", 0o644)
+	write(t, dir, "commondir", "../..\n", 0o644)
+}
+
+// Entries planted in the clone's bookkeeping that would widen discovery to the
+// home directory, the file system root, a directory above the clone or
+// another project are ignored; genuine worktrees, a deleted one and one moved
+// without git's knowledge included, are kept.
+func TestWorktreesIgnorePlantedEntries(t *testing.T) {
+	requireGit(t)
+	base := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		base = resolved
+	}
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	main := filepath.Join(base, "work", "demo")
+	other := filepath.Join(base, "work", "other")
+	impostor := filepath.Join(base, "work", "impostor")
+	for _, dir := range []string{home, main, other, impostor} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, main, "init", "-q", "-b", "main")
+	write(t, main, "a.txt", "a\n", 0o644)
+	commit(t, main, "start")
+	git(t, other, "init", "-q", "-b", "main")
+	write(t, impostor, ".git", "gitdir: "+filepath.Join(other, ".git", "worktrees", "x")+"\n", 0o644)
+
+	genuine := filepath.Join(base, "work", "demo-feature")
+	gone := filepath.Join(base, "work", "demo-gone")
+	moved := filepath.Join(base, "work", "demo-moved")
+	git(t, main, "worktree", "add", "-q", "-b", "feature", genuine)
+	git(t, main, "worktree", "add", "-q", "-b", "gone", gone)
+	git(t, main, "worktree", "add", "-q", "-b", "moved", moved)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(moved, moved+"-elsewhere"); err != nil {
+		t.Fatal(err)
+	}
+
+	common := filepath.Join(main, ".git")
+	plant(t, common, "home", filepath.Join(home, ".git"))
+	plant(t, common, "root", filepath.Join(string(filepath.Separator), ".git"))
+	plant(t, common, "above", filepath.Join(base, "work", ".git"))
+	plant(t, common, "other", filepath.Join(other, ".git"))
+	plant(t, common, "impostor", filepath.Join(impostor, ".git"))
+
+	want := []string{main, genuine, gone, moved}
+	slices.Sort(want)
+	for _, from := range []string{main, genuine, moved + "-elsewhere"} {
+		got, err := Worktrees(context.Background(), from)
+		if err != nil {
+			t.Fatalf("from %s: %v", from, err)
+		}
+		var paths []string
+		for _, w := range got {
+			paths = append(paths, w.Path)
+		}
+		slices.Sort(paths)
+		if !slices.Equal(paths, want) {
+			t.Errorf("from %s:\n got %v\nwant %v", from, paths, want)
+		}
+	}
+}
+
+func TestTrustedWorktreesRefusesBroadMainEntries(t *testing.T) {
+	home := filepath.FromSlash("/srv/home")
+	listed := []Worktree{{Path: filepath.FromSlash("/srv/home"), Main: true}}
+	if got := trustedWorktrees(listed, filepath.FromSlash("/srv/home/.git"), home); len(got) != 0 {
+		t.Errorf("home as the main worktree = %+v", got)
+	}
+	root := string(filepath.Separator)
+	if got := trustedWorktrees([]Worktree{{Path: root, Main: true}}, filepath.Join(root, ".git"), home); len(got) != 0 {
+		t.Errorf("the file system root as the main worktree = %+v", got)
+	}
+}

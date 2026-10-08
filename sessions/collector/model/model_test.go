@@ -18,7 +18,8 @@ func TestPathWithin(t *testing.T) {
 		{"/repo", "/repos", false, false},
 		{"/repo", "/rep", false, false},
 		{"/repo", "/Repo/sub", false, false},
-		{"/", "/anything", false, true},
+		{"/", "/anything", false, false},
+		{"/", "/", false, true},
 		// Windows: case is ignored, the boundary still holds.
 		{"/c/Projects/Demo", "/C/projects/demo/sub", true, true},
 		{"/c/Projects/Demo", "/C/projects/demo-other", true, false},
