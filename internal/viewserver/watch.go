@@ -87,8 +87,10 @@ func (s *Server) watch(ctx context.Context) {
 		}
 		if next := sha256.Sum256(document); next != hash {
 			hash = next
-			s.setDocument(document)
+			// Findings print before the event, so they are on the terminal by
+			// the time the viewer reloads.
 			s.warnFindings(document)
+			s.setDocument(document)
 		}
 	}
 }
