@@ -169,6 +169,30 @@ func (e *events) next(t *testing.T, match string) {
 	}
 }
 
+// nextEvent waits for the next event line, ignoring comments, data and the
+// blank lines between events, and fails if that line is not want.
+func (e *events) nextEvent(t *testing.T, want string) {
+	t.Helper()
+	timeout := time.After(wait)
+	for {
+		select {
+		case line, ok := <-e.lines:
+			if !ok {
+				t.Fatalf("event stream ended before %q", want)
+			}
+			if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "data:") {
+				continue
+			}
+			if line != want {
+				t.Fatalf("event line %q, want %q", line, want)
+			}
+			return
+		case <-timeout:
+			t.Fatalf("no %q on the event stream", want)
+		}
+	}
+}
+
 // eventually polls /api/document until it equals want.
 func eventually(t *testing.T, base, want string) {
 	t.Helper()
@@ -350,15 +374,26 @@ func TestBadHostIsRejected(t *testing.T) {
 }
 
 func TestTraversalNeverReachesDisk(t *testing.T) {
-	// A file system with nothing but an index: whatever a request path says, the
-	// only content that can come back is that index or a 404.
-	assets := fstest.MapFS{
-		"index.html":    {Data: []byte("<!doctype html>INDEX")},
-		"assets/app.js": {Data: []byte("console.log(1)")},
+	// With a file system holding nothing but an index, and with the real
+	// embedded app, whatever a request path says, the only content that can
+	// come back is the index or a 404. The paths include files that exist
+	// relative to this test's working directory, which a handler serving from
+	// disk would return.
+	index, err := fs.ReadFile(viewer.Assets(), "index.html")
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, base := start(t, Options{Document: []byte(fixture), Assets: assets})
-	port := base[strings.LastIndex(base, ":")+1:]
-
+	tests := []struct {
+		name   string
+		assets fs.FS
+		index  string
+	}{
+		{"map", fstest.MapFS{
+			"index.html":    {Data: []byte("<!doctype html>INDEX")},
+			"assets/app.js": {Data: []byte("console.log(1)")},
+		}, "<!doctype html>INDEX"},
+		{"embedded", nil, string(index)},
+	}
 	paths := []string{
 		"/../../etc/passwd",
 		"/%2e%2e/%2e%2e/etc/passwd",
@@ -373,34 +408,52 @@ func TestTraversalNeverReachesDisk(t *testing.T) {
 		"/etc/passwd",
 		"/go.mod",
 		"/review.json",
+		"/server.go",
+		"/watch.go",
+		"/server_test.go",
+		"/./server.go",
+		"/../viewserver/server.go",
+		"/%2e%2e/viewserver/server.go",
+		"/assets/../server.go",
+		"/assets/..%2fserver.go",
+		"/%2e/server.go",
+		"/server.go%00",
+		"/server.go/",
+		"/api/../server.go",
 	}
-	for _, p := range paths {
-		// Send the path as written, without the client normalising it.
-		conn, err := net.Dial("tcp", "127.0.0.1:"+port)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = io.WriteString(conn, "GET "+p+" HTTP/1.1\r\nHost: 127.0.0.1:"+port+"\r\nConnection: close\r\n\r\n")
-		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-		if err != nil {
-			_ = conn.Close()
-			t.Fatalf("%s: %v", p, err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		_ = conn.Close()
-		text := string(body)
-		for _, leak := range []string{"root:", "module github.com", "baum.review"} {
-			if strings.Contains(text, leak) {
-				t.Errorf("%s: response leaks %q", p, leak)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, base := start(t, Options{Document: []byte(fixture), Assets: tt.assets})
+			port := base[strings.LastIndex(base, ":")+1:]
+			for _, p := range paths {
+				// Send the path as written, without the client normalising it.
+				conn, err := net.Dial("tcp", "127.0.0.1:"+port)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, _ = io.WriteString(conn, "GET "+p+" HTTP/1.1\r\nHost: 127.0.0.1:"+port+"\r\nConnection: close\r\n\r\n")
+				resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+				if err != nil {
+					_ = conn.Close()
+					t.Fatalf("%s: %v", p, err)
+				}
+				body, _ := io.ReadAll(resp.Body)
+				_ = conn.Close()
+				text := string(body)
+				for _, leak := range []string{"root:", "module github.com", "baum.review", "package viewserver"} {
+					if strings.Contains(text, leak) {
+						t.Errorf("%s: response leaks %q", p, leak)
+					}
+				}
+				switch {
+				case resp.StatusCode >= 300 && resp.StatusCode < 400:
+				case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
+				case resp.StatusCode == http.StatusOK && text == tt.index:
+				default:
+					t.Errorf("%s: status %d, body %.60q", p, resp.StatusCode, text)
+				}
 			}
-		}
-		switch {
-		case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
-		case resp.StatusCode == http.StatusOK && text == "<!doctype html>INDEX":
-		default:
-			t.Errorf("%s: status %d, body %q", p, resp.StatusCode, text)
-		}
+		})
 	}
 }
 
@@ -495,9 +548,10 @@ func TestWatchKeepsPreviousDocumentWhenInvalid(t *testing.T) {
 		t.Errorf("document = %q, want the previous one", got)
 	}
 
-	// A later good write recovers, and that is the first event the stream sees.
+	// The bad write sent no event: the first event line after it is the one for
+	// the good write.
 	writeFile(t, path, updated)
-	stream.next(t, "event: document")
+	stream.nextEvent(t, "event: document")
 	eventually(t, base, updated)
 }
 
@@ -621,7 +675,8 @@ func TestListenReportsPortInUse(t *testing.T) {
 }
 
 func TestShutdownEndsEventStreams(t *testing.T) {
-	server, err := New(Options{Document: []byte(fixture)})
+	path := fixtureFile(t)
+	server, err := New(Options{Path: path, Watch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,14 +691,99 @@ func TestShutdownEndsEventStreams(t *testing.T) {
 	stream := openEvents(t, strings.TrimSuffix(url, "/"))
 	stream.next(t, ": connected")
 	cancel()
+	// The client's stream reaches EOF well inside the grace period because the
+	// handler returns at once; a handler that waited for the client would hold
+	// the shutdown until the grace period ran out.
+	eof := time.After(shutdownGrace / 2)
+	for open := true; open; {
+		select {
+		case _, open = <-stream.lines:
+		case <-eof:
+			t.Fatal("the event stream did not end after shutdown began")
+		}
+	}
 	select {
 	case err := <-finished:
 		if err != nil {
 			t.Errorf("Serve: %v", err)
 		}
-	case <-time.After(wait):
-		t.Fatal("Serve hung on an open event stream")
+	case <-time.After(shutdownGrace / 2):
+		t.Fatal("Serve did not return after the stream ended")
 	}
+}
+
+func TestServeReturnsOnlyAfterTheWatcherStops(t *testing.T) {
+	path := fixtureFile(t)
+	server, err := New(Options{Path: path, Watch: true, PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Listen(0); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { finished <- server.Serve(ctx) }()
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	// The watcher is done, so nothing reads or swaps the document any more.
+	writeFile(t, path, updated)
+	time.Sleep(20 * time.Millisecond)
+	if string(server.current()) != fixture {
+		t.Error("the watcher kept running after Serve returned")
+	}
+}
+
+func TestHeadEventsReturnsHeadersOnly(t *testing.T) {
+	_, base := start(t, Options{Document: []byte(fixture)})
+	client := &http.Client{Timeout: wait}
+	resp, err := client.Head(base + "/api/events")
+	if err != nil {
+		t.Fatalf("HEAD /api/events did not finish: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("HEAD /api/events: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestWatchSeesASaveBetweenNewAndServe(t *testing.T) {
+	path := fixtureFile(t)
+	server, err := New(Options{Path: path, Watch: true, PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The file changes after the document was read and before the watcher runs.
+	writeFile(t, path, updated)
+	url, err := server.Listen(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { finished <- server.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-finished
+	})
+	eventually(t, strings.TrimSuffix(url, "/"), updated)
+}
+
+func TestUseAfterServePanics(t *testing.T) {
+	server, _ := start(t, Options{Document: []byte(fixture)})
+	defer func() {
+		if recover() == nil {
+			t.Error("Use after Serve did not panic")
+		}
+	}()
+	// Serve runs in a goroutine; wait until it has fixed the chain.
+	deadline := time.Now().Add(wait)
+	for !server.serving.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	server.Use(func(next http.Handler) http.Handler { return next })
 }
 
 func TestExtensionPoints(t *testing.T) {

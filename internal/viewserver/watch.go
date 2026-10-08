@@ -44,9 +44,9 @@ func isJSON(document []byte) bool {
 // valid JSON, or is too large, is not served: the previous one stays and a
 // warning is printed. A missing file is waited for.
 func (s *Server) watch(ctx context.Context) {
-	handled, _ := os.Stat(s.opts.Path)
+	handled := s.baseline
 	var pending fs.FileInfo
-	hash := sha256.Sum256(s.current())
+	hash := s.hash
 	missing := false
 
 	ticker := time.NewTicker(s.opts.PollInterval)

@@ -10,6 +10,7 @@ package viewserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -17,10 +18,12 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lastpersonlabs/baum/internal/viewer"
@@ -77,10 +80,16 @@ type Server struct {
 	document []byte
 	hub      hub
 
+	// baseline is the file as it was when the served document was read, so the
+	// watcher compares against what is actually being served.
+	baseline fs.FileInfo
+	hash     [sha256.Size]byte
+
 	listener net.Listener
 	allowed  map[string]bool
 	done     chan struct{}
 	stop     sync.Once
+	serving  atomic.Bool
 }
 
 // New loads the document and returns a server that is not yet listening.
@@ -108,6 +117,8 @@ func New(opts Options) (*Server, error) {
 
 	document := opts.Document
 	if opts.Path != "" {
+		// Stat first: a save after this point differs from the baseline.
+		s.baseline, _ = os.Stat(opts.Path)
 		loaded, err := LoadDocument(opts.Path)
 		if err != nil {
 			return nil, err
@@ -117,7 +128,7 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("viewserver: the document is not valid JSON")
 	}
 	s.document = document
-	s.warnFindings(document)
+	s.hash = sha256.Sum256(document)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/document", s.handleDocument)
@@ -133,13 +144,19 @@ func New(opts Options) (*Server, error) {
 func (s *Server) Mux() *http.ServeMux { return s.mux }
 
 // Use adds middleware that wraps the router, inside the host check, for
-// example authentication. The first one added is the outermost.
+// example authentication. The first one added is the outermost. Add it before
+// Serve: the chain is fixed when Serve starts, so a later call panics rather
+// than being silently ignored.
 func (s *Server) Use(middleware func(http.Handler) http.Handler) {
+	if s.serving.Load() {
+		panic("viewserver: Use after Serve")
+	}
 	s.chain = append(s.chain, middleware)
 }
 
 // Listen binds 127.0.0.1 on port, or on a free port when port is 0, and returns
-// the viewer's URL.
+// the viewer's URL. Once it has the port, it prints the findings for the
+// initial document.
 func (s *Server) Listen(port int) (string, error) {
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
@@ -148,16 +165,19 @@ func (s *Server) Listen(port int) (string, error) {
 	s.listener = listener
 	actual := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 	s.allowed = map[string]bool{"127.0.0.1:" + actual: true, "localhost:" + actual: true}
+	s.warnFindings(s.current())
 	return "http://127.0.0.1:" + actual + "/", nil
 }
 
 // Serve serves until ctx is cancelled, then shuts down gracefully: event
 // streams end at once and requests in flight get a short grace period. It
-// returns nil after a clean shutdown.
+// returns nil after a clean shutdown, and only once the shutdown and the file
+// watcher have finished.
 func (s *Server) Serve(ctx context.Context) error {
 	if s.listener == nil {
 		return errors.New("viewserver: Serve before Listen")
 	}
+	s.serving.Store(true)
 	var handler http.Handler = s.mux
 	for i := len(s.chain) - 1; i >= 0; i-- {
 		handler = s.chain[i](handler)
@@ -167,19 +187,31 @@ func (s *Server) Serve(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Serve also stops its helpers when srv.Serve fails on its own.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var helpers sync.WaitGroup
 	if s.opts.Watch {
-		go s.watch(ctx)
+		helpers.Add(1)
+		go func() {
+			defer helpers.Done()
+			s.watch(ctx)
+		}()
 	}
+	helpers.Add(1)
 	go func() {
+		defer helpers.Done()
 		<-ctx.Done()
 		s.stop.Do(func() { close(s.done) })
-		shutdown, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-		defer cancel()
+		shutdown, release := context.WithTimeout(context.Background(), shutdownGrace)
+		defer release()
 		if err := srv.Shutdown(shutdown); err != nil {
 			_ = srv.Close()
 		}
 	}()
 	err := srv.Serve(s.listener)
+	cancel()
+	helpers.Wait()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -241,6 +273,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
 	_, _ = io.WriteString(w, ": connected\n\n")
 	flusher.Flush()
 
