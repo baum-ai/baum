@@ -217,7 +217,9 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Claude Code transcripts: %w", err)
 		}
-		graph, report, err := claudesession.Build(tree)
+		// Nothing reads the transcript's surveyed shape here, and the survey
+		// re-reads every line, so it is skipped.
+		graph, report, err := claudesession.BuildWith(tree, claudesession.BuildOptions{})
 		if err != nil {
 			return nil, nil, fmt.Errorf("mapping Claude Code session: %w", err)
 		}

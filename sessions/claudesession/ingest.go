@@ -13,8 +13,22 @@ import (
 
 const Vendor = "claude_code"
 
-// Build maps a transcript tree into one session tree.
+// Build maps a transcript tree into one session tree. Its report includes the
+// transcript's shape (versions, content shapes, keys the decoder left unread).
 func Build(tree *claudetranscript.Tree) (*session.Graph, *Report, error) {
+	return BuildWith(tree, BuildOptions{Survey: true})
+}
+
+// BuildOptions choose what Build reports beyond the graph and its accounting.
+type BuildOptions struct {
+	// Survey fills Report.Transcript, which re-reads every line to describe
+	// the transcript's shape: a diagnostic, and a large part of the cost of
+	// mapping a long session.
+	Survey bool
+}
+
+// BuildWith is Build with options.
+func BuildWith(tree *claudetranscript.Tree, opts BuildOptions) (*session.Graph, *Report, error) {
 	if tree == nil || tree.Main == nil {
 		return nil, nil, fmt.Errorf("building session: no transcript")
 	}
@@ -43,7 +57,9 @@ func Build(tree *claudetranscript.Tree) (*session.Graph, *Report, error) {
 
 	rows := traceprocessing.TallyRows(b.graph)
 	b.report.Sessions, b.report.Rows = rows.Sessions, rowsFrom(rows)
-	b.report.Transcript = claudetranscript.Survey(tree.Files())
+	if opts.Survey {
+		b.report.Transcript = claudetranscript.Survey(tree.Files())
+	}
 	return b.graph, b.report, nil
 }
 
