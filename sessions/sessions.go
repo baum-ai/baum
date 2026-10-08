@@ -14,6 +14,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/sessions/claudesession"
 	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
 	"github.com/lastpersonlabs/baum/sessions/codexsession"
@@ -252,14 +253,22 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	if err != nil || !ok {
 		return nil, "", nil, err
 	}
-	checkpoints, err := entire.List(ctx, root, commit)
+	// Objects are read from a private repository with no remote, so a partial
+	// clone's missing objects are skipped with a failure, never downloaded.
+	repo, err := gitlocal.Open(ctx, root, gitlocal.Options{})
+	if err != nil {
+		return nil, commit, nil, fmt.Errorf("opening the clone to read Entire checkpoints: %w", err)
+	}
+	defer func() { _ = repo.Close() }()
+	objects := repo.PrivateDir()
+	checkpoints, err := entire.List(ctx, objects, commit)
 	if err != nil {
 		return nil, commit, nil, err
 	}
 	var sessions []Session
 	var failures []Failure
 	for _, checkpoint := range checkpoints {
-		fsys, err := entire.Read(ctx, root, commit, checkpoint.ID)
+		fsys, err := entire.Read(ctx, objects, commit, checkpoint.ID)
 		if err != nil {
 			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
 			continue

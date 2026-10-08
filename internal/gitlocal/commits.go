@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -91,11 +92,12 @@ func (r *Repo) Commits(ctx context.Context, base, head string) ([]Commit, error)
 		if len(commits[i].Parents) > 1 {
 			continue
 		}
-		files, err := r.read(ctx, maxCommitFilesBytes, "diff-tree", "--no-commit-id", "--name-status", "-z", "-r", "-M", "--root", commits[i].OID)
+		files, err := r.read(ctx, maxCommitFilesBytes, "diff-tree", "--no-commit-id", "--name-status", "-z", "-r", "--no-renames", "--root", commits[i].OID)
 		if err != nil {
 			return nil, rangeError(err)
 		}
 		commits[i].Files = pathsFromNameStatus(files)
+		slices.Sort(commits[i].Files)
 	}
 	return commits, nil
 }
@@ -147,6 +149,12 @@ func pathsFromNameStatus(out []byte) []string {
 	}
 	return paths
 }
+
+// PrivateDir is the private repository reads run in: a bare repository with
+// no remote and no refs that borrows the clone's objects. A caller that runs
+// its own read-only git commands against objects points them here, so git has
+// no remote to fetch a missing object from. It exists until Close.
+func (r *Repo) PrivateDir() string { return r.mirror }
 
 // RemoteURL is the configured URL of the clone's remote exactly as written in
 // its configuration, or "" when the remote is not configured. It reads
