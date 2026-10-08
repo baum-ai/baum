@@ -324,7 +324,41 @@ hosted service sets its own licensed face this way.
 The components and their seams are in [`viewer/`](viewer/README.md). The
 package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
-built output is committed. The server that serves it, `baum view`, comes later.
+built output is committed.
+
+### How `baum view` serves it
+
+`internal/viewserver` is the host. `baum view` loads one document file (or the
+embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
+or a free one, and prints the URL. It never fetches anything. The server has
+three API routes and an asset fallback:
+
+| Route | Serves |
+| --- | --- |
+| `GET /api/document` | the document's bytes exactly as read, `no-store` |
+| `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
+| `GET /api/health` | `{"status":"ok"}` |
+| any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
+
+Only the embedded files and the one document are ever served; a request path
+is looked up in the embedded file system and never reaches the disk. A request
+whose `Host` is not the bound `127.0.0.1:port` or `localhost:port` is refused
+with 403, which stops DNS rebinding. Every response carries a `'self'`-only
+Content-Security-Policy, `nosniff` and `no-referrer`; there are no CORS
+headers, and any method but `GET` and `HEAD` gets 405. An unknown `/api/` path
+is 404.
+
+A document with findings is served anyway, with the findings on stderr. It must
+be valid JSON of at most 32 MiB, or `view` exits at start-up. With `--watch` the
+file is polled by path every 500ms and read once it has stopped changing, so an
+editor's save by rename is followed. A change that is not valid JSON or is too
+large is warned about and ignored, and the previous document keeps being
+served. Findings print again on each accepted change.
+
+The server exposes `Mux` and `Use` so a host with its own routes or
+authentication, such as a later `baum ui`, extends it without changing these
+rules; its handlers sit behind the host check and the headers. Cancelling the
+context ends the event streams and shuts the server down.
 
 ## Running locally
 

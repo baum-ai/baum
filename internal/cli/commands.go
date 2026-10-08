@@ -35,11 +35,19 @@ func newViewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "view [document.json]",
 		Short: "Serve the embedded viewer for a review document on localhost",
-		RunE:  notImplemented,
+		Long: `View serves the embedded viewer for a baum.review/1 document on 127.0.0.1 and
+opens it in the browser. It reads only the file given, or the built-in sample,
+and never fetches anything. A document with schema or rule findings is still
+served, and the findings print to stderr. The document must be valid JSON of
+at most 32 MiB. Give exactly one of a file, --sample and --pr.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runView,
 	}
-	cmd.Flags().Int("pr", 0, "view the latest generated document for this pull request")
+	cmd.Flags().Bool("sample", false, "serve the built-in example document")
+	cmd.Flags().Int("pr", 0, "view the latest generated document for this pull request (needs the local version store, not in this build)")
 	cmd.Flags().Int("port", 0, "listen on this port instead of a free one")
-	cmd.Flags().Bool("watch", false, "reload the viewer when the document changes")
+	cmd.Flags().Bool("no-open", false, "print the URL without opening a browser")
+	cmd.Flags().Bool("watch", false, "reload the viewer when the document file changes")
 	return cmd
 }
 

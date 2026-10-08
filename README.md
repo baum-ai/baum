@@ -21,9 +21,9 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, review schema, release pipeline, `baum sessions` and
-`baum validate` exist; `generate`, `bundle`, `view` and `refresh` print their
-help and exit non-zero until their phase lands.
+layout, review schema, release pipeline, `baum sessions`, `baum validate` and
+`baum view` exist; `generate`, `bundle` and `refresh` print their help and exit
+non-zero until their phase lands.
 
 ## Install
 
@@ -49,7 +49,18 @@ baum generate --pr 191 -o review.json
 baum bundle --pr 191 -o bundle.json
 
 # Serve the viewer for a document on localhost and open it in the browser.
+# The URL is always printed. Nothing leaves your machine: the server listens on
+# 127.0.0.1 only and never fetches anything.
 baum view review.json
+
+# Reload the viewer whenever the file changes, for example while editing it.
+baum view review.json --watch
+
+# Try the viewer on the built-in example document.
+baum view --sample
+
+# Print the URL without opening a browser, on a fixed port.
+baum view review.json --no-open --port 4173
 
 # Check a stored document against the schema and its own rules. Findings
 # print to stderr, one per line, and the exit status is non-zero when there
@@ -60,6 +71,12 @@ baum validate review.json
 # section outlines, evidence against checks, and restricted sessions.
 baum validate review.json --bundle bundle.json
 ```
+
+`baum view` serves a document with schema or rule findings anyway and prints
+the findings to stderr, as `baum validate` does. The document must be valid
+JSON of at most 32 MiB. `baum view --pr N`, which would open the latest
+generated document for a pull request, is not available yet: it needs the
+local version store, which is not in this build.
 
 `baum refresh` updates checks, threads and session evidence without a
 model call. Run any command with `--help` for its flags.
