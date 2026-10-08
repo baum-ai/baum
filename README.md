@@ -78,6 +78,20 @@ JSON of at most 32 MiB. `baum view --pr N`, which would open the latest
 generated document for a pull request, is not available yet: it needs the
 local version store, which is not in this build.
 
+From local data only, `baum view` can also show the coding-agent sessions
+linked to the pull request. When the viewer asks, `baum view` reads the clone
+containing the current directory, but only if its `origin` remote is the
+document's repository (`owner/name`, whether the remote is HTTPS or SSH), and
+only if the clone already has the pull request's head and base commits. It
+reads the sessions recorded on this machine, as `baum sessions` does, and
+links them to those commits with the same matcher the hosted service uses.
+Only sessions linked to at least one commit are shown, and all their text is
+redacted like `baum sessions` output. It never fetches: a clone without the
+commits, a different origin, a directory outside a clone and `--sample` show
+no local sessions, with the reason, and the viewer falls back to the sessions
+in the document. Run `git fetch` yourself to make missing commits available,
+then reload the viewer. Run `baum view` from inside the clone.
+
 `baum refresh` updates checks, threads and session evidence without a
 model call. Run any command with `--help` for its flags.
 

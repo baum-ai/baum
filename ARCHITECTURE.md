@@ -330,14 +330,15 @@ built output is committed.
 
 `internal/viewserver` is the host. `baum view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
-or a free one, and prints the URL. It never fetches anything. The server has
-three API routes and an asset fallback:
+or a free one, and prints the URL. It never contacts a server or fetches
+anything. The server has four API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
 | `GET /api/document` | the document's bytes exactly as read, `no-store` |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
+| `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -354,6 +355,104 @@ file is polled by path every 500ms and read once it has stopped changing, so an
 editor's save by rename is followed. A change that is not valid JSON or is too
 large is warned about and ignored, and the previous document keeps being
 served. Findings print again on each accepted change.
+
+### Local session linkage
+
+`internal/locallink` links the sessions on this machine to a pull request's
+commits using only this machine; `baum view` serves it, and the session
+evidence that `baum bundle` collects can reuse it without a server. `Resolve`
+takes the pull request's `owner/name`, head and base commit ids, a directory
+inside the clone and the session store overrides, and does this:
+
+1. Opens the clone containing the directory. A directory outside a clone is
+   `not_a_clone`.
+2. Compares the clone's `origin` URL with the repository. `owner/name` is taken
+   from an HTTPS, HTTP, SSH, `git://` or scp-like URL, ignoring case, a `.git`
+   suffix, credentials, host and port; a local path or `file://` URL names no
+   repository. A different or missing origin is `origin_mismatch`.
+3. Lists the commits in `base..head` with `gitlocal.Commits`: oid, author,
+   committer date, parents, subject, trailers and the files each changed. A
+   head or base the clone lacks is `commits_missing`; full commit ids are
+   required, or the answer is `no_head`. It never fetches: the reads run in the
+   private repository `gitlocal` makes, which has no remote and no promisor
+   configuration, with `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot
+   download an object. Only the origin's URL is read, never contacted.
+4. Loads the sessions with `sessions.Load` and projects each into a
+   `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
+   `Agent` the vendor that ran, `Source` the store it came from, branches, files
+   touched and edited, and role-tagged commit refs from `sessioncorrelate`,
+   and the transcript's modified time as `IngestedAt`, which bounds a session
+   that recorded no end. `UserEmail` is empty, so it never rules a commit out.
+5. Projects each commit into a `linkage.EnrichedCommit`: the first parent as
+   `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
+   agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
+   empty, which the branch step reads as unknown.
+6. Matches every commit with `linkage.MatchCommits`, the default config and
+   `steps.Default`, and keeps only matched edges.
+
+The result is redacted with the engine and the row summary that `baum sessions`
+uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
+address or session store path.
+
+`GET /api/sessions` answers one of two shapes. Available:
+
+```json
+{
+  "available": true,
+  "sessions": [
+    {
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "source": "claude_code",
+      "vendor": "claude_code",
+      "title": "Ask xxx.xxxxxxxx@xxxxxxx.xxx about the feature (XXXXX9XX9XXX9XXX9XXX)",
+      "branch": "feature",
+      "started_at": "2026-07-01T10:00:00Z",
+      "ended_at": "2026-07-01T10:30:00Z",
+      "outcome": "committed",
+      "edited_files": 0
+    }
+  ],
+  "commits": [
+    {
+      "oid": "3f2c0a9e5b1d4c6a8e7f90123456789abcdef012",
+      "subject": "Add the feature",
+      "author": "Grace Hopper",
+      "committed_at": "2026-07-01T10:30:00Z",
+      "links": [{ "session": "aaaaaaaa-0000-4000-8000-000000000001", "method": "commit_ref", "confidence": 0.95 }]
+    }
+  ]
+}
+```
+
+`sessions` holds only sessions with at least one matched commit, oldest first;
+`commits` holds every commit of the pull request, oldest first, with `links`
+empty for a commit no session matched. `links` are ordered by confidence;
+`method` is `commit_ref`, `start_commit` or `files_overlap`, and `source` is
+the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
+`vendor` for a session an Entire checkpoint recorded. A pull request none of
+whose commits match still answers `available` with `"sessions": []`. A subject
+or author is at most 200 characters.
+
+Unavailable:
+
+```json
+{ "available": false, "code": "commits_missing", "reason": "this clone does not have the pull request's commits; ..." }
+```
+
+`code` is one of `sample` (the built-in example, which belongs to no clone),
+`no_head` (the document lacks a repository or full head and base ids),
+`not_a_clone`, `origin_mismatch`, `commits_missing`, `too_many_commits` (over
+2000) and `error` (anything else; the cause is printed to stderr, not sent).
+The viewer then falls back to the document's own sessions.
+
+The route is lazy and cached. Nothing is computed at start-up; the first
+request starts the computation, and requests that arrive meanwhile wait for it
+instead of starting another. An available answer is kept until the document's
+repository, head or base changes, which with `--watch` happens when the file
+is rewritten with a new head; an unavailable answer is not kept, so fetching
+the commits takes effect on the next request. The route sits behind the same
+host check and security headers as the others, and only `GET` and `HEAD` are
+allowed.
 
 The server exposes `Mux` and `Use` so a host with its own routes or
 authentication, such as a later `baum ui`, extends it without changing these

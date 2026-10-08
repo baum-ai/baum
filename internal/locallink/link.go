@@ -176,7 +176,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		}
 		return Result{}, fmt.Errorf("opening the clone: %w", err)
 	}
-	defer repo.Close()
+	defer func() { _ = repo.Close() }()
 
 	origin, err := repo.RemoteURL(ctx)
 	if err != nil {
