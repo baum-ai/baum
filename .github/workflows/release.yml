@@ -29,9 +29,33 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+  viewer-dist:
+    # The tag must carry the viewer bundle its sources build to.
+    name: Viewer bundle is fresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: viewer/pnpm-lock.yaml
+
+      - name: Rebuild and compare
+        run: sh scripts/viewer-fresh.sh
+
   release:
     name: Release
-    needs: test
+    needs: [test, viewer-dist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -48,6 +72,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+
+      # The before hook in .goreleaser.yaml rebuilds the viewer.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: viewer/pnpm-lock.yaml
 
       # Builds linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and
       # windows/amd64 with CGO off, archives them, writes checksums.txt and

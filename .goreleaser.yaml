@@ -7,8 +7,10 @@ project_name: baum
 before:
   hooks:
     - go mod tidy
-    # Phase 3 adds the viewer build here so internal/viewer's embed.FS has
-    # ui/dist before go build runs.
+    # Rebuild the viewer and fail when the result differs from the committed
+    # internal/viewer/dist, which go build embeds, so no archive ships a stale
+    # bundle. Needs Node.js and pnpm.
+    - sh scripts/viewer-fresh.sh
 
 builds:
   - id: baum
