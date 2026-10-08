@@ -73,9 +73,10 @@ case "$proxy_path" in
   *) proxy_url=file:///$proxy_path ;;
 esac
 
-# The install runs with a PATH of its own: a directory holding only go, git and
-# curl, so nothing the build could use Node from is reachable. A system
-# directory would not do: Node is often installed beside git and curl.
+# The install runs with a PATH of its own: a directory holding only go, so
+# nothing the build could use Node from is reachable. A system directory would
+# not do: Node is often installed beside git and curl. The proxy is a local
+# directory, so go needs neither git nor curl here.
 goroot=$(go env GOROOT)
 # GOROOT is C:\... on Windows; Git Bash wants /c/...
 if command -v cygpath >/dev/null 2>&1; then
@@ -94,8 +95,6 @@ link_tool() {
   ln -s "$src" "$tools/$name" 2>/dev/null || cp "$src" "$tools/$name"
 }
 link_tool "$goroot_unix/bin/go"
-link_tool "$(command -v git)"
-link_tool "$(command -v curl)"
 clean_path=$tools
 
 step "install with no Node on PATH"
@@ -106,14 +105,16 @@ step "install with no Node on PATH"
       fail "$tool is still on PATH: $(command -v "$tool")"
     fi
   done
-  for tool in go git curl; do
-    command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on the Node-free PATH"
-  done
+  command -v go >/dev/null 2>&1 || fail "go is not on the Node-free PATH"
   echo "node, pnpm and npm are not on PATH"
 
   export GOROOT=$goroot
   export GOTOOLCHAIN=local
   export GOWORK=off
+  # Nothing from the developer's Go environment may change what is verified:
+  # GOPRIVATE would skip the local proxy and a user-level GOSUMDB=off would
+  # disable checksum verification.
+  export GOENV=off GOPRIVATE='' GONOPROXY='' GONOSUMCHECK='' GOINSECURE='' GOSUMDB=sum.golang.org
   export GOFLAGS=-modcacherw
   export GOPATH
   GOPATH=$(native "$work/gopath")
@@ -173,14 +174,16 @@ fetch "$url/" >"$work/index.html" || fail "/ failed"
 grep -q '<div id="root">' "$work/index.html" || fail "/ is not the viewer page"
 echo "/: $(wc -c <"$work/index.html" | tr -d ' ') bytes"
 
-asset=$(grep -o '/assets/[A-Za-z0-9_.-]*' "$work/index.html" | head -n 1)
+asset=$(grep -m1 -o '/assets/[A-Za-z0-9_.-]*' "$work/index.html" || true)
 [ -n "$asset" ] || fail "index.html references no /assets/ file"
 fetch "$url$asset" >"$work/asset" || fail "$asset failed"
 [ -s "$work/asset" ] || fail "$asset is empty"
 echo "$asset: $(wc -c <"$work/asset" | tr -d ' ') bytes"
 
 fetch "$url/api/document" >"$work/document.json" || fail "/api/document failed"
-cmp "$work/document.json" schema/review-example.json || fail "/api/document differs from schema/review-example.json"
+# The example as committed, like the zip, not the working tree's copy.
+git -C "$work/src" show "HEAD:${subdir:+$subdir/}schema/review-example.json" >"$work/example.json"
+cmp "$work/document.json" "$work/example.json" || fail "/api/document differs from schema/review-example.json"
 echo "/api/document matches schema/review-example.json"
 
 step "stop the server"
