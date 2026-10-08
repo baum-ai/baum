@@ -126,11 +126,14 @@ export function HistoryToolbar({
   currentVersion,
   versions,
   view,
+  status,
   children,
 }: {
   currentVersion: number;
   versions: number[];
   view: ReturnType<typeof useHistoryView>;
+  /** Drawn right after the menu, such as how old the review is. */
+  status?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -150,7 +153,12 @@ export function HistoryToolbar({
           <CloseIcon />
         </IconButton>
       )}
-      <span className="text-base text-(--text-tertiary)">
+      {status}
+      {/* The current version is already named in the head; on a phone the
+        menu's own label says it again, and this line would only repeat it. */}
+      <span
+        className={cn("text-base text-(--text-tertiary)", !view.selection && "hidden sm:inline")}
+      >
         {view.selection
           ? view.selection.compare
             ? `Comparing current v${currentVersion} with v${view.selection.version}`

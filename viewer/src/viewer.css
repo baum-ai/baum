@@ -291,6 +291,9 @@
      review's compact pull request bar, used as `z-(--z-sticky)`. A host's
      own page layers stack around it. */
   --z-sticky: 30;
+  /* The review's section sheet and its scrim, where the panes stack: over
+     every sticky bar, under a host's own drawer. */
+  --z-sheet: 40;
 
   /* ---- Brand: sand and forest ----
      The viewer borrows the brand palette only for chrome: the

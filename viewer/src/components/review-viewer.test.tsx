@@ -31,6 +31,14 @@ beforeAll(() => {
       return [];
     }
   } as unknown as typeof IntersectionObserver;
+  // Nor does it match media: every query reads as false, a narrow window.
+  window.matchMedia ??= (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
   Element.prototype.scrollIntoView ??= () => {};
   HTMLElement.prototype.hidePopover ??= () => {};
 });
@@ -175,6 +183,71 @@ describe("ReviewViewer without host slots", () => {
     expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe(
       "Operator-only dead-letter endpoints",
     );
+  });
+
+  it("steps through the Summary and then each section in the rail's order", async () => {
+    const container = await render(
+      <Host>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    // Each row's title, without the score badge beside it.
+    const rail = [...container.querySelectorAll("#review-changes button[aria-pressed]")].map(
+      (button) => button.querySelector("[title]")?.getAttribute("title"),
+    );
+    const step = (name: "Previous" | "Next") =>
+      container.querySelector<HTMLButtonElement>(`button[aria-label^="${name}"]`)!;
+    const paneName = () => container.querySelector("#review-section")?.getAttribute("aria-label");
+    const sheet = container.querySelector("#review-rail")!;
+    const opener = container.querySelector<HTMLButtonElement>('[aria-controls="review-rail"]')!;
+
+    expect(paneName()).toBe("Summary");
+    expect(step("Previous").disabled).toBe(true);
+    expect(step("Next").getAttribute("aria-label")).toBe(`Next: ${rail[0]}`);
+    await act(async () => step("Next").click());
+    expect(paneName()).toBe(rail[0]);
+    expect(opener.textContent).toContain(`1 of ${rail.length}`);
+    // The pane's own foot offers the same step on.
+    const foot = container.querySelector('nav[aria-label="Next in review"]')!;
+    expect(foot.textContent).toContain(rail[1]);
+    await act(async () => step("Next").click());
+    expect(paneName()).toBe(rail[1]);
+    await act(async () => step("Previous").click());
+    expect(paneName()).toBe(rail[0]);
+
+    // The sheet closes once a place is picked from it, and on Escape.
+    await act(async () => opener.click());
+    expect(sheet.className).toContain("block");
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    const row = [...sheet.querySelectorAll("#review-changes button")].find(
+      (button) => button.querySelector("[title]")?.getAttribute("title") === rail[2],
+    ) as HTMLButtonElement;
+    await act(async () => row.click());
+    expect(paneName()).toBe(rail[2]);
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => opener.click());
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+
+    // The side pane is a sheet of its own, opened from the same bar, and only
+    // one sheet is open at a time.
+    const aside = container.querySelector("#review-aside")!;
+    const asideOpener = container.querySelector<HTMLButtonElement>(
+      '[aria-controls="review-aside"]',
+    )!;
+    // The example's CI is failing, which the button flags from the bar.
+    expect(asideOpener.getAttribute("aria-label")).toBe("Details: CI checks failing");
+    expect(aside.className).toMatch(/(^| )hidden( |$)/);
+    await act(async () => asideOpener.click());
+    expect(aside.className).not.toMatch(/(^| )hidden( |$)/);
+    expect(asideOpener.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => opener.click());
+    expect(asideOpener.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    // Going somewhere else closes it, as a pick from the rail does.
+    await act(async () => asideOpener.click());
+    await act(async () => step("Next").click());
+    expect(asideOpener.getAttribute("aria-expanded")).toBe("false");
   });
 });
 
