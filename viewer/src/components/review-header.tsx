@@ -233,8 +233,10 @@ export function ReviewHeader({
         </div>
         <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
           {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+          {/* Not on a phone: two branch chips there take a line of their own
+            above the review, for a fact a reader on a phone rarely needs. */}
           {facts.branches ? (
-            <>
+            <span className="hidden sm:contents">
               <Dot />
               <Chip mono>
                 <BranchIcon size={13} className="text-(--text-tertiary)" />
@@ -247,7 +249,7 @@ export function ReviewHeader({
                 <BranchIcon size={13} className="text-(--text-tertiary)" />
                 {facts.branches.base}
               </Chip>
-            </>
+            </span>
           ) : null}
           {githubUrl ? (
             <a

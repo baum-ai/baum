@@ -38,7 +38,9 @@ import {
   ChecksIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CloseIcon,
   CommitIcon,
+  FilesIcon,
   RiskIcon,
   SectionIcon,
   SessionsIcon,
@@ -55,6 +57,7 @@ import {
   type ReviewHeaderSlots,
 } from "./review-header";
 import { HistoryToolbar, ReviewHistory } from "./review-history";
+import { ReviewNavigator, ReviewPaneFoot, type ReviewStep } from "./review-navigator";
 import { ReviewScoreBadge, TierDot } from "./review-parts";
 import { ReviewRisk } from "./review-risk";
 import { ReviewSection } from "./review-section";
@@ -363,6 +366,14 @@ function ReviewWorkspace<F extends ReviewFile>({
   const reviewPane = useRef<HTMLElement>(null);
   const conversationPane = useRef<HTMLElement>(null);
   const railPane = useRef<HTMLElement>(null);
+  const navigator = useRef<HTMLDivElement>(null);
+  // Where the panes stack (below xl) the rail and the side pane are sheets
+  // over the page, opened from the navigator bar: the rail rather than a
+  // screen of rows above the pane, the side pane rather than a second page
+  // under it, whose start a reader scrolling the review cannot see coming.
+  const [sheet, setSheet] = useState<"rail" | "aside" | null>(null);
+  const sheetOpen = sheet === "rail";
+  const asideOpen = sheet === "aside";
   const workspace = useVisibleHeight<HTMLDivElement>();
   const split = useConversationWidth();
   const rail = useRailWidth();
@@ -378,6 +389,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const openBarTab = (tab: ConversationTab) => {
     setBarTab(tab);
     setChatCollapsed(false);
+    setSheet("aside");
   };
   // "Discuss this PR" asks for the composer; the focus waits for the render
   // that unfolds the side pane, since a folded pane hides the text box.
@@ -602,12 +614,87 @@ function ReviewWorkspace<F extends ReviewFile>({
   const paneKey = filesSelected ? "files" : selectionKey;
   // A new place starts at its top. The pane shares the page's scroll, so
   // one read far down would otherwise open the next part way through; the
-  // page only moves when the pane's top has gone under the bar.
+  // page only moves when the pane's top has gone under the bar. Where the
+  // panes stack, that bar is the navigator's, and the pane lands under it.
   useEffect(() => {
     const pane = reviewPane.current;
     if (!paneKey || !pane) return;
-    if (pane.getBoundingClientRect().top < REVIEW_BAR_PX) pane.scrollIntoView({ block: "start" });
+    const bar = navigator.current;
+    const top = pane.getBoundingClientRect().top;
+    // No offset parent: the bar is not displayed, as from xl.
+    if (bar?.offsetParent) {
+      const below = bar.getBoundingClientRect().bottom;
+      if (top < below) window.scrollBy({ top: top - below });
+    } else if (top < REVIEW_BAR_PX) pane.scrollIntoView({ block: "start" });
   }, [paneKey]);
+  // A sheet has done its job once the reader has gone somewhere, including
+  // a file already selected and picked again, or a link out of the side pane.
+  useEffect(() => setSheet(null), [selectionKey, fileClick]);
+  /** Closes the open sheet and returns focus to the bar button that opened it. */
+  const closeSheet = () => {
+    if (sheet)
+      navigator.current?.querySelector<HTMLElement>(`[aria-controls="review-${sheet}"]`)?.focus();
+    setSheet(null);
+  };
+  useEffect(() => {
+    if (!sheet) return;
+    const pane = sheet === "rail" ? railPane.current : conversationPane.current;
+    // Start on the row being read, or the tab on show, unless something in
+    // the sheet already asked for the focus (the composer, for "Discuss").
+    if (pane && !pane.contains(window.document.activeElement)) {
+      const start = pane.querySelector<HTMLElement>(
+        sheet === "rail" ? '[aria-pressed="true"]' : '[role="tab"][aria-selected="true"]',
+      );
+      start?.focus({ preventScroll: true });
+      start?.scrollIntoView({ block: "nearest" });
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSheet(null);
+      navigator.current?.querySelector<HTMLElement>(`[aria-controls="review-${sheet}"]`)?.focus();
+    };
+    window.document.addEventListener("keydown", onKeyDown);
+    return () => window.document.removeEventListener("keydown", onKeyDown);
+  }, [sheet]);
+  // Reading order, for the navigator's previous and next: the Summary, then
+  // each section as the rail lists it. A risk is read inside its section, and
+  // the Changes and Critical risks overviews sit between the Summary and the
+  // first section; the other groups are places to look things up, not steps.
+  const steps: (ReviewStep & { key: string })[] = [
+    {
+      key: "summary",
+      label: conversation ? "Summary / General" : "Summary",
+      go: () => setSelection({ kind: "summary" }),
+    },
+    ...sections.map((section) => ({
+      key: section.id,
+      label: section.label,
+      go: () => selectSection(section.id),
+    })),
+  ];
+  const stepAt =
+    selection.kind === "summary"
+      ? 0
+      : selection.kind === "changes" || selection.kind === "risks"
+        ? 0.5
+        : viewedId
+          ? steps.findIndex((step) => step.key === viewedId)
+          : -1;
+  const previousStep = stepAt < 0 ? null : (steps[Math.ceil(stepAt) - 1] ?? null);
+  const nextStep = stepAt < 0 ? null : (steps[Math.floor(stepAt) + 1] ?? null);
+  const navigatorIcon =
+    selection.kind === "risk" || selection.kind === "risks"
+      ? RiskIcon
+      : selection.kind === "section" || selection.kind === "changes"
+        ? SectionIcon
+        : filesSelected
+          ? FilesIcon
+          : selection.kind === "sessions" || selection.kind === "session"
+            ? SessionsIcon
+            : selection.kind === "commits" || selection.kind === "commit"
+              ? CommitIcon
+              : SummaryIcon;
+  const sectionIndex = viewedId ? sections.findIndex((section) => section.id === viewedId) : -1;
   const findFile = useCallback(
     (path: string) =>
       fileList?.find((candidate) => candidate.path === path || candidate.old_path === path),
@@ -649,8 +736,10 @@ function ReviewWorkspace<F extends ReviewFile>({
     },
     { value: "activity", label: "Activity", icon: <SessionsIcon /> },
   ];
+  const asideLabel = conversation ? "Conversation" : "Details";
   // The tabs and the fold share the pane's first line; folding only exists
-  // from xl up, where the panes sit side by side.
+  // from xl up, where the panes sit side by side. Below xl the pane is a
+  // sheet, and the same place holds the way to close it.
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
       <SegmentedControl
@@ -668,6 +757,15 @@ function ReviewWorkspace<F extends ReviewFile>({
           onClick={() => setChatCollapsed(true)}
         >
           <ChevronRightIcon />
+        </IconButton>
+      </span>
+      <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
+        <IconButton
+          label={`Close ${asideLabel.toLowerCase()}`}
+          className="h-9 w-9"
+          onClick={closeSheet}
+        >
+          <CloseIcon />
         </IconButton>
       </span>
     </div>
@@ -739,18 +837,57 @@ function ReviewWorkspace<F extends ReviewFile>({
           className={cn(
             // Edge to edge on a phone: the gutter, this frame and each pane's
             // own padding would otherwise stack up to a tenth of the width.
-            "-mx-4 grid flex-1 items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x xl:items-stretch",
+            // Stacked, the one column is the window's width: an `auto` track
+            // would grow to the bar's untruncated title and widen the page.
+            "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x xl:items-stretch",
             columns,
           )}
         >
+          <ReviewNavigator
+            ref={navigator}
+            label={paneLabel}
+            icon={navigatorIcon}
+            position={sectionIndex >= 0 ? `${sectionIndex + 1} of ${sections.length}` : undefined}
+            check={selected && !selected.stale ? sectionCheck(selected.id, selected.label) : null}
+            previous={previousStep}
+            next={nextStep}
+            expanded={sheetOpen}
+            onOpen={() => setSheet("rail")}
+            aside={{
+              label: asideLabel,
+              alert: barTabs.some((tab) => tab.tone),
+              expanded: asideOpen,
+              onOpen: () => setSheet("aside"),
+            }}
+          />
+          {/* A button rather than a div: dismissing a sheet by tapping beside
+            it is a real control, as the application drawer's is. */}
+          {sheet ? (
+            <button
+              type="button"
+              aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
+              onClick={closeSheet}
+              className="fixed inset-0 z-(--z-sheet) bg-(--surface-scrim) xl:hidden"
+            />
+          ) : null}
           <nav
             ref={railPane}
+            id="review-rail"
             aria-label="Review sections"
-            style={{ top: REVIEW_BAR_PX }}
-            // Stacked above the pane on a narrower screen, the rail keeps its own
-            // scroll there too, so a long file list cannot push the pane away.
-            className="max-h-[60dvh] min-w-0 overflow-x-hidden overflow-y-auto border-b border-(--border-subtle) p-4 xl:sticky xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-b-0"
+            // Below xl a sheet from the bottom of the window, `hidden` while
+            // closed so its rows leave the tab order with it; from xl the
+            // column beside the pane, under the head's bar.
+            className={cn(
+              "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-(--border-default) bg-(--surface-card) px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay)",
+              "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:block xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-t-0 xl:bg-transparent xl:p-4 xl:shadow-none",
+              sheetOpen ? "block" : "hidden",
+            )}
           >
+            <div className="absolute top-1 right-2 xl:hidden">
+              <IconButton label="Close sections" className="h-10 w-10" onClick={closeSheet}>
+                <CloseIcon />
+              </IconButton>
+            </div>
             <SideNavGroup label="Review">
               <SideNavButton
                 label={conversation ? "Summary / General" : "Summary"}
@@ -1116,6 +1253,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   </div>
                 </>
               )}
+              {document ? <ReviewPaneFoot previous={previousStep} next={nextStep} /> : null}
             </div>
           </section>
 
@@ -1132,10 +1270,15 @@ function ReviewWorkspace<F extends ReviewFile>({
 
           <section
             ref={conversationPane}
+            id="review-aside"
             aria-label={conversation ? "Conversation" : "Side pane"}
-            style={{ top: REVIEW_BAR_PX }}
+            // Below xl a sheet from the bottom of the window, nearly its full
+            // height so the chat's feed and composer both have room; from xl
+            // the column beside the pane, under the head's bar.
             className={cn(
-              "relative flex min-h-[22rem] min-w-0 flex-col bg-(--surface-aside) p-4 sm:p-5 xl:sticky xl:h-(--review-visible) xl:min-h-0 xl:self-start xl:overflow-hidden",
+              "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
+              "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:flex xl:h-(--review-visible) xl:self-start xl:border-t-0 xl:shadow-none",
+              asideOpen ? "flex" : "hidden",
               chatCollapsed && "xl:items-center xl:px-0 xl:py-2",
             )}
           >
@@ -1192,7 +1335,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 chat's feed does; their parts query the pane's width. */}
               <div
                 {...tabPanelProps("conversation", "details", barTab === "details")}
-                className="@container min-h-0 flex-1 xl:-mr-2 xl:overflow-y-auto xl:pr-2"
+                className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
               >
                 {barTab === "details" ? (
                   barDocument ? (
@@ -1207,7 +1350,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               </div>
               <div
                 {...tabPanelProps("conversation", "activity", barTab === "activity")}
-                className="@container min-h-0 flex-1 xl:-mr-2 xl:overflow-y-auto xl:pr-2"
+                className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
               >
                 {barTab === "activity" ? (
                   barDocument ? (

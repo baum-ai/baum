@@ -150,7 +150,11 @@ export function HistoryToolbar({
           <CloseIcon />
         </IconButton>
       )}
-      <span className="text-base text-(--text-tertiary)">
+      {/* The current version is already named in the head; on a phone the
+        menu's own label says it again, and this line would only repeat it. */}
+      <span
+        className={cn("text-base text-(--text-tertiary)", !view.selection && "hidden sm:inline")}
+      >
         {view.selection
           ? view.selection.compare
             ? `Comparing current v${currentVersion} with v${view.selection.version}`
