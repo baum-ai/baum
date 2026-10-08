@@ -246,17 +246,17 @@ func addPortableTool(
 	if block.Tool == nil {
 		return fmt.Errorf("the Cursor portable line %d block %d has no tool", record.Ordinal, block.Index)
 	}
-	metadata := json.RawMessage(`{"fallback_store":"jsonl"}`)
+	resolved := resolvePortableTool(block.Tool.Name, block.Tool.Input)
 	row := session.ToolUse{
 		ID: portableID("tool_use", sessionID, identity), SessionID: input.SessionID,
-		UserInputID: input.ID, ModelInvocationID: invocation.ID, Name: block.Tool.Name,
-		Verb: portableVerb(block.Tool.Name), Input: append(json.RawMessage(nil), block.Tool.Input...),
-		Status: session.StatusNoResult, Metadata: metadata,
+		UserInputID: input.ID, ModelInvocationID: invocation.ID, Name: resolved.Name,
+		Verb: resolved.Verb, Input: append(json.RawMessage(nil), resolved.Input...),
+		Status: session.StatusNoResult, Metadata: resolved.Metadata,
 	}
 	graph.ToolUses = append(graph.ToolUses, row)
 	use := &graph.ToolUses[len(graph.ToolUses)-1]
 	addPortableVendorID(graph, use.ID, session.EntityToolUse, input.SessionID, "line.block", identity, ref)
-	addPortableTouches(graph, use, block.Tool, identity, ref)
+	addPortableTouches(graph, use, &cursortranscript.PortableToolUse{Name: resolved.Name, Input: resolved.Input}, identity, ref)
 	return nil
 }
 
