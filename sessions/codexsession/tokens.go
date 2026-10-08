@@ -126,15 +126,19 @@ func serviceTierOf(settings json.RawMessage) string {
 	return parsed.ServiceTier
 }
 
-// speedForServiceTier maps Codex's service tier to an invocation speed: the
-// "priority" tier is fast mode, "default" is standard, and anything else (or no
-// tier ever set) is not reported. Codex reports no cache TTL.
+// speedForServiceTier maps Codex's service tier to an invocation speed. OpenAI's
+// fast mode is requested as "fast" and, for GPT-5.6 and earlier, reported back
+// as "priority" (its former name), so both are fast; "ultrafast" is its own,
+// pricier tier; "default" and "standard" are standard. Anything else (flex, auto,
+// or no tier ever set) is not reported. Codex reports no cache TTL.
 func speedForServiceTier(tier string) *string {
 	var speed string
 	switch tier {
-	case "priority":
+	case "priority", "fast":
 		speed = session.SpeedFast
-	case "default":
+	case "ultrafast":
+		speed = session.SpeedUltrafast
+	case "default", "standard":
 		speed = session.SpeedStandard
 	default:
 		return nil

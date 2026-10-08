@@ -201,7 +201,7 @@ func TestInvocationSpeedFollowsThreadServiceTier(t *testing.T) {
 	if got, want := strings.Join(speeds(read("basic_rollout.jsonl")), ","), "nil,nil,nil,nil"; got != want {
 		t.Errorf("speeds with no service tier = %s, want %s", got, want)
 	}
-	for _, tier := range []struct{ tier, want string }{{"priority", "fast"}, {"default", "standard"}, {"flex", ""}, {"", ""}} {
+	for _, tier := range []struct{ tier, want string }{{"priority", "fast"}, {"fast", "fast"}, {"ultrafast", "ultrafast"}, {"default", "standard"}, {"standard", "standard"}, {"flex", ""}, {"auto", ""}, {"", ""}} {
 		got := speedForServiceTier(tier.tier)
 		if (got == nil) != (tier.want == "") || got != nil && *got != tier.want {
 			t.Errorf("speedForServiceTier(%q) = %v, want %q", tier.tier, got, tier.want)

@@ -84,6 +84,14 @@ func TestValidateAcceptsCacheTTLSplitAndSpeed(t *testing.T) {
 	if err := Validate(g); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+	g.ModelInvocations[1].Speed = new(SpeedUltrafast)
+	if err := Validate(g); err != nil {
+		t.Fatalf("Validate rejects ultrafast: %v", err)
+	}
+	g.ModelInvocations[1].Speed = new("turbo")
+	if err := Validate(g); err == nil {
+		t.Fatal("Validate accepted an unknown speed")
+	}
 }
 
 func TestValidateAcceptsUnknownStatusWithResult(t *testing.T) {

@@ -153,14 +153,15 @@ const (
 )
 
 // Speed values for ModelInvocation.Speed: the service speed the vendor billed a
-// request at. Fast requests cost a premium over standard ones.
+// request at. Fast and ultrafast requests cost a premium over standard ones.
 const (
-	SpeedStandard = "standard"
-	SpeedFast     = "fast"
+	SpeedStandard  = "standard"
+	SpeedFast      = "fast"
+	SpeedUltrafast = "ultrafast"
 )
 
 // SpeedValid reports whether s is a known invocation speed.
-func SpeedValid(s string) bool { return s == SpeedStandard || s == SpeedFast }
+func SpeedValid(s string) bool { return s == SpeedStandard || s == SpeedFast || s == SpeedUltrafast }
 
 func (b TokenBasis) Valid() bool {
 	switch b {
@@ -274,7 +275,7 @@ type ModelInvocation struct {
 	CacheWrite1hTokens *int64     `json:"cache_write_1h_tokens,omitempty"`
 	TotalTokens        int64      `json:"total_tokens"`
 	TokenBasis         TokenBasis `json:"token_basis,omitempty"`
-	// Speed is SpeedStandard or SpeedFast. Nil means the vendor did not report it.
+	// Speed is SpeedStandard, SpeedFast or SpeedUltrafast. Nil means the vendor did not report it.
 	Speed      *string    `json:"speed,omitempty"`
 	StopReason *string    `json:"stop_reason,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
@@ -358,7 +359,7 @@ type TokenUsage struct {
 	TotalTokens      *int64     `json:"total_tokens,omitempty"`
 	APICallCount     *int64     `json:"api_call_count,omitempty"`
 	TokenBasis       TokenBasis `json:"token_basis,omitempty"`
-	// Speed is SpeedStandard or SpeedFast when every request the row counts ran
+	// Speed is SpeedStandard, SpeedFast or SpeedUltrafast when every request the row counts ran
 	// at that speed (a row of one request, such as Codex's unattributed
 	// token_count). Nil means not reported.
 	Speed *string `json:"speed,omitempty"`
