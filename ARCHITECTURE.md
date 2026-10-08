@@ -444,17 +444,21 @@ inside the clone and the session store overrides, and does this:
    value or two distinct ids is unusable. A usable id is looked up on the
    clone's checkpoint branch (the local branch, else a remote-tracking copy),
    reading only its metadata in the private repository, and maps to the
-   sessions the checkpoint records. Such a commit is linked to exactly those
-   sessions with `method` `entire_checkpoint` and confidence 1, as the hosted
-   `entireEdges` writes them, and skips the heuristic steps. Every linked
+   sessions the checkpoint records. Such a commit is linked to those sessions
+   with `method` `entire_checkpoint` and confidence 1, as the hosted
+   `entireEdges` writes them. Then, as the hosted `matchRemaining` does, while
+   the files those sessions edited do not cover every file the commit changed,
+   `linkage.MatchCommit` runs again over the sessions not yet linked (up to the
+   files-overlap link cap), and finally, as `dropSupersededGuesses` does, a
+   heuristic link below `linkage.ReviewConfidence` is dropped, since the
+   checkpoint's links are above it. The checkpoint is read whatever
+   `Sessions.Sources` asks for. Every linked
    session is listed: when loading did not return it (it was last written
    outside the window, or only Entire holds it), it is mapped from that
    checkpoint. A session that already came from a home-directory store under
    the same id is listed once, from that store, since its transcript is the
    fuller record. An unusable trailer, a checkpoint the clone does not hold,
    or one whose sessions cannot be mapped leaves the commit to the heuristics.
-   Unlike the hosted resolver, no further heuristic link is added beside the
-   checkpoint's.
 7. Matches every other commit with `linkage.MatchCommits`, the default config and
    `steps.Default`, and keeps only matched edges. A session that arrives more
    than once under one id is matched once, as its best reading: one with a

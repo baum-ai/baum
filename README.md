@@ -91,7 +91,8 @@ written within two days of the pull request's first commit, and links them to
 those commits with the same matcher the hosted service uses. A commit whose
 `Entire-Checkpoint` trailer names a checkpoint the clone's checkpoint branch
 holds is linked to the sessions that checkpoint recorded, as the hosted service
-does, instead of by the matcher.
+does; the matcher then adds only confident links, and only for files those
+sessions did not edit.
 Only sessions linked to at least one commit are shown, and all their text is
 redacted like `baum sessions` output. It never fetches, not even in a partial
 clone: a clone without the

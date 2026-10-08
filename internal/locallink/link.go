@@ -74,7 +74,8 @@ type Request struct {
 	// has it, and Base otherwise. MergeBase may be empty.
 	Head, Base, MergeBase string
 	// Sessions narrows or redirects the stores read; the zero value reads
-	// the defaults.
+	// the defaults. Its Sources do not stop the checkpoint a commit's
+	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
 	// read, as "baum sessions" prints them. It defaults to discarding them.
@@ -278,15 +279,20 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 	}
 
 	var edges []linkage.Edge
+	cfg := linkage.DefaultConfig()
 	enriched := make([]linkage.EnrichedCommit, 0, len(commits))
 	for _, c := range commits {
 		if linked := truth[c.OID]; len(linked) > 0 {
-			edges = append(edges, entireEdges(c.OID, linked)...)
+			checkpointed, err := checkpointCommitEdges(enrichedOf(c), linked, candidates, cfg)
+			if err != nil {
+				return Result{}, fmt.Errorf("matching commit %s: %w", c.OID, err)
+			}
+			edges = append(edges, checkpointed...)
 			continue
 		}
 		enriched = append(enriched, enrichedOf(c))
 	}
-	matched, err := linkage.MatchCommits(enriched, candidates, linkage.DefaultConfig(), steps.Default())
+	matched, err := linkage.MatchCommits(enriched, candidates, cfg, steps.Default())
 	if err != nil {
 		return Result{}, fmt.Errorf("matching commits: %w", err)
 	}

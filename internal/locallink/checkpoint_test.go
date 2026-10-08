@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
+	"github.com/lastpersonlabs/baum/linkage"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
@@ -53,8 +54,9 @@ func linkedTo(c Commit) map[string][]string {
 }
 
 // A commit whose trailer names a checkpoint on the clone's branch links to the
-// sessions the checkpoint records, and only to them, although the session
-// that ran git commit would match it by commit_ref.
+// sessions the checkpoint records. When they edited every file the commit
+// changed, it links only to them, although the session that ran git commit
+// would match it by commit_ref.
 func TestResolveLinksACommitToItsCheckpointSessions(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -67,7 +69,7 @@ func TestResolveLinksACommitToItsCheckpointSessions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
-			f.AddCheckpoint(t)
+			f.AddCheckpointEditing(t, "b.txt")
 			req := request(f)
 			req.Sessions.Sources = tc.sources
 			result := resolve(t, req)
@@ -102,6 +104,67 @@ func TestResolveLinksACommitToItsCheckpointSessions(t *testing.T) {
 				t.Errorf("the heuristic match was listed beside the checkpoint's: %+v", result.Sessions)
 			}
 		})
+	}
+}
+
+// When the checkpoint's sessions did not edit all of the commit's files, the
+// heuristic steps go on over the other sessions until the files are covered,
+// as in the hosted resolver. The checkpoint's sessions edited a.txt and the
+// commit also changed b.txt: the session that ran git commit (which edited
+// nothing) and a session that edited b.txt are linked beside them.
+func TestResolveAddsMatchesBesideAnIncompleteCheckpoint(t *testing.T) {
+	const editor = "bbbbbbbb-0000-4000-8000-00000000000b"
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+	f.AddCheckpointEditing(t, "a.txt")
+	f.AddEditor(t, editor, "10", "b.txt")
+	result := resolve(t, request(f))
+	got := linkedTo(result.Commits[0])
+	if len(got) != 3 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) ||
+		!slices.Equal(got["commit_ref"], []string{linktest.SessionID}) || !slices.Equal(got["files_overlap"], []string{editor}) {
+		t.Fatalf("first commit links = %+v, want the checkpoint's sessions, the commit_ref and the editor", result.Commits[0].Links)
+	}
+	listed := 0
+	for _, s := range result.Sessions {
+		if s.ID == editor || s.ID == linktest.SessionID {
+			listed++
+		}
+	}
+	if listed != 2 {
+		t.Errorf("sessions = %+v, want the heuristic matches listed", result.Sessions)
+	}
+}
+
+// A heuristic match below the review confidence is dropped once the commit
+// has a confident link, which a checkpoint's always are.
+func TestResolveDropsWeakMatchesBesideACheckpoint(t *testing.T) {
+	const weak = "cccccccc-0000-4000-8000-00000000000c"
+	// On its own, a session that edited b.txt but finished ten hours before
+	// the first commit matches it weakly.
+	plain := linktest.New(t).NoSession(t)
+	plain.AddEditor(t, weak, "00", "b.txt")
+	var confidence float64
+	for _, link := range resolve(t, request(plain)).Commits[0].Links {
+		if link.Session == weak {
+			confidence = link.Confidence
+		}
+	}
+	if confidence == 0 || confidence >= linkage.ReviewConfidence {
+		t.Fatalf("the editor matches with confidence %v on its own; the test needs a weak match", confidence)
+	}
+
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+	f.AddCheckpoint(t)
+	f.AddEditor(t, weak, "00", "b.txt")
+	result := resolve(t, request(f))
+	for _, link := range result.Commits[0].Links {
+		if link.Session == weak {
+			t.Errorf("the weak match was kept beside the checkpoint: %+v", result.Commits[0].Links)
+		}
+	}
+	for _, s := range result.Sessions {
+		if s.ID == weak {
+			t.Errorf("the weak match was listed: %+v", result.Sessions)
+		}
 	}
 }
 
