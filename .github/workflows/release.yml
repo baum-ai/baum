@@ -16,12 +16,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+
+      - name: Check go.mod is tidy
+        run: go mod tidy -diff
 
       - name: Vet
         run: go vet ./...
@@ -37,6 +42,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -66,25 +73,15 @@ jobs:
         with:
           # goreleaser derives the changelog from the previous tag.
           fetch-depth: 0
+          # goreleaser calls the release API with GITHUB_TOKEN from the
+          # environment and never pushes, so no credentials stay in the clone.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-
-      # The before hook in .goreleaser.yaml rebuilds the viewer.
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.0.8
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: viewer/pnpm-lock.yaml
 
       # Builds linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and
       # windows/amd64 with CGO off, archives them, writes checksums.txt and
@@ -96,4 +93,8 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # The viewer-dist job, which has a read-only token, already checked
+          # the bundle, so the before hook skips it: no JavaScript tooling
+          # runs while this job holds a token that can write to the repository.
+          BAUM_SKIP_VIEWER_FRESH: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
