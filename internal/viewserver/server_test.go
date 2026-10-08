@@ -103,7 +103,7 @@ func get(t *testing.T, url string) (*http.Response, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +300,7 @@ func TestOnlyGetAndHeadAreAllowed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("%s %s: status %d, want 405", method, p, resp.StatusCode)
 			}
@@ -313,7 +313,7 @@ func TestOnlyGetAndHeadAreAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("HEAD /api/document: status %d", resp.StatusCode)
 	}
@@ -330,7 +330,7 @@ func TestBadHostIsRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden || strings.Contains(string(body), "baum.review") {
 			t.Errorf("Host %q: status %d, body %q", host, resp.StatusCode, body)
 		}
@@ -342,7 +342,7 @@ func TestBadHostIsRejected(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Host %q: status %d, want 200", host, resp.StatusCode)
 		}
@@ -383,11 +383,11 @@ func TestTraversalNeverReachesDisk(t *testing.T) {
 		_, _ = io.WriteString(conn, "GET "+p+" HTTP/1.1\r\nHost: 127.0.0.1:"+port+"\r\nConnection: close\r\n\r\n")
 		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 		if err != nil {
-			conn.Close()
+			_ = conn.Close()
 			t.Fatalf("%s: %v", p, err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		conn.Close()
+		_ = conn.Close()
 		text := string(body)
 		for _, leak := range []string{"root:", "module github.com", "baum.review"} {
 			if strings.Contains(text, leak) {
@@ -431,7 +431,7 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Error("a rejected host response has no security headers")
 	}
@@ -676,7 +676,7 @@ func TestExtensionPoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("without a token: status %d", resp.StatusCode)
 	}
@@ -686,7 +686,7 @@ func TestExtensionPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || string(body) != "extra" {
 		t.Errorf("with a token: %d %q", resp.StatusCode, body)
 	}
