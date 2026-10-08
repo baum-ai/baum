@@ -71,6 +71,24 @@ describe("CommitList", () => {
     expect(text).toContain("(no subject)");
   });
 
+  it("says a link from the commit's Entire checkpoint was recorded by Entire", () => {
+    render({
+      status: "ready",
+      commits: [
+        {
+          id: ONE,
+          subject: "x",
+          links: [{ session: "s1", label: "A", method: "entire_checkpoint", confidence: 1 }],
+        },
+      ],
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Recorded by Entire");
+    expect(text).toContain("100% confidence");
+    expect(text).not.toContain("Entire checkpoint");
+  });
+
   it("keeps a confidence outside 0 to 1 within a percentage", () => {
     render({
       status: "ready",

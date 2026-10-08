@@ -36,6 +36,7 @@ export type CommitListState =
   | { status: "ready"; commits: CommitView[] };
 
 const METHODS: Record<string, string> = {
+  entire_checkpoint: "Recorded by Entire",
   commit_ref: "Named in the session",
   start_commit: "Started from this commit",
   files_overlap: "Edited the same files",
