@@ -106,3 +106,27 @@ func TestNoSourceMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The server's Content-Security-Policy has no 'unsafe-eval', so a script that
+// builds code from a string fails at run time and leaves the page blank. Ajv
+// does this when it compiles a schema, so the viewer ships precompiled
+// validators; see scripts/review-tile-validators.mjs in the viewer package.
+func TestNoRuntimeCodeGeneration(t *testing.T) {
+	evaluates := regexp.MustCompile(`new Function\(|(?:^|[^\w$.])eval\(|Error compiling schema`)
+	err := fs.WalkDir(Assets(), "assets", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(name, ".js") {
+			return err
+		}
+		source, err := fs.ReadFile(Assets(), name)
+		if err != nil {
+			return err
+		}
+		if match := evaluates.Find(source); match != nil {
+			t.Errorf("%s evaluates strings as code (%q), which the CSP blocks", name, match)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

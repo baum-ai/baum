@@ -186,11 +186,16 @@ the highlighter adds no path for contributor markup.
 
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
-canonical. Tiles are validated against it with Ajv at runtime, and
+canonical. Tiles are validated against it at runtime, and
 `src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
 retired, so stored tiles of those kinds still render. `pnpm generate` writes
-the tile types to `generated/review-tile-types.d.ts` from both files;
-`pnpm typecheck` runs it first, and the output is not committed.
+the tile types to `generated/review-tile-types.d.ts` from both files, which is
+not committed, and the validators to `src/precompiled/review-tile-validators.js`
+with Ajv's standalone code generation, which is. The validators are
+precompiled because Ajv otherwise compiles with `new Function`, which a page
+under a strict Content-Security-Policy (as `baum view` serves) cannot run. A
+unit test fails when the committed file is out of date: run `pnpm generate`
+after changing either schema file.
 
 ## Standalone app
 
