@@ -38,6 +38,23 @@ test *args:
 lint:
     golangci-lint run ./...
 
-# Build release archives for every target locally without publishing
+# Rebuild the committed viewer bundle and the precompiled tile validators
+viewer-build:
+    sh scripts/viewer-build.sh
+
+# Fail when the committed viewer bundle or validators differ from a fresh build
+viewer-fresh:
+    sh scripts/viewer-fresh.sh
+
+# Build release archives for every target locally without publishing; the
+# goreleaser before-hook runs viewer-fresh first
 release-snapshot:
     go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
+
+# Check every archive release-snapshot built: CGO off and the viewer bundle embedded
+release-verify:
+    bash scripts/release-verify.sh
+
+# Install baum from a module-proxy-shaped source tree with no Node, then smoke test it
+clean-install:
+    bash scripts/clean-install.sh
