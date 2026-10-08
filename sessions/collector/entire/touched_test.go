@@ -41,7 +41,7 @@ func TestTouchedDatesEachCheckpointByItsNewestCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	touched, err := Touched(ctx, dir, commit)
+	touched, err := Touched(ctx, privateRepo(t, dir), commit)
 	if err != nil {
 		t.Fatal(err)
 	}

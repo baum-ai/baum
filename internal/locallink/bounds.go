@@ -95,7 +95,10 @@ func resolveBounds(ctx context.Context, repo *gitlocal.Repo, req Request) (head,
 }
 
 // maxRemotesListed bounds the remotes a reason names.
-const maxRemotesListed = 5
+const (
+	maxRemotesListed    = 5
+	maxRemoteNameLength = 40
+)
 
 // anyRemoteIs reports whether any remote URL names the repository "owner/name".
 func anyRemoteIs(remotes []gitlocal.Remote, repository string) bool {
@@ -124,7 +127,7 @@ func remoteReason(remotes []gitlocal.Remote, repository string) string {
 		if got, ok := NormalizeRepository(remote.URL); ok {
 			target = got
 		}
-		listed = append(listed, remote.Name+" \u2192 "+target)
+		listed = append(listed, truncate(remote.Name, maxRemoteNameLength)+" \u2192 "+target)
 	}
 	return "no remote of this clone points at " + repository + " (" + strings.Join(listed, ", ") + ")"
 }

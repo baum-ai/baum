@@ -16,7 +16,7 @@ import (
 // checkpoints uses it to skip reading the rest. repoRoot may be a private
 // repository that borrows the clone's objects.
 func Touched(ctx context.Context, repoRoot, commit string) (map[string]time.Time, error) {
-	out, err := git(ctx, repoRoot, "-c", "core.quotepath=false", "log", "--no-renames", "--no-color",
+	out, err := privateGit(ctx, repoRoot, "-c", "core.quotepath=false", "log", "--no-renames", "--no-color", "--no-show-signature",
 		"--name-only", "--format=%x01%ct", commit)
 	if err != nil {
 		return nil, fmt.Errorf("dating Entire checkpoints: %w", err)
