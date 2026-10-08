@@ -12,10 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/lastpersonlabs/baum/internal/locallink"
 	"github.com/lastpersonlabs/baum/internal/openurl"
 	"github.com/lastpersonlabs/baum/internal/viewserver"
 	"github.com/lastpersonlabs/baum/review"
 	"github.com/lastpersonlabs/baum/schema"
+	"github.com/lastpersonlabs/baum/sessions"
 )
 
 // Seams for tests: the browser is never opened and the server is stopped
@@ -67,7 +69,18 @@ func runView(cmd *cobra.Command, args []string) error {
 			return v.ValidateStored(document, nil)
 		},
 	}
+	stores := sessions.Options{}
+	stores.ClaudeProjectsDir, _ = flags.GetString("claude-dir")
+	stores.CodexSessionsDir, _ = flags.GetString("codex-dir")
+	stores.CursorStorePaths, _ = flags.GetStringArray("cursor-store")
+	opts.Sessions = func(ctx context.Context, review viewserver.Review) (locallink.Result, error) {
+		return locallink.Resolve(ctx, locallink.Request{
+			Repository: review.Repository, Head: review.Head, Base: review.Base,
+			Sessions: stores, Warn: cmd.ErrOrStderr(),
+		})
+	}
 	if sample {
+		opts.Sample = true
 		opts.Document = schema.Example
 	} else {
 		opts.Path = args[0]
