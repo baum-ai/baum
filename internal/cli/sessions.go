@@ -36,8 +36,11 @@ func newSessionsCommand() *cobra.Command {
 		Short: "List coding-agent sessions recorded for the repository containing dir",
 		Long: `Sessions lists the Claude Code, Codex, Cursor and Entire sessions recorded on
 this machine for the git repository containing dir (default: the current
-directory), with the commits and files each one touched. Nothing leaves the
-machine; any text printed is redacted first.`,
+directory), with the commits and files each one touched. A session recorded in
+any working tree of the clone, the main checkout or one of its git worktrees,
+counts, whichever of them dir is in. Each Entire session is listed once, from
+the newest checkpoint that recorded it. Nothing leaves the machine; any text
+printed is redacted first.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
