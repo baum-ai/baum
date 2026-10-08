@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
@@ -20,12 +21,9 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/codexsession"
 	"github.com/lastpersonlabs/baum/sessions/codextranscript"
 	"github.com/lastpersonlabs/baum/sessions/collector"
-	"github.com/lastpersonlabs/baum/sessions/collector/entire"
 	"github.com/lastpersonlabs/baum/sessions/collector/model"
 	"github.com/lastpersonlabs/baum/sessions/cursorsession"
 	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/baum/sessions/entiresession"
 	"github.com/lastpersonlabs/baum/sessions/session"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
@@ -124,38 +122,57 @@ type Report struct {
 
 // Load returns every session recorded for the git repository containing dir,
 // mapped and ordered by modification time.
+//
+// A session belongs to the repository when it was recorded in any of the
+// clone's working trees, the main checkout or a linked worktree, whichever of
+// them dir is in; git's own list of worktrees says which those are. Each
+// Entire session is returned once, from the newest checkpoint that recorded
+// it, and not at all when the agent's own store holds it.
 func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, error) {
 	var report Report
+	// A clone whose worktrees git cannot list (git older than 2.36) is read
+	// as the one checkout containing dir.
+	var worktrees []string
+	if listed, err := gitlocal.Worktrees(ctx, dir); err == nil {
+		for _, worktree := range listed {
+			worktrees = append(worktrees, worktree.Path)
+		}
+	}
 	found, scan, err := collector.FindSessions(dir, collector.FindOptions{
 		ClaudeProjectsDir: opts.ClaudeProjectsDir,
 		CodexSessionsDir:  opts.CodexSessionsDir,
 		CursorStorePaths:  opts.CursorStorePaths,
 		PreviousPaths:     opts.PreviousPaths,
+		Worktrees:         worktrees,
+		Since:             opts.Since,
 	})
 	if err != nil {
 		return nil, report, err
 	}
 	report.Skipped = scan.Skipped
 
+	wanted := make([]collector.Session, 0, len(found))
+	for _, s := range found {
+		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) {
+			wanted = append(wanted, s)
+		}
+	}
+	mapped, err := mapAll(ctx, wanted)
+	if err != nil {
+		return nil, report, err
+	}
 	var sessions []Session
 	native := map[string]bool{}
-	for _, s := range found {
-		if err := ctx.Err(); err != nil {
-			return nil, report, err
-		}
-		if !opts.wants(s.Source) || (!opts.Since.IsZero() && s.ModifiedAt.Before(opts.Since)) {
-			continue
-		}
-		graph, notes, err := Map(s)
-		if err != nil {
-			report.Failures = append(report.Failures, Failure{Source: s.Source, Path: s.Path, Err: err})
+	for i, s := range wanted {
+		if mapped[i].err != nil {
+			report.Failures = append(report.Failures, Failure{Source: s.Source, Path: s.Path, Err: mapped[i].err})
 			continue
 		}
 		native[s.SessionID] = true
 		sessions = append(sessions, Session{
 			Source: s.Source, Vendor: s.Source.String(), ID: s.SessionID, Path: s.Path,
 			RepoRoot: s.RepoRoot, WorktreeRoot: s.WorktreeRoot, ModifiedAt: s.ModifiedAt,
-			Graph: graph, Notes: notes,
+			Graph: mapped[i].graph, Notes: mapped[i].notes,
 		})
 	}
 
@@ -179,13 +196,10 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 		if c := a.ModifiedAt.Compare(b.ModifiedAt); c != 0 {
 			return c
 		}
-		if a.Source != b.Source {
-			return -1
+		if c := strings.Compare(string(a.Source), string(b.Source)); c != 0 {
+			return c
 		}
-		if a.ID < b.ID {
-			return -1
-		}
-		return 1
+		return strings.Compare(a.ID, b.ID)
 	})
 	return sessions, report, nil
 }
@@ -246,76 +260,4 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 	default:
 		return nil, nil, fmt.Errorf("no mapper for %q sessions", s.Source)
 	}
-}
-
-// loadEntire maps every checkpoint in the clone's checkpoint branch. A
-// session Entire recorded that discovery already found in the agent's own
-// store is skipped: the native transcript is the fuller record.
-func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool) ([]Session, string, []Failure, error) {
-	commit, ok, err := entire.Resolve(ctx, root)
-	if err != nil || !ok {
-		return nil, "", nil, err
-	}
-	// Objects are read from a private repository with no remote, so a partial
-	// clone's missing objects are skipped with a failure, never downloaded.
-	repo, err := gitlocal.Open(ctx, root, gitlocal.Options{})
-	if err != nil {
-		return nil, commit, nil, fmt.Errorf("opening the clone to read Entire checkpoints: %w", err)
-	}
-	defer func() { _ = repo.Close() }()
-	objects := repo.PrivateDir()
-	checkpoints, err := entire.List(ctx, objects, commit)
-	if err != nil {
-		return nil, commit, nil, err
-	}
-	// Reading a checkpoint is the slow part, and a store holds checkpoints for
-	// every session ever recorded, so with a Since the ones last written
-	// before it are skipped unread. If they cannot be dated, all are read.
-	var written map[string]time.Time
-	if !opts.Since.IsZero() {
-		if written, err = entire.Touched(ctx, objects, commit); err != nil {
-			written = nil
-		}
-	}
-	var sessions []Session
-	var failures []Failure
-	for _, checkpoint := range checkpoints {
-		if err := ctx.Err(); err != nil {
-			return nil, commit, failures, err
-		}
-		if at, dated := written[checkpoint.ID]; dated && at.Before(opts.Since) {
-			continue
-		}
-		fsys, err := entire.Read(ctx, objects, commit, checkpoint.ID)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		parsed, err := entirecheckpoint.ParseCheckpoint(fsys)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		results, _, err := entiresession.Build(parsed)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		for _, result := range results {
-			switch {
-			case result.Err != nil:
-				failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID + "/" + result.SessionID, Err: result.Err})
-				continue
-			case result.Graph == nil || native[result.SessionID]:
-				continue
-			case !opts.Since.IsZero() && result.CreatedAt.Before(opts.Since):
-				continue
-			}
-			sessions = append(sessions, Session{
-				Source: Entire, Vendor: result.Vendor, ID: result.SessionID, Path: checkpoint.ID,
-				RepoRoot: root, ModifiedAt: result.CreatedAt, Graph: result.Graph, Notes: result.Warnings,
-			})
-		}
-	}
-	return sessions, commit, failures, nil
 }
