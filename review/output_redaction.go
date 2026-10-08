@@ -636,15 +636,17 @@ func (o *outputRedaction) scanClosed(indexes []int) error {
 
 // alreadyMasked reports a finding that is the redactor's own output found
 // again, and so no finding: text that already reads as its mask, or an
-// address whose domain does (ev-author-xxxxx.xxx@xxxxxxx.xxx), which no
-// real address has.
+// address glued behind an identifier's words whose domain and last local
+// word do (ev-author-xxxxx.xxx@xxxxxxx.xxx). The domain alone does not
+// tell: a real address can be User@xxx.xxx.
 func alreadyMasked(text string, email bool) bool {
 	if formatMask(text) == text {
 		return true
 	}
 	if at := strings.LastIndexByte(text, '@'); email && at >= 0 {
-		domain := text[at+1:]
-		return formatMask(domain) == domain
+		local, domain := text[:at], text[at+1:]
+		word := local[strings.LastIndexAny(local, "-_")+1:]
+		return word != "" && formatMask(word) == word && formatMask(domain) == domain
 	}
 	return false
 }

@@ -1148,6 +1148,23 @@ func TestOutputRedactionIgnoresAlreadyMaskedFindings(t *testing.T) {
 	checkEqual(t, 0, o.MaskedClosed())
 }
 
+// A real address whose domain happens to read as a mask is still a finding:
+// its local part does not.
+func TestOutputRedactionCountsAddressesWithMaskLikeDomains(t *testing.T) {
+	for _, id := range []string{"User@xxx.xxx", "ev-author-User@xxx.xxx"} {
+		t.Run(id, func(t *testing.T) {
+			document := `{"sections":[{"evidence":[{"id":"` + id + `"}],"title":"T"}]}`
+			o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+			raw, err := o.Identifiers(context.Background(), []byte(document))
+			checkNoError(t, err)
+			if strings.Contains(string(raw), "User") {
+				t.Fatalf("the address survives in %s", raw)
+			}
+			checkEqual(t, 1, o.MaskedClosed())
+		})
+	}
+}
+
 // A key glued to letters in its own identifier is a source also widened to
 // that identifier's words, so the identifier's other spellings are masked.
 func TestOutputRedactionWidensSourcesToTheirWords(t *testing.T) {
