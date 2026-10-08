@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 
+import { commitsSlot, sessionsSlot } from "../src/components/list-slots";
 import { ReviewViewer } from "../src/components/review-viewer";
 import { Failed, Skeleton } from "../src/components/states";
 import { Alert, Button } from "../src/components/ui";
@@ -19,10 +20,13 @@ import {
   ViewerLinkProvider,
 } from "../src/navigation";
 import type { ReviewDocument } from "../src/review-document";
+import { fetchSessions, sessionLists, type SessionsLoad } from "./local-sessions";
 
 /** The standalone viewer: one review document, served by `baum view` from the
  *  same origin. It reads `/api/document` and refetches it whenever
- *  `/api/events` says the document changed. */
+ *  `/api/events` says the document changed. It also asks `/api/sessions` for the
+ *  sessions and commits on this machine, which fill the Sessions and Commits
+ *  groups; where it has none, the Sessions group lists the document's own. */
 
 const SCHEMA = "baum.review/1";
 
@@ -63,6 +67,9 @@ function useDocument() {
   const [document, setDocument] = useState<ReviewDocument | null>(null);
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [stale, setStale] = useState(false);
+  // How many `document` events have arrived, for what else depends on the
+  // document being rewritten.
+  const [changes, setChanges] = useState(0);
   const loaded = useRef(false);
   const controller = useRef<AbortController | null>(null);
 
@@ -106,7 +113,10 @@ function useDocument() {
         delay = RECONNECT_MIN_MS;
         void refetch();
       });
-      events.addEventListener("document", () => void refetch());
+      events.addEventListener("document", () => {
+        setChanges((count) => count + 1);
+        void refetch();
+      });
       // The browser reconnects by itself unless the stream was refused (a bad
       // status or content type), which closes it for good; reopen it then.
       events.addEventListener("error", () => {
@@ -126,7 +136,29 @@ function useDocument() {
     };
   }, [refetch]);
 
-  return { document, load, stale, retry };
+  return { document, load, stale, retry, changes };
+}
+
+/** The sessions and commits on this machine, asked for once the page opens and
+ *  again each time the document is rewritten. The first request can take
+ *  seconds, as the server reads the agents' stores; until it answers the groups
+ *  are loading, and a later one leaves the last answer on screen. */
+function useSessions(refresh: number): SessionsLoad {
+  const [load, setLoad] = useState<SessionsLoad>({ state: "loading" });
+
+  useEffect(() => {
+    const abort = new AbortController();
+    fetchSessions(abort.signal).then(
+      (answer) => {
+        if (abort.signal.aborted) return;
+        setLoad(answer ? { state: "answered", answer } : { state: "request-failed" });
+      },
+      () => {},
+    );
+    return () => abort.abort();
+  }, [refresh]);
+
+  return load;
 }
 
 /** The page's search parameters, read from and written to the address bar. */
@@ -239,8 +271,15 @@ class ViewerBoundary extends Component<
 }
 
 export function App() {
-  const { document, load, stale, retry } = useDocument();
+  const { document, load, stale, retry, changes } = useDocument();
+  const sessionsLoad = useSessions(changes);
   const urlState = useLocationSearch();
+  const lists = useMemo(
+    () => (document ? sessionLists(sessionsLoad, document) : null),
+    [sessionsLoad, document],
+  );
+  const sessions = useMemo(() => (lists ? sessionsSlot(lists.sessions) : undefined), [lists]);
+  const commits = useMemo(() => (lists?.commits ? commitsSlot(lists.commits) : undefined), [lists]);
 
   useEffect(() => {
     window.document.title = document ? documentTitle(document) : "baum";
@@ -258,7 +297,7 @@ export function App() {
     ) : undefined;
     body = (
       <ViewerBoundary document={document} onRetry={retry}>
-        <ReviewViewer document={document} notices={notices} />
+        <ReviewViewer document={document} notices={notices} sessions={sessions} commits={commits} />
       </ViewerBoundary>
     );
   } else if (load.state === "failed") {

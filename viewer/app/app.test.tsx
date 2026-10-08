@@ -63,7 +63,11 @@ class FakeEventSource {
 
 let root: Root | null = null;
 let container: HTMLElement;
-let fetchMock: ReturnType<typeof vi.fn>;
+/** The document's requests. */
+type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+let fetchMock: ReturnType<typeof vi.fn<Fetcher>>;
+/** The `/api/sessions` requests. */
+let sessionsMock: ReturnType<typeof vi.fn<Fetcher>>;
 
 function respond(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -127,8 +131,14 @@ beforeAll(() => {
 beforeEach(() => {
   FakeEventSource.instances = [];
   viewer.failure = null;
-  fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
+  fetchMock = vi.fn<Fetcher>();
+  // Nothing on this machine, unless a test says otherwise.
+  sessionsMock = vi.fn<Fetcher>(async () =>
+    respond({ available: false, code: "not_a_clone", reason: "this is not a clone" }),
+  );
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+    String(url).startsWith("/api/sessions") ? sessionsMock(url, init) : fetchMock(url, init),
+  );
   vi.stubGlobal("EventSource", FakeEventSource);
   window.history.replaceState(null, "", "/");
 });
@@ -281,7 +291,7 @@ describe("App", () => {
     expect(container.textContent).toContain("Back again");
   });
 
-  it("requests nothing but the document", async () => {
+  it("requests nothing but the document and the sessions", async () => {
     fetchMock.mockImplementation(async () => respond(current));
     await mount();
     await act(async () => source().emit("document"));
@@ -289,6 +299,9 @@ describe("App", () => {
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls.length).toBeGreaterThan(1);
     expect(new Set(urls)).toEqual(new Set(["/api/document"]));
+    expect(new Set(sessionsMock.mock.calls.map(([url]) => String(url)))).toEqual(
+      new Set(["/api/sessions"]),
+    );
     expect(FakeEventSource.instances.map((instance) => instance.url)).toEqual(["/api/events"]);
   });
 
@@ -327,6 +340,275 @@ describe("App", () => {
 
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).toContain(current.summary.title);
+  });
+});
+
+describe("sessions and commits", () => {
+  const OID_ONE = "1111111111111111111111111111111111111111";
+  const OID_TWO = "2222222222222222222222222222222222222222";
+  const SESSION = "aaaaaaaa-0000-4000-8000-000000000001";
+  const local = {
+    available: true,
+    sessions: [
+      {
+        id: SESSION,
+        source: "claude_code",
+        vendor: "claude_code",
+        title: "Wire the retry budget",
+        branch: "feature",
+        started_at: "2026-07-01T10:00:00Z",
+        ended_at: "2026-07-01T10:30:00Z",
+        outcome: "committed",
+        edited_files: 3,
+        unknown_field: { ignored: true },
+      },
+    ],
+    commits: [
+      {
+        oid: OID_ONE,
+        subject: "Add the retry budget",
+        author: "Grace Hopper",
+        committed_at: "2026-07-01T10:30:00Z",
+        links: [{ session: SESSION, method: "commit_ref", confidence: 0.95 }],
+      },
+      { oid: OID_TWO, subject: "Tidy the docs", links: [] },
+    ],
+  };
+  const recorded = current.index.sessions[0]!;
+
+  const rail = () => container.querySelector("nav");
+  const railText = () => rail()?.textContent ?? "";
+  const pane = () => container.querySelector("#review-section")?.textContent ?? "";
+  const rows = (label: string) =>
+    [...(rail()?.querySelectorAll("button") ?? [])].filter((button) =>
+      button.textContent?.includes(label),
+    );
+  /** Unfolds a rail group, which the reader does by clicking its row. */
+  const openGroup = (label: string) =>
+    act(async () => {
+      for (const button of rail()?.querySelectorAll("button") ?? []) {
+        if (button.textContent?.startsWith(label)) {
+          button.click();
+          return;
+        }
+      }
+      throw new Error(`no ${label} group in the rail`);
+    });
+  const press = (label: string) =>
+    act(
+      async () =>
+        void [...container.querySelectorAll("button")]
+          .find((button) => button.textContent?.includes(label))!
+          .click(),
+    );
+
+  beforeEach(() => {
+    fetchMock.mockImplementation(async () => respond(current));
+  });
+
+  it("lists the linked sessions and commits when the machine has them", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    expect(sessionsMock).toHaveBeenCalledWith(
+      "/api/sessions",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(railText()).toContain("Sessions1");
+    expect(railText()).toContain("Commits2");
+    expect(pane()).toContain("Wire the retry budget");
+    expect(pane()).toContain("1 linked commit");
+    expect(pane()).not.toContain("recorded in the review");
+
+    await openGroup("Sessions");
+    await openGroup("Commits");
+    expect(rows("Wire the retry budget")).toHaveLength(1);
+    expect(rows("Add the retry budget")).toHaveLength(1);
+    expect(rows("Tidy the docs")).toHaveLength(1);
+  });
+
+  it("opens a selected session and a selected commit from the URL", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
+    await mount();
+    expect(pane()).toContain("1 of 1 session");
+    expect(pane()).toContain("Wire the retry budget");
+
+    window.history.pushState(null, "", `/?pane=commit&commit=${OID_ONE}`);
+    await act(async () => void window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(pane()).toContain("1 of 2 commits");
+    expect(pane()).toContain("Add the retry budget");
+    expect(pane()).toContain("95% confidence");
+
+    window.history.pushState(null, "", "/?pane=commits");
+    await act(async () => void window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(pane()).toContain("Tidy the docs");
+  });
+
+  it("moves between a commit and its session", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", "/?pane=commits");
+    await mount();
+
+    await press("Wire the retry budget");
+    expect(search()).toBe(`pane=session&session=${SESSION}`);
+    await press("Add the retry budget");
+    expect(search()).toBe(`pane=commit&commit=${OID_ONE}`);
+  });
+
+  it("falls back to the document's sessions, with the reason and no Commits group", async () => {
+    sessionsMock.mockImplementation(async () =>
+      respond({
+        available: false,
+        code: "remote_mismatch",
+        reason: "no remote matches <b>this</b>",
+      }),
+    );
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    expect(railText()).not.toContain("Commits");
+    expect(pane()).toContain(
+      "Showing the sessions recorded in the review — no remote matches <b>this</b>",
+    );
+    // The reason is text, never markup.
+    expect(container.querySelector("#review-section b")).toBeNull();
+    expect(pane()).toContain(recorded.title!);
+    await openGroup("Sessions");
+    expect(rows(recorded.title!)).toHaveLength(1);
+  });
+
+  it("keeps a deep link to Commits in the URL when there are none to show", async () => {
+    window.history.replaceState(null, "", "/?pane=commits");
+    await mount();
+
+    expect(railText()).not.toContain("Commits");
+    expect(search()).toBe("pane=commits");
+  });
+
+  it.each([
+    ["a network error", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ["a 500", async () => respond({ error: "boom" }, 500)],
+    ["text that is not JSON", async () => new Response("<html>", { status: 200 })],
+    ["a body that is not an answer", async () => respond([1, 2])],
+    ["an available answer without commits", async () => respond({ available: true, sessions: [] })],
+    [
+      "a session of the wrong type",
+      async () => respond({ available: true, commits: [], sessions: [{ id: 7 }] }),
+    ],
+    [
+      "a commit link of the wrong type",
+      async () =>
+        respond({
+          available: true,
+          sessions: [],
+          commits: [{ oid: OID_ONE, subject: "x", links: [{ session: SESSION, method: 1 }] }],
+        }),
+    ],
+  ])("falls back to the document's sessions on %s", async (_, answer) => {
+    sessionsMock.mockImplementation(answer);
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    expect(railText()).not.toContain("Commits");
+    expect(pane()).toContain("Showing the sessions recorded in the review");
+    await openGroup("Sessions");
+    expect(rows(recorded.title!)).toHaveLength(1);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("fails the Sessions group only when the request failed and the review has none", async () => {
+    sessionsMock.mockImplementation(async () => respond({ error: "boom" }, 500));
+    const bare = structuredClone(current);
+    bare.index.sessions = [];
+    fetchMock.mockImplementation(async () => respond(bare));
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    await openGroup("Sessions");
+    expect(railText()).toContain("Linked sessions could not be loaded.");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "The sessions could not be loaded.",
+    );
+  });
+
+  it("lists an empty fallback, not a failure, when the server said it is unavailable", async () => {
+    const bare = structuredClone(current);
+    bare.index.sessions = [];
+    fetchMock.mockImplementation(async () => respond(bare));
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    await openGroup("Sessions");
+    expect(railText()).toContain("No linked sessions.");
+    expect(pane()).toContain("this is not a clone");
+  });
+
+  it("shows the sessions loading, and the review, while the request is out", async () => {
+    const pending = deferred();
+    sessionsMock.mockReturnValueOnce(pending.promise);
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+
+    expect(container.textContent).toContain(current.summary.title);
+    expect(container.querySelector('[aria-label="Loading sessions"]')).not.toBeNull();
+    expect(search()).toBe("pane=sessions");
+    await openGroup("Commits");
+    expect(railText()).toContain("Loading commits…");
+    await openGroup("Sessions");
+    expect(railText()).toContain("Loading linked sessions…");
+
+    await act(async () => pending.resolve(respond(local)));
+    expect(container.querySelector('[aria-label="Loading sessions"]')).toBeNull();
+    expect(pane()).toContain("Wire the retry budget");
+    expect(search()).toBe("pane=sessions");
+  });
+
+  it("keeps a Commits deep link through the loading state", async () => {
+    const pending = deferred();
+    sessionsMock.mockReturnValueOnce(pending.promise);
+    window.history.replaceState(null, "", `/?pane=commit&commit=${OID_TWO}`);
+    await mount();
+    expect(container.querySelector('[aria-label="Loading commits"]')).not.toBeNull();
+
+    await act(async () => pending.resolve(respond(local)));
+    expect(pane()).toContain("1 of 2 commits");
+    expect(pane()).toContain("Tidy the docs");
+  });
+
+  it("asks again when the document changes, and keeps the last answer meanwhile", async () => {
+    sessionsMock.mockImplementation(async () => respond(local));
+    window.history.replaceState(null, "", "/?pane=sessions");
+    await mount();
+    expect(sessionsMock).toHaveBeenCalledTimes(1);
+
+    const pending = deferred();
+    sessionsMock.mockReturnValueOnce(pending.promise);
+    await act(async () => source().emit("document"));
+    expect(sessionsMock).toHaveBeenCalledTimes(2);
+    expect(pane()).toContain("Wire the retry budget");
+    expect(container.querySelector('[aria-label="Loading sessions"]')).toBeNull();
+
+    await act(async () =>
+      pending.resolve(
+        respond({
+          available: true,
+          sessions: [],
+          commits: [{ oid: OID_TWO, subject: "Only", links: [] }],
+        }),
+      ),
+    );
+    expect(pane()).toContain("No agent session is linked");
+    await openGroup("Commits");
+    expect(rows("Only")).toHaveLength(1);
+  });
+
+  it("does not ask again when the stream merely opens", async () => {
+    await mount();
+    expect(sessionsMock).toHaveBeenCalledTimes(1);
+    await act(async () => source().emit("open"));
+    expect(sessionsMock).toHaveBeenCalledTimes(1);
   });
 });
 

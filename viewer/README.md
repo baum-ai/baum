@@ -92,7 +92,7 @@ left out rather than shown empty or failed:
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
 | `files` | a Files group: the host's tree in the rail and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
-| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
+| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
@@ -107,8 +107,31 @@ shows what prompted it and why ("Prompted by review: …") and the session's
 own words as a quote; both are plain text from the session, never Markdown.
 
 The document's own sessions are listed in the Activity tab; the Sessions
-group and its pane need the host's `sessions` slot. The `baum` binary fills
-it from the session stores on the user's machine.
+group and its pane need the host's `sessions` slot.
+
+### Sessions and Commits
+
+A host need not draw these panes itself. `SessionList`
+(`@baum/viewer/components/session-list`) and `CommitList`
+(`@baum/viewer/components/commit-list`) render the pane for a whole list, or
+for the one item `selected`, from plain view models (`SessionView`,
+`CommitView`): they never fetch and know nothing of where the data came from.
+Their state is `loading`, `failed` or `ready`, and a ready list may carry a
+plain-text `note` shown under the heading. A session shows its agent (name
+and mark), title, branch, times, outcome and the commits it is linked to; a
+commit shows its short id, author, time and the sessions matched to it, with
+the method and confidence of each. Both open each other through
+`actions.select`. `sessionsSlot` and `commitsSlot`
+(`@baum/viewer/components/list-slots`) turn a state into the
+`ReviewListSlot` the `sessions` and `commits` props take, with the rail's
+labels.
+
+The `baum` binary's app (`app/`) fills both from `GET /api/sessions`: the
+linked sessions and commits when the machine has them; otherwise the sessions
+the document recorded (under a note giving the server's reason) and no Commits
+group; and the loading state while the request is out, so a `?pane=sessions`
+or `?pane=commits` link survives. See the "Local session linkage" section of
+`oss/ARCHITECTURE.md` for the contract.
 
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a

@@ -310,7 +310,7 @@ through props and context:
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
 | header slots | no | not used | statistics, generation controls, approval state, a back link |
-| rail groups | no | linked sessions and commits from the local session stores | changed files, linked sessions and commits, each listed in the rail with the host's pane |
+| rail groups | no | Sessions and Commits, from `/api/sessions` (below) | changed files, linked sessions and commits, each listed in the rail with the host's pane |
 | version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
 
 Optional seams default to absent, and the viewer renders the document alone.
@@ -325,6 +325,25 @@ The components and their seams are in [`viewer/`](viewer/README.md). The
 package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
 built output is committed.
+
+`baum view`'s app fills the `sessions` and `commits` slots from
+`GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
+view models and never fetch. The app asks once when the page opens, and again
+on each `document` event (the server recomputes when the head changes), and
+keeps the last answer on screen while it does.
+
+- While the request is out, both groups are in the loading state, so a
+  `?pane=sessions` or `?pane=commits` link survives; the rest of the review
+  does not wait for it. The first request can take seconds.
+- Available: the Sessions group lists the linked sessions, each with the
+  commits it is linked to, and the Commits group lists every commit with the
+  sessions matched to it, the method and the confidence. Each opens the other.
+- Unavailable, or a request that fails (network error, a status other than 200,
+  a body that is not an answer, a field of the wrong type): the Sessions group
+  lists the sessions the document itself recorded, under a note giving the
+  server's `reason` as plain text (a failed request says it could not be
+  read), and the Commits group is left out. Only a failed request with no
+  session in the document shows the group as failed.
 
 ### How `baum view` serves it
 
@@ -462,7 +481,8 @@ commit ids), `ambiguous_commit`, `not_a_clone`, `remote_mismatch`,
 `commits_missing`, `partial_clone`, `too_many_commits` (over 2000) and `error`
 (anything else, including a computation that took more than two minutes; the
 cause is printed to stderr, not sent).
-The viewer then falls back to the document's own sessions.
+The viewer then falls back to the document's own sessions, under a note with
+the reason, and omits the Commits group.
 
 The route is lazy and cached. Nothing is computed at start-up; the first
 request starts the computation, and requests that arrive meanwhile wait for it
