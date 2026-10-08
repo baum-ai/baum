@@ -98,6 +98,14 @@ func TestMCPToolsSharingABuiltinNameAreQualified(t *testing.T) {
 		if use := graph.ToolUses[i]; use.Name != name || use.Verb != session.VerbOther {
 			t.Errorf("tool %d = %q / %q, want %q / other", i, use.Name, use.Verb, name)
 		}
+		var metadata struct {
+			Dynamic map[string]string `json:"dynamic_tool"`
+		}
+		wantTool := []string{"Task", "Agent", "Delete", "save_issue"}[i]
+		if err := json.Unmarshal(graph.ToolUses[i].Metadata, &metadata); err != nil ||
+			metadata.Dynamic["wrapper"] != "CallDynamicTool" || metadata.Dynamic["namespace"] != "user-tracker" || metadata.Dynamic["toolName"] != wantTool {
+			t.Errorf("tool %d metadata = %s", i, graph.ToolUses[i].Metadata)
+		}
 	}
 }
 
