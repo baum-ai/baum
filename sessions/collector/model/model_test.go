@@ -20,8 +20,8 @@ func TestPathWithin(t *testing.T) {
 		{"/repo", "/Repo/sub", false, false},
 		{"/", "/anything", false, true},
 		// Windows: case is ignored, the boundary still holds.
-		{"/c/Users/Dev/Repo", "/C/users/dev/repo/sub", true, true},
-		{"/c/Users/Dev/Repo", "/C/users/dev/repo-other", true, false},
+		{"/c/Projects/Demo", "/C/projects/demo/sub", true, true},
+		{"/c/Projects/Demo", "/C/projects/demo-other", true, false},
 	} {
 		if got := pathWithin(p(tc.root), p(tc.path), tc.fold); got != tc.want {
 			t.Errorf("pathWithin(%q, %q, fold=%v) = %v, want %v", tc.root, tc.path, tc.fold, got, tc.want)
