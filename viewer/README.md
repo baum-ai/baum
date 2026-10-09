@@ -105,9 +105,11 @@ left out rather than shown empty or failed:
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
 | `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
-| `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
+| `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
+| `detailsChecks` | the Details tab's Checks part for the document the tab describes, in place of the document's own checks, and whether it shows a failure (which flags the tab); null content leaves the part out. For checks gathered from elsewhere, such as a stack review's members |
+| `hideActivity` | leaves out the side pane's Activity tab; a reader whose last tab was Activity sees Details |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |

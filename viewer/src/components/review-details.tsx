@@ -34,7 +34,14 @@ import { useScrollingFlag } from "./use-scrolling-flag";
  *  tab: whether CI passed, who wrote it and with what, what it says it
  *  implements, and how big it is. Narrow by design — the pane is 320px at
  *  its smallest — so every part is a list or a two-up grid. */
-export function ReviewDetails({ document }: { document: ReviewDocument }) {
+export function ReviewDetails({
+  document,
+  checks,
+}: {
+  document: ReviewDocument;
+  /** Replaces the Checks part; null leaves it out. */
+  checks?: ReactNode;
+}) {
   const { summary, stats } = document;
   const implemented = implementsGroups(summary.implements);
   const segments = riskSegments(stats.risk_loc);
@@ -42,7 +49,7 @@ export function ReviewDetails({ document }: { document: ReviewDocument }) {
 
   return (
     <div className="space-y-7">
-      <ChecksPart document={document} />
+      {checks === undefined ? <ChecksPart document={document} /> : checks}
 
       <Part label="Author">
         <Facts
@@ -290,7 +297,7 @@ function ObservedLine({ vendors, models }: { vendors: string[]; models: string[]
 
 /** One linked session: its harness, models and outcome, then what it was
  *  about, with its prompts and events a click away. */
-function SessionItem({
+export function SessionItem({
   session,
   onOpen,
 }: {

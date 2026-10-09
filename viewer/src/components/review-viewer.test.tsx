@@ -401,6 +401,65 @@ describe("ReviewViewer for a review of more than one pull request", () => {
   });
 });
 
+describe("ReviewViewer's side pane for a host", () => {
+  it("leaves out the Activity tab, and a stored Activity choice opens Details", async () => {
+    localStorage.setItem("baum.review.conversation-tab", "activity");
+    const container = await render(
+      <Host>
+        <ReviewViewer document={current} hideActivity />
+      </Host>,
+    );
+    expect(container.querySelector("#conversation-tab-activity")).toBeNull();
+    expect(container.querySelector("#conversation-panel-activity")).toBeNull();
+    expect(
+      container.querySelector("#conversation-tab-details")?.getAttribute("aria-selected"),
+    ).toBe("true");
+    act(() => root?.unmount());
+    root = null;
+
+    const single = await render(
+      <Host>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    expect(single.querySelector("#conversation-tab-activity")).not.toBeNull();
+  });
+
+  it("draws the host's checks in Details, or none, in place of the document's", async () => {
+    localStorage.setItem("baum.review.conversation-tab", "details");
+    const container = await render(
+      <Host>
+        <ReviewViewer
+          document={current}
+          detailsChecks={(document) => ({
+            content: <p>Host checks for v{document.review.version}</p>,
+            failing: false,
+          })}
+        />
+      </Host>,
+    );
+    const details = container.querySelector("#conversation-panel-details");
+    expect(details?.textContent).toContain("Host checks for v3");
+    expect(details?.textContent).not.toContain("on this head");
+    act(() => root?.unmount());
+    root = null;
+
+    const hidden = await render(
+      <Host>
+        <ReviewViewer
+          document={current}
+          detailsChecks={() => ({ content: null, failing: false })}
+        />
+      </Host>,
+    );
+    const part = [...hidden.querySelectorAll("#conversation-panel-details *")].some(
+      (element) => element.children.length === 0 && element.textContent === "Checks",
+    );
+    expect(part).toBe(false);
+    expect(hidden.querySelector("#conversation-panel-details")?.textContent).toContain("Author");
+  });
+});
+
 describe("ReviewViewer and its host's renders", () => {
   it("reads nothing again when the host passes a new loader and version list", async () => {
     const calls: number[] = [];
