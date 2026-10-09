@@ -3,12 +3,14 @@
 // each of them caused, and per prompt the agent's messages, model calls and
 // tool calls with their input and output.
 //
-// It decides nothing about secrets: the graph it is given has been redacted
-// already (see locallink.RedactGraph). It bounds the result instead, so a
-// session of many megabytes does not stall the page drawing it: every text is
-// cut to a limit, each prompt lists a limited number of messages and calls,
-// and once the whole transcript reaches its byte budget the prompts after it
-// are left out. Each cut is reported, so the reader is told.
+// It bounds the result, so a session of many megabytes does not stall the
+// page drawing it: every text is cut to a limit, each prompt lists a limited
+// number of messages and calls, and once the encoded transcript reaches its
+// byte budget nothing after it is listed. Each cut is reported, so the reader
+// is told. It reads the graph as recorded and passes each text it keeps,
+// before cutting it, through the caller's Clean (a redactor), so a secret is
+// never cut in two where the redactor can no longer see it; the caller
+// redacts the encoded result as a whole as well.
 //
 // The prompt and ownership rules are the hosted service's: a prompt is a
 // top-level user input of kind prompt or slash command from a human with text
@@ -18,7 +20,9 @@
 package transcript
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/json"
 	"slices"
 	"strings"
 	"time"
@@ -30,8 +34,7 @@ import (
 
 // Limits bound a transcript. Text limits are in bytes, cut at a character.
 type Limits struct {
-	// Bytes is the budget for all the text the transcript carries: prompts,
-	// messages and tool inputs and outputs.
+	// Bytes is the budget for the transcript as Encode writes it.
 	Bytes int
 	// Prompt, Message and Tool cut one prompt, one agent message, and one
 	// tool call's input or output.
@@ -68,7 +71,7 @@ type Transcript struct {
 	// Activity is each listed prompt's activity, by its turn id.
 	Activity map[string]Activity `json:"activity"`
 	// Truncated says some prompts, messages, calls or text were left out or
-	// cut; LimitBytes is the text budget that was applied.
+	// cut; LimitBytes is the budget that was applied to the encoded size.
 	Truncated  bool `json:"truncated"`
 	LimitBytes int  `json:"limit_bytes"`
 }
@@ -84,7 +87,6 @@ type Session struct {
 	StartedAt        *time.Time `json:"started_at"`
 	EndedAt          *time.Time `json:"ended_at"`
 	Outcome          string     `json:"outcome"`
-	UserEmail        string     `json:"user_email"`
 	TurnCount        int        `json:"turn_count"`
 	CommitCount      int        `json:"commit_count"`
 	Confidence       float64    `json:"confidence"`
@@ -145,9 +147,12 @@ func (e *Effects) add(other Effects) {
 
 // Activity is what the agent did for one prompt.
 type Activity struct {
-	Messages           []Message    `json:"messages"`
-	MessagesTruncated  bool         `json:"messages_truncated"`
+	Messages          []Message `json:"messages"`
+	MessagesTruncated bool      `json:"messages_truncated"`
+	// Invocations holds the first model call only, which is all the card
+	// reads; InvocationsTotal counts them.
 	Invocations        []Invocation `json:"invocations"`
+	InvocationsTotal   int          `json:"invocations_total"`
 	TokenUsage         TokenUsage   `json:"token_usage"`
 	ToolCalls          []ToolCall   `json:"tool_calls"`
 	ToolCallsTruncated bool         `json:"tool_calls_truncated"`
@@ -222,7 +227,14 @@ type ToolCall struct {
 // Build shapes g, whose top-level session is the one meta describes, within
 // limits. A graph with no top-level session yields a transcript with no
 // prompts.
-func Build(g *session.Graph, meta Meta, limits Limits) Transcript {
+//
+// clean, when set, is given each text the transcript keeps before it is cut
+// (and cut first to the limit plus cleanMargin), and must return a text of
+// the same length, as a redactor does. An error from it ends the build.
+func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (string, error)) (Transcript, error) {
+	if clean == nil {
+		clean = func(text string) (string, error) { return text, nil }
+	}
 	t := Transcript{
 		Session: Session{
 			RunID: meta.ID, Source: meta.Vendor, GitBranch: meta.Branch, Outcome: string(session.OutcomeUnknown),
@@ -233,7 +245,7 @@ func Build(g *session.Graph, meta Meta, limits Limits) Transcript {
 	}
 	root := g.Root()
 	if root == nil {
-		return t
+		return t, nil
 	}
 	s := &t.Session
 	s.StartedAt, s.EndedAt, s.Outcome = root.StartedAt, root.EndedAt, string(root.Outcome)
@@ -376,7 +388,18 @@ func Build(g *session.Graph, meta Meta, limits Limits) Transcript {
 	}
 
 	s.TurnCount = len(o.ordered)
-	b := budget{left: limits.Bytes}
+	// The budget starts with everything but the prompts and their activity,
+	// and keeps a little back for the flags a cut sets afterwards.
+	b := budget{left: limits.Bytes - encodedSize(t) - budgetReserve}
+	cut := func(full string, limit int) (string, bool, error) {
+		window, _ := clip(full, limit+cleanMargin)
+		cleaned, err := clean(window)
+		if err != nil {
+			return "", false, err
+		}
+		shown, _ := clip(cleaned, limit)
+		return shown, len(full) > limit, nil
+	}
 	for _, input := range o.ordered {
 		text := prompttext.Strip(input.Text)
 		if strings.TrimSpace(text) == "" {
@@ -388,11 +411,13 @@ func Build(g *session.Graph, meta Meta, limits Limits) Transcript {
 			t.Truncated = true
 			continue
 		}
-		shown, cut := clip(text, limits.Prompt)
-		b.take(len(shown))
+		shown, textCut, err := cut(text, limits.Prompt)
+		if err != nil {
+			return Transcript{}, err
+		}
 		prompt := Prompt{
 			TurnID: input.ID, Ordinal: input.Ordinal, StartedAt: input.TriggeredAt,
-			Text: shown, TextLength: utf8.RuneCountInString(text), Truncated: cut,
+			Text: shown, TextLength: utf8.RuneCountInString(text), Truncated: textCut,
 		}
 		if s.HasInnerTrace {
 			e := Effects{}
@@ -406,63 +431,119 @@ func Build(g *session.Graph, meta Meta, limits Limits) Transcript {
 			turnUsage = *found
 		}
 		prompt.Tokens, prompt.EstimatedTokens = turnUsage.Tokens, turnUsage.EstimatedTokens
-		s.Prompts = append(s.Prompts, prompt)
-		t.Truncated = t.Truncated || cut
 
 		activity := Activity{
 			Messages: []Message{}, Invocations: []Invocation{}, ToolCalls: []ToolCall{}, TokenUsage: turnUsage,
 		}
+		turnCalls := calls[input.ID]
+		activity.InvocationsTotal = len(turnCalls)
+		// A prompt and its empty activity go in together, or neither does.
+		if !b.fits(encodedSize(prompt) + 1 + encodedSize(input.ID) + 1 + encodedSize(activity) + 1) {
+			s.PromptsTruncated = true
+			t.Truncated = true
+			continue
+		}
+		s.Prompts = append(s.Prompts, prompt)
+		t.Truncated = t.Truncated || textCut
+
+		// The card only asks whether a prompt made model calls; the first
+		// stands for them, and InvocationsTotal and the token usage count them.
+		sortByTime(turnCalls, func(c session.ModelInvocation) (*time.Time, string) { return c.StartedAt, c.ID })
+		if len(turnCalls) > 0 {
+			call := turnCalls[0]
+			first := Invocation{
+				Model: deref(call.Model), InputTokens: call.InputTokens, OutputTokens: call.OutputTokens,
+				CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens, StartedAt: call.StartedAt,
+			}
+			if b.fits(encodedSize(first) + 1) {
+				activity.Invocations = append(activity.Invocations, first)
+			} else {
+				t.Truncated = true
+			}
+		}
 		turnMessages := messages[input.ID]
 		sortByTime(turnMessages, func(m session.AssistantMessage) (*time.Time, string) { return m.Timestamp, m.ID })
 		for i, message := range turnMessages {
-			full := deref(message.Text)
-			text, cut := clip(full, limits.Message)
-			if i >= limits.Messages || !b.fits(len(text)) {
+			if i >= limits.Messages {
 				activity.MessagesTruncated = true
 				break
 			}
-			b.take(len(text))
-			activity.Messages = append(activity.Messages, Message{
-				Text: text, TextLength: utf8.RuneCountInString(full), Truncated: cut,
+			full := deref(message.Text)
+			text, textCut, err := cut(full, limits.Message)
+			if err != nil {
+				return Transcript{}, err
+			}
+			item := Message{
+				Text: text, TextLength: utf8.RuneCountInString(full), Truncated: textCut,
 				Timestamp: message.Timestamp, Model: models[message.ModelInvocationID],
-			})
-			t.Truncated = t.Truncated || cut
-		}
-		turnCalls := calls[input.ID]
-		sortByTime(turnCalls, func(c session.ModelInvocation) (*time.Time, string) { return c.StartedAt, c.ID })
-		for i, call := range turnCalls {
-			if i >= limits.ToolCalls {
+			}
+			if !b.fits(encodedSize(item) + 1) {
+				activity.MessagesTruncated = true
 				break
 			}
-			activity.Invocations = append(activity.Invocations, Invocation{
-				Model: deref(call.Model), InputTokens: call.InputTokens, OutputTokens: call.OutputTokens,
-				CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens, StartedAt: call.StartedAt,
-			})
+			activity.Messages = append(activity.Messages, item)
+			t.Truncated = t.Truncated || textCut
 		}
 		turnUses := uses[input.ID]
 		sortByTime(turnUses, func(u session.ToolUse) (*time.Time, string) { return u.Timestamp, u.ID })
 		for i, use := range turnUses {
-			call := toolCall(use, results, limits.Tool)
-			size := len(call.Input)
-			if call.Output != nil {
-				size += len(*call.Output)
-			}
-			if i >= limits.ToolCalls || !b.fits(size) {
+			if i >= limits.ToolCalls {
 				activity.ToolCallsTruncated = true
 				break
 			}
-			b.take(size)
+			call, err := toolCall(use, results, limits.Tool, cut)
+			if err != nil {
+				return Transcript{}, err
+			}
+			if !b.fits(encodedSize(call) + 1) {
+				activity.ToolCallsTruncated = true
+				break
+			}
 			activity.ToolCalls = append(activity.ToolCalls, call)
 			t.Truncated = t.Truncated || call.InputTruncated || call.OutputTruncated
 		}
 		t.Truncated = t.Truncated || activity.MessagesTruncated || activity.ToolCallsTruncated
 		t.Activity[input.ID] = activity
 	}
-	return t
+	return t, nil
 }
 
-func toolCall(use session.ToolUse, results map[string]session.ToolResult, limit int) ToolCall {
-	input, inputCut := clip(string(use.Input), limit)
+// cleanMargin is how far past a text's limit Clean reads, so a secret that
+// starts before the cut and runs over it is still recognised and masked.
+const cleanMargin = 8 << 10
+
+// budgetReserve absorbs what can change after the budget is spent: the
+// truncation flags, and a redaction that rewrites a string.
+const budgetReserve = 1 << 10
+
+// Encode writes t as JSON without HTML escaping, the form Bytes bounds.
+func Encode(t Transcript) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(t); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// encodedSize is the length of v as Encode writes it, without its newline.
+func encodedSize(v any) int {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return 0
+	}
+	return buf.Len() - 1
+}
+
+func toolCall(use session.ToolUse, results map[string]session.ToolResult, limit int,
+	cut func(string, int) (string, bool, error)) (ToolCall, error) {
+	input, inputCut, err := cut(string(use.Input), limit)
+	if err != nil {
+		return ToolCall{}, err
+	}
 	call := ToolCall{
 		ID: use.ID, Name: use.Name, Verb: string(use.Verb), Input: input, InputTruncated: inputCut,
 		Status: string(use.Status), Timestamp: use.Timestamp,
@@ -476,11 +557,14 @@ func toolCall(use session.ToolUse, results map[string]session.ToolResult, limit 
 			output = deref(result.ErrorText)
 		}
 		if output != "" {
-			shown, cut := clip(output, limit)
-			call.Output, call.OutputTruncated = &shown, cut
+			shown, outputCut, err := cut(output, limit)
+			if err != nil {
+				return ToolCall{}, err
+			}
+			call.Output, call.OutputTruncated = &shown, outputCut
 		}
 	}
-	return call
+	return call, nil
 }
 
 // ownership answers which top-level input a piece of activity belongs to.
@@ -538,21 +622,22 @@ func (o *ownership) key(inputID string) string {
 	return inputID
 }
 
+// budget is what is left of Limits.Bytes.
 type budget struct{ left int }
 
 func (b *budget) spent() bool { return b.left <= 0 }
 
-// fits reports whether n bytes fit; once something does not, nothing
-// more does, so what is shown is the start of the session and never a
-// selection from it.
+// fits takes n bytes when they fit. Once something does not, nothing more
+// does, so what is shown is the start of the session and never a selection
+// from it.
 func (b *budget) fits(n int) bool {
 	if n > b.left {
 		b.left = 0
+		return false
 	}
-	return b.left > 0
+	b.left -= n
+	return true
 }
-
-func (b *budget) take(n int) { b.left -= n }
 
 // clip cuts text to at most limit bytes, at a character boundary.
 func clip(text string, limit int) (string, bool) {

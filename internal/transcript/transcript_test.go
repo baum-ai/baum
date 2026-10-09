@@ -2,9 +2,13 @@ package transcript
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
@@ -69,10 +73,10 @@ func graph() *session.Graph {
 }
 
 func TestBuildListsThePromptsWithTheirActivity(t *testing.T) {
-	got := Build(graph(), Meta{ID: "root", Vendor: "claude_code", Commits: 2, Confidence: 0.9}, DefaultLimits)
+	got := build(t, graph(), Meta{ID: "root", Vendor: "claude_code", Commits: 2, Confidence: 0.9}, DefaultLimits)
 	s := got.Session
 	if s.RunID != "root" || s.Source != "claude_code" || s.Title != "Fix the parser" || s.GitBranch != "fix/parser" ||
-		s.Outcome != "committed" || s.CommitCount != 2 || s.Confidence != 0.9 || s.UserEmail != "" || !s.HasInnerTrace {
+		s.Outcome != "committed" || s.CommitCount != 2 || s.Confidence != 0.9 || !s.HasInnerTrace {
 		t.Errorf("session = %+v", s)
 	}
 	if len(s.Prompts) != 2 || s.Prompts[0].TurnID != "p1" || s.Prompts[1].TurnID != "p2" || s.TurnCount != 3 || s.PromptsTotal != 2 {
@@ -102,7 +106,7 @@ func TestBuildListsThePromptsWithTheirActivity(t *testing.T) {
 	if len(activity.Messages) != 2 || activity.Messages[0].Text != "Reading the parser." || activity.Messages[0].Model != "claude-opus" {
 		t.Errorf("messages = %+v", activity.Messages)
 	}
-	if len(activity.Invocations) != 2 || activity.TokenUsage.APICalls != 2 {
+	if len(activity.Invocations) != 1 || activity.InvocationsTotal != 2 || activity.TokenUsage.APICalls != 2 {
 		t.Errorf("invocations = %+v, usage %+v", activity.Invocations, activity.TokenUsage)
 	}
 	var names []string
@@ -129,7 +133,7 @@ func TestBuildListsThePromptsWithTheirActivity(t *testing.T) {
 func TestBuildReportsUsageForTheWholeSessionOnly(t *testing.T) {
 	g := graph()
 	g.ModelInvocations = nil
-	got := Build(g, Meta{ID: "root"}, DefaultLimits)
+	got := build(t, g, Meta{ID: "root"}, DefaultLimits)
 	if got.Session.Tokens != 7 || got.Session.CostPerPrompt {
 		t.Errorf("tokens %d, per prompt %v", got.Session.Tokens, got.Session.CostPerPrompt)
 	}
@@ -140,20 +144,38 @@ func TestBuildWithoutAnInnerTraceLeavesTheEffectsUnknown(t *testing.T) {
 		Sessions:   []session.Session{{ID: "root", Outcome: session.OutcomeUnknown}},
 		UserInputs: []session.UserInput{{ID: "p", SessionID: "root", Text: "hello", Kind: session.KindPrompt, Origin: session.OriginHuman}},
 	}
-	got := Build(g, Meta{ID: "root"}, DefaultLimits)
+	got := build(t, g, Meta{ID: "root"}, DefaultLimits)
 	if got.Session.HasInnerTrace || got.Session.Totals != nil || got.Session.Prompts[0].Effects != nil {
 		t.Errorf("session = %+v", got.Session)
 	}
 }
 
-func TestBuildBoundsTheTranscript(t *testing.T) {
+func build(t *testing.T, g *session.Graph, meta Meta, limits Limits) Transcript {
+	t.Helper()
+	got, err := Build(g, meta, limits, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func encodedLen(t *testing.T, tr Transcript) int {
+	t.Helper()
+	body, err := Encode(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(body)
+}
+
+func TestBuildCutsLongTextsAndLongLists(t *testing.T) {
 	g := graph()
 	g.UserInputs[1].Text = strings.Repeat("é", 40) // 80 bytes
-	limits := Limits{Bytes: 100, Prompt: 50, Message: 4, Tool: 10, Messages: 1, ToolCalls: 2}
-	got := Build(g, Meta{ID: "root"}, limits)
+	limits := Limits{Bytes: 1 << 20, Prompt: 50, Message: 4, Tool: 10, Messages: 1, ToolCalls: 2}
+	got := build(t, g, Meta{ID: "root"}, limits)
 	s := got.Session
-	if !got.Truncated || got.LimitBytes != 100 {
-		t.Errorf("truncated %v, limit %d", got.Truncated, got.LimitBytes)
+	if !got.Truncated || got.LimitBytes != 1<<20 || len(s.Prompts) != 2 || s.PromptsTruncated {
+		t.Errorf("truncated %v, limit %d, prompts %d", got.Truncated, got.LimitBytes, len(s.Prompts))
 	}
 	first := s.Prompts[0]
 	if !first.Truncated || first.TextLength != 40 || first.Text != strings.Repeat("é", 25) {
@@ -165,17 +187,58 @@ func TestBuildBoundsTheTranscript(t *testing.T) {
 		t.Errorf("messages = %+v", activity.Messages)
 	}
 	if len(activity.ToolCalls) != 2 || !activity.ToolCallsTruncated || !activity.ToolCalls[0].InputTruncated ||
-		len(activity.ToolCalls[0].Input) != 10 {
+		len(activity.ToolCalls[0].Input) != 10 || !activity.ToolCalls[0].OutputTruncated || *activity.ToolCalls[0].Output != "package pa" {
 		t.Errorf("tool calls = %+v", activity.ToolCalls)
 	}
-	// 50 + 4 + 10+10 + 10 bytes leave 16: the second prompt still starts.
-	if len(s.Prompts) != 2 || s.PromptsTruncated {
-		t.Fatalf("prompts = %d, truncated %v", len(s.Prompts), s.PromptsTruncated)
-	}
+}
 
-	limits.Bytes = 60
-	got = Build(g, Meta{ID: "root"}, limits)
-	if len(got.Session.Prompts) != 1 || !got.Session.PromptsTruncated || got.Session.PromptsTotal != 2 {
+// manyCalls is one prompt with n tool calls, each printing size bytes.
+func manyCalls(n, size int) *session.Graph {
+	g := &session.Graph{
+		Sessions:   []session.Session{{ID: "root"}},
+		UserInputs: []session.UserInput{{ID: "p1", SessionID: "root", Ordinal: 1, Text: "go", Kind: session.KindPrompt, Origin: session.OriginHuman}},
+	}
+	for i := range n {
+		id := fmt.Sprintf("call-%02d", i)
+		g.ToolUses = append(g.ToolUses, session.ToolUse{ID: id, SessionID: "root", UserInputID: "p1", Name: "Bash",
+			Verb: session.VerbExecute, Input: json.RawMessage(`{}`), Status: session.StatusOK, Timestamp: at(i)})
+		g.ToolResults = append(g.ToolResults, session.ToolResult{ID: "r" + id, ToolUseID: id, SessionID: "root",
+			UserInputID: "p1", Status: session.StatusOK, OutputText: ptr(strings.Repeat("o", size))})
+	}
+	return g
+}
+
+// The budget cuts within a prompt: the calls that fit are listed in order,
+// and the rest are reported as left out.
+func TestBuildStopsAtTheBudgetWithinAPrompt(t *testing.T) {
+	limits := DefaultLimits
+	whole := build(t, manyCalls(5, 1000), Meta{ID: "root"}, limits)
+	if whole.Truncated || len(whole.Activity["p1"].ToolCalls) != 5 {
+		t.Fatalf("unbounded: truncated %v", whole.Truncated)
+	}
+	limits.Bytes = encodedLen(t, whole) + budgetReserve - 1500
+	got := build(t, manyCalls(5, 1000), Meta{ID: "root"}, limits)
+	activity := got.Activity["p1"]
+	if len(activity.ToolCalls) != 3 || !activity.ToolCallsTruncated || !got.Truncated || got.Session.PromptsTruncated {
+		t.Errorf("calls %d, calls cut %v, truncated %v", len(activity.ToolCalls), activity.ToolCallsTruncated, got.Truncated)
+	}
+	if activity.ToolCalls[2].ID != "call-02" {
+		t.Errorf("calls = %+v", activity.ToolCalls)
+	}
+	if n := encodedLen(t, got); n > limits.Bytes {
+		t.Errorf("encoded %d bytes over a budget of %d", n, limits.Bytes)
+	}
+}
+
+func TestBuildLeavesOutThePromptsPastTheBudget(t *testing.T) {
+	g := graph()
+	limits := DefaultLimits
+	whole := build(t, g, Meta{ID: "root"}, limits)
+	// Room for the first prompt, not the second (some 700 bytes with its
+	// activity).
+	limits.Bytes = encodedLen(t, whole) + budgetReserve - 300
+	got := build(t, g, Meta{ID: "root"}, limits)
+	if len(got.Session.Prompts) != 1 || !got.Session.PromptsTruncated || got.Session.PromptsTotal != 2 || !got.Truncated {
 		t.Errorf("prompts = %d of %d, truncated %v", len(got.Session.Prompts), got.Session.PromptsTotal, got.Session.PromptsTruncated)
 	}
 	if _, ok := got.Activity["p2"]; ok {
@@ -183,8 +246,97 @@ func TestBuildBoundsTheTranscript(t *testing.T) {
 	}
 }
 
+// Large synthetic sessions stay within the budget as encoded, angle
+// brackets and ampersands included, and say they were cut.
+func TestBuildKeepsTheEncodedSizeWithinTheBudget(t *testing.T) {
+	for _, c := range []struct {
+		prompts, calls int
+		out            string
+	}{
+		{300, 200, strings.Repeat("x", 60)},
+		{300, 200, strings.Repeat("<&>", 20)},
+		{300, 200, ""},
+		{20, 1000, strings.Repeat("<", 4000)},
+	} {
+		g := bigGraph(c.prompts, c.calls, c.out)
+		got := build(t, g, Meta{ID: "root"}, DefaultLimits)
+		if n := encodedLen(t, got); n > DefaultLimits.Bytes || !got.Truncated {
+			t.Errorf("%d prompts of %d calls of %d bytes: %d bytes encoded, truncated %v",
+				c.prompts, c.calls, len(c.out), n, got.Truncated)
+		}
+	}
+}
+
+func bigGraph(prompts, calls int, out string) *session.Graph {
+	g := &session.Graph{Sessions: []session.Session{{ID: "root"}}}
+	ts := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	model := "claude-opus"
+	for p := range prompts {
+		in := fmt.Sprintf("p%d", p)
+		g.UserInputs = append(g.UserInputs, session.UserInput{ID: in, SessionID: "root", Ordinal: p + 1, Text: "do it",
+			Kind: session.KindPrompt, Origin: session.OriginHuman})
+		for c := range calls {
+			id := fmt.Sprintf("toolu_01ABCDEFGHIJKLMNOPQRSTUV%d_%d", p, c)
+			when := ts.Add(time.Duration(p*calls+c) * time.Second)
+			g.ModelInvocations = append(g.ModelInvocations, session.ModelInvocation{ID: "m" + id, SessionID: "root",
+				UserInputID: in, Model: &model, InputTokens: 1, StartedAt: &when})
+			g.ToolUses = append(g.ToolUses, session.ToolUse{ID: id, SessionID: "root", UserInputID: in, Name: "Bash",
+				Verb: session.VerbExecute, Input: json.RawMessage(`{"command":"a && b <c>"}`), Status: session.StatusOK, Timestamp: &when})
+			output := out
+			g.ToolResults = append(g.ToolResults, session.ToolResult{ID: "r" + id, ToolUseID: id, SessionID: "root",
+				UserInputID: in, Status: session.StatusOK, OutputText: &output})
+		}
+	}
+	return g
+}
+
+// Clean reads past the cut, so a secret the cut runs through is masked in
+// the part that is shown.
+func TestBuildCleansTextsBeforeCuttingThem(t *testing.T) {
+	g := graph()
+	g.UserInputs[1].Text = strings.Repeat("a", 45) + "SECRETVALUE"
+	limits := DefaultLimits
+	limits.Prompt = 50
+	var seen []string
+	got, err := Build(g, Meta{ID: "root"}, limits, func(text string) (string, error) {
+		seen = append(seen, text)
+		return strings.ReplaceAll(text, "SECRETVALUE", "XXXXXXXXXXX"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Prompts[0].Text != strings.Repeat("a", 45)+"XXXXX" || !slices.Contains(seen, "package parse") {
+		t.Errorf("prompt = %q, cleaned %q", got.Session.Prompts[0].Text, seen)
+	}
+	if _, err := Build(g, Meta{ID: "root"}, limits, func(string) (string, error) { return "", errors.New("no") }); err == nil {
+		t.Error("an error from clean was dropped")
+	}
+}
+
+func TestClipCutsAtACharacter(t *testing.T) {
+	for _, c := range []struct {
+		text  string
+		limit int
+		want  string
+	}{
+		{"ab€", 2, "ab"},
+		{"ab€", 3, "ab"},
+		{"ab€", 4, "ab"},
+		{"ab€", 5, "ab€"},
+		{"a😀b", 2, "a"},
+		{"a😀b", 4, "a"},
+		{"a😀b", 5, "a😀"},
+		{"é", 1, ""},
+	} {
+		got, cut := clip(c.text, c.limit)
+		if got != c.want || cut != (len(c.text) > c.limit) || !utf8.ValidString(got) {
+			t.Errorf("clip(%q, %d) = %q, %v; want %q", c.text, c.limit, got, cut, c.want)
+		}
+	}
+}
+
 func TestBuildOfAnEmptyGraph(t *testing.T) {
-	got := Build(&session.Graph{}, Meta{ID: "x", Vendor: "codex"}, DefaultLimits)
+	got := build(t, &session.Graph{}, Meta{ID: "x", Vendor: "codex"}, DefaultLimits)
 	encoded, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)

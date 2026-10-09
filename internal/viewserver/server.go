@@ -76,7 +76,8 @@ type Options struct {
 	// repository, head or base changes. Unset, /api/sessions is unavailable.
 	Sessions SessionsFunc
 	// Home is the user's home directory, written as ~ in the transcripts
-	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir.
+	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir, else the
+	// account's home directory.
 	Home string
 	// PollInterval is how often a watched file is checked; it defaults to
 	// 500ms. PingInterval is how often an idle event stream sends a comment
@@ -121,7 +122,7 @@ type Server struct {
 	engineOnce sync.Once
 	engine     *redact.Engine
 	engineErr  error
-	home       string
+	homes      []homeForm
 	// life ends when the server stops, and bounds sessions computations,
 	// which outlive the request that started them.
 	life       context.Context
@@ -156,10 +157,12 @@ func New(opts Options) (*Server, error) {
 	if opts.PingInterval <= 0 {
 		opts.PingInterval = defaultPingInterval
 	}
-	s := &Server{opts: opts, assets: opts.Assets, done: make(chan struct{}), home: opts.Home}
-	if s.home == "" {
-		s.home, _ = os.UserHomeDir()
+	s := &Server{opts: opts, assets: opts.Assets, done: make(chan struct{})}
+	home := opts.Home
+	if home == "" {
+		home = userHome()
 	}
+	s.homes = homeForms(home)
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	if s.assets == nil {
 		s.assets = viewer.Assets()

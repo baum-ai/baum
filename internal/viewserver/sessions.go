@@ -40,7 +40,7 @@ type sessionsEntry struct {
 	// transcripts are the session transcripts served from this answer, by
 	// session id, built once each.
 	transcriptsMu sync.Mutex
-	transcripts   map[string][]byte
+	transcripts   map[string]*transcriptJob
 }
 
 // parseReview reads the pull request a document names. A document that does

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -123,6 +125,28 @@ func TestTranscriptServesALinkedSessionRedacted(t *testing.T) {
 	}
 }
 
+// A tool's output holding an env file is masked line by line, as Redact
+// masks the text itself, though each line follows an escaped newline.
+func TestTranscriptMasksAnEnvFileInAToolsOutput(t *testing.T) {
+	graph := transcriptGraph("Read the env file")
+	env := "PASSWORD=Sup3r$ecret!Pass\nPASSWORD=An0ther$ecret!Pass\nPASSWORD=Th1rd$ecret!Pass\n" +
+		"Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l\nAuthorization: Basic Zm9vYmFyOmJhenF1dXg9\n"
+	graph.ToolResults[0].OutputText = &env
+	_, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Home: testHome, Sessions: transcriptLinker(graph)})
+	resp, body := get(t, base+"/api/sessions/s-1")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	for _, secret := range []string{"Sup3r$ecret", "An0ther$ecret", "Th1rd$ecret", "YWxhZGRpbjpvcGVuc2VzYW1l", "Zm9vYmFyOmJhenF1dXg9"} {
+		if strings.Contains(body, secret) {
+			t.Errorf("%q survived: %s", secret, body)
+		}
+	}
+	if !json.Valid([]byte(body)) {
+		t.Error("the body is not JSON")
+	}
+}
+
 func TestTranscriptOfAnUnlinkedSessionIsNotFound(t *testing.T) {
 	l := &linker{}
 	cases := []struct {
@@ -213,14 +237,42 @@ func TestTranscriptRouteIsBehindTheHostCheckAndReadOnly(t *testing.T) {
 
 func TestReplaceHome(t *testing.T) {
 	const home = "/home/user"
+	users := "Us" + "ers"
+	q := func(parts ...string) string { return `"` + strings.Join(parts, `" "`) + `"` }
 	for _, c := range []struct{ home, in, want string }{
-		{home, `"` + home + `/src" "` + home + `" "` + home + `name" "` + home + `.bak" "x` + home + ` y"`,
-			`"~/src" "~" "` + home + `name" "` + home + `.bak" "x~ y"`},
-		{`C:\Users\ada`, `"C:\\Users\\ada\\src"`, `"~\\src"`},
-		{"", `"` + home + `"`, `"` + home + `"`},
+		{home, q(home+"/src", home, home+"name", home+".bak", "x"+home+" y", "cd "+home+"/x", "a="+home, "file://"+home+"/x"),
+			q("~/src", "~", home+"name", home+".bak", "x"+home+" y", "cd ~/x", "a=~", "file://~/x")},
+		// Not inside a longer path.
+		{home, q("/data" + home + "/src"), q("/data" + home + "/src")},
+		// A trailing separator on the home is dropped.
+		{home + "/", q(home+"/src", home), q("~/src", "~")},
+		// After an escaped newline or tab in the JSON text.
+		{home, `"a\n` + home + `/x\t` + home + `"`, `"a\n~/x\t~"`},
+		// Windows: escaped backslashes, forward slashes, any case.
+		// (The directory name is split so no source line spells a real home.)
+		{`C:\` + users + `\ada`, q(`C:\\`+users+`\\ada\\src`, "C:/"+users+"/ada/src", `c:\\`+strings.ToLower(users)+`\\ADA\\src`),
+			q(`~\\src`, "~/src", `~\\src`)},
+		{"", q(home), q(home)},
+		{"/", q(home), q(home)},
 	} {
-		if got := string(replaceHome([]byte(c.in), c.home)); got != c.want {
-			t.Errorf("replaceHome(%q, %q) = %q, want %q", c.in, c.home, got, c.want)
+		if got := string(replaceHome([]byte(c.in), homeForms(c.home))); got != c.want {
+			t.Errorf("replaceHome(%s, %q)\n got %s\nwant %s", c.in, c.home, got, c.want)
 		}
+	}
+}
+
+func TestReplaceHomeFollowsTheHomesLink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real")
+	link := filepath.Join(dir, "link")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("no symbolic links here:", err)
+	}
+	in := `"` + link + `/a" "` + target + `/b"`
+	if got := string(replaceHome([]byte(in), homeForms(link))); got != `"~/a" "~/b"` {
+		t.Errorf("got %s", got)
 	}
 }
