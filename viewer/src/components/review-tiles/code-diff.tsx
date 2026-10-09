@@ -1,7 +1,10 @@
+import { useId, useState } from "react";
+
 import { useHighlightedHunks } from "../../highlight";
-import { cn } from "../classnames";
+import { cn, FOCUS_RING } from "../classnames";
 import { CodeFileLink } from "../code-file-link";
 import { HighlightedText } from "../highlighted-text";
+import { ChevronDownIcon } from "../icons";
 
 export type CodeDiffLine = {
   kind: "context" | "add" | "remove";
@@ -89,7 +92,8 @@ function CodeDiffTable({ file }: { file: CodeDiffFile }) {
 }
 
 /** A compact GitHub-style unified diff for evidence that benefits from reading in place.
- *  `bare` leaves off the heading and totals, for a caller that already names them. */
+ *  `bare` leaves off the heading and totals, for a caller that already names them.
+ *  Every file opens unfolded, and each folds on its own from its header. */
 export function CodeDiff({
   files,
   bare = false,
@@ -99,6 +103,8 @@ export function CodeDiff({
   bare?: boolean;
   className?: string;
 }) {
+  const id = useId();
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   if (files.length === 0) return null;
   const additions = files.reduce((total, file) => total + file.additions, 0);
   const deletions = files.reduce((total, file) => total + file.deletions, 0);
@@ -117,29 +123,71 @@ export function CodeDiff({
         </span>
       </div>
       <div className="space-y-3">
-        {files.map((file) => (
-          <article
-            key={`${file.sourceIndex}:${file.path}`}
-            aria-label={`${file.path} diff`}
-            className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
-          >
-            <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-(--border-default) bg-(--surface-wash) px-3 py-2">
-              <CodeFileLink
-                path={file.path}
-                line={file.hunks[0]?.lines.find((line) => line.newLine)?.newLine}
-                href={file.href}
-                className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-(--text-link) hover:underline"
+        {files.map((file, index) => {
+          const key = `${file.sourceIndex}:${file.path}`;
+          const expanded = !folded.has(key);
+          const body = `${id}-${index}`;
+          const toggle = () =>
+            setFolded((current) => {
+              const next = new Set(current);
+              if (expanded) next.add(key);
+              else next.delete(key);
+              return next;
+            });
+          return (
+            <article
+              key={key}
+              aria-label={`${file.path} diff`}
+              className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+            >
+              <header
+                className={cn(
+                  "flex min-w-0 flex-wrap items-center justify-between gap-2 bg-(--surface-wash) px-3 py-2",
+                  expanded && "border-b border-(--border-default)",
+                )}
               >
-                <span className="truncate">{file.path}</span>
-              </CodeFileLink>
-              <span className="flex-none font-mono text-xs">
-                <span className="text-(--status-positive)">+{file.additions}</span>{" "}
-                <span className="text-(--status-critical)">−{file.deletions}</span>
-              </span>
-            </header>
-            <CodeDiffTable file={file} />
-          </article>
-        ))}
+                {/* The path stays a link to the file, so folding is its own
+                    control beside it. */}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-label={`${expanded ? "Fold" : "Unfold"} ${file.path}`}
+                    aria-expanded={expanded}
+                    aria-controls={body}
+                    onClick={toggle}
+                    className={cn(
+                      "flex-none cursor-pointer rounded-(--radius-sm) p-0.5 text-(--text-tertiary) hover:text-(--text-secondary)",
+                      FOCUS_RING,
+                    )}
+                  >
+                    <ChevronDownIcon
+                      size={12}
+                      className={cn(
+                        "transition-transform motion-reduce:transition-none",
+                        !expanded && "-rotate-90",
+                      )}
+                    />
+                  </button>
+                  <CodeFileLink
+                    path={file.path}
+                    line={file.hunks[0]?.lines.find((line) => line.newLine)?.newLine}
+                    href={file.href}
+                    className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-(--text-link) hover:underline"
+                  >
+                    <span className="truncate">{file.path}</span>
+                  </CodeFileLink>
+                </span>
+                <span className="flex-none font-mono text-xs">
+                  <span className="text-(--status-positive)">+{file.additions}</span>{" "}
+                  <span className="text-(--status-critical)">−{file.deletions}</span>
+                </span>
+              </header>
+              <div id={body} hidden={!expanded}>
+                <CodeDiffTable file={file} />
+              </div>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
