@@ -650,16 +650,20 @@ prompt's (`unattributed`).
 It is bounded so a session of many megabytes does not stall the page
 (`transcript.DefaultLimits`): a prompt's text is cut at 32 KiB, an agent
 message at 16 KiB and a tool call's input and output at 4 KiB each (at a
-character, with the full length or a `*_truncated` flag beside it); a prompt
+character, with the full length or a `*_truncated` flag beside it); the
+session's own title, branch, working directory, agent and model names are cut
+at 1 KiB each, and at most 50 model names are listed; a prompt
 lists at most 100 messages and 200 tool calls, and only its first model call
 (`invocations`, which the card reads only to tell whether there were any;
 `invocations_total` and `token_usage.api_calls` count them). The body as
 encoded (JSON without HTML escaping) is held to 4 MiB, counted item by item:
 once an item does not fit, nothing after it is listed, and the prompts left
 out are reported (`prompts_truncated`, with `prompts_total`). The redaction
-and home replacement after it keep each string's length or shorten it (a mask
-that splits a multi-byte character can add two bytes, written as U+FFFD), and
-1 KiB of the 4 MiB is held back for that and for the truncation flags. Any
+and home replacement after it keep each string's length or shorten it, except
+that a mask splitting a multi-byte character leaves invalid bytes, each
+written as U+FFFD in three bytes (two more per byte, up to four more for a
+split three-byte character); 1 KiB of the 4 MiB is held back for that and for
+the truncation flags. Any
 cut sets `truncated`. The body is built once per session and answer and kept
 with it.
 

@@ -49,8 +49,9 @@ output, which can include file contents and command output. The transcript is
 redacted with the engine `baum sessions --dump` uses, so secrets and e-mail
 addresses are masked as described above, and your home directory is written as
 `~` where it starts a path; paths outside it (a clone elsewhere, a Windows
-home under `/mnt/c` in WSL) are shown as recorded, and nothing else is
-removed. Only sessions linked to the pull request are served.
+home under `/mnt/c` in WSL) are shown as recorded, as are home paths glued
+to other text (`-I/home/…/include`, a path after an escaped backslash), and
+nothing else is removed. Only sessions linked to the pull request are served.
 
 The server has no login. It refuses requests whose `Host` is not its own
 address, which stops other websites in your browser from reading it, but any
