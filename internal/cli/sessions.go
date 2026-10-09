@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,7 +108,7 @@ func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	}
 
 	if opts.dump != "" {
-		return dumpSession(cmd.OutOrStdout(), engine, found, opts.dump)
+		return dumpSession(cmd.Context(), cmd.OutOrStdout(), engine, found, opts.dump)
 	}
 	rows := make([]sessionRow, 0, len(found))
 	for _, s := range found {
@@ -127,20 +128,16 @@ func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	return writeSessionTable(cmd.OutOrStdout(), rows)
 }
 
-func dumpSession(w io.Writer, engine *redact.Engine, found []sessions.Session, id string) error {
+func dumpSession(ctx context.Context, w io.Writer, engine *redact.Engine, found []sessions.Session, id string) error {
 	for _, s := range found {
 		if s.ID != id {
 			continue
 		}
-		encoded, err := json.MarshalIndent(s.Graph, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encoding session graph: %w", err)
-		}
-		redacted, _, err := engine.Redact(string(encoded))
+		redacted, err := locallink.RedactGraph(ctx, engine, s.Graph, true)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(w, redacted)
+		_, err = fmt.Fprintln(w, string(redacted))
 		return err
 	}
 	return fmt.Errorf("no session %s recorded for this repository", id)
