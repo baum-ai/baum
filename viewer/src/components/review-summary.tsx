@@ -1,6 +1,7 @@
 import pluralize from "pluralize";
 import { useState } from "react";
 
+import { harnessName } from "../agent-names";
 import {
   behaviourChanges,
   type BehaviourSection,
@@ -14,7 +15,6 @@ import {
   type TriageRisk,
   triageRisks,
 } from "../review-document";
-import { harnessName } from "../agent-names";
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
@@ -55,6 +55,13 @@ export function ReviewSummary({
   const { summary } = document;
   const intent = summaryIntent(document);
   const prompts = intentPrompts(document, intent);
+  // Numbered as the Activity tab lists them, so two sessions of one agent
+  // read apart.
+  const sessionLabel = (prompt: (typeof prompts)[number]) => {
+    const position = document.index.sessions.findIndex((each) => each.id === prompt.session);
+    const agent = harnessName(prompt.vendor);
+    return position < 0 ? agent : `${agent} session ${position + 1}`;
+  };
   const triage = triageRisks(document);
   const behaviour = behaviourChanges(document);
 
@@ -133,7 +140,7 @@ export function ReviewSummary({
                     className="mt-2"
                     prompts={prompts.map((prompt) => ({
                       ...prompt,
-                      session: { id: prompt.session, label: harnessName(prompt.vendor) },
+                      session: { id: prompt.session, label: sessionLabel(prompt) },
                     }))}
                   />
                 </details>

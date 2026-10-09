@@ -50,7 +50,7 @@ describe("quoted prompts", () => {
     const html = renderToStaticMarkup(
       <QuotedPrompts prompts={[{ id: "p2", index: 2, text: null }]} />,
     );
-    expect(html).toContain("Prompt 2 is not carried in the document.");
+    expect(html).toContain("Prompt #2 is not carried in the document.");
     expect(html).not.toContain('data-message="human"');
   });
 });

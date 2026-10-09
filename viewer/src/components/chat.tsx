@@ -92,45 +92,66 @@ export function PromptBubble({
   );
 }
 
-/** Prompts quoted from sessions whose author the document does not name, each
- *  as the transcript's bubble with its number and time in the corner and a
- *  pill for each new day. Prompts from several sessions are introduced by a
- *  pill naming their `session`, so two `#1`s do not read as one conversation.
- *  A prompt the document does not carry the text of says so in its place. */
+/** Prompts quoted out of their sessions, each as the transcript's bubble with
+ *  its number and time in the corner and a pill for each new day. Prompts
+ *  from several sessions are introduced by a pill naming their `session`, so
+ *  two `#1`s do not read as one conversation, and each session counts its own
+ *  days. `author` and `avatar` name who typed them, when the host knows. A
+ *  prompt whose text is not carried says so in its place. */
 export function QuotedPrompts({
   prompts,
+  author,
+  avatar,
+  number = (index) => `#${index}`,
   className,
 }: {
   prompts: {
     id: string;
     index: number;
     text: string | null;
-    at?: string;
+    at?: string | null;
     session?: { id: string; label: string };
   }[];
+  author?: string | null;
+  avatar?: ReactNode;
+  /** How a prompt's number reads in its corner. */
+  number?: (index: number) => string;
   className?: string;
 }) {
   // Days and times in the reader's own zone, which only the browser knows.
   const mounted = useMounted();
-  const days = mounted ? dayBreaks(prompts.map((prompt) => prompt.at ?? null)) : [];
+  const starts = prompts.map(
+    (prompt, index) => index === 0 || prompt.session?.id !== prompts[index - 1]?.session?.id,
+  );
+  const days: (string | null)[] = [];
+  if (mounted) {
+    for (let index = 0; index < prompts.length; ) {
+      let end = index + 1;
+      while (end < prompts.length && !starts[end]) end++;
+      days.push(...dayBreaks(prompts.slice(index, end).map((prompt) => prompt.at ?? null)));
+      index = end;
+    }
+  }
   const several = new Set(prompts.map((prompt) => prompt.session?.id)).size > 1;
   return (
     <ChatSurface className={className}>
       <ol className="flex flex-col gap-3">
         {prompts.map((prompt, index) => (
           <li key={prompt.id} className="flex flex-col gap-2">
-            {several && prompt.session && prompt.session.id !== prompts[index - 1]?.session?.id ? (
+            {several && prompt.session && starts[index] ? (
               <SystemNote className="mb-1 font-medium">{prompt.session.label}</SystemNote>
             ) : null}
             {days[index] ? <SystemNote className="mb-1">{days[index]}</SystemNote> : null}
             {prompt.text === null ? (
-              <SystemNote>Prompt {prompt.index} is not carried in the document.</SystemNote>
+              <SystemNote>Prompt {number(prompt.index)} is not carried in the document.</SystemNote>
             ) : (
               <PromptBubble
                 text={prompt.text}
+                author={author}
+                avatar={avatar}
                 meta={
                   <>
-                    <span className="tabular-nums">#{prompt.index}</span>
+                    <span className="tabular-nums">{number(prompt.index)}</span>
                     {prompt.at && mounted ? (
                       <time dateTime={prompt.at}>{formatTime(prompt.at)}</time>
                     ) : null}

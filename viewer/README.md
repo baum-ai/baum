@@ -129,9 +129,12 @@ Activity tab, the prompts behind the Summary's intent), they are drawn with
 each prompt is a bubble on the right with its number and, where the document
 records it, its time in the corner, shown as typed with only its pasted code
 fences rendered as code, and folded to a few lines with "Show all" when it is
-taller. A pill marks each new day, and prompts drawn from several sessions
-are introduced by a pill naming each session's agent. Days and times are
-the reader's, so they appear once the page is in the browser. An agent reply
+taller. A pill marks each new day. Prompts drawn from several sessions are
+introduced by a pill naming each session ("Codex session 2", numbered as the
+Activity tab lists them), and each session counts its own days. Days and
+times are the reader's, so they appear once the page is in the browser. A
+host passes the author's name and avatar, and how a number reads ("Turn 3"),
+when it has them. An agent reply
 (`AgentText`) renders as Markdown with any HTML tags shown as written. A
 decision's evidence stays a short quote rather than a bubble: it is an
 excerpt from somewhere in the session, and the document does not record who
