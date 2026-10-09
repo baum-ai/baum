@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -25,17 +25,28 @@ const sessions: SessionView[] = [
   { id: "s2", vendor: "codex", title: null, commits: [] },
 ];
 
+const transcript = (session: SessionView) => <p data-testid="extra">{session.id} transcript</p>;
+
 let root: Root | null = null;
 let container: HTMLElement;
 const select = vi.fn();
 
-function render(state: SessionListState, selected: string | null = null) {
+function render(
+  state: SessionListState,
+  selected: string | null = null,
+  renderSession?: (session: SessionView) => ReactNode,
+) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   act(() =>
     root!.render(
-      <SessionList state={state} selected={selected} actions={{ select, openFile: vi.fn() }} />,
+      <SessionList
+        state={state}
+        selected={selected}
+        actions={{ select, openFile: vi.fn() }}
+        renderSession={renderSession}
+      />,
     ),
   );
 }
@@ -105,6 +116,19 @@ describe("SessionList", () => {
         .click(),
     );
     expect(select).toHaveBeenLastCalledWith({ kind: "sessions" });
+  });
+
+  it("adds the host's content under the one session opened, and only then", () => {
+    render({ status: "ready", sessions }, null, transcript);
+    expect(container.querySelector('[data-testid="extra"]')).toBeNull();
+    act(() => root?.unmount());
+
+    render({ status: "ready", sessions }, "s2", transcript);
+    expect(container.querySelector('[data-testid="extra"]')?.textContent).toBe("s2 transcript");
+    act(() => root?.unmount());
+
+    render({ status: "ready", sessions }, "unknown", transcript);
+    expect(container.querySelector('[data-testid="extra"]')).toBeNull();
   });
 
   it("says nothing is linked when the list is empty", () => {

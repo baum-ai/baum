@@ -68,6 +68,8 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 let fetchMock: ReturnType<typeof vi.fn<Fetcher>>;
 /** The `/api/sessions` requests. */
 let sessionsMock: ReturnType<typeof vi.fn<Fetcher>>;
+/** The `/api/sessions/{id}` requests. */
+let transcriptMock: ReturnType<typeof vi.fn<Fetcher>>;
 
 function respond(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -144,8 +146,13 @@ beforeEach(() => {
   sessionsMock = vi.fn<Fetcher>(async () =>
     respond({ available: false, code: "not_a_clone", reason: "this is not a clone" }),
   );
+  transcriptMock = vi.fn<Fetcher>(async () => respond({ error: "not found" }, 404));
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
-    String(url).startsWith("/api/sessions") ? sessionsMock(url, init) : fetchMock(url, init),
+    String(url).startsWith("/api/sessions/")
+      ? transcriptMock(url, init)
+      : String(url).startsWith("/api/sessions")
+        ? sessionsMock(url, init)
+        : fetchMock(url, init),
   );
   vi.stubGlobal("EventSource", FakeEventSource);
   window.history.replaceState(null, "", "/");
@@ -311,6 +318,7 @@ describe("App", () => {
       new Set(["/api/sessions"]),
     );
     expect(FakeEventSource.instances.map((instance) => instance.url)).toEqual(["/api/events"]);
+    expect(transcriptMock).not.toHaveBeenCalled();
   });
 
   it("closes the event stream when it unmounts", async () => {
@@ -678,6 +686,222 @@ describe("sessions and commits", () => {
     expect(sessionsMock).toHaveBeenCalledTimes(1);
     await act(async () => source().emit("open"));
     expect(sessionsMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a session's transcript", () => {
+    const effects = {
+      files_read: 2,
+      files_edited: 1,
+      reads: 3,
+      files_changed: 1,
+      diff_hunks: 1,
+      added_lines: 4,
+      removed_lines: 1,
+      tool_calls: 2,
+      execute_calls: 1,
+      failed_calls: 0,
+    };
+    const prompt = (ordinal: number, text: string) => ({
+      turn_id: `turn-${ordinal}`,
+      ordinal,
+      started_at: "2026-07-01T10:00:00Z",
+      text,
+      text_length: text.length,
+      truncated: false,
+      effects,
+      cost_usd: null,
+      tokens: 900,
+      estimated_tokens: 0,
+    });
+    const transcript = (overrides: Record<string, unknown> = {}) => ({
+      session: {
+        run_id: SESSION,
+        source: "claude_code",
+        title: "Wire the retry budget",
+        git_branch: "feature",
+        working_dir: "~/src/widgets",
+        models: ["claude-opus"],
+        started_at: "2026-07-01T10:00:00Z",
+        ended_at: "2026-07-01T10:30:00Z",
+        outcome: "committed",
+        user_email: "",
+        turn_count: 2,
+        commit_count: 1,
+        confidence: 0.95,
+        prompts: [
+          prompt(1, "Add a retry budget to the client"),
+          prompt(2, "Now cover it with tests"),
+        ],
+        prompts_total: 2,
+        prompts_truncated: false,
+        totals: effects,
+        unattributed: effects,
+        tokens: 1800,
+        estimated_tokens: 0,
+        cost_per_prompt: true,
+        has_inner_trace: true,
+      },
+      activity: {
+        "turn-1": {
+          messages: [
+            {
+              text: "Reading the client first.",
+              text_length: 25,
+              truncated: false,
+              timestamp: null,
+              model: "claude-opus",
+            },
+          ],
+          messages_truncated: false,
+          invocations: [{ model: "claude-opus" }],
+          token_usage: {
+            tokens: 900,
+            estimated_tokens: 0,
+            uncached_input_tokens: 600,
+            output_tokens: 300,
+            api_calls: 1,
+            models: ["claude-opus"],
+          },
+          tool_calls: [
+            {
+              id: "call-1",
+              name: "Bash",
+              verb: "execute",
+              input: '{"command":"go test ./..."}',
+              input_truncated: false,
+              output: "ok  	client	0.2s",
+              output_truncated: false,
+              status: "ok",
+              timestamp: null,
+            },
+          ],
+          tool_calls_truncated: false,
+        },
+      },
+      truncated: false,
+      limit_bytes: 4194304,
+      ...overrides,
+    });
+    const transcriptRegion = () => container.querySelector('[aria-label="Transcript"]');
+
+    beforeEach(() => {
+      sessionsMock.mockImplementation(async () => respond(local));
+    });
+
+    it("is asked for only once a linked session is opened, then drawn by the session card", async () => {
+      const pending = deferred();
+      transcriptMock.mockReturnValueOnce(pending.promise);
+      window.history.replaceState(null, "", "/?pane=sessions");
+      await mount();
+      expect(transcriptMock).not.toHaveBeenCalled();
+
+      await press("Wire the retry budget");
+      expect(search()).toBe(`pane=session&session=${SESSION}`);
+      expect(transcriptMock).toHaveBeenCalledWith(
+        `/api/sessions/${SESSION}`,
+        expect.objectContaining({ cache: "no-store" }),
+      );
+      expect(container.querySelector('[aria-label="Loading the transcript"]')).not.toBeNull();
+
+      await act(async () => pending.resolve(respond(transcript())));
+      expect(container.querySelector('[aria-label="Loading the transcript"]')).toBeNull();
+      const text = transcriptRegion()?.textContent ?? "";
+      expect(text).toContain("secrets and e-mail addresses masked");
+      expect(text).toContain("Add a retry budget to the client");
+      expect(text).toContain("Now cover it with tests");
+      expect(text).toContain("~/src/widgets");
+      expect(text).not.toContain("Cost");
+      expect(container.querySelector("[data-session-id]")?.getAttribute("data-session-id")).toBe(
+        SESSION,
+      );
+
+      await press("Agent activity");
+      const opened = transcriptRegion()?.textContent ?? "";
+      expect(opened).toContain("Reading the client first.");
+      expect(opened).toContain("execute · 1 call");
+      expect(opened).toContain("go test ./...");
+      expect(opened).toContain("ok  	client	0.2s");
+      // The activity came with the transcript.
+      expect(transcriptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("says when the transcript could not be loaded, and tries again on Retry", async () => {
+      transcriptMock.mockImplementationOnce(async () => respond({ error: "boom" }, 500));
+      transcriptMock.mockImplementationOnce(async () => respond(transcript()));
+      window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
+      await mount();
+
+      expect(pane()).toContain("The transcript could not be loaded.");
+      await act(
+        async () =>
+          void [...container.querySelectorAll<HTMLButtonElement>("#review-section button")]
+            .find((button) => button.textContent === "Retry")!
+            .click(),
+      );
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+      expect(transcriptRegion()?.textContent).toContain("Add a retry budget to the client");
+    });
+
+    it.each([
+      ["a body that is not a transcript", async () => respond({ session: { run_id: 7 } })],
+      ["text that is not JSON", async () => new Response("<html>", { status: 200 })],
+      ["a network error", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ])("fails on %s", async (_, answer) => {
+      transcriptMock.mockImplementation(answer);
+      window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
+      await mount();
+      expect(pane()).toContain("The transcript could not be loaded.");
+    });
+
+    it("says when the server no longer links the session", async () => {
+      window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
+      await mount();
+      expect(pane()).toContain("it is no longer linked to the pull request");
+    });
+
+    it("says what a truncated transcript leaves out", async () => {
+      const cut = transcript({ truncated: true });
+      cut.session.prompts = cut.session.prompts.slice(0, 1);
+      cut.session.prompts_total = 40;
+      cut.session.prompts_truncated = true;
+      transcriptMock.mockImplementation(async () => respond(cut));
+      window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
+      await mount();
+      expect(container.querySelector('[role="note"]')?.textContent).toBe(
+        "This transcript is too large to show whole: it shows the first 1 prompt of 40, and long prompts, messages and tool calls are cut short.",
+      );
+
+      transcriptMock.mockImplementation(async () => respond(transcript({ truncated: true })));
+      await act(async () => root!.unmount());
+      await mount();
+      expect(container.querySelector('[role="note"]')?.textContent).toContain(
+        "Long prompts, messages and tool calls are cut short",
+      );
+    });
+
+    it("opens at the turn a link names, and leaves it behind with the session", async () => {
+      transcriptMock.mockImplementation(async () => respond(transcript()));
+      window.history.replaceState(null, "", `/?pane=session&session=${SESSION}&turn=2`);
+      await mount();
+      expect(container.querySelector('[aria-current="step"]')?.textContent).toContain(
+        "Now cover it with tests",
+      );
+      expect(search()).toBe(`pane=session&session=${SESSION}&turn=2`);
+
+      await press("All sessions");
+      expect(search()).toBe("pane=sessions");
+    });
+
+    it("is not asked for the review's own sessions", async () => {
+      sessionsMock.mockImplementation(async () =>
+        respond({ available: false, code: "not_a_clone", reason: "this is not a clone" }),
+      );
+      window.history.replaceState(null, "", `/?pane=session&session=${recorded.id}`);
+      await mount();
+      expect(pane()).toContain(recorded.title!);
+      expect(transcriptMock).not.toHaveBeenCalled();
+      expect(transcriptRegion()).toBeNull();
+    });
   });
 });
 

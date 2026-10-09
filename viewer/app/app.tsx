@@ -21,12 +21,15 @@ import {
 } from "../src/navigation";
 import type { ReviewDocument } from "../src/review-document";
 import { fetchSessions, sessionLists, type SessionsLoad } from "./local-sessions";
+import { SessionTranscript } from "./session-transcript";
 
 /** The standalone viewer: one review document, served by `baum view` from the
  *  same origin. It reads `/api/document` and refetches it whenever
  *  `/api/events` says the document changed. It also asks `/api/sessions` for the
  *  sessions and commits on this machine, which fill the Sessions and Commits
- *  groups; where it has none, the Sessions group lists the document's own. */
+ *  groups; where it has none, the Sessions group lists the document's own. A
+ *  linked session opened alone shows its transcript from
+ *  `/api/sessions/{id}`, asked for only then. */
 
 const SCHEMA = "baum.review/1";
 
@@ -285,7 +288,25 @@ export function App() {
     () => (document ? sessionLists(sessionsLoad, document) : null),
     [sessionsLoad, document],
   );
-  const sessions = useMemo(() => (lists ? sessionsSlot(lists.sessions) : undefined), [lists]);
+  // Only the sessions linked on this machine have a transcript to show; the
+  // document's own are listed without one.
+  const linkedHere = sessionsLoad.state === "answered" && sessionsLoad.answer.available;
+  const sessions = useMemo(
+    () =>
+      lists
+        ? sessionsSlot(
+            lists.sessions,
+            linkedHere
+              ? {
+                  renderSession: (session) => (
+                    <SessionTranscript key={session.id} id={session.id} />
+                  ),
+                }
+              : {},
+          )
+        : undefined,
+    [lists, linkedHere],
+  );
   const commits = useMemo(() => (lists?.commits ? commitsSlot(lists.commits) : undefined), [lists]);
 
   useEffect(() => {
