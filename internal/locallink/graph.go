@@ -10,10 +10,10 @@ import (
 )
 
 // RedactGraph encodes a session graph as JSON and masks every secret and
-// e-mail address in it. Secrets are found over the whole encoded text, so a
-// tool input's key and value are caught together; the result stays valid
-// JSON. "baum sessions --dump" prints it indented, and "baum view" reads it
-// back to serve a transcript, so both show exactly the same redaction.
+// e-mail address in it with redact.Engine.RedactJSON: found over the whole
+// encoded text, so a tool input's key and value are caught together, and in
+// each string as decoded, so a line of a tool's output is read as a line. The
+// result stays valid JSON. "baum sessions --dump" prints it indented.
 func RedactGraph(ctx context.Context, engine *redact.Engine, graph *session.Graph, indent bool) ([]byte, error) {
 	var (
 		encoded []byte
