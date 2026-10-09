@@ -882,7 +882,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         {/* On a phone the head leaves out its version line, and the review's
           age sits beside the version menu instead; a review with no earlier
           version has no menu, so its number stands in for it. */}
-        {document && (versions.length > 0 || historyView.selection) ? (
+        {document && (versions.length > 0 || historyView.selection || header?.beside) ? (
           <HistoryToolbar
             currentVersion={document.review.version}
             versions={versions}
@@ -902,6 +902,9 @@ function ReviewWorkspace<F extends ReviewFile>({
                 {historyView.selection?.version}
               </span>
             )}
+            {header?.beside ? (
+              <div className="min-w-0 basis-full sm:basis-auto">{header.beside}</div>
+            ) : null}
           </HistoryToolbar>
         ) : document ? (
           <div className="flex items-center gap-3 text-base text-(--text-tertiary) sm:hidden">

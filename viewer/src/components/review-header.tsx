@@ -66,6 +66,9 @@ export type ReviewHeaderSlots = {
   approval?: ReactNode;
   /** The pull request's figures, drawn as the head's last line. */
   statistics?: ReactNode;
+  /** Drawn beside the version menu, or on its own line under it on a
+   *  narrow screen, such as where the pull request sits in a stack. */
+  beside?: ReactNode;
   generation?: GenerationView;
 };
 
