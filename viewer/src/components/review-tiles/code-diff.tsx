@@ -124,7 +124,10 @@ export function CodeDiff({
       </div>
       <div className="space-y-3">
         {files.map((file, index) => {
-          const key = `${file.sourceIndex}:${file.path}`;
+          // By path, not position: evidence draws each file once, and its
+          // excerpts arrive one by one, so a file's position can shift under
+          // a reader who folded it.
+          const key = file.path;
           const expanded = !folded.has(key);
           const body = `${id}-${index}`;
           const toggle = () =>
@@ -151,12 +154,12 @@ export function CodeDiff({
                 <span className="flex min-w-0 items-center gap-1.5">
                   <button
                     type="button"
-                    aria-label={`${expanded ? "Fold" : "Unfold"} ${file.path}`}
+                    aria-label={`${file.path} code`}
                     aria-expanded={expanded}
                     aria-controls={body}
                     onClick={toggle}
                     className={cn(
-                      "flex-none cursor-pointer rounded-(--radius-sm) p-0.5 text-(--text-tertiary) hover:text-(--text-secondary)",
+                      "flex-none cursor-pointer rounded-(--radius-sm) -m-1 p-1.5 text-(--text-tertiary) hover:text-(--text-secondary)",
                       FOCUS_RING,
                     )}
                   >

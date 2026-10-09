@@ -41,16 +41,34 @@ describe("code diff", () => {
     expect(body("a.go").hidden).toBe(false);
     expect(body("b.go").hidden).toBe(false);
 
-    const foldA = container.querySelector<HTMLButtonElement>('[aria-label="Fold a.go"]')!;
-    expect(foldA.getAttribute("aria-controls")).toBe(body("a.go").id);
-    await act(async () => foldA.click());
+    const toggleA = container.querySelector<HTMLButtonElement>('[aria-label="a.go code"]')!;
+    expect(toggleA.getAttribute("aria-controls")).toBe(body("a.go").id);
+    await act(async () => toggleA.click());
     expect(body("a.go").hidden).toBe(true);
+    expect(toggleA.getAttribute("aria-expanded")).toBe("false");
     expect(body("b.go").hidden).toBe(false);
 
-    const unfoldA = container.querySelector<HTMLButtonElement>('[aria-label="Unfold a.go"]')!;
-    expect(unfoldA.getAttribute("aria-expanded")).toBe("false");
-    await act(async () => unfoldA.click());
+    await act(async () => toggleA.click());
     expect(body("a.go").hidden).toBe(false);
     expect(body("a.go").textContent).toContain("alpha");
+  });
+
+  // Evidence excerpts load one by one, so a file can move down the list
+  // after the reader folded it.
+  it("keeps a file folded when another arrives before it", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root!.render(<CodeDiff bare files={[file(0, "b.go", "beta")]} />));
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="b.go code"]')!.click(),
+    );
+    await act(async () =>
+      root!.render(<CodeDiff bare files={[file(0, "a.go", "alpha"), file(1, "b.go", "beta")]} />),
+    );
+    const body = (path: string) =>
+      container.querySelector<HTMLElement>(`[aria-label="${path} diff"] [id]`)!;
+    expect(body("b.go").hidden).toBe(true);
+    expect(body("a.go").hidden).toBe(false);
   });
 });
