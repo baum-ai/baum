@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { promptSegments } from "./prompt-text";
+import { dayBreaks, promptSegments } from "./conversation";
 
 describe("promptSegments", () => {
   it("keeps typed text as it is and lifts out only the code fences", () => {
@@ -48,5 +48,17 @@ describe("promptSegments", () => {
       { kind: "code", value: "````\n```\nstill code\n````" },
       { kind: "text", value: "after" },
     ]);
+  });
+});
+
+describe("dayBreaks", () => {
+  it("marks the first turn of each day and skips undated turns", () => {
+    const breaks = dayBreaks([
+      "2026-07-28T10:00:00",
+      "2026-07-28T15:00:00",
+      null,
+      "2026-07-29T09:00:00",
+    ]);
+    expect(breaks.map((label) => label !== null)).toEqual([true, false, false, true]);
   });
 });

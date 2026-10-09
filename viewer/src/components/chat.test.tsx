@@ -22,7 +22,28 @@ describe("quoted prompts", () => {
     expect(html).not.toContain("<h1");
     expect(html).toContain("<pre");
     expect(html).toContain("#1");
-    expect(html).toContain('dateTime="2026-07-29T10:00:00Z"');
+    // Days and times wait for the reader's zone, which the server lacks.
+    expect(html).not.toContain("dateTime");
+  });
+
+  it("names each session when the prompts come from several", () => {
+    const codex = { id: "s1", label: "Codex" };
+    const claude = { id: "s2", label: "Claude Code" };
+    const html = renderToStaticMarkup(
+      <QuotedPrompts
+        prompts={[
+          { id: "a", index: 1, text: "One", session: codex },
+          { id: "b", index: 2, text: "Two", session: codex },
+          { id: "c", index: 1, text: "Three", session: claude },
+        ]}
+      />,
+    );
+    expect(html.match(/>Codex</g)).toHaveLength(1);
+    expect(html.match(/>Claude Code</g)).toHaveLength(1);
+    const single = renderToStaticMarkup(
+      <QuotedPrompts prompts={[{ id: "a", index: 1, text: "One", session: codex }]} />,
+    );
+    expect(single).not.toContain(">Codex<");
   });
 
   it("says when the document does not carry a prompt's text", () => {

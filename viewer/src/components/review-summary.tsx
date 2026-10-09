@@ -14,6 +14,7 @@ import {
   type TriageRisk,
   triageRisks,
 } from "../review-document";
+import { harnessName } from "../agent-names";
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
@@ -128,7 +129,13 @@ export function ReviewSummary({
                   <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
                     From {pluralize("session prompt", prompts.length, true)}
                   </summary>
-                  <QuotedPrompts className="mt-2" prompts={prompts} />
+                  <QuotedPrompts
+                    className="mt-2"
+                    prompts={prompts.map((prompt) => ({
+                      ...prompt,
+                      session: { id: prompt.session, label: harnessName(prompt.vendor) },
+                    }))}
+                  />
                 </details>
               )}
             </Part>

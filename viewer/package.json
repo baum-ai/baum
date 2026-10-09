@@ -14,6 +14,7 @@
     "./components/brand-logo": "./src/components/brand-logo.tsx",
     "./components/chat": "./src/components/chat.tsx",
     "./components/classnames": "./src/components/classnames.ts",
+    "./conversation": "./src/conversation.ts",
     "./components/code-file-link": "./src/components/code-file-link.tsx",
     "./components/editorial": "./src/components/editorial.tsx",
     "./components/format": "./src/components/format.ts",

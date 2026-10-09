@@ -2,10 +2,10 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { harnessName } from "../agent-names";
 import { harnessBrand } from "../brands";
-import { promptSegments } from "../prompt-text";
+import { dayBreaks, promptSegments } from "../conversation";
 import { BrandMark } from "./brand-logo";
 import { cn, FOCUS_RING } from "./classnames";
-import { formatCompact, formatDate, formatTime } from "./format";
+import { formatCompact, formatTime } from "./format";
 import { Markdown } from "./markdown";
 
 /** The pieces a session's conversation is drawn with, laid out like a
@@ -92,21 +92,37 @@ export function PromptBubble({
   );
 }
 
-/** Prompts quoted from a session whose author the document does not name,
- *  each as the transcript's bubble with its number and time in the corner. A
- *  prompt the document does not carry the text of says so in its place. */
+/** Prompts quoted from sessions whose author the document does not name, each
+ *  as the transcript's bubble with its number and time in the corner and a
+ *  pill for each new day. Prompts from several sessions are introduced by a
+ *  pill naming their `session`, so two `#1`s do not read as one conversation.
+ *  A prompt the document does not carry the text of says so in its place. */
 export function QuotedPrompts({
   prompts,
   className,
 }: {
-  prompts: { id: string; index: number; text: string | null; at?: string }[];
+  prompts: {
+    id: string;
+    index: number;
+    text: string | null;
+    at?: string;
+    session?: { id: string; label: string };
+  }[];
   className?: string;
 }) {
+  // Days and times in the reader's own zone, which only the browser knows.
+  const mounted = useMounted();
+  const days = mounted ? dayBreaks(prompts.map((prompt) => prompt.at ?? null)) : [];
+  const several = new Set(prompts.map((prompt) => prompt.session?.id)).size > 1;
   return (
     <ChatSurface className={className}>
       <ol className="flex flex-col gap-3">
-        {prompts.map((prompt) => (
-          <li key={prompt.id} className="flex flex-col">
+        {prompts.map((prompt, index) => (
+          <li key={prompt.id} className="flex flex-col gap-2">
+            {several && prompt.session && prompt.session.id !== prompts[index - 1]?.session?.id ? (
+              <SystemNote className="mb-1 font-medium">{prompt.session.label}</SystemNote>
+            ) : null}
+            {days[index] ? <SystemNote className="mb-1">{days[index]}</SystemNote> : null}
             {prompt.text === null ? (
               <SystemNote>Prompt {prompt.index} is not carried in the document.</SystemNote>
             ) : (
@@ -115,10 +131,8 @@ export function QuotedPrompts({
                 meta={
                   <>
                     <span className="tabular-nums">#{prompt.index}</span>
-                    {prompt.at ? (
-                      <time dateTime={prompt.at} title={formatDate(prompt.at)}>
-                        {formatTime(prompt.at)}
-                      </time>
+                    {prompt.at && mounted ? (
+                      <time dateTime={prompt.at}>{formatTime(prompt.at)}</time>
                     ) : null}
                   </>
                 }
@@ -129,6 +143,12 @@ export function QuotedPrompts({
       </ol>
     </ChatSurface>
   );
+}
+
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
 }
 
 /** The agent's picture: its harness's mark in a circle, beside the first

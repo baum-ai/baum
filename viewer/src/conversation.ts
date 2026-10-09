@@ -1,3 +1,5 @@
+import { formatDate } from "./components/format";
+
 export type PromptSegment = { kind: "text" | "code"; value: string };
 
 /** A prompt split into the text a person typed and the code fences they
@@ -41,4 +43,19 @@ export function promptSegments(text: string): PromptSegment[] {
   if (code) segments.push({ kind: "code", value: code.join("\n") });
   flushProse();
   return segments;
+}
+
+/** The day label to set above each turn, or null where a turn starts on the
+ *  same day as the one before it, as a chat marks only a change of day. An
+ *  undated turn neither shows a day nor breaks a run. */
+export function dayBreaks(startedAt: (string | null)[]): (string | null)[] {
+  let previous: string | null = null;
+  return startedAt.map((iso) => {
+    const at = iso ? new Date(iso) : null;
+    if (!iso || !at || Number.isNaN(at.getTime())) return null;
+    const day = at.toDateString();
+    if (day === previous) return null;
+    previous = day;
+    return formatDate(iso);
+  });
 }
