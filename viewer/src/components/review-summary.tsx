@@ -14,6 +14,7 @@ import {
   type TriageRisk,
   triageRisks,
 } from "../review-document";
+import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
 import { formatRelative } from "./format";
@@ -127,24 +128,7 @@ export function ReviewSummary({
                   <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
                     From {pluralize("session prompt", prompts.length, true)}
                   </summary>
-                  <ol className="mt-2 space-y-2">
-                    {prompts.map((prompt) => (
-                      <li key={prompt.id} className="flex gap-2 text-base">
-                        <span className="w-6 flex-none text-right tabular-nums text-(--text-tertiary)">
-                          {prompt.index}
-                        </span>
-                        {prompt.text ? (
-                          <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                            {prompt.text}
-                          </Markdown>
-                        ) : (
-                          <span className="min-w-0 flex-1 text-(--text-tertiary)">
-                            This prompt is not carried in the document.
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
+                  <QuotedPrompts className="mt-2" prompts={prompts} />
                 </details>
               )}
             </Part>
