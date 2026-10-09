@@ -187,8 +187,8 @@ export function SideNavDisclosure({
   onSelect: (expanded: boolean) => void;
 }) {
   const state = active ? "active" : "idle";
-  // Progress is carried by the bar and the row's name; only a count is
-  // written out at the row's end.
+  // Progress is never written on the row: the bar and the row's name carry
+  // it. A count always is, at the row's end.
   const trailing = count === undefined ? undefined : String(count);
   return (
     <button
