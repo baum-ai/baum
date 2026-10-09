@@ -222,6 +222,12 @@ func (v *validator) invocations(g *Graph, userInputs map[string]bool) {
 		if m.TokenBasis != "" && !m.TokenBasis.Valid() {
 			v.addf("model invocation %s has unknown token basis %q", m.ID, m.TokenBasis)
 		}
+		if h := m.CacheWrite1hTokens; h != nil && (*h < 0 || *h > m.CacheWriteTokens) {
+			v.addf("model invocation %s has cache_write_1h_tokens %d, want 0 to cache_write_tokens (%d)", m.ID, *h, m.CacheWriteTokens)
+		}
+		if m.Speed != nil && !SpeedValid(*m.Speed) {
+			v.addf("model invocation %s has unknown speed %q", m.ID, *m.Speed)
+		}
 
 		if m.ParentModelInvocationID != nil {
 			parent := *m.ParentModelInvocationID
@@ -461,6 +467,9 @@ func (v *validator) tokenUsage(g *Graph, sessions, userInputs map[string]bool) {
 		}
 		if u.TokenBasis != "" && !u.TokenBasis.Valid() {
 			v.addf("token usage %s has unknown token basis %q", u.ID, u.TokenBasis)
+		}
+		if u.Speed != nil && !SpeedValid(*u.Speed) {
+			v.addf("token usage %s has unknown speed %q", u.ID, *u.Speed)
 		}
 	}
 }

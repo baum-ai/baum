@@ -152,6 +152,17 @@ const (
 	TokenBasisUnknown           TokenBasis = "unknown"
 )
 
+// Speed values for ModelInvocation.Speed: the service speed the vendor billed a
+// request at. Fast and ultrafast requests cost a premium over standard ones.
+const (
+	SpeedStandard  = "standard"
+	SpeedFast      = "fast"
+	SpeedUltrafast = "ultrafast"
+)
+
+// SpeedValid reports whether s is a known invocation speed.
+func SpeedValid(s string) bool { return s == SpeedStandard || s == SpeedFast || s == SpeedUltrafast }
+
 func (b TokenBasis) Valid() bool {
 	switch b {
 	case TokenBasisReported, TokenBasisAggregateReported, TokenBasisEstimated, TokenBasisUnknown:
@@ -249,19 +260,25 @@ type UserInput struct {
 // ModelInvocation is one model API reply (§3.4). Token counts are 0 when
 // unknown, never negative.
 type ModelInvocation struct {
-	ID                      string     `json:"id"`
-	SessionID               string     `json:"session_id"`
-	UserInputID             string     `json:"user_input_id"`
-	ParentModelInvocationID *string    `json:"parent_model_invocation_id"`
-	Model                   *string    `json:"model,omitempty"`
-	InputTokens             int64      `json:"input_tokens"`
-	OutputTokens            int64      `json:"output_tokens"`
-	CacheReadTokens         int64      `json:"cache_read_tokens"`
-	CacheWriteTokens        int64      `json:"cache_write_tokens"`
-	TotalTokens             int64      `json:"total_tokens"`
-	TokenBasis              TokenBasis `json:"token_basis,omitempty"`
-	StopReason              *string    `json:"stop_reason,omitempty"`
-	StartedAt               *time.Time `json:"started_at,omitempty"`
+	ID                      string  `json:"id"`
+	SessionID               string  `json:"session_id"`
+	UserInputID             string  `json:"user_input_id"`
+	ParentModelInvocationID *string `json:"parent_model_invocation_id"`
+	Model                   *string `json:"model,omitempty"`
+	InputTokens             int64   `json:"input_tokens"`
+	OutputTokens            int64   `json:"output_tokens"`
+	CacheReadTokens         int64   `json:"cache_read_tokens"`
+	CacheWriteTokens        int64   `json:"cache_write_tokens"`
+	// CacheWrite1hTokens is the part of CacheWriteTokens written with the
+	// 1-hour cache TTL (the rest used the 5-minute TTL). Nil means the vendor did
+	// not report the split.
+	CacheWrite1hTokens *int64     `json:"cache_write_1h_tokens,omitempty"`
+	TotalTokens        int64      `json:"total_tokens"`
+	TokenBasis         TokenBasis `json:"token_basis,omitempty"`
+	// Speed is SpeedStandard, SpeedFast or SpeedUltrafast. Nil means the vendor did not report it.
+	Speed      *string    `json:"speed,omitempty"`
+	StopReason *string    `json:"stop_reason,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
 
 // AssistantMessage is one block of model-visible output from one model
@@ -342,6 +359,10 @@ type TokenUsage struct {
 	TotalTokens      *int64     `json:"total_tokens,omitempty"`
 	APICallCount     *int64     `json:"api_call_count,omitempty"`
 	TokenBasis       TokenBasis `json:"token_basis,omitempty"`
+	// Speed is SpeedStandard, SpeedFast or SpeedUltrafast when every request the row counts ran
+	// at that speed (a row of one request, such as Codex's unattributed
+	// token_count). Nil means not reported.
+	Speed *string `json:"speed,omitempty"`
 }
 
 // VendorID maps one of our entities to one vendor identifier (§6). Internal
