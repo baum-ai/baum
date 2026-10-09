@@ -91,7 +91,9 @@ const COMPONENTS: Components = {
       {children}
     </a>
   ),
-  p: ({ children }) => <p className="whitespace-pre-wrap">{children}</p>,
+  // No pre-wrap: `remark-breaks` turns each line break into a <br> and keeps
+  // the newline after it as text, so preserving whitespace would break twice.
+  p: ({ children }) => <p>{children}</p>,
   ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
   li: ({ children }) => <li>{children}</li>,
