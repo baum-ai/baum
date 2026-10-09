@@ -14,6 +14,11 @@ const (
 	exchangeUnknownNote = "Commit times or line counts are unavailable in this input, so the review exchange leaves back-and-forths or changes after opening unknown."
 )
 
+// ExchangeUnknownNote is the generator note a document carries while its
+// review exchange leaves back-and-forths or changes after opening unknown,
+// for a host that sets those figures itself, such as a stack review.
+const ExchangeUnknownNote = exchangeUnknownNote
+
 // setReviewExchange derives the review exchange's figures from the bundle and
 // the document's agent reviews; the model writes only its summary. It runs
 // after agentReviews, whose must-fix findings are the critical issues.
