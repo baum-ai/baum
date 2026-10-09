@@ -911,6 +911,8 @@ function ReviewWorkspace<F extends ReviewFile>({
             Review v{document.review.version}
             <ReviewFreshness document={document} generation={header?.generation} />
           </div>
+        ) : header?.beside ? (
+          <div className="min-w-0">{header.beside}</div>
         ) : null}
         {/* One ruled rectangle divided by hairlines rather than three floating
           cards: the rail, the pane and the side pane are one workspace, and
