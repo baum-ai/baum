@@ -17,6 +17,7 @@ import {
   RISK_SCORE_MEANING,
   riskCategory,
   riskLabel,
+  type Section,
   sectionBadgeState,
   sectionsInReviewOrder,
   type TriageRisk,
@@ -189,6 +190,11 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Drawn at the top of the pane while a section, or one of its risks, is
    *  read on the current version. */
   renderSectionAside?: (sectionId: string) => ReactNode;
+  /** Drawn on a section's line of badges, in its pane and in the Changes
+   *  overview, on whichever version is read: what the host knows of the
+   *  section, such as the pull requests a stack review's section covers.
+   *  Called with the document the section belongs to. */
+  renderSectionLabels?: (section: Section, document: ReviewDocument) => ReactNode;
   /** Drawn at the top of the pane on every selection, such as the state of
    *  the review's generation. */
   notices?: ReactNode;
@@ -314,6 +320,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   fallbackSections,
   checks,
   renderSectionAside,
+  renderSectionLabels,
   notices,
   files: filesSlot,
   sessions,
@@ -1450,6 +1457,9 @@ function ReviewWorkspace<F extends ReviewFile>({
         <ChangesOverview
           document={snapshot}
           onSelectSection={selectSection}
+          renderLabels={
+            renderSectionLabels ? (section) => renderSectionLabels(section, snapshot) : undefined
+          }
           renderCheck={(section) =>
             historical || section.derived.state === "stale"
               ? null
@@ -1520,6 +1530,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
           showTiles={showTiles}
+          labels={renderSectionLabels?.(section, snapshot)}
         />
       </HunkPatchProvider>
     );

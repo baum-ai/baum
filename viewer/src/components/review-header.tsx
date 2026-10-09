@@ -54,6 +54,10 @@ export type GenerationView = { state?: GenerationState; rewriting?: boolean };
 /** The head's optional parts, each supplied by a host. Absent, the head
  *  draws only what the document says. */
 export type ReviewHeaderSlots = {
+  /** The head's title for a review of something other than one pull request,
+   *  such as a stack's: it replaces the number and title, and the document's
+   *  own pull request (its number, link and state) is not shown. */
+  heading?: string;
   pullRequest?: PullRequestFacts;
   /** The way back to wherever the reader came from, drawn in the compact bar
    *  through the host's link component. */
@@ -168,17 +172,21 @@ export function ReviewHeader({
   slots?: ReviewHeaderSlots;
 }) {
   const facts = slots.pullRequest ?? {};
-  const number = facts.number ?? document?.review.pull_request;
+  const heading = slots.heading;
+  // A heading names something other than the document's pull request, so
+  // none of that pull request's own facts stand in for the host's.
+  const ofPullRequest = heading === undefined ? document : null;
+  const number = facts.number ?? ofPullRequest?.review.pull_request;
   const title = facts.title ?? document?.summary.title;
   const repositoryFullName = facts.repository ?? document?.review.repository;
-  const githubUrl = facts.url || (document ? pullRequestUrl(document) : undefined);
+  const githubUrl = facts.url || (ofPullRequest ? pullRequestUrl(ofPullRequest) : undefined);
   // A generated review holds a snapshot of the pull request as it was when it
   // was written, so its `pr_state` is not news about the pull request: a review
   // generated while one was open still says "open" long after it merged. The
   // live state is what the badge states, and the snapshot only stands in when
   // nothing live has arrived.
-  const state = facts.state ?? document?.review.pr_state;
-  const generatedFor = document?.review.pr_state;
+  const state = facts.state ?? ofPullRequest?.review.pr_state;
+  const generatedFor = ofPullRequest?.review.pr_state;
   // The head's figures carry the score; the compact bar, which has no
   // figures, carries it as a pill. Not assessed shows nothing in either: the
   // Summary says why, and a "not assessed" mark would read as a finding.
@@ -258,7 +266,9 @@ export function ReviewHeader({
               FOCUS_RING,
             )}
           >
-            {number !== undefined ? (
+            {heading !== undefined ? (
+              heading
+            ) : number !== undefined ? (
               <>
                 {title ? `${title} ` : ""}
                 <span className="text-(--text-tertiary)">#{number}</span>
@@ -285,7 +295,9 @@ export function ReviewHeader({
         <div className="pb-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
             <h1 className="text-2xl font-medium tracking-[-0.015em]">
-              {number !== undefined ? (
+              {heading !== undefined ? (
+                heading
+              ) : number !== undefined ? (
                 <>
                   <span className="text-(--text-tertiary)">#{number}</span>
                   {title ? ` ${title}` : ""}

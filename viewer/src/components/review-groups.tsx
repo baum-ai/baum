@@ -38,11 +38,15 @@ export function ChangesOverview({
   document,
   onSelectSection,
   renderCheck,
+  renderLabels,
 }: {
   document: ReviewDocument;
   onSelectSection: (id: string) => void;
   /** The row-action slot: a host's read mark or approval beside each row. */
   renderCheck?: (section: Section) => ReactNode;
+  /** A host's labels for each row, after its badges. Above the row's
+   *  overlay, so a link in them is its own destination. */
+  renderLabels?: (section: Section) => ReactNode;
 }) {
   const { stats } = document;
   const scored = sectionsAreScored(document.sections);
@@ -67,6 +71,7 @@ export function ChangesOverview({
           <ul className="space-y-1.5">
             {sectionsInReviewOrder(document.sections).map((section) => {
               const check = renderCheck?.(section);
+              const labels = renderLabels?.(section);
               const badgeState = sectionBadgeState(section.derived.state, document.review);
               return (
                 <Item
@@ -97,6 +102,11 @@ export function ChangesOverview({
                           {humanize(badgeState)}
                         </Badge>
                       )}
+                      {labels ? (
+                        <span className="relative z-10 inline-flex flex-wrap items-center gap-1">
+                          {labels}
+                        </span>
+                      ) : null}
                     </div>
                     <Markdown className="text-(--text-primary)">{section.summary.text}</Markdown>
                     {section.derived.review_reason && (

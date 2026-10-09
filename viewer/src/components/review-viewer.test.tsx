@@ -350,6 +350,57 @@ describe("ReviewViewer with host slots", () => {
   });
 });
 
+/** Labels naming the version and section they were drawn for. */
+const labels = (section: { id: string }, document: ReviewDocument) => (
+  <a href={`/labels/${section.id}`}>
+    v{document.review.version} {section.id}
+  </a>
+);
+
+describe("ReviewViewer for a review of more than one pull request", () => {
+  it("titles the head with the host's heading and none of the document's pull request", async () => {
+    const container = await render(
+      <Host>
+        <ReviewViewer
+          document={current}
+          header={{ heading: "Split the importer", pullRequest: { repository: "acme/widgets" } }}
+        />
+      </Host>,
+    );
+    expect(container.querySelector("h1")?.textContent).toBe("Split the importer");
+    expect(container.textContent).not.toContain("#212");
+    expect(container.querySelector('a[aria-label="View on GitHub"]')).toBeNull();
+    expect(container.textContent).toContain("Review v3 · Current");
+  });
+
+  it("draws the host's section labels in the section and the Changes overview, on any version", async () => {
+    const section = await render(
+      <Host initial="pane=section&section=sec_api">
+        <ReviewViewer document={current} renderSectionLabels={labels} />
+      </Host>,
+    );
+    expect(section.querySelector("#review-section a[href='/labels/sec_api']")?.textContent).toBe(
+      "v3 sec_api",
+    );
+    act(() => root?.unmount());
+    root = null;
+
+    const changes = await render(
+      <Host initial="pane=changes&review=2">
+        <ReviewViewer
+          document={current}
+          versions={[2]}
+          loadVersion={async () => ({ status: "ready", document: earlier() })}
+          renderSectionLabels={labels}
+        />
+      </Host>,
+    );
+    const links = [...changes.querySelectorAll("#review-section a[href^='/labels/']")];
+    expect(links.length).toBe(earlier().sections.length);
+    expect(links.every((link) => link.textContent?.startsWith("v2 "))).toBe(true);
+  });
+});
+
 describe("ReviewViewer and its host's renders", () => {
   it("reads nothing again when the host passes a new loader and version list", async () => {
     const calls: number[] = [];
