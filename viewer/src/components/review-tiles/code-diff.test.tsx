@@ -45,6 +45,8 @@ describe("code diff", () => {
     expect(toggleA.getAttribute("aria-controls")).toBe(body("a.go").id);
     await act(async () => toggleA.click());
     expect(body("a.go").hidden).toBe(true);
+    // A folded file draws, and so highlights, nothing.
+    expect(body("a.go").querySelector("table")).toBeNull();
     expect(toggleA.getAttribute("aria-expanded")).toBe("false");
     expect(body("b.go").hidden).toBe(false);
 
