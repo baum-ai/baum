@@ -104,7 +104,7 @@ left out rather than shown empty or failed:
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
-| `files` | a Files group: the host's tree in the rail and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
+| `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
@@ -160,17 +160,18 @@ bars (`--z-sticky`, 30).
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
 (`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
-calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
-not tokenised). Both render a line through `HighlightedText`
-(`@baum/viewer/components/highlighted-text`), which wraps each token in an
-inline span inside the existing code cell. It highlights in the browser only:
-the server render and the first client render are the plain text, exactly as
-before, and the colours replace it once they are ready, with no change of
-layout. Each hunk's old side (context and removed lines) and new side (context
-and added lines) are tokenised separately, so a comment or string that starts
-on an unchanged line is coloured on both the removed and the added lines that
-follow it. The text is never altered; a line whose tokens do not add up to it
-renders plain.
+calls `useHighlightedHunks` on its parsed hunks). Neither tokenises what it
+does not draw: a `CodeDiff` file folded from its header, a closed Files card or
+a large diff still collapsed behind its placeholder. Both render a line through
+`HighlightedText` (`@baum/viewer/components/highlighted-text`), which wraps
+each token in an inline span inside the existing code cell. It highlights in
+the browser only: the server render and the first client render are the plain
+text, exactly as before, and the colours replace it once they are ready, with
+no change of layout. Each hunk's old side (context and removed lines) and new
+side (context and added lines) are tokenised separately, so a comment or string
+that starts on an unchanged line is coloured on both the removed and the added
+lines that follow it. The text is never altered; a line whose tokens do not add
+up to it renders plain.
 
 - **Languages** are a fixed allow-list, picked by extension or file name
   (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
@@ -207,6 +208,10 @@ unchanged. Inline code, fences with no or an unknown language, blocks over the
 limits and blocks holding raw HTML elements render as before. Text reaches the
 page only as React text children, and colours only as `var(--syntax-*)`, so
 the highlighter adds no path for contributor markup.
+
+`Markdown` parses raw HTML into sanitized elements, as GitHub renders a
+comment. With `html={false}` it skips that step and raw HTML prints as the
+text it is, for prose that names tags rather than containing them.
 
 ## Schema and tile types
 
