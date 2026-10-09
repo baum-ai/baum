@@ -127,7 +127,8 @@ export function PromptBlock({
 
       {truncated && !expanded ? (
         <p className="mt-1.5 text-xs text-(--text-tertiary)">
-          Showing the first {formatCompact(characters)} of {formatCompact(fullLength)} characters.
+          Showing the first {formatCompact(Math.min(characters, fullLength ?? characters))} of{" "}
+          {formatCompact(fullLength)} characters.
         </p>
       ) : null}
     </figure>

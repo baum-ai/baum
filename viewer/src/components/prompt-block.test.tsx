@@ -47,6 +47,12 @@ describe("PromptBlock", () => {
     expect(container.textContent).toContain("Showing the first 300 of 1K characters.");
   });
 
+  it("never says it shows more than the whole", () => {
+    // A mask can turn one multi-byte character into several.
+    render(<PromptBlock text={"*".repeat(120)} fullLength={100} truncated />);
+    expect(container.textContent).toContain("Showing the first 100 of 100 characters.");
+  });
+
   it("captions an agent message", () => {
     render(<PromptBlock text="Done." tone="agent" />);
     expect(container.textContent).toContain("Agent");
