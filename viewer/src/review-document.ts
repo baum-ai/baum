@@ -191,6 +191,9 @@ export type Section = {
   title: string;
   kind: "logical" | "mechanical";
   hunks: string[];
+  /** The stack members the section covers; only on a stack review, and each
+   *  is one of its `stack.members`. */
+  pull_requests?: number[];
   summary: { text: string; anchors: Anchor[] };
   attention: Attention;
   risks: Risk[];
@@ -344,8 +347,17 @@ export type IndexedAttachment = {
   heading?: string;
 };
 
+/** The stack a stack review covers. Absent on a single-pull-request review. */
+export type ReviewStack = {
+  /** 1 to 80 characters, not blank. */
+  title: string;
+  members: { number: number; head_sha: string; review_version: number }[];
+};
+
 export type ReviewDocument = {
   schema: string;
+  /** Present only on a stack review. */
+  stack?: ReviewStack;
   review: {
     repository: string;
     pull_request: number;
