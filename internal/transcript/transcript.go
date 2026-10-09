@@ -41,6 +41,11 @@ type Limits struct {
 	Prompt, Message, Tool int
 	// Messages and ToolCalls cap how many of each one prompt lists.
 	Messages, ToolCalls int
+	// Field cuts each of the session's own texts (title, branch, working
+	// directory, agent and model names), and Models caps how many model
+	// names it lists, so the part of the transcript outside the prompts is
+	// bounded too.
+	Field, Models int
 }
 
 // DefaultLimits keeps a transcript to a few megabytes of JSON, which a
@@ -52,6 +57,8 @@ var DefaultLimits = Limits{
 	Tool:      4 << 10,
 	Messages:  100,
 	ToolCalls: 200,
+	Field:     1 << 10,
+	Models:    50,
 }
 
 // Meta is what the graph does not say about a session: which agent ran it
@@ -188,6 +195,8 @@ type TokenUsage struct {
 	UnclassifiedTokens  int64    `json:"unclassified_tokens"`
 	APICalls            int64    `json:"api_calls"`
 	Models              []string `json:"models"`
+	// seen holds Models, so adding one is not a search of the list.
+	seen map[string]bool
 }
 
 func (u *TokenUsage) add(model string, basis session.TokenBasis, in, out, cacheRead, cacheWrite, total, calls int64) {
@@ -206,7 +215,11 @@ func (u *TokenUsage) add(model string, basis session.TokenBasis, in, out, cacheR
 	u.CacheWriteTokens += cacheWrite
 	u.UnclassifiedTokens += unclassified
 	u.APICalls += calls
-	if model != "" && !slices.Contains(u.Models, model) {
+	if model != "" && !u.seen[model] {
+		if u.seen == nil {
+			u.seen = map[string]bool{}
+		}
+		u.seen[model] = true
 		u.Models = append(u.Models, model)
 	}
 }
@@ -317,15 +330,20 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		}
 		return usage[key]
 	}
+	sessionModels := map[string]bool{}
+	addModel := func(model string) {
+		if model != "" && !sessionModels[model] {
+			sessionModels[model] = true
+			s.Models = append(s.Models, model)
+		}
+	}
 	models := map[string]string{}
 	for _, call := range g.ModelInvocations {
 		model := deref(call.Model)
 		models[call.ID] = model
 		usageOf(bucket(call.UserInputID)).add(model, call.TokenBasis, call.InputTokens, call.OutputTokens,
 			call.CacheReadTokens, call.CacheWriteTokens, call.TotalTokens, 1)
-		if model != "" && !slices.Contains(s.Models, model) {
-			s.Models = append(s.Models, model)
-		}
+		addModel(model)
 	}
 	perPrompt := false
 	for _, u := range g.TokenUsage {
@@ -340,9 +358,7 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		model := deref(u.Model)
 		usageOf(key).add(model, basis, deref(u.InputTokens), deref(u.OutputTokens), deref(u.CacheReadTokens),
 			deref(u.CacheWriteTokens), deref(u.TotalTokens), deref(u.APICallCount))
-		if model != "" && !slices.Contains(s.Models, model) {
-			s.Models = append(s.Models, model)
-		}
+		addModel(model)
 	}
 	for key, u := range usage {
 		s.Tokens += u.Tokens
@@ -387,10 +403,6 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		results[result.ToolUseID] = result
 	}
 
-	s.TurnCount = len(o.ordered)
-	// The budget starts with everything but the prompts and their activity,
-	// and keeps a little back for the flags a cut sets afterwards.
-	b := budget{left: limits.Bytes - encodedSize(t) - budgetReserve}
 	cut := func(full string, limit int) (string, bool, error) {
 		window, _ := clip(full, limit+cleanMargin)
 		cleaned, err := clean(window)
@@ -400,6 +412,33 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		shown, _ := clip(cleaned, limit)
 		return shown, len(full) > limit, nil
 	}
+	// The session's own texts are cut to Field, so the budget below bounds
+	// everything else.
+	for _, field := range []*string{&s.Title, &s.GitBranch, &s.WorkingDir, &s.Source} {
+		shown, fieldCut, err := cut(*field, limits.Field)
+		if err != nil {
+			return Transcript{}, err
+		}
+		*field = shown
+		t.Truncated = t.Truncated || fieldCut
+	}
+	if len(s.Models) > limits.Models {
+		s.Models = s.Models[:limits.Models]
+		t.Truncated = true
+	}
+	for i, model := range s.Models {
+		shown, fieldCut, err := cut(model, limits.Field)
+		if err != nil {
+			return Transcript{}, err
+		}
+		s.Models[i] = shown
+		t.Truncated = t.Truncated || fieldCut
+	}
+
+	s.TurnCount = len(o.ordered)
+	// The budget starts with everything but the prompts and their activity,
+	// and keeps a little back for the flags a cut sets afterwards.
+	b := budget{left: limits.Bytes - encodedSize(t) - budgetReserve}
 	for _, input := range o.ordered {
 		text := prompttext.Strip(input.Text)
 		if strings.TrimSpace(text) == "" {

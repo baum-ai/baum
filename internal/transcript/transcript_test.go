@@ -345,3 +345,28 @@ func TestBuildOfAnEmptyGraph(t *testing.T) {
 		t.Errorf("encoded = %s", encoded)
 	}
 }
+
+// The session's own texts are cut too, so a huge title or many models do not
+// carry the body past the budget.
+func TestBuildCutsTheSessionsOwnTexts(t *testing.T) {
+	g := graph()
+	huge := strings.Repeat("t", 6<<20)
+	g.Sessions[0].Title, g.Sessions[0].WorkingDir, g.Sessions[0].GitBranch = &huge, &huge, &huge
+	for i := range 200 {
+		model := fmt.Sprintf("model-%03d-%s", i, strings.Repeat("m", 2000))
+		g.ModelInvocations = append(g.ModelInvocations, session.ModelInvocation{ID: fmt.Sprintf("x%d", i), SessionID: "root", UserInputID: "stop", Model: &model})
+	}
+	got := build(t, g, Meta{ID: "root", Vendor: huge}, DefaultLimits)
+	s := got.Session
+	for _, field := range []string{s.Title, s.WorkingDir, s.GitBranch, s.Source} {
+		if len(field) != DefaultLimits.Field {
+			t.Errorf("a field of %d bytes", len(field))
+		}
+	}
+	if len(s.Models) != DefaultLimits.Models || len(s.Models[49]) != DefaultLimits.Field || !got.Truncated {
+		t.Errorf("%d models, truncated %v", len(s.Models), got.Truncated)
+	}
+	if n := encodedLen(t, got); n > DefaultLimits.Bytes {
+		t.Errorf("encoded %d bytes", n)
+	}
+}

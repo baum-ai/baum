@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lastpersonlabs/baum/internal/locallink"
+	"github.com/lastpersonlabs/baum/internal/transcript"
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
@@ -144,6 +145,52 @@ func TestTranscriptMasksAnEnvFileInAToolsOutput(t *testing.T) {
 	}
 	if !json.Valid([]byte(body)) {
 		t.Error("the body is not JSON")
+	}
+}
+
+// fetchTranscriptBody serves graph as session s-1 and returns the body.
+func fetchTranscriptBody(t *testing.T, graph *session.Graph) string {
+	t.Helper()
+	_, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Home: testHome, Sessions: transcriptLinker(graph)})
+	resp, body := get(t, base+"/api/sessions/s-1")
+	if resp.StatusCode != http.StatusOK || !json.Valid([]byte(body)) {
+		t.Fatalf("status %d: %.200s", resp.StatusCode, body)
+	}
+	return body
+}
+
+// A connection string the prompt's or a tool output's limit cuts through is
+// masked in the part shown: the text is redacted past the cut before it is
+// cut, where the whole-body pass would see only a fragment.
+func TestTranscriptMasksASecretTheLimitCutsThrough(t *testing.T) {
+	// The cut falls inside the password, before the @ that marks the URL's
+	// credentials.
+	straddle := func(limit int) string {
+		head := "postgres://app:Tr0ub4"
+		return strings.Repeat("a", limit-len(head)-1) + " " + head + "dor-3xkq@db.internal:5432/app and more"
+	}
+	graph := transcriptGraph(straddle(transcript.DefaultLimits.Prompt))
+	output := straddle(transcript.DefaultLimits.Tool)
+	graph.ToolResults[0].OutputText = &output
+	body := fetchTranscriptBody(t, graph)
+	if n := strings.Count(body, "postgres://"); n != 2 {
+		t.Fatalf("the cut texts are not in the body (%d)", n)
+	}
+	if strings.Contains(body, "Tr0ub4") {
+		t.Errorf("the password's start survived the cut: ...%s", body[strings.Index(body, "Tr0ub4")-40:][:80])
+	}
+}
+
+// Strings no text limit applies to, such as a tool's name and a model name,
+// are redacted by the pass over the whole body.
+func TestTranscriptMasksTheStringsOutsideTheTexts(t *testing.T) {
+	graph := transcriptGraph("Fix the parser")
+	graph.ToolUses[0].Name = "mail " + plantedMail
+	model := "model of " + plantedMail
+	graph.ModelInvocations = []session.ModelInvocation{{ID: "m1", SessionID: "root", UserInputID: "p1", Model: &model, InputTokens: 1}}
+	body := fetchTranscriptBody(t, graph)
+	if strings.Contains(body, plantedMail) || !strings.Contains(body, "mail xxx.xxxxxxxx@xxxxxxx.xxx") {
+		t.Errorf("the address survived: %s", body)
 	}
 }
 
