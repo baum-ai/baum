@@ -160,7 +160,9 @@ card without prompts opens, a prompt's full text when a preview is expanded,
 and a prompt's agent activity. A loader left out turns its feature off (no
 "Agent activity" without `loadTurnActivity`). `modelLabel` names models;
 `focusTurn` marks a prompt and scrolls to it; `expand` opens the card from
-outside. A restricted session shows only that it is restricted.
+outside. A restricted session shows only that it is restricted, with the
+host's reason (`restrictedNote`) or a neutral one. Character counts are code
+points, as the hosts count a text's full length.
 
 The `baum` binary's app (`app/`) fills both from `GET /api/sessions`: the
 linked sessions and commits when the machine has them; otherwise the sessions

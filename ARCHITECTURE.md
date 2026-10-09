@@ -559,17 +559,38 @@ there yet, and any other id, a session read but not linked, or an unavailable
 answer is 404. The answer keeps the linked sessions' graphs for this
 (`Result.Graphs`, never part of its JSON).
 
-The graph is redacted as `baum sessions --dump` redacts it, by the same
-function (`locallink.RedactGraph`): it is encoded as JSON and secrets and
-e-mail addresses are found over the whole text, then masked only inside JSON
-strings and never in an escape (`redact.Engine.RedactJSON`), so the result
-stays valid JSON. The user's home directory is then written as `~` wherever
-the text names it (as is or JSON-escaped, and not where the name runs on
-into a longer one). Nothing else is removed: prompts, agent
-messages, tool inputs and tool output are shown as recorded, masked. The
-response does not carry the graph's store paths, vendor ids or repository and
-worktree roots, and never a cost (this machine has no prices) or an e-mail
-address of the session's user.
+The transcript is shaped and bounded first, from the graph as read, and
+redacted after, so nothing past the limits below is ever redacted or held:
+
+1. `internal/transcript` builds it (below). Each text it keeps (a prompt, an
+   agent message, a tool call's input or output) is read up to 8 KiB past its
+   limit and passed through the redaction engine before it is cut, so a
+   secret that the cut runs through is still recognised and masked.
+2. The encoded transcript is redacted as a whole with the engine
+   `baum sessions --dump` uses (`redact.Engine.RedactJSON`, which `--dump`
+   reaches through `locallink.RedactGraph`): secrets and e-mail addresses are
+   found over the encoded text, so a key and its value in separate strings are
+   caught together, and in every string value and object key as decoded, so a
+   rule anchored at a line's start fires after an escaped newline (an env
+   file in a tool's output). The union is masked, only inside strings and
+   never in an escape, so the result stays valid JSON.
+3. The user's home directory is written as `~` where it starts a path: after
+   the start of a string, a quote, white space (an escaped newline or tab
+   included), a separator or one of `= : ( [ { , ; | < >`, and not where the
+   name runs on into a longer one (another user's home), so
+   `/data/home/user/src` keeps its name. It is matched as given (trailing
+   separators dropped), as its symbolic links resolve, JSON-escaped, and for
+   a Windows path also with forward slashes and in any case. The home comes
+   from `$HOME` (or the platform's equivalent), else the account. Paths
+   outside it (a clone elsewhere, a Windows home under `/mnt/c` in WSL) are shown as
+   they are.
+
+Nothing else is removed: prompts, agent messages, tool inputs and tool output
+are shown as recorded, masked. The response does not carry the graph's store
+paths, vendor ids or repository and worktree roots, and never a cost (this
+machine has no prices) or an e-mail address of the session's user. Each
+session's body is built once per answer, on its own, so a large one does not
+hold up another, and a build that fails is tried again on the next request.
 
 `internal/transcript` shapes the graph into the session card's view model,
 with the hosted service's rules: a prompt is a top-level input of kind prompt
@@ -590,7 +611,6 @@ prompt's (`unattributed`).
     "started_at": "2026-07-01T10:00:00Z",
     "ended_at": "2026-07-01T10:30:00Z",
     "outcome": "committed",
-    "user_email": "",
     "turn_count": 2,
     "commit_count": 1,
     "confidence": 0.95,
@@ -616,6 +636,7 @@ prompt's (`unattributed`).
       "messages": [{ "text": "…", "text_length": 25, "truncated": false, "timestamp": null, "model": "claude-opus" }],
       "messages_truncated": false,
       "invocations": [{ "model": "claude-opus", "input_tokens": 600, "output_tokens": 300, "cache_read_tokens": 0, "cache_write_tokens": 0, "started_at": null }],
+      "invocations_total": 1,
       "token_usage": { "tokens": 900, "estimated_tokens": 0, "uncached_input_tokens": 600, "output_tokens": 300, "cache_read_tokens": 0, "cache_write_tokens": 0, "unclassified_tokens": 0, "api_calls": 1, "models": ["claude-opus"] },
       "tool_calls": [{ "id": "…", "name": "Bash", "verb": "execute", "input": "{\"command\":\"go test ./...\"}", "input_truncated": false, "output": "ok", "output_truncated": false, "status": "ok", "timestamp": null }],
       "tool_calls_truncated": false
@@ -630,9 +651,15 @@ It is bounded so a session of many megabytes does not stall the page
 (`transcript.DefaultLimits`): a prompt's text is cut at 32 KiB, an agent
 message at 16 KiB and a tool call's input and output at 4 KiB each (at a
 character, with the full length or a `*_truncated` flag beside it); a prompt
-lists at most 100 messages and 200 tool and model calls; and the text of the
-whole transcript is held to 4 MiB, so once something does not fit, the
-prompts after it are left out (`prompts_truncated`, with `prompts_total`). Any
+lists at most 100 messages and 200 tool calls, and only its first model call
+(`invocations`, which the card reads only to tell whether there were any;
+`invocations_total` and `token_usage.api_calls` count them). The body as
+encoded (JSON without HTML escaping) is held to 4 MiB, counted item by item:
+once an item does not fit, nothing after it is listed, and the prompts left
+out are reported (`prompts_truncated`, with `prompts_total`). The redaction
+and home replacement after it keep each string's length or shorten it (a mask
+that splits a multi-byte character can add two bytes, written as U+FFFD), and
+1 KiB of the 4 MiB is held back for that and for the truncation flags. Any
 cut sets `truncated`. The body is built once per session and answer and kept
 with it.
 

@@ -108,9 +108,10 @@ prompt the agent's messages and its tool calls with their input and output.
 It is read only when you open the session, redacted exactly as
 `baum sessions --dump` redacts it (secrets and e-mail addresses masked), with
 your home directory written as `~`, and served only to the page on
-`127.0.0.1`. A very long transcript is shown in part: long texts are cut
-short, and past a few megabytes the later prompts are left out, and the page
-says so. `?pane=session&session=<id>&turn=<n>` opens it at a prompt.
+`127.0.0.1`. A very long transcript is shown in part, and the page says so: a prompt is
+cut at 32 KiB, an agent message at 16 KiB, a tool call's input and output at
+4 KiB each, and once the response reaches 4 MiB the rest is left out. Paths
+outside your home directory are shown as recorded. `?pane=session&session=<id>&turn=<n>` opens it at a prompt.
 
 `baum refresh` updates checks, threads and session evidence without a
 model call. Run any command with `--help` for its flags.
@@ -132,7 +133,8 @@ baum sessions --dump <session-id>
 ```
 
 `--dump` prints valid JSON: secrets and e-mail addresses are found over the
-whole graph but masked only inside its strings.
+whole graph and in each of its strings as decoded, and masked only inside its
+strings.
 
 A session belongs to the repository when it ran in any working tree of the
 clone: the main checkout or any of its `git worktree` checkouts, including
