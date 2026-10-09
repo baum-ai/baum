@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lastpersonlabs/baum/internal/locallink"
@@ -36,6 +37,10 @@ type sessionsEntry struct {
 	// expires is when a failed answer is worked out again; zero for any
 	// other, which is kept until the document's pull request changes.
 	expires time.Time
+	// transcripts are the session transcripts served from this answer, by
+	// session id, built once each.
+	transcriptsMu sync.Mutex
+	transcripts   map[string][]byte
 }
 
 // parseReview reads the pull request a document names. A document that does
@@ -91,22 +96,35 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 // request, so fetching the commits or adding the remote takes effect without
 // restarting. It reports false when ctx ends before an answer.
 func (s *Server) sessionsResult(ctx context.Context) (locallink.Result, bool) {
+	entry, ok := s.sessionsAnswer(ctx)
+	if !ok {
+		return locallink.Result{}, false
+	}
+	return entry.result, true
+}
+
+// sessionsAnswer is sessionsResult's entry, finished, for what else is
+// kept beside the answer.
+func (s *Server) sessionsAnswer(ctx context.Context) (*sessionsEntry, bool) {
+	fixed := func(result locallink.Result) (*sessionsEntry, bool) {
+		return &sessionsEntry{result: result}, true
+	}
 	switch {
 	case s.opts.Sample:
-		return locallink.Unavailable(locallink.CodeSample, "the sample document has no sessions on this machine"), true
+		return fixed(locallink.Unavailable(locallink.CodeSample, "the sample document has no sessions on this machine"))
 	case s.opts.Sessions == nil:
-		return locallink.Unavailable(locallink.CodeError, "this server does not link sessions"), true
+		return fixed(locallink.Unavailable(locallink.CodeError, "this server does not link sessions"))
 	}
 	review := s.currentReview()
 	if review.Repository == "" || review.Head == "" || review.Base == "" {
-		return locallink.Unavailable(locallink.CodeNoHead, "the document does not name its repository and head and base commits"), true
+		return fixed(locallink.Unavailable(locallink.CodeNoHead, "the document does not name its repository and head and base commits"))
 	}
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", review.Repository, review.Head, review.Base, review.MergeBase)
 
 	s.sessionsMu.Lock()
 	if s.sessionsClosed {
 		s.sessionsMu.Unlock()
-		return locallink.Result{}, false
+		return nil, false
 	}
 	entry := s.sessions
 	start := entry == nil || entry.key != key
@@ -129,11 +147,11 @@ func (s *Server) sessionsResult(ctx context.Context) (locallink.Result, bool) {
 
 	select {
 	case <-entry.done:
-		return entry.result, true
+		return entry, true
 	case <-ctx.Done():
-		return locallink.Result{}, false
+		return nil, false
 	case <-s.done:
-		return locallink.Result{}, false
+		return nil, false
 	}
 }
 

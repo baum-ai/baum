@@ -94,6 +94,10 @@ type Result struct {
 	Sessions []Session
 	// Commits are every commit of the pull request, oldest first.
 	Commits []Commit
+	// Graphs are the linked sessions' graphs by id, as read and unredacted,
+	// for a caller that shows a session's transcript; RedactGraph redacts
+	// one. They are never part of the JSON.
+	Graphs map[string]*session.Graph
 }
 
 // Session is a linked session. All text is redacted.
@@ -303,11 +307,17 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		linked[edge.RunID] = true
 	}
 
-	result := Result{Available: true, Sessions: []Session{}, Commits: make([]Commit, 0, len(commits))}
+	result := Result{
+		Available: true, Sessions: []Session{}, Commits: make([]Commit, 0, len(commits)),
+		Graphs: map[string]*session.Graph{},
+	}
 	for _, id := range ids {
 		row, ok := rows[id]
 		if !ok || !linked[id] {
 			continue
+		}
+		if graph := latest[id].session.Graph; graph != nil {
+			result.Graphs[id] = graph
 		}
 		result.Sessions = append(result.Sessions, Session{
 			ID: row.ID, Source: row.Source, Vendor: row.Vendor, Title: row.Title, Branch: row.Branch,
