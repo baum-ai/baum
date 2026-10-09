@@ -174,9 +174,9 @@ export function SideNavDisclosure({
   progress?: string;
   /** The same progress as a pair of numbers, for the bar under the row. */
   read?: { done: number; total: number };
-  /** How many rows the group holds, for a group nothing is read through —
-   *  linked sessions, say. Shown at the row's end, and part of the row's
-   *  name. `progress` wins when both are given, and then nothing is written. */
+  /** How many rows the group holds — linked sessions, say. Shown at the row's
+   *  end. Without `progress` it is part of the row's name too; with it, the
+   *  progress already names the total. */
   count?: number;
   /** The id of the list this row folds. Named only while that list is on the
    *  page, so the row never points at an element that is not there. */
@@ -187,9 +187,9 @@ export function SideNavDisclosure({
   onSelect: (expanded: boolean) => void;
 }) {
   const state = active ? "active" : "idle";
-  // Progress is carried by the bar and the row's name; only a plain count is
-  // written out at the row's end.
-  const trailing = progress || count === undefined ? undefined : String(count);
+  // Progress is never written on the row: the bar and the row's name carry
+  // it. A count always is, at the row's end.
+  const trailing = count === undefined ? undefined : String(count);
   return (
     <button
       type="button"

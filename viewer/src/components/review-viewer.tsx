@@ -1112,6 +1112,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         : undefined
                     }
                     read={fileProgress}
+                    count={fileProgress?.total}
                     list="review-files"
                     controls="review-section"
                     onSelect={(expanded) => {

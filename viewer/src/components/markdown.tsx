@@ -91,7 +91,9 @@ const COMPONENTS: Components = {
       {children}
     </a>
   ),
-  p: ({ children }) => <p className="whitespace-pre-wrap">{children}</p>,
+  // No pre-wrap: `remark-breaks` turns each line break into a <br> and keeps
+  // the newline after it as text, so preserving whitespace would break twice.
+  p: ({ children }) => <p>{children}</p>,
   ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
   li: ({ children }) => <li>{children}</li>,
@@ -177,10 +179,15 @@ export function Markdown({
   children,
   className,
   title,
+  html = true,
 }: {
   children: string;
   className?: string;
   title?: string;
+  /** Parses raw HTML into elements, as GitHub does in a comment. Off for
+   *  text that talks about markup rather than containing it, such as an
+   *  agent's reply naming `<Button>`: the tag then reads as written. */
+  html?: boolean;
 }) {
   return (
     <div className={cn("space-y-2", className)} title={title}>
@@ -190,7 +197,7 @@ export function Markdown({
        *  multi-line comment collapses into a single run-on paragraph. */}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={REHYPE_PLUGINS}
+        rehypePlugins={html ? REHYPE_PLUGINS : undefined}
         components={COMPONENTS}
       >
         {children}

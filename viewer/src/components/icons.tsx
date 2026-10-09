@@ -316,6 +316,16 @@ export function BranchIcon(props: IconProps) {
   );
 }
 
+/** An idea: a lightbulb on its screw base. */
+export function LightbulbIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 11.5c0-1.4-2.25-2.6-2.25-5a4.25 4.25 0 0 1 8.5 0c0 2.4-2.25 3.6-2.25 5Z" />
+      <path d="M6.25 13.5h3.5" />
+    </Icon>
+  );
+}
+
 /** Changed files: two sheets, one behind the other. */
 export function FilesIcon(props: IconProps) {
   return (
