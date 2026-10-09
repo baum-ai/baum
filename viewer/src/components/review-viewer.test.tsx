@@ -340,7 +340,9 @@ describe("ReviewViewer with host slots", () => {
     const groups = [
       ...container.querySelectorAll('nav[aria-label="Review sections"] button[aria-expanded]'),
     ].map((row) => row.textContent);
-    expect(groups).toEqual(["Changes", "Critical risks", "Files changed", "Sessions"]);
+    // Files writes its total beside its read progress; Changes leaves it to
+    // the progress alone.
+    expect(groups).toEqual(["Changes", "Critical risks", "Files changed1", "Sessions"]);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Chat", "Details", "Activity"]);
     expect(container.querySelector('section[aria-label="Conversation"]')).not.toBeNull();
