@@ -143,7 +143,7 @@ export function QuotedPrompts({
             ) : null}
             {days[index] ? <SystemNote className="mb-1">{days[index]}</SystemNote> : null}
             {prompt.text === null ? (
-              <SystemNote>Prompt {number(prompt.index)} is not carried in the document.</SystemNote>
+              <SystemNote>{number(prompt.index)}: the document does not carry its text.</SystemNote>
             ) : (
               <PromptBubble
                 text={prompt.text}

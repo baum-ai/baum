@@ -46,11 +46,26 @@ describe("quoted prompts", () => {
     expect(single).not.toContain(">Codex<");
   });
 
+  it("names the author a host knows and numbers prompts its way", () => {
+    const html = renderToStaticMarkup(
+      <QuotedPrompts
+        prompts={[{ id: "t3", index: 3, text: "Ship it", at: null }]}
+        author="Ada Lovelace"
+        avatar={<img alt="" />}
+        number={(index) => `Turn ${index}`}
+      />,
+    );
+    expect(html).toContain("Ada Lovelace");
+    expect(html).toContain("<img");
+    expect(html).toContain("Turn 3");
+    expect(html).not.toContain("#3");
+  });
+
   it("says when the document does not carry a prompt's text", () => {
     const html = renderToStaticMarkup(
       <QuotedPrompts prompts={[{ id: "p2", index: 2, text: null }]} />,
     );
-    expect(html).toContain("Prompt #2 is not carried in the document.");
+    expect(html).toContain("#2: the document does not carry its text.");
     expect(html).not.toContain('data-message="human"');
   });
 });

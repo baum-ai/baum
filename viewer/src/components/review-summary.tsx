@@ -55,12 +55,14 @@ export function ReviewSummary({
   const { summary } = document;
   const intent = summaryIntent(document);
   const prompts = intentPrompts(document, intent);
-  // Numbered as the Activity tab lists them, so two sessions of one agent
-  // read apart.
+  // An agent with several sessions here numbers them, so they read apart.
+  const sessionsOf = (vendor: string) => [
+    ...new Set(prompts.filter((each) => each.vendor === vendor).map((each) => each.session)),
+  ];
   const sessionLabel = (prompt: (typeof prompts)[number]) => {
-    const position = document.index.sessions.findIndex((each) => each.id === prompt.session);
     const agent = harnessName(prompt.vendor);
-    return position < 0 ? agent : `${agent} session ${position + 1}`;
+    const sessions = sessionsOf(prompt.vendor);
+    return sessions.length > 1 ? `${agent} session ${sessions.indexOf(prompt.session) + 1}` : agent;
   };
   const triage = triageRisks(document);
   const behaviour = behaviourChanges(document);
