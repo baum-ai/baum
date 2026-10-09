@@ -137,14 +137,41 @@ the method and confidence of each. Both open each other through
 `actions.select`. `sessionsSlot` and `commitsSlot`
 (`@baum/viewer/components/list-slots`) turn a state into the
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
-labels.
+labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
+puts the host's own content under a session opened alone, such as its
+transcript.
+
+### Session transcripts
+
+`SessionCard` (`@baum/viewer/components/session-card`) draws one session's
+transcript, the same card in the hosted app and in `baum view`: a header with
+the agent, title, date, duration, prompt count and outcome (or linked commits),
+the session's figures (models, tokens, cost when the host has prices, files,
+lines, tool calls, working directory), then each prompt with what it caused,
+and on request the prompt's agent activity: model usage, tool calls grouped by
+kind with their input (and output, when the host has it), and the agent's
+messages. Prompts and messages are `PromptBlock`s
+(`@baum/viewer/components/prompt-block`), collapsed to a few lines.
+
+Its props are plain view models (`SessionCardSession` and the types beside
+it, in the hosted API's field names) and an optional `SessionCardSource` of
+loaders for what the session did not arrive with: the whole session when a
+card without prompts opens, a prompt's full text when a preview is expanded,
+and a prompt's agent activity. A loader left out turns its feature off (no
+"Agent activity" without `loadTurnActivity`). `modelLabel` names models;
+`focusTurn` marks a prompt and scrolls to it; `expand` opens the card from
+outside. A restricted session shows only that it is restricted.
 
 The `baum` binary's app (`app/`) fills both from `GET /api/sessions`: the
 linked sessions and commits when the machine has them; otherwise the sessions
 the document recorded (under a note giving the server's reason) and no Commits
 group; and the loading state while the request is out, so a `?pane=sessions`
-or `?pane=commits` link survives. See the "Local session linkage" section of
-`oss/ARCHITECTURE.md` for the contract.
+or `?pane=commits` link survives. A linked session opened alone
+(`?pane=session&session=<id>`) asks `GET /api/sessions/{id}` for its
+redacted transcript and shows it with `SessionCard` under the session: while
+loading, on failure (with Retry), and with a note when the server cut it
+short. `&turn=<n>` opens it at that prompt. See the "Local session linkage"
+and "Session transcripts" sections of `oss/ARCHITECTURE.md` for the contract.
 
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
@@ -258,6 +285,9 @@ page's own origin:
 - `GET /api/events` is a Server-Sent Events stream. A `document` event means
   the document changed, so the app fetches it again and keeps the URL, and with
   it the selection. Other events are ignored.
+- `GET /api/sessions` lists the sessions and commits linked on this machine,
+  and `GET /api/sessions/{id}` one linked session's transcript, asked for
+  only when that session is opened.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to

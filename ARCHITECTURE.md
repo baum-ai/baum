@@ -345,13 +345,21 @@ keeps the last answer on screen while it does.
   not be read), and the Commits group is left out. Only a failed request with
   no session in the document shows the group as failed. A later request that
   fails keeps the last answer; a server answer of unavailable replaces it.
+- A linked session opened alone (`?pane=session&session=<id>`) asks
+  `GET /api/sessions/{id}` for its transcript, only then, and draws it under
+  the session with `SessionCard`, the component the hosted app uses, through
+  `SessionList`'s `renderSession`. It shows a loading state, a failure with
+  Retry (a 404 says the session is no longer linked), and a note when the
+  server cut the transcript short. `?turn=<n>` opens it at that prompt; the
+  parameter is cleared with the selection. The document's own sessions have
+  no transcript.
 
 ### How `baum view` serves it
 
 `internal/viewserver` is the host. `baum view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
 or a free one, and prints the URL. It never contacts a server or fetches
-anything. The server has four API routes and an asset fallback:
+anything. The server has five API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
@@ -359,6 +367,7 @@ anything. The server has four API routes and an asset fallback:
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
+| `GET /api/sessions/{id}` | the redacted transcript of one of those sessions, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -472,7 +481,8 @@ inside the clone and the session store overrides, and does this:
 
 The result is redacted with the engine and the row summary that `baum sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
-address or session store path.
+address or session store path; a linked session's transcript is its own route
+(see "Session transcripts" below).
 
 `GET /api/sessions` answers one of two shapes. Available:
 
@@ -539,6 +549,92 @@ time. When the server stops, it cancels a running computation and waits up to
 ten seconds for it to remove its private repository. The route sits behind the same
 host check and security headers as the others, and only `GET` and `HEAD` are
 allowed.
+
+### Session transcripts
+
+`GET /api/sessions/{id}` serves the transcript of a session the current
+`/api/sessions` answer lists, and only those: it reads that answer from the
+same cache, computing it through the same single-flight path when it is not
+there yet, and any other id, a session read but not linked, or an unavailable
+answer is 404. The answer keeps the linked sessions' graphs for this
+(`Result.Graphs`, never part of its JSON).
+
+The graph is redacted as `baum sessions --dump` redacts it, by the same
+function (`locallink.RedactGraph`): it is encoded as JSON and secrets and
+e-mail addresses are found over the whole text, then masked only inside JSON
+strings and never in an escape (`redact.Engine.RedactJSON`), so the result
+stays valid JSON. The user's home directory is then written as `~` wherever
+the text names it (as is or JSON-escaped, and not where the name runs on
+into a longer one). Nothing else is removed: prompts, agent
+messages, tool inputs and tool output are shown as recorded, masked. The
+response does not carry the graph's store paths, vendor ids or repository and
+worktree roots, and never a cost (this machine has no prices) or an e-mail
+address of the session's user.
+
+`internal/transcript` shapes the graph into the session card's view model,
+with the hosted service's rules: a prompt is a top-level input of kind prompt
+or slash command from a human with text left once wrapper constructs are
+stripped; a nested session's activity counts toward the prompt whose tool
+call started it; activity under any other input is the session's and no
+prompt's (`unattributed`).
+
+```json
+{
+  "session": {
+    "run_id": "aaaaaaaa-0000-4000-8000-000000000001",
+    "source": "claude_code",
+    "title": "Fix the parser",
+    "git_branch": "feature",
+    "working_dir": "~/src/widgets",
+    "models": ["claude-opus"],
+    "started_at": "2026-07-01T10:00:00Z",
+    "ended_at": "2026-07-01T10:30:00Z",
+    "outcome": "committed",
+    "user_email": "",
+    "turn_count": 2,
+    "commit_count": 1,
+    "confidence": 0.95,
+    "prompts": [
+      {
+        "turn_id": "…", "ordinal": 1, "started_at": "…", "text": "…", "text_length": 34,
+        "truncated": false, "effects": { "files_read": 2, "files_edited": 1, "reads": 3, "files_changed": 1,
+        "diff_hunks": 1, "added_lines": 4, "removed_lines": 1, "tool_calls": 2, "execute_calls": 1,
+        "failed_calls": 0 }, "cost_usd": null, "tokens": 900, "estimated_tokens": 0
+      }
+    ],
+    "prompts_total": 2,
+    "prompts_truncated": false,
+    "totals": { "…": "as effects" },
+    "unattributed": { "…": "as effects" },
+    "tokens": 1800,
+    "estimated_tokens": 0,
+    "cost_per_prompt": true,
+    "has_inner_trace": true
+  },
+  "activity": {
+    "<turn_id>": {
+      "messages": [{ "text": "…", "text_length": 25, "truncated": false, "timestamp": null, "model": "claude-opus" }],
+      "messages_truncated": false,
+      "invocations": [{ "model": "claude-opus", "input_tokens": 600, "output_tokens": 300, "cache_read_tokens": 0, "cache_write_tokens": 0, "started_at": null }],
+      "token_usage": { "tokens": 900, "estimated_tokens": 0, "uncached_input_tokens": 600, "output_tokens": 300, "cache_read_tokens": 0, "cache_write_tokens": 0, "unclassified_tokens": 0, "api_calls": 1, "models": ["claude-opus"] },
+      "tool_calls": [{ "id": "…", "name": "Bash", "verb": "execute", "input": "{\"command\":\"go test ./...\"}", "input_truncated": false, "output": "ok", "output_truncated": false, "status": "ok", "timestamp": null }],
+      "tool_calls_truncated": false
+    }
+  },
+  "truncated": false,
+  "limit_bytes": 4194304
+}
+```
+
+It is bounded so a session of many megabytes does not stall the page
+(`transcript.DefaultLimits`): a prompt's text is cut at 32 KiB, an agent
+message at 16 KiB and a tool call's input and output at 4 KiB each (at a
+character, with the full length or a `*_truncated` flag beside it); a prompt
+lists at most 100 messages and 200 tool and model calls; and the text of the
+whole transcript is held to 4 MiB, so once something does not fit, the
+prompts after it are left out (`prompts_truncated`, with `prompts_total`). Any
+cut sets `truncated`. The body is built once per session and answer and kept
+with it.
 
 The server exposes `Mux` and `Use` so a host with its own routes or
 authentication, such as a later `baum ui`, extends it without changing these

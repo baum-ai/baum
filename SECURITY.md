@@ -39,6 +39,20 @@ verified, baum uses a copy embedded at release. Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else.
 
+## What `baum view` shows
+
+`baum view` serves only to `127.0.0.1` and answers only requests addressed to
+that address or `localhost` on its port; it never contacts a server. Besides
+the document, it shows the coding-agent sessions on your machine that it
+linked to the pull request, and, when you open one, that session's full
+transcript: your prompts, the agent's messages, and each tool call's input and
+output, which can include file contents and command output. The transcript is
+redacted exactly as `baum sessions --dump` redacts it, so secrets and e-mail
+addresses are masked as described above, and your home directory is written as
+`~`; nothing else is removed. Only sessions linked to the pull request are
+served. Anyone who can reach that port on your machine can read them, as they
+could read the session files themselves.
+
 ## Reading your clone without downloading anything
 
 `baum sessions` and `baum view` read your clone with git but never use the
