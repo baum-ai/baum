@@ -176,11 +176,13 @@ const LIFT =
  *
  *  `source` loads what the session did not arrive with, and `modelLabel`
  *  names a model (the model id by default). A source the host rebuilds on
- *  every render loads again, so keep it stable. */
+ *  every render loads again, so keep it stable. `restrictedNote` says why a
+ *  restricted session's details are withheld, in the host's own terms. */
 export function SessionCard({
   session,
   source,
   modelLabel = (model) => model,
+  restrictedNote = "This session's prompts, metadata, usage, and activity are not shown here.",
   defaultOpen,
   expand = false,
   meta,
@@ -189,6 +191,7 @@ export function SessionCard({
   session: SessionCardSession;
   source?: SessionCardSource;
   modelLabel?: (model: string) => string;
+  restrictedNote?: ReactNode;
   defaultOpen: boolean;
   expand?: boolean;
   meta?: ReactNode;
@@ -234,8 +237,7 @@ export function SessionCard({
           <Badge size="compact">Details restricted</Badge>
         </div>
         <p className="border-t border-(--border-subtle) px-5 py-4 text-base text-(--text-tertiary)">
-          This session's prompts, metadata, usage, and activity are shown only when you can read
-          every repository it belongs to and all of them are connected.
+          {restrictedNote}
         </p>
       </Card>
     );

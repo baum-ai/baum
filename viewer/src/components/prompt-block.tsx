@@ -1,7 +1,7 @@
 import { type ReactNode, useId, useState } from "react";
 
 import { cn, FOCUS_RING } from "./classnames";
-import { formatCompact } from "./format";
+import { codePoints, formatCompact } from "./format";
 
 /** A user prompt, or an agent's reply to one, collapsed by default.
  *
@@ -36,10 +36,14 @@ export function PromptBlock({
   truncated?: boolean;
   label?: ReactNode;
   collapsedLines?: number;
-  /** Fetches the rest. Called once, the first time this is expanded. */
+  /** Fetches the rest. Called each time the block is expanded, never when
+   *  it is collapsed; a host that has the rest already ignores it. */
   onExpand?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Characters as the hosts count them (code points), not UTF-16 units, so
+  // the shown and full lengths compare.
+  const characters = codePoints(text);
   const bodyId = useId();
 
   // A prompt that already fits gets no control: a "Show all" that reveals
@@ -74,7 +78,7 @@ export function PromptBlock({
           {label ? <span className="min-w-0 truncate">{label}</span> : null}
         </span>
         <span className="flex-none tabular-nums">
-          {formatCompact(fullLength ?? text.length)} characters
+          {formatCompact(fullLength ?? characters)} characters
         </span>
       </figcaption>
 
@@ -123,7 +127,7 @@ export function PromptBlock({
 
       {truncated && !expanded ? (
         <p className="mt-1.5 text-xs text-(--text-tertiary)">
-          Showing the first {formatCompact(text.length)} of {formatCompact(fullLength)} characters.
+          Showing the first {formatCompact(characters)} of {formatCompact(fullLength)} characters.
         </p>
       ) : null}
     </figure>

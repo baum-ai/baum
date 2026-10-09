@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { codePoints } from "./format";
 import { PromptBlock } from "./prompt-block";
 
 declare global {
@@ -37,6 +38,13 @@ describe("PromptBlock", () => {
     expect(text).toContain("Jul 1");
     expect(text).toContain("14 characters");
     expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("counts characters as code points, as the hosts do", () => {
+    expect(codePoints("a😀é")).toBe(3);
+    expect(codePoints("\ud83d")).toBe(1);
+    render(<PromptBlock text={"😀".repeat(300)} fullLength={1000} truncated />);
+    expect(container.textContent).toContain("Showing the first 300 of 1K characters.");
   });
 
   it("captions an agent message", () => {

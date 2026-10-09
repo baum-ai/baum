@@ -137,7 +137,19 @@ afterEach(() => {
 });
 
 describe("SessionCard", () => {
-  it("shows a restricted card with no usage", () => {
+  it("shows a restricted card with no usage, and the host's reason", () => {
+    const restricted = session({
+      restricted: true,
+      title: "",
+      prompts: [],
+      totals: null,
+      tokens: 0,
+      cost_usd: null,
+      has_inner_trace: false,
+    });
+    expect(
+      renderToStaticMarkup(createElement(SessionCard, { session: restricted, defaultOpen: true })),
+    ).toContain("prompts, metadata, usage, and activity are not shown here.");
     const html = renderToStaticMarkup(
       createElement(SessionCard, {
         session: session({
@@ -150,12 +162,11 @@ describe("SessionCard", () => {
           has_inner_trace: false,
         }),
         defaultOpen: true,
+        restrictedNote: "Only readers of every repository see it.",
       }),
     );
     expect(html).toContain("Details restricted");
-    expect(html).toContain(
-      "shown only when you can read every repository it belongs to and all of them are connected",
-    );
+    expect(html).toContain("Only readers of every repository see it.");
     for (const hidden of ["Tokens", "Cost", "Files read", "0 prompts", "$"]) {
       expect(html).not.toContain(hidden);
     }

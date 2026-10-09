@@ -260,3 +260,19 @@ export function githubAvatarURL(login: string | null | undefined, size = 64): st
   if (!login || login.endsWith("[bot]")) return null;
   return `https://github.com/${encodeURIComponent(login)}.png?size=${size}`;
 }
+
+/** How many code points `text` holds: a surrogate pair counts once. */
+export function codePoints(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    if (unit < 0xdc00 || unit > 0xdfff || i === 0 || !isHighSurrogate(text.charCodeAt(i - 1))) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function isHighSurrogate(unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff;
+}
