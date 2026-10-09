@@ -185,8 +185,10 @@ export function CodeDiff({
                   <span className="text-(--status-critical)">−{file.deletions}</span>
                 </span>
               </header>
+              {/* Stays on the page for aria-controls; a folded file draws and
+                  highlights nothing. */}
               <div id={body} hidden={!expanded}>
-                <CodeDiffTable file={file} />
+                {expanded ? <CodeDiffTable file={file} /> : null}
               </div>
             </article>
           );

@@ -160,8 +160,8 @@ bars (`--z-sticky`, 30).
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
 (`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
-calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
-not tokenised). Both render a line through `HighlightedText`
+calls `useHighlightedHunks` on its parsed hunks). Neither tokenises a folded
+file: each `CodeDiff` file folds on its own from its header. Both render a line through `HighlightedText`
 (`@baum/viewer/components/highlighted-text`), which wraps each token in an
 inline span inside the existing code cell. It highlights in the browser only:
 the server render and the first client render are the plain text, exactly as
