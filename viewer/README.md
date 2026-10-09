@@ -160,17 +160,18 @@ bars (`--z-sticky`, 30).
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
 (`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
-calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
-not tokenised). Both render a line through `HighlightedText`
-(`@baum/viewer/components/highlighted-text`), which wraps each token in an
-inline span inside the existing code cell. It highlights in the browser only:
-the server render and the first client render are the plain text, exactly as
-before, and the colours replace it once they are ready, with no change of
-layout. Each hunk's old side (context and removed lines) and new side (context
-and added lines) are tokenised separately, so a comment or string that starts
-on an unchanged line is coloured on both the removed and the added lines that
-follow it. The text is never altered; a line whose tokens do not add up to it
-renders plain.
+calls `useHighlightedHunks` on its parsed hunks). Neither tokenises what it
+does not draw: a `CodeDiff` file folded from its header, a closed Files card or
+a large diff still collapsed behind its placeholder. Both render a line through
+`HighlightedText` (`@baum/viewer/components/highlighted-text`), which wraps
+each token in an inline span inside the existing code cell. It highlights in
+the browser only: the server render and the first client render are the plain
+text, exactly as before, and the colours replace it once they are ready, with
+no change of layout. Each hunk's old side (context and removed lines) and new
+side (context and added lines) are tokenised separately, so a comment or string
+that starts on an unchanged line is coloured on both the removed and the added
+lines that follow it. The text is never altered; a line whose tokens do not add
+up to it renders plain.
 
 - **Languages** are a fixed allow-list, picked by extension or file name
   (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
