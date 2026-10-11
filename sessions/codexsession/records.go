@@ -220,11 +220,12 @@ func (f *threadState) itemCompleted(line codextranscript.Line, completed *codext
 	for _, part := range item.Content {
 		switch part.Type {
 		case "text":
-			text.WriteString(part.Text)
-			var partElements []json.RawMessage
-			if json.Unmarshal(part.TextElements, &partElements) == nil {
-				elements = append(elements, partElements...)
+			partElements, err := shiftTextElements(part.TextElements, text.Len())
+			if err != nil {
+				return accountDiscarded, "", fmt.Errorf("decoding item_completed text_elements: %w", err)
 			}
+			elements = append(elements, partElements...)
+			text.WriteString(part.Text)
 		case "image":
 			images = append(images, quoted(part.ImageURL))
 		case "local_image":
@@ -235,6 +236,54 @@ func (f *threadState) itemCompleted(line codextranscript.Line, completed *codext
 	message.Images, message.LocalImages, message.TextElements = rawArray(images), rawArray(localImages), rawArray(elements)
 	f.addHumanInput(line, message)
 	return accountMapped, "", nil
+}
+
+// shiftTextElements returns a text part's text_elements with each byte_range
+// moved by offset, the byte length of the text before the part. Codex measures
+// a range from the start of its own part, while the parts are joined into one
+// message. A part without text_elements yields none; any other malformed value
+// is an error.
+func shiftTextElements(raw json.RawMessage, offset int) ([]json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(raw, &elements); err != nil {
+		return nil, err
+	}
+	for i, element := range elements {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(element, &fields); err != nil {
+			return nil, err
+		}
+		if fields == nil {
+			return nil, fmt.Errorf("text element is null")
+		}
+		rangeRaw, ok := fields["byte_range"]
+		if !ok {
+			continue
+		}
+		var byteRange struct {
+			Start *int `json:"start"`
+			End   *int `json:"end"`
+		}
+		if err := json.Unmarshal(rangeRaw, &byteRange); err != nil {
+			return nil, err
+		}
+		if byteRange.Start == nil || byteRange.End == nil {
+			return nil, fmt.Errorf("byte_range needs start and end")
+		}
+		if offset == 0 {
+			continue
+		}
+		fields["byte_range"], _ = json.Marshal(map[string]int{"start": *byteRange.Start + offset, "end": *byteRange.End + offset})
+		shifted, err := json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		elements[i] = shifted
+	}
+	return elements, nil
 }
 
 func quoted(value string) json.RawMessage {

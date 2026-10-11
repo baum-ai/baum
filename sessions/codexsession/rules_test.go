@@ -412,6 +412,54 @@ func TestTokenUsageRecordsSurviveCompactionTotalDrift(t *testing.T) {
 	}
 }
 
+// A session an older Codex wrote and a newer one resumed has token_counts first
+// and token_usage_records after. Only token_counts after the first record are
+// superseded; the earlier ones count through the repeat check, so every request
+// counts once.
+func TestTokenUsageRecordsSupersedeOnlyLaterTokenCounts(t *testing.T) {
+	first, second, third, fourth := usageJSON(10, 2), usageJSON(20, 3), usageJSON(30, 4), usageJSON(40, 5)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		countLine("2026-08-01T12:00:05Z", first, first),
+		countLine("2026-08-01T12:00:06Z", first, first),
+		envelope("2026-08-01T12:00:07Z", "response_item", `{"type":"function_call","name":"b_tool","arguments":"{}","call_id":"b"}`),
+		countLine("2026-08-01T12:00:08Z", second, usageJSON(30, 5)),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"function_call","name":"c_tool","arguments":"{}","call_id":"c"}`),
+		recordLine("2026-08-01T12:00:10Z", third, usageJSON(64, 9)),
+		countLine("2026-08-01T12:00:11Z", third, usageJSON(64, 9)),
+		envelope("2026-08-01T12:00:12Z", "response_item", `{"type":"function_call","name":"d_tool","arguments":"{}","call_id":"d"}`),
+		recordLine("2026-08-01T12:00:13Z", fourth, usageJSON(109, 14)),
+		countLine("2026-08-01T12:00:14Z", fourth, usageJSON(109, 14)),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12+23+34+45 {
+		t.Fatalf("counted %d tokens, want %d", got, 12+23+34+45)
+	}
+	if report.Tokens.RepeatedTotals != 1 || report.Records.Discarded["context/token_repeat"] != 1 ||
+		report.Records.Discarded["context/token_count_superseded"] != 2 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v tokens = %+v", report.Records, report.Tokens)
+	}
+}
+
+// A record that names another thread or turn is still counted where it appears,
+// but the mismatch is noted.
+func TestTokenUsageRecordAttributionMismatchIsNoted(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "token_usage_record", `{"thread_id":"other","turn_id":"elsewhere","usage":`+usageJSON(10, 2)+`}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12 {
+		t.Fatalf("counted %d tokens, want 12", got)
+	}
+	notes := strings.Join(report.Notes, "\n")
+	if !strings.Contains(notes, "names thread other, not root") || !strings.Contains(notes, "names turn elsewhere") {
+		t.Fatalf("notes = %q", notes)
+	}
+}
+
 func TestTokenUsageRecordWithoutUsageIsDiscarded(t *testing.T) {
 	lines := basicStart()
 	lines = append(lines,
@@ -767,6 +815,32 @@ func TestItemCompletedUserMessageKeepsImagesAndTextElements(t *testing.T) {
 		if string(metadata[key]) != want {
 			t.Errorf("metadata[%s] = %s, want %s", key, metadata[key], want)
 		}
+	}
+}
+
+// Each text part's byte_range is relative to the part, so after joining the
+// parts it moves by the byte length of the text before it. A malformed element
+// fails the line.
+func TestItemCompletedShiftsTextElementOffsets(t *testing.T) {
+	lines := func(content string) []string {
+		return []string{
+			envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+			envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+			envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+			envelope("2026-08-01T12:00:03Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":[`+content+`]}}`),
+		}
+	}
+	graph, _ := buildLines(t, lines(`{"type":"text","text":"Hé ","text_elements":[]},{"type":"text","text":"@file now","text_elements":[{"byte_range":{"start":0,"end":5},"placeholder":"x"}]}`)...)
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(graph.UserInputs[0].Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	// "Hé " is 4 bytes.
+	if want := `[{"byte_range":{"end":9,"start":4},"placeholder":"x"}]`; string(metadata["text_elements"]) != want {
+		t.Fatalf("text_elements = %s, want %s", metadata["text_elements"], want)
+	}
+	if _, _, err := buildLinesResult(t, lines(`{"type":"text","text":"a","text_elements":[{"byte_range":{"start":"x"}}]}`)...); err == nil {
+		t.Fatal("malformed text element did not fail the line")
 	}
 }
 

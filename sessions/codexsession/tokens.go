@@ -8,27 +8,34 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
-// applyTokenUsageRecord counts a token_usage_record's own usage once. In a
-// rollout that writes records they are the sole token source: the token_count
-// that follows each one is discarded (see applyTokenCount), so no repeat check
-// or thread total is involved. Totals drift apart after a remote compaction
+// applyTokenUsageRecord counts a token_usage_record's own usage once. From the
+// first record on they are the thread's sole token source: the token_count that
+// follows each one is discarded (see applyTokenCount), so no repeat check or
+// thread total is involved. Totals drift apart after a remote compaction
 // (the record's thread total includes the compaction request, token_count's does
 // not), so comparing them would double count every later request.
 func (f *threadState) applyTokenUsageRecord(line codextranscript.Line, record *codextranscript.TokenUsageRecord) (accountCategory, string, error) {
 	f.b.report.Tokens.Records++
+	f.seenTokenUsageRecord = true
 	turn := f.usageTurn()
+	if record.ThreadID != "" && record.ThreadID != f.meta.ID {
+		f.b.report.note("token_usage_record at line %d names thread %s, not %s", line.Ordinal, record.ThreadID, f.meta.ID)
+	}
+	if record.TurnID != "" && (turn == nil || record.TurnID != turn.id) {
+		f.b.report.note("token_usage_record at line %d names turn %s, not the turn it is attributed to", line.Ordinal, record.TurnID)
+	}
 	if turn == nil {
 		return accountDiscarded, "context/token_outside_turn", nil
 	}
 	return f.assignUsage(line, turn, record.Usage)
 }
 
-// applyTokenCount takes a token_count event. In a rollout with
-// token_usage_records the records already counted every request, so the event
-// is discarded. Otherwise a total equal to the thread's previous one is a repeat
+// applyTokenCount takes a token_count event. Once the thread has seen a
+// token_usage_record the records count every request, so the event is
+// discarded. Before that a total equal to the thread's previous one is a repeat
 // (Codex re-emits it, including at the start of the next turn).
 func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextranscript.TokenCount) (accountCategory, string, error) {
-	if f.hasTokenUsageRecords {
+	if f.seenTokenUsageRecord {
 		return accountDiscarded, "context/token_count_superseded", nil
 	}
 	f.b.report.Tokens.Records++

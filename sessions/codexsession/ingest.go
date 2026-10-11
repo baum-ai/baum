@@ -86,9 +86,6 @@ func (b *builder) ingest(file *codextranscript.File, spawn *session.SpawnLink) e
 		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
 			state.hasUserMessageEvents = true
 		}
-		if line.TokenUsageRecord != nil {
-			state.hasTokenUsageRecords = true
-		}
 	}
 	for i, line := range file.Lines {
 		b.report.Records.Total++
@@ -270,12 +267,13 @@ type threadState struct {
 	// hasUserMessageEvents is true when the rollout writes user_message
 	// events, which then carry the human prompts instead of item_completed.
 	hasUserMessageEvents bool
-	// hasTokenUsageRecords is true when the rollout writes token_usage_record
-	// lines, which then are the only token source; token_count events are
-	// discarded as superseded.
-	hasTokenUsageRecords bool
-	// lastTotal is the previous token_count total of the thread, for repeat
-	// detection in rollouts without token_usage_records.
+	// seenTokenUsageRecord is true once the thread has processed a
+	// token_usage_record. From then on records are the only token source and
+	// token_count events are discarded as superseded; earlier token_counts (a
+	// session an older Codex wrote and a newer one resumed) still count.
+	seenTokenUsageRecord bool
+	// lastTotal is the previous counted token_count total of the thread, for
+	// repeat detection before the first token_usage_record.
 	lastTotal       *codextranscript.Usage
 	unsupported     map[string]bool
 	unsupportedCall map[string]bool
