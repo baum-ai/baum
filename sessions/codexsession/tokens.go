@@ -8,39 +8,62 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
-// applyTokenUsageRecord counts a token_usage_record as the token_count it
-// precedes: its usage and thread total are that event's last and total token
-// usage. The token_count that follows repeats the thread total, so the per-turn
-// repeat check discards it and each request counts once; a record with no
-// following token_count (a request still in flight) still counts.
+// applyTokenUsageRecord counts a token_usage_record's own usage once. In a
+// rollout that writes records they are the sole token source: the token_count
+// that follows each one is discarded (see applyTokenCount), so no repeat check
+// or thread total is involved. Totals drift apart after a remote compaction
+// (the record's thread total includes the compaction request, token_count's does
+// not), so comparing them would double count every later request.
 func (f *threadState) applyTokenUsageRecord(line codextranscript.Line, record *codextranscript.TokenUsageRecord) (accountCategory, string, error) {
-	return f.applyTokenCount(line, &codextranscript.TokenCount{Info: &codextranscript.TokenInfo{
-		TotalTokenUsage: record.ThreadTokenUsage, LastTokenUsage: record.Usage,
-	}})
+	f.b.report.Tokens.Records++
+	turn := f.usageTurn()
+	if turn == nil {
+		return accountDiscarded, "context/token_outside_turn", nil
+	}
+	return f.assignUsage(line, turn, record.Usage)
 }
 
-// applyTokenCount takes one usage report, from a token_count event or a
-// token_usage_record, so Tokens.Records counts both kinds.
+// applyTokenCount takes a token_count event. In a rollout with
+// token_usage_records the records already counted every request, so the event
+// is discarded. Otherwise a total equal to the thread's previous one is a repeat
+// (Codex re-emits it, including at the start of the next turn).
 func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextranscript.TokenCount) (accountCategory, string, error) {
+	if f.hasTokenUsageRecords {
+		return accountDiscarded, "context/token_count_superseded", nil
+	}
 	f.b.report.Tokens.Records++
 	if count.Info == nil {
 		return accountDiscarded, "context/token_rate_limits", nil
 	}
+	turn := f.usageTurn()
+	if turn == nil {
+		return accountDiscarded, "context/token_outside_turn", nil
+	}
+	if f.lastTotal != nil && sameUsage(*f.lastTotal, count.Info.TotalTokenUsage) {
+		f.b.report.Tokens.RepeatedTotals++
+		return accountDiscarded, "context/token_repeat", nil
+	}
+	total := count.Info.TotalTokenUsage
+	f.lastTotal = &total
+	return f.assignUsage(line, turn, count.Info.LastTokenUsage)
+}
+
+// usageTurn is the turn a usage report belongs to: the open turn, or the last
+// closed one when the report arrives after task_complete.
+func (f *threadState) usageTurn() *turnState {
 	turnID := f.openTurn
 	if turnID == "" {
 		turnID = f.lastClosedTurn
 	}
 	if turnID == "" {
-		return accountDiscarded, "context/token_outside_turn", nil
+		return nil
 	}
-	turn := f.turn(turnID)
-	if turn.lastTotal != nil && sameUsage(*turn.lastTotal, count.Info.TotalTokenUsage) {
-		f.b.report.Tokens.RepeatedTotals++
-		return accountDiscarded, "context/token_repeat", nil
-	}
-	total := count.Info.TotalTokenUsage
-	turn.lastTotal = &total
-	last := count.Info.LastTokenUsage
+	return f.turn(turnID)
+}
+
+// assignUsage gives one request's usage to the turn's single unaccounted
+// invocation, or records it as an ambiguous session or input row.
+func (f *threadState) assignUsage(line codextranscript.Line, turn *turnState, last codextranscript.Usage) (accountCategory, string, error) {
 	if !usageReported(last) {
 		turn.unaccounted = nil
 		return accountDiscarded, "context/token_without_usage", nil

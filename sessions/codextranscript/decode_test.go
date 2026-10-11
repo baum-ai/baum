@@ -179,3 +179,19 @@ func TestTurnContextAccessorsKeepEveryField(t *testing.T) {
 		t.Fatal("turn_id was returned as an attribute")
 	}
 }
+
+func TestCompactionItemAndRealtimeItemDecode(t *testing.T) {
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+
+		envelope("response_item", `{"type":"compaction","id":"c","encrypted_content":"x","internal_chat_message_metadata_passthrough":{}}`)+
+		envelope("realtime_item", `{"type":"realtime_session_started","id":"r","realtime_session_id":"s"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := lines[1].ResponseItem
+	if item == nil || item.Type != "compaction" || item.Compaction == nil || len(item.Compaction.Raw) == 0 {
+		t.Fatalf("compaction line = %+v", lines[1])
+	}
+	if lines[2].Class != ClassRealtime || lines[2].Realtime == nil || len(lines[2].Realtime.Raw) == 0 {
+		t.Fatalf("realtime line = %+v", lines[2])
+	}
+}

@@ -20,6 +20,7 @@ const (
 	ClassInterAgentMetadata      Class = "inter_agent_communication_metadata"
 	ClassInterAgentCommunication Class = "inter_agent_communication"
 	ClassTokenUsageRecord        Class = "token_usage_record"
+	ClassRealtime                Class = "realtime_item"
 )
 
 // Line is one decoded rollout envelope. Exactly one typed payload pointer is
@@ -41,6 +42,7 @@ type Line struct {
 	InterAgentMetadata      *InterAgentMeta          `json:"inter_agent_communication_metadata,omitempty"`
 	InterAgentCommunication *InterAgentCommunication `json:"inter_agent_communication,omitempty"`
 	TokenUsageRecord        *TokenUsageRecord        `json:"token_usage_record,omitempty"`
+	Realtime                *RawPayload              `json:"realtime_item,omitempty"`
 }
 
 type File struct {
@@ -187,6 +189,7 @@ type ResponseItem struct {
 	ToolSearchCall   *ToolSearchCall       `json:"tool_search_call,omitempty"`
 	ToolSearchOutput *ToolSearchOutput     `json:"tool_search_output,omitempty"`
 	WebSearchCall    *WebSearchCall        `json:"web_search_call,omitempty"`
+	Compaction       *RawPayload           `json:"compaction,omitempty"`
 }
 
 type ContentItem struct {

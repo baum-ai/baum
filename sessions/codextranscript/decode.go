@@ -135,6 +135,8 @@ func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
 		if line.TokenUsageRecord != nil {
 			line.TokenUsageRecord.Raw = cloneRaw(envelope.Payload)
 		}
+	case ClassRealtime:
+		line.Realtime = &RawPayload{Raw: cloneRaw(envelope.Payload)}
 	default:
 		return Line{}, nil, fmt.Errorf("line %d has unknown type %q", ordinal, envelope.Type)
 	}
@@ -265,6 +267,8 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 		item.ToolSearchOutput, err = decodeTyped[ToolSearchOutput](raw)
 	case "web_search_call":
 		item.WebSearchCall, err = decodeTyped[WebSearchCall](raw)
+	case "compaction":
+		item.Compaction = &RawPayload{Raw: cloneRaw(raw)}
 	default:
 		return nil, fmt.Errorf("unknown response_item type %q", head.Type)
 	}

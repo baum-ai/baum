@@ -13,6 +13,7 @@ import (
 var classDiscards = map[codextranscript.Class]string{
 	codextranscript.ClassCompacted:  "context/compacted",
 	codextranscript.ClassWorldState: "context/world_state",
+	codextranscript.ClassRealtime:   "context/realtime_item",
 }
 
 var eventDiscards = map[string]string{
@@ -71,6 +72,8 @@ func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, 
 		}
 		f.startBatch(line)
 		return accountDiscarded, "context/reasoning", nil
+	case item.Compaction != nil:
+		return accountDiscarded, "context/compaction_item", nil
 	case item.FunctionCall != nil:
 		return f.ownedCall(line, item.FunctionCall.CallID, func() error {
 			return f.addFunctionCall(line, item.FunctionCall)

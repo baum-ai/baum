@@ -313,28 +313,45 @@ func TestTokenAssignmentAndAmbiguousUsage(t *testing.T) {
 	}
 }
 
-// A token_usage_record carries the usage of the request whose token_count
-// follows it. The token_count repeats the record's thread total, so the request
-// counts once; a trailing record whose token_count never arrived still counts.
+func usageJSON(input, output int) string {
+	return fmt.Sprintf(`{"input_tokens":%d,"output_tokens":%d,"total_tokens":%d}`, input, output, input+output)
+}
+
+func recordLine(at, last, threadTotal string) string {
+	return envelope(at, "token_usage_record", `{"thread_id":"thread","turn_id":"turn","response_id":"resp","usage":`+last+`,"turn_token_usage":`+threadTotal+`,"thread_token_usage":`+threadTotal+`}`)
+}
+
+func countLine(at, last, total string) string {
+	return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+total+`,"last_token_usage":`+last+`}}`)
+}
+
+func totalUsage(graph *session.Graph) int64 {
+	var total int64
+	for _, invocation := range graph.ModelInvocations {
+		total += invocation.TotalTokens
+	}
+	for _, row := range graph.TokenUsage {
+		if row.TotalTokens != nil {
+			total += *row.TotalTokens
+		}
+	}
+	return total
+}
+
+// A rollout with token_usage_records counts each record once. The record comes
+// before its call's output, the token_count after it is superseded, and a
+// trailing record whose token_count never arrived still counts.
 func TestTokenUsageRecordCountsEachRequestOnce(t *testing.T) {
-	record := func(at string, last, total string) string {
-		return envelope(at, "token_usage_record", `{"thread_id":"thread","turn_id":"turn","response_id":"resp","usage":`+last+`,"turn_token_usage":`+total+`,"thread_token_usage":`+total+`}`)
-	}
-	count := func(at string, last, total string) string {
-		return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+total+`,"last_token_usage":`+last+`}}`)
-	}
-	first := `{"input_tokens":10,"output_tokens":2,"total_tokens":12}`
-	second := `{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3,"total_tokens":23}`
-	secondTotal := `{"input_tokens":30,"cached_input_tokens":5,"output_tokens":5,"total_tokens":35}`
+	first, second := usageJSON(10, 2), `{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3,"total_tokens":23}`
 	lines := basicStart()
 	lines = append(lines,
 		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"first_tool","arguments":"{}","call_id":"first"}`),
-		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"function_call_output","call_id":"first","output":"done"}`),
-		record("2026-08-01T12:00:06Z", first, first),
-		count("2026-08-01T12:00:07Z", first, first),
+		recordLine("2026-08-01T12:00:05Z", first, first),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call_output","call_id":"first","output":"done"}`),
+		countLine("2026-08-01T12:00:07Z", first, first),
 		envelope("2026-08-01T12:00:08Z", "response_item", `{"type":"function_call","name":"second_tool","arguments":"{}","call_id":"second"}`),
-		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"function_call_output","call_id":"second","output":"done"}`),
-		record("2026-08-01T12:00:10Z", second, secondTotal),
+		recordLine("2026-08-01T12:00:09Z", second, `{"total_tokens":35}`),
+		envelope("2026-08-01T12:00:10Z", "response_item", `{"type":"function_call_output","call_id":"second","output":"done"}`),
 	)
 	graph, report := buildLines(t, lines...)
 	if graph.ModelInvocations[0].InputTokens != 10 || graph.ModelInvocations[0].TotalTokens != 12 {
@@ -347,8 +364,96 @@ func TestTokenUsageRecordCountsEachRequestOnce(t *testing.T) {
 	if len(graph.TokenUsage) != 0 {
 		t.Fatalf("token usage rows = %+v, want none", graph.TokenUsage)
 	}
-	if report.Tokens.AssignedInvocations != 2 || report.Tokens.RepeatedTotals != 1 || report.Tokens.Records != 3 {
+	if report.Tokens.AssignedInvocations != 2 || report.Tokens.RepeatedTotals != 0 || report.Tokens.Records != 2 {
 		t.Fatalf("token report = %+v", report.Tokens)
+	}
+	if report.Records.Discarded["context/token_count_superseded"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// After a remote compaction the record's thread total includes the compaction
+// request but token_count's does not, so totals stay offset. Records are the
+// sole source: every request counts once, the compaction request is one
+// ambiguous row, and the zero-usage token_count after it produces nothing.
+func TestTokenUsageRecordsSurviveCompactionTotalDrift(t *testing.T) {
+	a, compaction, b := usageJSON(100, 0), usageJSON(236, 0), usageJSON(50, 0)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		recordLine("2026-08-01T12:00:05Z", a, usageJSON(100, 0)),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call_output","call_id":"a","output":"done"}`),
+		countLine("2026-08-01T12:00:07Z", a, usageJSON(100, 0)),
+		recordLine("2026-08-01T12:00:08Z", compaction, usageJSON(336, 0)),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"compaction","id":"c","encrypted_content":"x","internal_chat_message_metadata_passthrough":{}}`),
+		envelope("2026-08-01T12:00:10Z", "compacted", `{"message":""}`),
+		envelope("2026-08-01T12:00:11Z", "world_state", `{}`),
+		envelope("2026-08-01T12:00:12Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:13Z", "event_msg", `{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5"}}`),
+		countLine("2026-08-01T12:00:14Z", `{"input_tokens":0,"output_tokens":0,"total_tokens":0}`, usageJSON(100, 0)),
+		envelope("2026-08-01T12:00:15Z", "response_item", `{"type":"function_call","name":"b_tool","arguments":"{}","call_id":"b"}`),
+		recordLine("2026-08-01T12:00:16Z", b, usageJSON(386, 0)),
+		envelope("2026-08-01T12:00:17Z", "response_item", `{"type":"function_call_output","call_id":"b","output":"done"}`),
+		countLine("2026-08-01T12:00:18Z", b, usageJSON(150, 0)),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 386 {
+		t.Fatalf("counted %d tokens, want the final thread total 386", got)
+	}
+	if len(graph.ModelInvocations) != 2 || len(graph.TokenUsage) != 1 || *graph.TokenUsage[0].TotalTokens != 236 {
+		t.Fatalf("invocations = %+v, token usage = %+v", graph.ModelInvocations, graph.TokenUsage)
+	}
+	if report.Tokens.AssignedInvocations != 2 || report.Tokens.AmbiguousRows != 1 || report.Tokens.RepeatedTotals != 0 || report.Tokens.Records != 3 {
+		t.Fatalf("token report = %+v", report.Tokens)
+	}
+	if report.Records.Discarded["context/token_count_superseded"] != 3 || report.Records.Discarded["context/compaction_item"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+func TestTokenUsageRecordWithoutUsageIsDiscarded(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "token_usage_record", `{"thread_id":"thread","turn_id":"turn","usage":{}}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 0 || report.Records.Discarded["context/token_without_usage"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("usage = %d, records = %+v", got, report.Records)
+	}
+}
+
+// Without records the token_count path stays, and its repeat check spans turns:
+// a token_count re-emitted right after the next task_started is a repeat.
+func TestTokenCountRepeatedAtStartOfNextTurnCountsOnce(t *testing.T) {
+	usage := usageJSON(10, 2)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"function_call_output","call_id":"a","output":"done"}`),
+		countLine("2026-08-01T12:00:06Z", usage, usage),
+		envelope("2026-08-01T12:00:07Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:08Z", "event_msg", `{"type":"task_started","turn_id":"turn2"}`),
+		countLine("2026-08-01T12:00:09Z", usage, usage),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12 {
+		t.Fatalf("counted %d tokens, want 12", got)
+	}
+	if report.Records.Discarded["context/token_repeat"] != 1 || report.Tokens.RepeatedTotals != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v tokens = %+v", report.Records, report.Tokens)
+	}
+}
+
+func TestCompactionItemAndRealtimeItemAreContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"compaction","id":"c","encrypted_content":"x"}`),
+		envelope("2026-08-01T12:00:05Z", "realtime_item", `{"type":"realtime_session_started","id":"r","realtime_session_id":"s"}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/compaction_item"] != 1 || report.Records.Discarded["context/realtime_item"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
 	}
 }
 

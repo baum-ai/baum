@@ -204,7 +204,6 @@ func (b *builder) account(category accountCategory, reason string) {
 type turnState struct {
 	id          string
 	unaccounted []*session.ModelInvocation
-	lastTotal   *codextranscript.Usage
 	lastInput   *session.UserInput
 }
 
@@ -258,10 +257,17 @@ type threadState struct {
 	// hasUserMessageEvents is true when the rollout writes user_message
 	// events, which then carry the human prompts instead of item_completed.
 	hasUserMessageEvents bool
-	unsupported          map[string]bool
-	unsupportedCall      map[string]bool
-	activities           []activityEvidence
-	touchByToolPath      map[string]*session.FileTouch
+	// hasTokenUsageRecords is true when the rollout writes token_usage_record
+	// lines, which then are the only token source; token_count events are
+	// discarded as superseded.
+	hasTokenUsageRecords bool
+	// lastTotal is the previous token_count total of the thread, for repeat
+	// detection in rollouts without token_usage_records.
+	lastTotal       *codextranscript.Usage
+	unsupported     map[string]bool
+	unsupportedCall map[string]bool
+	activities      []activityEvidence
+	touchByToolPath map[string]*session.FileTouch
 
 	times            traceprocessing.TimeBounds
 	workingDir       string
@@ -287,7 +293,9 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 	for _, line := range file.Lines {
 		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
 			state.hasUserMessageEvents = true
-			break
+		}
+		if line.TokenUsageRecord != nil {
+			state.hasTokenUsageRecords = true
 		}
 	}
 	if meta.Git != nil {
