@@ -190,6 +190,7 @@ type ResponseItem struct {
 	ToolSearchOutput *ToolSearchOutput     `json:"tool_search_output,omitempty"`
 	WebSearchCall    *WebSearchCall        `json:"web_search_call,omitempty"`
 	Compaction       *RawPayload           `json:"compaction,omitempty"`
+	ImageGeneration  *RawPayload           `json:"image_generation_call,omitempty"`
 }
 
 type ContentItem struct {
@@ -296,6 +297,7 @@ type EventMsg struct {
 	ThreadRolledBack      *ThreadRolledBack      `json:"thread_rolled_back,omitempty"`
 	ItemCompleted         *ItemCompleted         `json:"item_completed,omitempty"`
 	ContextCompacted      bool                   `json:"context_compacted,omitempty"`
+	ThreadGoalUpdated     *RawPayload            `json:"thread_goal_updated,omitempty"`
 }
 
 type TaskStarted struct {

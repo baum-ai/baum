@@ -17,12 +17,13 @@ var classDiscards = map[codextranscript.Class]string{
 }
 
 var eventDiscards = map[string]string{
-	"web_search_end":     "context/web_search_end",
-	"agent_message":      "context/agent_message_event_copy",
-	"agent_reasoning":    "context/agent_reasoning_event_copy",
-	"context_compacted":  "context/compacted",
-	"thread_rolled_back": "context/thread_rolled_back",
-	"item_completed":     "context/item_completed_copy",
+	"web_search_end":      "context/web_search_end",
+	"agent_message":       "context/agent_message_event_copy",
+	"agent_reasoning":     "context/agent_reasoning_event_copy",
+	"context_compacted":   "context/compacted",
+	"thread_rolled_back":  "context/thread_rolled_back",
+	"item_completed":      "context/item_completed_copy",
+	"thread_goal_updated": "context/thread_goal_updated",
 }
 
 func (f *threadState) process(line codextranscript.Line, next *codextranscript.Line) (accountCategory, string, error) {
@@ -74,6 +75,8 @@ func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, 
 		return accountDiscarded, "context/reasoning", nil
 	case item.Compaction != nil:
 		return accountDiscarded, "context/compaction_item", nil
+	case item.ImageGeneration != nil:
+		return accountDiscarded, "context/image_generation_call", nil
 	case item.FunctionCall != nil:
 		return f.ownedCall(line, item.FunctionCall.CallID, func() error {
 			return f.addFunctionCall(line, item.FunctionCall)
@@ -195,8 +198,11 @@ func (f *threadState) itemCompleted(line codextranscript.Line, completed *codext
 	var item struct {
 		Type    string `json:"type"`
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type         string          `json:"type"`
+			Text         string          `json:"text"`
+			Path         string          `json:"path"`
+			ImageURL     string          `json:"image_url"`
+			TextElements json.RawMessage `json:"text_elements"`
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(completed.Item, &item); err != nil {
@@ -209,13 +215,41 @@ func (f *threadState) itemCompleted(line codextranscript.Line, completed *codext
 		return accountDiscarded, "context/unconfirmed_human_input", nil
 	}
 	var text strings.Builder
+	message := &codextranscript.UserMessage{}
+	var images, localImages, elements []json.RawMessage
 	for _, part := range item.Content {
-		if part.Type == "text" {
+		switch part.Type {
+		case "text":
 			text.WriteString(part.Text)
+			var partElements []json.RawMessage
+			if json.Unmarshal(part.TextElements, &partElements) == nil {
+				elements = append(elements, partElements...)
+			}
+		case "image":
+			images = append(images, quoted(part.ImageURL))
+		case "local_image":
+			localImages = append(localImages, quoted(part.Path))
 		}
 	}
-	f.addHumanInput(line, &codextranscript.UserMessage{Message: text.String()})
+	message.Message = text.String()
+	message.Images, message.LocalImages, message.TextElements = rawArray(images), rawArray(localImages), rawArray(elements)
+	f.addHumanInput(line, message)
 	return accountMapped, "", nil
+}
+
+func quoted(value string) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
+}
+
+// rawArray is the JSON array of items, or nil when there are none, so
+// addHumanInput stores no empty metadata.
+func rawArray(items []json.RawMessage) json.RawMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	raw, _ := json.Marshal(items)
+	return raw
 }
 
 func (f *threadState) taskStarted(started *codextranscript.TaskStarted) (accountCategory, string, error) {

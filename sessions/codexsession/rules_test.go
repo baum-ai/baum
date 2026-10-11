@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -739,5 +740,44 @@ func TestChildItemCompletedUserMessageIsUnconfirmed(t *testing.T) {
 		if input.Text == "Steer the child" {
 			t.Fatalf("child item became input %+v", input)
 		}
+	}
+}
+
+// A UserMessage item keeps the images and text_elements a user_message would
+// carry as input metadata.
+func TestItemCompletedUserMessageKeepsImagesAndTextElements(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:03Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"Look","text_elements":[{"byte_range":{"start":0,"end":4}}]},{"type":"local_image","path":"/tmp/a.png"},{"type":"image","image_url":"data:image/png;base64,AAAA"}]}}`),
+	)
+	if !report.Records.Balanced() || len(graph.UserInputs) != 1 {
+		t.Fatalf("report = %+v inputs = %+v", report.Records, graph.UserInputs)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(graph.UserInputs[0].Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"local_images":  `["/tmp/a.png"]`,
+		"images":        `["data:image/png;base64,AAAA"]`,
+		"text_elements": `[{"byte_range":{"start":0,"end":4}}]`,
+	} {
+		if string(metadata[key]) != want {
+			t.Errorf("metadata[%s] = %s, want %s", key, metadata[key], want)
+		}
+	}
+}
+
+func TestGoalUpdateAndImageGenerationAreContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "event_msg", `{"type":"thread_goal_updated","threadId":"root","turnId":"turn","goal":{}}`),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"image_generation_call","id":"ig","status":"generating","result":"AAAA"}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/thread_goal_updated"] != 1 || report.Records.Discarded["context/image_generation_call"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
 	}
 }

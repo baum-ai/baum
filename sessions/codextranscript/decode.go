@@ -267,6 +267,8 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 		item.ToolSearchOutput, err = decodeTyped[ToolSearchOutput](raw)
 	case "web_search_call":
 		item.WebSearchCall, err = decodeTyped[WebSearchCall](raw)
+	case "image_generation_call":
+		item.ImageGeneration = &RawPayload{Raw: cloneRaw(raw)}
 	case "compaction":
 		item.Compaction = &RawPayload{Raw: cloneRaw(raw)}
 	default:
@@ -317,6 +319,8 @@ func decodeEventMsg(raw json.RawMessage) (*EventMsg, error) {
 		event.ItemCompleted, err = decodeTyped[ItemCompleted](raw)
 	case "context_compacted":
 		event.ContextCompacted = true
+	case "thread_goal_updated":
+		event.ThreadGoalUpdated = &RawPayload{Raw: cloneRaw(raw)}
 	default:
 		return nil, fmt.Errorf("unknown event_msg type %q", head.Type)
 	}

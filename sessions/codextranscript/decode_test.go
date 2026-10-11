@@ -195,3 +195,18 @@ func TestCompactionItemAndRealtimeItemDecode(t *testing.T) {
 		t.Fatalf("realtime line = %+v", lines[2])
 	}
 }
+
+func TestGoalUpdateAndImageGenerationDecode(t *testing.T) {
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+
+		envelope("event_msg", `{"type":"thread_goal_updated","threadId":"t","turnId":"u","goal":{}}`)+
+		envelope("response_item", `{"type":"image_generation_call","id":"ig","status":"generating","result":"AAAA"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines[1].EventMsg == nil || lines[1].EventMsg.ThreadGoalUpdated == nil {
+		t.Fatalf("goal line = %+v", lines[1])
+	}
+	if lines[2].ResponseItem == nil || lines[2].ResponseItem.ImageGeneration == nil {
+		t.Fatalf("image line = %+v", lines[2])
+	}
+}

@@ -77,6 +77,19 @@ func (b *builder) ingest(file *codextranscript.File, spawn *session.SpawnLink) e
 	if err != nil {
 		return err
 	}
+	// Rollout-wide choices look only at owned lines: inherited history may
+	// come from an older Codex that wrote different record kinds.
+	for i, line := range file.Lines {
+		if i > 0 && line.Ordinal < boundary {
+			continue
+		}
+		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
+			state.hasUserMessageEvents = true
+		}
+		if line.TokenUsageRecord != nil {
+			state.hasTokenUsageRecords = true
+		}
+	}
 	for i, line := range file.Lines {
 		b.report.Records.Total++
 		if i > 0 && line.Ordinal < boundary {
@@ -289,14 +302,6 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 		attributeTime: map[string]time.Time{}, unsupported: map[string]bool{},
 		unsupportedCall: map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
 		workingDir: meta.CWD,
-	}
-	for _, line := range file.Lines {
-		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
-			state.hasUserMessageEvents = true
-		}
-		if line.TokenUsageRecord != nil {
-			state.hasTokenUsageRecords = true
-		}
 	}
 	if meta.Git != nil {
 		state.gitBranch = meta.Git.Branch
