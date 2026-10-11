@@ -255,10 +255,13 @@ type threadState struct {
 	attributeTime   map[string]time.Time
 	pendingInter    *codextranscript.InterAgentMeta
 	pendingHuman    []pendingHumanInput
-	unsupported     map[string]bool
-	unsupportedCall map[string]bool
-	activities      []activityEvidence
-	touchByToolPath map[string]*session.FileTouch
+	// hasUserMessageEvents is true when the rollout writes user_message
+	// events, which then carry the human prompts instead of item_completed.
+	hasUserMessageEvents bool
+	unsupported          map[string]bool
+	unsupportedCall      map[string]bool
+	activities           []activityEvidence
+	touchByToolPath      map[string]*session.FileTouch
 
 	times            traceprocessing.TimeBounds
 	workingDir       string
@@ -280,6 +283,12 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 		attributeTime: map[string]time.Time{}, unsupported: map[string]bool{},
 		unsupportedCall: map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
 		workingDir: meta.CWD,
+	}
+	for _, line := range file.Lines {
+		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
+			state.hasUserMessageEvents = true
+			break
+		}
 	}
 	if meta.Git != nil {
 		state.gitBranch = meta.Git.Branch

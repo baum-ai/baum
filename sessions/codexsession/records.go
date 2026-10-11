@@ -158,6 +158,8 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		}
 		f.addHumanInput(line, event.UserMessage)
 		return accountMapped, "", nil
+	case event.ItemCompleted != nil && !f.hasUserMessageEvents:
+		return f.itemCompleted(line, event.ItemCompleted)
 	case event.TokenCount != nil:
 		return f.applyTokenCount(line, event.TokenCount)
 	case event.ExecCommandEnd != nil:
@@ -179,6 +181,38 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		}
 		return accountDiscarded, reason, nil
 	}
+}
+
+// itemCompleted maps the human prompt that newer Codex versions record only as
+// an item_completed UserMessage item, with no user_message event. A rollout that
+// still writes user_message events keeps item_completed as a discarded copy
+// (the caller only routes here otherwise), so no prompt counts twice. Other
+// item types are discarded as before.
+func (f *threadState) itemCompleted(line codextranscript.Line, completed *codextranscript.ItemCompleted) (accountCategory, string, error) {
+	var item struct {
+		Type    string `json:"type"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(completed.Item, &item); err != nil {
+		return accountDiscarded, "", fmt.Errorf("decoding item_completed item: %w", err)
+	}
+	if item.Type != "UserMessage" {
+		return accountDiscarded, eventDiscards["item_completed"], nil
+	}
+	if f.file != f.b.tree.Root {
+		return accountDiscarded, "context/unconfirmed_human_input", nil
+	}
+	var text strings.Builder
+	for _, part := range item.Content {
+		if part.Type == "text" {
+			text.WriteString(part.Text)
+		}
+	}
+	f.addHumanInput(line, &codextranscript.UserMessage{Message: text.String()})
+	return accountMapped, "", nil
 }
 
 func (f *threadState) taskStarted(started *codextranscript.TaskStarted) (accountCategory, string, error) {

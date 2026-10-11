@@ -497,3 +497,142 @@ func TestUserItemsAreAlwaysModelVisibleContext(t *testing.T) {
 		t.Fatalf("records = %+v", report.Records)
 	}
 }
+
+func userItem(at, text string) string {
+	return envelope(at, "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"turn","item":{"type":"UserMessage","id":"item","client_id":"client","content":[{"type":"text","text":`+fmt.Sprintf("%q", text)+`}]}}`)
+}
+
+// Current Codex rollouts record the human prompt only as an item_completed
+// UserMessage item. It must create the same inputs a user_message would,
+// including a steering message that arrives mid-turn.
+func TestItemCompletedUserMessageIsHumanInput(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:03Z", "response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"Do it"}]}`),
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","id":"one","role":"assistant","content":[{"type":"output_text","text":"Working"}]}`),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"true\"}","call_id":"call"}`),
+		envelope("2026-08-01T12:00:07Z", "response_item", `{"type":"function_call_output","call_id":"call","output":"done"}`),
+		userItem("2026-08-01T12:00:08Z", "Also this"),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"message","id":"two","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:10Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || !report.Records.Balanced() {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(graph.UserInputs) != 2 {
+		t.Fatalf("user inputs = %+v, want 2", graph.UserInputs)
+	}
+	first, second := graph.UserInputs[0], graph.UserInputs[1]
+	if first.Text != "Do it" || second.Text != "Also this" || first.Origin != session.OriginHuman || second.Origin != session.OriginHuman {
+		t.Fatalf("inputs = %q/%s and %q/%s", first.Text, first.Origin, second.Text, second.Origin)
+	}
+	if len(graph.AssistantMessages) != 2 || graph.AssistantMessages[0].UserInputID != first.ID || graph.AssistantMessages[1].UserInputID != second.ID {
+		t.Fatalf("assistant messages = %+v", graph.AssistantMessages)
+	}
+	if len(graph.ToolUses) != 1 || graph.ToolUses[0].UserInputID != first.ID {
+		t.Fatalf("tool uses = %+v", graph.ToolUses)
+	}
+	if err := session.Validate(graph); err != nil {
+		t.Fatalf("mapped graph is invalid: %v", err)
+	}
+}
+
+// An item_completed UserMessage that precedes task_started is pending input,
+// exactly like a user_message in that position.
+func TestItemCompletedUserMessageBeforeTaskStartIsPending(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		userItem("2026-08-01T12:00:01Z", "Do it"),
+		envelope("2026-08-01T12:00:02Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:03Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:04Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 || len(graph.AssistantMessages) != 1 ||
+		graph.AssistantMessages[0].UserInputID != graph.UserInputs[0].ID {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+// When a rollout also writes user_message events, the matching item_completed
+// is a copy and must not create a second input.
+func TestItemCompletedUserMessageIsCopyWhenUserMessageEventsExist(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:06Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+	if report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+func TestItemCompletedNonUserItemIsDiscarded(t *testing.T) {
+	lines := basicStart()[:1]
+	lines = append(lines,
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"turn","item":{"type":"AgentMessage","content":[{"type":"text","text":"hi"}]}}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if len(graph.UserInputs) != 0 || report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+func TestMalformedItemCompletedUserMessageFails(t *testing.T) {
+	lines := basicStart()[:1]
+	lines = append(lines,
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":"oops"}}`),
+	)
+	if _, _, err := buildLinesResult(t, lines...); err == nil {
+		t.Fatal("Build accepted a malformed UserMessage item")
+	}
+}
+
+// A child thread's item_completed UserMessage is not proven human input, just
+// like a child's user_message event.
+func TestChildItemCompletedUserMessageIsUnconfirmed(t *testing.T) {
+	tree := fixtureTree(t)
+	item := func(text string) *codextranscript.EventMsg {
+		return &codextranscript.EventMsg{
+			Type: "item_completed",
+			ItemCompleted: &codextranscript.ItemCompleted{
+				Item: []byte(`{"type":"UserMessage","content":[{"type":"text","text":"` + text + `"}]}`),
+			},
+		}
+	}
+	// The root's prompts become item_completed items; the child gets one more
+	// at the end of its own history.
+	for i := range tree.Root.Lines {
+		if tree.Root.Lines[i].EventMsg != nil && tree.Root.Lines[i].EventMsg.UserMessage != nil {
+			tree.Root.Lines[i].EventMsg = item("Root prompt")
+		}
+	}
+	child := tree.Children[0]
+	last := child.Lines[len(child.Lines)-1]
+	last.Ordinal++
+	last.Class = codextranscript.ClassEventMsg
+	last.EventMsg = item("Steer the child")
+	child.Lines = append(child.Lines, last)
+	graph, report, err := Build(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Records.Discarded["context/unconfirmed_human_input"] == 0 {
+		t.Fatalf("records = %+v, want the child item discarded as unconfirmed_human_input", report.Records)
+	}
+	if len(graph.UserInputs) == 0 {
+		t.Fatal("root item_completed produced no inputs")
+	}
+	for _, input := range graph.UserInputs {
+		if input.Text == "Steer the child" {
+			t.Fatalf("child item became input %+v", input)
+		}
+	}
+}
