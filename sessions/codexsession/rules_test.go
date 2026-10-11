@@ -313,6 +313,45 @@ func TestTokenAssignmentAndAmbiguousUsage(t *testing.T) {
 	}
 }
 
+// A token_usage_record carries the usage of the request whose token_count
+// follows it. The token_count repeats the record's thread total, so the request
+// counts once; a trailing record whose token_count never arrived still counts.
+func TestTokenUsageRecordCountsEachRequestOnce(t *testing.T) {
+	record := func(at string, last, total string) string {
+		return envelope(at, "token_usage_record", `{"thread_id":"thread","turn_id":"turn","response_id":"resp","usage":`+last+`,"turn_token_usage":`+total+`,"thread_token_usage":`+total+`}`)
+	}
+	count := func(at string, last, total string) string {
+		return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+total+`,"last_token_usage":`+last+`}}`)
+	}
+	first := `{"input_tokens":10,"output_tokens":2,"total_tokens":12}`
+	second := `{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3,"total_tokens":23}`
+	secondTotal := `{"input_tokens":30,"cached_input_tokens":5,"output_tokens":5,"total_tokens":35}`
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"first_tool","arguments":"{}","call_id":"first"}`),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"function_call_output","call_id":"first","output":"done"}`),
+		record("2026-08-01T12:00:06Z", first, first),
+		count("2026-08-01T12:00:07Z", first, first),
+		envelope("2026-08-01T12:00:08Z", "response_item", `{"type":"function_call","name":"second_tool","arguments":"{}","call_id":"second"}`),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"function_call_output","call_id":"second","output":"done"}`),
+		record("2026-08-01T12:00:10Z", second, secondTotal),
+	)
+	graph, report := buildLines(t, lines...)
+	if graph.ModelInvocations[0].InputTokens != 10 || graph.ModelInvocations[0].TotalTokens != 12 {
+		t.Fatalf("first invocation usage = %+v", graph.ModelInvocations[0])
+	}
+	last := graph.ModelInvocations[len(graph.ModelInvocations)-1]
+	if last.InputTokens != 20 || last.CacheReadTokens != 5 || last.TotalTokens != 23 {
+		t.Fatalf("trailing record usage = %+v", last)
+	}
+	if len(graph.TokenUsage) != 0 {
+		t.Fatalf("token usage rows = %+v, want none", graph.TokenUsage)
+	}
+	if report.Tokens.AssignedInvocations != 2 || report.Tokens.RepeatedTotals != 1 || report.Tokens.Records != 3 {
+		t.Fatalf("token report = %+v", report.Tokens)
+	}
+}
+
 func TestPaginatedTokenCountKeepsPromptOwner(t *testing.T) {
 	graph, _ := buildLines(t,
 		paginatedEnvelope("2026-08-01T12:00:00Z", 0, "session_meta", `{"id":"root","history_mode":"paginated","source":"cli"}`),

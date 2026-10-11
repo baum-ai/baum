@@ -104,6 +104,26 @@ func TestExternalHistoryBaseRefused(t *testing.T) {
 	}
 }
 
+func TestTokenUsageRecordDecodes(t *testing.T) {
+	usage := `{"input_tokens":20,"cached_input_tokens":5,"cache_write_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":1,"total_tokens":23}`
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope("token_usage_record", `{"thread_id":"th","turn_id":"tu","session_id":"se","root_turn_id":"ro","response_id":"resp","usage":`+usage+`,"turn_token_usage":`+usage+`,"thread_token_usage":{"input_tokens":50,"total_tokens":60}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := lines[len(lines)-1]
+	record := line.TokenUsageRecord
+	if record == nil || line.Class != ClassTokenUsageRecord {
+		t.Fatalf("line = %+v", line)
+	}
+	if record.ThreadID != "th" || record.TurnID != "tu" || record.SessionID != "se" || record.RootTurnID != "ro" || record.ResponseID != "resp" {
+		t.Errorf("ids = %+v", record)
+	}
+	if record.Usage.InputTokens == nil || *record.Usage.InputTokens != 20 || record.Usage.TotalTokens == nil || *record.Usage.TotalTokens != 23 ||
+		record.ThreadTokenUsage.InputTokens == nil || *record.ThreadTokenUsage.InputTokens != 50 || len(record.Raw) == 0 {
+		t.Errorf("usage = %+v", record)
+	}
+}
+
 func TestUnknownEventTypeIsAnError(t *testing.T) {
 	_, _, err := decodeText(t, envelope("event_msg", `{"type":"future_event"}`))
 	if err == nil || !strings.Contains(err.Error(), `unknown event_msg type "future_event"`) {

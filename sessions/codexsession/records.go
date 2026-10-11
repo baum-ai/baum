@@ -51,6 +51,8 @@ func (f *threadState) process(line codextranscript.Line, next *codextranscript.L
 		return accountMerged, "", nil
 	case codextranscript.ClassInterAgentCommunication:
 		return f.interAgentCommunication(line)
+	case codextranscript.ClassTokenUsageRecord:
+		return f.applyTokenUsageRecord(line, line.TokenUsageRecord)
 	default:
 		return accountDiscarded, "", fmt.Errorf("unsupported record class %q", line.Class)
 	}

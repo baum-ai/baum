@@ -19,6 +19,7 @@ const (
 	ClassWorldState              Class = "world_state"
 	ClassInterAgentMetadata      Class = "inter_agent_communication_metadata"
 	ClassInterAgentCommunication Class = "inter_agent_communication"
+	ClassTokenUsageRecord        Class = "token_usage_record"
 )
 
 // Line is one decoded rollout envelope. Exactly one typed payload pointer is
@@ -39,6 +40,7 @@ type Line struct {
 	WorldState              *RawPayload              `json:"world_state,omitempty"`
 	InterAgentMetadata      *InterAgentMeta          `json:"inter_agent_communication_metadata,omitempty"`
 	InterAgentCommunication *InterAgentCommunication `json:"inter_agent_communication,omitempty"`
+	TokenUsageRecord        *TokenUsageRecord        `json:"token_usage_record,omitempty"`
 }
 
 type File struct {
@@ -406,6 +408,22 @@ type ItemCompleted struct {
 	ThreadID string          `json:"thread_id"`
 	TurnID   string          `json:"turn_id"`
 	Item     json.RawMessage `json:"item"`
+}
+
+// TokenUsageRecord is the top-level per-request usage record newer Codex
+// versions write a few lines before the matching token_count event. Usage is
+// the request's own usage (token_count's last_token_usage) and ThreadTokenUsage
+// is the thread's running total (token_count's total_token_usage).
+type TokenUsageRecord struct {
+	ThreadID         string          `json:"thread_id,omitempty"`
+	TurnID           string          `json:"turn_id,omitempty"`
+	SessionID        string          `json:"session_id,omitempty"`
+	RootTurnID       string          `json:"root_turn_id,omitempty"`
+	ResponseID       string          `json:"response_id,omitempty"`
+	Usage            Usage           `json:"usage"`
+	TurnTokenUsage   Usage           `json:"turn_token_usage"`
+	ThreadTokenUsage Usage           `json:"thread_token_usage"`
+	Raw              json.RawMessage `json:"raw"`
 }
 
 type InterAgentMeta struct {

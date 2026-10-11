@@ -8,6 +8,19 @@ import (
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
+// applyTokenUsageRecord counts a token_usage_record as the token_count it
+// precedes: its usage and thread total are that event's last and total token
+// usage. The token_count that follows repeats the thread total, so the per-turn
+// repeat check discards it and each request counts once; a record with no
+// following token_count (a request still in flight) still counts.
+func (f *threadState) applyTokenUsageRecord(line codextranscript.Line, record *codextranscript.TokenUsageRecord) (accountCategory, string, error) {
+	return f.applyTokenCount(line, &codextranscript.TokenCount{Info: &codextranscript.TokenInfo{
+		TotalTokenUsage: record.ThreadTokenUsage, LastTokenUsage: record.Usage,
+	}})
+}
+
+// applyTokenCount takes one usage report, from a token_count event or a
+// token_usage_record, so Tokens.Records counts both kinds.
 func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextranscript.TokenCount) (accountCategory, string, error) {
 	f.b.report.Tokens.Records++
 	if count.Info == nil {

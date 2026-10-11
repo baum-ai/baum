@@ -130,6 +130,11 @@ func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
 		if line.InterAgentCommunication != nil {
 			line.InterAgentCommunication.Raw = cloneRaw(envelope.Payload)
 		}
+	case ClassTokenUsageRecord:
+		line.TokenUsageRecord, err = decodeTyped[TokenUsageRecord](envelope.Payload)
+		if line.TokenUsageRecord != nil {
+			line.TokenUsageRecord.Raw = cloneRaw(envelope.Payload)
+		}
 	default:
 		return Line{}, nil, fmt.Errorf("line %d has unknown type %q", ordinal, envelope.Type)
 	}
