@@ -25,5 +25,12 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*", "test/**/*", "generated/**/*", "vitest.config.ts"]
+  "include": [
+    "src/**/*",
+    "app/**/*",
+    "test/**/*",
+    "generated/**/*",
+    "vitest.config.ts",
+    "vite.app.config.ts"
+  ]
 }

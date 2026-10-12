@@ -1,7 +1,5 @@
-import Ajv2020 from "ajv/dist/2020.js";
 import type { Anchor, ReviewDocument } from "./review-document";
-import reviewSchema from "../../schema/review-1.json" with { type: "json" };
-import legacyTileSchema from "./legacy-review-tiles.json" with { type: "json" };
+import { validateAnchor, validateTile } from "./precompiled/review-tile-validators.js";
 import type {
   Anchor as TileAnchor,
   ReviewTile,
@@ -9,17 +7,12 @@ import type {
 } from "../generated/review-tile-types.js";
 
 /** Stored documents may still hold kinds that generation no longer produces;
- * they keep validating and rendering here rather than falling back. */
-const reviewTileSchema = {
-  anyOf: [{ $ref: "#/$defs/tile" }, { $ref: "#/$defs/legacyTile" }],
-  $defs: { ...reviewSchema.$defs, ...legacyTileSchema.$defs },
-};
-const ajv = new Ajv2020({ strict: false, validateFormats: false });
-const shape = ajv.compile<ReviewTile>(reviewTileSchema);
-const anchorShape = ajv.compile<TileAnchor>({
-  $ref: "#/$defs/anchor",
-  $defs: reviewTileSchema.$defs,
-});
+ * they keep validating and rendering here rather than falling back. The
+ * validators are compiled ahead of time from the shared schema and the legacy
+ * tile definitions (scripts/review-tile-validators.mjs), so nothing compiles a
+ * schema in the browser, which a strict Content-Security-Policy would block. */
+const shape = validateTile as (value: unknown) => value is ReviewTile;
+const anchorShape = validateAnchor as (value: unknown) => value is TileAnchor;
 export type { ReviewTile } from "../generated/review-tile-types.js";
 
 export function tileRecord(value: unknown): Record<string, unknown> | null {

@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!coverage", "!!generated"]
+    "includes": ["**", "!!coverage", "!!generated", "!!src/precompiled"]
   },
   "formatter": {
     "enabled": true,

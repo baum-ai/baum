@@ -237,11 +237,42 @@ text it is, for prose that names tags rather than containing them.
 
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
-canonical. Tiles are validated against it with Ajv at runtime, and
+canonical. Tiles are validated against it at runtime, and
 `src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
 retired, so stored tiles of those kinds still render. `pnpm generate` writes
-the tile types to `generated/review-tile-types.d.ts` from both files;
-`pnpm typecheck` runs it first, and the output is not committed.
+the tile types to `generated/review-tile-types.d.ts` from both files, which is
+not committed. `pnpm generate:validators` writes the validators to
+`src/precompiled/review-tile-validators.js` with Ajv's standalone code
+generation, and that file is committed. They are precompiled because Ajv
+otherwise compiles with `new Function`, which a page under a strict
+Content-Security-Policy (as `baum view` serves) cannot run. No other script
+rewrites the file, so a unit test fails when it is out of date: run
+`pnpm generate:validators` after changing either schema file, then rebuild the
+standalone app; `just viewer-build` from the module root does both.
+
+## Standalone app
+
+`app/` is a single-page app that renders one review document with
+`ReviewViewer`. It is meant to be served by `baum view`, and talks only to the
+page's own origin:
+
+- `GET /api/document` returns the `baum.review/1` document.
+- `GET /api/events` is a Server-Sent Events stream. A `document` event means
+  the document changed, so the app fetches it again and keeps the URL, and with
+  it the selection. Other events are ignored.
+
+The app follows the system colour scheme, keeps the reader's place in the
+URL's search parameters, and has no file picker, no upload and no requests to
+any other host.
+
+`pnpm build:app` builds it with Vite into `../internal/viewer/dist`, the Go
+package that embeds it. That output is committed, so `go install` needs
+nothing but Go: run `just viewer-build` from the module root and commit the
+result whenever the viewer's source or the schema changes. It runs
+`pnpm generate:validators` and `pnpm build:app`, and `just viewer-fresh` fails
+when the committed output differs from a fresh build, as CI does. The
+build writes no sourcemaps, and two builds of the same source are
+byte-identical.
 
 ## Development
 
@@ -252,6 +283,7 @@ pnpm install
 pnpm check            # lint, format check, typecheck and unit tests
 just check            # the same, through this directory's justfile
 pnpm format           # format with Biome
+pnpm build:app        # build the standalone app into ../internal/viewer/dist
 pnpm test:unit:watch  # watch the unit tests while editing
 ```
 
@@ -260,6 +292,7 @@ Unit tests use Vitest and sit beside the code they cover; fixtures live in
 follow the runtime locale. `src/components/review-viewer.test.tsx` renders
 `ReviewViewer` with the schema's example document
 (`../schema/review-example.json`) alone and with an earlier version to
-compare. `src/typography.test.ts` fails on a font size outside the type scale
+compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` and
+`EventSource`. `src/typography.test.ts` fails on a font size outside the type scale
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.

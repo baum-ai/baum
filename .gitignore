@@ -21,3 +21,6 @@ node_modules/
 # Local planning notes and agent worktrees
 .plans/
 /.agents/worktrees
+
+# The built standalone viewer is committed (see viewer/README.md).
+!/internal/viewer/dist/
