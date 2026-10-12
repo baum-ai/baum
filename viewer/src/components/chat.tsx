@@ -93,7 +93,7 @@ export function PromptBubble({
 }
 
 /** Prompts quoted out of their sessions, each as the transcript's bubble with
- *  its number and time in the corner and a pill for each new day. Prompts
+ *  its `#N` and time in the corner and a pill for each new day. Prompts
  *  from several sessions are introduced by a pill naming their `session`, so
  *  two `#1`s do not read as one conversation, and each session counts its own
  *  days. `author` and `avatar` name who typed them, when the host knows. A
@@ -102,7 +102,6 @@ export function QuotedPrompts({
   prompts,
   author,
   avatar,
-  number = (index) => `#${index}`,
   className,
 }: {
   prompts: {
@@ -114,8 +113,6 @@ export function QuotedPrompts({
   }[];
   author?: string | null;
   avatar?: ReactNode;
-  /** How a prompt's number reads in its corner. */
-  number?: (index: number) => string;
   className?: string;
 }) {
   // Days and times in the reader's own zone, which only the browser knows.
@@ -143,7 +140,7 @@ export function QuotedPrompts({
             ) : null}
             {days[index] ? <SystemNote className="mb-1">{days[index]}</SystemNote> : null}
             {prompt.text === null ? (
-              <SystemNote>{number(prompt.index)}: the document does not carry its text.</SystemNote>
+              <SystemNote>#{prompt.index}: the document does not carry its text.</SystemNote>
             ) : (
               <PromptBubble
                 text={prompt.text}
@@ -151,7 +148,7 @@ export function QuotedPrompts({
                 avatar={avatar}
                 meta={
                   <>
-                    <span className="tabular-nums">{number(prompt.index)}</span>
+                    <span className="tabular-nums">#{prompt.index}</span>
                     {prompt.at && mounted ? (
                       <time dateTime={prompt.at}>{formatTime(prompt.at)}</time>
                     ) : null}

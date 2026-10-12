@@ -136,8 +136,8 @@ taller. A pill marks each new day. Prompts drawn from several sessions are
 introduced by a pill naming each session's agent, numbered when one agent has
 several ("Codex session 2"), and each session counts its own days. Days and
 times are the reader's, so they appear once the page is in the browser. A
-host passes the author's name and avatar, and how a number reads ("Turn 3"),
-when it has them. An agent reply
+host passes the author's name and avatar when it has them. Each prompt is
+numbered `#N` in its corner, as the transcript numbers it. An agent reply
 (`AgentText`) renders as Markdown with any HTML tags shown as written. A
 decision's evidence stays a short quote rather than a bubble: it is an
 excerpt from somewhere in the session, and the document does not record who
