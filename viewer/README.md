@@ -355,7 +355,10 @@ byte-identical.
 
 ## Development
 
-Requires Node.js 24 and pnpm.
+Repository checks run in Docker with `just viewer::check` from the repository
+root. The recipes install dependencies in the shared `ui-test` service and
+preserve `BAUM_DEV_CPUSET`. The pnpm commands below describe in-container
+commands; standalone consumers require Node.js 24 and pnpm.
 
 ```sh
 pnpm install

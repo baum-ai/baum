@@ -1,22 +1,26 @@
+dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
+in_container := "BAUM_OP_RUN=0 " + dev_compose + " run --build --rm --no-deps --workdir /oss/viewer ui-test"
+
 [private]
 default:
     @just --list
 
 lint:
-    pnpm lint
+    {{ in_container }} pnpm lint
 
 format-check:
-    pnpm format:check
+    {{ in_container }} pnpm format:check
 
 typecheck:
-    pnpm typecheck
+    {{ in_container }} pnpm typecheck
 
 test:
-    pnpm test:unit
+    {{ in_container }} pnpm test:unit
 
 # Build the standalone app into ../internal/viewer/dist, which is committed
 build-app:
-    pnpm build:app
+    {{ in_container }} pnpm build:app
 
 # Run every check CI runs: lint, format check, typecheck and unit tests
-check: lint format-check typecheck test
+check:
+    {{ in_container }} pnpm check
