@@ -89,6 +89,9 @@ func mirrorEnv(dir string) []string {
 		"GIT_DIR="+dir,
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(dir, emptyConfigName),
 		"GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
+		// The private repository has no remote, so git has nowhere to fetch a
+		// missing object from; this makes the refusal explicit.
+		"GIT_NO_LAZY_FETCH=1",
 		"HOME="+dir, "XDG_CONFIG_HOME="+filepath.Join(dir, "xdg"),
 	)
 }

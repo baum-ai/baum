@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
 )
 
@@ -74,9 +76,10 @@ func Resolve(ctx context.Context, repoRoot string) (commit string, ok bool, err 
 	return "", false, nil
 }
 
-// List returns every checkpoint in the branch commit, in id order.
+// List returns every checkpoint in the branch commit, in id order. repoRoot is
+// a private repository that borrows the clone's objects, such as gitlocal's.
 func List(ctx context.Context, repoRoot, commit string) ([]Checkpoint, error) {
-	out, err := git(ctx, repoRoot, "ls-tree", "-r", "-d", "--full-tree", "-z", commit)
+	out, err := privateGit(ctx, repoRoot, "ls-tree", "-r", "-d", "--full-tree", "-z", commit)
 	if err != nil {
 		return nil, fmt.Errorf("listing Entire checkpoint store: %w", err)
 	}
@@ -108,6 +111,7 @@ func Read(ctx context.Context, repoRoot, commit, checkpointID string) (fs.FS, er
 	}
 	path := Path(checkpointID)
 	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "archive", "--format=tar", commit, "--", path)
+	cmd.Env = gitlocal.ReadEnv(repoRoot)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
@@ -126,8 +130,45 @@ func Read(ctx context.Context, repoRoot, commit, checkpointID string) (fs.FS, er
 	return fsys, openErr
 }
 
+// gitEnv is the environment of every git command here. They only read: refs
+// from the user's clone, and objects, which a caller that must not download
+// anything reads from a private repository with no remote (see the repoRoot
+// of List and Read). As a second line of defence a partial clone's missing
+// objects are never fetched on demand (GIT_NO_LAZY_FETCH, git 2.44 and
+// newer), nothing prompts, and no GIT_ variable from the caller redirects git
+// to another repository or changes how it reads, except those naming
+// configuration files, which tests and some setups rely on.
+func gitEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		upper := strings.ToUpper(name)
+		if strings.HasPrefix(upper, "GIT_") && upper != "GIT_EXEC_PATH" &&
+			upper != "GIT_CONFIG_GLOBAL" && upper != "GIT_CONFIG_NOSYSTEM" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_PAGER=cat", "LC_ALL=C")
+}
+
+// git runs a read of refs in the user's clone.
 func git(ctx context.Context, repoRoot string, args ...string) ([]byte, error) {
+	return runGit(ctx, gitEnv(), repoRoot, args...)
+}
+
+// privateGit runs a read of objects in a private repository such as the one
+// gitlocal makes. It runs with gitlocal's read environment: no global or
+// system configuration, so no filter, hook, signature program or credential
+// helper of the user's can run on a tree that came from a clone nobody has
+// vetted, and a home directory with nothing in it.
+func privateGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return runGit(ctx, gitlocal.ReadEnv(dir), dir, args...)
+}
+
+func runGit(ctx context.Context, env []string, repoRoot string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

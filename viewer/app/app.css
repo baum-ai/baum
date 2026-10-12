@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@import "../src/viewer.css";
+@source "../src";
+@source ".";
+
+/* The review page scrolls under a 48px sticky bar on wide screens, so a jump
+   lands its target below the bar rather than beneath it. */
+@media (width >= 64rem) {
+  html:has([data-review-page]) {
+    scroll-padding-top: calc(48px + 0.5rem);
+  }
+}
+
+body {
+  background: var(--surface-page);
+}

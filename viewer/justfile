@@ -14,5 +14,9 @@ typecheck:
 test:
     pnpm test:unit
 
+# Build the standalone app into ../internal/viewer/dist, which is committed
+build-app:
+    pnpm build:app
+
 # Run every check CI runs: lint, format check, typecheck and unit tests
 check: lint format-check typecheck test

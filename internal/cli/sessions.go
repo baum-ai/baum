@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
+	"github.com/lastpersonlabs/baum/internal/locallink"
 	"github.com/lastpersonlabs/baum/redact"
 	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/session"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
@@ -37,8 +37,11 @@ func newSessionsCommand() *cobra.Command {
 		Short: "List coding-agent sessions recorded for the repository containing dir",
 		Long: `Sessions lists the Claude Code, Codex, Cursor and Entire sessions recorded on
 this machine for the git repository containing dir (default: the current
-directory), with the commits and files each one touched. Nothing leaves the
-machine; any text printed is redacted first.`,
+directory), with the commits and files each one touched. A session recorded in
+any working tree of the clone, the main checkout or one of its git worktrees,
+counts, whichever of them dir is in. Each Entire session is listed once, from
+the newest checkpoint holding its transcript. Nothing leaves the machine; any text
+printed is redacted first.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -62,21 +65,9 @@ machine; any text printed is redacted first.`,
 	return cmd
 }
 
-// sessionRow is one listed session, and the JSON shape of --json.
-type sessionRow struct {
-	Source      string              `json:"source"`
-	Vendor      string              `json:"vendor"`
-	ID          string              `json:"id"`
-	Title       string              `json:"title,omitempty"`
-	Branch      string              `json:"branch,omitempty"`
-	StartedAt   *time.Time          `json:"started_at,omitempty"`
-	EndedAt     *time.Time          `json:"ended_at,omitempty"`
-	Outcome     session.Outcome     `json:"outcome"`
-	Commits     map[string][]string `json:"commits,omitempty"`
-	EditedFiles int                 `json:"edited_files"`
-	Path        string              `json:"path"`
-	Notes       []string            `json:"notes,omitempty"`
-}
+// sessionRow is one listed session, and the JSON shape of --json; "baum view"
+// summarises sessions with the same code.
+type sessionRow = locallink.Row
 
 func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	load := sessions.Options{
@@ -117,11 +108,11 @@ func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	}
 
 	if opts.dump != "" {
-		return dumpSession(cmd.OutOrStdout(), engine, found, opts.dump)
+		return dumpSession(cmd.Context(), cmd.OutOrStdout(), engine, found, opts.dump)
 	}
 	rows := make([]sessionRow, 0, len(found))
 	for _, s := range found {
-		row, err := rowOf(engine, s)
+		row, err := locallink.RowOf(engine, s)
 		if err != nil {
 			return err
 		}
@@ -137,56 +128,16 @@ func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	return writeSessionTable(cmd.OutOrStdout(), rows)
 }
 
-func rowOf(engine *redact.Engine, s sessions.Session) (sessionRow, error) {
-	row := sessionRow{
-		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID, Path: s.Path, Notes: s.Notes,
-		Outcome: session.OutcomeUnknown,
-	}
-	if root := s.Root(); root != nil {
-		row.StartedAt, row.EndedAt, row.Outcome = root.StartedAt, root.EndedAt, root.Outcome
-		if root.Title != nil {
-			title, _, err := engine.Redact(*root.Title)
-			if err != nil {
-				return sessionRow{}, err
-			}
-			row.Title = title
-		}
-		if root.GitBranch != nil {
-			row.Branch = *root.GitBranch
-		}
-	}
-	correlated := sessioncorrelate.Correlate(s.Graph, s.Vendor)
-	if row.Branch == "" && len(correlated.Branches) > 0 {
-		row.Branch = correlated.Branches[0]
-	}
-	for _, ref := range correlated.CommitRefs {
-		if row.Commits == nil {
-			row.Commits = map[string][]string{}
-		}
-		row.Commits[string(ref.Role)] = append(row.Commits[string(ref.Role)], ref.SHA)
-	}
-	for _, file := range correlated.Files {
-		if file.Kind == session.TouchEdit {
-			row.EditedFiles++
-		}
-	}
-	return row, nil
-}
-
-func dumpSession(w io.Writer, engine *redact.Engine, found []sessions.Session, id string) error {
+func dumpSession(ctx context.Context, w io.Writer, engine *redact.Engine, found []sessions.Session, id string) error {
 	for _, s := range found {
 		if s.ID != id {
 			continue
 		}
-		encoded, err := json.MarshalIndent(s.Graph, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encoding session graph: %w", err)
-		}
-		redacted, _, err := engine.Redact(string(encoded))
+		redacted, err := locallink.RedactGraph(ctx, engine, s.Graph, true)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(w, redacted)
+		_, err = fmt.Fprintln(w, string(redacted))
 		return err
 	}
 	return fmt.Errorf("no session %s recorded for this repository", id)

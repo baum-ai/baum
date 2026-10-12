@@ -26,6 +26,10 @@ const PARAM = {
   file: "file",
   session: "session",
   commit: "commit",
+  // A host's own place within the selection, such as the prompt of a session
+  // a link opens at. Readers of it take it from the URL themselves; it is
+  // cleared with the selection so it never applies to the next one.
+  turn: "turn",
 } as const;
 
 /** Summary is the default: an absent or unrecognized `pane` reads as it,

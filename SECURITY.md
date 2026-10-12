@@ -39,6 +39,52 @@ verified, baum uses a copy embedded at release. Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else.
 
+## What `baum view` shows
+
+`baum view` listens only on `127.0.0.1` and never contacts a server. Besides
+the document, it shows the coding-agent sessions on your machine that it
+linked to the pull request, and, when you open one, that session's full
+transcript: your prompts, the agent's messages, and each tool call's input and
+output, which can include file contents and command output. The transcript is
+redacted with the engine `baum sessions --dump` uses, so secrets and e-mail
+addresses are masked as described above, and your home directory is written as
+`~` where it starts a path; paths outside it (a clone elsewhere, a Windows
+home under `/mnt/c` in WSL) are shown as recorded, as are home paths glued
+to other text (`-I/home/…/include`, a path after an escaped backslash), and
+nothing else is removed. Only sessions linked to the pull request are served.
+
+The server has no login. It refuses requests whose `Host` is not its own
+address, which stops other websites in your browser from reading it, but any
+other user or process on the same machine can request the port while it runs
+and read everything it serves, transcripts included, even without permission
+to read your `~/.claude` or other session stores. Do not run `baum view` on a
+shared machine. `baum ui` will add token authentication.
+
+## Reading your clone without downloading anything
+
+`baum sessions` and `baum view` read your clone with git but never use the
+network. They run fixed git commands with no shell. Refs are read in your clone;
+commits, trees and Entire checkpoints are read from a private temporary
+repository that borrows the clone's objects and has no remote, so a partial
+clone's missing objects (a `--filter` clone with a promisor remote) are skipped
+with a warning, never downloaded. Each command also runs with
+`GIT_NO_LAZY_FETCH=1` and without prompts. Those object reads also ignore your
+global and system git configuration, which could otherwise run a filter (such
+as an LFS smudge, which contacts a server) or a signature program on a tree
+from a clone you have not vetted. The clone's remote URLs are read as
+text to match the pull request's repository, and are never contacted.
+The list of the clone's worktrees, which says where else its sessions may have
+been recorded, comes from `git worktree list` run against the clone's
+repository directory with that same environment: no global or system
+configuration, no `GIT_` variable of yours, and nothing that reads an object
+or runs a program. Because whoever made the clone controls that bookkeeping,
+an entry is used only when the worktree's own `.git` file points back at this
+repository (or its directory is gone), and never when it is the file system
+root, your home directory, or a directory containing the repository, so a
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
+the checkpoint branch already in your clone, in the private repository; a
+checkpoint you have not fetched is not fetched for it.
+
 ## Agent isolation
 
 The `claude`, `codex` and `cursor-agent` backends run on your machine under

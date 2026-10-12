@@ -14,7 +14,7 @@
       "version": "19"
     }
   },
-  "ignorePatterns": ["coverage/**", "generated/**"],
+  "ignorePatterns": ["coverage/**", "generated/**", "src/precompiled/**"],
   "rules": {
     "eqeqeq": ["error", "smart"],
     "no-alert": "error",

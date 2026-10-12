@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +60,26 @@ func buildFixture(t *testing.T) (*session.Graph, *Report) {
 		t.Fatalf("the mapped tree is not storable: %v", err)
 	}
 	return graph, report
+}
+
+// Without the survey the graph and accounting are the same; only the
+// transcript's shape is left out.
+func TestBuildWithoutSurvey(t *testing.T) {
+	graph, report := buildFixture(t)
+	tree, err := claudetranscript.DecodeLocalFiles(claudecode.SessionFiles(fixturePath()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, bareReport, err := BuildWith(tree, BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(bare, graph) || !reflect.DeepEqual(bareReport.Lines, report.Lines) || !slices.Equal(bareReport.Notes, report.Notes) {
+		t.Error("the graph or accounting differs without the survey")
+	}
+	if len(bareReport.Transcript.UnreadKeys) != 0 || len(bareReport.Transcript.Content) != 0 || len(report.Transcript.Content) == 0 {
+		t.Errorf("survey with %+v, without %+v", report.Transcript, bareReport.Transcript)
+	}
 }
 
 func TestFixtureGolden(t *testing.T) {

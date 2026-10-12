@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -23,15 +25,44 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Check go.mod is tidy
+        run: go mod tidy -diff
+
       - name: Vet
         run: go vet ./...
 
       - name: Test
         run: go test -race ./...
 
+  viewer-dist:
+    # The tag must carry the viewer bundle its sources build to.
+    name: Viewer bundle is fresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: viewer/pnpm-lock.yaml
+
+      - name: Rebuild and compare
+        run: sh scripts/viewer-fresh.sh
+
   release:
     name: Release
-    needs: test
+    needs: [test, viewer-dist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -42,6 +73,9 @@ jobs:
         with:
           # goreleaser derives the changelog from the previous tag.
           fetch-depth: 0
+          # goreleaser calls the release API with GITHUB_TOKEN from the
+          # environment and never pushes, so no credentials stay in the clone.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -59,4 +93,8 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # The viewer-dist job, which has a read-only token, already checked
+          # the bundle, so the before hook skips it: no JavaScript tooling
+          # runs while this job holds a token that can write to the repository.
+          BAUM_SKIP_VIEWER_FRESH: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

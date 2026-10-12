@@ -2,8 +2,8 @@
 default:
     @just --list
 
-# Run every check CI runs: format, vet, build, test, lint
-check: fmt-check vet build test privacy lint
+# Run every check CI runs: format, tidy, vet, build, test, lint
+check: fmt-check tidy-check vet build test privacy lint
 
 # Fail on unformatted files
 fmt-check:
@@ -17,6 +17,11 @@ fmt-check:
 
 fmt:
     gofmt -w .
+
+# Fail when go.mod or go.sum is not tidy; the release build runs go mod tidy
+# and would otherwise compile from files that differ from the tag
+tidy-check:
+    go mod tidy -diff
 
 vet:
     go vet ./...
@@ -38,6 +43,23 @@ test *args:
 lint:
     golangci-lint run ./...
 
-# Build release archives for every target locally without publishing
+# Rebuild the committed viewer bundle and the precompiled tile validators
+viewer-build:
+    sh scripts/viewer-build.sh
+
+# Fail when the committed viewer bundle or validators differ from a fresh build
+viewer-fresh:
+    sh scripts/viewer-fresh.sh
+
+# Build release archives for every target locally without publishing; the
+# goreleaser before-hook runs viewer-fresh first
 release-snapshot:
     go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
+
+# Check every archive release-snapshot built: CGO off and the viewer bundle embedded
+release-verify:
+    bash scripts/release-verify.sh
+
+# Install baum from a module-proxy-shaped source tree with no Node, then smoke test it
+clean-install:
+    bash scripts/clean-install.sh

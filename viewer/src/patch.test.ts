@@ -68,3 +68,21 @@ describe("indexedHunkFromFilePatch", () => {
     ).toBeNull();
   });
 });
+
+describe("indexedHunkFromFilePatch on a local patch", () => {
+  // What `baum view` serves for a renamed and edited file: the diff from its
+  // first hunk, with the function-context text after the header.
+  const local =
+    "@@ -18,6 +18,7 @@ line 17\n line 18\n line 19\n line 20\n+line 20b\n line 21\n line 22\n line 23\n";
+
+  it("finds the hunk the review cites in a renamed file", () => {
+    const hunk = indexedHunkFromFilePatch(local, {
+      new_range: [18, 7],
+      additions: 1,
+      deletions: 0,
+    });
+    expect(hunk?.header).toBe("@@ -18,6 +18,7 @@ line 17");
+    expect(hunk?.lines).toHaveLength(7);
+    expect(hunk?.lines[3]).toEqual({ kind: "add", new_line: 21, text: "line 20b" });
+  });
+});

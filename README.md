@@ -21,9 +21,9 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, review schema, release pipeline, `baum sessions` and
-`baum validate` exist; `generate`, `bundle`, `view` and `refresh` print their
-help and exit non-zero until their phase lands.
+layout, review schema, release pipeline, `baum sessions`, `baum validate` and
+`baum view` exist; `generate`, `bundle` and `refresh` print their help and exit
+non-zero until their phase lands.
 
 ## Install
 
@@ -49,7 +49,18 @@ baum generate --pr 191 -o review.json
 baum bundle --pr 191 -o bundle.json
 
 # Serve the viewer for a document on localhost and open it in the browser.
+# The URL is always printed. Nothing leaves your machine: the server listens on
+# 127.0.0.1 only and never fetches anything.
 baum view review.json
+
+# Reload the viewer whenever the file changes, for example while editing it.
+baum view review.json --watch
+
+# Try the viewer on the built-in example document.
+baum view --sample
+
+# Print the URL without opening a browser, on a fixed port.
+baum view review.json --no-open --port 4173
 
 # Check a stored document against the schema and its own rules. Findings
 # print to stderr, one per line, and the exit status is non-zero when there
@@ -60,6 +71,56 @@ baum validate review.json
 # section outlines, evidence against checks, and restricted sessions.
 baum validate review.json --bundle bundle.json
 ```
+
+`baum view` serves a document with schema or rule findings anyway and prints
+the findings to stderr, as `baum validate` does. The document must be valid
+JSON of at most 32 MiB. `baum view --pr N`, which would open the latest
+generated document for a pull request, is not available yet: it needs the
+local version store, which is not in this build.
+
+From local data only, `baum view` can also show the coding-agent sessions
+linked to the pull request. When the viewer asks, `baum view` reads the clone
+containing the current directory, but only if one of its remotes is the
+document's repository (`owner/name`, whether the remote is HTTPS or SSH), and
+only if the clone already has the pull request's head and merge base (or base)
+commits; abbreviated commit ids in the document are expanded in the clone. A
+fork clone, whose `origin` is the fork and whose `upstream` remote is the pull
+request's repository, matches. It reads the
+sessions recorded on this machine, as `baum sessions` does, but only those last
+written within two days of the pull request's first commit, and links them to
+those commits the way the hosted service does: a commit can link to several
+sessions when each edited part of it, and a weak guess is dropped once the
+commit has a confident link. A commit whose `Entire-Checkpoint` trailer names
+a checkpoint the clone's checkpoint branch holds is linked to the sessions that
+checkpoint recorded first; the matcher then looks only for the files those
+sessions did not edit.
+Only sessions linked to at least one commit are shown, and all their text is
+redacted like `baum sessions` output. It never fetches, not even in a partial
+clone: a clone without the
+commits, a clone with no remote for the repository, a directory outside a clone and `--sample` show
+no local sessions, with the reason, and the viewer falls back to the sessions
+in the document. Run `git fetch` yourself to make missing commits available,
+then reload the viewer. Run `baum view` from inside the clone.
+
+The same clone fills in code excerpts the document left out. Opening a cited
+hunk's evidence asks `baum view` for that file's patch between the merge base
+(else the base) and the head, only for files the document cites, read with the
+same private, no-fetch reads and the same clone matching. A binary or very
+large file (over 1 MiB), a submodule, a file the range does not change and a clone
+without the commits keep the link to GitHub instead. A renamed file is read
+under its old name too, as the hosted service reads it.
+
+Opening one of those linked sessions shows its full transcript, with the same
+session card the hosted app uses, as a conversation: every prompt with the
+agent's replies and what it caused, and per prompt the agent's messages and
+its tool calls with their input and output.
+It is read only when you open the session, redacted exactly as
+`baum sessions --dump` redacts it (secrets and e-mail addresses masked), with
+your home directory written as `~`, and served only to the page on
+`127.0.0.1`. A very long transcript is shown in part, and the page says so: a prompt is
+cut at 32 KiB, an agent message at 16 KiB, a tool call's input and output at
+4 KiB each, and once the response reaches 4 MiB the rest is left out. Paths
+outside your home directory are shown as recorded. `?pane=session&session=<id>&turn=<n>` opens it at a prompt.
 
 `baum refresh` updates checks, threads and session evidence without a
 model call. Run any command with `--help` for its flags.
@@ -79,6 +140,25 @@ baum sessions --since 72h --json --previous-path ~/old/checkout
 # The normalised session graph of one session, redacted, for debugging.
 baum sessions --dump <session-id>
 ```
+
+`--dump` prints valid JSON: secrets and e-mail addresses are found over the
+whole graph and in each of its strings as decoded, and masked only inside its
+strings.
+
+A session belongs to the repository when it ran in any working tree of the
+clone: the main checkout or any of its `git worktree` checkouts, including
+ones since deleted, and directories inside them. For an ordinary clone and its
+worktrees, `baum sessions` and `baum view` give the same answer from any of
+them. A directory that merely shares a name prefix (`~/src/repo-other` beside
+`~/src/repo`) is not part of it, but a separate repository nested inside a
+checkout is, because sessions are placed by directory. A worktree entry is
+used only when its directory points back at this repository (or is gone), and
+never when it is the file system root, your home directory, or a directory
+above the repository. In a clone made with `--separate-git-dir`, and in a
+submodule, git may report the main working tree at an unexpected place, so the
+answer can depend on where you run. Each Entire session is listed once, from
+the newest checkpoint holding its transcript (a checkpoint can hold only the
+prompt), and not at all when its agent's own store already has it.
 
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.
@@ -161,6 +241,18 @@ vet, build, tests and lint; `just --list` shows the other recipes. The
 viewer needs Node.js and pnpm; `pnpm install && pnpm check` in `viewer/`
 runs its lint, format check, typecheck and tests. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The viewer that `baum view` serves is committed, so `go install` needs no
+Node.js: `internal/viewer/dist` holds the built app and
+`viewer/src/precompiled` the precompiled tile validators. `just viewer-build`
+rebuilds both, and `just viewer-fresh` rebuilds them and fails, listing the
+changed paths, when they differ from what is committed. CI fails on a stale
+bundle, the release snapshot and the release wait for that check, and the
+goreleaser before hook runs it too. `just release-snapshot` builds the five release archives into
+`dist/`, and `just release-verify` checks that each binary was built with CGO
+off and embeds the committed bundle. `just clean-install` runs
+`scripts/clean-install.sh`, which installs `baum` from a module zip of the
+committed files with no Node.js on `PATH` and smoke tests `baum view --sample`.
 
 This repository is published from the `oss/` directory of the private baum
 monorepo, where the hosted service imports these packages. Pull requests are

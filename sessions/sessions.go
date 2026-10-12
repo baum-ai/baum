@@ -12,19 +12,18 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/sessions/claudesession"
 	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
 	"github.com/lastpersonlabs/baum/sessions/codexsession"
 	"github.com/lastpersonlabs/baum/sessions/codextranscript"
 	"github.com/lastpersonlabs/baum/sessions/collector"
-	"github.com/lastpersonlabs/baum/sessions/collector/entire"
 	"github.com/lastpersonlabs/baum/sessions/collector/model"
 	"github.com/lastpersonlabs/baum/sessions/cursorsession"
 	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/baum/sessions/entiresession"
 	"github.com/lastpersonlabs/baum/sessions/session"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
@@ -123,35 +122,57 @@ type Report struct {
 
 // Load returns every session recorded for the git repository containing dir,
 // mapped and ordered by modification time.
+//
+// A session belongs to the repository when it was recorded in any of the
+// clone's working trees, the main checkout or a linked worktree, whichever of
+// them dir is in; git's own list of worktrees says which those are. Each
+// Entire session is returned once, from the newest checkpoint that recorded
+// it, and not at all when the agent's own store holds it.
 func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, error) {
 	var report Report
+	// A clone whose worktrees git cannot list (git older than 2.36) is read
+	// as the one checkout containing dir.
+	var worktrees []string
+	if listed, err := gitlocal.Worktrees(ctx, dir); err == nil {
+		for _, worktree := range listed {
+			worktrees = append(worktrees, worktree.Path)
+		}
+	}
 	found, scan, err := collector.FindSessions(dir, collector.FindOptions{
 		ClaudeProjectsDir: opts.ClaudeProjectsDir,
 		CodexSessionsDir:  opts.CodexSessionsDir,
 		CursorStorePaths:  opts.CursorStorePaths,
 		PreviousPaths:     opts.PreviousPaths,
+		Worktrees:         worktrees,
+		Since:             opts.Since,
 	})
 	if err != nil {
 		return nil, report, err
 	}
 	report.Skipped = scan.Skipped
 
+	wanted := make([]collector.Session, 0, len(found))
+	for _, s := range found {
+		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) {
+			wanted = append(wanted, s)
+		}
+	}
+	mapped, err := mapAll(ctx, wanted)
+	if err != nil {
+		return nil, report, err
+	}
 	var sessions []Session
 	native := map[string]bool{}
-	for _, s := range found {
-		if !opts.wants(s.Source) || (!opts.Since.IsZero() && s.ModifiedAt.Before(opts.Since)) {
-			continue
-		}
-		graph, notes, err := Map(s)
-		if err != nil {
-			report.Failures = append(report.Failures, Failure{Source: s.Source, Path: s.Path, Err: err})
+	for i, s := range wanted {
+		if mapped[i].err != nil {
+			report.Failures = append(report.Failures, Failure{Source: s.Source, Path: s.Path, Err: mapped[i].err})
 			continue
 		}
 		native[s.SessionID] = true
 		sessions = append(sessions, Session{
 			Source: s.Source, Vendor: s.Source.String(), ID: s.SessionID, Path: s.Path,
 			RepoRoot: s.RepoRoot, WorktreeRoot: s.WorktreeRoot, ModifiedAt: s.ModifiedAt,
-			Graph: graph, Notes: notes,
+			Graph: mapped[i].graph, Notes: mapped[i].notes,
 		})
 	}
 
@@ -175,13 +196,10 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 		if c := a.ModifiedAt.Compare(b.ModifiedAt); c != 0 {
 			return c
 		}
-		if a.Source != b.Source {
-			return -1
+		if c := strings.Compare(string(a.Source), string(b.Source)); c != 0 {
+			return c
 		}
-		if a.ID < b.ID {
-			return -1
-		}
-		return 1
+		return strings.Compare(a.ID, b.ID)
 	})
 	return sessions, report, nil
 }
@@ -199,7 +217,9 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Claude Code transcripts: %w", err)
 		}
-		graph, report, err := claudesession.Build(tree)
+		// Nothing reads the transcript's surveyed shape here, and the survey
+		// re-reads every line, so it is skipped.
+		graph, report, err := claudesession.BuildWith(tree, claudesession.BuildOptions{})
 		if err != nil {
 			return nil, nil, fmt.Errorf("mapping Claude Code session: %w", err)
 		}
@@ -244,51 +264,19 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 	}
 }
 
-// loadEntire maps every checkpoint in the clone's checkpoint branch. A
-// session Entire recorded that discovery already found in the agent's own
-// store is skipped: the native transcript is the fuller record.
-func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool) ([]Session, string, []Failure, error) {
-	commit, ok, err := entire.Resolve(ctx, root)
-	if err != nil || !ok {
-		return nil, "", nil, err
+// HasTranscript reports whether a graph records anything the agent did: a
+// model call, an assistant message or a tool use. A snapshot Entire wrote with
+// only its metadata and the prompt has none.
+func HasTranscript(graph *session.Graph) bool {
+	return graph != nil &&
+		len(graph.ModelInvocations)+len(graph.AssistantMessages)+len(graph.ToolUses) > 0
+}
+
+// Fuller reports whether a is a better reading of a session than b: one with
+// a transcript over one without, and otherwise the one written later.
+func Fuller(a, b Session) bool {
+	if ha, hb := HasTranscript(a.Graph), HasTranscript(b.Graph); ha != hb {
+		return ha
 	}
-	checkpoints, err := entire.List(ctx, root, commit)
-	if err != nil {
-		return nil, commit, nil, err
-	}
-	var sessions []Session
-	var failures []Failure
-	for _, checkpoint := range checkpoints {
-		fsys, err := entire.Read(ctx, root, commit, checkpoint.ID)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		parsed, err := entirecheckpoint.ParseCheckpoint(fsys)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		results, _, err := entiresession.Build(parsed)
-		if err != nil {
-			failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID, Err: err})
-			continue
-		}
-		for _, result := range results {
-			switch {
-			case result.Err != nil:
-				failures = append(failures, Failure{Source: Entire, Path: checkpoint.ID + "/" + result.SessionID, Err: result.Err})
-				continue
-			case result.Graph == nil || native[result.SessionID]:
-				continue
-			case !opts.Since.IsZero() && result.CreatedAt.Before(opts.Since):
-				continue
-			}
-			sessions = append(sessions, Session{
-				Source: Entire, Vendor: result.Vendor, ID: result.SessionID, Path: checkpoint.ID,
-				RepoRoot: root, ModifiedAt: result.CreatedAt, Graph: result.Graph, Notes: result.Warnings,
-			})
-		}
-	}
-	return sessions, commit, failures, nil
+	return a.ModifiedAt.After(b.ModifiedAt)
 }
