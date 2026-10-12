@@ -1,10 +1,11 @@
 import pluralize from "pluralize";
 import { useEffect, useMemo, useState } from "react";
 
-import { SessionCard, type SessionCardSource } from "../src/components/session-card";
+import { SessionCard } from "../src/components/session-card";
 import { Failed, Skeleton } from "../src/components/states";
 import { Button } from "../src/components/ui";
 import { useUrlState } from "../src/navigation";
+import type { TranscriptSource } from "../src/transcript";
 import { fetchTranscript, type LocalTranscript, TranscriptError } from "./local-transcript";
 
 type TranscriptLoad =
@@ -20,8 +21,10 @@ function linkedTurn(search: URLSearchParams): number | undefined {
 
 /** One linked session's transcript under its card in the Sessions pane,
  *  asked for only once that session is opened. It is drawn by the session
- *  card the hosted app uses, with every prompt open to read and each
- *  prompt's agent activity a click away. */
+ *  card and conversation the hosted app uses: each prompt with the agent's
+ *  replies, and each prompt's agent activity a click away. This machine has
+ *  no prices, no avatars and no per-prompt endpoint, so the card is given no
+ *  cost format, no avatar and only the activity loader. */
 export function SessionTranscript({ id }: { id: string }) {
   const { search } = useUrlState();
   const focusTurn = linkedTurn(search);
@@ -48,7 +51,7 @@ export function SessionTranscript({ id }: { id: string }) {
 
   // The activity arrived with the transcript; the card asks for one prompt's
   // when the reader opens it.
-  const source = useMemo<SessionCardSource | undefined>(() => {
+  const source = useMemo<TranscriptSource | undefined>(() => {
     if (load.state !== "ready") return undefined;
     const { activity } = load.transcript;
     return {

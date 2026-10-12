@@ -103,8 +103,9 @@ in the document. Run `git fetch` yourself to make missing commits available,
 then reload the viewer. Run `baum view` from inside the clone.
 
 Opening one of those linked sessions shows its full transcript, with the same
-session card the hosted app uses: every prompt, what each one caused, and per
-prompt the agent's messages and its tool calls with their input and output.
+session card the hosted app uses, as a conversation: every prompt with the
+agent's replies and what it caused, and per prompt the agent's messages and
+its tool calls with their input and output.
 It is read only when you open the session, redacted exactly as
 `baum sessions --dump` redacts it (secrets and e-mail addresses masked), with
 your home directory written as `~`, and served only to the page on

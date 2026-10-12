@@ -1,7 +1,9 @@
 // Package transcript shapes one session graph into the transcript the
-// viewer's session card draws: the session's human prompts in order, what
-// each of them caused, and per prompt the agent's messages, model calls and
-// tool calls with their input and output.
+// viewer's session card draws as a conversation: the session's human prompts
+// in order, what each of them caused and the agent's text replies to it, and
+// per prompt the agent activity (its messages, model calls and tool calls
+// with their input and output) that the hosted service serves one prompt at a
+// time and baum view serves in the same answer.
 //
 // It bounds the result, so a session of many megabytes does not stall the
 // page drawing it: every text is cut to a limit, each prompt lists a limited
@@ -39,8 +41,13 @@ type Limits struct {
 	// Prompt, Message and Tool cut one prompt, one agent message, and one
 	// tool call's input or output.
 	Prompt, Message, Tool int
-	// Messages and ToolCalls cap how many of each one prompt lists.
+	// Messages and ToolCalls cap how many of each one prompt's activity
+	// lists.
 	Messages, ToolCalls int
+	// Reply cuts the preview of one text reply, and Replies caps how many
+	// replies (a prompt's last) a prompt carries. A reply's whole text, up to
+	// Message, is among the activity's messages.
+	Reply, Replies int
 	// Field cuts each of the session's own texts (title, branch, working
 	// directory, agent and model names), and Models caps how many model
 	// names it lists, so the part of the transcript outside the prompts is
@@ -57,6 +64,8 @@ var DefaultLimits = Limits{
 	Tool:      4 << 10,
 	Messages:  100,
 	ToolCalls: 200,
+	Reply:     4 << 10,
+	Replies:   10,
 	Field:     1 << 10,
 	Models:    50,
 }
@@ -72,7 +81,7 @@ type Meta struct {
 }
 
 // Transcript is the answer for one session. Its JSON names follow the
-// viewer's session card view models.
+// viewer's transcript view model (oss/viewer/src/transcript.ts).
 type Transcript struct {
 	Session Session `json:"session"`
 	// Activity is each listed prompt's activity, by its turn id.
@@ -85,30 +94,36 @@ type Transcript struct {
 
 // Session is the session card's session.
 type Session struct {
-	RunID            string     `json:"run_id"`
-	Source           string     `json:"source"`
-	Title            string     `json:"title"`
-	GitBranch        string     `json:"git_branch"`
-	WorkingDir       string     `json:"working_dir"`
-	Models           []string   `json:"models"`
-	StartedAt        *time.Time `json:"started_at"`
-	EndedAt          *time.Time `json:"ended_at"`
-	Outcome          string     `json:"outcome"`
-	TurnCount        int        `json:"turn_count"`
-	CommitCount      int        `json:"commit_count"`
-	Confidence       float64    `json:"confidence"`
-	Prompts          []Prompt   `json:"prompts"`
-	PromptsTotal     int        `json:"prompts_total"`
-	PromptsTruncated bool       `json:"prompts_truncated"`
-	Totals           *Effects   `json:"totals"`
-	Unattributed     *Effects   `json:"unattributed"`
-	Tokens           int64      `json:"tokens"`
-	EstimatedTokens  int64      `json:"estimated_tokens"`
+	RunID      string     `json:"run_id"`
+	Source     string     `json:"source"`
+	Title      string     `json:"title"`
+	GitBranch  string     `json:"git_branch"`
+	WorkingDir string     `json:"working_dir"`
+	Models     []string   `json:"models"`
+	StartedAt  *time.Time `json:"started_at"`
+	EndedAt    *time.Time `json:"ended_at"`
+	Outcome    string     `json:"outcome"`
+	// UserEmail is always empty: this machine does not say who typed.
+	UserEmail        string   `json:"user_email"`
+	TurnCount        int      `json:"turn_count"`
+	CommitCount      int      `json:"commit_count"`
+	Confidence       float64  `json:"confidence"`
+	Prompts          []Prompt `json:"prompts"`
+	PromptsTotal     int      `json:"prompts_total"`
+	PromptsTruncated bool     `json:"prompts_truncated"`
+	// RepliesIncluded is always true: every prompt carries its replies.
+	RepliesIncluded bool     `json:"replies_included"`
+	Totals          *Effects `json:"totals"`
+	Unattributed    *Effects `json:"unattributed"`
+	Tokens          int64    `json:"tokens"`
+	EstimatedTokens int64    `json:"estimated_tokens"`
 	// CostPerPrompt is false when usage was reported only for the whole
-	// session; the name is the card's. No cost is ever given: this machine
-	// has no prices.
-	CostPerPrompt bool `json:"cost_per_prompt"`
-	HasInnerTrace bool `json:"has_inner_trace"`
+	// session; the name is the card's. No cost is ever given (CostUSD is
+	// null and CostIsFloor false): this machine has no prices.
+	CostPerPrompt bool     `json:"cost_per_prompt"`
+	CostUSD       *float64 `json:"cost_usd"`
+	CostIsFloor   bool     `json:"cost_is_floor"`
+	HasInnerTrace bool     `json:"has_inner_trace"`
 }
 
 // Prompt is one human prompt.
@@ -121,8 +136,13 @@ type Prompt struct {
 	Truncated       bool       `json:"truncated"`
 	Effects         *Effects   `json:"effects"`
 	CostUSD         *float64   `json:"cost_usd"`
+	CostIsFloor     bool       `json:"cost_is_floor"`
 	Tokens          int64      `json:"tokens"`
 	EstimatedTokens int64      `json:"estimated_tokens"`
+	// Replies are the prompt's last text replies, oldest first, each cut to
+	// Limits.Reply; RepliesOmitted counts the earlier ones left out.
+	Replies        []Message `json:"replies"`
+	RepliesOmitted int       `json:"replies_omitted"`
 }
 
 // Effects is what a prompt, or the session, caused.
@@ -165,7 +185,7 @@ type Activity struct {
 	ToolCallsTruncated bool         `json:"tool_calls_truncated"`
 }
 
-// Message is one agent message with text.
+// Message is one agent message with text, or a prompt's reply.
 type Message struct {
 	Text       string     `json:"text"`
 	TextLength int        `json:"text_length"`
@@ -252,6 +272,7 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		Session: Session{
 			RunID: meta.ID, Source: meta.Vendor, GitBranch: meta.Branch, Outcome: string(session.OutcomeUnknown),
 			Models: []string{}, Prompts: []Prompt{}, CommitCount: meta.Commits, Confidence: meta.Confidence,
+			RepliesIncluded: true,
 		},
 		Activity:   map[string]Activity{},
 		LimitBytes: limits.Bytes,
@@ -456,7 +477,21 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		}
 		prompt := Prompt{
 			TurnID: input.ID, Ordinal: input.Ordinal, StartedAt: input.TriggeredAt,
-			Text: shown, TextLength: utf8.RuneCountInString(text), Truncated: textCut,
+			Text: shown, TextLength: utf8.RuneCountInString(text), Truncated: textCut, Replies: []Message{},
+		}
+		turnMessages := messages[input.ID]
+		sortByTime(turnMessages, func(m session.AssistantMessage) (*time.Time, string) { return m.Timestamp, m.ID })
+		// The last replies, as the hosted service sends them: a preview of
+		// each, whose whole text is the activity's message at that instant.
+		// A preview is not a loss, so it does not mark the transcript cut.
+		replies := turnMessages[max(0, len(turnMessages)-limits.Replies):]
+		prompt.RepliesOmitted = len(turnMessages) - len(replies)
+		for _, message := range replies {
+			reply, err := messageOf(message, limits.Reply, models, cut)
+			if err != nil {
+				return Transcript{}, err
+			}
+			prompt.Replies = append(prompt.Replies, reply)
 		}
 		if s.HasInnerTrace {
 			e := Effects{}
@@ -500,28 +535,21 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 				t.Truncated = true
 			}
 		}
-		turnMessages := messages[input.ID]
-		sortByTime(turnMessages, func(m session.AssistantMessage) (*time.Time, string) { return m.Timestamp, m.ID })
 		for i, message := range turnMessages {
 			if i >= limits.Messages {
 				activity.MessagesTruncated = true
 				break
 			}
-			full := deref(message.Text)
-			text, textCut, err := cut(full, limits.Message)
+			item, err := messageOf(message, limits.Message, models, cut)
 			if err != nil {
 				return Transcript{}, err
-			}
-			item := Message{
-				Text: text, TextLength: utf8.RuneCountInString(full), Truncated: textCut,
-				Timestamp: message.Timestamp, Model: models[message.ModelInvocationID],
 			}
 			if !b.fits(encodedSize(item) + 1) {
 				activity.MessagesTruncated = true
 				break
 			}
 			activity.Messages = append(activity.Messages, item)
-			t.Truncated = t.Truncated || textCut
+			t.Truncated = t.Truncated || item.Truncated
 		}
 		turnUses := uses[input.ID]
 		sortByTime(turnUses, func(u session.ToolUse) (*time.Time, string) { return u.Timestamp, u.ID })
@@ -575,6 +603,20 @@ func encodedSize(v any) int {
 		return 0
 	}
 	return buf.Len() - 1
+}
+
+// messageOf is message as listed, its text cut to limit.
+func messageOf(message session.AssistantMessage, limit int, models map[string]string,
+	cut func(string, int) (string, bool, error)) (Message, error) {
+	full := deref(message.Text)
+	text, textCut, err := cut(full, limit)
+	if err != nil {
+		return Message{}, err
+	}
+	return Message{
+		Text: text, TextLength: utf8.RuneCountInString(full), Truncated: textCut,
+		Timestamp: message.Timestamp, Model: models[message.ModelInvocationID],
+	}, nil
 }
 
 func toolCall(use session.ToolUse, results map[string]session.ToolResult, limit int,

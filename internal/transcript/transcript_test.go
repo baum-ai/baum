@@ -101,6 +101,15 @@ func TestBuildListsThePromptsWithTheirActivity(t *testing.T) {
 	if s.Unattributed.ToolCalls != 1 || s.Totals.ToolCalls != 5 {
 		t.Errorf("unattributed %+v, totals %+v", *s.Unattributed, *s.Totals)
 	}
+	// Every prompt carries its text replies, oldest first; a subagent's are
+	// its own, and a blank message is none.
+	if !s.RepliesIncluded || s.UserEmail != "" || s.CostUSD != nil || first.RepliesOmitted != 0 || len(first.Replies) != 2 ||
+		first.Replies[0].Text != "Reading the parser." || first.Replies[1].Text != "Fixed." || first.Replies[1].Model != "claude-opus" {
+		t.Errorf("replies = %+v (%d omitted), included %v", first.Replies, first.RepliesOmitted, s.RepliesIncluded)
+	}
+	if len(s.Prompts[1].Replies) != 0 || s.Prompts[1].Replies == nil {
+		t.Errorf("second prompt's replies = %#v", s.Prompts[1].Replies)
+	}
 
 	activity := got.Activity["p1"]
 	if len(activity.Messages) != 2 || activity.Messages[0].Text != "Reading the parser." || activity.Messages[0].Model != "claude-opus" {
@@ -171,7 +180,7 @@ func encodedLen(t *testing.T, tr Transcript) int {
 func TestBuildCutsLongTextsAndLongLists(t *testing.T) {
 	g := graph()
 	g.UserInputs[1].Text = strings.Repeat("é", 40) // 80 bytes
-	limits := Limits{Bytes: 1 << 20, Prompt: 50, Message: 4, Tool: 10, Messages: 1, ToolCalls: 2}
+	limits := Limits{Bytes: 1 << 20, Prompt: 50, Message: 4, Tool: 10, Messages: 1, ToolCalls: 2, Reply: 3, Replies: 1}
 	got := build(t, g, Meta{ID: "root"}, limits)
 	s := got.Session
 	if !got.Truncated || got.LimitBytes != 1<<20 || len(s.Prompts) != 2 || s.PromptsTruncated {
@@ -180,6 +189,11 @@ func TestBuildCutsLongTextsAndLongLists(t *testing.T) {
 	first := s.Prompts[0]
 	if !first.Truncated || first.TextLength != 40 || first.Text != strings.Repeat("é", 25) {
 		t.Errorf("first prompt = %q (%d), truncated %v", first.Text, first.TextLength, first.Truncated)
+	}
+	// The last reply, previewed; the earlier one is counted.
+	if len(first.Replies) != 1 || first.RepliesOmitted != 1 || first.Replies[0].Text != "Fix" ||
+		!first.Replies[0].Truncated || first.Replies[0].TextLength != 6 {
+		t.Errorf("replies = %+v (%d omitted)", first.Replies, first.RepliesOmitted)
 	}
 	activity := got.Activity["p1"]
 	if len(activity.Messages) != 1 || !activity.MessagesTruncated || activity.Messages[0].Text != "Read" ||
@@ -295,8 +309,9 @@ func bigGraph(prompts, calls int, out string) *session.Graph {
 func TestBuildCleansTextsBeforeCuttingThem(t *testing.T) {
 	g := graph()
 	g.UserInputs[1].Text = strings.Repeat("a", 45) + "SECRETVALUE"
+	g.AssistantMessages[0].Text = ptr(strings.Repeat("b", 45) + "SECRETVALUE")
 	limits := DefaultLimits
-	limits.Prompt = 50
+	limits.Prompt, limits.Reply = 50, 50
 	var seen []string
 	got, err := Build(g, Meta{ID: "root"}, limits, func(text string) (string, error) {
 		seen = append(seen, text)
@@ -307,6 +322,9 @@ func TestBuildCleansTextsBeforeCuttingThem(t *testing.T) {
 	}
 	if got.Session.Prompts[0].Text != strings.Repeat("a", 45)+"XXXXX" || !slices.Contains(seen, "package parse") {
 		t.Errorf("prompt = %q, cleaned %q", got.Session.Prompts[0].Text, seen)
+	}
+	if reply := got.Session.Prompts[0].Replies[1].Text; reply != strings.Repeat("b", 45)+"XXXXX" {
+		t.Errorf("reply = %q", reply)
 	}
 	if _, err := Build(g, Meta{ID: "root"}, limits, func(string) (string, error) { return "", errors.New("no") }); err == nil {
 		t.Error("an error from clean was dropped")
@@ -332,6 +350,16 @@ func TestClipCutsAtACharacter(t *testing.T) {
 		if got != c.want || cut != (len(c.text) > c.limit) || !utf8.ValidString(got) {
 			t.Errorf("clip(%q, %d) = %q, %v; want %q", c.text, c.limit, got, cut, c.want)
 		}
+	}
+}
+
+// A reply's preview is not a loss: its whole text is in the activity.
+func TestBuildDoesNotCountAReplyPreviewAsACut(t *testing.T) {
+	limits := DefaultLimits
+	limits.Reply = 3
+	got := build(t, graph(), Meta{ID: "root"}, limits)
+	if reply := got.Session.Prompts[0].Replies[0]; !reply.Truncated || got.Truncated {
+		t.Errorf("reply %+v, truncated %v", reply, got.Truncated)
 	}
 }
 

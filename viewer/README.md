@@ -99,14 +99,17 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
+| `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
-| `files` | a Files group: the host's tree in the rail and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
+| `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
+| `detailsChecks` | the Details tab's Checks part for the document the tab describes, in place of the document's own checks, and whether it shows a failure (which flags the tab); null content leaves the part out. For checks gathered from elsewhere, such as a stack review's members |
+| `hideActivity` | leaves out the side pane's Activity tab; a reader whose last tab was Activity sees Details |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
@@ -143,26 +146,39 @@ transcript.
 
 ### Session transcripts
 
-`SessionCard` (`@baum/viewer/components/session-card`) draws one session's
-transcript, the same card in the hosted app and in `baum view`: a header with
-the agent, title, date, duration, prompt count and outcome (or linked commits),
-the session's figures (models, tokens, cost when the host has prices, files,
-lines, tool calls, working directory), then each prompt with what it caused,
-and on request the prompt's agent activity: model usage, tool calls grouped by
-kind with their input (and output, when the host has it), and the agent's
-messages. Prompts and messages are `PromptBlock`s
-(`@baum/viewer/components/prompt-block`), collapsed to a few lines.
+`SessionCard` (`@baum/viewer/components/session-card`) draws one session, the
+same card in the hosted app and in `baum view`: a header with the agent,
+title, date, duration, prompt count and outcome (or linked commits), the
+session's figures (models, tokens, cost when the host has prices, files,
+lines, tool calls, working directory), then the session as a conversation
+(`SessionTranscript`, `@baum/viewer/components/transcript`, built from the
+`components/chat.tsx` pieces below): each prompt as a bubble on the right, the
+agent's text replies on the left, and a quiet line of what the turn caused
+with an **Agent activity** toggle. Opened, the activity replaces the turn's
+replies: model usage, then the agent's messages in time order with each run
+of tool calls between them folded into one row, each call with its input
+(and output, when the host has it). A reply that is a preview is swapped for
+its whole message once the activity has arrived.
 
-Its props are plain view models (`SessionCardSession` and the types beside
-it, in the hosted API's field names) and an optional `SessionCardSource` of
-loaders for what the session did not arrive with: the whole session when a
-card without prompts opens, a prompt's full text when a preview is expanded,
-and a prompt's agent activity. A loader left out turns its feature off (no
-"Agent activity" without `loadTurnActivity`). `modelLabel` names models;
-`focusTurn` marks a prompt and scrolls to it; `expand` opens the card from
-outside. A restricted session shows only that it is restricted, with the
-host's reason (`restrictedNote`) or a neutral one. Character counts are code
-points, as the hosts count a text's full length.
+Its props are plain view models (`TranscriptSession` and the types beside it
+in `@baum/viewer/transcript`, in the hosted API's field names, with the pure
+helpers the card uses) and what the host adds:
+
+- `source`, an optional `TranscriptSource` of loaders for what the session
+  did not arrive with: the whole session when a card without replies opens
+  (`loadSession`), a prompt's full text when a preview is expanded
+  (`loadPromptText`), and a prompt's agent activity (`loadTurnActivity`);
+- `formatCost`, which writes a cost and whether it is a lower bound;
+- `renderAvatar`, the picture beside a person's prompt;
+- `modelLabel`, which names models (the id by default), and
+  `restrictedNote`, the host's reason a restricted session shows only that
+  it is restricted (a neutral one by default).
+
+Leaving one out turns its feature off: no "Agent activity" without
+`loadTurnActivity`, no cost anywhere without `formatCost`, no avatar column
+without `renderAvatar`. Keep `source` stable, or it loads again. `focusTurn`
+marks a prompt and scrolls to it; `expand` opens the card from outside.
+Character counts are code points, as the hosts count a text's full length.
 
 The `baum` binary's app (`app/`) fills both from `GET /api/sessions`: the
 linked sessions and commits when the machine has them; otherwise the sessions
@@ -172,8 +188,27 @@ or `?pane=commits` link survives. A linked session opened alone
 (`?pane=session&session=<id>`) asks `GET /api/sessions/{id}` for its
 redacted transcript and shows it with `SessionCard` under the session: while
 loading, on failure (with Retry), and with a note when the server cut it
-short. `&turn=<n>` opens it at that prompt. See the "Local session linkage"
+short. The answer carries every prompt's replies and every prompt's activity,
+so the card is given only a `loadTurnActivity` that reads from it, and no
+cost format or avatar. `&turn=<n>` opens it at that prompt. See the "Local session linkage"
 and "Session transcripts" sections of `oss/ARCHITECTURE.md` for the contract.
+
+Wherever a session's prompts are quoted (a linked session's prompts in the
+Activity tab, the prompts behind the Summary's intent), they are drawn with
+`components/chat.tsx`, the pieces a host's own transcript is built from too:
+each prompt is a bubble on the right with its number and, where the document
+records it, its time in the corner, shown as typed with only its pasted code
+fences rendered as code, and folded to a few lines with "Show all" when it is
+taller. A pill marks each new day. Prompts drawn from several sessions are
+introduced by a pill naming each session's agent, numbered when one agent has
+several ("Codex session 2"), and each session counts its own days. Days and
+times are the reader's, so they appear once the page is in the browser. A
+host passes the author's name and avatar, and how a number reads ("Turn 3"),
+when it has them. An agent reply
+(`AgentText`) renders as Markdown with any HTML tags shown as written. A
+decision's evidence stays a short quote rather than a bubble: it is an
+excerpt from somewhere in the session, and the document does not record who
+said it.
 
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
@@ -212,17 +247,18 @@ bars (`--z-sticky`, 30).
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
 (`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
-calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
-not tokenised). Both render a line through `HighlightedText`
-(`@baum/viewer/components/highlighted-text`), which wraps each token in an
-inline span inside the existing code cell. It highlights in the browser only:
-the server render and the first client render are the plain text, exactly as
-before, and the colours replace it once they are ready, with no change of
-layout. Each hunk's old side (context and removed lines) and new side (context
-and added lines) are tokenised separately, so a comment or string that starts
-on an unchanged line is coloured on both the removed and the added lines that
-follow it. The text is never altered; a line whose tokens do not add up to it
-renders plain.
+calls `useHighlightedHunks` on its parsed hunks). Neither tokenises what it
+does not draw: a `CodeDiff` file folded from its header, a closed Files card or
+a large diff still collapsed behind its placeholder. Both render a line through
+`HighlightedText` (`@baum/viewer/components/highlighted-text`), which wraps
+each token in an inline span inside the existing code cell. It highlights in
+the browser only: the server render and the first client render are the plain
+text, exactly as before, and the colours replace it once they are ready, with
+no change of layout. Each hunk's old side (context and removed lines) and new
+side (context and added lines) are tokenised separately, so a comment or string
+that starts on an unchanged line is coloured on both the removed and the added
+lines that follow it. The text is never altered; a line whose tokens do not add
+up to it renders plain.
 
 - **Languages** are a fixed allow-list, picked by extension or file name
   (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
@@ -259,6 +295,10 @@ unchanged. Inline code, fences with no or an unknown language, blocks over the
 limits and blocks holding raw HTML elements render as before. Text reaches the
 page only as React text children, and colours only as `var(--syntax-*)`, so
 the highlighter adds no path for contributor markup.
+
+`Markdown` parses raw HTML into sanitized elements, as GitHub renders a
+comment. With `html={false}` it skips that step and raw HTML prints as the
+text it is, for prose that names tags rather than containing them.
 
 ## Schema and tile types
 

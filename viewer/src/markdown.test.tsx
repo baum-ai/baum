@@ -12,6 +12,15 @@ it("renders basic formatting and treats a single newline as a line break", () =>
   expect(html).toContain("<li>two</li>");
 });
 
+it("breaks a line once, not once for the <br> and again for its newline", () => {
+  const html = renderToStaticMarkup(<Markdown>{"one\ntwo"}</Markdown>);
+  // The newline after the <br> stays in the text, so a paragraph that kept
+  // its whitespace would show a blank line between the two.
+  expect(html).toContain("<br/>\ntwo");
+  expect(html).toMatch(/<p>one<br\/>/);
+  expect(html).not.toContain("pre-wrap");
+});
+
 it("hides an HTML comment instead of printing it as text", () => {
   const html = renderToStaticMarkup(
     <Markdown>{"Before.\n<!-- CURSOR_AUTOMATION_ID: abc -->\nAfter."}</Markdown>,

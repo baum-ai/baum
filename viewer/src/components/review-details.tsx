@@ -11,6 +11,7 @@ import {
   TIER_COLOR,
 } from "../review-document";
 import { HarnessName, ModelName } from "./brand-logo";
+import { QuotedPrompts } from "./chat";
 import { EM_DASH, formatDate, formatDuration } from "./format";
 import { Markdown } from "./markdown";
 import { ChecksPart } from "./review-checks";
@@ -34,7 +35,14 @@ import { useScrollingFlag } from "./use-scrolling-flag";
  *  tab: whether CI passed, who wrote it and with what, what it says it
  *  implements, and how big it is. Narrow by design — the pane is 320px at
  *  its smallest — so every part is a list or a two-up grid. */
-export function ReviewDetails({ document }: { document: ReviewDocument }) {
+export function ReviewDetails({
+  document,
+  checks,
+}: {
+  document: ReviewDocument;
+  /** Replaces the Checks part; null leaves it out. */
+  checks?: ReactNode;
+}) {
   const { summary, stats } = document;
   const implemented = implementsGroups(summary.implements);
   const segments = riskSegments(stats.risk_loc);
@@ -42,7 +50,7 @@ export function ReviewDetails({ document }: { document: ReviewDocument }) {
 
   return (
     <div className="space-y-7">
-      <ChecksPart document={document} />
+      {checks === undefined ? <ChecksPart document={document} /> : checks}
 
       <Part label="Author">
         <Facts
@@ -290,7 +298,7 @@ function ObservedLine({ vendors, models }: { vendors: string[]; models: string[]
 
 /** One linked session: its harness, models and outcome, then what it was
  *  about, with its prompts and events a click away. */
-function SessionItem({
+export function SessionItem({
   session,
   onOpen,
 }: {
@@ -355,16 +363,7 @@ function SessionItem({
           <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
             {pluralize("prompt", session.prompts.length, true)}
           </summary>
-          <ol className="mt-2 space-y-2">
-            {session.prompts.map((prompt) => (
-              <li key={prompt.id} className="flex gap-2 text-base">
-                <span className="w-6 flex-none text-right tabular-nums text-(--text-tertiary)">
-                  {prompt.index}
-                </span>
-                <Markdown className="min-w-0 flex-1 text-(--text-primary)">{prompt.text}</Markdown>
-              </li>
-            ))}
-          </ol>
+          <QuotedPrompts className="mt-2" prompts={session.prompts} />
         </details>
       )}
       {session.events && session.events.length > 0 && (

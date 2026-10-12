@@ -1,19 +1,21 @@
 import type {
-  SessionCardActivity,
-  SessionCardEffects,
-  SessionCardMessage,
-  SessionCardPrompt,
-  SessionCardSession,
-  SessionCardToolCall,
-} from "../src/components/session-card";
+  TranscriptActivity,
+  TranscriptEffects,
+  TranscriptMessage,
+  TranscriptPrompt,
+  TranscriptReply,
+  TranscriptSession,
+  TranscriptToolCall,
+} from "../src/transcript";
 
 /** One linked session's transcript, as `GET /api/sessions/{id}` answers it:
- *  the session card's session with every prompt it shows, each prompt's
- *  activity, and whether anything was left out to keep it small. The server
- *  has redacted it and written the home directory as `~`. */
+ *  the session with every prompt it shows and each prompt's replies, each
+ *  prompt's agent activity (which the hosted service serves one prompt at a
+ *  time), and whether anything was left out to keep it small. The server has
+ *  redacted it and written the home directory as `~`. */
 export type LocalTranscript = {
-  session: SessionCardSession;
-  activity: Record<string, SessionCardActivity>;
+  session: TranscriptSession;
+  activity: Record<string, TranscriptActivity>;
   /** Some prompts, messages, calls or long texts were left out or cut. */
   truncated: boolean;
   /** How many prompts the session has, shown or not. */
@@ -47,24 +49,30 @@ const EFFECT_KEYS = [
   "failed_calls",
 ];
 
-function parseEffects(value: unknown): SessionCardEffects | null | undefined {
+function parseEffects(value: unknown): TranscriptEffects | null | undefined {
   if (value === null) return null;
   if (!isRecord(value) || !every(value, EFFECT_KEYS, isNumber)) return undefined;
-  return value as SessionCardEffects;
+  return value as TranscriptEffects;
 }
 
-function parsePrompt(value: unknown): SessionCardPrompt | null {
+function parsePrompt(value: unknown): TranscriptPrompt | null {
   if (
     !isRecord(value) ||
     !every(value, ["turn_id", "text"], isString) ||
-    !every(value, ["ordinal", "text_length", "tokens", "estimated_tokens"], isNumber) ||
+    !every(
+      value,
+      ["ordinal", "text_length", "tokens", "estimated_tokens", "replies_omitted"],
+      isNumber,
+    ) ||
     !isBoolean(value.truncated) ||
-    !isInstant(value.started_at)
+    !isInstant(value.started_at) ||
+    !Array.isArray(value.replies)
   ) {
     return null;
   }
   const effects = parseEffects(value.effects);
-  if (effects === undefined) return null;
+  const replies = value.replies.map(parseMessage);
+  if (effects === undefined || replies.includes(null)) return null;
   return {
     turn_id: value.turn_id as string,
     ordinal: value.ordinal as number,
@@ -73,13 +81,18 @@ function parsePrompt(value: unknown): SessionCardPrompt | null {
     text_length: value.text_length as number,
     truncated: value.truncated,
     effects,
+    // This machine has no prices: no cost, and the card is given no format
+    // to show one.
     cost_usd: null,
+    cost_is_floor: false,
     tokens: value.tokens as number,
     estimated_tokens: value.estimated_tokens as number,
+    replies: replies as TranscriptReply[],
+    replies_omitted: value.replies_omitted as number,
   };
 }
 
-function parseSession(value: unknown): SessionCardSession | null {
+function parseSession(value: unknown): TranscriptSession | null {
   if (
     !isRecord(value) ||
     !every(
@@ -104,8 +117,6 @@ function parseSession(value: unknown): SessionCardSession | null {
   const totals = parseEffects(value.totals);
   const unattributed = parseEffects(value.unattributed);
   if (prompts.includes(null) || totals === undefined || unattributed === undefined) return null;
-  // The cost is left out on purpose: this machine has no prices, and the card
-  // hides the Cost figure rather than showing an empty one.
   return {
     run_id: value.run_id as string,
     source: value.source as string,
@@ -121,18 +132,23 @@ function parseSession(value: unknown): SessionCardSession | null {
     turn_count: value.turn_count as number,
     commit_count: value.commit_count as number,
     confidence: value.confidence as number,
-    prompts: prompts as SessionCardPrompt[],
+    prompts: prompts as TranscriptPrompt[],
     prompts_truncated: value.prompts_truncated as boolean,
+    // Every prompt carries its replies.
+    replies_included: true,
     totals,
     unattributed,
     tokens: value.tokens as number,
     estimated_tokens: value.estimated_tokens as number,
+    cost_usd: null,
+    cost_is_floor: false,
     cost_per_prompt: value.cost_per_prompt as boolean,
     has_inner_trace: value.has_inner_trace as boolean,
   };
 }
 
-function parseMessage(value: unknown): SessionCardMessage | null {
+/** A message of the activity, or a prompt's reply: the same fields. */
+function parseMessage(value: unknown): (TranscriptMessage & TranscriptReply) | null {
   if (
     !isRecord(value) ||
     !every(value, ["text", "model"], isString) ||
@@ -151,7 +167,7 @@ function parseMessage(value: unknown): SessionCardMessage | null {
   };
 }
 
-function parseToolCall(value: unknown): SessionCardToolCall | null {
+function parseToolCall(value: unknown): TranscriptToolCall | null {
   if (
     !isRecord(value) ||
     !every(value, ["id", "name", "verb", "input", "status"], isString) ||
@@ -174,7 +190,7 @@ function parseToolCall(value: unknown): SessionCardToolCall | null {
   };
 }
 
-function parseActivity(value: unknown): SessionCardActivity | null {
+function parseActivity(value: unknown): TranscriptActivity | null {
   if (
     !isRecord(value) ||
     !Array.isArray(value.messages) ||
@@ -196,7 +212,7 @@ function parseActivity(value: unknown): SessionCardActivity | null {
   const usage = value.token_usage;
   const models = Array.isArray(usage.models) ? usage.models.filter(isString) : [];
   return {
-    messages: messages as SessionCardMessage[],
+    messages: messages as TranscriptMessage[],
     messages_truncated: value.messages_truncated as boolean,
     invocations: value.invocations,
     token_usage: {
@@ -207,7 +223,7 @@ function parseActivity(value: unknown): SessionCardActivity | null {
       api_calls: usage.api_calls as number,
       models,
     },
-    tool_calls: calls as SessionCardToolCall[],
+    tool_calls: calls as TranscriptToolCall[],
     tool_calls_truncated: value.tool_calls_truncated as boolean,
   };
 }
@@ -219,7 +235,7 @@ export function parseTranscript(body: unknown): LocalTranscript | null {
   if (!isRecord(body) || !isRecord(body.activity) || !isBoolean(body.truncated)) return null;
   const session = parseSession(body.session);
   if (!session) return null;
-  const activity: Record<string, SessionCardActivity> = {};
+  const activity: Record<string, TranscriptActivity> = {};
   for (const [turn, value] of Object.entries(body.activity)) {
     const parsed = parseActivity(value);
     if (!parsed) return null;

@@ -347,8 +347,9 @@ keeps the last answer on screen while it does.
   fails keeps the last answer; a server answer of unavailable replaces it.
 - A linked session opened alone (`?pane=session&session=<id>`) asks
   `GET /api/sessions/{id}` for its transcript, only then, and draws it under
-  the session with `SessionCard`, the component the hosted app uses, through
-  `SessionList`'s `renderSession`. It shows a loading state, a failure with
+  the session with `SessionCard` and its conversation (`SessionTranscript`),
+  the components the hosted app uses, through `SessionList`'s
+  `renderSession`. The card's agent activity is read from the same answer. It shows a loading state, a failure with
   Retry (a 404 says the session is no longer linked), and a note when the
   server cut the transcript short. `?turn=<n>` opens it at that prompt; the
   parameter is cleared with the selection. The document's own sessions have
@@ -562,8 +563,8 @@ answer is 404. The answer keeps the linked sessions' graphs for this
 The transcript is shaped and bounded first, from the graph as read, and
 redacted after, so nothing past the limits below is ever redacted or held:
 
-1. `internal/transcript` builds it (below). Each text it keeps (a prompt, an
-   agent message, a tool call's input or output) is read up to 8 KiB past its
+1. `internal/transcript` builds it (below). Each text it keeps (a prompt, a
+   reply, an agent message, a tool call's input or output) is read up to 8 KiB past its
    limit and passed through the redaction engine before it is cut, so a
    secret that the cut runs through is still recognised and masked.
 2. The encoded transcript is redacted as a whole with the engine
@@ -592,12 +593,19 @@ machine has no prices) or an e-mail address of the session's user. Each
 session's body is built once per answer, on its own, so a large one does not
 hold up another, and a build that fails is tried again on the next request.
 
-`internal/transcript` shapes the graph into the session card's view model,
-with the hosted service's rules: a prompt is a top-level input of kind prompt
-or slash command from a human with text left once wrapper constructs are
-stripped; a nested session's activity counts toward the prompt whose tool
-call started it; activity under any other input is the session's and no
-prompt's (`unattributed`).
+`internal/transcript` shapes the graph into the view model of the viewer's
+session card and conversation (`oss/viewer/src/transcript.ts`, in the hosted
+API's field names), with the hosted service's rules: a prompt is a top-level
+input of kind prompt or slash command from a human with text left once
+wrapper constructs are stripped; a nested session's activity counts toward
+the prompt whose tool call started it; activity under any other input is the
+session's and no prompt's (`unattributed`). `session` is the hosted session
+detail's shape: each prompt carries its last text replies (`replies`, a
+preview of each, with `replies_omitted` counting the earlier ones) and
+`replies_included` is always true. `activity` holds, by turn id, what the
+hosted service serves one prompt at a time from its activity endpoint, since
+there is no such endpoint here. `user_email` is always empty, and
+`cost_usd` always null.
 
 ```json
 {
@@ -611,6 +619,7 @@ prompt's (`unattributed`).
     "started_at": "2026-07-01T10:00:00Z",
     "ended_at": "2026-07-01T10:30:00Z",
     "outcome": "committed",
+    "user_email": "",
     "turn_count": 2,
     "commit_count": 1,
     "confidence": 0.95,
@@ -619,16 +628,21 @@ prompt's (`unattributed`).
         "turn_id": "…", "ordinal": 1, "started_at": "…", "text": "…", "text_length": 34,
         "truncated": false, "effects": { "files_read": 2, "files_edited": 1, "reads": 3, "files_changed": 1,
         "diff_hunks": 1, "added_lines": 4, "removed_lines": 1, "tool_calls": 2, "execute_calls": 1,
-        "failed_calls": 0 }, "cost_usd": null, "tokens": 900, "estimated_tokens": 0
+        "failed_calls": 0 }, "cost_usd": null, "cost_is_floor": false, "tokens": 900, "estimated_tokens": 0,
+        "replies": [{ "text": "…", "text_length": 25, "truncated": false, "timestamp": null, "model": "claude-opus" }],
+        "replies_omitted": 0
       }
     ],
     "prompts_total": 2,
     "prompts_truncated": false,
+    "replies_included": true,
     "totals": { "…": "as effects" },
     "unattributed": { "…": "as effects" },
     "tokens": 1800,
     "estimated_tokens": 0,
     "cost_per_prompt": true,
+    "cost_usd": null,
+    "cost_is_floor": false,
     "has_inner_trace": true
   },
   "activity": {
@@ -652,7 +666,9 @@ It is bounded so a session of many megabytes does not stall the page
 message at 16 KiB and a tool call's input and output at 4 KiB each (at a
 character, with the full length or a `*_truncated` flag beside it); the
 session's own title, branch, working directory, agent and model names are cut
-at 1 KiB each, and at most 50 model names are listed; a prompt
+at 1 KiB each, and at most 50 model names are listed; a prompt carries at
+most its last 10 replies, each previewed at 4 KiB (a preview is not a cut:
+the whole message, to its own limit, is in the activity); a prompt's activity
 lists at most 100 messages and 200 tool calls, and only its first model call
 (`invocations`, which the card reads only to tell whether there were any;
 `invocations_total` and `token_usage.api_calls` count them). The body as

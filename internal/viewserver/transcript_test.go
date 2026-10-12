@@ -65,9 +65,11 @@ func transcriptLinker(graph *session.Graph) SessionsFunc {
 }
 
 func TestTranscriptServesALinkedSessionRedacted(t *testing.T) {
+	graph := transcriptGraph("Mail " + plantedMail + " when the parser is fixed")
+	graph.AssistantMessages = []session.AssistantMessage{{ID: "a1", SessionID: "root", UserInputID: "p1",
+		Text: ptr("Mailed " + plantedMail + " from " + testHome + "/src/widgets")}}
 	_, base := start(t, Options{
-		Document: []byte(reviewDocument(headA, "one")), Home: testHome,
-		Sessions: transcriptLinker(transcriptGraph("Mail " + plantedMail + " when the parser is fixed")),
+		Document: []byte(reviewDocument(headA, "one")), Home: testHome, Sessions: transcriptLinker(graph),
 	})
 	resp, body := get(t, base+"/api/sessions/s-1")
 	if resp.StatusCode != http.StatusOK {
@@ -89,10 +91,16 @@ func TestTranscriptServesALinkedSessionRedacted(t *testing.T) {
 			CommitCount int     `json:"commit_count"`
 			Confidence  float64 `json:"confidence"`
 			Prompts     []struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				Replies []struct {
+					Text string `json:"text"`
+				} `json:"replies"`
 			} `json:"prompts"`
 		} `json:"session"`
 		Activity map[string]struct {
+			Messages []struct {
+				Text string `json:"text"`
+			} `json:"messages"`
 			ToolCalls []struct {
 				Input  string `json:"input"`
 				Output string `json:"output"`
@@ -109,6 +117,13 @@ func TestTranscriptServesALinkedSessionRedacted(t *testing.T) {
 	}
 	if len(s.Prompts) != 1 || !strings.HasPrefix(s.Prompts[0].Text, "Mail xxx.xxxxxxxx@xxxxxxx.xxx when") {
 		t.Errorf("prompts = %+v", s.Prompts)
+	}
+	// The reply and the activity's message are both masked, with the home
+	// directory as ~.
+	const mailed = "Mailed xxx.xxxxxxxx@xxxxxxx.xxx from ~/src/widgets"
+	if replies, messages := s.Prompts[0].Replies, got.Activity["p1"].Messages; len(replies) != 1 || replies[0].Text != mailed ||
+		len(messages) != 1 || messages[0].Text != mailed {
+		t.Errorf("replies = %+v, messages %+v", replies, messages)
 	}
 	calls := got.Activity["p1"].ToolCalls
 	if len(calls) != 1 || calls[0].Input != `{"file_path":"~/src/widgets/.env"}` ||

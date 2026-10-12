@@ -710,8 +710,22 @@ describe("sessions and commits", () => {
       truncated: false,
       effects,
       cost_usd: null,
+      cost_is_floor: false,
       tokens: 900,
       estimated_tokens: 0,
+      replies:
+        ordinal === 1
+          ? [
+              {
+                text: "The budget is wired.",
+                text_length: 20,
+                truncated: false,
+                timestamp: null,
+                model: "claude-opus",
+              },
+            ]
+          : [],
+      replies_omitted: 0,
     });
     const transcript = (overrides: Record<string, unknown> = {}) => ({
       session: {
@@ -809,6 +823,9 @@ describe("sessions and commits", () => {
       expect(text).toContain("secrets and e-mail addresses masked");
       expect(text).toContain("Add a retry budget to the client");
       expect(text).toContain("Now cover it with tests");
+      // The replies came with the transcript, as a conversation.
+      expect(text).toContain("The budget is wired.");
+      expect(text).toContain("No text reply was recorded.");
       expect(text).toContain("~/src/widgets");
       expect(text).not.toContain("Cost");
       expect(container.querySelector("[data-session-id]")?.getAttribute("data-session-id")).toBe(
@@ -818,7 +835,7 @@ describe("sessions and commits", () => {
       await press("Agent activity");
       const opened = transcriptRegion()?.textContent ?? "";
       expect(opened).toContain("Reading the client first.");
-      expect(opened).toContain("execute · 1 call");
+      expect(opened).toContain("1 tool call · execute");
       expect(opened).toContain("go test ./...");
       expect(opened).toContain("ok  	client	0.2s");
       // The activity came with the transcript.

@@ -4,13 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import {
-  SessionCard,
-  type SessionCardActivity,
-  type SessionCardPrompt,
-  type SessionCardSession,
-  type SessionCardSource,
-} from "./session-card";
+import type {
+  TranscriptActivity,
+  TranscriptPrompt,
+  TranscriptReply,
+  TranscriptSession,
+  TranscriptSource,
+} from "../transcript";
+import { SessionCard } from "./session-card";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -27,7 +28,16 @@ const effects = {
   failed_calls: 1,
 };
 
-function prompt(ordinal: number, text: string, overrides: Partial<SessionCardPrompt> = {}) {
+const reply = (text: string, overrides: Partial<TranscriptReply> = {}): TranscriptReply => ({
+  text,
+  text_length: text.length,
+  truncated: false,
+  timestamp: "2026-07-01T10:05:00Z",
+  model: "claude-opus",
+  ...overrides,
+});
+
+function prompt(ordinal: number, text: string, overrides: Partial<TranscriptPrompt> = {}) {
   return {
     turn_id: `turn-${ordinal}`,
     ordinal,
@@ -36,14 +46,17 @@ function prompt(ordinal: number, text: string, overrides: Partial<SessionCardPro
     text_length: text.length,
     truncated: false,
     effects,
-    cost_usd: null,
+    cost_usd: 0.5,
+    cost_is_floor: false,
     tokens: 1200,
     estimated_tokens: 0,
+    replies: ordinal === 1 ? [reply("The budget is wired.")] : [],
+    replies_omitted: 0,
     ...overrides,
-  } satisfies SessionCardPrompt;
+  } satisfies TranscriptPrompt;
 }
 
-function session(overrides: Partial<SessionCardSession> = {}): SessionCardSession {
+function session(overrides: Partial<TranscriptSession> = {}): TranscriptSession {
   return {
     run_id: "run-1",
     source: "claude_code",
@@ -60,20 +73,27 @@ function session(overrides: Partial<SessionCardSession> = {}): SessionCardSessio
     confidence: 0.95,
     prompts: [prompt(1, "Add a retry budget"), prompt(2, "Now test it")],
     prompts_truncated: false,
+    replies_included: true,
     totals: effects,
     unattributed: null,
     tokens: 2400,
     estimated_tokens: 0,
     cost_usd: 1.25,
+    cost_is_floor: false,
     cost_per_prompt: true,
     has_inner_trace: true,
     ...overrides,
   };
 }
 
-const activity: SessionCardActivity = {
+const activity: TranscriptActivity = {
   messages: [
     { text: "Reading the client.", timestamp: "2026-07-01T10:01:00Z", model: "claude-opus" },
+    {
+      text: "The budget is wired, and the rest of the reply.",
+      timestamp: "2026-07-01T10:05:00Z",
+      model: "claude-opus",
+    },
   ],
   messages_truncated: false,
   invocations: [{}],
@@ -95,11 +115,14 @@ const activity: SessionCardActivity = {
       output: "package client",
       output_truncated: true,
       status: "ok",
-      timestamp: null,
+      timestamp: "2026-07-01T10:02:00Z",
     },
   ],
   tool_calls_truncated: false,
 };
+
+const usd = (cost: number | null, floor: boolean) =>
+  cost == null ? null : `${floor ? "at least " : ""}$${cost.toFixed(2)}`;
 
 let root: Root | null = null;
 let container: HTMLElement;
@@ -152,16 +175,9 @@ describe("SessionCard", () => {
     ).toContain("prompts, metadata, usage, and activity are not shown here.");
     const html = renderToStaticMarkup(
       createElement(SessionCard, {
-        session: session({
-          restricted: true,
-          title: "",
-          prompts: [],
-          totals: null,
-          tokens: 0,
-          cost_usd: null,
-          has_inner_trace: false,
-        }),
+        session: restricted,
         defaultOpen: true,
+        formatCost: usd,
         restrictedNote: "Only readers of every repository see it.",
       }),
     );
@@ -172,7 +188,7 @@ describe("SessionCard", () => {
     }
   });
 
-  it("lists the prompts with their effects and the session's figures", () => {
+  it("shows the prompts and replies as a conversation, with each turn's effects", () => {
     render(
       createElement(SessionCard, {
         session: session(),
@@ -185,32 +201,57 @@ describe("SessionCard", () => {
     expect(text).toContain("2 prompts");
     expect(text).toContain("1 commit");
     expect(text).toContain("CLAUDE-OPUS");
+    expect(container.querySelectorAll('[data-message="human"]')).toHaveLength(2);
     expect(text).toContain("Add a retry budget");
-    expect(text).toContain("Now test it");
+    expect(text).toContain("The budget is wired.");
+    expect(text).toContain("No text reply was recorded.");
     expect(text).toContain("read 3 files");
     expect(text).toContain("5 reads");
-    expect(text).toContain("+10/-4");
-    expect(text).toContain("$1.25");
+    expect(text).toContain("+10/−4");
     expect(text).toContain("~/src/widgets");
-    // Without a loader there is no activity to open.
+    // Without a loader there is no activity to open, and without a cost
+    // format no cost anywhere.
     expect(text).not.toContain("Agent activity");
+    expect(text).not.toContain("Cost");
+    expect(text).not.toContain("$");
   });
 
-  it("hides the Cost figure when the host has no prices", () => {
-    const local = session({ cost_per_prompt: true });
-    delete local.cost_usd;
-    render(createElement(SessionCard, { session: local, defaultOpen: true }));
+  it("shows the session's and each prompt's cost in the host's format", () => {
+    render(
+      createElement(SessionCard, {
+        session: session({ cost_is_floor: true }),
+        defaultOpen: true,
+        formatCost: usd,
+      }),
+    );
     const text = container.textContent ?? "";
-    expect(text).toContain("Tokens");
-    expect(text).not.toContain("Cost");
-    expect(text).not.toContain("no price");
+    expect(text).toContain("Cost");
+    expect(text).toContain("at least $1.25");
+    expect(text).toContain("lower bound · some usage has no price");
+    expect(text).toContain("$0.50");
+  });
+
+  it("draws the host's picture beside a person's prompt, and none without one", () => {
+    const renderAvatar = vi.fn((author: string) => createElement("img", { alt: author }));
+    render(
+      createElement(SessionCard, {
+        session: session({ user_email: "ada@example.com" }),
+        defaultOpen: true,
+        renderAvatar,
+      }),
+    );
+    expect(renderAvatar).toHaveBeenCalledWith("ada@example.com");
+    expect(container.querySelectorAll('img[alt="ada@example.com"]')).toHaveLength(2);
+    act(() => root!.unmount());
+    render(createElement(SessionCard, { session: session(), defaultOpen: true }));
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("loads a session that arrived without its prompts when it opens", async () => {
     const loadSession = vi.fn(async () => session());
     render(
       createElement(SessionCard, {
-        session: session({ prompts: [] }),
+        session: session({ prompts: [], replies_included: false }),
         source: { loadSession },
         defaultOpen: false,
       }),
@@ -220,13 +261,33 @@ describe("SessionCard", () => {
     expect(container.textContent).toContain("Loading this session…");
     await settle();
     expect(loadSession).toHaveBeenCalledWith("run-1");
+    expect(container.textContent).toContain("The budget is wired.");
+  });
+
+  it("shows a report's prompts at once and their replies once the session arrives", async () => {
+    let resolve!: (value: TranscriptSession) => void;
+    const arrival = new Promise<TranscriptSession>((done) => {
+      resolve = done;
+    });
+    const loadSession = vi.fn(() => arrival);
+    const report = session({
+      replies_included: false,
+      prompts: [prompt(1, "Add a retry budget", { replies: [] })],
+    });
+    render(
+      createElement(SessionCard, { session: report, source: { loadSession }, defaultOpen: true }),
+    );
     expect(container.textContent).toContain("Add a retry budget");
+    expect(container.textContent).toContain("Loading the agent's replies…");
+    await act(async () => resolve(session()));
+    expect(container.textContent).toContain("The budget is wired.");
+    expect(container.textContent).not.toContain("Loading the agent's replies…");
   });
 
   it("says when the session could not be loaded", async () => {
     render(
       createElement(SessionCard, {
-        session: session({ prompts: [] }),
+        session: session({ prompts: [], replies_included: false }),
         source: { loadSession: () => Promise.reject(new Error("no")) },
         defaultOpen: true,
       }),
@@ -237,17 +298,39 @@ describe("SessionCard", () => {
 
   it("opens a prompt's agent activity with its messages, tool calls and output", async () => {
     const loadTurnActivity = vi.fn(async () => activity);
-    const source: SessionCardSource = { loadTurnActivity };
+    const source: TranscriptSource = { loadTurnActivity };
     render(createElement(SessionCard, { session: session(), source, defaultOpen: true }));
     act(() => button("Agent activity").click());
     await settle();
     expect(loadTurnActivity).toHaveBeenCalledWith("run-1", "turn-1");
     const text = container.textContent ?? "";
     expect(text).toContain("Reading the client.");
-    expect(text).toContain("read · 1 call");
+    expect(text).toContain("1 model call");
+    expect(text).toContain("1 tool call · read");
     expect(text).toContain('{"file_path":"client.go"}');
     expect(text).toContain("Output");
     expect(text).toContain("package client\n…");
+  });
+
+  it("swaps a reply's preview for its whole message from the activity", async () => {
+    const loadTurnActivity = vi.fn(async () => activity);
+    render(
+      createElement(SessionCard, {
+        session: session({
+          prompts: [
+            prompt(1, "Add a retry budget", {
+              replies: [reply("The budget is wired", { truncated: true, text_length: 47 })],
+            }),
+          ],
+        }),
+        source: { loadTurnActivity },
+        defaultOpen: true,
+      }),
+    );
+    act(() => button("Show all").click());
+    await settle();
+    expect(loadTurnActivity).toHaveBeenCalledWith("run-1", "turn-1");
+    expect(container.textContent).toContain("The budget is wired, and the rest of the reply.");
   });
 
   it("fetches a prompt's full text when it is expanded", async () => {
@@ -262,11 +345,25 @@ describe("SessionCard", () => {
         defaultOpen: true,
       }),
     );
-    expect(container.textContent).toContain("Showing the first 300 of 5K characters.");
+    expect(container.textContent).toContain("5K characters");
     act(() => button("Show all").click());
     await settle();
     expect(loadPromptText).toHaveBeenCalledWith("run-1", "turn-1");
     expect(container.textContent).toContain("and the rest");
+  });
+
+  it("keeps a prompt's preview and says so without a loader", () => {
+    const preview = "x".repeat(300);
+    render(
+      createElement(SessionCard, {
+        session: session({
+          prompts: [prompt(1, preview, { truncated: true, text_length: 5000 })],
+        }),
+        defaultOpen: true,
+      }),
+    );
+    act(() => button("Show all").click());
+    expect(container.textContent).toContain("Showing the first 300 of 5K characters.");
   });
 
   it("marks and scrolls to the turn it is sent to", () => {
