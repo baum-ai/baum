@@ -77,6 +77,14 @@ func (b *builder) ingest(file *codextranscript.File, spawn *session.SpawnLink) e
 	if err != nil {
 		return err
 	}
+	// Rollout-wide choices look only at owned lines: inherited history may
+	// come from an older Codex that wrote different record kinds.
+	for i, line := range file.Lines {
+		if i > 0 && line.Ordinal < boundary {
+			continue
+		}
+		state.noteUserMessageTurn(line)
+	}
 	for i, line := range file.Lines {
 		b.report.Records.Total++
 		if i > 0 && line.Ordinal < boundary {
@@ -204,7 +212,6 @@ func (b *builder) account(category accountCategory, reason string) {
 type turnState struct {
 	id          string
 	unaccounted []*session.ModelInvocation
-	lastTotal   *codextranscript.Usage
 	lastInput   *session.UserInput
 }
 
@@ -255,6 +262,22 @@ type threadState struct {
 	attributeTime   map[string]time.Time
 	pendingInter    *codextranscript.InterAgentMeta
 	pendingHuman    []pendingHumanInput
+	// userMessageTurns holds the turns whose owned lines include a
+	// user_message event, which then carries the turn's human prompts instead
+	// of item_completed. It is per turn because an older Codex rollout resumed
+	// by a newer one has both kinds of turn. scanTurn and scanPending track the
+	// open turn and a user_message awaiting its task_started while it is built.
+	userMessageTurns map[string]bool
+	scanTurn         string
+	scanPending      bool
+	// seenTokenUsageRecord is true once the thread has processed a
+	// token_usage_record. From then on records are the only token source and
+	// token_count events are discarded as superseded; earlier token_counts (a
+	// session an older Codex wrote and a newer one resumed) still count.
+	seenTokenUsageRecord bool
+	// lastTotal is the previous counted token_count total of the thread, for
+	// repeat detection before the first token_usage_record.
+	lastTotal       *codextranscript.Usage
 	unsupported     map[string]bool
 	unsupportedCall map[string]bool
 	activities      []activityEvidence
@@ -278,7 +301,8 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 		inputTurn:     map[string]string{},
 		latestContext: map[string]json.RawMessage{}, latestAttribute: map[string]json.RawMessage{},
 		attributeTime: map[string]time.Time{}, unsupported: map[string]bool{},
-		unsupportedCall: map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
+		userMessageTurns: map[string]bool{},
+		unsupportedCall:  map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
 		workingDir: meta.CWD,
 	}
 	if meta.Git != nil {

@@ -130,6 +130,13 @@ func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
 		if line.InterAgentCommunication != nil {
 			line.InterAgentCommunication.Raw = cloneRaw(envelope.Payload)
 		}
+	case ClassTokenUsageRecord:
+		line.TokenUsageRecord, err = decodeTyped[TokenUsageRecord](envelope.Payload)
+		if line.TokenUsageRecord != nil {
+			line.TokenUsageRecord.Raw = cloneRaw(envelope.Payload)
+		}
+	case ClassRealtime:
+		line.Realtime = &RawPayload{Raw: cloneRaw(envelope.Payload)}
 	default:
 		return Line{}, nil, fmt.Errorf("line %d has unknown type %q", ordinal, envelope.Type)
 	}
@@ -260,6 +267,10 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 		item.ToolSearchOutput, err = decodeTyped[ToolSearchOutput](raw)
 	case "web_search_call":
 		item.WebSearchCall, err = decodeTyped[WebSearchCall](raw)
+	case "image_generation_call":
+		item.ImageGeneration = &RawPayload{Raw: cloneRaw(raw)}
+	case "compaction":
+		item.Compaction = &RawPayload{Raw: cloneRaw(raw)}
 	default:
 		return nil, fmt.Errorf("unknown response_item type %q", head.Type)
 	}
@@ -308,6 +319,8 @@ func decodeEventMsg(raw json.RawMessage) (*EventMsg, error) {
 		event.ItemCompleted, err = decodeTyped[ItemCompleted](raw)
 	case "context_compacted":
 		event.ContextCompacted = true
+	case "thread_goal_updated":
+		event.ThreadGoalUpdated = &RawPayload{Raw: cloneRaw(raw)}
 	default:
 		return nil, fmt.Errorf("unknown event_msg type %q", head.Type)
 	}

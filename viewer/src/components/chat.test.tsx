@@ -46,19 +46,17 @@ describe("quoted prompts", () => {
     expect(single).not.toContain(">Codex<");
   });
 
-  it("names the author a host knows and numbers prompts its way", () => {
+  it("names the author a host knows and numbers prompts as the transcript does", () => {
     const html = renderToStaticMarkup(
       <QuotedPrompts
         prompts={[{ id: "t3", index: 3, text: "Ship it", at: null }]}
         author="Ada Lovelace"
         avatar={<img alt="" />}
-        number={(index) => `Turn ${index}`}
       />,
     );
     expect(html).toContain("Ada Lovelace");
     expect(html).toContain("<img");
-    expect(html).toContain("Turn 3");
-    expect(html).not.toContain("#3");
+    expect(html).toContain("#3");
   });
 
   it("says when the document does not carry a prompt's text", () => {

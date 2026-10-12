@@ -13,15 +13,17 @@ import (
 var classDiscards = map[codextranscript.Class]string{
 	codextranscript.ClassCompacted:  "context/compacted",
 	codextranscript.ClassWorldState: "context/world_state",
+	codextranscript.ClassRealtime:   "context/realtime_item",
 }
 
 var eventDiscards = map[string]string{
-	"web_search_end":     "context/web_search_end",
-	"agent_message":      "context/agent_message_event_copy",
-	"agent_reasoning":    "context/agent_reasoning_event_copy",
-	"context_compacted":  "context/compacted",
-	"thread_rolled_back": "context/thread_rolled_back",
-	"item_completed":     "context/item_completed_copy",
+	"web_search_end":      "context/web_search_end",
+	"agent_message":       "context/agent_message_event_copy",
+	"agent_reasoning":     "context/agent_reasoning_event_copy",
+	"context_compacted":   "context/compacted",
+	"thread_rolled_back":  "context/thread_rolled_back",
+	"item_completed":      "context/item_completed_copy",
+	"thread_goal_updated": "context/thread_goal_updated",
 }
 
 func (f *threadState) process(line codextranscript.Line, next *codextranscript.Line) (accountCategory, string, error) {
@@ -51,6 +53,8 @@ func (f *threadState) process(line codextranscript.Line, next *codextranscript.L
 		return accountMerged, "", nil
 	case codextranscript.ClassInterAgentCommunication:
 		return f.interAgentCommunication(line)
+	case codextranscript.ClassTokenUsageRecord:
+		return f.applyTokenUsageRecord(line, line.TokenUsageRecord)
 	default:
 		return accountDiscarded, "", fmt.Errorf("unsupported record class %q", line.Class)
 	}
@@ -69,6 +73,10 @@ func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, 
 		}
 		f.startBatch(line)
 		return accountDiscarded, "context/reasoning", nil
+	case item.Compaction != nil:
+		return accountDiscarded, "context/compaction_item", nil
+	case item.ImageGeneration != nil:
+		return accountDiscarded, "context/image_generation_call", nil
 	case item.FunctionCall != nil:
 		return f.ownedCall(line, item.FunctionCall.CallID, func() error {
 			return f.addFunctionCall(line, item.FunctionCall)
@@ -156,6 +164,8 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		}
 		f.addHumanInput(line, event.UserMessage)
 		return accountMapped, "", nil
+	case event.ItemCompleted != nil:
+		return f.itemCompleted(line, event.ItemCompleted)
 	case event.TokenCount != nil:
 		return f.applyTokenCount(line, event.TokenCount)
 	case event.ExecCommandEnd != nil:
@@ -177,6 +187,148 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		}
 		return accountDiscarded, reason, nil
 	}
+}
+
+// noteUserMessageTurn records, for one owned line in file order, which turn
+// a user_message event belongs to. One written before its task_started belongs
+// to the turn that task_started opens, as pending input does.
+func (f *threadState) noteUserMessageTurn(line codextranscript.Line) {
+	event := line.EventMsg
+	switch {
+	case event == nil:
+	case event.TaskStarted != nil:
+		f.scanTurn = event.TaskStarted.TurnID
+		if f.scanPending {
+			f.userMessageTurns[f.scanTurn] = true
+			f.scanPending = false
+		}
+	case event.TaskComplete != nil || event.TurnAborted != nil:
+		f.scanTurn = ""
+	case event.UserMessage != nil:
+		if f.scanTurn == "" {
+			f.scanPending = true
+		} else {
+			f.userMessageTurns[f.scanTurn] = true
+		}
+	}
+}
+
+// itemCompleted maps the human prompt that newer Codex versions record only as
+// an item_completed UserMessage item, with no user_message event. In a turn
+// that still writes user_message events every item_completed is a discarded
+// copy, so no prompt counts twice. Other item types are discarded as before.
+func (f *threadState) itemCompleted(line codextranscript.Line, completed *codextranscript.ItemCompleted) (accountCategory, string, error) {
+	turnID := completed.TurnID
+	if turnID == "" {
+		turnID = f.openTurn
+	}
+	if f.userMessageTurns[turnID] {
+		return accountDiscarded, eventDiscards["item_completed"], nil
+	}
+	var item struct {
+		Type    string `json:"type"`
+		Content []struct {
+			Type         string          `json:"type"`
+			Text         string          `json:"text"`
+			Path         string          `json:"path"`
+			ImageURL     string          `json:"image_url"`
+			TextElements json.RawMessage `json:"text_elements"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(completed.Item, &item); err != nil {
+		return accountDiscarded, "", fmt.Errorf("decoding item_completed item: %w", err)
+	}
+	if item.Type != "UserMessage" {
+		return accountDiscarded, eventDiscards["item_completed"], nil
+	}
+	if f.file != f.b.tree.Root {
+		return accountDiscarded, "context/unconfirmed_human_input", nil
+	}
+	var text strings.Builder
+	message := &codextranscript.UserMessage{}
+	var images, localImages, elements []json.RawMessage
+	for _, part := range item.Content {
+		switch part.Type {
+		case "text":
+			partElements, err := shiftTextElements(part.TextElements, text.Len())
+			if err != nil {
+				return accountDiscarded, "", fmt.Errorf("decoding item_completed text_elements: %w", err)
+			}
+			elements = append(elements, partElements...)
+			text.WriteString(part.Text)
+		case "image":
+			images = append(images, quoted(part.ImageURL))
+		case "local_image":
+			localImages = append(localImages, quoted(part.Path))
+		}
+	}
+	message.Message = text.String()
+	message.Images, message.LocalImages, message.TextElements = rawArray(images), rawArray(localImages), rawArray(elements)
+	f.addHumanInput(line, message)
+	return accountMapped, "", nil
+}
+
+// shiftTextElements returns a text part's text_elements with each byte_range
+// moved by offset, the byte length of the text before the part. Codex measures
+// a range from the start of its own part, while the parts are joined into one
+// message. A part without text_elements yields none; any other malformed value
+// is an error.
+func shiftTextElements(raw json.RawMessage, offset int) ([]json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(raw, &elements); err != nil {
+		return nil, err
+	}
+	for i, element := range elements {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(element, &fields); err != nil {
+			return nil, err
+		}
+		if fields == nil {
+			return nil, fmt.Errorf("text element is null")
+		}
+		rangeRaw, ok := fields["byte_range"]
+		if !ok {
+			continue
+		}
+		var byteRange struct {
+			Start *int `json:"start"`
+			End   *int `json:"end"`
+		}
+		if err := json.Unmarshal(rangeRaw, &byteRange); err != nil {
+			return nil, err
+		}
+		if byteRange.Start == nil || byteRange.End == nil {
+			return nil, fmt.Errorf("byte_range needs start and end")
+		}
+		if offset == 0 {
+			continue
+		}
+		fields["byte_range"], _ = json.Marshal(map[string]int{"start": *byteRange.Start + offset, "end": *byteRange.End + offset})
+		shifted, err := json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		elements[i] = shifted
+	}
+	return elements, nil
+}
+
+func quoted(value string) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
+}
+
+// rawArray is the JSON array of items, or nil when there are none, so
+// addHumanInput stores no empty metadata.
+func rawArray(items []json.RawMessage) json.RawMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	raw, _ := json.Marshal(items)
+	return raw
 }
 
 func (f *threadState) taskStarted(started *codextranscript.TaskStarted) (accountCategory, string, error) {

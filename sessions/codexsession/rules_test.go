@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -313,6 +314,198 @@ func TestTokenAssignmentAndAmbiguousUsage(t *testing.T) {
 	}
 }
 
+func usageJSON(input, output int) string {
+	return fmt.Sprintf(`{"input_tokens":%d,"output_tokens":%d,"total_tokens":%d}`, input, output, input+output)
+}
+
+func recordLine(at, last, threadTotal string) string {
+	return envelope(at, "token_usage_record", `{"thread_id":"thread","turn_id":"turn","response_id":"resp","usage":`+last+`,"turn_token_usage":`+threadTotal+`,"thread_token_usage":`+threadTotal+`}`)
+}
+
+func countLine(at, last, total string) string {
+	return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+total+`,"last_token_usage":`+last+`}}`)
+}
+
+func totalUsage(graph *session.Graph) int64 {
+	var total int64
+	for _, invocation := range graph.ModelInvocations {
+		total += invocation.TotalTokens
+	}
+	for _, row := range graph.TokenUsage {
+		if row.TotalTokens != nil {
+			total += *row.TotalTokens
+		}
+	}
+	return total
+}
+
+// A rollout with token_usage_records counts each record once. The record comes
+// before its call's output, the token_count after it is superseded, and a
+// trailing record whose token_count never arrived still counts.
+func TestTokenUsageRecordCountsEachRequestOnce(t *testing.T) {
+	first, second := usageJSON(10, 2), `{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3,"total_tokens":23}`
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"first_tool","arguments":"{}","call_id":"first"}`),
+		recordLine("2026-08-01T12:00:05Z", first, first),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call_output","call_id":"first","output":"done"}`),
+		countLine("2026-08-01T12:00:07Z", first, first),
+		envelope("2026-08-01T12:00:08Z", "response_item", `{"type":"function_call","name":"second_tool","arguments":"{}","call_id":"second"}`),
+		recordLine("2026-08-01T12:00:09Z", second, `{"total_tokens":35}`),
+		envelope("2026-08-01T12:00:10Z", "response_item", `{"type":"function_call_output","call_id":"second","output":"done"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if graph.ModelInvocations[0].InputTokens != 10 || graph.ModelInvocations[0].TotalTokens != 12 {
+		t.Fatalf("first invocation usage = %+v", graph.ModelInvocations[0])
+	}
+	last := graph.ModelInvocations[len(graph.ModelInvocations)-1]
+	if last.InputTokens != 20 || last.CacheReadTokens != 5 || last.TotalTokens != 23 {
+		t.Fatalf("trailing record usage = %+v", last)
+	}
+	if len(graph.TokenUsage) != 0 {
+		t.Fatalf("token usage rows = %+v, want none", graph.TokenUsage)
+	}
+	if report.Tokens.AssignedInvocations != 2 || report.Tokens.RepeatedTotals != 0 || report.Tokens.Records != 2 {
+		t.Fatalf("token report = %+v", report.Tokens)
+	}
+	if report.Records.Discarded["context/token_count_superseded"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// After a remote compaction the record's thread total includes the compaction
+// request but token_count's does not, so totals stay offset. Records are the
+// sole source: every request counts once, the compaction request is one
+// ambiguous row, and the zero-usage token_count after it produces nothing.
+func TestTokenUsageRecordsSurviveCompactionTotalDrift(t *testing.T) {
+	a, compaction, b := usageJSON(100, 0), usageJSON(236, 0), usageJSON(50, 0)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		recordLine("2026-08-01T12:00:05Z", a, usageJSON(100, 0)),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call_output","call_id":"a","output":"done"}`),
+		countLine("2026-08-01T12:00:07Z", a, usageJSON(100, 0)),
+		recordLine("2026-08-01T12:00:08Z", compaction, usageJSON(336, 0)),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"compaction","id":"c","encrypted_content":"x","internal_chat_message_metadata_passthrough":{}}`),
+		envelope("2026-08-01T12:00:10Z", "compacted", `{"message":""}`),
+		envelope("2026-08-01T12:00:11Z", "world_state", `{}`),
+		envelope("2026-08-01T12:00:12Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:13Z", "event_msg", `{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5"}}`),
+		countLine("2026-08-01T12:00:14Z", `{"input_tokens":0,"output_tokens":0,"total_tokens":0}`, usageJSON(100, 0)),
+		envelope("2026-08-01T12:00:15Z", "response_item", `{"type":"function_call","name":"b_tool","arguments":"{}","call_id":"b"}`),
+		recordLine("2026-08-01T12:00:16Z", b, usageJSON(386, 0)),
+		envelope("2026-08-01T12:00:17Z", "response_item", `{"type":"function_call_output","call_id":"b","output":"done"}`),
+		countLine("2026-08-01T12:00:18Z", b, usageJSON(150, 0)),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 386 {
+		t.Fatalf("counted %d tokens, want the final thread total 386", got)
+	}
+	if len(graph.ModelInvocations) != 2 || len(graph.TokenUsage) != 1 || *graph.TokenUsage[0].TotalTokens != 236 {
+		t.Fatalf("invocations = %+v, token usage = %+v", graph.ModelInvocations, graph.TokenUsage)
+	}
+	if report.Tokens.AssignedInvocations != 2 || report.Tokens.AmbiguousRows != 1 || report.Tokens.RepeatedTotals != 0 || report.Tokens.Records != 3 {
+		t.Fatalf("token report = %+v", report.Tokens)
+	}
+	if report.Records.Discarded["context/token_count_superseded"] != 3 || report.Records.Discarded["context/compaction_item"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// A session an older Codex wrote and a newer one resumed has token_counts first
+// and token_usage_records after. Only token_counts after the first record are
+// superseded; the earlier ones count through the repeat check, so every request
+// counts once.
+func TestTokenUsageRecordsSupersedeOnlyLaterTokenCounts(t *testing.T) {
+	first, second, third, fourth := usageJSON(10, 2), usageJSON(20, 3), usageJSON(30, 4), usageJSON(40, 5)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		countLine("2026-08-01T12:00:05Z", first, first),
+		countLine("2026-08-01T12:00:06Z", first, first),
+		envelope("2026-08-01T12:00:07Z", "response_item", `{"type":"function_call","name":"b_tool","arguments":"{}","call_id":"b"}`),
+		countLine("2026-08-01T12:00:08Z", second, usageJSON(30, 5)),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"function_call","name":"c_tool","arguments":"{}","call_id":"c"}`),
+		recordLine("2026-08-01T12:00:10Z", third, usageJSON(64, 9)),
+		countLine("2026-08-01T12:00:11Z", third, usageJSON(64, 9)),
+		envelope("2026-08-01T12:00:12Z", "response_item", `{"type":"function_call","name":"d_tool","arguments":"{}","call_id":"d"}`),
+		recordLine("2026-08-01T12:00:13Z", fourth, usageJSON(109, 14)),
+		countLine("2026-08-01T12:00:14Z", fourth, usageJSON(109, 14)),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12+23+34+45 {
+		t.Fatalf("counted %d tokens, want %d", got, 12+23+34+45)
+	}
+	if report.Tokens.RepeatedTotals != 1 || report.Records.Discarded["context/token_repeat"] != 1 ||
+		report.Records.Discarded["context/token_count_superseded"] != 2 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v tokens = %+v", report.Records, report.Tokens)
+	}
+}
+
+// A record that names another thread or turn is still counted where it appears,
+// but the mismatch is noted.
+func TestTokenUsageRecordAttributionMismatchIsNoted(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "token_usage_record", `{"thread_id":"other","turn_id":"elsewhere","usage":`+usageJSON(10, 2)+`}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12 {
+		t.Fatalf("counted %d tokens, want 12", got)
+	}
+	notes := strings.Join(report.Notes, "\n")
+	if !strings.Contains(notes, "names thread other, not root") || !strings.Contains(notes, "names turn elsewhere") {
+		t.Fatalf("notes = %q", notes)
+	}
+}
+
+func TestTokenUsageRecordWithoutUsageIsDiscarded(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "token_usage_record", `{"thread_id":"thread","turn_id":"turn","usage":{}}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 0 || report.Records.Discarded["context/token_without_usage"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("usage = %d, records = %+v", got, report.Records)
+	}
+}
+
+// Without records the token_count path stays, and its repeat check spans turns:
+// a token_count re-emitted right after the next task_started is a repeat.
+func TestTokenCountRepeatedAtStartOfNextTurnCountsOnce(t *testing.T) {
+	usage := usageJSON(10, 2)
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"function_call","name":"a_tool","arguments":"{}","call_id":"a"}`),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"function_call_output","call_id":"a","output":"done"}`),
+		countLine("2026-08-01T12:00:06Z", usage, usage),
+		envelope("2026-08-01T12:00:07Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:08Z", "event_msg", `{"type":"task_started","turn_id":"turn2"}`),
+		countLine("2026-08-01T12:00:09Z", usage, usage),
+	)
+	graph, report := buildLines(t, lines...)
+	if got := totalUsage(graph); got != 12 {
+		t.Fatalf("counted %d tokens, want 12", got)
+	}
+	if report.Records.Discarded["context/token_repeat"] != 1 || report.Tokens.RepeatedTotals != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v tokens = %+v", report.Records, report.Tokens)
+	}
+}
+
+func TestCompactionItemAndRealtimeItemAreContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"compaction","id":"c","encrypted_content":"x"}`),
+		envelope("2026-08-01T12:00:05Z", "realtime_item", `{"type":"realtime_session_started","id":"r","realtime_session_id":"s"}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/compaction_item"] != 1 || report.Records.Discarded["context/realtime_item"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
 func TestPaginatedTokenCountKeepsPromptOwner(t *testing.T) {
 	graph, _ := buildLines(t,
 		paginatedEnvelope("2026-08-01T12:00:00Z", 0, "session_meta", `{"id":"root","history_mode":"paginated","source":"cli"}`),
@@ -455,6 +648,250 @@ func TestUserItemsAreAlwaysModelVisibleContext(t *testing.T) {
 		t.Fatalf("graph/report = %+v / %+v", graph, report)
 	}
 	if report.Records.Discarded["context/model_visible_user_copy"] != 1 {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+func userItem(at, text string) string {
+	return envelope(at, "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"turn","item":{"type":"UserMessage","id":"item","client_id":"client","content":[{"type":"text","text":`+fmt.Sprintf("%q", text)+`}]}}`)
+}
+
+// Current Codex rollouts record the human prompt only as an item_completed
+// UserMessage item. It must create the same inputs a user_message would,
+// including a steering message that arrives mid-turn.
+func TestItemCompletedUserMessageIsHumanInput(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:03Z", "response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"Do it"}]}`),
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","id":"one","role":"assistant","content":[{"type":"output_text","text":"Working"}]}`),
+		envelope("2026-08-01T12:00:06Z", "response_item", `{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"true\"}","call_id":"call"}`),
+		envelope("2026-08-01T12:00:07Z", "response_item", `{"type":"function_call_output","call_id":"call","output":"done"}`),
+		userItem("2026-08-01T12:00:08Z", "Also this"),
+		envelope("2026-08-01T12:00:09Z", "response_item", `{"type":"message","id":"two","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:10Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || !report.Records.Balanced() {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(graph.UserInputs) != 2 {
+		t.Fatalf("user inputs = %+v, want 2", graph.UserInputs)
+	}
+	first, second := graph.UserInputs[0], graph.UserInputs[1]
+	if first.Text != "Do it" || second.Text != "Also this" || first.Origin != session.OriginHuman || second.Origin != session.OriginHuman {
+		t.Fatalf("inputs = %q/%s and %q/%s", first.Text, first.Origin, second.Text, second.Origin)
+	}
+	if len(graph.AssistantMessages) != 2 || graph.AssistantMessages[0].UserInputID != first.ID || graph.AssistantMessages[1].UserInputID != second.ID {
+		t.Fatalf("assistant messages = %+v", graph.AssistantMessages)
+	}
+	if len(graph.ToolUses) != 1 || graph.ToolUses[0].UserInputID != first.ID {
+		t.Fatalf("tool uses = %+v", graph.ToolUses)
+	}
+	if err := session.Validate(graph); err != nil {
+		t.Fatalf("mapped graph is invalid: %v", err)
+	}
+}
+
+// An item_completed UserMessage that precedes task_started is pending input,
+// exactly like a user_message in that position.
+func TestItemCompletedUserMessageBeforeTaskStartIsPending(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		userItem("2026-08-01T12:00:01Z", "Do it"),
+		envelope("2026-08-01T12:00:02Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:03Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:04Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 || len(graph.AssistantMessages) != 1 ||
+		graph.AssistantMessages[0].UserInputID != graph.UserInputs[0].ID {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+// When a rollout also writes user_message events, the matching item_completed
+// is a copy and must not create a second input.
+func TestItemCompletedUserMessageIsCopyWhenUserMessageEventsExist(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:06Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+	if report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// A rollout an older Codex wrote with user_message events and a newer Codex
+// resumed has both kinds of turn: the resumed turn's item_completed is its only
+// prompt and must still map.
+func TestItemCompletedUserMessageMapsInResumedTurnWithoutUserMessage(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:06Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+		envelope("2026-08-01T13:00:00Z", "event_msg", `{"type":"task_started","turn_id":"resumed"}`),
+		envelope("2026-08-01T13:00:01Z", "turn_context", `{"turn_id":"resumed","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T13:00:02Z", "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"resumed","item":{"type":"UserMessage","id":"item2","content":[{"type":"text","text":"And again"}]}}`),
+		envelope("2026-08-01T13:00:03Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done again"}]}`),
+		envelope("2026-08-01T13:00:04Z", "event_msg", `{"type":"task_complete","turn_id":"resumed"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 2 || graph.UserInputs[1].Text != "And again" {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+	if report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// A user_message written before task_started still marks its turn, so the
+// turn's item_completed stays a copy.
+func TestItemCompletedUserMessageIsCopyWhenUserMessagePrecedesTaskStart(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"user_message","message":"Do it"}`),
+		envelope("2026-08-01T12:00:02Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		userItem("2026-08-01T12:00:03Z", "Do it"),
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:05Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 || report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+func TestItemCompletedNonUserItemIsDiscarded(t *testing.T) {
+	lines := basicStart()[:1]
+	lines = append(lines,
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"turn","item":{"type":"AgentMessage","content":[{"type":"text","text":"hi"}]}}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if len(graph.UserInputs) != 0 || report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+func TestMalformedItemCompletedUserMessageFails(t *testing.T) {
+	lines := basicStart()[:1]
+	lines = append(lines,
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":"oops"}}`),
+	)
+	if _, _, err := buildLinesResult(t, lines...); err == nil {
+		t.Fatal("Build accepted a malformed UserMessage item")
+	}
+}
+
+// A child thread's item_completed UserMessage is not proven human input, just
+// like a child's user_message event.
+func TestChildItemCompletedUserMessageIsUnconfirmed(t *testing.T) {
+	tree := fixtureTree(t)
+	item := func(text string) *codextranscript.EventMsg {
+		return &codextranscript.EventMsg{
+			Type: "item_completed",
+			ItemCompleted: &codextranscript.ItemCompleted{
+				Item: []byte(`{"type":"UserMessage","content":[{"type":"text","text":"` + text + `"}]}`),
+			},
+		}
+	}
+	// The root's prompts become item_completed items; the child gets one more
+	// at the end of its own history.
+	for i := range tree.Root.Lines {
+		if tree.Root.Lines[i].EventMsg != nil && tree.Root.Lines[i].EventMsg.UserMessage != nil {
+			tree.Root.Lines[i].EventMsg = item("Root prompt")
+		}
+	}
+	child := tree.Children[0]
+	last := child.Lines[len(child.Lines)-1]
+	last.Ordinal++
+	last.Class = codextranscript.ClassEventMsg
+	last.EventMsg = item("Steer the child")
+	child.Lines = append(child.Lines, last)
+	graph, report, err := Build(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Records.Discarded["context/unconfirmed_human_input"] == 0 {
+		t.Fatalf("records = %+v, want the child item discarded as unconfirmed_human_input", report.Records)
+	}
+	if len(graph.UserInputs) == 0 {
+		t.Fatal("root item_completed produced no inputs")
+	}
+	for _, input := range graph.UserInputs {
+		if input.Text == "Steer the child" {
+			t.Fatalf("child item became input %+v", input)
+		}
+	}
+}
+
+// A UserMessage item keeps the images and text_elements a user_message would
+// carry as input metadata.
+func TestItemCompletedUserMessageKeepsImagesAndTextElements(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T12:00:03Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"Look","text_elements":[{"byte_range":{"start":0,"end":4}}]},{"type":"local_image","path":"/tmp/a.png"},{"type":"image","image_url":"data:image/png;base64,AAAA"}]}}`),
+	)
+	if !report.Records.Balanced() || len(graph.UserInputs) != 1 {
+		t.Fatalf("report = %+v inputs = %+v", report.Records, graph.UserInputs)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(graph.UserInputs[0].Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"local_images":  `["/tmp/a.png"]`,
+		"images":        `["data:image/png;base64,AAAA"]`,
+		"text_elements": `[{"byte_range":{"start":0,"end":4}}]`,
+	} {
+		if string(metadata[key]) != want {
+			t.Errorf("metadata[%s] = %s, want %s", key, metadata[key], want)
+		}
+	}
+}
+
+// Each text part's byte_range is relative to the part, so after joining the
+// parts it moves by the byte length of the text before it. A malformed element
+// fails the line.
+func TestItemCompletedShiftsTextElementOffsets(t *testing.T) {
+	lines := func(content string) []string {
+		return []string{
+			envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+			envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+			envelope("2026-08-01T12:00:02Z", "turn_context", `{"turn_id":"turn","model":"gpt-5","cwd":"/repo"}`),
+			envelope("2026-08-01T12:00:03Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":[`+content+`]}}`),
+		}
+	}
+	graph, _ := buildLines(t, lines(`{"type":"text","text":"Hé ","text_elements":[]},{"type":"text","text":"@file now","text_elements":[{"byte_range":{"start":0,"end":5},"placeholder":"x"}]}`)...)
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(graph.UserInputs[0].Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	// "Hé " is 4 bytes.
+	if want := `[{"byte_range":{"end":9,"start":4},"placeholder":"x"}]`; string(metadata["text_elements"]) != want {
+		t.Fatalf("text_elements = %s, want %s", metadata["text_elements"], want)
+	}
+	if _, _, err := buildLinesResult(t, lines(`{"type":"text","text":"a","text_elements":[{"byte_range":{"start":"x"}}]}`)...); err == nil {
+		t.Fatal("malformed text element did not fail the line")
+	}
+}
+
+func TestGoalUpdateAndImageGenerationAreContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "event_msg", `{"type":"thread_goal_updated","threadId":"root","turnId":"turn","goal":{}}`),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"image_generation_call","id":"ig","status":"generating","result":"AAAA"}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/thread_goal_updated"] != 1 || report.Records.Discarded["context/image_generation_call"] != 1 || !report.Records.Balanced() {
 		t.Fatalf("records = %+v", report.Records)
 	}
 }
