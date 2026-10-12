@@ -331,6 +331,11 @@ func portablePathFields(fields map[string]json.RawMessage) []string {
 			paths = append(paths, value)
 		}
 	}
+	// ReadLints takes a list of paths.
+	var list []string
+	if json.Unmarshal(fields["paths"], &list) == nil {
+		paths = append(paths, list...)
+	}
 	return paths
 }
 

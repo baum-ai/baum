@@ -120,6 +120,15 @@ func TestDynamicDeleteKeepsItsEditTouch(t *testing.T) {
 	}
 }
 
+func TestDynamicReadLintsTouchesEveryPath(t *testing.T) {
+	graph := buildDynamic(t, dynamicCallInput("cursor", "ReadLints", `{"paths":["/repo/a.go","/repo/b.go","/repo/a.go"]}`))
+	if len(graph.FileTouches) != 2 ||
+		graph.FileTouches[0].Path != "/repo/a.go" || graph.FileTouches[1].Path != "/repo/b.go" ||
+		graph.FileTouches[0].Kind != session.TouchRead || graph.FileTouches[1].Kind != session.TouchRead {
+		t.Fatalf("touches = %+v", graph.FileTouches)
+	}
+}
+
 func TestUnknownDynamicToolKeepsTheWrapper(t *testing.T) {
 	whole := dynamicCallInput("cursor", "FutureTool", `{"a":1}`)
 	graph := buildDynamic(t, whole,
