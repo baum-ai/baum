@@ -326,6 +326,29 @@ export function LightbulbIcon(props: IconProps) {
   );
 }
 
+/** A timeline: three events on a spine, each with its entry beside it. */
+export function TimelineIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="4" cy="3.5" r="1.25" />
+      <circle cx="4" cy="8" r="1.25" />
+      <circle cx="4" cy="12.5" r="1.25" />
+      <path d="M4 4.75v2M4 9.25v2" />
+      <path d="M7.5 3.5h6M7.5 8h4M7.5 12.5h5" />
+    </Icon>
+  );
+}
+
+/** A house: the organisation's home page. */
+export function HomeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 7 8 2.5 13.5 7" />
+      <path d="M4 6v7.5h3V10h2v3.5h3V6" />
+    </Icon>
+  );
+}
+
 /** Changed files: two sheets, one behind the other. */
 export function FilesIcon(props: IconProps) {
   return (
