@@ -83,9 +83,7 @@ func (b *builder) ingest(file *codextranscript.File, spawn *session.SpawnLink) e
 		if i > 0 && line.Ordinal < boundary {
 			continue
 		}
-		if line.EventMsg != nil && line.EventMsg.UserMessage != nil {
-			state.hasUserMessageEvents = true
-		}
+		state.noteUserMessageTurn(line)
 	}
 	for i, line := range file.Lines {
 		b.report.Records.Total++
@@ -264,9 +262,14 @@ type threadState struct {
 	attributeTime   map[string]time.Time
 	pendingInter    *codextranscript.InterAgentMeta
 	pendingHuman    []pendingHumanInput
-	// hasUserMessageEvents is true when the rollout writes user_message
-	// events, which then carry the human prompts instead of item_completed.
-	hasUserMessageEvents bool
+	// userMessageTurns holds the turns whose owned lines include a
+	// user_message event, which then carries the turn's human prompts instead
+	// of item_completed. It is per turn because an older Codex rollout resumed
+	// by a newer one has both kinds of turn. scanTurn and scanPending track the
+	// open turn and a user_message awaiting its task_started while it is built.
+	userMessageTurns map[string]bool
+	scanTurn         string
+	scanPending      bool
 	// seenTokenUsageRecord is true once the thread has processed a
 	// token_usage_record. From then on records are the only token source and
 	// token_count events are discarded as superseded; earlier token_counts (a
@@ -298,7 +301,8 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 		inputTurn:     map[string]string{},
 		latestContext: map[string]json.RawMessage{}, latestAttribute: map[string]json.RawMessage{},
 		attributeTime: map[string]time.Time{}, unsupported: map[string]bool{},
-		unsupportedCall: map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
+		userMessageTurns: map[string]bool{},
+		unsupportedCall:  map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
 		workingDir: meta.CWD,
 	}
 	if meta.Git != nil {

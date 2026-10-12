@@ -164,7 +164,7 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		}
 		f.addHumanInput(line, event.UserMessage)
 		return accountMapped, "", nil
-	case event.ItemCompleted != nil && !f.hasUserMessageEvents:
+	case event.ItemCompleted != nil:
 		return f.itemCompleted(line, event.ItemCompleted)
 	case event.TokenCount != nil:
 		return f.applyTokenCount(line, event.TokenCount)
@@ -189,12 +189,42 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 	}
 }
 
+// noteUserMessageTurn records, for one owned line in file order, which turn
+// a user_message event belongs to. One written before its task_started belongs
+// to the turn that task_started opens, as pending input does.
+func (f *threadState) noteUserMessageTurn(line codextranscript.Line) {
+	event := line.EventMsg
+	switch {
+	case event == nil:
+	case event.TaskStarted != nil:
+		f.scanTurn = event.TaskStarted.TurnID
+		if f.scanPending {
+			f.userMessageTurns[f.scanTurn] = true
+			f.scanPending = false
+		}
+	case event.TaskComplete != nil || event.TurnAborted != nil:
+		f.scanTurn = ""
+	case event.UserMessage != nil:
+		if f.scanTurn == "" {
+			f.scanPending = true
+		} else {
+			f.userMessageTurns[f.scanTurn] = true
+		}
+	}
+}
+
 // itemCompleted maps the human prompt that newer Codex versions record only as
-// an item_completed UserMessage item, with no user_message event. A rollout that
-// still writes user_message events keeps item_completed as a discarded copy
-// (the caller only routes here otherwise), so no prompt counts twice. Other
-// item types are discarded as before.
+// an item_completed UserMessage item, with no user_message event. In a turn
+// that still writes user_message events every item_completed is a discarded
+// copy, so no prompt counts twice. Other item types are discarded as before.
 func (f *threadState) itemCompleted(line codextranscript.Line, completed *codextranscript.ItemCompleted) (accountCategory, string, error) {
+	turnID := completed.TurnID
+	if turnID == "" {
+		turnID = f.openTurn
+	}
+	if f.userMessageTurns[turnID] {
+		return accountDiscarded, eventDiscards["item_completed"], nil
+	}
 	var item struct {
 		Type    string `json:"type"`
 		Content []struct {

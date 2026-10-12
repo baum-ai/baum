@@ -728,6 +728,46 @@ func TestItemCompletedUserMessageIsCopyWhenUserMessageEventsExist(t *testing.T) 
 	}
 }
 
+// A rollout an older Codex wrote with user_message events and a newer Codex
+// resumed has both kinds of turn: the resumed turn's item_completed is its only
+// prompt and must still map.
+func TestItemCompletedUserMessageMapsInResumedTurnWithoutUserMessage(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		userItem("2026-08-01T12:00:04Z", "Do it"),
+		envelope("2026-08-01T12:00:05Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:06Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+		envelope("2026-08-01T13:00:00Z", "event_msg", `{"type":"task_started","turn_id":"resumed"}`),
+		envelope("2026-08-01T13:00:01Z", "turn_context", `{"turn_id":"resumed","model":"gpt-5","cwd":"/repo"}`),
+		envelope("2026-08-01T13:00:02Z", "event_msg", `{"type":"item_completed","thread_id":"root","turn_id":"resumed","item":{"type":"UserMessage","id":"item2","content":[{"type":"text","text":"And again"}]}}`),
+		envelope("2026-08-01T13:00:03Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done again"}]}`),
+		envelope("2026-08-01T13:00:04Z", "event_msg", `{"type":"task_complete","turn_id":"resumed"}`),
+	)
+	graph, report := buildLines(t, lines...)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 2 || graph.UserInputs[1].Text != "And again" {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+	if report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+// A user_message written before task_started still marks its turn, so the
+// turn's item_completed stays a copy.
+func TestItemCompletedUserMessageIsCopyWhenUserMessagePrecedesTaskStart(t *testing.T) {
+	graph, report := buildLines(t,
+		envelope("2026-08-01T12:00:00Z", "session_meta", `{"id":"root","session_id":"root","timestamp":"2026-08-01T12:00:00Z","cwd":"/repo","source":"cli"}`),
+		envelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"user_message","message":"Do it"}`),
+		envelope("2026-08-01T12:00:02Z", "event_msg", `{"type":"task_started","turn_id":"turn"}`),
+		userItem("2026-08-01T12:00:03Z", "Do it"),
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}`),
+		envelope("2026-08-01T12:00:05Z", "event_msg", `{"type":"task_complete","turn_id":"turn"}`),
+	)
+	if report.UnsupportedTurns != 0 || len(graph.UserInputs) != 1 || report.Records.Discarded["context/item_completed_copy"] != 1 {
+		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
 func TestItemCompletedNonUserItemIsDiscarded(t *testing.T) {
 	lines := basicStart()[:1]
 	lines = append(lines,
