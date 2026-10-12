@@ -168,6 +168,7 @@ func (f *threadState) eventMsg(line codextranscript.Line) (accountCategory, stri
 		return f.subAgentActivity(line, *event.SubAgentActivity)
 	case event.ThreadSettingsApplied != nil:
 		f.addAttribute(line, "thread_settings", event.ThreadSettingsApplied.ThreadSettings)
+		f.serviceTier = serviceTierOf(event.ThreadSettingsApplied.ThreadSettings)
 		return accountAttribute, "", nil
 	default:
 		reason, ok := eventDiscards[event.Type]

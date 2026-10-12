@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,7 @@ func TestCodex0129LifecycleFixtures(t *testing.T) {
 		{name: "basic_rollout.jsonl", inputs: 2},
 		{name: "commit_rollout.jsonl", inputs: 1},
 		{name: "aborted_rollout.jsonl", inputs: 1, interrupted: true},
+		{name: "fast_mode_rollout.jsonl", inputs: 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,5 +164,80 @@ func TestTriggerTurnFalseStaysParentContext(t *testing.T) {
 	graph, report := buildLines(t, lines...)
 	if len(graph.UserInputs) != 1 || len(graph.AssistantMessages) != 1 || report.UnsupportedTurns != 0 {
 		t.Fatalf("graph/report = %+v / %+v", graph, report)
+	}
+}
+
+// Codex reports fast mode as the thread's service tier: every invocation whose
+// usage arrives after a "priority" settings event is fast, and after "default"
+// standard. A rollout that never names a tier leaves the speed unreported, and
+// so do invocations whose usage could not be attributed to one (basic_rollout's
+// first turn has two token counts for three invocations).
+func TestInvocationSpeedFollowsThreadServiceTier(t *testing.T) {
+	read := func(name string) *session.Graph {
+		data, err := os.ReadFile(filepath.Join("testdata", "lifecycle", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		graph, _ := buildLines(t, strings.Split(strings.TrimSpace(string(data)), "\n")...)
+		return graph
+	}
+	speeds := func(graph *session.Graph) []string {
+		var out []string
+		for _, m := range graph.ModelInvocations {
+			if m.CacheWrite1hTokens != nil {
+				t.Errorf("invocation %s has a cache TTL split; Codex reports none", m.ID)
+			}
+			if m.Speed == nil {
+				out = append(out, "nil")
+			} else {
+				out = append(out, *m.Speed)
+			}
+		}
+		return out
+	}
+	if got, want := strings.Join(speeds(read("fast_mode_rollout.jsonl")), ","), "fast,nil,nil,standard"; got != want {
+		t.Errorf("speeds with priority then default = %s, want %s", got, want)
+	}
+	if got, want := strings.Join(speeds(read("basic_rollout.jsonl")), ","), "nil,nil,nil,nil"; got != want {
+		t.Errorf("speeds with no service tier = %s, want %s", got, want)
+	}
+	for _, tier := range []struct{ tier, want string }{{"priority", "fast"}, {"fast", "fast"}, {"ultrafast", "ultrafast"}, {"default", "standard"}, {"standard", "standard"}, {"flex", ""}, {"auto", ""}, {"", ""}} {
+		got := speedForServiceTier(tier.tier)
+		if (got == nil) != (tier.want == "") || got != nil && *got != tier.want {
+			t.Errorf("speedForServiceTier(%q) = %v, want %q", tier.tier, got, tier.want)
+		}
+	}
+}
+
+// A token_count that cannot be attributed to one invocation becomes a usage
+// row of exactly one request, at the thread's tier. A settings snapshot with no
+// service_tier clears the tier, so the next row has no speed.
+func TestUnattributedTokenCountIsOneRequestAtTheThreadTier(t *testing.T) {
+	count := func(at string, total int) string {
+		usage := fmt.Sprintf(`{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":5,"total_tokens":%d}`, total, total+5)
+		return envelope(at, "event_msg", `{"type":"token_count","info":{"total_token_usage":`+usage+`,"last_token_usage":`+usage+`}}`)
+	}
+	settings := func(at, tier string) string {
+		return envelope(at, "event_msg", `{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5"`+tier+`}}`)
+	}
+	graph, _ := buildLines(t, append(basicStart(),
+		settings("2026-08-01T12:00:04Z", `,"service_tier":"priority"`),
+		count("2026-08-01T12:00:05Z", 100),
+		settings("2026-08-01T12:00:06Z", ``),
+		count("2026-08-01T12:00:07Z", 200),
+	)...)
+	if len(graph.TokenUsage) != 2 {
+		t.Fatalf("token usage rows = %+v, want 2", graph.TokenUsage)
+	}
+	for i, row := range graph.TokenUsage {
+		if row.APICallCount == nil || *row.APICallCount != 1 {
+			t.Errorf("row %d api_call_count = %v, want 1", i, row.APICallCount)
+		}
+	}
+	if s := graph.TokenUsage[0].Speed; s == nil || *s != session.SpeedFast {
+		t.Errorf("row under priority has speed %v, want fast", s)
+	}
+	if s := graph.TokenUsage[1].Speed; s != nil {
+		t.Errorf("row after a snapshot without service_tier has speed %q, want nil", *s)
 	}
 }

@@ -74,6 +74,26 @@ func TestValidateAcceptsAWellFormedTree(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsCacheTTLSplitAndSpeed(t *testing.T) {
+	g := validGraph()
+	g.ModelInvocations[0].CacheWriteTokens = 5
+	g.ModelInvocations[0].CacheWrite1hTokens = new(int64(5))
+	g.ModelInvocations[0].Speed = new(SpeedFast)
+	g.ModelInvocations[1].CacheWrite1hTokens = new(int64(0))
+	g.ModelInvocations[1].Speed = new(SpeedStandard)
+	if err := Validate(g); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	g.ModelInvocations[1].Speed = new(SpeedUltrafast)
+	if err := Validate(g); err != nil {
+		t.Fatalf("Validate rejects ultrafast: %v", err)
+	}
+	g.ModelInvocations[1].Speed = new("turbo")
+	if err := Validate(g); err == nil {
+		t.Fatal("Validate accepted an unknown speed")
+	}
+}
+
 func TestValidateAcceptsUnknownStatusWithResult(t *testing.T) {
 	g := validGraph()
 	g.ToolUses[0].Status = StatusUnknown
@@ -184,6 +204,24 @@ func TestValidateRejects(t *testing.T) {
 			want:   "model invocation m-4 is in session s-nested but its user input is in s-root",
 		},
 		{
+			name: "a 1-hour cache write above the cache writes",
+			break_: func(g *Graph) {
+				g.ModelInvocations[0].CacheWriteTokens = 5
+				g.ModelInvocations[0].CacheWrite1hTokens = new(int64(6))
+			},
+			want: "has cache_write_1h_tokens 6",
+		},
+		{
+			name:   "a negative 1-hour cache write",
+			break_: func(g *Graph) { g.ModelInvocations[0].CacheWrite1hTokens = new(int64(-1)) },
+			want:   "has cache_write_1h_tokens -1",
+		},
+		{
+			name:   "an unknown speed",
+			break_: func(g *Graph) { g.ModelInvocations[0].Speed = new("turbo") },
+			want:   `has unknown speed "turbo"`,
+		},
+		{
 			name:   "a negative token count",
 			break_: func(g *Graph) { g.ModelInvocations[0].OutputTokens = -1 },
 			want:   "want a non-negative count",
@@ -207,6 +245,11 @@ func TestValidateRejects(t *testing.T) {
 			name:   "token usage under an input from another session",
 			break_: func(g *Graph) { g.TokenUsage[0].UserInputID = new("u-3") },
 			want:   "its user input is in s-nested",
+		},
+		{
+			name:   "token usage with an unknown speed",
+			break_: func(g *Graph) { g.TokenUsage[0].Speed = new("turbo") },
+			want:   `token usage usage-input has unknown speed "turbo"`,
 		},
 		{
 			name:   "negative aggregate token usage",

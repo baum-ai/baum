@@ -293,6 +293,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 		return err.Error()
 	}
 	var doc struct {
+		Stack    *documentStack    `json:"stack"`
 		Sections []authoredSection `json:"sections"`
 	}
 	if err := json.Unmarshal(document, &doc); err != nil {
@@ -304,7 +305,7 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 			attachments[attachment.ID] = true
 		}
 	}
-	findings, err := ruleFindings(value, doc.Sections, bundle, attachments)
+	findings, err := ruleFindings(value, doc.Stack, doc.Sections, bundle, attachments)
 	if err != nil {
 		return err.Error()
 	}
@@ -325,6 +326,7 @@ func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bu
 		return []string{conciseSchemaError(err)}
 	}
 	var doc struct {
+		Stack    *documentStack    `json:"stack"`
 		Sections []authoredSection `json:"sections"`
 		Index    struct {
 			Attachments []struct {
@@ -339,7 +341,7 @@ func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bu
 	for _, attachment := range doc.Index.Attachments {
 		listed[attachment.ID] = true
 	}
-	findings, err := ruleFindings(value, doc.Sections, bundle, listed)
+	findings, err := ruleFindings(value, doc.Stack, doc.Sections, bundle, listed)
 	if err != nil {
 		return []string{err.Error()}
 	}
@@ -351,8 +353,8 @@ func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bu
 // ranges, the section outline, evidence against checks, restricted sessions)
 // run only when bundle is non-nil; attachments lists the image IDs a document
 // may name.
-func ruleFindings(value any, sections []authoredSection, bundle *bundlepkg.Bundle, attachments map[string]bool) ([]string, error) {
-	findings := validateTileReferences(sections)
+func ruleFindings(value any, stack *documentStack, sections []authoredSection, bundle *bundlepkg.Bundle, attachments map[string]bool) ([]string, error) {
+	findings := append(validateTileReferences(sections), stackFindings(stack, sections)...)
 	hunks := map[string]bundlepkg.Hunk{}
 	checks := map[string]bundlepkg.Check{}
 	restricted := map[string]bool{}
@@ -515,6 +517,33 @@ func ruleFindings(value any, sections []authoredSection, bundle *bundlepkg.Bundl
 		findings = append(findings, invalid)
 	}
 	return findings, nil
+}
+
+// stackFindings applies the rules JSON Schema cannot express for a stack
+// review: members are unique, a section names only members of the stack, and
+// a document without a stack has no section pull requests.
+func stackFindings(stack *documentStack, sections []authoredSection) []string {
+	var findings []string
+	members := map[int]bool{}
+	if stack != nil {
+		for _, member := range stack.Members {
+			if members[member.Number] {
+				findings = append(findings, fmt.Sprintf("duplicate stack member: #%d", member.Number))
+			}
+			members[member.Number] = true
+		}
+	}
+	for index, section := range sections {
+		for _, number := range section.PullRequests {
+			switch {
+			case stack == nil:
+				findings = append(findings, fmt.Sprintf("section %d (%s) names pull request #%d but the document has no stack", index+1, section.ID, number))
+			case !members[number]:
+				findings = append(findings, fmt.Sprintf("section %d (%s) names pull request #%d, which is not a stack member", index+1, section.ID, number))
+			}
+		}
+	}
+	return findings
 }
 
 // unlistedImageFinding reports an images block item naming an attachment the

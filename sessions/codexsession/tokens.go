@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/lastpersonlabs/baum/sessions/codextranscript"
@@ -33,16 +34,21 @@ func (f *threadState) applyTokenCount(line codextranscript.Line, count *codextra
 	}
 	if len(turn.unaccounted) == 1 {
 		applyInvocationUsage(turn.unaccounted[0], last)
+		turn.unaccounted[0].Speed = speedForServiceTier(f.serviceTier)
 		turn.unaccounted = nil
 		f.b.report.Tokens.AssignedInvocations++
 		return accountMerged, "", nil
 	}
 
+	one := int64(1)
 	row := &session.TokenUsage{
 		ID: f.ids.Mint("token_usage", fmt.Sprintf("%d", line.Ordinal)), SessionID: f.session.ID,
 		Scope: session.UsageScopeSession, InputTokens: cloneInt64(last.InputTokens),
 		OutputTokens: cloneInt64(last.OutputTokens), CacheReadTokens: cloneInt64(last.CachedInputTokens),
 		CacheWriteTokens: cloneInt64(last.CacheWriteInputTokens), TotalTokens: cloneInt64(last.TotalTokens),
+		// A token_count is one request's last_token_usage, whichever invocation
+		// it belongs to, and the thread's tier at that point is known.
+		APICallCount: cloneInt64(&one), Speed: speedForServiceTier(f.serviceTier),
 	}
 	owner := f.activeInput
 	if owner == nil {
@@ -106,6 +112,38 @@ func applyInvocationUsage(row *session.ModelInvocation, usage codextranscript.Us
 	row.CacheReadTokens = int64Value(usage.CachedInputTokens)
 	row.CacheWriteTokens = int64Value(usage.CacheWriteInputTokens)
 	row.TotalTokens = int64Value(usage.TotalTokens)
+}
+
+// serviceTierOf reads service_tier from a thread_settings_applied snapshot.
+// Every snapshot replaces the previous tier, so a snapshot without one clears it.
+func serviceTierOf(settings json.RawMessage) string {
+	var parsed struct {
+		ServiceTier string `json:"service_tier"`
+	}
+	if json.Unmarshal(settings, &parsed) != nil {
+		return ""
+	}
+	return parsed.ServiceTier
+}
+
+// speedForServiceTier maps Codex's service tier to an invocation speed. OpenAI's
+// fast mode is requested as "fast" and, for GPT-5.6 and earlier, reported back
+// as "priority" (its former name), so both are fast; "ultrafast" is its own,
+// pricier tier; "default" and "standard" are standard. Anything else (flex, auto,
+// or no tier ever set) is not reported. Codex reports no cache TTL.
+func speedForServiceTier(tier string) *string {
+	var speed string
+	switch tier {
+	case "priority", "fast":
+		speed = session.SpeedFast
+	case "ultrafast":
+		speed = session.SpeedUltrafast
+	case "default", "standard":
+		speed = session.SpeedStandard
+	default:
+		return nil
+	}
+	return &speed
 }
 
 func int64Value(value *int64) int64 {
