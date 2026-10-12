@@ -49,6 +49,25 @@ type Fixture struct {
 // New builds a Fixture. It skips the test when git is not installed.
 func New(t *testing.T) Fixture {
 	t.Helper()
+	return build(t, "", nil)
+}
+
+// NewWithTrailer builds a Fixture whose first commit, the one the session
+// created, ends its message with trailer, such as an Entire-Checkpoint line.
+func NewWithTrailer(t *testing.T, trailer string) Fixture {
+	t.Helper()
+	return build(t, trailer, nil)
+}
+
+// NewWithFiles builds a Fixture whose first commit also adds files, paths
+// relative to the clone, beside b.txt.
+func NewWithFiles(t *testing.T, files ...string) Fixture {
+	t.Helper()
+	return build(t, "", files)
+}
+
+func build(t *testing.T, trailer string, files []string) Fixture {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
@@ -70,7 +89,14 @@ func New(t *testing.T) Fixture {
 	baseOID := commit(t, repo, "Start", "2026-07-01T09:00:00Z")
 	git(t, repo, "checkout", "-q", "-b", "feature")
 	write(t, filepath.Join(repo, "b.txt"), "b\n")
-	first := commit(t, repo, "Add the feature", "2026-07-01T10:30:00Z")
+	for _, file := range files {
+		write(t, filepath.Join(repo, filepath.FromSlash(file)), file+"\n")
+	}
+	message := "Add the feature"
+	if trailer != "" {
+		message += "\n\n" + trailer
+	}
+	first := commit(t, repo, message, "2026-07-01T10:30:00Z")
 	write(t, filepath.Join(repo, "c.txt"), "c\n")
 	second := commit(t, repo, "Tidy up, reported by bob@example.com", "2026-07-01T10:40:00Z")
 	git(t, repo, "checkout", "-q", "main")

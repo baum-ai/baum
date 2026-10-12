@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
 	"github.com/lastpersonlabs/baum/sessions/collector/codex"
@@ -37,26 +38,47 @@ type FindOptions struct {
 	CursorStorePaths []string
 	// PreviousPaths are directories the repository previously lived at.
 	PreviousPaths []string
+	// Worktrees are the clone's working trees, the main one first, as
+	// gitlocal.Worktrees lists them. A session recorded in any of them belongs
+	// to the repository, whichever of them dir is in. Empty means only the
+	// checkout containing dir, and the worktrees git remembers inside it.
+	Worktrees []string
+	// Since skips Claude Code transcripts last modified before it without
+	// opening them. Zero keeps every transcript.
+	Since time.Time
 }
 
 // FindSessions returns the local Claude Code, Codex, and Cursor sessions relevant to
-// the git repository containing dir, ordered by modification time. The report
-// names every session file discovery had to drop.
+// the git repository containing dir, ordered by modification time: those whose
+// recorded working directory is the checkout containing dir, one of
+// opts.Worktrees or opts.PreviousPaths, or a directory inside one of them. The
+// report names every session file discovery had to drop.
 func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	var report ScanReport
 	root, err := RepoRoot(dir)
 	if err != nil {
 		return nil, report, err
 	}
-	roots := []string{root}
+	// The main worktree leads, so a session is placed in the same checkout
+	// whichever worktree discovery runs from.
+	var roots []string
+	add := func(path string) {
+		if !slices.ContainsFunc(roots, func(r string) bool { return model.SameText(r, path, model.FoldCase) }) {
+			roots = append(roots, path)
+		}
+	}
+	for _, worktree := range opts.Worktrees {
+		if filepath.IsAbs(worktree) {
+			add(filepath.Clean(worktree))
+		}
+	}
+	add(root)
 	for _, prev := range opts.PreviousPaths {
 		abs, err := filepath.Abs(prev)
 		if err != nil {
 			return nil, report, fmt.Errorf("previous path %q: %w", prev, err)
 		}
-		if !slices.Contains(roots, abs) {
-			roots = append(roots, abs)
-		}
+		add(abs)
 	}
 	claudeDir, codexDir := opts.ClaudeProjectsDir, opts.CodexSessionsDir
 	if claudeDir == "" || codexDir == "" {
@@ -72,7 +94,7 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 		}
 	}
 
-	sessions, claudeReport, err := claudecode.FindSessions(claudeDir, roots)
+	sessions, claudeReport, err := claudecode.FindSessionsSince(claudeDir, roots, opts.Since)
 	if err != nil {
 		return nil, report, err
 	}
@@ -90,7 +112,7 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	report.Merge(codexReport)
 	report.Merge(cursorReport)
 
-	var worktrees []string
+	worktrees := slices.Clone(opts.Worktrees)
 	for _, root := range roots {
 		worktrees = append(worktrees, rememberedWorktrees(root)...)
 	}

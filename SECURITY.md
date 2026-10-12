@@ -52,6 +52,17 @@ global and system git configuration, which could otherwise run a filter (such
 as an LFS smudge, which contacts a server) or a signature program on a tree
 from a clone you have not vetted. The clone's remote URLs are read as
 text to match the pull request's repository, and are never contacted.
+The list of the clone's worktrees, which says where else its sessions may have
+been recorded, comes from `git worktree list` run against the clone's
+repository directory with that same environment: no global or system
+configuration, no `GIT_` variable of yours, and nothing that reads an object
+or runs a program. Because whoever made the clone controls that bookkeeping,
+an entry is used only when the worktree's own `.git` file points back at this
+repository (or its directory is gone), and never when it is the file system
+root, your home directory, or a directory containing the repository, so a
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
+the checkpoint branch already in your clone, in the private repository; a
+checkpoint you have not fetched is not fetched for it.
 
 ## Agent isolation
 

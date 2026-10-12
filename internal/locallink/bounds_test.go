@@ -66,7 +66,7 @@ func TestResolveKeepsTheNewestSnapshotOfASession(t *testing.T) {
 		"oldest first": {earlier[0], later[0]},
 		"newest first": {later[0], earlier[0]},
 	} {
-		result, err := match(ctx, engine, found, commits)
+		result, err := match(ctx, engine, found, commits, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

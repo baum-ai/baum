@@ -29,7 +29,6 @@ import (
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/linkage"
 	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/linkage/steps"
 	"github.com/lastpersonlabs/baum/redact"
 	"github.com/lastpersonlabs/baum/sessions"
 	"github.com/lastpersonlabs/baum/sessions/session"
@@ -74,7 +73,8 @@ type Request struct {
 	// has it, and Base otherwise. MergeBase may be empty.
 	Head, Base, MergeBase string
 	// Sessions narrows or redirects the stores read; the zero value reads
-	// the defaults.
+	// the defaults. Its Sources do not stop the checkpoint a commit's
+	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
 	// read, as "baum sessions" prints them. It defaults to discarding them.
@@ -126,8 +126,9 @@ type Commit struct {
 // Link is one session matched to a commit.
 type Link struct {
 	Session string `json:"session"`
-	// Method is the linkage step that matched: commit_ref, start_commit or
-	// files_overlap.
+	// Method is how the link was made: entire_checkpoint when the commit's
+	// Entire-Checkpoint trailer names a checkpoint recording the session, or
+	// the linkage step that matched: commit_ref, start_commit or files_overlap.
 	Method     string  `json:"method"`
 	Confidence float64 `json:"confidence"`
 }
@@ -238,15 +239,18 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 			_, _ = fmt.Fprintf(req.Warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	return match(ctx, engine, found, commits)
+	truth, extra := checkpointLinks(ctx, dir, commits, found, req.Warn)
+	return match(ctx, engine, append(found, extra...), commits, truth)
 }
 
-// match links sessions to commits with the matcher's default steps and
-// builds the redacted result.
-func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit) (Result, error) {
-	// An Entire session has one snapshot per checkpoint, each fuller than the
-	// last, and the matcher identifies a run by its id, so only the newest
-	// snapshot of each id is matched.
+// match links sessions to commits and builds the redacted result. Each commit
+// is linked as the hosted resolver links it (commitEdges): to the sessions its
+// Entire checkpoint records, if any, then by the matcher's default steps until
+// its files are explained.
+func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
+	// A session can arrive more than once under one id, and the matcher
+	// identifies a run by its id, so only the best reading of each id is
+	// matched: one with a transcript, then the newest.
 	latest := make(map[string]snapshot, len(found))
 	var ids []string
 	for _, s := range found {
@@ -274,13 +278,17 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
 	}
 
-	enriched := make([]linkage.EnrichedCommit, len(commits))
-	for i, c := range commits {
-		enriched[i] = enrichedOf(c)
-	}
-	edges, err := linkage.MatchCommits(enriched, candidates, linkage.DefaultConfig(), steps.Default())
-	if err != nil {
-		return Result{}, fmt.Errorf("matching commits: %w", err)
+	var edges []linkage.Edge
+	cfg := linkage.DefaultConfig()
+	for _, c := range commits {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		commitEdges, err := commitEdges(enrichedOf(c), truth[c.OID], candidates, cfg)
+		if err != nil {
+			return Result{}, fmt.Errorf("matching commit %s: %w", c.OID, err)
+		}
+		edges = append(edges, commitEdges...)
 	}
 
 	links := map[string][]Link{}
@@ -355,12 +363,16 @@ type snapshot struct {
 	correlated sessioncorrelate.Result
 }
 
-// newerThan reports whether s is the later reading of the same session: the
-// one written last, and when they were written together the one that knows of
-// more commits.
+// newerThan reports whether s is the better reading of the same session: one
+// with a transcript over one without (a snapshot need not be fuller than the
+// one before it), then the one written last, and when they were written
+// together the one that knows of more commits.
 func (s snapshot) newerThan(other snapshot) bool {
-	if c := s.session.ModifiedAt.Compare(other.session.ModifiedAt); c != 0 {
-		return c > 0
+	if sessions.Fuller(s.session, other.session) {
+		return true
+	}
+	if sessions.Fuller(other.session, s.session) {
+		return false
 	}
 	return len(s.correlated.CommitRefs) > len(other.correlated.CommitRefs)
 }
