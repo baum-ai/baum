@@ -395,30 +395,39 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 (`gitlocal.Open`, any remote naming the document's repository, no fetch).
 
 - Only a `path` that is the `path` of a hunk in `index.hunks` of the document
-  being served is answered; anything else, including a missing or repeated
-  parameter, is 404 and runs nothing. The document records one path per hunk,
-  so a renamed file is looked up by its new name.
-- The patch is `git diff` from the merge base (else the base) to the head for
-  that one path, as `gitlocal.Repo.FilePatch`: `--no-ext-diff --no-textconv
-  --no-color --no-renames --unified=3 --diff-algorithm=myers`, full commit ids,
-  `--` and a `:(literal)` pathspec, so a path cannot be an option or a glob.
-  Renames are not detected (one pathspec cannot see the old name), so a renamed
-  file's change is a whole-file addition, which fails the viewer's check that the
-  hunk has the cited range and counts, and keeps its link. The merge base must be
-  in the clone: the base would give a different diff.
+  being served is answered; anything else, including a missing, empty or
+  over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
+  parameter is not an error: the first is the one asked for. The document
+  records one path per hunk, the file's name at the head.
+- The range's changed files are listed once per merge base and head
+  (`gitlocal.Repo.ChangedFiles`: `git diff --raw -z -M -l1000`, bounded like the
+  other reads) and kept while the commits stay the same. That list gives the old
+  name of a renamed file and marks a submodule (a gitlink on either side).
+- The patch is `git diff` from the merge base (else the base) to the head as the
+  hosted service reads it (`gitlocal.Repo.FilePatch`): `-M -l1000`, then `--`
+  and a `:(literal)` pathspec for the path and, for a renamed file, its old path
+  too, so a rename shows only its edit. The fixed flags are `--no-ext-diff
+  --no-textconv --no-color --unified=3 --diff-algorithm=myers`, with full commit
+  ids, so a path cannot be an option or a glob. The merge base must be in the
+  clone: the base would give a different diff.
+- A submodule has no patch, as in the hosted service. Nor does a path whose diff
+  is not exactly one file's: a directory (several files) or a pair git did not
+  detect as a rename.
 - It runs in `gitlocal`'s private repository (empty configuration, no
   attributes, no replace refs, no remote, `GIT_NO_LAZY_FETCH=1`), so neither a
   `diff.external`, a textconv or filter driver, a pager nor any other setting of
   the clone, and no environment variable, changes or runs anything.
 - The response is `200 {"patch":"@@ -1,3 +1,4 @@..."}`: the file's diff from its
-  first `@@` line, without git's `diff --git`, `index`, `---` and `+++` lines, the
-  form the hosted app's patches have. Every outcome that is not a patch is
-  `200 {"patch":null}` with nothing about why: a binary file or a mode-only
-  change, a path the range does not change, commits or blobs the clone lacks
-  (including a partial clone), a directory that is not the repository's clone, a
-  patch over 1 MiB (`locallink.MaxPatchBytes`), the sample document. A failure
-  that may pass (git failing, the one-minute limit) is 500, which the app turns
-  into a rejected request and tries again when the excerpt is next opened.
+  first `@@` line. git's header lines before it (`diff --git`, `index`, the
+  rename lines, `---` and `+++`) are dropped; the viewer reads only the hunks.
+  Every outcome that is not a patch is `200 {"patch":null}` with nothing about
+  why: a binary file or a mode-only change, a submodule, a directory, a path the
+  range does not change, commits or blobs the clone lacks (including a partial
+  clone), a directory that is not the repository's clone, a patch over 1 MiB
+  (`locallink.MaxPatchBytes`), the sample document. A failure that may pass (git
+  failing, the one-minute limit) is 500, and a server that is stopping is 503;
+  the app turns both into a rejected request and tries again when the excerpt is
+  next opened.
 - Answers that hold until the document changes (a patch, no text patch, unchanged,
   too large) are kept per path; those a person can fix (no clone, no remote,
   missing commits) and failures are computed again on the next request. A

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/lastpersonlabs/baum/bundle"
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
@@ -16,8 +17,9 @@ const MaxPatchBytes = 1 << 20
 
 // Codes a PatchResult can carry, besides those the sessions answer shares.
 const (
-	// CodeNoTextPatch is a file whose change has no text hunks: a binary file,
-	// or a change of mode alone.
+	// CodeNoTextPatch is a file whose change has no text hunks (a binary file,
+	// or a change of mode alone), a submodule, a path that is a directory, or
+	// anything whose diff is not one file's.
 	CodeNoTextPatch = "no_text_patch"
 	// CodeUnchanged is a path the range does not change.
 	CodeUnchanged = "unchanged"
@@ -36,7 +38,7 @@ type PatchRequest struct {
 	// merge base. A merge base the clone lacks makes the patch unavailable:
 	// the base would give a different diff.
 	Head, Base, MergeBase string
-	// Path is the repository-relative path of the file.
+	// Path is the repository-relative path of the file at the head.
 	Path string
 }
 
@@ -44,9 +46,9 @@ type PatchRequest struct {
 type PatchResult struct {
 	// Available is true when Patch holds a text patch.
 	Available bool
-	// Patch is the file's unified diff from its first "@@" hunk header on,
-	// with git's "diff --git", "index", "---" and "+++" lines left out: the
-	// form the hosted app's patches have.
+	// Patch is the file's diff from its first "@@" hunk header on. git's header
+	// lines before it ("diff --git", "index", the rename lines, "---" and
+	// "+++") are left out; the viewer reads only the hunks.
 	Patch string
 	// Code says why Patch is empty, when it is.
 	Code string
@@ -66,12 +68,41 @@ func (r PatchResult) Stable() bool {
 
 func noPatch(code string) (PatchResult, error) { return PatchResult{Code: code}, nil }
 
+// Patcher reads file patches for a pull request. It finds the files the
+// pull request changes, and so the old name of each renamed one, once for a
+// merge base and head, and keeps that while the answer holds; the zero value is
+// ready. It is safe for concurrent use.
+type Patcher struct {
+	mu      sync.Mutex
+	changes *changeSet
+}
+
+// changeSet is one computation of a range's changed files, shared by every
+// request that arrives while it runs and, when it succeeded, by later ones.
+type changeSet struct {
+	key   string
+	done  chan struct{}
+	files map[string]gitlocal.ChangedFile
+	err   error
+}
+
+// Patch is Patcher.Patch with nothing kept between calls.
+func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
+	return new(Patcher).Patch(ctx, req)
+}
+
 // Patch reads one file's patch for a pull request from the clone containing
 // req.Dir, once the clone is matched to the pull request's repository as
 // Resolve matches it. It never fetches. A patch that cannot be read from this
 // machine is an unavailable PatchResult, not an error; an error is a failure
 // to read something that should have been readable.
-func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
+//
+// The diff is the one the hosted service reads: -M and -l1000 over the file's
+// path, and over its old path too when the range renamed it, so a renamed file
+// shows only what changed in it. A submodule, a directory, or a diff that is
+// not exactly one file's (two for a path that is not a rename's pair) has no
+// text patch.
+func (p *Patcher) Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
 	start := req.MergeBase
 	if start == "" {
 		start = req.Base
@@ -115,29 +146,93 @@ func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
 			return PatchResult{}, fmt.Errorf("resolving commit %s: %w", id, err)
 		}
 	}
-	out, err := repo.FilePatch(ctx, oids[0], oids[1], req.Path, MaxPatchBytes)
-	switch {
-	case errors.Is(err, bundle.ErrOutputTooLarge):
-		return noPatch(CodeTooLarge)
-	case errors.Is(err, gitlocal.ErrPartialClone):
-		return noPatch(CodePartialClone)
-	case errors.Is(err, gitlocal.ErrObjectNotFound):
-		return noPatch(CodeCommitsMissing)
-	case errors.Is(err, gitlocal.ErrInvalidInput):
-		return noPatch(CodeError)
-	case err != nil:
-		return PatchResult{}, err
+	files, err := p.changedFiles(ctx, repo, oids[0], oids[1])
+	if result, handled, err := unreadable(err); handled {
+		return result, err
 	}
-	if len(out) == 0 {
+	change := files[req.Path]
+	if change.Submodule {
+		return noPatch(CodeNoTextPatch)
+	}
+	paths := []string{req.Path}
+	if change.OldPath != "" && change.OldPath != req.Path {
+		paths = []string{change.OldPath, req.Path}
+	}
+	out, err := repo.FilePatch(ctx, oids[0], oids[1], MaxPatchBytes, paths...)
+	if result, handled, err := unreadable(err); handled {
+		return result, err
+	}
+	return patchOf(string(out))
+}
+
+// unreadable turns a failure to read objects into the unavailable answer it
+// means. handled is false for no error at all.
+func unreadable(err error) (result PatchResult, handled bool, _ error) {
+	switch {
+	case err == nil:
+		return PatchResult{}, false, nil
+	case errors.Is(err, bundle.ErrOutputTooLarge):
+		result, err = noPatch(CodeTooLarge)
+	case errors.Is(err, gitlocal.ErrPartialClone):
+		result, err = noPatch(CodePartialClone)
+	case errors.Is(err, gitlocal.ErrObjectNotFound):
+		result, err = noPatch(CodeCommitsMissing)
+	case errors.Is(err, gitlocal.ErrInvalidInput):
+		result, err = noPatch(CodeError)
+	default:
+		return PatchResult{}, true, err
+	}
+	return result, true, err
+}
+
+// patchOf cuts git's output down to a patch.
+func patchOf(out string) (PatchResult, error) {
+	if out == "" {
 		return noPatch(CodeUnchanged)
 	}
-	text := string(out)
-	if !strings.HasPrefix(text, "@@ ") {
-		i := strings.Index(text, "\n@@ ")
-		if i < 0 {
-			return noPatch(CodeNoTextPatch)
-		}
-		text = text[i+1:]
+	// One file's diff, a rename's old and new name included, has one
+	// "diff --git" line. More is a directory, or a pair git did not detect as a
+	// rename, which is no file's patch.
+	if !strings.HasPrefix(out, "diff --git ") || strings.Count("\n"+out, "\ndiff --git ") != 1 {
+		return noPatch(CodeNoTextPatch)
 	}
-	return PatchResult{Available: true, Patch: text}, nil
+	i := strings.Index("\n"+out, "\n@@ ")
+	if i < 0 {
+		return noPatch(CodeNoTextPatch)
+	}
+	return PatchResult{Available: true, Patch: out[i:]}, nil
+}
+
+// changedFiles is the range's changed files, found once and kept while the
+// commits stay the same. A failure is not kept.
+func (p *Patcher) changedFiles(ctx context.Context, repo *gitlocal.Repo, base, head string) (map[string]gitlocal.ChangedFile, error) {
+	key := base + ".." + head
+	p.mu.Lock()
+	set := p.changes
+	if set == nil || set.key != key {
+		set = &changeSet{key: key, done: make(chan struct{})}
+		p.changes = set
+		p.mu.Unlock()
+		set.files, set.err = repo.ChangedFiles(ctx, base, head)
+		if set.err != nil {
+			p.mu.Lock()
+			if p.changes == set {
+				p.changes = nil
+			}
+			p.mu.Unlock()
+		}
+		close(set.done)
+		return set.files, set.err
+	}
+	p.mu.Unlock()
+	select {
+	case <-set.done:
+		if set.err != nil {
+			// The computation that failed was another request's: ask again.
+			return p.changedFiles(ctx, repo, base, head)
+		}
+		return set.files, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

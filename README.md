@@ -106,8 +106,9 @@ The same clone fills in code excerpts the document left out. Opening a cited
 hunk's evidence asks `baum view` for that file's patch between the merge base
 (else the base) and the head, only for files the document cites, read with the
 same private, no-fetch reads and the same clone matching. A binary or very
-large file (over 1 MiB), a file the range does not change, a renamed file and a
-clone without the commits keep the link to GitHub instead.
+large file (over 1 MiB), a submodule, a file the range does not change and a clone
+without the commits keep the link to GitHub instead. A renamed file is read
+under its old name too, as the hosted service reads it.
 
 Opening one of those linked sessions shows its full transcript, with the same
 session card the hosted app uses, as a conversation: every prompt with the

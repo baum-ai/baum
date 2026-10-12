@@ -79,8 +79,9 @@ func runView(cmd *cobra.Command, args []string) error {
 			Sessions: stores, Warn: cmd.ErrOrStderr(),
 		})
 	}
+	patcher := new(locallink.Patcher)
 	opts.Patch = func(ctx context.Context, review viewserver.Review, path string) (locallink.PatchResult, error) {
-		return locallink.Patch(ctx, locallink.PatchRequest{
+		return patcher.Patch(ctx, locallink.PatchRequest{
 			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Path: path,
 		})
 	}

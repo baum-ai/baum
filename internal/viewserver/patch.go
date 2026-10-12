@@ -70,17 +70,19 @@ func hunkPaths(document []byte) map[string]struct{} {
 // handlePatch serves GET /api/patch?path=<repository-relative path>: the patch
 // of one file the current document cites, between the document's merge base
 // (its base when it records none) and its head, read from the clone containing
-// the server's working directory.
+// the server's working directory. A renamed file is diffed with its old name,
+// as the hosted service does.
 //
 // A path that is not the path of a hunk of the current document is 404,
 // whatever this machine holds. Every other outcome is 200 with {"patch":"..."}
-// (the file's unified diff from its first "@@" line, as the hosted app's
-// patches are) or {"patch":null}: a binary file, a path the range does not
+// (the file's diff from its first "@@" line, without git's header lines) or
+// {"patch":null}: a binary file, a submodule, a directory, a path the range does not
 // change, commits or objects the clone lacks, a clone that is not the
 // document's repository, a patch over locallink.MaxPatchBytes. The viewer
 // treats null as no excerpt and keeps its link to GitHub. A failure that may
-// pass, such as a git command that fails or runs out of time, is 500, so the
-// viewer tries again the next time the excerpt is opened.
+// pass, such as a git command that fails or runs out of time, is 500, and a
+// server that is stopping is 503, so the viewer tries again the next time the
+// excerpt is opened.
 func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("path")
 	cache, review, ok := s.patchTarget(file)
@@ -90,7 +92,11 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := s.patch(r.Context(), cache, review, file)
 	switch {
-	case r.Context().Err() != nil, errors.Is(err, errStopping):
+	case r.Context().Err() != nil:
+		return
+	case errors.Is(err, errStopping), err != nil && s.life.Err() != nil:
+		// An empty 200 would read as a patch that does not exist and be kept.
+		http.Error(w, "the server is stopping", http.StatusServiceUnavailable)
 		return
 	case err != nil:
 		_, _ = fmt.Fprintf(s.opts.Warn, "warning: cannot read a patch: %v\n", err)
