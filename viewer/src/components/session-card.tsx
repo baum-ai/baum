@@ -44,6 +44,9 @@ function outcomeRule(session: TranscriptSession): string {
 
 /** A card that answers the pointer: it lifts a pixel and takes a shadow, the
  *  one place in a flat page where depth says "this opens". */
+/** A model named by its id, when the host names none. */
+const modelId = (model: string) => model;
+
 const LIFT =
   "border-l-2 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:shadow-(--shadow-raised) motion-reduce:transition-none motion-reduce:hover:translate-y-0";
 
@@ -74,7 +77,7 @@ export function SessionCard({
   source,
   formatCost,
   renderAvatar,
-  modelLabel = (model) => model,
+  modelLabel = modelId,
   restrictedNote = "This session's prompts, metadata, usage, and activity are not shown here.",
 }: {
   session: TranscriptSession;

@@ -794,7 +794,11 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
             <SubagentConversation detail={detail} onRetry={load} />
           ) : (
             <>
-              <SystemNote>This subagent's own transcript was not captured.</SystemNote>
+              {/* A host that cannot load a captured transcript shows the
+                  input alone rather than call it missing. */}
+              {subagent.session_id === "" ? (
+                <SystemNote>This subagent's own transcript was not captured.</SystemNote>
+              ) : null}
               <p className="text-xs text-(--text-tertiary)">Input to {subagent.name}</p>
               <pre className="max-h-56 overflow-auto rounded-md bg-(--surface-card) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
                 {subagent.input}
