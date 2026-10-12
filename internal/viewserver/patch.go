@@ -160,9 +160,10 @@ func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, fi
 	if start {
 		go func() {
 			defer s.compute.Done()
+			// keep is false whenever err is set, so a failure is never kept.
 			keep := false
 			job.body, keep, job.err = s.computePatch(review, file)
-			if job.err != nil || !keep {
+			if !keep {
 				cache.mu.Lock()
 				if cache.jobs[file] == job {
 					delete(cache.jobs, file)

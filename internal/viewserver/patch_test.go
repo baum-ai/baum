@@ -165,7 +165,7 @@ func TestPatchWithoutAFunctionOrForTheSampleIsNull(t *testing.T) {
 func TestAFailedPatchIsAServerErrorAndTriedAgain(t *testing.T) {
 	p := &patcher{reply: func(n int, _ string) (locallink.PatchResult, error) {
 		if n == 1 {
-			return locallink.PatchResult{}, errors.New("git broke: /home/someone/secret")
+			return locallink.PatchResult{}, errors.New("git broke: /srv/private-clone/secret")
 		}
 		return locallink.PatchResult{Available: true, Patch: "@@ -1 +1 @@\n-a\n+b\n"}, nil
 	}}
