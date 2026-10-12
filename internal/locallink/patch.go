@@ -146,11 +146,19 @@ func (p *Patcher) Patch(ctx context.Context, req PatchRequest) (PatchResult, err
 			return PatchResult{}, fmt.Errorf("resolving commit %s: %w", id, err)
 		}
 	}
-	files, err := p.changedFiles(ctx, repo, oids[0], oids[1])
+	files, err := p.changedFiles(ctx, oids[0], oids[1], func(ctx context.Context) (map[string]gitlocal.ChangedFile, error) {
+		return repo.ChangedFiles(ctx, oids[0], oids[1])
+	})
 	if result, handled, err := unreadable(err); handled {
 		return result, err
 	}
-	change := files[req.Path]
+	// Only a path the range changes has a patch. Any other, a directory with
+	// one changed file in it included, is unchanged: its diff would be that of
+	// the files under it.
+	change, changed := files[req.Path]
+	if !changed {
+		return noPatch(CodeUnchanged)
+	}
 	if change.Submodule {
 		return noPatch(CodeNoTextPatch)
 	}
@@ -162,7 +170,7 @@ func (p *Patcher) Patch(ctx context.Context, req PatchRequest) (PatchResult, err
 	if result, handled, err := unreadable(err); handled {
 		return result, err
 	}
-	return patchOf(string(out))
+	return patchOf(string(out), change.TypeChanged)
 }
 
 // unreadable turns a failure to read objects into the unavailable answer it
@@ -185,27 +193,42 @@ func unreadable(err error) (result PatchResult, handled bool, _ error) {
 	return result, true, err
 }
 
-// patchOf cuts git's output down to a patch.
-func patchOf(out string) (PatchResult, error) {
+// patchOf cuts git's output down to a patch. typeChanged says the file changed
+// type (a file to a symlink, say), which git diffs as a deletion and an
+// addition of the same path, as the hosted service shows it.
+func patchOf(out string, typeChanged bool) (PatchResult, error) {
 	if out == "" {
 		return noPatch(CodeUnchanged)
 	}
 	// One file's diff, a rename's old and new name included, has one
-	// "diff --git" line. More is a directory, or a pair git did not detect as a
-	// rename, which is no file's patch.
-	if !strings.HasPrefix(out, "diff --git ") || strings.Count("\n"+out, "\ndiff --git ") != 1 {
+	// "diff --git" line, and a type change two for the same path. Any more is
+	// several files, which is no file's patch.
+	headers := strings.Split("\n"+out, "\ndiff --git ")[1:]
+	for i := range headers {
+		headers[i], _, _ = strings.Cut(headers[i], "\n")
+	}
+	oneFile := len(headers) == 1 || typeChanged && len(headers) == 2 && headers[0] == headers[1]
+	if !strings.HasPrefix(out, "diff --git ") || !oneFile {
 		return noPatch(CodeNoTextPatch)
 	}
-	i := strings.Index("\n"+out, "\n@@ ")
-	if i < 0 {
+	// Each section's header lines go, so that a second section's "---" line is
+	// not read as a removed line.
+	var patch strings.Builder
+	for _, section := range strings.Split("\n"+out, "\ndiff --git ")[1:] {
+		if i := strings.Index("\n"+section, "\n@@ "); i >= 0 {
+			patch.WriteString(strings.TrimSuffix(section[i:], "\n"))
+			patch.WriteString("\n")
+		}
+	}
+	if patch.Len() == 0 {
 		return noPatch(CodeNoTextPatch)
 	}
-	return PatchResult{Available: true, Patch: out[i:]}, nil
+	return PatchResult{Available: true, Patch: patch.String()}, nil
 }
 
 // changedFiles is the range's changed files, found once and kept while the
 // commits stay the same. A failure is not kept.
-func (p *Patcher) changedFiles(ctx context.Context, repo *gitlocal.Repo, base, head string) (map[string]gitlocal.ChangedFile, error) {
+func (p *Patcher) changedFiles(ctx context.Context, base, head string, load func(context.Context) (map[string]gitlocal.ChangedFile, error)) (map[string]gitlocal.ChangedFile, error) {
 	key := base + ".." + head
 	p.mu.Lock()
 	set := p.changes
@@ -213,7 +236,7 @@ func (p *Patcher) changedFiles(ctx context.Context, repo *gitlocal.Repo, base, h
 		set = &changeSet{key: key, done: make(chan struct{})}
 		p.changes = set
 		p.mu.Unlock()
-		set.files, set.err = repo.ChangedFiles(ctx, base, head)
+		set.files, set.err = load(ctx)
 		if set.err != nil {
 			p.mu.Lock()
 			if p.changes == set {
@@ -229,7 +252,7 @@ func (p *Patcher) changedFiles(ctx context.Context, repo *gitlocal.Repo, base, h
 	case <-set.done:
 		if set.err != nil {
 			// The computation that failed was another request's: ask again.
-			return p.changedFiles(ctx, repo, base, head)
+			return p.changedFiles(ctx, base, head, load)
 		}
 		return set.files, nil
 	case <-ctx.Done():

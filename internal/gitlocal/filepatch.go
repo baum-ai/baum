@@ -3,7 +3,6 @@ package gitlocal
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // ChangedFile is one file a range changes, as git lists it with rename
@@ -15,13 +14,15 @@ type ChangedFile struct {
 	OldPath string
 	// Submodule is a path that is a submodule (a gitlink) on either side.
 	Submodule bool
+	// TypeChanged is a path whose type changed, a file to a symlink say.
+	TypeChanged bool
 }
 
 const gitlinkMode = "160000"
 
 // ChangedFiles lists the files that differ between two commits, with the
 // rename detection a pull request page uses (-M, with -l1000 bounding the
-// work), by the new path. It reads only objects the clone holds and never
+// work), by the new path, or by the path a deleted file had. It reads only objects the clone holds and never
 // fetches: objects it lacks are ErrObjectNotFound, or ErrPartialClone in a
 // partial clone. A list over MaxComparisonBytes is bundle.ErrOutputTooLarge.
 func (r *Repo) ChangedFiles(ctx context.Context, baseOID, headOID string) (map[string]ChangedFile, error) {
@@ -38,28 +39,22 @@ func (r *Repo) ChangedFiles(ctx context.Context, baseOID, headOID string) (map[s
 	if err != nil {
 		return nil, fmt.Errorf("listing changed files: %w", rangeError(err))
 	}
-	files := map[string]ChangedFile{}
-	tokens := strings.Split(string(out), "\x00")
-	for i := 0; i < len(tokens); i++ {
-		meta, ok := strings.CutPrefix(tokens[i], ":")
-		if !ok {
-			continue
+	changes, err := parseRawDiff(out)
+	if err != nil {
+		return nil, fmt.Errorf("listing changed files: %w", err)
+	}
+	files := make(map[string]ChangedFile, len(changes))
+	for _, change := range changes {
+		file := ChangedFile{
+			Path: change.NewPath, OldPath: change.OldPath,
+			Submodule:   change.OldMode == gitlinkMode || change.NewMode == gitlinkMode,
+			TypeChanged: change.Status == "type_changed",
 		}
-		// ":<old mode> <new mode> <old id> <new id> <status>", then the path,
-		// or the old and the new path for a rename or a copy.
-		fields := strings.Fields(meta)
-		if len(fields) != 5 || i+1 >= len(tokens) {
-			return nil, fmt.Errorf("listing changed files: unexpected git diff output")
+		if change.NewPath == "" { // a deletion is listed by the path it had
+			file.Path, file.OldPath = change.OldPath, ""
 		}
-		file := ChangedFile{Submodule: fields[0] == gitlinkMode || fields[1] == gitlinkMode}
-		i++
-		file.Path = tokens[i]
-		if strings.HasPrefix(fields[4], "R") || strings.HasPrefix(fields[4], "C") {
-			if i+1 >= len(tokens) {
-				return nil, fmt.Errorf("listing changed files: unexpected git diff output")
-			}
-			i++
-			file.OldPath, file.Path = file.Path, tokens[i]
+		if change.Status == "added" || change.OldPath == change.NewPath {
+			file.OldPath = ""
 		}
 		files[file.Path] = file
 	}
