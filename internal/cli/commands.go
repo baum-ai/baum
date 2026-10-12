@@ -36,10 +36,14 @@ func newViewCommand() *cobra.Command {
 		Use:   "view [document.json]",
 		Short: "Serve the embedded viewer for a review document on localhost",
 		Long: `View serves the embedded viewer for a baum.review/1 document on 127.0.0.1 and
-opens it in the browser. It reads only the file given, or the built-in sample,
-and never fetches anything. A document with schema or rule findings is still
-served, and the findings print to stderr. The document must be valid JSON of
-at most 32 MiB. Give exactly one of a file, --sample and --pr.`,
+opens it in the browser. It reads the file given, or the built-in sample, and
+never contacts a server or fetches anything. When the document's pull request
+belongs to the clone containing the current directory and the clone already has
+its commits, the viewer also shows the coding-agent sessions on this machine
+linked to them, with their text redacted. A document with schema or rule
+findings is still served, and the findings print to stderr. The document must
+be valid JSON of at most 32 MiB. Give exactly one of a file, --sample and
+--pr.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runView,
 	}
@@ -48,6 +52,12 @@ at most 32 MiB. Give exactly one of a file, --sample and --pr.`,
 	cmd.Flags().Int("port", 0, "listen on this port instead of a free one")
 	cmd.Flags().Bool("no-open", false, "print the URL without opening a browser")
 	cmd.Flags().Bool("watch", false, "reload the viewer when the document file changes")
+	cmd.Flags().String("claude-dir", "", "Claude Code projects directory (default ~/.claude/projects)")
+	cmd.Flags().String("codex-dir", "", "Codex sessions directory (default ~/.codex/sessions)")
+	cmd.Flags().StringArray("cursor-store", nil, "Cursor state.vscdb file or directory holding one (repeatable)")
+	for _, hidden := range []string{"claude-dir", "codex-dir", "cursor-store"} {
+		_ = cmd.Flags().MarkHidden(hidden)
+	}
 	return cmd
 }
 

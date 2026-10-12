@@ -310,7 +310,7 @@ through props and context:
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
 | header slots | no | not used | statistics, generation controls, approval state, a back link |
-| rail groups | no | linked sessions and commits from the local session stores | changed files, linked sessions and commits, each listed in the rail with the host's pane |
+| rail groups | no | Sessions and Commits, from `/api/sessions` (below) | changed files, linked sessions and commits, each listed in the rail with the host's pane |
 | version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
 
 Optional seams default to absent, and the viewer renders the document alone.
@@ -326,18 +326,39 @@ package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
 built output is committed.
 
+`baum view`'s app fills the `sessions` and `commits` slots from
+`GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
+view models and never fetch. The app asks once when the page opens, and again
+on each `document` event (the server recomputes when the head changes), and
+keeps the last answer on screen while it does.
+
+- While the request is out, both groups are in the loading state, so a
+  `?pane=sessions` or `?pane=commits` link survives; the rest of the review
+  does not wait for it. The first request can take seconds.
+- Available: the Sessions group lists the linked sessions, each with the
+  commits it is linked to, and the Commits group lists every commit with the
+  sessions matched to it, the method and the confidence. Each opens the other.
+- Unavailable, or a first request that fails (network error, a status other
+  than 200, a body that is not an answer, a field of the wrong type): the
+  Sessions group lists the sessions the document itself recorded, under a note
+  giving the server's `reason` as plain text (a failed request says it could
+  not be read), and the Commits group is left out. Only a failed request with
+  no session in the document shows the group as failed. A later request that
+  fails keeps the last answer; a server answer of unavailable replaces it.
+
 ### How `baum view` serves it
 
 `internal/viewserver` is the host. `baum view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
-or a free one, and prints the URL. It never fetches anything. The server has
-three API routes and an asset fallback:
+or a free one, and prints the URL. It never contacts a server or fetches
+anything. The server has four API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
 | `GET /api/document` | the document's bytes exactly as read, `no-store` |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
+| `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -354,6 +375,127 @@ file is polled by path every 500ms and read once it has stopped changing, so an
 editor's save by rename is followed. A change that is not valid JSON or is too
 large is warned about and ignored, and the previous document keeps being
 served. Findings print again on each accepted change.
+
+### Local session linkage
+
+`internal/locallink` links the sessions on this machine to a pull request's
+commits using only this machine; `baum view` serves it, and the session
+evidence that `baum bundle` collects can reuse it without a server. `Resolve`
+takes the pull request's `owner/name`, head and base commit ids, a directory
+inside the clone and the session store overrides, and does this:
+
+1. Opens the clone containing the directory. A directory outside a clone is
+   `not_a_clone`.
+2. Compares the URL of each of the clone's remotes with the repository. `owner/name` is taken
+   from an HTTPS, HTTP, SSH, `git://` or scp-like URL, ignoring case, a `.git`
+   suffix, credentials, host and port; a local path or `file://` URL names no
+   repository. Any matching remote links, so a fork clone (origin the fork,
+   the pull request's repository as `upstream`) works. If none matches the
+   answer is `remote_mismatch`, and its reason lists up to five remotes as
+   `name → owner/name` (never a URL or its credentials); a clone with no
+   remotes says so.
+3. Expands the document's head, and its merge base (else its base), which the
+   schema allows to be abbreviated to 7 hex digits, with
+   `gitlocal.ResolveCommit` in the clone; an abbreviation matching several
+   commits is `ambiguous_commit` and anything that is not hex is `no_head`. The
+   merge base is preferred because it gives the same range and is more likely
+   to be local. It then lists the commits in `merge_base..head` with
+   `gitlocal.Commits`: oid, author, committer date, parents, subject, trailers
+   and the files each changed (without rename detection, which would need
+   blobs, so a rename lists both paths). A head or start the clone lacks is
+   `commits_missing`; a partial clone that has the commits but not the trees
+   is `partial_clone`. It never fetches: every read of objects, including the
+   Entire checkpoint branch, runs in the private repository `gitlocal` makes,
+   which has no remote and no promisor configuration, with
+   `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot download an object;
+   a checkpoint whose objects are missing is skipped with a warning. Only the
+   remotes' URLs are read from configuration, never contacted.
+4. Loads the sessions with `sessions.Load`, only those last modified within
+   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread, and
+   projects each into a
+   `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
+   `Agent` the vendor that ran, `Source` the store it came from, branches, files
+   touched and edited, and role-tagged commit refs from `sessioncorrelate`,
+   and the transcript's modified time as `IngestedAt`, which bounds a session
+   that recorded no end. `UserEmail` is empty, so it never rules a commit out.
+5. Projects each commit into a `linkage.EnrichedCommit`: the first parent as
+   `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
+   agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
+   empty, which the branch step reads as unknown.
+6. Matches every commit with `linkage.MatchCommits`, the default config and
+   `steps.Default`, and keeps only matched edges. A session with several
+   snapshots (Entire records one per checkpoint, each fuller than the last) is
+   matched once, as its newest snapshot.
+
+The result is redacted with the engine and the row summary that `baum sessions`
+uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
+address or session store path.
+
+`GET /api/sessions` answers one of two shapes. Available:
+
+```json
+{
+  "available": true,
+  "sessions": [
+    {
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "source": "claude_code",
+      "vendor": "claude_code",
+      "title": "Ask xxx.xxxxxxxx@xxxxxxx.xxx about the feature (XXXXX9XX9XXX9XXX9XXX)",
+      "branch": "feature",
+      "started_at": "2026-07-01T10:00:00Z",
+      "ended_at": "2026-07-01T10:30:00Z",
+      "outcome": "committed",
+      "edited_files": 0
+    }
+  ],
+  "commits": [
+    {
+      "oid": "3f2c0a9e5b1d4c6a8e7f90123456789abcdef012",
+      "subject": "Add the feature",
+      "author": "Grace Hopper",
+      "committed_at": "2026-07-01T10:30:00Z",
+      "links": [{ "session": "aaaaaaaa-0000-4000-8000-000000000001", "method": "commit_ref", "confidence": 0.95 }]
+    }
+  ]
+}
+```
+
+`sessions` holds only sessions with at least one matched commit, ordered by when
+their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
+empty for a commit no session matched. `links` are ordered by confidence;
+`method` is `commit_ref`, `start_commit` or `files_overlap`, and `source` is
+the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
+`vendor` for a session an Entire checkpoint recorded. A pull request none of
+whose commits match still answers `available` with `"sessions": []`. A subject
+or author is at most 200 characters.
+
+Unavailable:
+
+```json
+{ "available": false, "code": "commits_missing", "reason": "this clone does not have the pull request's commits; ..." }
+```
+
+`code` is one of `sample` (the built-in example, which belongs to no clone),
+`no_head` (the document lacks a repository, head or base, or they are not hex
+commit ids), `ambiguous_commit`, `not_a_clone`, `remote_mismatch`,
+`commits_missing`, `partial_clone`, `too_many_commits` (over 2000) and `error`
+(anything else, including a computation that took more than two minutes; the
+cause is printed to stderr, not sent).
+The viewer then falls back to the document's own sessions, under a note with
+the reason, and omits the Commits group.
+
+The route is lazy and cached. Nothing is computed at start-up; the first
+request starts the computation, and requests that arrive meanwhile wait for it
+instead of starting another. An available answer is kept until the document's
+repository, head or base changes, which with `--watch` happens when the file
+is rewritten with a new head. An unavailable answer is not kept, so fetching
+the commits takes effect on the next request, except an `error`, which is kept
+for 30 seconds so that reloading does not start a slow computation again each
+time. When the server stops, it cancels a running computation and waits up to
+ten seconds for it to remove its private repository. The route sits behind the same
+host check and security headers as the others, and only `GET` and `HEAD` are
+allowed.
 
 The server exposes `Mux` and `Use` so a host with its own routes or
 authentication, such as a later `baum ui`, extends it without changing these

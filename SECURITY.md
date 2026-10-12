@@ -39,6 +39,20 @@ verified, baum uses a copy embedded at release. Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else.
 
+## Reading your clone without downloading anything
+
+`baum sessions` and `baum view` read your clone with git but never use the
+network. They run fixed git commands with no shell. Refs are read in your clone;
+commits, trees and Entire checkpoints are read from a private temporary
+repository that borrows the clone's objects and has no remote, so a partial
+clone's missing objects (a `--filter` clone with a promisor remote) are skipped
+with a warning, never downloaded. Each command also runs with
+`GIT_NO_LAZY_FETCH=1` and without prompts. Those object reads also ignore your
+global and system git configuration, which could otherwise run a filter (such
+as an LFS smudge, which contacts a server) or a signature program on a tree
+from a clone you have not vetted. The clone's remote URLs are read as
+text to match the pull request's repository, and are never contacted.
+
 ## Agent isolation
 
 The `claude`, `codex` and `cursor-agent` backends run on your machine under
