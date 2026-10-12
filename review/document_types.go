@@ -41,6 +41,7 @@ type reviewDocument struct {
 	Review          documentReview        `json:"review"`
 	Summary         documentSummary       `json:"summary"`
 	Stats           documentStats         `json:"stats"`
+	Stack           *documentStack        `json:"stack,omitempty"`
 	Sections        []documentSection     `json:"sections"`
 	AgentReviews    []documentAgentReview `json:"agent_reviews"`
 	UnassignedHunks []string              `json:"unassigned_hunks"`
@@ -189,6 +190,9 @@ type sectionContent struct {
 	Attention json.RawMessage    `json:"attention"`
 	Evidence  []documentEvidence `json:"evidence"`
 	Blocks    json.RawMessage    `json:"blocks"`
+	// PullRequests names the stack members a section covers; it is absent on a
+	// single-pull-request document.
+	PullRequests []int `json:"pull_requests,omitempty"`
 	// Assessment is absent on mechanical sections and on sections written
 	// before assessments existed.
 	Assessment *sectionAssessment `json:"assessment,omitempty"`
@@ -205,8 +209,22 @@ type sectionAssessmentReason struct {
 	Anchors []documentAnchor `json:"anchors"`
 }
 
+// documentStack is the stack a stack review covers: its title and the member
+// pull requests, each at the head and review version the review read.
+type documentStack struct {
+	Title   string                `json:"title"`
+	Members []documentStackMember `json:"members"`
+}
+
+type documentStackMember struct {
+	Number        int    `json:"number"`
+	HeadSHA       string `json:"head_sha"`
+	ReviewVersion int    `json:"review_version"`
+}
+
 type authoredDocument struct {
 	Schema    string            `json:"schema"`
+	Stack     *documentStack    `json:"stack,omitempty"`
 	Summary   json.RawMessage   `json:"summary"`
 	Sections  []authoredSection `json:"sections"`
 	Relations json.RawMessage   `json:"relations"`
