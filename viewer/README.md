@@ -126,6 +126,26 @@ The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot. The `baum` binary fills
 it from the session stores on the user's machine.
 
+Wherever a session's prompts are quoted (a linked session's prompts in the
+Activity tab, the prompts behind the Summary's intent), they are drawn with
+`components/chat.tsx`, the pieces a host's own transcript is built from too:
+each prompt is a bubble on the right with its number and, where the document
+records it, its time in the corner, shown as typed with only its pasted code
+fences rendered as code, and folded to a few lines with "Show all" when it is
+taller. A pill marks each new day. Prompts drawn from several sessions are
+introduced by a pill naming each session's agent, numbered when one agent has
+several ("Codex session 2"), and each session counts its own days. Days and
+times are the reader's, so they appear once the page is in the browser. A
+host passes the author's name and avatar, and how a number reads ("Turn 3"),
+when it has them. A prompt bubble can instead carry an instruction one agent
+wrote another (`kind="instruction"`), with the writing agent's mark
+(`AgentAvatar`) as its avatar. An agent reply
+(`AgentText`) renders as Markdown with any HTML tags shown as written, named
+by its harness or by an `author` the host gives. A
+decision's evidence stays a short quote rather than a bubble: it is an
+excerpt from somewhere in the session, and the document does not record who
+said it.
+
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
 host that is still loading a group should pass its slot in a loading state

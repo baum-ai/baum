@@ -1,6 +1,7 @@
 import pluralize from "pluralize";
 import { useState } from "react";
 
+import { harnessName } from "../agent-names";
 import {
   behaviourChanges,
   type BehaviourSection,
@@ -14,6 +15,7 @@ import {
   type TriageRisk,
   triageRisks,
 } from "../review-document";
+import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
 import { formatRelative } from "./format";
@@ -53,6 +55,15 @@ export function ReviewSummary({
   const { summary } = document;
   const intent = summaryIntent(document);
   const prompts = intentPrompts(document, intent);
+  // An agent with several sessions here numbers them, so they read apart.
+  const sessionsOf = (vendor: string) => [
+    ...new Set(prompts.filter((each) => each.vendor === vendor).map((each) => each.session)),
+  ];
+  const sessionLabel = (prompt: (typeof prompts)[number]) => {
+    const agent = harnessName(prompt.vendor);
+    const sessions = sessionsOf(prompt.vendor);
+    return sessions.length > 1 ? `${agent} session ${sessions.indexOf(prompt.session) + 1}` : agent;
+  };
   const triage = triageRisks(document);
   const behaviour = behaviourChanges(document);
 
@@ -127,24 +138,13 @@ export function ReviewSummary({
                   <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
                     From {pluralize("session prompt", prompts.length, true)}
                   </summary>
-                  <ol className="mt-2 space-y-2">
-                    {prompts.map((prompt) => (
-                      <li key={prompt.id} className="flex gap-2 text-base">
-                        <span className="w-6 flex-none text-right tabular-nums text-(--text-tertiary)">
-                          {prompt.index}
-                        </span>
-                        {prompt.text ? (
-                          <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                            {prompt.text}
-                          </Markdown>
-                        ) : (
-                          <span className="min-w-0 flex-1 text-(--text-tertiary)">
-                            This prompt is not carried in the document.
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
+                  <QuotedPrompts
+                    className="mt-2"
+                    prompts={prompts.map((prompt) => ({
+                      ...prompt,
+                      session: { id: prompt.session, label: sessionLabel(prompt) },
+                    }))}
+                  />
                 </details>
               )}
             </Part>
