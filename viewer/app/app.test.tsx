@@ -967,3 +967,89 @@ describe("AppLink", () => {
     expect(window.location.search).toBe("");
   });
 });
+
+describe("App code excerpts", () => {
+  const CITED = "h_141757b19901";
+  const MARK = "served by baum view";
+
+  /** The example with the cited hunk's stored excerpt left out, as a review
+   *  generated under a budget leaves it. */
+  function withoutExcerpt(): { document: ReviewDocument; path: string; patch: string } {
+    const document = structuredClone(current);
+    const hunk = document.index.hunks.find((candidate) => candidate.id === CITED)!;
+    const stored = hunk.diff!;
+    delete hunk.diff;
+    const body = stored.lines.map((line) => {
+      const text = line.text.startsWith("func (p RetryPolicy) Delay")
+        ? `${line.text} // ${MARK}`
+        : line.text;
+      return `${line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}${text}`;
+    });
+    return { document, path: hunk.path, patch: `${stored.header}\n${body.join("\n")}\n` };
+  }
+
+  beforeEach(() => {
+    // The section whose risks cite the hunk.
+    window.history.replaceState(null, "", `/?pane=section&section=${current.sections[0]!.id}`);
+  });
+
+  const evidence = () =>
+    [...container.querySelectorAll("details")].find((details) =>
+      details.querySelector("summary")?.getAttribute("aria-label")?.startsWith("Code evidence"),
+    )!;
+  const toggle = (open: boolean) =>
+    act(async () => {
+      evidence().open = open;
+      evidence().dispatchEvent(new Event("toggle"));
+    });
+
+  it("passes the viewer a patch source, so an omitted excerpt shows the clone's diff", async () => {
+    const { document, path, patch } = withoutExcerpt();
+    const patchRequests: string[] = [];
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).startsWith("/api/patch")) {
+        patchRequests.push(String(url));
+        return respond({ patch });
+      }
+      return respond(document);
+    });
+    await mount();
+    expect(evidence().textContent).not.toContain(MARK);
+    expect(patchRequests).toEqual([]);
+
+    await toggle(true);
+    expect(patchRequests).toEqual([`/api/patch?path=${encodeURIComponent(path)}`]);
+    expect(evidence().textContent).toContain(MARK);
+    expect(evidence().textContent).not.toContain("Excerpt unavailable");
+  });
+
+  it("keeps the link to the source when the clone has no patch", async () => {
+    const { document } = withoutExcerpt();
+    fetchMock.mockImplementation(async (url) =>
+      String(url).startsWith("/api/patch") ? respond({ patch: null }) : respond(document),
+    );
+    await mount();
+    await toggle(true);
+
+    expect(evidence().textContent).toContain("Excerpt unavailable");
+    expect(evidence().textContent).not.toContain(MARK);
+  });
+
+  it("asks again when the request failed and the excerpt is opened again", async () => {
+    const { document, patch } = withoutExcerpt();
+    let patchCalls = 0;
+    fetchMock.mockImplementation(async (url) => {
+      if (!String(url).startsWith("/api/patch")) return respond(document);
+      return ++patchCalls === 1 ? respond({}, 500) : respond({ patch });
+    });
+    await mount();
+    await toggle(true);
+    expect(patchCalls).toBe(1);
+    expect(evidence().textContent).toContain("Excerpt unavailable");
+
+    await toggle(false);
+    await toggle(true);
+    expect(patchCalls).toBe(2);
+    expect(evidence().textContent).toContain(MARK);
+  });
+});

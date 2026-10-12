@@ -20,6 +20,7 @@ import {
   ViewerLinkProvider,
 } from "../src/navigation";
 import type { ReviewDocument } from "../src/review-document";
+import { createPatchSource } from "./local-patches";
 import { fetchSessions, sessionLists, type SessionsLoad } from "./local-sessions";
 import { SessionTranscript } from "./session-transcript";
 
@@ -29,7 +30,8 @@ import { SessionTranscript } from "./session-transcript";
  *  sessions and commits on this machine, which fill the Sessions and Commits
  *  groups; where it has none, the Sessions group lists the document's own. A
  *  linked session opened alone shows its transcript from
- *  `/api/sessions/{id}`, asked for only then. */
+ *  `/api/sessions/{id}`, asked for only then. A code excerpt the document left
+ *  out is read from `/api/patch`, when its evidence is opened. */
 
 const SCHEMA = "baum.review/1";
 
@@ -308,6 +310,12 @@ export function App() {
     [lists, linkedHere],
   );
   const commits = useMemo(() => (lists?.commits ? commitsSlot(lists.commits) : undefined), [lists]);
+  // The server reads patches for the document it serves now, and keeps none of
+  // an earlier one, so a rewritten document starts with no patches fetched.
+  const hunkPatches = useMemo(
+    () => (document ? createPatchSource(document.review.version) : null),
+    [document],
+  );
 
   useEffect(() => {
     window.document.title = document ? documentTitle(document) : "baum";
@@ -325,7 +333,13 @@ export function App() {
     ) : undefined;
     body = (
       <ViewerBoundary document={document} onRetry={retry}>
-        <ReviewViewer document={document} notices={notices} sessions={sessions} commits={commits} />
+        <ReviewViewer
+          document={document}
+          notices={notices}
+          sessions={sessions}
+          commits={commits}
+          hunkPatches={hunkPatches}
+        />
       </ViewerBoundary>
     );
   } else if (load.state === "failed") {

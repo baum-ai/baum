@@ -330,6 +330,15 @@ page's own origin:
 - `GET /api/sessions` lists the sessions and commits linked on this machine,
   and `GET /api/sessions/{id}` one linked session's transcript, asked for
   only when that session is opened.
+- `GET /api/patch?path=<path>` returns `{"patch": "<unified diff>"}` or
+  `{"patch": null}` for a file the document cites, from the clone on this
+  machine. The app passes `hunkPatches` to `ReviewViewer` (see `createPatchSource`
+  in `app/local-patches.ts`) so cited code whose excerpt the document left out
+  shows the diff when its evidence is opened. It asks once per path, only for
+  the document's own version, turns a null patch, an unknown path or a body that
+  is not an answer into no patch (the excerpt keeps its link to GitHub), and
+  forgets a request that failed or got a server error, so opening the excerpt
+  again retries.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to
