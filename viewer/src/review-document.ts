@@ -1192,6 +1192,8 @@ export type CitedPrompt = {
   /** Null when the index does not carry the prompt: a restricted session, or a
    *  document generated with prompts omitted. The number still stands. */
   text: string | null;
+  /** When it was typed, where the index carries it. */
+  at?: string;
 };
 
 /** The prompts the intent lines cite, de-duplicated, in session then prompt
@@ -1207,12 +1209,14 @@ export function intentPrompts(document: ReviewDocument, lines: IntentLine[]): Ci
       const id = `${anchor.session}:${anchor.index}`;
       if (cited.has(id)) continue;
       const session = document.index.sessions.find((item) => item.id === anchor.session);
+      const prompt = session?.prompts?.find((each) => each.index === anchor.index);
       cited.set(id, {
         id,
         session: anchor.session,
         vendor: session?.vendor ?? "Session",
         index: anchor.index,
-        text: session?.prompts?.find((prompt) => prompt.index === anchor.index)?.text ?? null,
+        text: prompt?.text ?? null,
+        ...(prompt ? { at: prompt.at } : {}),
       });
     }
   }

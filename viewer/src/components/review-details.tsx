@@ -11,6 +11,7 @@ import {
   TIER_COLOR,
 } from "../review-document";
 import { HarnessName, ModelName } from "./brand-logo";
+import { QuotedPrompts } from "./chat";
 import { EM_DASH, formatDate, formatDuration } from "./format";
 import { Markdown } from "./markdown";
 import { ChecksPart } from "./review-checks";
@@ -362,16 +363,7 @@ export function SessionItem({
           <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
             {pluralize("prompt", session.prompts.length, true)}
           </summary>
-          <ol className="mt-2 space-y-2">
-            {session.prompts.map((prompt) => (
-              <li key={prompt.id} className="flex gap-2 text-base">
-                <span className="w-6 flex-none text-right tabular-nums text-(--text-tertiary)">
-                  {prompt.index}
-                </span>
-                <Markdown className="min-w-0 flex-1 text-(--text-primary)">{prompt.text}</Markdown>
-              </li>
-            ))}
-          </ol>
+          <QuotedPrompts className="mt-2" prompts={session.prompts} />
         </details>
       )}
       {session.events && session.events.length > 0 && (
