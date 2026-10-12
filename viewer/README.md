@@ -140,14 +140,58 @@ the method and confidence of each. Both open each other through
 `actions.select`. `sessionsSlot` and `commitsSlot`
 (`@baum/viewer/components/list-slots`) turn a state into the
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
-labels.
+labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
+puts the host's own content under a session opened alone, such as its
+transcript.
+
+### Session transcripts
+
+`SessionCard` (`@baum/viewer/components/session-card`) draws one session, the
+same card in the hosted app and in `baum view`: a header with the agent,
+title, date, duration, prompt count and outcome (or linked commits), the
+session's figures (models, tokens, cost when the host has prices, files,
+lines, tool calls, working directory), then the session as a conversation
+(`SessionTranscript`, `@baum/viewer/components/transcript`, built from the
+`components/chat.tsx` pieces below): each prompt as a bubble on the right, the
+agent's text replies on the left, and a quiet line of what the turn caused
+with an **Agent activity** toggle. Opened, the activity replaces the turn's
+replies: model usage, then the agent's messages in time order with each run
+of tool calls between them folded into one row, each call with its input
+(and output, when the host has it). A reply that is a preview is swapped for
+its whole message once the activity has arrived.
+
+Its props are plain view models (`TranscriptSession` and the types beside it
+in `@baum/viewer/transcript`, in the hosted API's field names, with the pure
+helpers the card uses) and what the host adds:
+
+- `source`, an optional `TranscriptSource` of loaders for what the session
+  did not arrive with: the whole session when a card without replies opens
+  (`loadSession`), a prompt's full text when a preview is expanded
+  (`loadPromptText`), and a prompt's agent activity (`loadTurnActivity`);
+- `formatCost`, which writes a cost and whether it is a lower bound;
+- `renderAvatar`, the picture beside a person's prompt;
+- `modelLabel`, which names models (the id by default), and
+  `restrictedNote`, the host's reason a restricted session shows only that
+  it is restricted (a neutral one by default).
+
+Leaving one out turns its feature off: no "Agent activity" without
+`loadTurnActivity`, no cost anywhere without `formatCost`, no avatar column
+without `renderAvatar`. Keep `source` stable, or it loads again. `focusTurn`
+marks a prompt and scrolls to it; `expand` opens the card from outside.
+Character counts are code points, as the hosts count a text's full length.
 
 The `baum` binary's app (`app/`) fills both from `GET /api/sessions`: the
 linked sessions and commits when the machine has them; otherwise the sessions
 the document recorded (under a note giving the server's reason) and no Commits
 group; and the loading state while the request is out, so a `?pane=sessions`
-or `?pane=commits` link survives. See the "Local session linkage" section of
-`oss/ARCHITECTURE.md` for the contract.
+or `?pane=commits` link survives. A linked session opened alone
+(`?pane=session&session=<id>`) asks `GET /api/sessions/{id}` for its
+redacted transcript and shows it with `SessionCard` under the session: while
+loading, on failure (with Retry), and with a note when the server cut it
+short. The answer carries every prompt's replies and every prompt's activity,
+so the card is given only a `loadTurnActivity` that reads from it, and no
+cost format or avatar. `&turn=<n>` opens it at that prompt. See the "Local session linkage"
+and "Session transcripts" sections of `oss/ARCHITECTURE.md` for the contract.
 
 Wherever a session's prompts are quoted (a linked session's prompts in the
 Activity tab, the prompts behind the Summary's intent), they are drawn with
@@ -283,6 +327,9 @@ page's own origin:
 - `GET /api/events` is a Server-Sent Events stream. A `document` event means
   the document changed, so the app fetches it again and keeps the URL, and with
   it the selection. Other events are ignored.
+- `GET /api/sessions` lists the sessions and commits linked on this machine,
+  and `GET /api/sessions/{id}` one linked session's transcript, asked for
+  only when that session is opened.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to

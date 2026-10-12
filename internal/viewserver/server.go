@@ -5,7 +5,8 @@
 // given; request paths never reach the file system. It never fetches anything.
 // The one thing it computes from this machine is GET /api/sessions, the
 // sessions linked to the document's pull request, through the function a host
-// supplies in Options.Sessions.
+// supplies in Options.Sessions, and GET /api/sessions/{id}, the redacted
+// transcript of one of them.
 // Host checking, security headers and routing are fixed here; a host such as a
 // later "baum ui" extends the server through Mux and Use.
 package viewserver
@@ -31,6 +32,7 @@ import (
 
 	"github.com/lastpersonlabs/baum/internal/locallink"
 	"github.com/lastpersonlabs/baum/internal/viewer"
+	"github.com/lastpersonlabs/baum/redact"
 )
 
 // MaxDocumentBytes is the largest document the server accepts, at start-up and
@@ -73,6 +75,10 @@ type Options struct {
 	// start-up, and its available answers are kept until the document's
 	// repository, head or base changes. Unset, /api/sessions is unavailable.
 	Sessions SessionsFunc
+	// Home is the user's home directory, written as ~ in the transcripts
+	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir, else the
+	// account's home directory.
+	Home string
 	// PollInterval is how often a watched file is checked; it defaults to
 	// 500ms. PingInterval is how often an idle event stream sends a comment
 	// line; it defaults to 20s.
@@ -112,6 +118,11 @@ type Server struct {
 	sessions       *sessionsEntry
 	sessionsClosed bool
 	compute        sync.WaitGroup
+	// engine redacts transcripts; it is compiled on the first one asked for.
+	engineOnce sync.Once
+	engine     *redact.Engine
+	engineErr  error
+	homes      []homeForm
 	// life ends when the server stops, and bounds sessions computations,
 	// which outlive the request that started them.
 	life       context.Context
@@ -147,6 +158,11 @@ func New(opts Options) (*Server, error) {
 		opts.PingInterval = defaultPingInterval
 	}
 	s := &Server{opts: opts, assets: opts.Assets, done: make(chan struct{})}
+	home := opts.Home
+	if home == "" {
+		home = userHome()
+	}
+	s.homes = homeForms(home)
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	if s.assets == nil {
 		s.assets = viewer.Assets()
@@ -174,6 +190,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleTranscript)
 	s.mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	s.mux.HandleFunc("GET /", s.handleAsset)
 	return s, nil

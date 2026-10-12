@@ -1,4 +1,5 @@
 import pluralize from "pluralize";
+import type { ReactNode } from "react";
 
 import { humanize } from "../review-document";
 import { HarnessName } from "./brand-logo";
@@ -122,15 +123,18 @@ function SessionCard({
 }
 
 /** The Sessions pane: every session of the list, or the one `selected`. It
- *  takes the sessions as data and never fetches them. */
+ *  takes the sessions as data and never fetches them; `renderSession` adds a
+ *  host's own content, such as the transcript, under the one session opened. */
 export function SessionList({
   state,
   selected,
   actions,
+  renderSession,
 }: {
   state: SessionListState;
   selected: string | null;
   actions: ReviewViewerActions;
+  renderSession?: (session: SessionView) => ReactNode;
 }) {
   if (state.status !== "ready") {
     return (
@@ -192,6 +196,7 @@ export function SessionList({
             ))}
           </ol>
         )}
+        {single && renderSession ? renderSession(shown[0]!) : null}
       </div>
     </>
   );
