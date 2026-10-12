@@ -368,7 +368,8 @@ describe("ReviewViewer for a review of more than one pull request", () => {
       </Host>,
     );
     expect(container.querySelector("h1")?.textContent).toBe("Split the importer");
-    expect(container.textContent).not.toContain("#212");
+    // The head only: a quoted prompt's "#2" and a "12:40 PM" read as "#212".
+    expect(container.querySelector("header")?.textContent).not.toContain("#212");
     expect(container.querySelector('a[aria-label="View on GitHub"]')).toBeNull();
     expect(container.textContent).toContain("Review v3 · Current");
   });
