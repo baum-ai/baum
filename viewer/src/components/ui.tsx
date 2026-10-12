@@ -10,7 +10,7 @@ import { cn, FOCUS_RING } from "./classnames";
 import { tabIds } from "./tabs";
 import { SEGMENT_BASE, SEGMENTED_TRACK, segmentedTileClass } from "./segmented";
 
-type CardSize = "standard" | "compact" | "panel";
+type CardSize = "standard" | "compact" | "panel" | "flush";
 
 type CardProps = ComponentProps<"section"> & {
   children: ReactNode;
@@ -26,6 +26,9 @@ const cardSizes: Record<CardSize, string> = {
   // A dashboard panel, sized by its grid cell rather than by itself. `min-w-0`
   // is what lets a chart inside it shrink as well as grow.
   panel: "flex min-w-0 flex-col p-5",
+  // A panel whose sections bring their own padding, such as a card with a
+  // full-width header button and ruled strips below it.
+  flush: "flex min-w-0 flex-col",
 };
 
 export function Card({ children, className, size = "standard", ...props }: CardProps) {
@@ -45,7 +48,7 @@ export function Card({ children, className, size = "standard", ...props }: CardP
 
 /** `pane` is `panel` with the title of a reading pane: the subject of its own
  *  column, rather than a label on one widget among several in a grid. */
-type CardHeaderSize = CardSize | "pane";
+type CardHeaderSize = Exclude<CardSize, "flush"> | "pane";
 
 const headerSizes = {
   standard: {
