@@ -113,6 +113,39 @@ type rawUsage struct {
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	// A speed or 1-hour count of the wrong type reads as not reported; it must
+	// not fail the line, whose other counts are good.
+	CacheCreation cacheCreation `json:"cache_creation"`
+	Speed         lenientString `json:"speed"`
+}
+
+// cacheCreation is usage.cache_creation; Hour is ephemeral_1h_input_tokens,
+// nil when absent or not an integer.
+type cacheCreation struct{ Hour *int64 }
+
+func (c *cacheCreation) UnmarshalJSON(b []byte) error {
+	var v struct {
+		Hour json.RawMessage `json:"ephemeral_1h_input_tokens"`
+	}
+	if json.Unmarshal(b, &v) != nil {
+		return nil
+	}
+	var n int64
+	if json.Unmarshal(v.Hour, &n) == nil {
+		c.Hour = &n
+	}
+	return nil
+}
+
+// lenientString is a string that reads as empty when it is anything else.
+type lenientString string
+
+func (l *lenientString) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*l = lenientString(s)
+	}
+	return nil
 }
 
 func decodeLine(raw []byte, ordinal int) (Line, error) {
@@ -172,6 +205,8 @@ func decodeLine(raw []byte, ordinal int) (Line, error) {
 				OutputTokens:             u.OutputTokens,
 				CacheCreationInputTokens: u.CacheCreationInputTokens,
 				CacheReadInputTokens:     u.CacheReadInputTokens,
+				Speed:                    string(u.Speed),
+				CacheWrite1h:             u.CacheCreation.Hour,
 			}
 		}
 	}

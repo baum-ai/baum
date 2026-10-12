@@ -17,6 +17,7 @@ import {
   RISK_SCORE_MEANING,
   riskCategory,
   riskLabel,
+  type Section,
   sectionBadgeState,
   sectionsInReviewOrder,
   type TriageRisk,
@@ -131,6 +132,9 @@ export type ReviewFilesSlot<F extends ReviewFile = ReviewFile> = {
   loading: boolean;
   failed: boolean;
   retry: () => void;
+  /** False when the host keeps no viewed marks, so the rail counts no
+   *  progress through the files. */
+  tracksViewed?: boolean;
   renderTree: (props: {
     files: F[];
     selected: string | null;
@@ -144,6 +148,10 @@ export type ReviewFilesSlot<F extends ReviewFile = ReviewFile> = {
     focus: FileLineFocus;
   }) => ReactNode;
 };
+
+/** The Details tab's Checks part as a host draws it, and whether it shows a
+ *  failure, which flags the tab as the document's own failing checks do. */
+export type ReviewDetailsChecks = { content: ReactNode; failing: boolean };
 
 /** What the side pane's first tab is told about where the reader is. */
 export type ReviewConversationContext = {
@@ -189,6 +197,11 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Drawn at the top of the pane while a section, or one of its risks, is
    *  read on the current version. */
   renderSectionAside?: (sectionId: string) => ReactNode;
+  /** Drawn on a section's line of badges, in its pane and in the Changes
+   *  overview, on whichever version is read: what the host knows of the
+   *  section, such as the pull requests a stack review's section covers.
+   *  Called with the document the section belongs to. */
+  renderSectionLabels?: (section: Section, document: ReviewDocument) => ReactNode;
   /** Drawn at the top of the pane on every selection, such as the state of
    *  the review's generation. */
   notices?: ReactNode;
@@ -198,6 +211,12 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The side pane's first tab, such as a discussion. Absent, the side pane
    *  holds only the document's details and activity. */
   conversation?: (context: ReviewConversationContext) => ReactNode;
+  /** Replaces the Details tab's Checks part for the document it describes,
+   *  such as checks gathered from elsewhere; null content leaves the part
+   *  out. */
+  detailsChecks?: (document: ReviewDocument) => ReviewDetailsChecks;
+  /** Leaves out the side pane's Activity tab. */
+  hideActivity?: boolean;
   /** Puts the cursor in the conversation's text box once the side pane has
    *  unfolded on its tab, when the reader asks to discuss the review. */
   focusConversation?: (pane: HTMLElement) => void;
@@ -314,11 +333,14 @@ function ReviewWorkspace<F extends ReviewFile>({
   fallbackSections,
   checks,
   renderSectionAside,
+  renderSectionLabels,
   notices,
   files: filesSlot,
   sessions,
   commits,
   conversation,
+  detailsChecks,
+  hideActivity = false,
   focusConversation,
   hunkPatches = null,
   onVersionsShown,
@@ -387,7 +409,10 @@ function ReviewWorkspace<F extends ReviewFile>({
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
   const [storedTab, setBarTab] = useConversationTab();
-  const barTab: ConversationTab = !conversation && storedTab === "chat" ? "details" : storedTab;
+  const barTab: ConversationTab =
+    (!conversation && storedTab === "chat") || (hideActivity && storedTab === "activity")
+      ? "details"
+      : storedTab;
   /** Opens a tab of the side pane, unfolding it if it was folded. */
   const openBarTab = (tab: ConversationTab) => {
     setBarTab(tab);
@@ -764,6 +789,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   // read, or the current one while two are compared.
   const barDocument = navigationDocument;
   const barHistorical = historicalOnly;
+  const barChecks = barDocument && detailsChecks ? detailsChecks(barDocument) : null;
   const barTabs: { value: ConversationTab; label: string; icon: ReactNode; tone?: "critical" }[] = [
     ...(conversation ? [{ value: "chat" as const, label: "Chat", icon: <TeamChatIcon /> }] : []),
     {
@@ -771,9 +797,17 @@ function ReviewWorkspace<F extends ReviewFile>({
       label: "Details",
       icon: <ChecksIcon />,
       // Failing CI is the one detail worth flagging from another tab.
-      tone: barDocument && checkStatus(barDocument).state === "failing" ? "critical" : undefined,
+      tone: (
+        barChecks
+          ? barChecks.failing
+          : barDocument && checkStatus(barDocument).state === "failing"
+      )
+        ? "critical"
+        : undefined,
     },
-    { value: "activity", label: "Activity", icon: <SessionsIcon /> },
+    ...(hideActivity
+      ? []
+      : [{ value: "activity" as const, label: "Activity", icon: <SessionsIcon /> }]),
   ];
   const asideLabel = conversation ? "Conversation" : "Details";
   // The tabs and the fold share the pane's first line; folding only exists
@@ -838,7 +872,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     "--conversation-width": `${split.width}px`,
   } as CSSProperties;
   const fileProgress =
-    !comparing && fileList
+    !comparing && fileList && filesSlot?.tracksViewed !== false
       ? { done: fileList.filter((file) => file.viewed).length, total: fileList.length }
       : undefined;
 
@@ -848,7 +882,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         {/* On a phone the head leaves out its version line, and the review's
           age sits beside the version menu instead; a review with no earlier
           version has no menu, so its number stands in for it. */}
-        {document && (versions.length > 0 || historyView.selection) ? (
+        {document && (versions.length > 0 || historyView.selection || header?.beside) ? (
           <HistoryToolbar
             currentVersion={document.review.version}
             versions={versions}
@@ -868,12 +902,17 @@ function ReviewWorkspace<F extends ReviewFile>({
                 {historyView.selection?.version}
               </span>
             )}
+            {header?.beside ? (
+              <div className="min-w-0 basis-full sm:basis-auto">{header.beside}</div>
+            ) : null}
           </HistoryToolbar>
         ) : document ? (
           <div className="flex items-center gap-3 text-base text-(--text-tertiary) sm:hidden">
             Review v{document.review.version}
             <ReviewFreshness document={document} generation={header?.generation} />
           </div>
+        ) : header?.beside ? (
+          <div className="min-w-0">{header.beside}</div>
         ) : null}
         {/* One ruled rectangle divided by hairlines rather than three floating
           cards: the rail, the pane and the side pane are one workspace, and
@@ -1112,6 +1151,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         : undefined
                     }
                     read={fileProgress}
+                    // Counted even when the host keeps no viewed marks.
+                    count={!comparing && fileList ? fileList.length : undefined}
                     list="review-files"
                     controls="review-section"
                     onSelect={(expanded) => {
@@ -1396,37 +1437,9 @@ function ReviewWorkspace<F extends ReviewFile>({
                   barDocument ? (
                     <>
                       {historicalNote}
-                      <ReviewDetails document={barDocument} />
-                    </>
-                  ) : (
-                    barPlaceholder
-                  )
-                ) : null}
-              </div>
-              <div
-                {...tabPanelProps("conversation", "activity", barTab === "activity")}
-                className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
-              >
-                {barTab === "activity" ? (
-                  barDocument ? (
-                    <>
-                      {historicalNote}
-                      <ReviewActivity
+                      <ReviewDetails
                         document={barDocument}
-                        onSelectSection={selectSection}
-                        onSelectSession={
-                          barHistorical || !sessions
-                            ? undefined
-                            : (id) => {
-                                setFolded((current) => ({ ...current, sessions: false }));
-                                setSelection({ kind: "session", id });
-                              }
-                        }
-                        onViewSessions={
-                          barHistorical || !sessions
-                            ? undefined
-                            : () => navigateFromSummary("sessions")
-                        }
+                        checks={barChecks ? barChecks.content : undefined}
                       />
                     </>
                   ) : (
@@ -1434,6 +1447,39 @@ function ReviewWorkspace<F extends ReviewFile>({
                   )
                 ) : null}
               </div>
+              {hideActivity ? null : (
+                <div
+                  {...tabPanelProps("conversation", "activity", barTab === "activity")}
+                  className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                >
+                  {barTab === "activity" ? (
+                    barDocument ? (
+                      <>
+                        {historicalNote}
+                        <ReviewActivity
+                          document={barDocument}
+                          onSelectSection={selectSection}
+                          onSelectSession={
+                            barHistorical || !sessions
+                              ? undefined
+                              : (id) => {
+                                  setFolded((current) => ({ ...current, sessions: false }));
+                                  setSelection({ kind: "session", id });
+                                }
+                          }
+                          onViewSessions={
+                            barHistorical || !sessions
+                              ? undefined
+                              : () => navigateFromSummary("sessions")
+                          }
+                        />
+                      </>
+                    ) : (
+                      barPlaceholder
+                    )
+                  ) : null}
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -1449,6 +1495,9 @@ function ReviewWorkspace<F extends ReviewFile>({
         <ChangesOverview
           document={snapshot}
           onSelectSection={selectSection}
+          renderLabels={
+            renderSectionLabels ? (section) => renderSectionLabels(section, snapshot) : undefined
+          }
           renderCheck={(section) =>
             historical || section.derived.state === "stale"
               ? null
@@ -1519,6 +1568,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
           showTiles={showTiles}
+          labels={renderSectionLabels?.(section, snapshot)}
         />
       </HunkPatchProvider>
     );

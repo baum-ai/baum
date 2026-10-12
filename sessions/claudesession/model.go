@@ -79,6 +79,20 @@ func (f *fileState) applyUsage(row *session.ModelInvocation, line claudetranscri
 	// The four buckets are disjoint, so the total is their sum.
 	row.TotalTokens = usage.InputTokens + usage.OutputTokens +
 		usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+
+	// The 1-hour part is recorded only when it fits inside the total. When 1h +
+	// 5m differs from cache_creation_input_tokens we do not guess which figure is
+	// wrong: a 1h figure that fits is kept, anything else is left unreported.
+	row.CacheWrite1hTokens = nil
+	if h := usage.CacheWrite1h; h != nil && *h >= 0 && *h <= usage.CacheCreationInputTokens {
+		value := *h
+		row.CacheWrite1hTokens = &value
+	}
+	row.Speed = nil
+	if session.SpeedValid(usage.Speed) {
+		speed := usage.Speed
+		row.Speed = &speed
+	}
 }
 
 // addMessage records one block of model output. Every block that is not a tool

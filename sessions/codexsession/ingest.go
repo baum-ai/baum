@@ -250,6 +250,7 @@ type threadState struct {
 	batchNumber     int
 	lastByInput     map[string]string
 	latestContext   map[string]json.RawMessage
+	serviceTier     string // service_tier of the latest thread_settings_applied; empty until one names it
 	latestAttribute map[string]json.RawMessage
 	attributeTime   map[string]time.Time
 	pendingInter    *codextranscript.InterAgentMeta

@@ -62,6 +62,7 @@ export function ReviewSection({
   activeVersions,
   idPrefix = "",
   showTiles = false,
+  labels,
 }: {
   document: ReviewDocument;
   section: Section;
@@ -72,6 +73,8 @@ export function ReviewSection({
   idPrefix?: string;
   /** Tiles are held back from reviews until they are ready to show. */
   showTiles?: boolean;
+  /** The host's labels for the section, at the end of its badges. */
+  labels?: ReactNode;
 }) {
   const { derived } = section;
   const badgeState = sectionBadgeState(derived.state, document.review);
@@ -109,6 +112,7 @@ export function ReviewSection({
         {badgeState !== "unchanged" && badgeState !== "changed" && (
           <Badge tone={sectionStateTone(badgeState)}>{sectionStateLabel(badgeState)}</Badge>
         )}
+        {labels}
       </div>
       <CardHeader
         size="pane"
