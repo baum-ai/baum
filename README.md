@@ -102,6 +102,13 @@ no local sessions, with the reason, and the viewer falls back to the sessions
 in the document. Run `git fetch` yourself to make missing commits available,
 then reload the viewer. Run `baum view` from inside the clone.
 
+The same clone fills in code excerpts the document left out. Opening a cited
+hunk's evidence asks `baum view` for that file's patch between the merge base
+(else the base) and the head, only for files the document cites, read with the
+same private, no-fetch reads and the same clone matching. A binary or very
+large file (over 1 MiB), a file the range does not change, a renamed file and a
+clone without the commits keep the link to GitHub instead.
+
 Opening one of those linked sessions shows its full transcript, with the same
 session card the hosted app uses, as a conversation: every prompt with the
 agent's replies and what it caused, and per prompt the agent's messages and

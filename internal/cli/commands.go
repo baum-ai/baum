@@ -40,7 +40,8 @@ opens it in the browser. It reads the file given, or the built-in sample, and
 never contacts a server or fetches anything. When the document's pull request
 belongs to the clone containing the current directory and the clone already has
 its commits, the viewer also shows the coding-agent sessions on this machine
-linked to them, with their text redacted. A document with schema or rule
+linked to them, with their text redacted, and fills in the code excerpts the
+document left out from the same clone's commits. A document with schema or rule
 findings is still served, and the findings print to stderr. The document must
 be valid JSON of at most 32 MiB. Give exactly one of a file, --sample and
 --pr.`,

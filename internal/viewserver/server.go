@@ -5,8 +5,9 @@
 // given; request paths never reach the file system. It never fetches anything.
 // The one thing it computes from this machine is GET /api/sessions, the
 // sessions linked to the document's pull request, through the function a host
-// supplies in Options.Sessions, and GET /api/sessions/{id}, the redacted
-// transcript of one of them.
+// supplies in Options.Sessions, GET /api/sessions/{id}, the redacted
+// transcript of one of them, and GET /api/patch, the patch of one file the
+// document cites, through Options.Patch.
 // Host checking, security headers and routing are fixed here; a host such as a
 // later "baum ui" extends the server through Mux and Use.
 package viewserver
@@ -75,6 +76,10 @@ type Options struct {
 	// start-up, and its available answers are kept until the document's
 	// repository, head or base changes. Unset, /api/sessions is unavailable.
 	Sessions SessionsFunc
+	// Patch reads one file's patch of the document's pull request from this
+	// machine, for GET /api/patch. It is called when a file's patch is first
+	// asked for, never at start-up. Unset, every patch is unavailable.
+	Patch PatchFunc
 	// Home is the user's home directory, written as ~ in the transcripts
 	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir, else the
 	// account's home directory.
@@ -112,6 +117,11 @@ type Server struct {
 	document []byte
 	review   Review
 	hub      hub
+	// paths are the paths of the document's cited hunks, and patches the
+	// answers of /api/patch for it; both are replaced with the document.
+	paths      map[string]struct{}
+	patches    *patchCache
+	patchSlots chan struct{}
 
 	// sessions is the answer for /api/sessions, computed on demand.
 	sessionsMu     sync.Mutex
@@ -183,6 +193,9 @@ func New(opts Options) (*Server, error) {
 	}
 	s.document = document
 	s.review = parseReview(document)
+	s.paths = hunkPaths(document)
+	s.patches = &patchCache{jobs: map[string]*patchJob{}}
+	s.patchSlots = make(chan struct{}, maxConcurrentPatches)
 	s.hash = sha256.Sum256(document)
 
 	s.mux = http.NewServeMux()
@@ -191,6 +204,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleTranscript)
+	s.mux.HandleFunc("GET /api/patch", s.handlePatch)
 	s.mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	s.mux.HandleFunc("GET /", s.handleAsset)
 	return s, nil
@@ -416,9 +430,12 @@ func contentType(name string) string {
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
 	review := parseReview(document)
+	paths := hunkPaths(document)
 	s.mu.Lock()
 	s.document = document
 	s.review = review
+	s.paths = paths
+	s.patches = &patchCache{jobs: map[string]*patchJob{}}
 	s.mu.Unlock()
 	s.hub.broadcast()
 }

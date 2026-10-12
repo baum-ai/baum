@@ -79,6 +79,11 @@ func runView(cmd *cobra.Command, args []string) error {
 			Sessions: stores, Warn: cmd.ErrOrStderr(),
 		})
 	}
+	opts.Patch = func(ctx context.Context, review viewserver.Review, path string) (locallink.PatchResult, error) {
+		return locallink.Patch(ctx, locallink.PatchRequest{
+			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Path: path,
+		})
+	}
 	if sample {
 		opts.Sample = true
 		opts.Document = schema.Example

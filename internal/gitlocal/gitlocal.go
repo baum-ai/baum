@@ -602,6 +602,35 @@ func (r *Repo) TextPatch(ctx context.Context, baseOID, headOID string, paths ...
 	return out, nil
 }
 
+// FilePatch is the unified diff of one file between two commits, as a pull
+// request page shows it: no rename or copy detection (so a path that a commit
+// renamed appears as an addition or a deletion), three lines of context, git's
+// default diff algorithm fixed rather than read from configuration, and no
+// external diff driver, text conversion or colour. The output starts with git's
+// file header lines; a binary file has none of the "@@" hunks. The patch is at
+// most maxBytes (MaxPatchBytes when zero), else bundle.ErrOutputTooLarge. It
+// reads only objects the clone holds and never fetches: objects it lacks are
+// ErrObjectNotFound, or ErrPartialClone in a partial clone.
+func (r *Repo) FilePatch(ctx context.Context, baseOID, headOID, filePath string, maxBytes int64) ([]byte, error) {
+	if !validOID(baseOID) || !validOID(headOID) || !validGitPath(filePath) {
+		return nil, ErrInvalidInput
+	}
+	if maxBytes <= 0 {
+		maxBytes = r.opts.MaxPatchBytes
+	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	out, err := r.read(ctx, maxBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+		"--unified=3", "--diff-algorithm=myers", baseOID, headOID, "--", ":(literal)"+filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading file patch: %w", rangeError(err))
+	}
+	return out, nil
+}
+
 // Blob is a file read at a revision.
 type Blob struct {
 	OID     string

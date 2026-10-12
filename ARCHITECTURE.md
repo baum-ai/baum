@@ -305,7 +305,7 @@ through props and context:
 | document source | yes | the file given, and versions from the local store | the current document, a version list and a loader for one version |
 | attachment URL | no | served from the local cache | resolves an image ID to a URL; without it, image blocks draw nothing |
 | navigation | yes | in-app history | link component and the selection and version state in the URL |
-| hunk patch source | no | not used | the full patch for a hunk when the document does not carry it |
+| hunk patch source | no | `GET /api/patch` (below) | the full patch for a hunk when the document does not carry it |
 | file opener | no | not used | opens a cited file in the host's own diff view instead of following its link |
 | row actions | no | not used | a slot beside each section and risk, for example a read mark or approval |
 | side pane | no | not used | a slot for discussion or other host features |
@@ -360,7 +360,7 @@ keeps the last answer on screen while it does.
 `internal/viewserver` is the host. `baum view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
 or a free one, and prints the URL. It never contacts a server or fetches
-anything. The server has five API routes and an asset fallback:
+anything. The server has six API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
@@ -369,6 +369,7 @@ anything. The server has five API routes and an asset fallback:
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | `GET /api/sessions/{id}` | the redacted transcript of one of those sessions, as below; `no-store` |
+| `GET /api/patch?path=` | the patch of one file the document cites, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -385,6 +386,44 @@ file is polled by path every 500ms and read once it has stopped changing, so an
 editor's save by rename is followed. A change that is not valid JSON or is too
 large is warned about and ignored, and the previous document keeps being
 served. Findings print again on each accepted change.
+
+### Local patches
+
+Most hunks a document cites carry no inline `diff`, which the generation budget
+leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
+`locallink.Patch` over the same clone and remote matching as the sessions
+(`gitlocal.Open`, any remote naming the document's repository, no fetch).
+
+- Only a `path` that is the `path` of a hunk in `index.hunks` of the document
+  being served is answered; anything else, including a missing or repeated
+  parameter, is 404 and runs nothing. The document records one path per hunk,
+  so a renamed file is looked up by its new name.
+- The patch is `git diff` from the merge base (else the base) to the head for
+  that one path, as `gitlocal.Repo.FilePatch`: `--no-ext-diff --no-textconv
+  --no-color --no-renames --unified=3 --diff-algorithm=myers`, full commit ids,
+  `--` and a `:(literal)` pathspec, so a path cannot be an option or a glob.
+  Renames are not detected (one pathspec cannot see the old name), so a renamed
+  file's change is a whole-file addition, which fails the viewer's check that the
+  hunk has the cited range and counts, and keeps its link. The merge base must be
+  in the clone: the base would give a different diff.
+- It runs in `gitlocal`'s private repository (empty configuration, no
+  attributes, no replace refs, no remote, `GIT_NO_LAZY_FETCH=1`), so neither a
+  `diff.external`, a textconv or filter driver, a pager nor any other setting of
+  the clone, and no environment variable, changes or runs anything.
+- The response is `200 {"patch":"@@ -1,3 +1,4 @@..."}`: the file's diff from its
+  first `@@` line, without git's `diff --git`, `index`, `---` and `+++` lines, the
+  form the hosted app's patches have. Every outcome that is not a patch is
+  `200 {"patch":null}` with nothing about why: a binary file or a mode-only
+  change, a path the range does not change, commits or blobs the clone lacks
+  (including a partial clone), a directory that is not the repository's clone, a
+  patch over 1 MiB (`locallink.MaxPatchBytes`), the sample document. A failure
+  that may pass (git failing, the one-minute limit) is 500, which the app turns
+  into a rejected request and tries again when the excerpt is next opened.
+- Answers that hold until the document changes (a patch, no text patch, unchanged,
+  too large) are kept per path; those a person can fix (no clone, no remote,
+  missing commits) and failures are computed again on the next request. A
+  document reload (`--watch`) drops every answer and the set of cited paths. At
+  most four git reads run at once, each bounded by the server's lifetime.
 
 ### Local session linkage
 
