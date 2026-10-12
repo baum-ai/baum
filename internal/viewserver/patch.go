@@ -76,7 +76,7 @@ func hunkPaths(document []byte) map[string]struct{} {
 // A path that is not the path of a hunk of the current document is 404,
 // whatever this machine holds. Every other outcome is 200 with {"patch":"..."}
 // (the file's diff from its first "@@" line, without git's header lines) or
-// {"patch":null}: a binary file, a submodule, a directory, a path the range does not
+// {"patch":null}: a binary file, a submodule, a path the range does not
 // change, commits or objects the clone lacks, a clone that is not the
 // document's repository, a patch over locallink.MaxPatchBytes. The viewer
 // treats null as no excerpt and keeps its link to GitHub. A failure that may

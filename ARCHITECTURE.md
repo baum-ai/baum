@@ -410,9 +410,13 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   --no-textconv --no-color --unified=3 --diff-algorithm=myers`, with full commit
   ids, so a path cannot be an option or a glob. The merge base must be in the
   clone: the base would give a different diff.
-- A submodule has no patch, as in the hosted service. Nor does a path whose diff
-  is not exactly one file's: a directory (several files) or a pair git did not
-  detect as a rename.
+- A path must be one the range changes (a key of that list; a deleted file is
+  listed by the path it had). Any other, a directory included, whether one file
+  or several changed under it, is unchanged and runs no diff. A submodule has no
+  patch, as in the hosted service. The diff must also be one file's: one `diff
+  --git` section, or for a type change (a file to a symlink, say) the two
+  sections of the same path, as the hosted service shows it, with each section's
+  header lines dropped. Any other diff has no text patch.
 - It runs in `gitlocal`'s private repository (empty configuration, no
   attributes, no replace refs, no remote, `GIT_NO_LAZY_FETCH=1`), so neither a
   `diff.external`, a textconv or filter driver, a pager nor any other setting of
@@ -421,8 +425,8 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   first `@@` line. git's header lines before it (`diff --git`, `index`, the
   rename lines, `---` and `+++`) are dropped; the viewer reads only the hunks.
   Every outcome that is not a patch is `200 {"patch":null}` with nothing about
-  why: a binary file or a mode-only change, a submodule, a directory, a path the
-  range does not change, commits or blobs the clone lacks (including a partial
+  why: a binary file or a mode-only change, a submodule, a path the range does
+  not change (a directory is one), commits or blobs the clone lacks (including a partial
   clone), a directory that is not the repository's clone, a patch over 1 MiB
   (`locallink.MaxPatchBytes`), the sample document. A failure that may pass (git
   failing, the one-minute limit) is 500, and a server that is stopping is 503;

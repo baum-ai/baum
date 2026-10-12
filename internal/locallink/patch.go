@@ -18,8 +18,7 @@ const MaxPatchBytes = 1 << 20
 // Codes a PatchResult can carry, besides those the sessions answer shares.
 const (
 	// CodeNoTextPatch is a file whose change has no text hunks (a binary file,
-	// or a change of mode alone), a submodule, a path that is a directory, or
-	// anything whose diff is not one file's.
+	// or a change of mode alone), a submodule, or a diff that is not one file's.
 	CodeNoTextPatch = "no_text_patch"
 	// CodeUnchanged is a path the range does not change.
 	CodeUnchanged = "unchanged"
@@ -99,8 +98,9 @@ func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
 //
 // The diff is the one the hosted service reads: -M and -l1000 over the file's
 // path, and over its old path too when the range renamed it, so a renamed file
-// shows only what changed in it. A submodule, a directory, or a diff that is
-// not exactly one file's (two for a path that is not a rename's pair) has no
+// shows only what changed in it. A path the range does not change (a directory
+// is one) is unchanged, and a submodule or a diff that is
+// not one file's (a type change has two sections of its path) has no
 // text patch.
 func (p *Patcher) Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
 	start := req.MergeBase
