@@ -99,14 +99,17 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
+| `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
-| `files` | a Files group: the host's tree in the rail and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back |
+| `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
+| `detailsChecks` | the Details tab's Checks part for the document the tab describes, in place of the document's own checks, and whether it shows a failure (which flags the tab); null content leaves the part out. For checks gathered from elsewhere, such as a stack review's members |
+| `hideActivity` | leaves out the side pane's Activity tab; a reader whose last tab was Activity sees Details |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
@@ -146,6 +149,23 @@ group; and the loading state while the request is out, so a `?pane=sessions`
 or `?pane=commits` link survives. See the "Local session linkage" section of
 `oss/ARCHITECTURE.md` for the contract.
 
+Wherever a session's prompts are quoted (a linked session's prompts in the
+Activity tab, the prompts behind the Summary's intent), they are drawn with
+`components/chat.tsx`, the pieces a host's own transcript is built from too:
+each prompt is a bubble on the right with its number and, where the document
+records it, its time in the corner, shown as typed with only its pasted code
+fences rendered as code, and folded to a few lines with "Show all" when it is
+taller. A pill marks each new day. Prompts drawn from several sessions are
+introduced by a pill naming each session's agent, numbered when one agent has
+several ("Codex session 2"), and each session counts its own days. Days and
+times are the reader's, so they appear once the page is in the browser. A
+host passes the author's name and avatar, and how a number reads ("Turn 3"),
+when it has them. An agent reply
+(`AgentText`) renders as Markdown with any HTML tags shown as written. A
+decision's evidence stays a short quote rather than a bubble: it is an
+excerpt from somewhere in the session, and the document does not record who
+said it.
+
 A link to a group whose slot is absent (`?pane=sessions` without
 `sessions`, say) shows the Summary, and the URL keeps what it asked for. So a
 host that is still loading a group should pass its slot in a loading state
@@ -183,17 +203,18 @@ bars (`--z-sticky`, 30).
 
 `CodeDiff` colours the code in a file's hunks by the language of its path
 (`src/highlight.ts`), and so does the Files pane in `ui/` (its `PRFileDiffBody`
-calls `useHighlightedHunks` on its parsed hunks, and its collapsed diffs are
-not tokenised). Both render a line through `HighlightedText`
-(`@baum/viewer/components/highlighted-text`), which wraps each token in an
-inline span inside the existing code cell. It highlights in the browser only:
-the server render and the first client render are the plain text, exactly as
-before, and the colours replace it once they are ready, with no change of
-layout. Each hunk's old side (context and removed lines) and new side (context
-and added lines) are tokenised separately, so a comment or string that starts
-on an unchanged line is coloured on both the removed and the added lines that
-follow it. The text is never altered; a line whose tokens do not add up to it
-renders plain.
+calls `useHighlightedHunks` on its parsed hunks). Neither tokenises what it
+does not draw: a `CodeDiff` file folded from its header, a closed Files card or
+a large diff still collapsed behind its placeholder. Both render a line through
+`HighlightedText` (`@baum/viewer/components/highlighted-text`), which wraps
+each token in an inline span inside the existing code cell. It highlights in
+the browser only: the server render and the first client render are the plain
+text, exactly as before, and the colours replace it once they are ready, with
+no change of layout. Each hunk's old side (context and removed lines) and new
+side (context and added lines) are tokenised separately, so a comment or string
+that starts on an unchanged line is coloured on both the removed and the added
+lines that follow it. The text is never altered; a line whose tokens do not add
+up to it renders plain.
 
 - **Languages** are a fixed allow-list, picked by extension or file name
   (`languageForPath`): TypeScript, JavaScript (JSX, TSX), JSON, Go, Python,
@@ -230,6 +251,10 @@ unchanged. Inline code, fences with no or an unknown language, blocks over the
 limits and blocks holding raw HTML elements render as before. Text reaches the
 page only as React text children, and colours only as `var(--syntax-*)`, so
 the highlighter adds no path for contributor markup.
+
+`Markdown` parses raw HTML into sanitized elements, as GitHub renders a
+comment. With `html={false}` it skips that step and raw HTML prints as the
+text it is, for prose that names tags rather than containing them.
 
 ## Schema and tile types
 

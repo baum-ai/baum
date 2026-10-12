@@ -442,7 +442,14 @@ describe("summaryIntent", () => {
 describe("intentPrompts", () => {
   it("de-duplicates cited prompts and orders them by session then prompt", () => {
     expect(intentPrompts(intended, summaryIntent(intended))).toEqual([
-      { id: "s1:3", session: "s1", vendor: "codex", index: 3, text: "test against real data" },
+      {
+        id: "s1:3",
+        session: "s1",
+        vendor: "codex",
+        index: 3,
+        text: "test against real data",
+        at: "2026-09-14T11:31:20Z",
+      },
       { id: "s2:1", session: "s2", vendor: "claude", index: 1, text: null },
     ]);
   });
