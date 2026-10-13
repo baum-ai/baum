@@ -333,8 +333,10 @@ describe("followupLabel", () => {
     );
     expect(named(handBack, "  ")).toBe("Subagent report");
     expect(named(handBack)).not.toContain("ac144ce280eaabd7b");
-    // A task does not turn other inputs into reports.
-    expect(named("Session resumed", "Fix it")).toBe("System input");
+    // A peer's plain message is named by the sender the host found for it;
+    // a command it quotes stays a command.
+    expect(named("Status: still going.", "Fix it")).toBe("Message from “Fix it”");
+    expect(named("<command-name>/model</command-name>", "Fix it")).toBe("Slash command /model");
   });
 
   it("matches a report only where the input begins with it", () => {

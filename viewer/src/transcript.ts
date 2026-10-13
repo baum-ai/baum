@@ -446,6 +446,8 @@ export function followupLabel(input: { text: string; origin: string; subagent_ta
     if (text.startsWith("[Request interrupted")) return { label: "Interrupted", wrapper: true };
     return { label: "Editor context", wrapper: true };
   }
+  // A subagent's message whose text names nobody; the host knows its sender.
+  if (task) return { label: `Message from “${task}”`, wrapper: false };
   const label =
     input.origin === "agent" ? "Agent input" : input.origin === "human" ? "Input" : "System input";
   return { label, wrapper: false };
