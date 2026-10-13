@@ -1,9 +1,9 @@
 // Package github reads one pull request's metadata, commits, checks and
 // conversation from GitHub's GraphQL API with the user's own token, and maps
 // them onto the generation bundle the way every baum host does. It is the
-// only part of baum that calls GitHub's API. Endpoints, authentication
-// headers and the GraphQL transport come from the GitHub CLI's library,
-// go-gh.
+// only part of baum that calls GitHub's API. Hosts, repositories, SSH
+// aliases and tokens are read as the GitHub CLI reads them, through its
+// library go-gh; the GraphQL requests are baum's own, over shurcooL-graphql.
 package github
 
 import (
@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/auth"
+	graphql "github.com/cli/shurcooL-graphql"
 
 	"github.com/lastpersonlabs/baum/githubapi"
 	"github.com/lastpersonlabs/baum/internal/config"
@@ -40,7 +42,7 @@ type Client struct {
 	transport http.RoundTripper
 
 	mu    sync.Mutex
-	hosts map[string]*api.GraphQLClient
+	hosts map[string]*graphql.Client
 
 	// maxRetries bounds the retries of one request; maxWait is the longest
 	// single wait for a rate limit, beyond which the request fails.
@@ -65,7 +67,7 @@ func New(tokens TokenSource, opts Options) *Client {
 	return &Client{
 		tokens:           tokens,
 		transport:        githubapi.RateLimitTransport(unavailableTransport{base: base}),
-		hosts:            map[string]*api.GraphQLClient{},
+		hosts:            map[string]*graphql.Client{},
 		maxRetries:       4,
 		maxWait:          2 * time.Minute,
 		rateLimitBackoff: time.Minute,
@@ -84,43 +86,78 @@ func NewFromConfig(cfg config.Config, opts Options) *Client {
 // requestTimeout bounds one GraphQL request, however slowly GitHub answers.
 const requestTimeout = 2 * time.Minute
 
-// graphQL returns the go-gh client for host, created on first use. go-gh
-// derives the endpoint from the host (api.github.com for github.com and
-// *.ghe.com tenants, https://<host>/api/graphql for an Enterprise Server,
-// or the api_host gh's hosts.yml sets for the host) and adds the token only
-// to requests for that host. Its response cache stays off, and GH_DEBUG
-// cannot turn on its request log, which would print the token.
-func (c *Client) graphQL(ctx context.Context, host string) (*api.GraphQLClient, error) {
+// ErrUnknownHost reports a host gh does not treat as GitHub. No token is
+// looked up for it and no request is sent to it.
+var ErrUnknownHost = errors.New("not a GitHub host gh knows: use github.com, a *.ghe.com tenant, a host you ran `gh auth login` for, or GH_HOST")
+
+// graphQL returns the GraphQL client for host, created on first use with the
+// host's token. The token is added only to requests for the host's GraphQL
+// endpoint, the client follows no redirect, and responses reach the mapping
+// byte for byte. The token lookup, which may wait on a keyring, runs without
+// the client's lock held.
+func (c *Client) graphQL(ctx context.Context, host string) (*graphql.Client, error) {
 	host = auth.NormalizeHostname(host)
+	if !gitHubHost(host) {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownHost, host)
+	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if client, ok := c.hosts[host]; ok {
+	client, ok := c.hosts[host]
+	c.mu.Unlock()
+	if ok {
 		return client, nil
 	}
 	token, err := c.tokens(ctx, host)
 	if err != nil {
 		return nil, err
 	}
-	client, err := api.NewGraphQLClient(api.ClientOptions{
-		Host:          host,
-		AuthToken:     token,
-		Transport:     c.transport,
+	endpoint := graphQLEndpoint(host)
+	httpClient := &http.Client{
+		Transport:     authTransport{host: endpoint.Host, token: token, base: c.transport},
 		CheckRedirect: refuseRedirect,
-		Headers:       map[string]string{"User-Agent": "baum"},
-		LogIgnoreEnv:  true,
 		Timeout:       requestTimeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating the GitHub client for %s: %w", host, err)
+	}
+	client = graphql.NewClient(endpoint.String(), httpClient)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing, ok := c.hosts[host]; ok {
+		return existing, nil
 	}
 	c.hosts[host] = client
 	return client, nil
 }
 
+// graphQLEndpoint is a host's GraphQL API, derived as gh derives it:
+// api.github.com for github.com, api.<host> for a *.ghe.com tenant, and
+// /api/graphql on the host itself for an Enterprise Server. gh's per-host
+// api_host override is not read: go-gh does not expose it.
+func graphQLEndpoint(host string) *url.URL {
+	if host == config.GitHubHost || auth.IsTenancy(host) {
+		return &url.URL{Scheme: "https", Host: "api." + host, Path: "/graphql"}
+	}
+	return &url.URL{Scheme: "https", Host: host, Path: "/api/graphql"}
+}
+
+// authTransport adds the host's token, and identifies baum, on requests for
+// the host's GraphQL endpoint only.
+type authTransport struct {
+	host  string
+	token string
+	base  http.RoundTripper
+}
+
+func (t authTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	request.Header.Set("User-Agent", "baum")
+	if request.URL.Scheme == "https" && strings.EqualFold(request.URL.Host, t.host) {
+		request.Header.Set("Authorization", "token "+t.token)
+	}
+	return t.base.RoundTrip(request)
+}
+
 // errRedirect reports a redirect the client refused to follow.
 var errRedirect = errors.New("github answered with a redirect, which baum does not follow")
 
-// refuseRedirect follows no redirect. go-gh already withholds the token from
+// refuseRedirect follows no redirect. The token is already withheld from
 // other hosts, but GitHub's GraphQL endpoint never redirects, so a redirect
 // is a misconfiguration better reported than followed.
 func refuseRedirect(*http.Request, []*http.Request) error { return errRedirect }
@@ -179,7 +216,7 @@ func (c *Client) query(ctx context.Context, host, operation string, q any, varia
 	}
 	for attempt := 0; ; attempt++ {
 		reflect.ValueOf(q).Elem().SetZero()
-		err := gql.QueryWithContext(ctx, operation, q, variables)
+		err := gql.QueryNamed(ctx, operation, q, variables)
 		if err == nil {
 			return nil
 		}
@@ -223,11 +260,11 @@ func (c *Client) retryWait(err error, attempt int) (wait time.Duration, resumeAt
 // graphQLErrorType reports a GraphQL error of GitHub's type kind, such as
 // NOT_FOUND or RATE_LIMITED.
 func graphQLErrorType(err error, kind string) bool {
-	var graphErr *api.GraphQLError
+	var graphErr graphql.Errors
 	if !errors.As(err, &graphErr) {
 		return false
 	}
-	for _, item := range graphErr.Errors {
+	for _, item := range graphErr {
 		if item.Type == kind {
 			return true
 		}

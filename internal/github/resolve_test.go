@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cli/go-gh/v2/pkg/repository"
+
 	"github.com/lastpersonlabs/baum/internal/config"
 )
 
@@ -36,20 +38,98 @@ func origin(url string) map[string]string { return map[string]string{"origin": u
 // standInSSH puts an ssh on PATH that resolves the aliases github-work and
 // github-personal to github.com, as an ~/.ssh/config would, and every other
 // host to itself. gh's configuration is isolated, and GH_HOST names
-// ghe.example.com, so gh treats that host as GitHub.
-func standInSSH(t *testing.T) {
+// ghe.example.com, so gh treats that host as GitHub. It returns the file
+// each invocation's arguments are appended to.
+func standInSSH(t *testing.T) string {
 	t.Helper()
 	t.Setenv("GH_CONFIG_DIR", t.TempDir())
 	t.Setenv("GH_HOST", "ghe.example.com")
-	if runtime.GOOS == "windows" {
-		return
-	}
 	dir := t.TempDir()
-	script := "#!/bin/sh\ncase \"$2\" in github-work|github-personal) echo \"hostname github.com\";; *) echo \"hostname $2\";; esac\n"
+	log := filepath.Join(dir, "invocations")
+	if runtime.GOOS == "windows" {
+		return log
+	}
+	script := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" +
+		"case \"$2\" in github-work|github-personal) echo \"hostname github.com\";; *) echo \"hostname $2\";; esac\n"
 	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
+	return log
+}
+
+// TestRemoteHostIsNeverAnSSHOption checks a remote whose host would read as
+// an option of `ssh -G` is refused before ssh runs.
+func TestRemoteHostIsNeverAnSSHOption(t *testing.T) {
+	log := standInSSH(t)
+	for _, remote := range []string{
+		"ssh://-oProxyCommand=id/acme/widgets",
+		"-oProxyCommand=id:acme/widgets",
+		"ssh://git@-oProxyCommand=id/acme/widgets.git",
+		"git@-oProxyCommand=id:acme/widgets.git",
+	} {
+		if got, err := RepositoryFromRemote(remote); !errors.Is(err, ErrNotGitHubRemote) {
+			t.Errorf("RepositoryFromRemote(%q) = %v, %v; want ErrNotGitHubRemote", remote, got, err)
+		}
+	}
+	if invocations, err := os.ReadFile(log); err == nil {
+		t.Errorf("ssh ran: %q", invocations)
+	}
+	// The stand-in does run for an ordinary ssh remote.
+	if runtime.GOOS != "windows" {
+		if _, err := RepositoryFromRemote("git@github.com:acme/widgets.git"); err != nil {
+			t.Fatal(err)
+		}
+		if invocations, err := os.ReadFile(log); err != nil || !strings.Contains(string(invocations), "-G github.com") {
+			t.Errorf("ssh invocations = %q, %v; want one for github.com", invocations, err)
+		}
+	}
+}
+
+// TestUnknownHostsAreNeverSentAToken checks a --repo or repository on a host
+// gh does not treat as GitHub is refused before any token is looked up, so
+// GH_ENTERPRISE_TOKEN, which gh hands out for any non-github.com host, never
+// leaves for it.
+func TestUnknownHostsAreNeverSentAToken(t *testing.T) {
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_HOST", "")
+	t.Setenv("GH_ENTERPRISE_TOKEN", "ENTERPRISE-SECRET")
+	t.Setenv("GITHUB_ENTERPRISE_TOKEN", "ENTERPRISE-SECRET")
+	for _, value := range []string{
+		"evil.example/acme/widgets",
+		"https://evil.example/acme/widgets",
+		"attacker.github.com.evil.example/acme/widgets",
+	} {
+		t.Run(value, func(t *testing.T) {
+			fake := newFakeGitHub(t, fixtureRoutes(t))
+			client := fake.client(nil)
+			t.Setenv("GH_HOST", "")
+			if _, err := ParseRepository(value); !errors.Is(err, ErrUnknownHost) {
+				t.Errorf("ParseRepository = %v, want ErrUnknownHost", err)
+			}
+			if _, err := client.ResolvePR(context.Background(), stubClone{}, ResolveOptions{Repo: value, PR: 7}); !errors.Is(err, ErrUnknownHost) {
+				t.Errorf("ResolvePR = %v, want ErrUnknownHost", err)
+			}
+			repo, err := repository.ParseWithHost(value, config.GitHubHost)
+			if err != nil {
+				t.Fatal(err)
+			}
+			direct := Repository{Host: repo.Host, Owner: repo.Owner, Name: repo.Name}
+			if _, err := client.Fetch(context.Background(), direct, 7, FetchOptions{}); !errors.Is(err, ErrUnknownHost) {
+				t.Errorf("Fetch = %v, want ErrUnknownHost", err)
+			}
+			cfg, err := config.Load(config.Overrides{Path: filepath.Join(t.TempDir(), "absent.toml")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewFromConfig(cfg, Options{Transport: fake.transport()}).Fetch(context.Background(), direct, 7, FetchOptions{}); !errors.Is(err, ErrUnknownHost) {
+				t.Errorf("Fetch with the configured tokens = %v, want ErrUnknownHost", err)
+			}
+			if requests := fake.recorded(); len(requests) != 0 || len(fake.tokenHosts) != 0 {
+				t.Errorf("sent %d requests and looked up tokens for %v", len(requests), fake.tokenHosts)
+			}
+		})
+	}
 }
 
 func TestRepositoryFromRemote(t *testing.T) {
@@ -291,7 +371,7 @@ func TestResolvePRFromTheBranchUpstream(t *testing.T) {
 
 // TestNewFromConfigSendsTheResolvedToken checks the client takes its token
 // through config's precedence for github.com (GITHUB_TOKEN, GH_TOKEN, the
-// config file, then gh's), sends it in go-gh's Authorization header, and
+// config file, then gh's), sends it in the Authorization header, and
 // asks for and sends an Enterprise host only that host's token.
 func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 	fake := newFakeGitHub(t, map[string]route{"PullRequest": func(gqlRequest, int) fakeResponse { return data(pullRequestData(headSHA)) }})
@@ -333,6 +413,7 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 			t.Setenv("GITHUB_ENTERPRISE_TOKEN", "")
 			t.Setenv("GH_PATH", "")
 			t.Setenv("GH_CONFIG_DIR", t.TempDir())
+			t.Setenv("GH_HOST", "ghe.example.com")
 			if test.gh {
 				t.Setenv("PATH", ghDir)
 			} else {

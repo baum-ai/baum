@@ -19,6 +19,7 @@ type gqlRequest struct {
 	Variables     map[string]any `json:"variables"`
 	OperationName string         `json:"-"`
 	Authorization string         `json:"-"`
+	Header        http.Header    `json:"-"`
 	// URL is where the client sent the request, before the fake's transport
 	// redirected it to the fake.
 	URL string `json:"-"`
@@ -70,6 +71,7 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Authorization = r.Header.Get("Authorization")
+	request.Header = r.Header.Clone()
 	request.URL = r.Header.Get(originalURLHeader)
 	if match := operationName.FindStringSubmatch(request.Query); match != nil {
 		request.OperationName = match[1]
@@ -112,7 +114,7 @@ func (f *fakeGitHub) callCount(operation string) int {
 const originalURLHeader = "X-Test-Original-URL"
 
 // toFake sends every request for a GitHub host to the fake, keeping its
-// headers. It stands in for the network below go-gh.
+// headers. It stands in for the network below the client's transports.
 type toFake struct{ target *url.URL }
 
 func (t toFake) RoundTrip(request *http.Request) (*http.Response, error) {

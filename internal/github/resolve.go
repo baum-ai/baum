@@ -32,9 +32,12 @@ func (r Repository) String() string {
 }
 
 var (
-	hostPattern  = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$`)
-	ownerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
-	namePattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+	hostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$`)
+	// sshHostPattern is what may be handed to `ssh -G`: a host name or an
+	// SSH alias, which need not have a dot, but never an option.
+	sshHostPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+	ownerPattern   = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
+	namePattern    = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 )
 
 // ErrInvalidRepository reports a --repo value that names no repository. It
@@ -43,7 +46,8 @@ var ErrInvalidRepository = errors.New("--repo must be owner/name, or host/owner/
 
 // ParseRepository reads --repo: "owner/name" on github.com, or
 // "host/owner/name" on another GitHub host such as an Enterprise Server,
-// as gh reads it.
+// as gh reads it. The host must be one gh treats as GitHub (see gitHubHost),
+// so a mistyped or hostile host is refused before any token is looked up.
 func ParseRepository(value string) (Repository, error) {
 	parsed, err := repository.ParseWithHost(strings.TrimSpace(value), config.GitHubHost)
 	if err != nil {
@@ -52,6 +56,9 @@ func ParseRepository(value string) (Repository, error) {
 	repo, ok := checkedRepository(parsed.Host, parsed.Owner, parsed.Name)
 	if !ok {
 		return Repository{}, ErrInvalidRepository
+	}
+	if !gitHubHost(repo.Host) {
+		return Repository{}, fmt.Errorf("%w: %s", ErrUnknownHost, repo.Host)
 	}
 	return repo, nil
 }
@@ -81,6 +88,11 @@ func RepositoryFromRemote(remote string) (Repository, error) {
 		return Repository{}, ErrNotGitHubRemote
 	}
 	if u.Scheme == "ssh" {
+		// The host becomes an argument of `ssh -G`, so it must not be able
+		// to pass as an option.
+		if !sshHostPattern.MatchString(u.Hostname()) {
+			return Repository{}, ErrNotGitHubRemote
+		}
 		u = ssh.NewTranslator().Translate(u)
 	}
 	parsed, err := repository.Parse(u.String())
@@ -118,7 +130,9 @@ func remoteURL(remote string) (*url.URL, bool) {
 	return nil, false
 }
 
-// gitHubHost reports a host gh treats as GitHub.
+// gitHubHost reports a host gh treats as GitHub: github.com, a *.ghe.com
+// tenant, a host in gh's hosts.yml, or the one GH_HOST names. Only these are
+// ever sent a token.
 func gitHubHost(host string) bool {
 	if host == config.GitHubHost || auth.IsTenancy(host) {
 		return true

@@ -613,8 +613,10 @@ func TestFetchStopsWaitingWhenCancelled(t *testing.T) {
 
 func TestFetchReadsAnEnterpriseHost(t *testing.T) {
 	fake := newFakeGitHub(t, fixtureRoutes(t))
+	client := fake.client(nil)
+	t.Setenv("GH_HOST", "ghe.example.com")
 	ghe := Repository{Host: "ghe.example.com", Owner: "acme", Name: "widgets"}
-	evidence, err := fake.client(nil).Fetch(context.Background(), ghe, 7, FetchOptions{})
+	evidence, err := client.Fetch(context.Background(), ghe, 7, FetchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,8 +633,8 @@ func TestFetchReadsAnEnterpriseHost(t *testing.T) {
 	}
 }
 
-// TestGHDebugDoesNotLogRequests checks GH_DEBUG, which turns on go-gh's
-// request log for gh itself, cannot make baum print requests and their
+// TestGHDebugDoesNotLogRequests checks GH_DEBUG, which turns on the GitHub
+// CLI's request log, cannot make baum print requests and their
 // Authorization header.
 func TestGHDebugDoesNotLogRequests(t *testing.T) {
 	t.Setenv("GH_DEBUG", "api")
@@ -657,5 +659,43 @@ func TestGHDebugDoesNotLogRequests(t *testing.T) {
 	}
 	if len(logged) != 0 {
 		t.Errorf("GH_DEBUG made the client log %d bytes: %.200q", len(logged), logged)
+	}
+}
+
+// TestRequestsCarryOnlyBaumsHeaders checks the client sends no time zone,
+// API version or preview media types, only its own identity and the token.
+func TestRequestsCarryOnlyBaumsHeaders(t *testing.T) {
+	fake := newFakeGitHub(t, fixtureRoutes(t))
+	if _, err := fake.client(nil).Fetch(context.Background(), acme, 7, FetchOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range fake.recorded() {
+		header := request.Header
+		if header.Get("User-Agent") != "baum" || header.Get("Time-Zone") != "" ||
+			header.Get("X-GitHub-Api-Version") != "" || strings.Contains(header.Get("Accept"), "preview") {
+			t.Fatalf("%s sent headers %v", request.OperationName, header)
+		}
+	}
+}
+
+// TestResponseTextIsNotRewritten checks control characters in GitHub's
+// answer reach the bundle as GitHub sent them, as the hosted service stores
+// them, so both hosts digest the same text.
+func TestResponseTextIsNotRewritten(t *testing.T) {
+	const body = "Colour \x1b[31mred\x1b[0m, next line\u0085, bell\a."
+	routes := fixtureRoutes(t)
+	routes["PullRequestComments"] = func(gqlRequest, int) fakeResponse {
+		return prConnection(headSHA, "comments", page([]any{
+			map[string]any{"fullDatabaseId": "101", "authorAssociation": "MEMBER", "author": user("octo-dev"), "body": body, "createdAt": at("03:10:00")},
+		}, ""))
+	}
+	evidence, err := newFakeGitHub(t, routes).client(nil).Fetch(context.Background(), acme, 7, FetchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range evidence.Conversation {
+		if item.ID == "101" && item.Body != body {
+			t.Fatalf("body = %q, want %q", item.Body, body)
+		}
 	}
 }

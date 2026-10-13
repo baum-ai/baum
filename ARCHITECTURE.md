@@ -96,39 +96,45 @@ comment or thread has the same identifier in a local and a hosted document.
 ### GitHub source
 
 `internal/github` is the GraphQL client the upcoming `baum bundle` command
-reads GitHub with. It is built on the GitHub CLI's library, go-gh
-(`github.com/cli/go-gh/v2`): go-gh parses repositories and remote URLs,
-resolves SSH host aliases, finds the GitHub CLI's tokens, derives each
-host's API endpoint and sends the GraphQL requests. baum keeps what it
-fetches, the pagination, head pinning, rate-limit backoff, `sources` and the
-mapping onto the bundle.
+reads GitHub with. It reads hosts, repositories, remote URLs, SSH host
+aliases and tokens as the GitHub CLI does, through its library go-gh
+(`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
+themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
+that client sends the user's time zone and preview media types, and
+rewrites control characters in every response, which would make a local
+bundle's text, and so its digest, differ from the hosted service's. baum
+also keeps what it fetches, the pagination, head pinning, rate-limit
+backoff, `sources` and the mapping onto the bundle.
 
 - **Hosts.** github.com, GitHub Enterprise Cloud with data residency
-  (`*.ghe.com`) and GitHub Enterprise Server are all supported. go-gh
-  derives the endpoint from the host: `api.github.com` for github.com and
-  `api.<tenant>.ghe.com` for a tenant, `https://<host>/api/graphql` for an
-  Enterprise Server, or the `api_host` gh's `hosts.yml` sets for the host.
-  A remote names a GitHub repository only when its host is one gh treats
-  as GitHub: github.com, a `*.ghe.com` tenant, a host gh is logged in to,
-  or the one `GH_HOST` names. Any other host, such as another code host,
-  is never sent a GitHub token.
+  (`*.ghe.com`) and GitHub Enterprise Server are all supported. A host is
+  read only when gh treats it as GitHub: github.com, a `*.ghe.com` tenant, a
+  host in gh's `hosts.yml` (one `gh auth login` was run for), or the one
+  `GH_HOST` names. That holds for `--repo host/owner/name` as for a remote:
+  any other host is refused before a token is looked up, and is never sent
+  one. The endpoint is derived as gh derives it: `api.github.com` for
+  github.com, `api.<tenant>.ghe.com` for a tenant, and
+  `https://<host>/api/graphql` for an Enterprise Server. An `api_host`
+  override in gh's `hosts.yml` is not honoured, since go-gh does not expose
+  it outside its own API client.
 - **Tokens.** A token is asked for, and sent to, only the host of the
   repository being read. For github.com baum's own sources come first, as
   documented: `GITHUB_TOKEN`, then `GH_TOKEN`, then `github_token` in the
-  config file. After them, and for any other host only, go-gh's
-  `auth.TokenForHost`: `GH_TOKEN` and `GITHUB_TOKEN` for github.com and
-  `*.ghe.com` tenants (gh's own rule), `GH_ENTERPRISE_TOKEN` and
-  `GITHUB_ENTERPRISE_TOKEN` for an Enterprise Server, then gh's `hosts.yml`,
-  then the system keyring through `gh auth token --secure-storage
-  --hostname <host>`. go-gh's own order puts `GH_TOKEN` before
-  `GITHUB_TOKEN`; baum keeps its documented order and uses go-gh only for
-  the GitHub CLI's part.
-- **Requests.** go-gh adds the token only to requests for the repository's
-  host or its API host, and the client also follows no redirect at all,
-  since GitHub's GraphQL endpoint never sends one. go-gh's response cache
-  is off, and its request log, which `GH_DEBUG` turns on for gh, stays off
-  for baum: it would print the token. Of gh's configuration go-gh reads only
-  the hosts and tokens above and a host's `api_host`.
+  config file. After them, and for any other host only, the GitHub CLI's:
+  go-gh's `auth.TokenFromEnvOrConfig` (`GH_TOKEN` and `GITHUB_TOKEN` for
+  github.com and `*.ghe.com` tenants, gh's own rule; `GH_ENTERPRISE_TOKEN`
+  and `GITHUB_ENTERPRISE_TOKEN` for an Enterprise Server; then gh's
+  `hosts.yml`), then the system keyring through `gh auth token
+  --secure-storage --hostname <host>`. baum runs that last step itself,
+  under the command's context, so cancelling stops a keyring that waits to
+  be unlocked. go-gh's own order puts `GH_TOKEN` before `GITHUB_TOKEN`;
+  baum keeps its documented order and uses go-gh only for the GitHub CLI's
+  part.
+- **Requests.** The token goes only to the host's GraphQL endpoint, the
+  client follows no redirect at all (GitHub's GraphQL endpoint never sends
+  one), and requests carry `User-Agent: baum` and no other header of the
+  client's own. Nothing is cached and nothing is logged; `GH_DEBUG` has no
+  effect. Responses reach the mapping exactly as GitHub sent them.
 - The pull request is `--pr` on the repository `--repo` names
   (`owner/name` on github.com, or `host/owner/name`) or, by default, the one
   the clone's `origin` remote names (https, ssh and scp-like URLs, read with
@@ -185,8 +191,9 @@ mapping onto the bundle.
   built, will flag bot reports through the same hook.
 - The description's rendered images are listed for the attachment step,
   with their signed fetch URLs, which are never stored or logged.
-- The tests run the GraphQL documents against a fake GitHub, below go-gh's
-  own transport; they are not checked against GitHub's published schema.
+- The tests run the GraphQL documents against a fake GitHub, below the
+  client's transports; they are not checked against GitHub's published
+  schema.
 
 ### Contracts
 

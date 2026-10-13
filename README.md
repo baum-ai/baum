@@ -189,8 +189,8 @@ environment variables are:
 
 | Variable | Purpose |
 | --- | --- |
-| `GITHUB_TOKEN`, `GH_TOKEN` | github.com token; when neither is set and the file has none, the GitHub CLI's token is used |
-| `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it |
+| `GITHUB_TOKEN`, `GH_TOKEN` | github.com token, also used for `*.ghe.com` tenants as the GitHub CLI uses it; when neither is set and the file has none, the GitHub CLI's token is used |
+| `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it and only ever sent to an Enterprise host the GitHub CLI knows (logged in with `gh auth login`, or named by `GH_HOST`) |
 | `ANTHROPIC_API_KEY` | key for the `anthropic` backend |
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
@@ -201,7 +201,8 @@ base branch's protection from GitHub's GraphQL API, through the GitHub CLI's
 library. It works with github.com, GitHub Enterprise Cloud and GitHub
 Enterprise Server, and sends a token only to the host it belongs to: the
 variables and file above are for github.com, and any host's token can come
-from the GitHub CLI (`gh auth login`). A token that cannot read part of it
+from the GitHub CLI (`gh auth login`). An `api_host` override in the GitHub
+CLI's `hosts.yml` is not honoured. A token that cannot read part of it
 (a fine-grained token without checks access, say) leaves that part out of
 the bundle, recorded as unavailable in its `sources`; a check's `required`
 stays unknown unless the protection is readable. The repository will be

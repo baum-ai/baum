@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -222,9 +223,9 @@ func TestResolveGitHubTokenKeepsBaumSourcesForGitHubCom(t *testing.T) {
 	restore := ghToken
 	t.Cleanup(func() { ghToken = restore })
 	var asked []string
-	ghToken = func(host string) string {
+	ghToken = func(_ context.Context, host string) (string, error) {
 		asked = append(asked, host)
-		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host]
+		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], nil
 	}
 	ctx := context.Background()
 
@@ -296,6 +297,39 @@ func TestGHTokenForAnEnterpriseHost(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_github_com")
 	if token, err := (Config{}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_env" {
 		t.Fatalf("token = %q, err = %v; want GH_ENTERPRISE_TOKEN", token, err)
+	}
+}
+
+// TestGHKeyringLookupStopsWhenCancelled runs a stand-in gh that waits, as a
+// locked keyring would, and checks cancelling the context ends the lookup
+// promptly with the context's error.
+func TestGHKeyringLookupStopsWhenCancelled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in gh is a shell script")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep binary")
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+filepath.Dir(sleep))
+	t.Setenv("GH_PATH", "")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
+		t.Setenv(name, "")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = (Config{}).ResolveGitHubToken(ctx, "github.com")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the context's deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("the lookup took %v after cancellation", elapsed)
 	}
 }
 
