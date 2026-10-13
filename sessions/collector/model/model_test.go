@@ -29,3 +29,19 @@ func TestPathWithin(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAgentRun(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/tmp/baum-agent-run-123":              true,
+		"/tmp/baum-agent-run-123/checkout/sub": true,
+		`C:\Temp\baum-agent-run-9\checkout`:    true,
+		"/repo":                                false,
+		"/tmp/not-baum-agent-run-1":            false,
+		"/repo/pr-review-run-1":                false,
+		"":                                     false,
+	} {
+		if got := IsAgentRun(path); got != want {
+			t.Errorf("IsAgentRun(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

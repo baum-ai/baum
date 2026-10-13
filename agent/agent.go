@@ -18,6 +18,12 @@ const (
 	BackendCursorAgent = "cursor-agent"
 )
 
+// RunDirPrefix starts the name of the temporary directory a local caller runs a
+// backend in (os.MkdirTemp("", agent.RunDirPrefix+"*")). Session discovery skips
+// sessions recorded under such a directory, so baum's own model calls are never
+// collected as the user's work.
+const RunDirPrefix = "baum-agent-run-"
+
 // Backend runs one model call loop over a checkout and returns the document
 // the model submitted.
 type Backend interface {

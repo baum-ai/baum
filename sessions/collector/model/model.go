@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lastpersonlabs/baum/agent"
 	"github.com/lastpersonlabs/baum/sessions/vendors"
 )
 
@@ -124,6 +125,19 @@ func SameText(a, b string, fold bool) bool {
 func PathWithinAny(roots []string, path string) bool {
 	for _, root := range roots {
 		if PathWithin(root, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAgentRun reports whether a recorded working directory is, or lies inside,
+// a directory baum made to run its own model backend in: one of its path
+// elements starts with agent.RunDirPrefix. Either separator splits the path,
+// since a session may have been recorded on another platform.
+func IsAgentRun(path string) bool {
+	for _, element := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if strings.HasPrefix(element, agent.RunDirPrefix) {
 			return true
 		}
 	}

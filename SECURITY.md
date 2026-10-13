@@ -104,6 +104,36 @@ request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
 account.
 
+The `claude` backend (`agent/claude`, the `User` profile) restricts Claude Code
+as far as the tool allows:
+
+- Only the `Read`, `Glob` and `Grep` tools are available. Restricted mode
+  removes every tool that runs commands or reaches the network, and file
+  tools are limited to the temporary checkout
+  (`blockReadsOutsideWorkingDirectories`).
+- No settings file, hook, plugin or MCP server is loaded, and nothing is
+  written to the session store (`--no-session-persistence`).
+- The process gets an allowlist of your environment variables. Provider
+  credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
+  `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
+  removed. `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` are set only when you
+  configure an endpoint for baum.
+- Claude Code older than the version baum was checked against is refused with a
+  request to upgrade, because an older release may not honour these flags.
+- Its own sessions are made under a `baum-agent-run-*` temporary directory,
+  which session discovery skips, so a review is not collected as your work.
+
+What remains:
+
+- It runs under your login and your `HOME`, so it uses your Claude
+  subscription or key. Claude Code may still update `~/.claude.json` and its
+  caches.
+- Credentials kept in files under `HOME` stay readable by the Claude Code
+  process itself. Its tools cannot read outside the checkout, but a flaw in
+  Claude Code or its restricted mode would not be stopped by baum.
+- Only environment variables are filtered, not files, the network or other
+  processes running as you.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or

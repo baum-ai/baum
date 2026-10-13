@@ -90,7 +90,7 @@ func eligible(entry Entry, sessionsDir string, roots []string) (candidate, bool)
 	}
 	path := filepath.Clean(entry.Path)
 	cwd := filepath.Clean(entry.Meta.CWD)
-	if !model.PathWithin(sessionsDir, path) || entry.Meta.ID == "" || cwd == "" || !model.PathWithinAny(roots, cwd) {
+	if !model.PathWithin(sessionsDir, path) || entry.Meta.ID == "" || cwd == "" || !model.PathWithinAny(roots, cwd) || model.IsAgentRun(cwd) {
 		return candidate{}, false
 	}
 	info, err := os.Stat(path)

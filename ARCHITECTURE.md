@@ -376,13 +376,30 @@ stay, so a child can still read credentials kept in files under them. Backends:
 | Backend | Runs |
 | --- | --- |
 | `anthropic` | the Anthropic API directly, with read-only file tools over the checkout |
-| `claude` | `claude -p` restricted to read-only tools, submitting through structured output |
+| `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema |
 | `cursor-agent` | `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
 leaves open.
+
+`agent/claude` has two profiles over the same read-only flags, which are not
+configurable. `User`, the zero value, is for local runs: the child gets
+`LocalEnvironment` plus `CLAUDE_CONFIG_DIR`, the user's own `HOME` and login,
+the binary found on `PATH`, and `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`
+only when an `Endpoint` is given. Before its first run a `Backend` runs
+`claude --version` once and refuses a release older than the pinned minimum; a
+run that dies on an unknown option reports the same upgrade request.
+`Isolated` is for a host that supplies the whole environment: `HOME` and
+`CLAUDE_CONFIG_DIR` under `<run>/home`, a fixed `PATH`, and the key and base URL
+of the `Endpoint`, which it requires. Cancelling a run kills the child's
+process group on Unix; on Windows only the child itself, not its descendants.
+
+Local callers create a run's directory with
+`os.MkdirTemp("", agent.RunDirPrefix+"*")`, and session discovery skips any
+session recorded under a path element with that prefix, so baum's own model
+calls are not collected as the user's sessions.
 
 ### Prompts
 
