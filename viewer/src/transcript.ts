@@ -187,6 +187,9 @@ export type TranscriptInput = {
   started_at: string | null;
   origin: string;
   kind: string;
+  /** For a follow-up that is a subagent's report, message or notification,
+   *  the task it was spawned for, when the host knows it. */
+  subagent_task?: string;
 };
 
 /** An input and what the agent did about it. */
@@ -361,6 +364,27 @@ export function spawnStatusLabel(status: string): string {
   }
 }
 
+/** What a subagent card says in place of a response it has none of. Codex
+ *  keeps a child's report only in the parent's full record, so its absence
+ *  there is how that record was kept, not a failure. */
+export function missingResponseNote(vendor: string): string {
+  return vendor === "codex"
+    ? "The Codex record holds no report from this subagent."
+    : "No response was recorded.";
+}
+
+/** Whether a spawn's input is one whose message the agent recorded redacted,
+ *  as Codex does for the instructions it gives a subagent. An input the host
+ *  cut short is read up to where it stops. */
+export function redactedSpawnMessage(input: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(input);
+    return (parsed as { message?: unknown } | null)?.message === "REDACTED";
+  } catch {
+    return /^\s*\{(?:\s*"[^"\\]*"\s*:\s*"[^"\\]*"\s*,)*\s*"message"\s*:\s*"REDACTED"/.test(input);
+  }
+}
+
 const HAND_BACK = "Another Claude session sent a message:";
 
 /** The wrappers Claude Code writes into an input that carry nothing anybody
@@ -382,25 +406,35 @@ function isBoilerplate(text: string): boolean {
   return BOILERPLATE.reduce((rest, pattern) => rest.replace(pattern, ""), text).trim() === "";
 }
 
+/** A hand-back's frame, at the start of a line; an agent's message without
+ *  it is one it sent of its own accord. */
+const HAND_BACK_FRAME = /^\[Subagent hand-back\]/m;
+
 /** What woke the agent with a follow-up input, from how the input reads: a
- *  background task's notification, another session's report handed back, a
- *  slash command or its output, an interruption, editor context, or else
- *  who sent it. `wrapper` marks an input that carries nothing anybody typed,
- *  which the agent need not answer. */
-export function followupLabel(input: { text: string; origin: string }): {
+ *  background task's notification, a subagent's report handed back or a
+ *  message it sent, a slash command or its output, an interruption, editor
+ *  context, or else who sent it. A subagent is named by the task it was
+ *  spawned for when the host knows it, never by its agent id. `wrapper`
+ *  marks an input that carries nothing anybody typed, which the agent need
+ *  not answer. */
+export function followupLabel(input: { text: string; origin: string; subagent_task?: string }): {
   label: string;
   wrapper: boolean;
 } {
   const text = input.text.trimStart();
+  const task = input.subagent_task?.trim();
   if (!text) return { label: "Empty input", wrapper: true };
-  if (text.startsWith("<task-notification>")) return { label: "Task notification", wrapper: false };
-  const report = text.startsWith(HAND_BACK) ? text.slice(HAND_BACK.length).trimStart() : text;
-  if (report.startsWith('<agent-message from="')) {
-    const sender = /^<agent-message from="([^"]+)"/.exec(report)?.[1];
-    return {
-      label: sender ? `Subagent report from ${sender}` : "Subagent report delivered",
-      wrapper: false,
-    };
+  if (text.startsWith("<task-notification>"))
+    return { label: task ? `Notification from “${task}”` : "Task notification", wrapper: false };
+  const message = text.startsWith(HAND_BACK) ? text.slice(HAND_BACK.length).trimStart() : text;
+  if (message.startsWith('<agent-message from="')) {
+    const report = HAND_BACK_FRAME.test(message);
+    const label = task
+      ? `${report ? "Report" : "Message"} from “${task}”`
+      : report
+        ? "Subagent report"
+        : "Agent message";
+    return { label, wrapper: false };
   }
   if (isBoilerplate(text)) {
     const command = /<command-name>\s*([\s\S]*?)\s*<\/command-name>/.exec(text)?.[1];
@@ -412,6 +446,8 @@ export function followupLabel(input: { text: string; origin: string }): {
     if (text.startsWith("[Request interrupted")) return { label: "Interrupted", wrapper: true };
     return { label: "Editor context", wrapper: true };
   }
+  // A subagent's message whose text names nobody; the host knows its sender.
+  if (task) return { label: `Message from “${task}”`, wrapper: false };
   const label =
     input.origin === "agent" ? "Agent input" : input.origin === "human" ? "Input" : "System input";
   return { label, wrapper: false };

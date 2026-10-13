@@ -172,7 +172,12 @@ cannot load one, opens onto the spawn's input. An activity that carries
 `followups` draws them after the prompt's own entries: each input that came
 after the prompt (a task notification, a subagent's report handed back, a
 slash command, an interruption) as a dashed pill naming what it was with its
-text folded behind it, as written, then what the agent did about it. An input
+text folded behind it, as written, then what the agent did about it. A
+subagent's report, message or notification is named by the input's
+`subagent_task` when the host sends one, never by the agent id. A card
+without a response says so; for Codex, as how Codex kept its record rather
+than as a failure, and a spawn input whose message Codex recorded redacted
+says so when opened. An input
 that carries nothing anybody typed is not reported as missing output.
 
 Its props are plain view models (`TranscriptSession` and the types beside it

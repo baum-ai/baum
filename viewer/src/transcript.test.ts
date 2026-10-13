@@ -5,6 +5,8 @@ import {
   endsWithResponse,
   followupLabel,
   fullReplyText,
+  missingResponseNote,
+  redactedSpawnMessage,
   spawnStatusLabel,
   timeline,
   type TranscriptActivity as TurnActivity,
@@ -85,6 +87,8 @@ const shape = (entries: ReturnType<typeof timeline>) =>
   );
 
 const label = (text: string, origin = "system") => followupLabel({ text, origin });
+const named = (text: string, subagent_task?: string) =>
+  followupLabel({ text, origin: "system", subagent_task }).label;
 
 describe("timeline", () => {
   it("puts tool calls between the messages they happened between, one run per gap", () => {
@@ -300,18 +304,39 @@ describe("followupLabel", () => {
     });
     expect(
       label(
-        'Another Claude session sent a message: <agent-message from="reviewer">Done</agent-message>',
+        'Another Claude session sent a message:\n<agent-message from="a1b2">\n[Subagent hand-back] The report follows:\n  Done\n</agent-message>',
       ),
-    ).toEqual({ label: "Subagent report from reviewer", wrapper: false });
-    expect(label('<agent-message from="docs">Done</agent-message>').label).toBe(
-      "Subagent report from docs",
+    ).toEqual({ label: "Subagent report", wrapper: false });
+    expect(label('<agent-message from="a1b2">\nStatus: still going.\n</agent-message>').label).toBe(
+      "Agent message",
     );
-    expect(label('<agent-message from="">Done</agent-message>').label).toBe(
-      "Subagent report delivered",
-    );
+    expect(label('<agent-message from="">Done</agent-message>').label).toBe("Agent message");
     expect(label("Carry on", "agent").label).toBe("Agent input");
     expect(label("Session resumed").label).toBe("System input");
     expect(label("What changed?", "human").label).toBe("Input");
+  });
+
+  it("names a subagent by the task it was spawned for, never by its agent id", () => {
+    const handBack =
+      '<agent-message from="ac144ce280eaabd7b">\n[Subagent hand-back] The report follows:\n  Done\n</agent-message>';
+    expect(named(handBack, "Review step 1 platform API")).toBe(
+      "Report from “Review step 1 platform API”",
+    );
+    expect(named(`Another Claude session sent a message:\n${handBack}`, "Fix it")).toBe(
+      "Report from “Fix it”",
+    );
+    expect(named('<agent-message from="a1">\nStatus: going.\n</agent-message>', "Fix it")).toBe(
+      "Message from “Fix it”",
+    );
+    expect(named("<task-notification><task-id>a1</task-id></task-notification>", "Fix it")).toBe(
+      "Notification from “Fix it”",
+    );
+    expect(named(handBack, "  ")).toBe("Subagent report");
+    expect(named(handBack)).not.toContain("ac144ce280eaabd7b");
+    // A peer's plain message is named by the sender the host found for it;
+    // a command it quotes stays a command.
+    expect(named("Status: still going.", "Fix it")).toBe("Message from “Fix it”");
+    expect(named("<command-name>/model</command-name>", "Fix it")).toBe("Slash command /model");
   });
 
   it("matches a report only where the input begins with it", () => {
@@ -355,6 +380,22 @@ describe("followupLabel", () => {
       label: "Input",
       wrapper: false,
     });
+  });
+});
+
+describe("a subagent card without a response", () => {
+  it("says a Codex record kept no report, and others that none was recorded", () => {
+    expect(missingResponseNote("codex")).toBe(
+      "The Codex record holds no report from this subagent.",
+    );
+    expect(missingResponseNote("claude_code")).toBe("No response was recorded.");
+  });
+
+  it("tells a redacted spawn message from one that only mentions it", () => {
+    expect(redactedSpawnMessage('{"message": "REDACTED", "task_name": "review"}')).toBe(true);
+    expect(redactedSpawnMessage('{"task_name":"review","message":"REDACTED","fork')).toBe(true);
+    expect(redactedSpawnMessage('{"message": "Check REDACTED fields"}')).toBe(false);
+    expect(redactedSpawnMessage('{"prompt": "say \\"message\\": \\"REDACTED\\""}')).toBe(false);
   });
 });
 

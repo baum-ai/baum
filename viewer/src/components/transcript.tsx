@@ -23,6 +23,8 @@ import {
   formatTokenUsage,
   fullReplyText,
   join,
+  missingResponseNote,
+  redactedSpawnMessage,
   spawnStatusLabel,
   timeline,
   type TranscriptActivity,
@@ -773,7 +775,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
 
       <div className="flex flex-col gap-2.5 px-3 py-2.5">
         {!subagent.response ? (
-          <p className="text-xs text-(--text-tertiary) italic">No response was recorded.</p>
+          <p className="text-xs text-(--text-tertiary) italic">{missingResponseNote(vendor)}</p>
         ) : responseShown ? (
           <AgentText
             vendor={vendor}
@@ -800,6 +802,12 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
                 <SystemNote>This subagent's own transcript was not captured.</SystemNote>
               ) : null}
               <p className="text-xs text-(--text-tertiary)">Input to {subagent.name}</p>
+              {redactedSpawnMessage(subagent.input) ? (
+                <p className="text-xs text-(--text-tertiary)">
+                  {harnessName(vendor)} recorded this instruction redacted, so its text is not
+                  available.
+                </p>
+              ) : null}
               <pre className="max-h-56 overflow-auto rounded-md bg-(--surface-card) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
                 {subagent.input}
                 {subagent.input_truncated ? "\n…" : ""}
