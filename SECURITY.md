@@ -139,6 +139,36 @@ What remains:
 - Only environment variables are filtered, not files, the network or other
   processes running as you.
 
+The `codex` backend (`agent/codex`, the `Local` profile) runs `codex exec` in
+Codex's own read-only sandbox:
+
+- `--sandbox read-only` stops commands the model runs from writing files or
+  reaching the network. It does **not** confine reads to the checkout: the
+  model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
+  a pull request could try to persuade it to. Baum adds no further
+  restriction, and the model's answer is the only thing baum keeps.
+- `--ephemeral` writes no session, `--ignore-rules` skips execpolicy rules,
+  and the `hooks`, `apps` and `multi_agent` features are disabled. Web search
+  is off and approvals are never requested.
+- `--ignore-user-config` skips `$CODEX_HOME/config.toml`, so your Codex
+  configuration (MCP servers, profiles, instructions) is not applied; auth
+  still uses `CODEX_HOME`.
+- The process gets the same environment allowlist as the `claude` backend, plus
+  `CODEX_HOME`. `CODEX_API_KEY`, `OPENAI_*` and the other provider and cloud
+  credentials are removed; `CODEX_API_KEY` and the base URL are set only when
+  you configure an endpoint for baum.
+- It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
+  The output schema is written to a private temporary file that is removed
+  after the run; baum never writes into `CODEX_HOME`.
+- Codex older than the version baum was checked against is refused with a
+  request to upgrade. If Codex cannot start its read-only sandbox (on Linux,
+  when the kernel or container forbids the user namespaces it needs), baum
+  reports that and does not fall back to running without it.
+
+The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
+`Container` profile for the hosted review agent, which runs inside its own
+container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or

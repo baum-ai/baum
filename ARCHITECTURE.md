@@ -377,7 +377,7 @@ stay, so a child can still read credentials kept in files under them. Backends:
 | --- | --- |
 | `anthropic` | the Anthropic API directly, with read-only file tools over the checkout |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
-| `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema |
+| `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
 | `cursor-agent` | `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
@@ -398,6 +398,20 @@ process group on Unix; on Windows only the child itself, not its descendants.
 Because the child has its own process group, Ctrl-C does not reach it: a local
 caller must cancel the context it passes to `Run` on SIGINT and SIGTERM (for
 example with `signal.NotifyContext`), or the CLI keeps running.
+
+`agent/codex` has the same shape. `Local`, the zero value, runs `codex exec
+--sandbox read-only` with the user's own `HOME` and `CODEX_HOME` (so `codex
+login` works), `LocalEnvironment` plus `CODEX_HOME`, and `CODEX_API_KEY` and the
+base URL only when an `Endpoint` is given. The output schema goes to a private
+temporary file removed after the run, never into `CODEX_HOME`. It checks
+`codex --version` once, refuses a release older than the pinned minimum, maps an
+unknown-option exit to the same upgrade request, and reports a read-only
+sandbox Codex could not set up. `Container` is for a host that already runs
+inside its own boundary: it passes `--sandbox danger-full-access`, puts `HOME`
+and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
+`Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces
+this. `codex.StrictSchema` turns the lenient review schema into the form
+OpenAI's strict structured outputs accept.
 
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.

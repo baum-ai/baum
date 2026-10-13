@@ -1,0 +1,281 @@
+package codex
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/lastpersonlabs/baum/agent"
+	"github.com/lastpersonlabs/baum/agent/internal/proc"
+)
+
+// Profile selects the sandbox, environment and credentials the Codex process gets.
+type Profile int
+
+const (
+	// Local is for local runs and the zero value. Codex runs in its read-only
+	// sandbox: commands it starts cannot write or reach the network, but they
+	// can read any file the user can, not only the working directory. The
+	// process gets the user's own HOME and CODEX_HOME (or ~/.codex), so
+	// `codex login` auth works, an allowlisted copy of the environment
+	// (agent.LocalEnvironment, plus CODEX_HOME) and the binary found on PATH.
+	// CODEX_API_KEY and the base URL are set only when the request names an
+	// Endpoint. The output schema goes to a private temporary file removed
+	// after the run, never into CODEX_HOME. The installed version is checked
+	// once before the first run.
+	Local Profile = iota
+	// Container is for a host that already runs the process inside its own
+	// boundary, such as the hosted review agent container. Codex runs with its
+	// sandbox disabled: Docker's default seccomp profile blocks the user
+	// namespaces the sandbox needs. The CLI may execute commands, so the child
+	// receives only the run's endpoint token and run files: HOME and CODEX_HOME
+	// under <run>/home, a fixed PATH and CODEX_API_KEY from the Endpoint, which
+	// it requires. It never inherits the caller's environment and does not
+	// check the installed version. Never use it outside such a container.
+	Container
+)
+
+// Backend runs the Codex CLI over a request's directory.
+//
+// The child runs in its own process group, so a terminal's Ctrl-C (SIGINT) does
+// not reach it. A local caller must cancel the context it passes to Run on
+// SIGINT and SIGTERM, for example with signal.NotifyContext, or the CLI keeps
+// running after baum exits. Cancelling kills the group on Unix, and on Windows
+// only the child itself.
+type Backend struct {
+	// Binary is the codex executable. The Local profile resolves it with
+	// exec.LookPath and defaults to "codex".
+	Binary, Model string
+	Profile       Profile
+
+	mu         sync.Mutex
+	versionOK  bool
+	versionErr error
+}
+
+func (*Backend) Name() string { return agent.BackendCodex }
+
+func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+	if c.Profile != Local && c.Profile != Container {
+		return result, fmt.Errorf("codex: unknown profile %d", int(c.Profile))
+	}
+	if request.MaxCalls < 1 {
+		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
+	}
+	if request.MaxTokens < 1 {
+		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
+	}
+	endpoint := request.Endpoint
+	if c.Profile == Container && endpoint == nil {
+		return result, errors.New("codex: the container profile needs a provider endpoint")
+	}
+	binary := c.Binary
+	if c.Profile == Local {
+		if binary, err = c.localBinary(ctx); err != nil {
+			return result, err
+		}
+	}
+	var codexHome string
+	var env []string
+	var schemaDirectory string
+	sandbox := "danger-full-access"
+	if c.Profile == Container {
+		// Codex refuses to start when CODEX_HOME does not exist.
+		codexHome = filepath.Join(request.Directory, "home", ".codex")
+		if err := os.MkdirAll(codexHome, 0700); err != nil {
+			return result, err
+		}
+		schemaDirectory = codexHome
+		env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(request.Directory, "home"),
+			"CODEX_HOME=" + codexHome, "CODEX_API_KEY=" + endpoint.Key}
+	} else {
+		sandbox = "read-only"
+		env = agent.LocalEnvironment(os.Environ(), "CODEX_HOME")
+		if endpoint != nil {
+			env = append(env, "CODEX_API_KEY="+endpoint.Key)
+		}
+	}
+	args := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent",
+		"--sandbox", sandbox, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
+		"--skip-git-repo-check", "--model", c.Model}
+	if endpoint != nil && endpoint.BaseURL != "" {
+		encoded, err := json.Marshal(endpoint.BaseURL)
+		if err != nil {
+			return result, err
+		}
+		args = append(args, "-c", "openai_base_url="+string(encoded))
+	}
+	if len(request.Schema) > 0 {
+		schema, err := StrictSchema(request.Schema)
+		if err != nil {
+			return result, fmt.Errorf("deriving Codex output schema: %w", err)
+		}
+		if schemaDirectory == "" {
+			// A private directory of its own: the user's CODEX_HOME holds their
+			// login and configuration and is never written to.
+			if schemaDirectory, err = os.MkdirTemp("", "baum-codex-schema-"); err != nil {
+				return result, err
+			}
+			defer os.RemoveAll(schemaDirectory)
+		}
+		schemaPath := filepath.Join(schemaDirectory, "output-schema.json")
+		if err := os.WriteFile(schemaPath, schema, 0600); err != nil {
+			return result, err
+		}
+		args = append(args, "--output-schema", schemaPath)
+	}
+	// Internal stops cancel runCtx rather than calling Cancel directly, so
+	// WaitDelay bounds them as it does an outer cancellation.
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	cmd := exec.CommandContext(runCtx, binary, append(args, "-")...)
+	cmd.Dir = request.Directory
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(request.Prompt)
+	proc.Configure(cmd)
+	// Sandboxed commands can start their own session and outlive the group
+	// kill while holding stdout open; bound the wait for them after cancellation.
+	cmd.WaitDelay = 5 * time.Second
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return result, err
+	}
+	var stderr limitedBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return result, err
+	}
+	var document []byte
+	completed := false
+	// lastError is the latest "error" event's message, classified only when
+	// the run fails without a message of its own.
+	var lastError string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 65536), 8<<20)
+	for scanner.Scan() {
+		var event struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Item    struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Usage struct {
+				Input       int `json:"input_tokens"`
+				CachedInput int `json:"cached_input_tokens"`
+				CacheWrite  int `json:"cache_write_input_tokens"`
+				Output      int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			break
+		}
+		switch event.Type {
+		case "error":
+			lastError = event.Message
+		case "turn.started":
+			// Codex exposes one turn total, not the number of model cycles
+			// inside it. Count each invocation so retries and repairs are bounded.
+			result.Calls = 1
+		case "item.completed":
+			if event.Item.Type == "agent_message" {
+				document = []byte(strings.TrimSpace(event.Item.Text))
+				if len(document) > 8<<20 {
+					err = errors.New("agent document exceeds output size limit")
+				}
+			}
+		case "turn.completed":
+			completed = true
+			// Unlike Anthropic's, Codex input_tokens includes cached reads and
+			// cache writes, so uncached input already charges cache creation.
+			result.Tokens = max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
+			// agent.Usage keeps Anthropic's disjoint buckets, so the cached and
+			// cache-write tokens come out of Codex's input total.
+			result.Usage = agent.Usage{
+				Input:       int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)),
+				Output:      int64(event.Usage.Output),
+				CacheRead:   int64(event.Usage.CachedInput),
+				CacheCreate: int64(event.Usage.CacheWrite),
+			}
+			result.Events = append(result.Events, agent.Event{Kind: "model_usage", Input: event.Usage.Input, Output: event.Usage.Output,
+				CacheRead: event.Usage.CachedInput, CacheCreate: event.Usage.CacheWrite})
+		case "turn.failed":
+			// Codex also emits "error" events for connection retries it
+			// recovers from; failures it cannot recover from end the turn
+			// or exit nonzero. The message may quote the run, so only its
+			// classification is kept.
+			message := event.Error.Message
+			if message == "" {
+				message = lastError
+			}
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
+			err = errors.New(agent.ReasonProviderUnavailable)
+		}
+		if err != nil || result.Tokens > request.MaxTokens {
+			if err == nil {
+				err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
+			}
+			break
+		}
+	}
+	if scanErr := scanner.Err(); err == nil {
+		err = scanErr
+	}
+	if err != nil {
+		// Wait closes stdout, so skip draining it: an escaped descendant may
+		// hold it open indefinitely.
+		stop()
+	}
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if err != nil {
+		return result, err
+	}
+	if waitErr != nil {
+		if lastError != "" {
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(lastError)})
+		}
+		if c.Profile == Local {
+			if unknownOption(stderr.String()) {
+				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", firstLine(stderr.String()), minimumVersion)
+			}
+			if line, found := sandboxUnavailable(stderr.String(), lastError); found {
+				return result, fmt.Errorf("codex could not start its read-only sandbox: %s; baum will not run Codex without it", line)
+			}
+		}
+		return result, fmt.Errorf("codex failed: %w", waitErr)
+	}
+	if !completed || len(document) == 0 || bytes.Equal(document, []byte("null")) {
+		return result, errors.New("codex returned no review document")
+	}
+	result.Document = document
+	result.Model = c.Model
+	result.Events = append(result.Events, agent.Event{Kind: "document", Bytes: len(document)})
+	return result, nil
+}
+
+// Keep diagnostic output bounded; it is never exposed in a hosted failure.
+type limitedBuffer struct{ bytes.Buffer }
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if b.Len() < 65536 {
+		_, _ = b.Buffer.Write(p[:min(len(p), 65536-b.Len())])
+	}
+	return n, nil
+}
