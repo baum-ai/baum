@@ -147,23 +147,41 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session, `--ignore-rules` skips execpolicy rules,
-  and the `hooks`, `apps` and `multi_agent` features are disabled. Web search
-  is off and approvals are never requested.
-- `--ignore-user-config` skips `$CODEX_HOME/config.toml`, so your Codex
-  configuration (MCP servers, profiles, instructions) is not applied; auth
-  still uses `CODEX_HOME`.
+- `--ephemeral` writes no session, and the `hooks`, `apps` and `multi_agent`
+  features are disabled. Web search is off and approvals are never requested.
+- `--ignore-rules` skips user and project execpolicy `.rules` files, and
+  `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
+  `CODEX_HOME`). Codex's help says nothing more about either. In particular,
+  baum does not turn off `AGENTS.md` instructions, whether in `CODEX_HOME` or in
+  the checkout, so a pull request's `AGENTS.md` may be read by the model as
+  instructions.
 - The process gets the same environment allowlist as the `claude` backend, plus
-  `CODEX_HOME`. `CODEX_API_KEY`, `OPENAI_*` and the other provider and cloud
-  credentials are removed; `CODEX_API_KEY` and the base URL are set only when
-  you configure an endpoint for baum.
+  `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
+  provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
+  are set only when you configure an endpoint for baum.
 - It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
   The output schema is written to a private temporary file that is removed
   after the run; baum never writes into `CODEX_HOME`.
-- Codex older than the version baum was checked against is refused with a
-  request to upgrade. If Codex cannot start its read-only sandbox (on Linux,
-  when the kernel or container forbids the user namespaces it needs), baum
-  reports that and does not fall back to running without it.
+- Codex older than the version baum was checked against (the one the hosted
+  agent runs) is refused with a request to upgrade.
+- Before its first run, baum runs a trivial read-only command under
+  `codex sandbox -P :read-only`, which starts Codex's sandbox without calling
+  a model or the network. If it fails (on Linux, typically when the kernel or
+  container forbids the user namespaces the sandbox needs), baum reports
+  "codex could not start its read-only sandbox on this machine" with Codex's
+  first error line and does not run Codex without it. Baum has verified this
+  only for Linux. On Windows the local `codex` backend is refused, because
+  Codex's Windows sandbox was not examined; on macOS the same preflight runs
+  but was not tested.
+
+What remains for `codex`:
+
+- Everything the model reads, which can be any file your account can read, is
+  sent to the model provider as part of the conversation.
+- Users who keep their Codex credentials in the operating system keyring through
+  `config.toml` may appear logged out, because `--ignore-user-config` skips that
+  file. Baum does not pass the desktop session variables the keyring needs; sign
+  in with `codex login` so the login is stored in `CODEX_HOME`.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own

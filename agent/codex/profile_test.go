@@ -21,8 +21,18 @@ const successEvents = `{"type":"turn.started"}
 // otherwise runs run in the directory the backend chose.
 func fakeCodex(t *testing.T, version, run string) string {
 	t.Helper()
+	return fakeCodexSandbox(t, version, workingSandbox, run)
+}
+
+// workingSandbox runs the command after "--" as codex sandbox would.
+const workingSandbox = `for last; do :; done; cat "$last"; exit 0;`
+
+// fakeCodexSandbox is fakeCodex with its own answer to the sandbox preflight.
+func fakeCodexSandbox(t *testing.T, version, sandbox, run string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "codex")
-	body := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '" + version + "'; exit 0; fi\n" + run
+	body := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '" + version + "'; exit 0; fi\n" +
+		"if [ \"$1\" = sandbox ]; then " + sandbox + " fi\n" + run
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +95,7 @@ func TestLocalEnvironmentUsesTheUsersLoginAndNoKey(t *testing.T) {
 	env := environmentOf(t, dir)
 	for name := range env {
 		if strings.HasPrefix(name, "OPENAI_") || strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "AWS_") || strings.HasPrefix(name, "GH") ||
-			slices.Contains([]string{"CODEX_API_KEY", "SSH_AUTH_SOCK", "DATABASE_URL", "GIT_ASKPASS"}, name) {
+			slices.Contains([]string{"CODEX_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "DATABASE_URL", "GIT_ASKPASS"}, name) {
 			t.Errorf("%s reached the process", name)
 		}
 	}
@@ -253,9 +263,9 @@ func TestLocalRefusesUnreadableVersion(t *testing.T) {
 }
 
 func TestLocalMapsUnknownOptionToUpgrade(t *testing.T) {
-	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho \"error: unexpected argument '--ignore-rules' found\" >&2\nexit 2\n")
+	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho 'Usage: codex exec [OPTIONS]' >&2\necho \"error: unexpected argument '--ignore-rules' found\" >&2\nexit 2\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
-	if err == nil || !strings.Contains(err.Error(), "upgrade Codex to "+minimumVersion) || !strings.Contains(err.Error(), "unexpected argument") {
+	if err == nil || !strings.Contains(err.Error(), "upgrade Codex to "+minimumVersion) || !strings.Contains(err.Error(), "unexpected argument '--ignore-rules'") || strings.Contains(err.Error(), "Usage:") {
 		t.Fatalf("error %v", err)
 	}
 	// The container profile reports the failure as it always has.
@@ -271,30 +281,74 @@ func TestLocalMapsUnknownOptionToUpgrade(t *testing.T) {
 	}
 }
 
-func TestLocalMapsSandboxUnavailable(t *testing.T) {
-	for name, stderr := range map[string]string{
-		"bubblewrap": "bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces",
-		"uid map":    "bwrap: setting up uid map: Permission denied",
-		"landlock":   "error: Landlock ruleset restrict_self failed",
-		"seccomp":    "seccomp filter installation failed",
-	} {
-		t.Run(name, func(t *testing.T) {
-			script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho '"+stderr+"' >&2\nexit 1\n")
-			_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
-			if err == nil || !strings.HasPrefix(err.Error(), "codex could not start its read-only sandbox: ") {
-				t.Fatalf("error %v", err)
-			}
-		})
-	}
-	// An unrelated permission error, or a container run, is not mapped.
-	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho 'open /x: permission denied' >&2\nexit 1\n")
+// A local failure carries the first line of stderr; a hosted one never does.
+func TestGenericFailureDetailIsLocalOnly(t *testing.T) {
+	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho >&2\necho 'stream closed: private repository text' >&2\necho 'second line' >&2\nexit 1\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
-	if err == nil || strings.Contains(err.Error(), "sandbox") {
+	if err == nil || !strings.HasPrefix(err.Error(), "codex failed: ") || !strings.HasSuffix(err.Error(), "(stream closed: private repository text)") {
+		t.Fatalf("local error %v", err)
+	}
+	_, err = (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
+	if err == nil || strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "stream closed") {
+		t.Fatalf("container error %v", err)
+	}
+}
+
+func TestUnsetCodexHomeStaysUnset(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	os.Unsetenv("CODEX_HOME")
+	script := fakeCodex(t, "codex-cli 0.162.1", recording)
+	dir := t.TempDir()
+	if _, err := (&Backend{Binary: script, Model: "m"}).Run(context.Background(), schemaRequest(dir, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if value, present := environmentOf(t, dir)["CODEX_HOME"]; present {
+		t.Errorf("CODEX_HOME = %q reached the process", value)
+	}
+}
+
+// The preflight runs a read-only command under Codex's read-only profile once,
+// and a machine where the sandbox cannot start is refused before any run.
+func TestLocalPreflightsTheReadOnlySandbox(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "preflights")
+	script := fakeCodexSandbox(t, "codex-cli 0.162.1", `echo "$@" >> `+counter+`; for last; do :; done; cat "$last"; exit 0;`,
+		"cat >/dev/null\ncat <<'EVENTS'\n"+successEvents+"\nEVENTS\n")
+	backend := &Backend{Binary: script}
+	for range 2 {
+		if _, err := backend.Run(context.Background(), request(t.TempDir())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := readLines(t, filepath.Dir(counter), "preflights")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "sandbox -P :read-only -- cat ") {
+		t.Fatalf("preflight calls %q", lines)
+	}
+
+	marker := filepath.Join(t.TempDir(), "ran")
+	script = fakeCodexSandbox(t, "codex-cli 0.162.1", "echo 'bwrap: No permissions to create a new namespace' >&2; echo more >&2; exit 1;", "touch "+marker+"\n")
+	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
+	want := "codex could not start its read-only sandbox on this machine: bwrap: No permissions to create a new namespace; baum will not run codex without it"
+	if err == nil || err.Error() != want {
 		t.Fatalf("error %v", err)
 	}
-	script = fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n")
-	_, err = (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
-	if err == nil || strings.Contains(err.Error(), "sandbox") {
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("codex ran without its sandbox")
+	}
+	// A sandbox that succeeds without running the command is not a pass, and a
+	// failed preflight is repeated rather than cached.
+	script = fakeCodexSandbox(t, "codex-cli 0.162.1", "exit 0;", "touch "+marker+"\n")
+	failing := &Backend{Binary: script}
+	for range 2 {
+		if _, err := failing.Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "read-only sandbox") {
+			t.Fatalf("error %v", err)
+		}
+	}
+}
+
+func TestSandboxIsNotVerifiedOnWindows(t *testing.T) {
+	script := fakeCodex(t, "codex-cli 0.162.1", "")
+	err := checkSandbox(context.Background(), script, "windows")
+	if err == nil || !strings.Contains(err.Error(), "cannot verify") || !sandboxPlatform("linux") || !sandboxPlatform("darwin") || sandboxPlatform("windows") {
 		t.Fatalf("error %v", err)
 	}
 }

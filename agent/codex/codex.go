@@ -30,8 +30,9 @@ const (
 	// (agent.LocalEnvironment, plus CODEX_HOME) and the binary found on PATH.
 	// CODEX_API_KEY and the base URL are set only when the request names an
 	// Endpoint. The output schema goes to a private temporary file removed
-	// after the run, never into CODEX_HOME. The installed version is checked
-	// once before the first run.
+	// after the run, never into CODEX_HOME. Before the first run the installed version is
+	// checked and a trivial command is run under the read-only sandbox, once
+	// per Backend; a machine where the sandbox cannot start is refused.
 	Local Profile = iota
 	// Container is for a host that already runs the process inside its own
 	// boundary, such as the hosted review agent container. Codex runs with its
@@ -57,9 +58,9 @@ type Backend struct {
 	Binary, Model string
 	Profile       Profile
 
-	mu         sync.Mutex
-	versionOK  bool
-	versionErr error
+	mu           sync.Mutex
+	checked      bool
+	checkFailure error
 }
 
 func (*Backend) Name() string { return agent.BackendCodex }
@@ -87,8 +88,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	var codexHome string
 	var env []string
 	var schemaDirectory string
-	sandbox := "danger-full-access"
+	sandbox := "read-only"
 	if c.Profile == Container {
+		sandbox = "danger-full-access"
 		// Codex refuses to start when CODEX_HOME does not exist.
 		codexHome = filepath.Join(request.Directory, "home", ".codex")
 		if err := os.MkdirAll(codexHome, 0700); err != nil {
@@ -98,7 +100,6 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(request.Directory, "home"),
 			"CODEX_HOME=" + codexHome, "CODEX_API_KEY=" + endpoint.Key}
 	} else {
-		sandbox = "read-only"
 		env = agent.LocalEnvironment(os.Environ(), "CODEX_HOME")
 		if endpoint != nil {
 			env = append(env, "CODEX_API_KEY="+endpoint.Key)
@@ -251,11 +252,13 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(lastError)})
 		}
 		if c.Profile == Local {
-			if unknownOption(stderr.String()) {
-				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", firstLine(stderr.String()), minimumVersion)
+			if line, found := unknownOption(stderr.String()); found {
+				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", line, minimumVersion)
 			}
-			if line, found := sandboxUnavailable(stderr.String(), lastError); found {
-				return result, fmt.Errorf("codex could not start its read-only sandbox: %s; baum will not run Codex without it", line)
+			// Local stderr is the user's own and bounded; a hosted run's may
+			// quote the repository, so Container never reports it.
+			if line := firstLine(stderr.String()); line != "" {
+				return result, fmt.Errorf("codex failed: %w (%s)", waitErr, line)
 			}
 		}
 		return result, fmt.Errorf("codex failed: %w", waitErr)

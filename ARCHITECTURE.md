@@ -403,10 +403,12 @@ example with `signal.NotifyContext`), or the CLI keeps running.
 --sandbox read-only` with the user's own `HOME` and `CODEX_HOME` (so `codex
 login` works), `LocalEnvironment` plus `CODEX_HOME`, and `CODEX_API_KEY` and the
 base URL only when an `Endpoint` is given. The output schema goes to a private
-temporary file removed after the run, never into `CODEX_HOME`. It checks
-`codex --version` once, refuses a release older than the pinned minimum, maps an
-unknown-option exit to the same upgrade request, and reports a read-only
-sandbox Codex could not set up. `Container` is for a host that already runs
+temporary file removed after the run, never into `CODEX_HOME`. Once per
+`Backend` it checks `codex --version` against the pinned minimum (the release
+the hosted agent runs) and runs `codex sandbox -P :read-only -- cat <file>` to
+prove the read-only sandbox starts on this machine, refusing the run otherwise
+(and always on Windows, where the sandbox was not examined). A run that dies on
+an unknown option reports the upgrade request. `Container` is for a host that already runs
 inside its own boundary: it passes `--sandbox danger-full-access`, puts `HOME`
 and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 `Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces

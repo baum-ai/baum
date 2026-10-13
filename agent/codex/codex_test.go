@@ -76,6 +76,9 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 	if !bytes.Contains(env, []byte("CODEX_API_KEY=test-key")) || bytes.Contains(env, []byte("DATABASE_URL")) || bytes.Contains(env, []byte("GITHUB_APP_PRIVATE_KEY")) {
 		t.Fatalf("incorrect child environment: %s", env)
 	}
+	if prompt, _ := os.ReadFile(filepath.Join(dir, "prompt.txt")); string(prompt) != "review the checkout" {
+		t.Fatalf("prompt on stdin = %q", prompt)
+	}
 	_, err = backend.Run(context.Background(), agent.Request{Directory: dir, Prompt: "review the checkout", MaxCalls: 2, MaxTokens: 69, Endpoint: testEndpoint})
 	if err == nil || err.Error() != agent.GenerationBudgetExceededReason("tokens") {
 		t.Fatalf("token budget: %v", err)
