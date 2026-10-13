@@ -24,12 +24,13 @@ func fakeCodex(t *testing.T, version, run string) string {
 	return fakeCodexSandbox(t, version, workingSandbox, run)
 }
 
-// workingSandbox runs the command after "--" as codex sandbox would.
-const workingSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo "Read-only file system" >&2; exit 1;; esac; cat "$last"; exit 0;`
+// workingSandbox answers the preflight as an enforced codex sandbox would: the
+// read succeeds and the shell reports its write was refused.
+const workingSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo ` + writeBlocked + `; exit 0;; esac; cat "$last"; exit 0;`
 
 // writableSandbox lets the write probe succeed, as a sandbox that is not
 // enforced would.
-const writableSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; exit 0;; esac; cat "$last"; exit 0;`
+const writableSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; echo ` + writeAllowed + `; exit 0;; esac; cat "$last"; exit 0;`
 
 // fakeCodexSandbox is fakeCodex with its own answer to the sandbox preflight.
 func fakeCodexSandbox(t *testing.T, version, sandbox, run string) string {
@@ -226,6 +227,18 @@ func TestLocalArgumentsAreReadOnly(t *testing.T) {
 			t.Errorf("missing %s in %q", flag, args)
 		}
 	}
+	if at := slices.Index(args, "--model"); at < 0 || args[at+1] != "m" {
+		t.Errorf("arguments %q lack --model m", args)
+	}
+
+	// With no model, Codex chooses its default: no empty --model.
+	dir = t.TempDir()
+	if _, err := (&Backend{Binary: script}).Run(context.Background(), schemaRequest(dir, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if args := readLines(t, dir, "arguments.txt"); slices.Contains(args, "--model") {
+		t.Errorf("an empty Model passed --model: %q", args)
+	}
 }
 
 func TestLocalRefusesOldCodexOnce(t *testing.T) {
@@ -300,7 +313,9 @@ func TestGenericFailureDetailIsLocalOnly(t *testing.T) {
 
 func TestUnsetCodexHomeStaysUnset(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
-	os.Unsetenv("CODEX_HOME")
+	if err := os.Unsetenv("CODEX_HOME"); err != nil {
+		t.Fatal(err)
+	}
 	script := fakeCodex(t, "codex-cli 0.162.1", recording)
 	dir := t.TempDir()
 	if _, err := (&Backend{Binary: script, Model: "m"}).Run(context.Background(), schemaRequest(dir, nil)); err != nil {
@@ -315,7 +330,7 @@ func TestUnsetCodexHomeStaysUnset(t *testing.T) {
 // and a machine where the sandbox cannot start is refused before any run.
 func TestLocalPreflightsTheReadOnlySandbox(t *testing.T) {
 	counter := filepath.Join(t.TempDir(), "preflights")
-	script := fakeCodexSandbox(t, "codex-cli 0.162.1", `echo "$@" >> `+counter+`; for last; do :; done; cat "$last"; exit $?;`,
+	script := fakeCodexSandbox(t, "codex-cli 0.162.1", `echo "$@" >> `+counter+`; `+workingSandbox,
 		"cat >/dev/null\ncat <<'EVENTS'\n"+successEvents+"\nEVENTS\n")
 	backend := &Backend{Binary: script}
 	for range 2 {
@@ -368,10 +383,28 @@ func TestLocalPreflightRefusesAnUnenforcedSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A sandbox that fails the write but still leaves the file is refused too.
-	leaving := `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; exit 1;; esac; cat "$last"; exit 0;`
+	leaving := `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; echo ` + writeBlocked + `; exit 0;; esac; cat "$last"; exit 0;`
 	script = fakeCodexSandbox(t, "codex-cli 0.162.1", leaving, "touch "+marker+"\n")
 	if _, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "without enforcing") {
 		t.Fatalf("error %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("codex ran without an enforced sandbox")
+	}
+}
+
+// A write check whose shell never ran (no report back) proves nothing, even
+// though the write failed and left no file.
+func TestLocalPreflightRefusesAWriteCheckThatNeverRan(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	silent := `for last; do :; done; case "$*" in *"-- sh -c"*) echo "sh: not found" >&2; exit 127;; esac; cat "$last"; exit 0;`
+	script := fakeCodexSandbox(t, "codex-cli 0.162.1", silent, "touch "+marker+"\n")
+	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
+	if err == nil || !strings.Contains(err.Error(), "could not run its read-only sandbox check") || !strings.Contains(err.Error(), "sh: not found") {
+		t.Fatalf("error %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("codex ran after a write check that never ran")
 	}
 }
 

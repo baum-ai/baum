@@ -124,20 +124,43 @@ func checkSandbox(ctx context.Context, binary, goos string) error {
 	return fmt.Errorf("codex could not start its read-only sandbox on this machine: %s; baum will not run codex without it", reason)
 }
 
+// The sandboxed shell prints one of these after it tried the write, so a run
+// that never reached the write proves nothing.
+const (
+	writeBlocked = "baum-write-blocked"
+	writeAllowed = "baum-write-allowed"
+)
+
 // checkWriteBlocked proves the read-only profile is enforced, not just
-// accepted: a sandboxed command that creates a file in dir must fail and leave
-// no file behind. The command is sh with the path as an argument, which works
-// the same on Linux and macOS.
+// accepted: a sandboxed shell must try to create a file in dir, report that
+// the write failed, and leave no file behind. The command is sh with the path
+// as an argument, which works the same on Linux and macOS.
 func checkWriteBlocked(ctx context.Context, binary, dir string) error {
 	probe := filepath.Join(dir, "probe")
-	defer os.Remove(probe)
-	cmd := localCommand(ctx, binary, "sandbox", "-P", ":read-only", "--", "sh", "-c", `echo x > "$1"`, "sh", probe)
+	defer func() { _ = os.Remove(probe) }()
+	script := `if (echo x > "$1") 2>/dev/null; then echo ` + writeAllowed + `; else echo ` + writeBlocked + `; fi`
+	cmd := localCommand(ctx, binary, "sandbox", "-P", ":read-only", "--", "sh", "-c", script, "sh", probe)
 	cmd.Dir = dir
-	err := cmd.Run()
-	if _, statErr := os.Stat(probe); err == nil || statErr == nil {
+	var stderr limitedBuffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	_, statErr := os.Stat(probe)
+	result := strings.TrimSpace(string(out))
+	switch {
+	case result == writeAllowed || statErr == nil:
 		return errors.New("codex ran a command without enforcing its read-only sandbox on this machine; baum will not run codex")
+	case err == nil && result == writeBlocked:
+		return nil
 	}
-	return nil
+	reason := firstLine(stderr.String())
+	if reason == "" {
+		if err != nil {
+			reason = err.Error()
+		} else {
+			reason = "the sandboxed write check did not run"
+		}
+	}
+	return fmt.Errorf("codex could not run its read-only sandbox check on this machine: %s; baum will not run codex without it", reason)
 }
 
 // compareVersions orders two dotted numeric versions of the same length.

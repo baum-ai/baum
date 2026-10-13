@@ -108,7 +108,11 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	args := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
 		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent",
 		"--sandbox", sandbox, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
-		"--skip-git-repo-check", "--model", c.Model}
+		"--skip-git-repo-check"}
+	// An empty Model leaves the flag out so Codex uses its configured default.
+	if c.Model != "" {
+		args = append(args, "--model", c.Model)
+	}
 	if endpoint != nil && endpoint.BaseURL != "" {
 		encoded, err := json.Marshal(endpoint.BaseURL)
 		if err != nil {
