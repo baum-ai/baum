@@ -16,7 +16,7 @@ func (f Fixture) EarlierSnapshot(t *testing.T) sessions.Options {
 	base := t.TempDir()
 	claudeDir := filepath.Join(base, "claude")
 	write(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(f.Repo), SessionID+".jsonl"),
-		transcript(f.Repo, "0000000000000000000000000000000000000000"))
+		transcript(SessionID, f.Repo, "add the feature", "0000000000000000000000000000000000000000"))
 	return sessions.Options{
 		ClaudeProjectsDir: claudeDir,
 		CodexSessionsDir:  filepath.Join(base, "codex"),

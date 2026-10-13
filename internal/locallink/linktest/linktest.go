@@ -102,7 +102,7 @@ func build(t *testing.T, trailer string, files []string) Fixture {
 	git(t, repo, "checkout", "-q", "main")
 
 	claudeDir := filepath.Join(base, "claude")
-	write(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(repo), SessionID+".jsonl"), transcript(repo, first))
+	write(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(repo), SessionID+".jsonl"), transcript(SessionID, repo, "add the feature", first))
 	flags := []string{
 		"--claude-dir", claudeDir,
 		"--codex-dir", filepath.Join(base, "codex", "sessions"),
@@ -116,6 +116,14 @@ func build(t *testing.T, trailer string, files []string) Fixture {
 			CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
 		},
 	}
+}
+
+// AddSession writes one more Claude Code session into f's Claude Code store:
+// one recorded in cwd, asked prompt, that created the first of f.Commits as
+// the fixture's own session did.
+func (f Fixture) AddSession(t *testing.T, id, cwd, prompt string) {
+	t.Helper()
+	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(cwd), id+".jsonl"), transcript(id, cwd, prompt, f.Commits[0]))
 }
 
 // NoSession returns f's stores with the session removed.
@@ -167,20 +175,20 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// transcript is a Claude Code session that asked for a feature and ran
+// transcript is a Claude Code session in cwd that was asked prompt and ran
 // git commit, whose output names the commit.
-func transcript(repo, commitOID string) string {
+func transcript(id, cwd, prompt, commitOID string) string {
 	const usage = `{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard"}`
 	common := func(kind, uuid, parent, at string) string {
 		return fmt.Sprintf(`"cwd":%q,"gitBranch":"feature","isSidechain":false,"sessionId":%q,"type":%q,"uuid":%q,"parentUuid":%s,"timestamp":%q`,
-			repo, SessionID, kind, uuid, parent, at)
+			cwd, id, kind, uuid, parent, at)
 	}
 	lines := []string{
-		`{` + common("user", "u-1", "null", "2026-07-01T10:00:00.000Z") + `,"promptId":"p-1","message":{"role":"user","content":"add the feature"}}`,
+		`{` + common("user", "u-1", "null", "2026-07-01T10:00:00.000Z") + fmt.Sprintf(`,"promptId":"p-1","message":{"role":"user","content":%q}}`, prompt),
 		`{` + common("assistant", "a-1", `"u-1"`, "2026-07-01T10:20:00.000Z") + `,"requestId":"req_1","message":{"id":"msg_1","role":"assistant","model":"claude-opus-5","stop_reason":"tool_use","usage":` + usage +
 			`,"content":[{"type":"tool_use","id":"toolu_commit","name":"Bash","input":{"command":"git commit -m 'Add the feature'"}}]}}`,
 		`{` + common("user", "u-2", `"a-1"`, "2026-07-01T10:30:00.000Z") + fmt.Sprintf(`,"promptId":"p-1","message":{"role":"user","content":[{"tool_use_id":"toolu_commit","type":"tool_result","content":"[feature %s] Add the feature"}]},"toolUseResult":{"stdout":"[feature %s] Add the feature","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`, commitOID[:7], commitOID[:7]),
-		fmt.Sprintf(`{"type":"ai-title","aiTitle":"Ask %s about the feature (%s)","sessionId":%q}`, Email, Secret, SessionID),
+		fmt.Sprintf(`{"type":"ai-title","aiTitle":"Ask %s about the feature (%s)","sessionId":%q}`, Email, Secret, id),
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

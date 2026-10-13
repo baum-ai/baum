@@ -282,6 +282,12 @@ another implementation; the hosted service does. The prompt is per backend
 because each backend submits its result differently. The repair
 instructions and tile guidance are part of the loop, not the prompt.
 
+Every prompt a local generation run sends starts with
+`sessions.GenerationRunMarker`. A CLI backend records its run in the same
+session stores as the developer's own sessions, in a worktree of the same
+clone, and the marker is how session evidence leaves baum's own runs out (see
+"Local session evidence").
+
 ### Generate and repair
 
 The loop asks the backend for a document, runs it through `review`, and on
@@ -442,7 +448,8 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 
 `internal/locallink` links the sessions on this machine to a pull request's
 commits using only this machine; `baum view` serves it, and the session
-evidence that `baum bundle` collects can reuse it without a server. `Resolve`
+evidence that `baum bundle` collects reuses its loading and matching (see
+"Local session evidence"). `Resolve`
 takes the pull request's `owner/name`, head and base commit ids, a directory
 inside the clone and the session store overrides, and does this:
 
@@ -602,6 +609,51 @@ time. When the server stops, it cancels a running computation and waits up to
 ten seconds for it to remove its private repository. The route sits behind the same
 host check and security headers as the others, and only `GET` and `HEAD` are
 allowed.
+
+### Local session evidence
+
+`locallink.BuildSessionEvidence` is the bundle's sessions source on this
+machine. It takes the pull request's commits as the clone holds them
+(`gitlocal.Commits` from the merge base to the head), a directory in the
+clone, the session store overrides with the `--previous-path` directories the
+repository used to live at, and the bundle caps `MaxPromptsPerSession` and
+`MaxCommandEventsPerSession`. It loads and matches sessions exactly
+as steps 4 to 7 of "Local session linkage" do, after leaving out baum's own
+generation runs: a session whose top-level session has a prompt starting with
+`sessions.GenerationRunMarker` is neither linked nor allowed to take a link
+from another session, and is dropped from an Entire checkpoint's ground truth
+too. Each session linked to at least one commit becomes one bundle session:
+
+- `id` is the vendor's session id, the one `/api/sessions` lists, and
+  `vendor` the agent that ran. The session tree is one entry: a subagent is
+  never a session of its own.
+- `models` are the distinct models of every invocation in the tree, sorted;
+  `title`, `branch` (else the first branch `sessioncorrelate` found), start,
+  end and `outcome` are the top-level session's.
+- `prompts` are the top-level session's human prompts and slash commands with
+  text, by turn index: the first and the latest `MaxPromptsPerSession - 1`
+  (none at 0). Each carries the latest non-blank reply the model gave it, and
+  as `touched_paths` the distinct paths read or edited under it, including by
+  the subagents it spawned at any depth. Paths are made repository-relative
+  by `sessioncorrelate.PathResolver`, the rules `Correlate` applies; a path it
+  cannot make relative (a file outside the clone) is left out.
+- `command_events` are the tree's execute tool calls that carry a command
+  line, the latest `MaxCommandEventsPerSession` (all at 0) in time order.
+  Each is `bundle.ParseCommandParaphrase` of the command: per simple command
+  of a pipeline or `&&`/`;` chain, the program's base name (an absolute
+  executable keeps only its name), its closed category and the first
+  argument that is a repository-relative path. Its `outcome` is the tool
+  result's status as `bundle.CommandOutcome` maps it, `unknown` without a
+  result. Command lines and tool output never leave the session graph.
+- The linkage confidence is the highest of the session's matched edges.
+  Sessions are returned by confidence, then start (unknown last), then id,
+  which is the order `bundle.ApplyCaps` cuts them in.
+
+The sessions are returned unredacted: `bundle.Redact`, the bundle's input
+redaction, masks their titles, branches, prompts, replies, paths and command
+fields with the rest of the bundle, before trimming. `bundle.CommandText`,
+`bundle.ParseCommandParaphrase` and `bundle.CommandOutcome` are the same
+helpers the hosted service paraphrases its stored command events with.
 
 ### Session transcripts
 

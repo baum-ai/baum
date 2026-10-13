@@ -163,6 +163,17 @@ prompt), and not at all when its agent's own store already has it.
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.
 
+The review bundle takes the sessions linked to the pull request's commits the
+way `baum view` links them, `--previous-path` included. Each carries its
+title, branch, models, timing and outcome, its first and latest prompts with
+the agent's final reply and the repository files each prompt read or edited
+(subagents' work counts toward the prompt that started them), and its shell
+commands as paraphrases: program name, a category such as `test` or `build`,
+a repository-relative target and whether the command succeeded, failed or was
+interrupted. Command lines, their output and paths outside the repository are
+never included, and all text is redacted. The agent runs baum itself starts
+to write a review are left out.
+
 ## Configuration
 
 baum reads `$XDG_CONFIG_HOME/baum/config.toml`, which defaults to
@@ -219,13 +230,13 @@ describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
-| `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, the `REVIEW.md` loader, reference extraction and bot flags, the code checkout archive, description image handling, and the caps, input redaction, byte trimming and digest applied to a bundle |
+| `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, the `REVIEW.md` loader, reference extraction and bot flags, the code checkout archive, description image handling, the paraphrase of a session's shell commands, and the caps, input redaction, byte trimming and digest applied to a bundle |
 | `review` | the review document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh and the tile catalogue (`review/tilecatalogue`) |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |
 | `sessions/collector` | discovers Claude Code, Codex and Cursor stores in the home directory and Entire checkpoints in the clone |
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
 | `linkage` | matches commits of a pull request to the sessions that produced them |
-| `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph |
+| `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph, and makes a file touch's path repository-relative |
 | `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/lastpersonlabs/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
 | `schema` | the review schema and its validator |
 
