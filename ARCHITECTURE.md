@@ -466,8 +466,9 @@ The loop owns the rest of what a run sends:
   whose instructions name the tools differently. They are not part of the
   prompt's JSON encoding.
 
-Local generation (`baum generate`, not built yet) must start every prompt it
-sends with `sessions.GenerationRunMarker`. That is the contract session
+Local generation (`baum generate`, in `internal/generate`) starts every prompt
+it sends, repairs included, with `sessions.GenerationRunMarker`; its `Prompts`
+wrapper prepends the marker to the body. That is the contract session
 evidence relies on: a CLI backend records its run in the same session stores
 as the developer's own sessions, in a worktree of the same clone, and local
 linkage leaves out every session whose top-level prompt starts with the
@@ -1079,6 +1080,31 @@ context ends the event streams and shuts the server down.
    enabled;
 7. validates, derives and redacts the document, and stores it as the next
    version.
+
+Today `baum generate` is `internal/generate` (the pipeline) and
+`internal/cli/generate.go`. It runs steps 1 to 4 and 6 and 7 without the
+previous version and the store (a later change adds them): it selects and
+checks the backend first (`claude.Backend.Check`, `codex.Backend.Check`; `auto`
+tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
+written to temporary files outside the run directory, creates the run
+directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
+archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
+bundle's own caps, and runs `agent.Generator` with the `claude.User` or
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this). The
+wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
+bounds each backend call, and SIGINT and SIGTERM cancel the context so the
+backend's process group is killed and the run directory removed.
+
+Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
+`agent.RedactOutput` masks the document, findings, model and diagnostics (with
+the unpacked tree's paths as the known checkout paths) and
+`agent.RejectSecrets` rejects a run that masked a secret in a closed value; then
+`DocumentValidator.CompleteWithPrompt` derives the host-owned fields and records
+the model and prompt version, and `ValidateStored` checks the result strictly
+against the bundle. Failures are `*generate.Error` values of a category (input,
+backend, budget, validation, interrupted) that `cli.ExitCode` maps to exit codes
+2, 3, 4, 5 and 130. The document is returned only for a run that passed every
+step, and written by the command afterwards.
 
 Git reads (the comparison, patches, blobs and the exports) run in a private
 temporary bare repository that borrows the clone's objects and has default
