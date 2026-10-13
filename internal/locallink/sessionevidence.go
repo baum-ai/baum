@@ -3,8 +3,9 @@ package locallink
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"io"
+	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -72,10 +73,17 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if err != nil {
 		return nil, err
 	}
-	roots, err := cloneRoots(ctx, dir, req.Sessions.PreviousPaths)
+	clone, err := collector.RepoRoot(dir)
 	if err != nil {
 		return nil, err
 	}
+	roots := cloneRoots(ctx, dir, clone, req.Sessions.PreviousPaths, req.Warn)
+	home, _ := os.UserHomeDir()
+	var changed []string
+	for _, c := range req.Commits {
+		changed = append(changed, c.Files...)
+	}
+	inPullRequest, inCheckout := bundle.KnownPaths(changed...), existsInClone(clone)
 	confidence := linkConfidence(edges)
 	for _, id := range ids {
 		linked, ok := confidence[id]
@@ -83,8 +91,14 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 			continue
 		}
 		s := latest[id].session
-		sessionRoots := append(slices.Clone(roots), s.RepoRoot, s.WorktreeRoot)
-		if item, ok := sessionEvidence(s, linked, sessionRoots, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession); ok {
+		sessionRoots := slices.Clone(roots)
+		for _, root := range []string{s.RepoRoot, s.WorktreeRoot} {
+			if root != "" && trustedRoot(root, home) {
+				sessionRoots = append(sessionRoots, root)
+			}
+		}
+		known := func(path string) bool { return inPullRequest(path) || inCheckout(path) }
+		if item, ok := sessionEvidence(s, linked, sessionRoots, known, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession); ok {
 			evidence = append(evidence, item)
 		}
 	}
@@ -125,29 +139,82 @@ func sortSessionEvidence(evidence []bundle.Session) {
 }
 
 // cloneRoots are the checkouts of the clone containing dir: every working
-// tree git lists (deleted ones included), the checkout holding dir, and the
-// directories the repository used to live at. A touched path outside all of
-// them is not the repository's.
-func cloneRoots(ctx context.Context, dir string, previous []string) ([]string, error) {
+// tree git lists (deleted ones included), clone, the checkout holding dir,
+// and the directories the repository used to live at. A touched path outside
+// all of them is not the repository's. A previous path that is the file
+// system root, the home directory or a directory above it is dropped with a
+// warning, as gitlocal drops such a worktree: everything under it would pass
+// for the repository's.
+func cloneRoots(ctx context.Context, dir, clone string, previous []string, warn io.Writer) []string {
 	var roots []string
 	if worktrees, err := gitlocal.Worktrees(ctx, dir); err == nil {
 		for _, worktree := range worktrees {
 			roots = append(roots, worktree.Path)
 		}
+	} else {
+		warnf(warn, "warning: listing the clone's worktrees: %v; only the current checkout bounds the paths sessions touched\n", err)
 	}
-	root, err := collector.RepoRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	roots = append(roots, root)
+	roots = append(roots, clone)
+	home, _ := os.UserHomeDir()
 	for _, path := range previous {
 		abs, err := filepath.Abs(path)
-		if err != nil {
-			return nil, fmt.Errorf("previous path %q: %w", path, err)
+		if err != nil || !trustedRoot(abs, home) {
+			warnf(warn, "warning: previous path %s is not used to bound the paths sessions touched: it is the file system root, the home directory or above it\n", path)
+			continue
 		}
 		roots = append(roots, abs)
 	}
-	return roots, nil
+	return roots
+}
+
+// trustedRoot reports whether dir may bound a repository: not the file
+// system root, not the home directory and not a directory holding it.
+func trustedRoot(dir, home string) bool {
+	dir = filepath.Clean(dir)
+	if filepath.Dir(dir) == dir {
+		return false
+	}
+	if home == "" {
+		return true
+	}
+	rel, err := filepath.Rel(dir, filepath.Clean(home))
+	return err != nil || (rel != "." && !filepath.IsLocal(rel))
+}
+
+// existsInClone returns a knownPath predicate accepting a repository path
+// that exists in the checkout at root, or whose parent directory (other than
+// root itself) does, so a file a command creates still counts. A path that
+// leaves root through a symbolic link is not accepted.
+func existsInClone(root string) func(string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return func(string) bool { return false }
+	}
+	inside := func(p string) bool {
+		real, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			return false
+		}
+		rel, err := filepath.Rel(realRoot, real)
+		return err == nil && rel != "." && filepath.IsLocal(rel)
+	}
+	return func(p string) bool {
+		p = path.Clean(p)
+		if !filepath.IsLocal(filepath.FromSlash(p)) {
+			return false
+		}
+		if inside(p) {
+			return true
+		}
+		parent := path.Dir(p)
+		if parent == "." {
+			return false
+		}
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(parent))); err != nil || !info.IsDir() {
+			return false
+		}
+		return inside(parent)
+	}
 }
 
 // withoutGenerationRuns drops baum's own generation runs before matching, so
@@ -182,7 +249,7 @@ func withoutGenerationRuns(found []sessions.Session, truth map[string][]string) 
 // the tree can belong to another repository. Touched paths resolve only
 // inside roots, the clone's checkouts. ok is false for a graph without a
 // top-level session.
-func sessionEvidence(s sessions.Session, confidence float64, roots []string, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
+func sessionEvidence(s sessions.Session, confidence float64, roots []string, knownPath func(string) bool, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
 	root := s.Root()
 	if root == nil {
 		return bundle.Session{}, false
@@ -207,8 +274,12 @@ func sessionEvidence(s sessions.Session, confidence float64, roots []string, max
 		item.EndedAt = &ended
 	}
 	item.Prompts = prompts(graph, root.ID, maxPrompts)
-	attachTouchedPaths(graph, s.Vendor, roots, item.Prompts)
-	item.CommandEvents = commandEvents(graph, maxCommandEvents)
+	resolver := sessioncorrelate.NewPathResolver(graph, s.Vendor, sessioncorrelate.WithCloneRoots(roots...))
+	attachTouchedPaths(graph, resolver, item.Prompts)
+	touched := bundle.KnownPaths(touchedPaths(graph, resolver)...)
+	item.CommandEvents = commandEvents(graph, maxCommandEvents, func(path string) bool {
+		return touched(path) || (knownPath != nil && knownPath(path))
+	})
 	return item, true
 }
 
@@ -287,7 +358,7 @@ func newerMessage(a, b *session.AssistantMessage) bool {
 // read or edited under it, including by the sessions it spawned at any depth,
 // sorted. An absolute path outside every root, and a relative one the
 // resolver cannot place, is left out.
-func attachTouchedPaths(graph *session.Graph, vendor string, roots []string, prompts []bundle.Prompt) {
+func attachTouchedPaths(graph *session.Graph, resolver *sessioncorrelate.PathResolver, prompts []bundle.Prompt) {
 	if len(prompts) == 0 {
 		return
 	}
@@ -296,7 +367,6 @@ func attachTouchedPaths(graph *session.Graph, vendor string, roots []string, pro
 		byID[prompts[i].ID] = &prompts[i]
 	}
 	owners := newPromptOwners(graph)
-	resolver := sessioncorrelate.NewPathResolver(graph, vendor, sessioncorrelate.WithCloneRoots(roots...))
 	touched := map[string]map[string]bool{}
 	for _, touch := range graph.FileTouches {
 		if touch.Kind != session.TouchRead && touch.Kind != session.TouchEdit {
@@ -322,6 +392,18 @@ func attachTouchedPaths(graph *session.Graph, vendor string, roots []string, pro
 		}
 		slices.Sort(prompt.TouchedPaths)
 	}
+}
+
+// touchedPaths are the repository-relative paths read or edited anywhere in
+// the tree.
+func touchedPaths(graph *session.Graph, resolver *sessioncorrelate.PathResolver) []string {
+	var paths []string
+	for _, touch := range graph.FileTouches {
+		if path, ok := resolver.Touch(touch); ok {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // promptOwners finds the top-level input a user input works for: a top-level
@@ -404,7 +486,7 @@ func (o *promptOwners) sessionOwner(sessionID string, depth int) (string, bool) 
 // paraphrased: the latest limit of them (all when limit is 0 or less), in
 // time order, each with the outcome its tool result records ("unknown"
 // without one).
-func commandEvents(graph *session.Graph, limit int) []bundle.CommandEvent {
+func commandEvents(graph *session.Graph, limit int, knownPath func(string) bool) []bundle.CommandEvent {
 	type call struct {
 		use  session.ToolUse
 		text string
@@ -453,7 +535,7 @@ func commandEvents(graph *session.Graph, limit int) []bundle.CommandEvent {
 	for _, c := range calls {
 		event := bundle.CommandEvent{
 			ID: c.use.ID, Outcome: bundle.CommandOutcome(string(statuses[c.use.ID])),
-			Commands: bundle.ParseCommandParaphrase(c.text),
+			Commands: bundle.ParseCommandParaphrase(c.text, knownPath),
 		}
 		if c.use.Timestamp != nil {
 			at := *c.use.Timestamp

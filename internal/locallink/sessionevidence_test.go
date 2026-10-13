@@ -1,8 +1,10 @@
 package locallink
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -81,6 +83,7 @@ func evidenceTree() sessions.Session {
 			use("e-4", root, "u-3", session.VerbExecute, `{"command":"npm test"}`, minute(20)),
 			use("e-5", root, "u-3", session.VerbExecute, `{"shell_id":"poll"}`, minute(21)),
 			use("e-6", root, "u-4", session.VerbExecute, `{"command":"make lint"}`, nil),
+			use("e-7", root, "u-4", session.VerbExecute, `{"command":"ssh db.internal.example.com && cat ./main.go docs/notes.md && ls docs"}`, nil),
 		},
 		ToolResults: []session.ToolResult{
 			{ID: "r-1", ToolUseID: "e-1", SessionID: root, UserInputID: "u-1", Status: session.StatusOK, OutputText: text("ok\tpkg built from /home/dev/widgets")},
@@ -102,7 +105,7 @@ func evidenceTree() sessions.Session {
 
 func evidenceOf(t *testing.T, s sessions.Session, maxPrompts, maxCommandEvents int) bundle.Session {
 	t.Helper()
-	item, ok := sessionEvidence(s, 0.9, []string{"/home/dev/widgets"}, maxPrompts, maxCommandEvents)
+	item, ok := sessionEvidence(s, 0.9, []string{"/home/dev/widgets"}, bundle.KnownPaths("docs/notes.md"), maxPrompts, maxCommandEvents)
 	if !ok {
 		t.Fatal("no top-level session")
 	}
@@ -180,14 +183,21 @@ func TestSessionEvidenceCommandEvents(t *testing.T) {
 	got := evidenceOf(t, evidenceTree(), 0, 0).CommandEvents
 	want := []bundle.CommandEvent{
 		{ID: "e-1", Time: minute(5), Outcome: "succeeded", Commands: []bundle.CommandEntry{
-			{Program: "go", Category: "build", Target: "./..."},
-			{Program: "go", Category: "test", Target: "./..."},
+			{Program: "go", Category: "build"},
+			{Program: "go", Category: "test"},
 			{Program: "tee", Category: "other"},
 		}},
-		{ID: "e-2", Time: minute(12), Outcome: "failed", Commands: []bundle.CommandEntry{{Program: "go", Category: "lint", Target: "./pkg/..."}}},
+		{ID: "e-2", Time: minute(12), Outcome: "failed", Commands: []bundle.CommandEntry{{Program: "go", Category: "lint", Target: "pkg/..."}}},
 		{ID: "e-3", Time: minute(13), Outcome: "unknown", Commands: []bundle.CommandEntry{{Program: "git", Category: "git"}}},
 		{ID: "e-4", Time: minute(20), Outcome: "interrupted", Commands: []bundle.CommandEntry{{Program: "npm", Category: "test"}}},
 		{ID: "e-6", Outcome: "unknown", Commands: []bundle.CommandEntry{{Program: "make", Category: "build"}}},
+		// A target needs a known path: one the session touched, a directory
+		// above one, or one the host knows (here docs/notes.md).
+		{ID: "e-7", Outcome: "unknown", Commands: []bundle.CommandEntry{
+			{Program: "ssh", Category: "other"},
+			{Program: "cat", Category: "other", Target: "main.go"},
+			{Program: "ls", Category: "other"},
+		}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("command events =\n%+v\nwant\n%+v", got, want)
@@ -216,7 +226,7 @@ func TestSessionEvidenceCarriesNoRawCommandsOutputsOrAbsolutePaths(t *testing.T)
 }
 
 func TestSessionEvidenceWithoutTopLevelSession(t *testing.T) {
-	if _, ok := sessionEvidence(sessions.Session{ID: "x", Graph: &session.Graph{}}, 1, nil, 1, 1); ok {
+	if _, ok := sessionEvidence(sessions.Session{ID: "x", Graph: &session.Graph{}}, 1, nil, nil, 1, 1); ok {
 		t.Error("an empty graph has no session evidence")
 	}
 }
@@ -451,7 +461,7 @@ func TestBuildSessionEvidenceAttributesASubagent(t *testing.T) {
 	}
 	want := []event{
 		{"succeeded", []bundle.CommandEntry{{Program: "git", Category: "git"}}},
-		{"failed", []bundle.CommandEntry{{Program: "cat", Category: "other"}, {Program: "go", Category: "test", Target: "./..."}}},
+		{"failed", []bundle.CommandEntry{{Program: "cat", Category: "other"}, {Program: "go", Category: "test"}}},
 	}
 	if !reflect.DeepEqual(events, want) {
 		t.Errorf("command events = %+v, want %+v", events, want)
@@ -472,5 +482,66 @@ func TestResolveExcludesGenerationRuns(t *testing.T) {
 	}
 	if _, kept := result.Graphs["cccccccc-0000-4000-8000-000000000003"]; kept {
 		t.Error("the generation run's graph must not be kept")
+	}
+}
+
+func TestExistsInClone(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	for _, dir := range []string{filepath.Join(root, "src"), filepath.Join(outside, "private")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "x.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skip("symbolic links are not available:", err)
+	}
+	known := existsInClone(root)
+	for candidate, want := range map[string]bool{
+		"src/x.go": true, "src": true, "src/new.go": true, "./src/x.go": true,
+		"new.go": false, "db.internal.example.com": false, "src/missing/x.go": false,
+		"escape": false, "escape/private": false, "escape/private/new.txt": false,
+		"../x.go": false, ".": false,
+	} {
+		if got := known(candidate); got != want {
+			t.Errorf("existsInClone(%q) = %v, want %v", candidate, got, want)
+		}
+	}
+}
+
+func TestTrustedRoot(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "home", "user")
+	for dir, want := range map[string]bool{
+		string(filepath.Separator):         false,
+		home:                               false,
+		filepath.Dir(home):                 false,
+		filepath.Join(home, "src", "repo"): true,
+		filepath.Join(string(filepath.Separator), "srv", "repo"): true,
+	} {
+		if got := trustedRoot(dir, home); got != want {
+			t.Errorf("trustedRoot(%q) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
+// A previous path that would make every file pass for the repository's is
+// not a clone root, and a clone whose worktrees cannot be listed says so.
+func TestCloneRootsDropsUntrustedPreviousPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory:", err)
+	}
+	notAClone := t.TempDir()
+	previous := filepath.Join(t.TempDir(), "old-widgets")
+	var warnings bytes.Buffer
+	roots := cloneRoots(context.Background(), notAClone, notAClone, []string{string(filepath.Separator), home, previous}, &warnings)
+	if want := []string{notAClone, previous}; !reflect.DeepEqual(roots, want) {
+		t.Errorf("roots = %v, want %v", roots, want)
+	}
+	text := warnings.String()
+	if !strings.Contains(text, "listing the clone's worktrees") || strings.Count(text, "is not used to bound") != 2 {
+		t.Errorf("warnings =\n%s", text)
 	}
 }

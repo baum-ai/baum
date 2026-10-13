@@ -105,21 +105,89 @@ func firstNonFlagArg(args []string) string {
 	return ""
 }
 
-// firstRepositoryPathArg returns the first argument that looks like a
-// repository-relative path, skipping flags, non-path words such as a
+// firstRepositoryPathArg returns the first argument that is a known
+// repository path: path-shaped (looksLikeRepositoryPath) and, normalised by
+// normalizeTarget, accepted by knownPath. Flags, non-path words such as a
 // subcommand keyword ("test", "build"), and the value of a flag that carries
-// code, a message or a credential (textValueFlag).
-func firstRepositoryPathArg(args []string) string {
+// code, a message or a credential (textValueFlag) are skipped. A nil
+// knownPath accepts nothing.
+func firstRepositoryPathArg(args []string, knownPath func(string) bool) string {
+	if knownPath == nil {
+		return ""
+	}
 	for i := 0; i < len(args); i++ {
 		if textValueFlag(args[i]) {
 			i++
 			continue
 		}
-		if looksLikeRepositoryPath(args[i]) {
-			return args[i]
+		if !looksLikeRepositoryPath(args[i]) {
+			continue
+		}
+		if target, ok := normalizeTarget(args[i]); ok && knownPath(TargetPath(target)) {
+			return target
 		}
 	}
 	return ""
+}
+
+// normalizeTarget spells a path-shaped argument as a repository-relative
+// path: cleaned, without a leading "./", and with a trailing Go package
+// pattern "/..." kept. The repository root itself and a path that escapes it
+// are not targets.
+func normalizeTarget(arg string) (string, bool) {
+	pattern := strings.HasSuffix(arg, "/...")
+	cleaned := path.Clean(strings.TrimSuffix(arg, "/..."))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return "", false
+	}
+	if pattern {
+		return cleaned + "/...", true
+	}
+	return cleaned, true
+}
+
+// TargetPath is the repository path a command target names: the target
+// without a trailing Go package pattern "/...".
+func TargetPath(target string) string {
+	return strings.TrimSuffix(target, "/...")
+}
+
+// KnownPaths returns a knownPath predicate for ParseCommandParaphrase that
+// accepts each of paths and every directory above it, but not the repository
+// root. Paths are cleaned and a leading "./" is ignored.
+func KnownPaths(paths ...string) func(string) bool {
+	known := map[string]bool{}
+	for _, p := range paths {
+		for p = path.Clean(p); p != "." && p != "/" && p != "" && !strings.HasPrefix(p, "../") && p != ".."; p = path.Dir(p) {
+			known[p] = true
+		}
+	}
+	return func(candidate string) bool { return known[path.Clean(candidate)] }
+}
+
+// KeepKnownCommandTargets clears every command target of sessions that
+// knownPath does not accept and that is not one of the session's own touched
+// paths or a directory above one, for a host that paraphrases commands before
+// the paths it knows are all read.
+func KeepKnownCommandTargets(sessions []Session, knownPath func(string) bool) {
+	for i := range sessions {
+		var touched []string
+		for _, prompt := range sessions[i].Prompts {
+			touched = append(touched, prompt.TouchedPaths...)
+		}
+		touchedPath := KnownPaths(touched...)
+		for e := range sessions[i].CommandEvents {
+			for c := range sessions[i].CommandEvents[e].Commands {
+				entry := &sessions[i].CommandEvents[e].Commands[c]
+				if entry.Target == "" {
+					continue
+				}
+				if p := TargetPath(entry.Target); (knownPath == nil || !knownPath(p)) && !touchedPath(p) {
+					entry.Target = ""
+				}
+			}
+		}
+	}
 }
 
 // codeOrMessageFlags take code to run or a message as their value
@@ -131,14 +199,20 @@ var codeOrMessageFlags = map[string]bool{
 }
 
 // textValueFlag reports whether arg is a flag whose value is code, a message
-// or a credential: one of codeOrMessageFlags, or a flag naming a password,
-// token, secret, key or credential.
+// or a credential: one of codeOrMessageFlags, a cluster of two or three short
+// flags ending in one of them ("-am", "-cm"; a longer single-dash word is a
+// long flag such as go's -race), or a flag naming a password, token, secret,
+// key or credential.
 func textValueFlag(arg string) bool {
 	if codeOrMessageFlags[arg] {
 		return true
 	}
 	if !strings.HasPrefix(arg, "-") {
 		return false
+	}
+	if cluster := arg[1:]; len(cluster) >= 2 && len(cluster) <= 3 && strings.Trim(cluster, "abcdefghijklmnopqrstuvwxyz") == "" &&
+		strings.ContainsRune("cem", rune(cluster[len(cluster)-1])) {
+		return true
 	}
 	name := strings.ToLower(arg)
 	for _, word := range []string{"pass", "token", "secret", "key", "auth", "cred"} {
@@ -149,14 +223,13 @@ func textValueFlag(arg string) bool {
 	return false
 }
 
-// looksLikeRepositoryPath reports whether arg is strictly a
-// repository-relative path, the only kind of target a command event keeps. It
-// must be local (not absolute, not escaping through ".."), contain a "/" or a
-// file extension, and hold only path characters: whitespace, quotes, "=",
-// "@", ":", "\" and shell metacharacters mark a word that is (or may hide)
-// code, a message, an assignment, a remote or a credential, so such a word is
-// dropped rather than guessed at, even where it could be a legitimate file
-// name.
+// looksLikeRepositoryPath reports whether arg is path-shaped, the first test
+// a target passes before knownPath is asked. It must be local (not absolute,
+// not escaping through ".."), contain a "/" or a file extension, and hold
+// only path characters: whitespace, quotes, "=", "@", ":", "\" and shell
+// metacharacters mark a word that is (or may hide) code, a message, an
+// assignment, a remote or a credential, so such a word is dropped rather than
+// guessed at, even where it could be a legitimate file name.
 func looksLikeRepositoryPath(arg string) bool {
 	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "/") || !safeWord(arg) {
 		return false
@@ -201,8 +274,11 @@ func programName(word string) string {
 // ParseCommandParaphrase extracts one entry per simple command from a possibly
 // compound or piped command line. Raw command lines never survive past this
 // function's return: it returns only program base name, category and an
-// optional repository-relative target.
-func ParseCommandParaphrase(command string) []CommandEntry {
+// optional target. The target is the first argument that is path-shaped and,
+// normalised, a path knownPath accepts: positive evidence it is a path of the
+// repository, such as a changed file, a touched path or a file in the
+// checkout. With a nil knownPath no entry has a target.
+func ParseCommandParaphrase(command string, knownPath func(string) bool) []CommandEntry {
 	if strings.TrimSpace(command) == "" {
 		return nil
 	}
@@ -227,7 +303,7 @@ func ParseCommandParaphrase(command string) []CommandEntry {
 			return true
 		}
 		entry := CommandEntry{Program: program, Category: categorize(program, args[1:])}
-		entry.Target = firstRepositoryPathArg(args[1:])
+		entry.Target = firstRepositoryPathArg(args[1:], knownPath)
 		entries = append(entries, entry)
 		return true
 	})

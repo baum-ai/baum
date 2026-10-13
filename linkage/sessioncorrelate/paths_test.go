@@ -22,8 +22,8 @@ func TestCorrelatePrefersRecordedRootsOverSubdirectoryCwd(t *testing.T) {
 
 func TestCorrelateStripsAgentWorktreePrefix(t *testing.T) {
 	tree := newTree("/home/dev/repo", "").
-		touch("s-root", "/home/dev/repo/.claude/worktrees/eng-1/platform/a.go", session.TouchEdit).
-		touch("s-root", ".agents/worktrees/eng-2/ui/b.ts", session.TouchEdit)
+		touch("s-root", "/home/dev/repo/.claude/worktrees/first/platform/a.go", session.TouchEdit).
+		touch("s-root", ".agents/worktrees/second/ui/b.ts", session.TouchEdit)
 
 	if got := paths(Correlate(tree.build(), "claude_code").Files); !reflect.DeepEqual(got, []string{"platform/a.go", "ui/b.ts"}) {
 		t.Errorf("files = %v, want [platform/a.go ui/b.ts]", got)
@@ -264,8 +264,21 @@ func TestPathResolverCases(t *testing.T) {
 				"/home/user/src/other-client/secrets.env": "",
 				"/home/user/src/repo/main.go":             "main.go",
 				"/home/user/.claude/plans/plan.md":        "",
-				"docs/guide.md":                           "docs/guide.md",
+				"docs/guide.md":                           "",
 			},
+		},
+		"relative paths join the session's working directory": {
+			tree: newTree("/repo/web", ""), cloneRoots: []string{"/repo"},
+			want: map[string]string{"src/rel.ts": "web/src/rel.ts", "../outside.txt": ""},
+		},
+		"relative path from the home directory": {
+			tree: newTree("/home/user", ""), cloneRoots: []string{"/home/user/src/repo"},
+			want: map[string]string{".ssh/config": ""},
+		},
+		"relative path from a cwd history that disagrees": {
+			tree:       newTree("/repo", "").attribute("s-root", "cwd", "/repo/web"),
+			cloneRoots: []string{"/repo"},
+			want:       map[string]string{"src/rel.ts": ""},
 		},
 		"worktree beside the clone and a previous path": {
 			tree:       newTree("/home/user/src/repo-feature", ""),

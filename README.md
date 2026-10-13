@@ -169,9 +169,10 @@ Each session carries its title, branch, models, timing and outcome, its first
 and latest prompts with the agent's final reply, the files inside the clone
 each prompt read or edited (subagents' work counts toward the prompt that
 started them), and its shell commands as paraphrases: program name, a
-category such as `test` or `build`, a target only when an argument is plainly
-a repository-relative path, and whether the command succeeded, failed or was
-interrupted. Command lines, their output, inline code, commit messages and
+category such as `test` or `build`, a target only when an argument is a
+path-shaped repository path that the pull request changes, the session
+touched, or that exists in the clone, and whether the command succeeded,
+failed or was interrupted. Command lines, their output, inline code, commit messages and
 paths outside the clone are never included, and all text is redacted before
 the bundle is trimmed or written. Sessions of baum's own generation runs are
 left out, from the bundle and from `baum view` alike.

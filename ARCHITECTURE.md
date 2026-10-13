@@ -646,7 +646,12 @@ session:
   anchors, with a leading in-repo agent worktree such as
   `{.claude,.agents}/worktrees/<name>/` removed), and with the clone's checkouts given
   (`WithCloneRoots`: every worktree git lists, the checkout itself and the
-  previous paths) an absolute path resolves only inside one of them. A file
+  previous paths) an absolute path resolves only inside one of them, and a
+  relative one only when joining it with each working directory its session
+  recorded (else the tree's) lands at the same place inside them. A previous
+  path that is the file system root, the home directory or above it is not
+  used and is reported as a warning, as is a clone whose worktrees git cannot
+  list. A file
   outside the clone, beside it or in the home directory, is left out, even
   when the session ran in a directory above the clone.
 - `command_events` are the tree's execute tool calls that carry a command
@@ -654,12 +659,22 @@ session:
   Each is `bundle.ParseCommandParaphrase` of the command: per simple command
   of a pipeline or `&&`/`;` chain, the program's base name across `/` and
   `\` (a command whose program is dynamic, a directory or not a plain name
-  is left out), its closed category, and a target only when an argument is
-  strictly path-shaped: local, with a `/` or an extension, and free of
-  whitespace, quotes, `=`, `@`, `:`, `\` and shell metacharacters. The value
-  after a flag that carries code, a message or a credential (`-c`, `-e`,
-  `-m`, `--message`, `--eval`, a flag naming a password or token, ...) is
-  never a target. A target is dropped rather than guessed. Its `outcome` is
+  is left out), its closed category, and at most one target: the first
+  argument that is a known repository path. An argument is a candidate only
+  when it is path-shaped (local, with a `/` or an extension, free of
+  whitespace, quotes, `=`, `@`, `:`, `\` and shell metacharacters) and is
+  not the value of a flag that carries code, a message or a credential
+  (`-c`, `-e`, `-m`, `-p`, `-r`, `--command`, `--eval`, `--exec`,
+  `--execute`, `--message`, `--print`, `--run`, a two- or three-letter
+  cluster of short flags ending in `c`, `e` or `m` such as `-am`, or a flag
+  whose name contains `pass`, `token`, `secret`, `key`, `auth` or `cred`).
+  It is normalised (cleaned, `./` dropped, a trailing Go `/...` pattern
+  kept; the repository root and anything escaping it are never targets) and
+  kept only when the `knownPath` predicate accepts it: here a path the pull
+  request's commits change or a directory above one, a path the session
+  touched or a directory above one, or a path that exists in the checkout
+  (or whose parent directory, other than the root, does) without leaving it
+  through a symbolic link. A target is dropped rather than guessed. Its `outcome` is
   the tool result's status as `bundle.CommandOutcome` maps it, `unknown`
   without a result. Command lines and tool output never leave the session
   graph.

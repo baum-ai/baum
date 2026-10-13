@@ -17,8 +17,9 @@ import (
 //
 // WithCloneRoots narrows it further for a caller that knows the checkouts the
 // repository was worked in: an absolute path then resolves only inside one of
-// them, cut at the longest and with a leading agent worktree removed, so a
-// file beside the clone is never mistaken for one in it.
+// them, cut at the longest and with a leading agent worktree removed, and a
+// relative one only once joined with the working directory it was recorded
+// in, so a file beside the clone is never mistaken for one in it.
 type PathResolver struct {
 	dirs       workingDirs
 	anchors    []string
@@ -68,14 +69,47 @@ func (r *PathResolver) Touch(touch session.FileTouch) (string, bool) {
 		return "", false
 	}
 	path := cleanPath(touch.Path)
-	if parsed := sourcepath.Parse(path); len(r.cloneRoots) > 0 && parsed.Valid() && parsed.IsAbsolute() {
-		relative, ok := stripLongestDir(parsed.String(), r.cloneRoots)
-		if !ok {
+	parsed := sourcepath.Parse(path)
+	if len(r.cloneRoots) == 0 || !parsed.Valid() {
+		return r.dirs.repoRelative(path, touch.SessionID, r.anchors)
+	}
+	if parsed.IsAbsolute() {
+		return r.inClone(parsed.String())
+	}
+	// A relative path is relative to the working directory: the session's
+	// own, else the tree's. It is kept only when every one of them puts it
+	// at the same place in the clone; a tree that recorded none is read as
+	// the hosted service reads it.
+	cwds := r.dirs.recordedOf(touch.SessionID)
+	if len(cwds) == 0 {
+		cwds = r.dirs.recorded.values()
+	}
+	if len(cwds) == 0 {
+		return r.dirs.repoRelative(path, touch.SessionID, r.anchors)
+	}
+	resolved := ""
+	for _, cwd := range cwds {
+		joined := sourcepath.Parse(sourcepath.Join(cwd, parsed.String()))
+		if !joined.IsAbsolute() {
 			return "", false
 		}
-		return withoutAgentWorktree(relative)
+		relative, ok := r.inClone(joined.String())
+		if !ok || (resolved != "" && relative != resolved) {
+			return "", false
+		}
+		resolved = relative
 	}
-	return r.dirs.repoRelative(path, touch.SessionID, r.anchors)
+	return resolved, true
+}
+
+// inClone cuts an absolute path at the longest clone root holding it and
+// removes a leading agent worktree, or reports false outside every root.
+func (r *PathResolver) inClone(path string) (string, bool) {
+	relative, ok := stripLongestDir(path, r.cloneRoots)
+	if !ok {
+		return "", false
+	}
+	return withoutAgentWorktree(relative)
 }
 
 // Dirs returns every working directory and recorded root in the tree.
