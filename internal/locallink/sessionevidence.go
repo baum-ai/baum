@@ -182,38 +182,26 @@ func trustedRoot(dir, home string) bool {
 }
 
 // existsInClone returns a knownPath predicate accepting a repository path
-// that exists in the checkout at root, or whose parent directory (other than
-// root itself) does, so a file a command creates still counts. A path that
-// leaves root through a symbolic link is not accepted.
+// that exists in the checkout at root, as a file or a directory. A path that
+// leaves root through a symbolic link is not accepted. A file a session
+// created or deleted is known from the pull request's changed paths or the
+// session's touched paths instead.
 func existsInClone(root string) func(string) bool {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return func(string) bool { return false }
 	}
-	inside := func(p string) bool {
+	return func(p string) bool {
+		p = path.Clean(p)
+		if p == "." || !filepath.IsLocal(filepath.FromSlash(p)) {
+			return false
+		}
 		real, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(p)))
 		if err != nil {
 			return false
 		}
 		rel, err := filepath.Rel(realRoot, real)
 		return err == nil && rel != "." && filepath.IsLocal(rel)
-	}
-	return func(p string) bool {
-		p = path.Clean(p)
-		if !filepath.IsLocal(filepath.FromSlash(p)) {
-			return false
-		}
-		if inside(p) {
-			return true
-		}
-		parent := path.Dir(p)
-		if parent == "." {
-			return false
-		}
-		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(parent))); err != nil || !info.IsDir() {
-			return false
-		}
-		return inside(parent)
 	}
 }
 

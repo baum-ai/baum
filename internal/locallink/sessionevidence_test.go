@@ -487,7 +487,7 @@ func TestResolveExcludesGenerationRuns(t *testing.T) {
 
 func TestExistsInClone(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
-	for _, dir := range []string{filepath.Join(root, "src"), filepath.Join(outside, "private")} {
+	for _, dir := range []string{filepath.Join(root, "src"), filepath.Join(root, "docs"), filepath.Join(outside, "private")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -500,13 +500,23 @@ func TestExistsInClone(t *testing.T) {
 	}
 	known := existsInClone(root)
 	for candidate, want := range map[string]bool{
-		"src/x.go": true, "src": true, "src/new.go": true, "./src/x.go": true,
+		"src/x.go": true, "src": true, "./src/x.go": true, "docs": true,
+		"src/new.go": false, "docs/hunter2.pw": false, "src/Main.go": false,
 		"new.go": false, "db.internal.example.com": false, "src/missing/x.go": false,
 		"escape": false, "escape/private": false, "escape/private/new.txt": false,
 		"../x.go": false, ".": false,
 	} {
 		if got := known(candidate); got != want {
 			t.Errorf("existsInClone(%q) = %v, want %v", candidate, got, want)
+		}
+	}
+	// A path-shaped leaf under an existing directory is not a target unless
+	// the file itself exists.
+	for command, want := range map[string]string{
+		"cat docs/hunter2.pw": "", "cat src/Main.go": "", "cat src/x.go": "src/x.go",
+	} {
+		if entries := bundle.ParseCommandParaphrase(command, known); len(entries) != 1 || entries[0].Target != want {
+			t.Errorf("%s: entries %+v, want target %q", command, entries, want)
 		}
 	}
 }

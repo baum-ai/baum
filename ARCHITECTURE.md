@@ -672,10 +672,11 @@ session:
   kept; the repository root and anything escaping it are never targets) and
   kept only when the `knownPath` predicate accepts it: here a path the pull
   request's commits change or a directory above one, a path the session
-  touched or a directory above one, or a path that exists in the checkout
-  (or whose parent directory, other than the root, does) without leaving it
-  through a symbolic link. A target is dropped rather than guessed. Its `outcome` is
-  the tool result's status as `bundle.CommandOutcome` maps it, `unknown`
+  touched or a directory above one, or a file or directory that exists in
+  the checkout at exactly that path without leaving it through a symbolic
+  link. Each argument is checked in turn, and the first known one is the
+  target. A target is dropped rather than guessed. Its `outcome` is the tool
+  result's status as `bundle.CommandOutcome` maps it, `unknown`
   without a result. Command lines and tool output never leave the session
   graph.
 - The linkage confidence is the highest of the session's matched edges, over
