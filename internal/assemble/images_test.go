@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/lastpersonlabs/baum/bundle"
 )
 
 func TestHTTPImageFetcher(t *testing.T) {
@@ -61,3 +63,20 @@ func TestHTTPImageFetcherRefusesOtherHosts(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The secrets masked in image alt text count toward the bundle's masked
+// spans: bundle.Redact later sees only the masked alt.
+func TestCaptureImagesCountsMaskedAltText(t *testing.T) {
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := []bundle.RenderedImage{
+		{ID: "att_0123456789abcdef0123456789abcdef", Alt: "diagram by someone@example.com", State: bundle.AttachmentExternal},
+		{ID: "att_fedcba9876543210fedcba9876543210", Alt: "plain alt", State: bundle.AttachmentExternal},
+	}
+	images, _, masked := (&Assembler{}).captureImages(context.Background(), found, redactor, Limits{})
+	if masked != 1 || len(images) != 2 || strings.Contains(images[0].Alt, "example.com") {
+		t.Fatalf("masked = %d, images = %+v; want the e-mail in the first alt masked and counted once", masked, images)
+	}
+}

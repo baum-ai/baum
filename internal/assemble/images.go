@@ -35,19 +35,20 @@ type ImageFetcher func(ctx context.Context, fetchURL string, maxBytes int64) ([]
 // fails the assembly, every problem becomes the image's state. The contents
 // of the stored images are returned by ID. Neither a warning nor an error
 // carries a URL, which is signed.
-func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedImage, redactor *bundle.Redactor, limits Limits) ([]bundle.DescriptionImage, map[string][]byte) {
+func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedImage, redactor *bundle.Redactor, limits Limits) ([]bundle.DescriptionImage, map[string][]byte, int) {
 	if len(found) == 0 {
-		return nil, nil
+		return nil, nil, 0
 	}
 	ctx, cancel := context.WithTimeout(ctx, imageCaptureTimeout)
 	defer cancel()
 	contents := map[string][]byte{}
 	images := make([]bundle.DescriptionImage, 0, len(found))
-	hosted := 0
+	hosted, masked := 0, 0
 	for _, candidate := range found {
 		image := bundle.DescriptionImage{ID: candidate.ID, SourceURL: candidate.SourceURL, Position: len(images) + 1, State: candidate.State}
-		if alt, _, err := redactor.RedactString(ctx, candidate.Alt); err == nil {
+		if alt, count, err := redactor.RedactString(ctx, candidate.Alt); err == nil {
 			image.Alt = alt
+			masked += count
 		}
 		if image.State == "" {
 			hosted++
@@ -64,7 +65,7 @@ func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedIm
 		}
 		images = append(images, image)
 	}
-	return images, contents
+	return images, contents, masked
 }
 
 // download fills image from the signed source and returns the content of a

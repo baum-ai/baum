@@ -176,7 +176,7 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 
 	// Description images come first, as the hosted assembler captures them
 	// before it builds the evidence.
-	images, contents := a.captureImages(ctx, evidence.Images, redactor, limits)
+	images, contents, altMasked := a.captureImages(ctx, evidence.Images, redactor, limits)
 	attachmentsTar := io.Discard
 	if req.Attachments != nil {
 		attachmentsTar = req.Attachments
@@ -264,6 +264,9 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	if err := bundle.Redact(ctx, &b, redactor); err != nil {
 		return Result{}, err
 	}
+	// Alt text was masked when the images were captured, so Redact found
+	// nothing left in it to count.
+	b.MaskedSpanCount += altMasked
 	bundle.CapAttachments(&b, limits.Caps)
 	if err := bundle.Fit(&b, limits.Caps); err != nil {
 		return Result{}, err
@@ -306,6 +309,15 @@ func (a *Assembler) remoteFor(ctx context.Context, repo github.Repository) strin
 		return ""
 	}
 	for _, remote := range remotes {
+		// Resolve the remote as pull request resolution does (ssh.github.com
+		// is github.com, SSH aliases go through ssh -G), and fall back to
+		// matching an alias by owner/name.
+		if resolved, err := github.RepositoryFromRemote(remote.URL); err == nil {
+			if strings.EqualFold(resolved.Host, repo.Host) && strings.EqualFold(resolved.Owner, repo.Owner) && strings.EqualFold(resolved.Name, repo.Name) {
+				return remote.Name
+			}
+			continue
+		}
 		if host, name, ok := gitlocal.RemoteRepository(remote.URL); ok && name == strings.ToLower(repo.Owner+"/"+repo.Name) &&
 			(host == repo.Host || !strings.Contains(host, ".")) {
 			return remote.Name

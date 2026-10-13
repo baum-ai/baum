@@ -341,6 +341,19 @@ func TestMissingCommitsFailWithAFetchHintAndTouchNothing(t *testing.T) {
 	}
 }
 
+// A remote that reaches GitHub over SSH on port 443 names the repository
+// as pull request resolution reads it, ssh.github.com being github.com.
+func TestFetchHintNamesAnSSHOverHTTPSRemote(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	assembletest.Git(t, repo.Dir, "remote", "add", "github-443", "ssh://git@ssh.github.com:443/acme/demo.git")
+	evidence := repo.Evidence()
+	evidence.PullRequest.HeadSHA = strings.Repeat("cd", 20)
+	_, err := assembleWith(t, repo, evidence, nil, nil)
+	if want := "`git fetch github-443 pull/7/head`"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to contain %s", err, want)
+	}
+}
+
 func TestAssemblyLeavesADirtyWorktreeUntouched(t *testing.T) {
 	repo := assembletest.NewRepo(t, assembletest.Options{})
 	repo.Dirty(t)
