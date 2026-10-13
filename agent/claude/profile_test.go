@@ -126,6 +126,9 @@ func TestIsolatedArgumentsAndEnvironmentAreStable(t *testing.T) {
 	if user := (&Backend{Model: "sonnet"}).args(agent.Request{MaxCalls: 7, Schema: []byte(`{"type":"object"}`)}); !slices.Equal(user, want) {
 		t.Errorf("the User profile's flags differ: %q", user)
 	}
+	if defaulted := (&Backend{}).args(agent.Request{MaxCalls: 7}); slices.Contains(defaulted, "--model") {
+		t.Errorf("an empty Model passed --model: %q", defaulted)
+	}
 
 	env := backend.environment("/run/1", &agent.Endpoint{BaseURL: "https://proxy/anthropic", Key: "tok"})
 	wantEnv := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/run/1/home", "CLAUDE_CONFIG_DIR=/run/1/home", "ANTHROPIC_API_KEY=tok",
