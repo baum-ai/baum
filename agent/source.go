@@ -64,11 +64,9 @@ func sourceContext(dir string, b *bundle.Bundle) string {
 				}
 			}
 			header := fmt.Sprintf("\n%s/%s (selected lines; omissions are not evidence of absence):\n", root, path)
-			limit := allowance
+			limit := allowance / 4
 			if root == "head" {
 				limit = allowance * 3 / 4
-			} else {
-				limit = allowance / 4
 			}
 			if len(header) > limit {
 				continue
