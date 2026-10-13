@@ -2,23 +2,6 @@ package cli
 
 import "github.com/spf13/cobra"
 
-func newGenerateCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "generate",
-		Short: "Generate the review document for a pull request",
-		Long: `Generate builds the generation bundle for a pull request from local sessions,
-the local clone and GitHub, runs the review agent passes with the configured
-model backend, validates the result and writes a baum.review/1 document.`,
-		RunE: notImplemented,
-	}
-	cmd.Flags().Int("pr", 0, "pull request number")
-	cmd.Flags().String("repo", "", "GitHub repository as owner/name (defaults to the origin remote)")
-	cmd.Flags().String("backend", "", "model backend: auto, anthropic, claude, codex or cursor-agent")
-	cmd.Flags().String("model", "", "model name for the selected backend")
-	cmd.Flags().StringP("output", "o", "", "write the document to this file instead of stdout")
-	return cmd
-}
-
 func newViewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "view [document.json]",
