@@ -145,37 +145,6 @@ func TestResolveWithoutRemotes(t *testing.T) {
 	}
 }
 
-func TestNormalizeRepository(t *testing.T) {
-	for remote, want := range map[string]string{
-		"https://github.com/Acme/Widgets.git":            "acme/widgets",
-		"https://github.com/acme/widgets":                "acme/widgets",
-		"https://github.com/acme/widgets/":               "acme/widgets",
-		"https://user:token@github.com/acme/widgets.git": "acme/widgets",
-		"http://192.0.2.1:3000/acme/widgets.git":         "acme/widgets",
-		"git@github.com:acme/widgets.git":                "acme/widgets",
-		"github.com:acme/widgets":                        "acme/widgets",
-		"ssh://git@github.com/acme/widgets.git":          "acme/widgets",
-		"ssh://git@ssh.github.com:443/acme/widgets.git":  "acme/widgets",
-		"git://github.com/acme/widgets.git":              "acme/widgets",
-		"  https://github.com/acme/widgets.git\n":        "acme/widgets",
-	} {
-		if got, ok := NormalizeRepository(remote); !ok || got != want {
-			t.Errorf("NormalizeRepository(%q) = %q, %v; want %q", remote, got, ok, want)
-		}
-	}
-	for _, remote := range []string{
-		"", "/srv/git/acme/widgets.git", "../widgets", "file:///srv/acme/widgets.git", `C:\src\acme\widgets`,
-		"https://github.com/acme", "https://github.com/acme/widgets/tree/main", "ftp://github.com/acme/widgets.git", "widgets",
-	} {
-		if got, ok := NormalizeRepository(remote); ok {
-			t.Errorf("NormalizeRepository(%q) = %q, want no repository", remote, got)
-		}
-	}
-	if !SameRepository("git@github.com:ACME/Widgets.git", "acme/widgets") || SameRepository("git@github.com:acme/gadgets.git", "acme/widgets") {
-		t.Error("SameRepository compares case-insensitively and exactly")
-	}
-}
-
 func TestCoauthoredAgents(t *testing.T) {
 	got := coauthoredAgents([]string{
 		"Co-Authored-By: Claude <noreply@anthropic.com>",

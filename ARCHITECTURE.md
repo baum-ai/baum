@@ -57,6 +57,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
 | `redact` | the one redaction engine used for input, output and logs |
+| `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
 store) stays under `internal/`.
@@ -84,6 +85,56 @@ implementation of each source:
 A source that has nothing returns an empty result, and the bundle records in
 `sources` which inputs existed. Missing evidence is reported as missing,
 never as zero.
+
+Every host maps GitHub's pull request, checks, conversation and review
+threads onto the bundle through the same helpers in `bundle` (`github.go`),
+whether it reads them from stored rows or asks GitHub directly: check and
+status identifiers, the pull request state, bot flags, the summary-comment
+marker and the placement of review comments in their threads. So a check,
+comment or thread has the same identifier in a local and a hosted document.
+
+### GitHub source
+
+`baum` reads GitHub through `internal/github`, a GraphQL client over the
+user's token, resolved by `internal/config`: `GITHUB_TOKEN`, then
+`GH_TOKEN`, then `github_token` in the config file, then `gh auth token`.
+
+- The pull request is `--pr` on the repository `--repo` names or, by
+  default, the one the clone's `origin` remote names (https, ssh and
+  scp-like URLs on github.com or an SSH alias naming GitHub). Without `--pr`
+  it is the pull request whose head is the current branch, from GitHub's
+  `associatedPullRequests`: the open one, otherwise the most recently
+  updated; several open ones are an error. A branch pushed from a fork
+  resolves to the pull request's base repository.
+- Each part is its own query, paginated to the end: the header (state,
+  draft, title, body and rendered body, author and association, base, head,
+  merge commit, requested users and teams), the commits in order with
+  subjects and parents, the issue comments, the submitted reviews, the review
+  threads with identity, resolution and every comment, the check suites with
+  every run and the commit statuses of the head commit itself, and the base
+  branch's protection. Every page of a pull-request-scoped part reads the
+  head again; when it moved, the whole fetch starts over, up to three times,
+  so every part describes one head.
+- A check is required when the base branch's classic protection rule or a
+  ruleset requires its name as a status check context. Protection that
+  cannot be read in full (no access, no such branch, more rules than one
+  page) leaves every `required` null rather than false.
+- A part GitHub refuses, such as checks for a fine-grained token without
+  that permission, is left empty and recorded false in `sources`
+  (`pull_request`, `commits`, `comments`, `reviews`, `review_threads`,
+  `checks`, `required_checks`); the reason is returned beside it. Review
+  comments come from the threads, so they are absent with them.
+- Rate limits and secondary limits are retried after the reset GitHub
+  names, or with backoff from one minute when it names none; a 502, 503 or
+  504 is retried with backoff from one second. A reset more than two minutes
+  away, or a limit that persists through four retries, fails the fetch with
+  the time to try again.
+- A Bot's comment that opens with the summary-comment marker is a baum
+  host's own summary and is left out; a person's comment with the marker
+  stays. The REVIEW.md marker registry, once built, will flag bot reports
+  through the same hook.
+- The description's rendered images are listed for the attachment step,
+  with their signed fetch URLs, which are never stored or logged.
 
 ### Contracts
 

@@ -103,7 +103,7 @@ const (
 // anyRemoteIs reports whether any remote URL names the repository "owner/name".
 func anyRemoteIs(remotes []gitlocal.Remote, repository string) bool {
 	for _, remote := range remotes {
-		if SameRepository(remote.URL, repository) {
+		if gitlocal.SameRepository(remote.URL, repository) {
 			return true
 		}
 	}
@@ -124,7 +124,7 @@ func remoteReason(remotes []gitlocal.Remote, repository string) string {
 			break
 		}
 		target := "not a repository URL"
-		if got, ok := NormalizeRepository(remote.URL); ok {
+		if got, ok := gitlocal.NormalizeRepository(remote.URL); ok {
 			target = got
 		}
 		listed = append(listed, truncate(remote.Name, maxRemoteNameLength)+" \u2192 "+target)
