@@ -22,7 +22,7 @@ export default defineConfig({
     command:
       "pnpm exec vite build --config vite.app.config.ts --outDir ../e2e-dist && node --experimental-strip-types e2e/server.ts",
     url: `http://127.0.0.1:${port}/api/health`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
     env: { PORT: String(port), E2E_DIST: "e2e-dist" },
   },

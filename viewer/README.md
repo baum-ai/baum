@@ -414,7 +414,7 @@ security headers as `internal/viewserver` (the content security policy is kept
 equal to its `contentSecurityPolicy`), `GET /api/document` with the schema's
 synthetic example (`../schema/review-example.json`, what `baum view --sample`
 shows), a quiet `/api/events`, `/api/sessions` answering that no sessions are
-available, and `/api/patch` answering no patch. The suite needs no Go binary
+available, and `/api/patch` answering no patch for a path the document cites (404 for any other, as `viewserver` does). Opening the page as `/?csp=off` serves it without the policy, which `untrusted.spec.ts` uses so that sanitization is tested on its own rather than masked by the policy. The suite needs no Go binary
 and no hosted API. A spec changes what one page sees with `page.route`
 (`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay
 parallel.

@@ -63,10 +63,9 @@ export const test = base.extend<Collected>({
   foreignRequests: async ({ page, baseURL }, provide) => {
     const foreign: string[] = [];
     page.on("request", (request) => {
-      const url = request.url();
-      if (!url.startsWith("data:") && !url.startsWith("blob:") && !url.startsWith(baseURL ?? "")) {
-        foreign.push(url);
-      }
+      const url = new URL(request.url());
+      if (url.protocol === "data:" || url.protocol === "blob:") return;
+      if (url.origin !== new URL(baseURL ?? "http://localhost").origin) foreign.push(url.href);
     });
     await provide(foreign);
   },

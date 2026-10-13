@@ -50,7 +50,9 @@ test("untrusted Markdown and HTML renders as inert text on every pane that shows
 }) => {
   await serveDocument(page, hostileDocument());
 
-  for (const search of ["", "?pane=section&section=sec_retry"]) {
+  // Served without the content security policy, which would stop every script
+  // and handler by itself: here only the sanitizer stands in the way.
+  for (const search of ["?csp=off", "?csp=off&pane=section&section=sec_retry"]) {
     await page.goto(`/${search}`);
     const pane = page.locator("#review-section");
     await expect(pane).toContainText("Reads fine.");
@@ -61,16 +63,18 @@ test("untrusted Markdown and HTML renders as inert text on every pane that shows
     expect(await page.evaluate(() => Reflect.get(window, "__pwned"))).toBeUndefined();
 
     // Clicking what is left does nothing either: no overlay, no script link.
-    await pane.getByText("html link").first().click();
-    await pane.getByText("markdown link").first().click();
-    await expect(page).toHaveURL(new RegExp(`${search ? "pane=section" : "^[^?]+$"}`));
+    await pane.getByText("html link").first().click({ force: true });
+    await pane.getByText("markdown link").first().click({ force: true });
+    await expect(page).toHaveURL(
+      new RegExp(search.includes("pane=") ? "pane=section" : "^[^?]+\\?csp=off$"),
+    );
     expect(await page.evaluate(() => Reflect.get(window, "__pwned"))).toBeUndefined();
   }
 
   // The same page, wherever the text was drawn, makes no request of its own to
   // anywhere else and raises no error.
   expect(foreignRequests).toEqual([]);
-  expect(browserErrors.filter((message) => !message.includes("Refused to"))).toEqual([]);
+  expect(browserErrors).toEqual([]);
 });
 
 test("a safe link in untrusted Markdown opens in a new tab without a referrer", async ({

@@ -12,7 +12,7 @@ test("without sessions on the machine the Sessions group lists the document's ow
   const pane = page.locator("#review-section");
   await expect(pane.getByRole("heading", { level: 2, name: "Sessions" })).toBeVisible();
   await expect(pane).toContainText(
-    "Showing the sessions recorded in the review — this is the built-in sample",
+    "Showing the sessions recorded in the review — the sample document has no sessions on this machine",
   );
   await expect(
     pane.getByRole("button", { name: "Add retry budget and dead letters" }),

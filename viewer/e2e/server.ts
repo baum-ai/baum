@@ -10,6 +10,12 @@ const root = resolve(process.env.E2E_DIST ?? "e2e-dist");
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const example = readFileSync(new URL("../../schema/review-example.json", import.meta.url), "utf8");
 
+const citedPaths = new Set(
+  (JSON.parse(example) as { index: { hunks: { path: string }[] } }).index.hunks.map(
+    (hunk) => hunk.path,
+  ),
+);
+
 // Kept equal to `contentSecurityPolicy` in oss/internal/viewserver/server.go.
 const contentSecurityPolicy =
   "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
@@ -24,10 +30,14 @@ const types: Record<string, string> = {
 };
 
 createServer((request, response) => {
-  response.setHeader("Content-Security-Policy", contentSecurityPolicy);
+  const { pathname, searchParams } = new URL(request.url ?? "/", "http://localhost");
+  // `?csp=off` on the page's address serves it without the policy, for the
+  // spec that must see sanitization work on its own rather than be blocked.
+  if (searchParams.get("csp") !== "off") {
+    response.setHeader("Content-Security-Policy", contentSecurityPolicy);
+  }
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "no-referrer");
-  const { pathname } = new URL(request.url ?? "/", "http://localhost");
 
   const json = (body: unknown, status = 200) => {
     response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -41,11 +51,21 @@ createServer((request, response) => {
     response.write(": ping\n\n");
     return;
   }
-  // The sample belongs to no repository, so the machine has no sessions to link.
+  // The sample belongs to no repository, so the machine has no sessions to
+  // link; the shape is `locallink.Result`'s.
   if (pathname === "/api/sessions") {
-    return json({ available: false, reason: "this is the built-in sample" });
+    return json({
+      available: false,
+      code: "sample",
+      reason: "the sample document has no sessions on this machine",
+    });
   }
-  if (pathname === "/api/patch") return json({ patch: null });
+  // Like viewserver: a path the document does not cite is 404, a cited one
+  // with no patch to give is `{"patch": null}`.
+  if (pathname === "/api/patch") {
+    const path = searchParams.get("path") ?? "";
+    return citedPaths.has(path) ? json({ patch: null }) : json({ error: "not found" }, 404);
+  }
   if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 
   let file = join(root, normalize(pathname));

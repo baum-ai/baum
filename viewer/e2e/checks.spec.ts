@@ -54,6 +54,8 @@ test("a check from an earlier head does not paint this one red", async ({ page }
   await serveDocument(page, document);
   await page.goto("/");
 
+  // The status is drawn, and it is not red.
+  await expect(details(page).getByRole("status")).toContainText("CI pending");
   await expect(details(page).getByRole("status")).not.toContainText("CI failing");
 });
 
