@@ -333,8 +333,8 @@ func (g *GitHub) Fetch(_ context.Context, repo github.Repository, number int, _ 
 	return g.Evidence, g.Err
 }
 
-// Sessions is a fake session source returning Found for any commits, and
-// recording the commits and caps it was asked with.
+// Sessions is a fake session source returning Found, or Err, whatever the
+// commits, and recording the commits it was asked for.
 type Sessions struct {
 	Found   []bundle.Session
 	Err     error

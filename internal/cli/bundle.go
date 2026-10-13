@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -29,6 +31,11 @@ var (
 		return github.NewFromConfig(cfg, github.Options{})
 	}
 	newImageFetcher = func() assemble.ImageFetcher { return assemble.NewHTTPImageFetcher(nil) }
+	// bundleContext ends on SIGINT or SIGTERM; tests replace it to cancel
+	// without a signal.
+	bundleContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+		return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	}
 )
 
 func newBundleCommand() *cobra.Command {
@@ -90,11 +97,17 @@ func runBundle(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := cmd.Context()
+	// Ctrl-C cancels the work and returns, so the clone's private repository
+	// and a half-written output file are cleaned up.
+	ctx, stop := bundleContext(cmd.Context())
+	defer stop()
 	stderr := cmd.ErrOrStderr()
 
 	clone, err := gitlocal.Open(ctx, ".", gitlocal.Options{})
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("bundle works inside a git clone of the repository: %w", err)
 	}
 	defer func() { _ = clone.Close() }()
@@ -148,6 +161,11 @@ func writeFileAtomically(path string, data []byte) (err error) {
 		}
 	}()
 	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("writing the bundle: %w", err)
+	}
+	// Reach the disk before the rename makes the file visible under its name.
+	if err = file.Sync(); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("writing the bundle: %w", err)
 	}

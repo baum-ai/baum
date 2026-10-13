@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/lastpersonlabs/baum/bundle"
 	"github.com/lastpersonlabs/baum/internal/github"
@@ -41,6 +42,9 @@ type Git interface {
 	// ResolveCommit expands a commit id the clone holds; a commit it lacks
 	// is gitlocal.ErrObjectNotFound. It never fetches.
 	ResolveCommit(ctx context.Context, id string) (string, error)
+	// RemoteURLs lists the clone's configured remote URLs, from its
+	// configuration only.
+	RemoteURLs(ctx context.Context) ([]gitlocal.Remote, error)
 	// Commits lists the commits reachable from head and not from base,
 	// oldest first.
 	Commits(ctx context.Context, base, head string) ([]gitlocal.Commit, error)
@@ -81,6 +85,10 @@ type Request struct {
 	Repository github.Repository
 	Number     int
 	Limits     Limits
+	// Previous is the pull request's current document, in the form the
+	// hosted builder carries it into the next version's bundle; nil when
+	// there is none, as for "baum bundle".
+	Previous *bundle.PreviousVersion
 	// Checkout, when not nil, receives the checkout archive "baum generate"
 	// reads: a gzip-compressed tar holding the head/ and merge-base/ trees,
 	// as bundle.UnpackCheckout unpacks it. Nil exports the same trees to
@@ -114,12 +122,20 @@ type MissingCommitError struct {
 	Number int
 	// BaseRef is the base branch's name.
 	BaseRef string
+	// Remote is the clone's remote whose URL names the pull request's
+	// repository; "" when none does, and Repository is then named in the hint.
+	Remote     string
+	Repository string
 }
 
 func (e *MissingCommitError) Error() string {
-	fetch := fmt.Sprintf("git fetch origin pull/%d/head", e.Number)
+	remote := e.Remote
+	if remote == "" {
+		remote = "<remote for " + e.Repository + ">"
+	}
+	fetch := fmt.Sprintf("git fetch %s pull/%d/head", remote, e.Number)
 	if e.Role == "base" {
-		fetch = "git fetch origin " + e.BaseRef
+		fetch = "git fetch " + remote + " " + e.BaseRef
 	}
 	return fmt.Sprintf("the pull request's %s commit %s is not in this clone; run `%s` (or git fetch) and try again. baum does not fetch or change your refs", e.Role, e.SHA, fetch)
 }
@@ -149,11 +165,11 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	a.warnUnavailable(evidence)
 	pr := evidence.PullRequest
-	head, err := a.commit(ctx, "head", pr.HeadSHA, req.Number, pr.BaseRef)
+	head, err := a.commit(ctx, "head", pr.HeadSHA, req, pr.BaseRef)
 	if err != nil {
 		return Result{}, err
 	}
-	base, err := a.commit(ctx, "base", pr.BaseSHA, req.Number, pr.BaseRef)
+	base, err := a.commit(ctx, "base", pr.BaseSHA, req, pr.BaseRef)
 	if err != nil {
 		return Result{}, err
 	}
@@ -201,8 +217,18 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// base and the head, so they follow the comparison that finds the merge
 	// base. A session source that fails leaves the bundle without sessions,
 	// recorded in its sources, rather than failing the whole assembly.
-	b.Sessions = a.sessions(ctx, mergeBase, head, limits.Caps)
+	if b.Sessions, err = a.sessions(ctx, mergeBase, head, limits.Caps); err != nil {
+		return Result{}, err
+	}
 	b.Sources["sessions"] = len(b.Sessions) > 0
+	// A command target needs positive evidence that it is a repository path:
+	// a path the diff changes, a directory above one, or a path the session
+	// touched. This keeps it independent of the working tree.
+	diffPaths := make([]string, 0, 2*len(hunks))
+	for _, hunk := range hunks {
+		diffPaths = append(diffPaths, hunk.Path, hunk.OldPath)
+	}
+	bundle.KeepKnownCommandTargets(b.Sessions, bundle.KnownPaths(diffPaths...))
 
 	b.References = bundle.CollectReferences(b)
 	b.Sources["references"] = len(b.References) > 0
@@ -221,7 +247,8 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	b.ReviewConfig = reviewConfig
 	b.Sources["review_md"] = reviewConfig.Present
-	// The previous version stays absent until the local version store exists.
+	// The previous version is the caller's: "baum bundle" has none.
+	b.Previous = req.Previous
 	b.Sources["previous_version"] = b.Previous != nil
 
 	archive, finish := checkoutWriter(req.Checkout)
@@ -255,35 +282,61 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 }
 
 // commit checks that the pull request's commit is in the clone.
-func (a *Assembler) commit(ctx context.Context, role, sha string, number int, baseRef string) (string, error) {
+func (a *Assembler) commit(ctx context.Context, role, sha string, req Request, baseRef string) (string, error) {
 	if sha == "" {
-		return "", fmt.Errorf("GitHub returned no %s commit for pull request %d", role, number)
+		return "", fmt.Errorf("GitHub returned no %s commit for pull request %d", role, req.Number)
 	}
 	oid, err := a.Git.ResolveCommit(ctx, sha)
 	switch {
 	case errors.Is(err, gitlocal.ErrObjectNotFound):
-		return "", &MissingCommitError{Role: role, SHA: sha, Number: number, BaseRef: baseRef}
+		return "", &MissingCommitError{
+			Role: role, SHA: sha, Number: req.Number, BaseRef: baseRef,
+			Remote: a.remoteFor(ctx, req.Repository), Repository: req.Repository.String(),
+		}
 	case err != nil:
 		return "", fmt.Errorf("looking for the %s commit %s in this clone: %w", role, sha, err)
 	}
 	return oid, nil
 }
 
-func (a *Assembler) sessions(ctx context.Context, mergeBase, head string, caps bundle.Caps) []bundle.Session {
+// remoteFor names the clone's remote whose URL names repo, "" when none does.
+func (a *Assembler) remoteFor(ctx context.Context, repo github.Repository) string {
+	remotes, err := a.Git.RemoteURLs(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, remote := range remotes {
+		if host, name, ok := gitlocal.RemoteRepository(remote.URL); ok && name == strings.ToLower(repo.Owner+"/"+repo.Name) &&
+			(host == repo.Host || !strings.Contains(host, ".")) {
+			return remote.Name
+		}
+	}
+	return ""
+}
+
+// sessions finds the linked sessions. A source that fails leaves the bundle
+// without sessions and a warning; cancellation is an error.
+func (a *Assembler) sessions(ctx context.Context, mergeBase, head string, caps bundle.Caps) ([]bundle.Session, error) {
 	if a.Sessions == nil {
-		return nil
+		return nil, nil
 	}
 	commits, err := a.Git.Commits(ctx, mergeBase, head)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		a.warn("sessions left out: listing the pull request's commits in this clone: %v", err)
-		return nil
+		return nil, nil
 	}
 	found, err := a.Sessions.Evidence(ctx, commits, caps.MaxPromptsPerSession, caps.MaxCommandEventsPerSession)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		a.warn("sessions left out: %v", err)
-		return nil
+		return nil, nil
 	}
-	return found
+	return found, nil
 }
 
 // warnUnavailable reports each GitHub part that could not be read.

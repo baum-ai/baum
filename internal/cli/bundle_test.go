@@ -24,6 +24,15 @@ type fakeGitHub struct {
 	assembletest.GitHub
 	resolveErr error
 	resolved   []github.ResolveOptions
+	// onFetch runs when the evidence is asked for.
+	onFetch func()
+}
+
+func (f *fakeGitHub) Fetch(ctx context.Context, repo github.Repository, number int, opts github.FetchOptions) (github.Evidence, error) {
+	if f.onFetch != nil {
+		f.onFetch()
+	}
+	return f.GitHub.Fetch(ctx, repo, number, opts)
 }
 
 func (f *fakeGitHub) ResolvePR(_ context.Context, _ github.Clone, opts github.ResolveOptions) (github.Target, error) {
@@ -174,9 +183,9 @@ func TestBundleErrors(t *testing.T) {
 		},
 			want: "pull request acme/demo#7 was not found"},
 		"missing head": {args: []string{"--pr", "7"}, setup: func(_ *testing.T, f *fakeGitHub) { f.Evidence.PullRequest.HeadSHA = missing },
-			want: "git fetch origin pull/7/head"},
+			want: "git fetch <remote for acme/demo> pull/7/head"},
 		"missing base": {args: []string{"--pr", "7"}, setup: func(_ *testing.T, f *fakeGitHub) { f.Evidence.PullRequest.BaseSHA = missing },
-			want: "git fetch origin main"},
+			want: "git fetch <remote for acme/demo> main"},
 		"not a clone": {args: []string{"--pr", "7"}, notRepo: true, want: "inside a git clone"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -217,6 +226,32 @@ func TestBundleFailureWritesNoOutputFile(t *testing.T) {
 	stdout, _, err := run(t, append([]string{"bundle", "--pr", "7", "-o", filepath.Join(t.TempDir(), "absent", "b.json")}, stores...)...)
 	if err == nil || !strings.Contains(err.Error(), "writing the bundle") || stdout != "" {
 		t.Errorf("err = %v, stdout = %.50q", err, stdout)
+	}
+}
+
+// Ctrl-C (here, a cancelled context) stops the run with the cancellation, and
+// leaves neither an output file nor a temporary one.
+func TestBundleCancellationCleansUp(t *testing.T) {
+	repo, fake, stores := bundleEnv(t)
+	cancelled := false
+	old := bundleContext
+	bundleContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		fake.onFetch = func() { cancelled = true; cancel() }
+		return ctx, cancel
+	}
+	t.Cleanup(func() { bundleContext = old })
+	before := repo.State(t)
+	dir := t.TempDir()
+	stdout, _, err := run(t, append([]string{"bundle", "--pr", "7", "-o", filepath.Join(dir, "bundle.json")}, stores...)...)
+	if !cancelled || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled = %v, err = %v", cancelled, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 || stdout != "" {
+		t.Errorf("a failed run left %v, stdout %.50q", entries, stdout)
+	}
+	if after := repo.State(t); after != before {
+		t.Errorf("the clone changed:\n%s\n--- after ---\n%s", before, after)
 	}
 }
 

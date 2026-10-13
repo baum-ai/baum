@@ -79,7 +79,7 @@ implementation of each source:
 | checks | check runs and commit statuses at head | GitHub |
 | conversation | comments, reviews and review threads | GitHub |
 | sessions | coding-agent sessions linked to the pull request's commits | `sessions` and `linkage` over the home directory and Entire checkpoints |
-| attachments | images referenced in the description | GitHub, with the user's token |
+| attachments | images referenced in the description | GitHub: the user's token reads the rendered body, whose image URLs GitHub has signed, and the images download from those URLs without credentials |
 | previous version | the last stored document for this pull request | the local version store |
 
 A source that has nothing returns an empty result, and the bundle records in
@@ -955,8 +955,10 @@ context ends the event streams and shuts the server down.
    same limits as above;
 3. collects sessions from the home directory and Entire checkpoints and
    links them to the pull request's commits;
-4. fetches description images with the user's token and caches them by
-   content hash beside the local version store;
+4. reads the pull request's rendered body with the user's token, which carries
+   image URLs GitHub has already signed, and downloads the description images
+   from them without credentials; `bundle` caches nothing, and writes the
+   images only to the attachments archive `generate` reads;
 5. loads the previous local version, if any, and builds the bundle;
 6. runs the configured backend with the public prompt; tiles are off unless
    enabled;
@@ -986,11 +988,16 @@ interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, the diff index, commit
 changes, sessions, references, attachments, `REVIEW.md` at the base commit,
 the checkout export, then caps, redaction, byte trimming and the digest. Sessions
-follow the comparison because they need its merge base, and command targets
-are checked by `locallink` (changed paths and the clone's files) rather than
-by `bundle.KeepKnownCommandTargets`. A session source that fails leaves the
-bundle without sessions and a warning. Image downloads carry no credentials: GitHub
-renders each source signed, and only its upload hosts are contacted. The
+follow the comparison because they need its merge base. Command targets are
+first checked by `locallink` and then, as the hosted builder does, by
+`bundle.KeepKnownCommandTargets` against the diff's paths, so a target a
+session names depends on the pull request, not on the working tree. A
+session source that fails leaves the bundle without sessions and a warning;
+cancellation is an error. Image downloads carry no credentials: the user's
+token only reads the rendered body, in which GitHub has signed each image
+URL, and only GitHub's upload hosts are contacted (see SECURITY.md). A
+previous document can be given in `Request.Previous`, as `generate` will;
+`baum bundle` leaves it nil. The
 bundle is written as `json.Marshal` encodes it plus a newline, so its digest
 is the SHA-256 of the output without that newline, and it holds no timestamp
 of its own: the same inputs produce the same bytes. `Assemble` can also

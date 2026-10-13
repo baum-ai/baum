@@ -30,6 +30,14 @@ Redaction is best effort. Review `baum bundle` output before using
 do not run it against repositories you are not allowed to share with your
 provider.
 
+Description images are downloaded from URLs GitHub signed in the pull
+request's rendered body, which your token read. The downloads carry no
+credentials, and only these hosts are contacted: `github.com`
+(`/user-attachments/assets/`), `private-user-images.githubusercontent.com`,
+`user-images.githubusercontent.com`, `objects.githubusercontent.com` and
+`github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
+any other host is refused, and an image hosted elsewhere is not downloaded.
+
 baum sends no telemetry. Besides GitHub and the configured provider, it
 contacts only `static.usebaum.com`, to download the public price list used
 for cost estimates. That request is a plain download: it carries no token,

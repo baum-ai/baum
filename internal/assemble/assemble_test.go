@@ -21,6 +21,7 @@ import (
 	"github.com/lastpersonlabs/baum/internal/github"
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
 	"github.com/lastpersonlabs/baum/internal/goldentest"
+	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
 )
 
 type run struct {
@@ -188,9 +189,6 @@ func TestFixtureBundle(t *testing.T) {
 				t.Errorf("checkout lacks %s: %v", want, names)
 			}
 		}
-		if contains(names, "head/README.md") && contains(names, "head/untracked.txt") {
-			t.Error("the checkout holds a file that is not in the head commit")
-		}
 	})
 	t.Run("digest is the SHA-256 of the JSON", func(t *testing.T) {
 		sum := sha256.Sum256(bytes.TrimSuffix(r.result.JSON, []byte("\n")))
@@ -304,21 +302,35 @@ func TestMissingCommitsFailWithAFetchHintAndTouchNothing(t *testing.T) {
 	repo.Dirty(t)
 	before := repo.State(t)
 	missing := strings.Repeat("ab", 20)
-	for _, role := range []string{"head", "base"} {
-		evidence := repo.Evidence()
-		if role == "head" {
-			evidence.PullRequest.HeadSHA = missing
-		} else {
-			evidence.PullRequest.BaseSHA = missing
+	// The hint names the remote whose URL is the pull request's repository
+	// when the clone has one, and says which remote to look for otherwise.
+	for _, remote := range []struct{ name, url, wantRemote string }{
+		{"", "", "<remote for acme/demo>"},
+		{"elsewhere", "https://github.com/other/project.git", "<remote for acme/demo>"},
+		{"upstream", "git@github.com:acme/demo.git", "upstream"},
+	} {
+		if remote.name != "" {
+			assembletest.Git(t, repo.Dir, "remote", "add", remote.name, remote.url)
 		}
-		_, err := assembleWith(t, repo, evidence, nil, nil)
-		var missingErr *assemble.MissingCommitError
-		if !errors.As(err, &missingErr) || missingErr.Role != role || !errors.Is(err, gitlocal.ErrObjectNotFound) {
-			t.Fatalf("%s: err = %v", role, err)
-		}
-		hint := map[string]string{"head": "git fetch origin pull/7/head", "base": "git fetch origin main"}[role]
-		if !strings.Contains(err.Error(), hint) || !strings.Contains(err.Error(), missing) {
-			t.Errorf("%s: message %q lacks %q", role, err, hint)
+		for _, role := range []string{"head", "base"} {
+			evidence := repo.Evidence()
+			if role == "head" {
+				evidence.PullRequest.HeadSHA = missing
+			} else {
+				evidence.PullRequest.BaseSHA = missing
+			}
+			_, err := assembleWith(t, repo, evidence, nil, nil)
+			var missingErr *assemble.MissingCommitError
+			if !errors.As(err, &missingErr) || missingErr.Role != role || !errors.Is(err, gitlocal.ErrObjectNotFound) {
+				t.Fatalf("%s: err = %v", role, err)
+			}
+			hint := map[string]string{
+				"head": "git fetch " + remote.wantRemote + " pull/7/head",
+				"base": "git fetch " + remote.wantRemote + " main",
+			}[role]
+			if !strings.Contains(err.Error(), "`"+hint+"`") || !strings.Contains(err.Error(), missing) {
+				t.Errorf("%s with remote %q: message %q lacks %q", role, remote.name, err, hint)
+			}
 		}
 	}
 	if after := repo.State(t); after != before {
@@ -344,9 +356,18 @@ func TestAssemblyLeavesADirtyWorktreeUntouched(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(repo.Dir, "README.md")); !bytes.Equal(got, readme) {
 		t.Error("a tracked file was rewritten")
 	}
-	// The uncommitted work is not in the bundle.
+	// The uncommitted work is not in the bundle or the checkout.
 	if bytes.Contains(r.result.JSON, []byte("Local edit")) || bytes.Contains(r.result.JSON, []byte("staged.txt")) {
 		t.Error("the bundle holds uncommitted work")
+	}
+	names := tarNames(t, r.checkout.Bytes(), true)
+	if !contains(names, "head/README.md") || !contains(names, "head/src/list.go") {
+		t.Errorf("the checkout lacks the committed files: %v", names)
+	}
+	for _, name := range names {
+		if strings.HasSuffix(name, "untracked.txt") || strings.HasSuffix(name, "staged.txt") {
+			t.Errorf("the checkout holds %s, which is not in a commit", name)
+		}
 	}
 }
 
@@ -397,6 +418,9 @@ func TestTrimmingNeverDropsHunks(t *testing.T) {
 	}
 	if len(got.Truncated) == 0 {
 		t.Error("trimming left no truncation note")
+	}
+	if bytes.Contains(r.result.JSON, []byte(assembletest.PlantedSecret)) || bytes.Contains(r.result.JSON, []byte(assembletest.PlantedEmail)) {
+		t.Error("the trimmed bundle holds the planted secret or e-mail address")
 	}
 	if len(r.result.JSON) >= len(r0(t, full)) {
 		t.Errorf("the bundle was not trimmed: %d bytes, was %d", len(r.result.JSON), len(r0(t, full)))
@@ -504,4 +528,143 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A session's command target counts only when the pull request, not the
+// working tree, vouches for it.
+func TestCommandTargetsDoNotDependOnTheWorkingTree(t *testing.T) {
+	targets := func() []bundle.Session {
+		found := assembletest.SessionTree()[:1]
+		found[0].CommandEvents = []bundle.CommandEvent{{ID: "t-1", Outcome: "succeeded", Commands: []bundle.CommandEntry{
+			{Program: "cat", Category: "other", Target: "scratch/notes.txt"},
+			{Program: "cat", Category: "other", Target: "config/settings.env"},
+			{Program: "go", Category: "test", Target: "src/..."},
+			{Program: "cat", Category: "other", Target: "docs/new.md"},
+		}}}
+		// The session touched docs/new.md itself, which the diff also holds.
+		return found
+	}
+	plain := assembletest.NewRepo(t, assembletest.Options{})
+	extra := assembletest.NewRepo(t, assembletest.Options{})
+	assembletest.Write(t, extra.Dir, "scratch/notes.txt", "an untracked file a session named\n")
+	a := mustAssemble(t, plain, plain.Evidence(), targets())
+	b := mustAssemble(t, extra, extra.Evidence(), targets())
+	if !bytes.Equal(a.result.JSON, b.result.JSON) {
+		t.Error("an untracked file in the working tree changed the bundle")
+	}
+	var got []string
+	for _, entry := range a.result.Bundle.Sessions[0].CommandEvents[0].Commands {
+		got = append(got, entry.Target)
+	}
+	if strings.Join(got, ",") != ",config/settings.env,src/...,docs/new.md" {
+		t.Errorf("targets = %q, want only the ones the diff vouches for", got)
+	}
+}
+
+func TestCancellationIsNotDowngradedToAWarning(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	var stderr bytes.Buffer
+	assembler := assemble.Assembler{
+		GitHub:   &assembletest.GitHub{Evidence: repo.Evidence()},
+		Git:      open(t, repo.Dir),
+		Sessions: cancellingSessions{cancel: cancel},
+		Warn:     &stderr,
+	}
+	_, err := assembler.Assemble(ctx, assemble.Request{Repository: assembletest.Repository, Number: assembletest.Number, Limits: assemble.DefaultLimits()})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if strings.Contains(stderr.String(), "sessions left out") {
+		t.Errorf("cancellation was reported as a warning:\n%s", stderr.String())
+	}
+}
+
+type cancellingSessions struct{ cancel context.CancelFunc }
+
+func (c cancellingSessions) Evidence(context.Context, []gitlocal.Commit, int, int) ([]bundle.Session, error) {
+	c.cancel()
+	return nil, errors.New("the store read was interrupted")
+}
+
+func TestPreviousVersionIsCarriedIntoTheBundle(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	previous := &bundle.PreviousVersion{Version: 2, Sections: []bundle.PreviousSection{{
+		ID: "sec-1", Title: "Notes", Kind: "change", HunkContentHashes: []string{"h_e76fc2d327ac"},
+		Content: json.RawMessage(`{"id":"sec-1","title":"Notes","kind":"change"}`),
+	}}}
+	r, err := assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) { req.Previous = previous })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.result.Bundle.Sources["previous_version"] {
+		t.Error("sources.previous_version is false")
+	}
+	var decoded bundle.Bundle
+	if err := json.Unmarshal(r.result.JSON, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Previous == nil || decoded.Previous.Version != 2 || len(decoded.Previous.Sections) != 1 ||
+		decoded.Previous.Sections[0].ID != "sec-1" || decoded.Previous.Sections[0].HunkContentHashes[0] != "h_e76fc2d327ac" ||
+		string(decoded.Previous.Sections[0].Content) != string(previous.Sections[0].Content) {
+		t.Errorf("previous = %+v", decoded.Previous)
+	}
+	// Without one, the bundle has none: the previous version changes the
+	// digest and nothing else about the evidence.
+	without := mustAssemble(t, repo, repo.Evidence(), nil)
+	if without.result.Bundle.Previous != nil || without.result.Bundle.Digest == r.result.Bundle.Digest {
+		t.Error("the previous version did not change the bundle's digest, or leaked into a run without one")
+	}
+}
+
+// The real session pipeline: a Claude Code store on disk, whose session
+// spawned a subagent, goes through LocalSessions and the assembler.
+func TestLocalSessionsWithASubagentOnDisk(t *testing.T) {
+	f := linktest.New(t).NoSession(t)
+	f.AddSessionWithSubagent(t, "eeeeeeee-0000-4000-8000-000000000005", f.Repo, "add the feature")
+	evidence := github.Evidence{
+		Repository: "acme/widgets",
+		PullRequest: bundle.PullRequest{
+			Number: 7, State: "open", Title: "Add the feature", BaseRef: "main", BaseSHA: f.Base, HeadRef: "feature", HeadSHA: f.Head,
+		},
+		Sources: bundle.Sources{github.SourcePullRequest: true},
+	}
+	var stderr bytes.Buffer
+	assembler := assemble.Assembler{
+		GitHub:   &assembletest.GitHub{Evidence: evidence},
+		Git:      open(t, f.Repo),
+		Sessions: assemble.LocalSessions{Dir: f.Repo, Stores: f.Store, Warn: &stderr},
+		Warn:     &stderr,
+	}
+	result, err := assembler.Assemble(context.Background(), assemble.Request{
+		Repository: github.Repository{Host: "github.com", Owner: "acme", Name: "widgets"}, Number: 7, Limits: assemble.DefaultLimits(),
+	})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	sessions := result.Bundle.Sessions
+	if len(sessions) != 1 || !result.Bundle.Sources["sessions"] {
+		t.Fatalf("sessions = %+v\n%s", sessions, stderr.String())
+	}
+	s := sessions[0]
+	if len(s.Prompts) != 1 || len(s.Prompts[0].TouchedPaths) != 1 || s.Prompts[0].TouchedPaths[0] != "b.txt" {
+		t.Errorf("the subagent's read is not attributed to the prompt: %+v", s.Prompts)
+	}
+	var programs []string
+	for _, event := range s.CommandEvents {
+		for _, entry := range event.Commands {
+			programs = append(programs, entry.Program+":"+entry.Target)
+		}
+	}
+	if strings.Join(programs, " ") != "git: cat: go:" {
+		t.Errorf("commands = %v", programs)
+	}
+	if !contains(s.Models, "claude-haiku-5") {
+		t.Errorf("the subagent's model is missing: %v", s.Models)
+	}
+	for _, leaked := range []string{linktest.Email, linktest.Secret, "hunter2"} {
+		if bytes.Contains(result.JSON, []byte(leaked)) {
+			t.Errorf("the bundle holds %q", leaked)
+		}
+	}
 }
