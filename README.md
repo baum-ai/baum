@@ -189,20 +189,24 @@ environment variables are:
 
 | Variable | Purpose |
 | --- | --- |
-| `GITHUB_TOKEN`, `GH_TOKEN` | GitHub token; when neither is set and the file has none, `gh auth token` is used |
+| `GITHUB_TOKEN`, `GH_TOKEN` | github.com token; when neither is set and the file has none, the GitHub CLI's token is used |
+| `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it |
 | `ANTHROPIC_API_KEY` | key for the `anthropic` backend |
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
 For the upcoming `baum bundle` command, baum reads the pull request, its
 commits, checks and statuses, comments, reviews and review threads, and the
-base branch's protection from GitHub's GraphQL API with that token. A token
-that cannot read part of it (a fine-grained token without checks access,
-say) leaves that part out of the bundle, recorded as unavailable in its
-`sources`; a check's `required` stays unknown unless the protection is
-readable. The repository will be `--repo` or the one `origin` names, and the
-pull request `--pr` or the one for the current branch. See
-[ARCHITECTURE.md](ARCHITECTURE.md#github-source).
+base branch's protection from GitHub's GraphQL API, through the GitHub CLI's
+library. It works with github.com, GitHub Enterprise Cloud and GitHub
+Enterprise Server, and sends a token only to the host it belongs to: the
+variables and file above are for github.com, and any host's token can come
+from the GitHub CLI (`gh auth login`). A token that cannot read part of it
+(a fine-grained token without checks access, say) leaves that part out of
+the bundle, recorded as unavailable in its `sources`; a check's `required`
+stays unknown unless the protection is readable. The repository will be
+`--repo` or the one `origin` names, and the pull request `--pr` or the one
+for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
 `backend = "auto"` picks the first of `claude`, `codex` and `cursor-agent`
 found on `PATH`, and falls back to `anthropic` when `ANTHROPIC_API_KEY` is set.

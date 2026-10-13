@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	graphql "github.com/hasura/go-graphql-client"
+	graphql "github.com/cli/shurcooL-graphql"
 
 	"github.com/lastpersonlabs/baum/bundle"
 	"github.com/lastpersonlabs/baum/githubapi"
@@ -52,6 +52,8 @@ type FetchOptions struct {
 // Evidence is the GitHub-sourced part of a generation bundle for one pull
 // request at its current head.
 type Evidence struct {
+	// Host is the GitHub host the evidence was read from.
+	Host string
 	// Repository is "owner/name" as GitHub spells it.
 	Repository   string
 	PullRequest  bundle.PullRequest
@@ -154,7 +156,7 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 		unavailable[UnavailableReviewComments] = fmt.Errorf("review comments are read with the review threads: %w", threadsErr)
 	}
 	evidence := mapEvidence(raw, sources, opts)
-	evidence.Unavailable = unavailable
+	evidence.Host, evidence.Unavailable = repo.Host, unavailable
 	return evidence, nil
 }
 
@@ -167,7 +169,9 @@ func fatal(err error) bool {
 
 func (c *Client) pullRequest(ctx context.Context, repo Repository, number int) (rawEvidence, error) {
 	var q pullRequestQuery
-	err := c.query(ctx, "PullRequest", &q, map[string]any{"owner": repo.Owner, "name": repo.Name, "number": number})
+	variables := repoVariables(repo)
+	variables["number"] = graphql.Int(number)
+	err := c.query(ctx, repo.Host, "PullRequest", &q, variables)
 	if err != nil {
 		return rawEvidence{}, fmt.Errorf("reading pull request %s#%d: %w", repo, number, err)
 	}
@@ -186,7 +190,15 @@ type partReader struct {
 }
 
 func (f partReader) variables(cursor *string) map[string]any {
-	return map[string]any{"owner": f.repo.Owner, "name": f.repo.Name, "number": f.number, "cursor": cursor}
+	variables := repoVariables(f.repo)
+	variables["number"], variables["cursor"] = graphql.Int(f.number), (*graphql.String)(cursor)
+	return variables
+}
+
+// repoVariables are the variables naming repo. The GraphQL library declares
+// each variable's type from its Go type, so variables use its scalar types.
+func repoVariables(repo Repository) map[string]any {
+	return map[string]any{"owner": graphql.String(repo.Owner), "name": graphql.String(repo.Name)}
 }
 
 func (f partReader) notFound() error {
@@ -196,7 +208,7 @@ func (f partReader) notFound() error {
 func (f partReader) reviewRequests(ctx context.Context) ([]reviewRequest, error) {
 	return paginate(nil, func(cursor *string) ([]reviewRequest, pageInfo, error) {
 		var q reviewRequestsQuery
-		if err := f.client.query(ctx, "PullRequestReviewRequests", &q, f.variables(cursor)); err != nil {
+		if err := f.client.query(ctx, f.repo.Host, "PullRequestReviewRequests", &q, f.variables(cursor)); err != nil {
 			return nil, pageInfo{}, err
 		}
 		pr := q.Repository.PullRequest
@@ -213,7 +225,7 @@ func (f partReader) reviewRequests(ctx context.Context) ([]reviewRequest, error)
 func (f partReader) commits(ctx context.Context) ([]commitNode, error) {
 	return paginate(nil, func(cursor *string) ([]commitNode, pageInfo, error) {
 		var q commitsQuery
-		if err := f.client.query(ctx, "PullRequestCommits", &q, f.variables(cursor)); err != nil {
+		if err := f.client.query(ctx, f.repo.Host, "PullRequestCommits", &q, f.variables(cursor)); err != nil {
 			return nil, pageInfo{}, err
 		}
 		pr := q.Repository.PullRequest
@@ -234,7 +246,7 @@ func (f partReader) commits(ctx context.Context) ([]commitNode, error) {
 func (f partReader) comments(ctx context.Context) ([]issueComment, error) {
 	return paginate(nil, func(cursor *string) ([]issueComment, pageInfo, error) {
 		var q commentsQuery
-		if err := f.client.query(ctx, "PullRequestComments", &q, f.variables(cursor)); err != nil {
+		if err := f.client.query(ctx, f.repo.Host, "PullRequestComments", &q, f.variables(cursor)); err != nil {
 			return nil, pageInfo{}, err
 		}
 		pr := q.Repository.PullRequest
@@ -251,7 +263,7 @@ func (f partReader) comments(ctx context.Context) ([]issueComment, error) {
 func (f partReader) reviews(ctx context.Context) ([]review, error) {
 	return paginate(nil, func(cursor *string) ([]review, pageInfo, error) {
 		var q reviewsQuery
-		if err := f.client.query(ctx, "PullRequestReviews", &q, f.variables(cursor)); err != nil {
+		if err := f.client.query(ctx, f.repo.Host, "PullRequestReviews", &q, f.variables(cursor)); err != nil {
 			return nil, pageInfo{}, err
 		}
 		pr := q.Repository.PullRequest
@@ -270,7 +282,7 @@ func (f partReader) reviews(ctx context.Context) ([]review, error) {
 func (f partReader) threads(ctx context.Context) ([]reviewThread, error) {
 	threads, err := paginate(nil, func(cursor *string) ([]reviewThread, pageInfo, error) {
 		var q reviewThreadsQuery
-		if err := f.client.query(ctx, "PullRequestReviewThreads", &q, f.variables(cursor)); err != nil {
+		if err := f.client.query(ctx, f.repo.Host, "PullRequestReviewThreads", &q, f.variables(cursor)); err != nil {
 			return nil, pageInfo{}, err
 		}
 		pr := q.Repository.PullRequest
@@ -295,7 +307,7 @@ func (f partReader) threads(ctx context.Context) ([]reviewThread, error) {
 		}
 		rest, err := paginate(thread.Comments.PageInfo.EndCursor, func(cursor *string) ([]reviewComment, pageInfo, error) {
 			var q threadCommentsQuery
-			if err := f.client.query(ctx, "ReviewThreadComments", &q, map[string]any{"id": graphql.ID(thread.ID), "cursor": cursor}); err != nil {
+			if err := f.client.query(ctx, f.repo.Host, "ReviewThreadComments", &q, map[string]any{"id": graphql.ID(thread.ID), "cursor": (*graphql.String)(cursor)}); err != nil {
 				return nil, pageInfo{}, err
 			}
 			if q.Node == nil || q.Node.Thread.ID != thread.ID {
@@ -320,8 +332,9 @@ func (f partReader) checks(ctx context.Context) ([]checkSuite, []statusContext, 
 	first := true
 	suites, err := paginate(nil, func(cursor *string) ([]checkSuite, pageInfo, error) {
 		var q headChecksQuery
-		variables := map[string]any{"owner": f.repo.Owner, "name": f.repo.Name, "oid": githubapi.GitObjectID(f.head), "cursor": cursor}
-		if err := f.client.query(ctx, "HeadChecks", &q, variables); err != nil {
+		variables := repoVariables(f.repo)
+		variables["oid"], variables["cursor"] = githubapi.GitObjectID(f.head), (*graphql.String)(cursor)
+		if err := f.client.query(ctx, f.repo.Host, "HeadChecks", &q, variables); err != nil {
 			return nil, pageInfo{}, err
 		}
 		if q.Repository.Object == nil || q.Repository.Object.Commit.OID != f.head {
@@ -347,7 +360,7 @@ func (f partReader) checks(ctx context.Context) ([]checkSuite, []statusContext, 
 		}
 		rest, err := paginate(suite.CheckRuns.PageInfo.EndCursor, func(cursor *string) ([]checkRun, pageInfo, error) {
 			var q suiteRunsQuery
-			if err := f.client.query(ctx, "CheckSuiteRuns", &q, map[string]any{"id": graphql.ID(suite.ID), "cursor": cursor}); err != nil {
+			if err := f.client.query(ctx, f.repo.Host, "CheckSuiteRuns", &q, map[string]any{"id": graphql.ID(suite.ID), "cursor": (*graphql.String)(cursor)}); err != nil {
 				return nil, pageInfo{}, err
 			}
 			if q.Node == nil || q.Node.CheckSuite.ID != suite.ID {
@@ -370,8 +383,9 @@ func (f partReader) checks(ctx context.Context) ([]checkSuite, []statusContext, 
 // unknown rather than reading as "not required".
 func (f partReader) requiredChecks(ctx context.Context, baseRef string) (map[string]bool, error) {
 	var q requiredChecksQuery
-	variables := map[string]any{"owner": f.repo.Owner, "name": f.repo.Name, "ref": "refs/heads/" + baseRef}
-	if err := f.client.query(ctx, "RequiredChecks", &q, variables); err != nil {
+	variables := repoVariables(f.repo)
+	variables["ref"] = graphql.String("refs/heads/" + baseRef)
+	if err := f.client.query(ctx, f.repo.Host, "RequiredChecks", &q, variables); err != nil {
 		return nil, err
 	}
 	ref := q.Repository.Ref

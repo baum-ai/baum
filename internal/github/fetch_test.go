@@ -3,8 +3,10 @@ package github
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +27,7 @@ const (
 	signedURL = "https://private-user-images.githubusercontent.com/1/0f0e0d0c-0b0a-4908-8706-050403020100.png?jwt=signed"
 )
 
-var acme = Repository{Owner: "acme", Name: "widgets"}
+var acme = Repository{Host: "github.com", Owner: "acme", Name: "widgets"}
 
 func at(clock string) string { return "2026-01-02T" + clock + "Z" }
 
@@ -284,8 +286,11 @@ func TestFetchMapsEveryPageOntoTheBundle(t *testing.T) {
 	if diff := cmp.Diff(wantSources, evidence.Sources); diff != "" || len(evidence.Unavailable) != 0 {
 		t.Errorf("sources (-want +got):\n%s\nunavailable: %v", diff, evidence.Unavailable)
 	}
-	if evidence.Repository != "Acme/widgets" {
-		t.Errorf("repository = %q, want GitHub's spelling", evidence.Repository)
+	if evidence.Repository != "Acme/widgets" || evidence.Host != "github.com" {
+		t.Errorf("repository = %q on %q, want GitHub's spelling on github.com", evidence.Repository, evidence.Host)
+	}
+	if hosts := fake.tokenHosts; len(hosts) != 1 || hosts[0] != "github.com" {
+		t.Errorf("tokens asked for %v, want github.com's once", hosts)
 	}
 
 	var b bundle.Bundle
@@ -301,8 +306,8 @@ func TestFetchSendsTheTokenAndGitHubFieldNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, request := range fake.recorded() {
-		if request.Authorization != "Bearer test-token" {
-			t.Fatalf("%s sent Authorization %q", request.OperationName, request.Authorization)
+		if request.Authorization != "token test-token" || request.URL != "https://api.github.com/graphql" {
+			t.Fatalf("%s went to %s with Authorization %q", request.OperationName, request.URL, request.Authorization)
 		}
 	}
 	queries := joinQueries(fake.recorded())
@@ -585,7 +590,8 @@ func TestFetchStopsWaitingWhenCancelled(t *testing.T) {
 		return fakeResponse{status: http.StatusServiceUnavailable, body: map[string]any{"message": "unavailable"}}
 	}
 	fake := newFakeGitHub(t, routes)
-	c := New("test-token", Options{Endpoint: fake.server.URL})
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	c := New(fake.testTokens, Options{Transport: fake.transport()})
 	c.retryBackoff = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -602,5 +608,54 @@ func TestFetchStopsWaitingWhenCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Errorf("Fetch took %v to notice the cancellation", elapsed)
+	}
+}
+
+func TestFetchReadsAnEnterpriseHost(t *testing.T) {
+	fake := newFakeGitHub(t, fixtureRoutes(t))
+	ghe := Repository{Host: "ghe.example.com", Owner: "acme", Name: "widgets"}
+	evidence, err := fake.client(nil).Fetch(context.Background(), ghe, 7, FetchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Host != "ghe.example.com" || len(evidence.Unavailable) != 0 {
+		t.Errorf("host = %q, unavailable = %v", evidence.Host, evidence.Unavailable)
+	}
+	for _, request := range fake.recorded() {
+		if request.URL != "https://ghe.example.com/api/graphql" || request.Authorization != "token test-token" {
+			t.Fatalf("%s went to %s with Authorization %q", request.OperationName, request.URL, request.Authorization)
+		}
+	}
+	if hosts := fake.tokenHosts; len(hosts) != 1 || hosts[0] != "ghe.example.com" {
+		t.Errorf("tokens asked for %v, want the Enterprise host's once", hosts)
+	}
+}
+
+// TestGHDebugDoesNotLogRequests checks GH_DEBUG, which turns on go-gh's
+// request log for gh itself, cannot make baum print requests and their
+// Authorization header.
+func TestGHDebugDoesNotLogRequests(t *testing.T) {
+	t.Setenv("GH_DEBUG", "api")
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan []byte)
+	go func() {
+		logged, _ := io.ReadAll(reader)
+		read <- logged
+	}()
+	stderr := os.Stderr
+	os.Stderr = writer
+	defer func() { os.Stderr = stderr }()
+	_, err = newFakeGitHub(t, fixtureRoutes(t)).client(nil).Fetch(context.Background(), acme, 7, FetchOptions{})
+	os.Stderr = stderr
+	_ = writer.Close()
+	logged := <-read
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logged) != 0 {
+		t.Errorf("GH_DEBUG made the client log %d bytes: %.200q", len(logged), logged)
 	}
 }

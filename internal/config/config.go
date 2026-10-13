@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -27,6 +28,10 @@ const (
 	EnvBackend         = "BAUM_BACKEND"
 	EnvModel           = "BAUM_MODEL"
 )
+
+// GitHubHost is github.com, the host GITHUB_TOKEN, GH_TOKEN and github_token
+// belong to.
+const GitHubHost = "github.com"
 
 // Backend names a model backend. Auto picks one at run time, see Detect.
 type Backend string
@@ -232,32 +237,40 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// ghAuthToken asks the GitHub CLI for the token of its active github.com
-// account. The host is pinned: baum only talks to github.com, and GH_HOST
-// would otherwise hand it an Enterprise token. A variable so tests can stand
-// in for the binary.
-var ghAuthToken = func(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+// ghToken is the GitHub CLI's token for host: GH_TOKEN and GITHUB_TOKEN for
+// github.com and GitHub Enterprise Cloud with data residency (*.ghe.com),
+// GH_ENTERPRISE_TOKEN and GITHUB_ENTERPRISE_TOKEN for an Enterprise Server,
+// then gh's hosts.yml, then `gh auth token --secure-storage --hostname host`
+// for the system keyring. A variable so tests can stand in for it.
+var ghToken = func(host string) string {
+	token, _ := auth.TokenForHost(host)
+	return token
 }
 
-// ErrNoGitHubToken is returned when no token is configured and gh has none.
-var ErrNoGitHubToken = errors.New("no GitHub token: set GITHUB_TOKEN, add github_token to the config file, or run `gh auth login`")
+// ErrNoGitHubToken is returned when no token is configured for a host and gh
+// has none either.
+var ErrNoGitHubToken = errors.New("no GitHub token")
 
-// ResolveGitHubToken returns the configured token, falling back to
-// `gh auth token` when none is set.
-func (c Config) ResolveGitHubToken(ctx context.Context) (string, error) {
-	if c.GitHubToken != "" {
+// ResolveGitHubToken returns the token for the GitHub host whose repository
+// is read, and never another host's. For github.com baum's own sources come
+// first: GITHUB_TOKEN, GH_TOKEN, then github_token in the config file. After
+// them, and for any other host only, the GitHub CLI's token for that host
+// (see ghToken).
+func (c Config) ResolveGitHubToken(_ context.Context, host string) (string, error) {
+	host = auth.NormalizeHostname(strings.TrimSpace(host))
+	if host == "" {
+		return "", fmt.Errorf("%w: no host given", ErrNoGitHubToken)
+	}
+	if host == GitHubHost && c.GitHubToken != "" {
 		return c.GitHubToken, nil
 	}
-	token, err := ghAuthToken(ctx)
-	if err != nil || token == "" {
-		return "", ErrNoGitHubToken
+	if token := strings.TrimSpace(ghToken(host)); token != "" {
+		return token, nil
 	}
-	return token, nil
+	if host == GitHubHost {
+		return "", fmt.Errorf("%w for %s: set GITHUB_TOKEN, add github_token to the config file, or run `gh auth login`", ErrNoGitHubToken, host)
+	}
+	return "", fmt.Errorf("%w for %s: set GH_ENTERPRISE_TOKEN or run `gh auth login --hostname %s`", ErrNoGitHubToken, host, host)
 }
 
 // ErrNoBackend is returned by Detect when nothing usable is available.

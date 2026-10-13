@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/lastpersonlabs/baum/internal/config"
@@ -32,25 +33,52 @@ func (c stubClone) BranchUpstream(_ context.Context, branch string) (string, str
 
 func origin(url string) map[string]string { return map[string]string{"origin": url} }
 
+// standInSSH puts an ssh on PATH that resolves the aliases github-work and
+// github-personal to github.com, as an ~/.ssh/config would, and every other
+// host to itself. gh's configuration is isolated, and GH_HOST names
+// ghe.example.com, so gh treats that host as GitHub.
+func standInSSH(t *testing.T) {
+	t.Helper()
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_HOST", "ghe.example.com")
+	if runtime.GOOS == "windows" {
+		return
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncase \"$2\" in github-work|github-personal) echo \"hostname github.com\";; *) echo \"hostname $2\";; esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
 func TestRepositoryFromRemote(t *testing.T) {
-	for remote, want := range map[string]Repository{
+	standInSSH(t)
+	ghe := Repository{Host: "ghe.example.com", Owner: "acme", Name: "widgets"}
+	cases := map[string]Repository{
 		"https://github.com/acme/widgets.git":                       acme,
-		"https://user:token@github.com/Acme/Widgets":                {Owner: "acme", Name: "widgets"},
+		"https://user:token@github.com/Acme/Widgets":                {Host: "github.com", Owner: "Acme", Name: "Widgets"},
 		"git@github.com:acme/widgets.git":                           acme,
 		"ssh://git@github.com/acme/widgets.git":                     acme,
 		"ssh://git@ssh.github.com:443/acme/widgets.git":             acme,
-		"github-work:acme/widgets.git":                              acme,
-		"git@github-personal:acme/widgets":                          acme,
 		"  https://github.com/acme/widgets.git/\n":                  acme,
-		"https://github.com/acme/widgets.github.io.git":             {Owner: "acme", Name: "widgets.github.io"},
-		"git@github.com:acme-labs/widgets_2.0.git":                  {Owner: "acme-labs", Name: "widgets_2.0"},
+		"https://github.com/acme/widgets.github.io.git":             {Host: "github.com", Owner: "acme", Name: "widgets.github.io"},
+		"git@github.com:acme-labs/widgets_2.0.git":                  {Host: "github.com", Owner: "acme-labs", Name: "widgets_2.0"},
 		"https://www.github.com/acme/widgets":                       acme,
 		"ssh://git@github.com:22/acme/widgets":                      acme,
 		"https://github.com/acme/widgets/":                          acme,
 		"git://github.com/acme/widgets.git":                         acme,
 		"http://github.com/acme/widgets":                            acme,
 		"https://x-access-token:secret@github.com/acme/widgets.git": acme,
-	} {
+		"https://GHE.example.com/acme/widgets.git":                  ghe,
+		"git@ghe.example.com:acme/widgets.git":                      ghe,
+		"https://octo.ghe.com/acme/widgets":                         {Host: "octo.ghe.com", Owner: "acme", Name: "widgets"},
+	}
+	if runtime.GOOS != "windows" {
+		cases["github-work:acme/widgets.git"] = acme
+		cases["git@github-personal:acme/widgets"] = acme
+	}
+	for remote, want := range cases {
 		got, err := RepositoryFromRemote(remote)
 		if err != nil || got != want {
 			t.Errorf("RepositoryFromRemote(%q) = %v, %v; want %v", remote, got, err, want)
@@ -59,20 +87,39 @@ func TestRepositoryFromRemote(t *testing.T) {
 	for _, remote := range []string{
 		"", "https://gitlab.com/acme/widgets.git", "git@bitbucket.org:acme/widgets.git", "https://github.example.com/acme/widgets",
 		"/srv/git/acme/widgets.git", "file:///srv/acme/widgets.git", "https://github.com/acme", "https://github.com/acme/widgets/pull/7",
+		"acme/widgets", "https://x:secret@gitlab.com/acme/widgets.git", "https://x:secret@github.com/%zz/widgets",
 	} {
-		if got, err := RepositoryFromRemote(remote); !errors.Is(err, ErrNotGitHubRemote) {
+		got, err := RepositoryFromRemote(remote)
+		if !errors.Is(err, ErrNotGitHubRemote) {
 			t.Errorf("RepositoryFromRemote(%q) = %v, %v; want ErrNotGitHubRemote", remote, got, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "secret") {
+			t.Errorf("RepositoryFromRemote(%q) put the credentials in its error: %v", remote, err)
 		}
 	}
 }
 
 func TestParseRepository(t *testing.T) {
-	if got, err := ParseRepository(" Acme/widgets.js "); err != nil || got != (Repository{Owner: "Acme", Name: "widgets.js"}) {
-		t.Errorf("ParseRepository = %v, %v", got, err)
+	t.Setenv("GH_HOST", "ghe.example.com")
+	for value, want := range map[string]Repository{
+		" Acme/widgets.js ":               {Host: "github.com", Owner: "Acme", Name: "widgets.js"},
+		"ghe.example.com/acme/widgets":    {Host: "ghe.example.com", Owner: "acme", Name: "widgets"},
+		"https://github.com/acme/widgets": acme,
+	} {
+		if got, err := ParseRepository(value); err != nil || got != want {
+			t.Errorf("ParseRepository(%q) = %v, %v; want %v", value, got, err, want)
+		}
 	}
-	for _, value := range []string{"", "acme", "acme/", "/widgets", "acme/widgets/extra", "ac me/widgets", "acme/..", "-acme/widgets"} {
-		if _, err := ParseRepository(value); err == nil {
-			t.Errorf("ParseRepository(%q) accepted", value)
+	for _, value := range []string{
+		"", "acme", "acme/", "/widgets", "acme/widgets/extra", "ac me/widgets", "acme/..", "-acme/widgets", "a.b/c/d/e",
+		"https://x:secret@github.com/acme",
+	} {
+		_, err := ParseRepository(value)
+		if !errors.Is(err, ErrInvalidRepository) {
+			t.Errorf("ParseRepository(%q) = %v, want ErrInvalidRepository", value, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "secret") {
+			t.Errorf("ParseRepository(%q) put the credentials in its error: %v", value, err)
 		}
 	}
 }
@@ -84,7 +131,7 @@ func TestResolvePRFromFlagsMakesNoRequest(t *testing.T) {
 	if got, err := c.ResolvePR(ctx, clone, ResolveOptions{PR: 7}); err != nil || got != (Target{Repository: acme, Number: 7}) {
 		t.Errorf("--pr on origin: %v, %v", got, err)
 	}
-	if got, err := c.ResolvePR(ctx, stubClone{}, ResolveOptions{Repo: "other/repo", PR: 3}); err != nil || got != (Target{Repository: Repository{Owner: "other", Name: "repo"}, Number: 3}) {
+	if got, err := c.ResolvePR(ctx, stubClone{}, ResolveOptions{Repo: "other/repo", PR: 3}); err != nil || got != (Target{Repository: Repository{Host: "github.com", Owner: "other", Name: "repo"}, Number: 3}) {
 		t.Errorf("--repo and --pr: %v, %v", got, err)
 	}
 	for name, test := range map[string]struct {
@@ -100,7 +147,7 @@ func TestResolvePRFromFlagsMakesNoRequest(t *testing.T) {
 			t.Errorf("%s: err = %v, want %v", name, err, test.want)
 		}
 	}
-	if _, err := c.ResolvePR(ctx, clone, ResolveOptions{Repo: "not a repo", PR: 7}); err == nil {
+	if _, err := c.ResolvePR(ctx, clone, ResolveOptions{Repo: "not a repo", PR: 7}); !errors.Is(err, ErrInvalidRepository) {
 		t.Error("an invalid --repo was accepted")
 	}
 }
@@ -121,7 +168,7 @@ func TestResolvePRFromTheCurrentBranch(t *testing.T) {
 				associated(12, "OPEN", "feature", "upstream/widgets"),
 				associated(13, "OPEN", "feature-two", "acme/widgets"),
 			}}},
-			want: Target{Repository: Repository{Owner: "upstream", Name: "widgets"}, Number: 12},
+			want: Target{Repository: Repository{Host: "github.com", Owner: "upstream", Name: "widgets"}, Number: 12},
 		},
 		"the most recent closed one": {
 			ref: map[string]any{"associatedPullRequests": map[string]any{"nodes": []any{
@@ -174,7 +221,7 @@ func branchRoutes(t *testing.T, prs map[string][]any) map[string]route {
 }
 
 func TestResolvePRFromTheBranchUpstream(t *testing.T) {
-	upstreamWidgets := Repository{Owner: "upstream", Name: "widgets"}
+	upstreamWidgets := Repository{Host: "github.com", Owner: "upstream", Name: "widgets"}
 	remotes := map[string]string{
 		"origin":   "https://github.com/acme/widgets.git",
 		"upstream": "https://github.com/upstream/widgets.git",
@@ -212,7 +259,7 @@ func TestResolvePRFromTheBranchUpstream(t *testing.T) {
 		"an upstream outside --repo falls back to --repo": {
 			clone:    stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "upstream", upstreamMerge: "refs/pull/42/head"},
 			opts:     ResolveOptions{Repo: "other/repo"},
-			want:     Target{Repository: Repository{Owner: "other", Name: "repo"}, Number: 31},
+			want:     Target{Repository: Repository{Host: "github.com", Owner: "other", Name: "repo"}, Number: 31},
 			requests: 1,
 		},
 		"a local upstream is ignored": {
@@ -243,8 +290,9 @@ func TestResolvePRFromTheBranchUpstream(t *testing.T) {
 }
 
 // TestNewFromConfigSendsTheResolvedToken checks the client takes its token
-// through config's precedence: GITHUB_TOKEN, GH_TOKEN, the config file, then
-// `gh auth token`.
+// through config's precedence for github.com (GITHUB_TOKEN, GH_TOKEN, the
+// config file, then gh's), sends it in go-gh's Authorization header, and
+// asks for and sends an Enterprise host only that host's token.
 func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 	fake := newFakeGitHub(t, map[string]route{"PullRequest": func(gqlRequest, int) fakeResponse { return data(pullRequestData(headSHA)) }})
 	dir := t.TempDir()
@@ -257,18 +305,23 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 	if err := os.MkdirAll(ghDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte("#!/bin/sh\n[ \"$*\" = \"auth token --hostname github.com\" ] || exit 2\necho gh-cli-token\n"), 0o755); err != nil {
+	script := "#!/bin/sh\n[ \"$*\" = \"auth token --secure-storage --hostname github.com\" ] || exit 2\necho gh-cli-token\n"
+	if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	ghe := Repository{Host: "ghe.example.com", Owner: "acme", Name: "widgets"}
 
 	for _, test := range []struct {
-		name, githubToken, ghToken, path, want string
-		gh                                     bool
+		name, githubToken, ghToken, enterpriseToken, path, want, url string
+		repo                                                         Repository
+		gh                                                           bool
 	}{
 		{name: "GITHUB_TOKEN first", githubToken: "env-token", ghToken: "gh-env-token", path: withFile, want: "env-token"},
 		{name: "then GH_TOKEN", ghToken: "gh-env-token", path: withFile, want: "gh-env-token"},
 		{name: "then the config file", path: withFile, gh: true, want: "file-token"},
 		{name: "then gh auth token", path: withoutFile, gh: true, want: "gh-cli-token"},
+		{name: "an Enterprise host gets its own token", githubToken: "env-token", enterpriseToken: "ghe-token", path: withFile,
+			repo: ghe, want: "ghe-token", url: "https://ghe.example.com/api/graphql"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.gh && runtime.GOOS == "windows" {
@@ -276,6 +329,10 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 			}
 			t.Setenv(config.EnvGitHubToken, test.githubToken)
 			t.Setenv(config.EnvGHToken, test.ghToken)
+			t.Setenv("GH_ENTERPRISE_TOKEN", test.enterpriseToken)
+			t.Setenv("GITHUB_ENTERPRISE_TOKEN", "")
+			t.Setenv("GH_PATH", "")
+			t.Setenv("GH_CONFIG_DIR", t.TempDir())
 			if test.gh {
 				t.Setenv("PATH", ghDir)
 			} else {
@@ -285,31 +342,93 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := NewFromConfig(context.Background(), cfg, Options{Endpoint: fake.server.URL})
-			if err != nil {
-				t.Fatal(err)
+			repo, url := acme, "https://api.github.com/graphql"
+			if test.repo != (Repository{}) {
+				repo, url = test.repo, test.url
 			}
-			if _, err := client.pullRequest(context.Background(), acme, 7); err != nil {
+			if _, err := NewFromConfig(cfg, Options{Transport: fake.transport()}).pullRequest(context.Background(), repo, 7); err != nil {
 				t.Fatal(err)
 			}
 			requests := fake.recorded()
 			last := requests[len(requests)-1]
-			if last.Authorization != "Bearer "+test.want {
-				t.Errorf("Authorization = %q, want the %s", last.Authorization, test.want)
+			if last.Authorization != "token "+test.want || last.URL != url {
+				t.Errorf("request to %s with Authorization %q, want %s with the %s", last.URL, last.Authorization, url, test.want)
 			}
 		})
 	}
 
 	t.Run("no token anywhere", func(t *testing.T) {
-		t.Setenv(config.EnvGitHubToken, "")
-		t.Setenv(config.EnvGHToken, "")
+		for _, name := range []string{config.EnvGitHubToken, config.EnvGHToken, "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_PATH"} {
+			t.Setenv(name, "")
+		}
+		t.Setenv("GH_CONFIG_DIR", t.TempDir())
 		t.Setenv("PATH", t.TempDir())
 		cfg, err := config.Load(config.Overrides{Path: withoutFile})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := NewFromConfig(context.Background(), cfg, Options{}); !errors.Is(err, config.ErrNoGitHubToken) {
+		before := len(fake.recorded())
+		if _, err := NewFromConfig(cfg, Options{Transport: fake.transport()}).pullRequest(context.Background(), acme, 7); !errors.Is(err, config.ErrNoGitHubToken) {
 			t.Fatalf("err = %v, want ErrNoGitHubToken", err)
 		}
+		if len(fake.recorded()) != before {
+			t.Error("a request was sent without a token")
+		}
 	})
+}
+
+// TestResolvePRReadsEveryPageOfAssociatedPullRequests checks the choice is
+// made over the whole list, not its first page.
+func TestResolvePRReadsEveryPageOfAssociatedPullRequests(t *testing.T) {
+	pagesOf := func(first, second []any) route {
+		return pages(t, map[string]func() fakeResponse{
+			"": func() fakeResponse {
+				return data(map[string]any{"repository": map[string]any{"ref": map[string]any{"associatedPullRequests": page(first, "associated-1")}}})
+			},
+			"associated-1": func() fakeResponse {
+				return data(map[string]any{"repository": map[string]any{"ref": map[string]any{"associatedPullRequests": page(second, "")}}})
+			},
+		})
+	}
+	clone := stubClone{remotes: origin("https://github.com/acme/widgets.git"), branch: "feature"}
+
+	fake := newFakeGitHub(t, map[string]route{"BranchPullRequests": pagesOf(
+		[]any{associated(9, "MERGED", "feature", "acme/widgets")},
+		[]any{associated(12, "OPEN", "feature", "acme/widgets")},
+	)})
+	if got, err := fake.client(nil).ResolvePR(context.Background(), clone, ResolveOptions{}); err != nil || got != (Target{Repository: acme, Number: 12}) {
+		t.Errorf("open pull request on the second page: %v, %v", got, err)
+	}
+	if fake.callCount("BranchPullRequests") != 2 {
+		t.Errorf("read %d pages, want 2", fake.callCount("BranchPullRequests"))
+	}
+
+	fake = newFakeGitHub(t, map[string]route{"BranchPullRequests": pagesOf(
+		[]any{associated(12, "OPEN", "feature", "acme/widgets")},
+		[]any{associated(14, "OPEN", "feature", "acme/widgets")},
+	)})
+	if _, err := fake.client(nil).ResolvePR(context.Background(), clone, ResolveOptions{}); !errors.Is(err, ErrAmbiguousPullRequest) {
+		t.Errorf("open pull requests on two pages: err = %v, want ErrAmbiguousPullRequest", err)
+	}
+}
+
+func TestResolvePROnAnEnterpriseHost(t *testing.T) {
+	t.Setenv("GH_HOST", "ghe.example.com")
+	fake := newFakeGitHub(t, branchRoutes(t, map[string][]any{
+		"acme/widgets refs/heads/feature": {associated(5, "OPEN", "feature", "acme/widgets")},
+	}))
+	client := fake.client(nil)
+	clone := stubClone{remotes: origin("https://ghe.example.com/acme/widgets.git"), branch: "feature"}
+	got, err := client.ResolvePR(context.Background(), clone, ResolveOptions{})
+	ghe := Repository{Host: "ghe.example.com", Owner: "acme", Name: "widgets"}
+	if err != nil || got != (Target{Repository: ghe, Number: 5}) {
+		t.Fatalf("ResolvePR = %v, %v", got, err)
+	}
+	requests := fake.recorded()
+	if len(requests) != 1 || requests[0].URL != "https://ghe.example.com/api/graphql" {
+		t.Errorf("requests = %+v, want one to the Enterprise host's GraphQL endpoint", requests)
+	}
+	if hosts := fake.tokenHosts; len(hosts) != 1 || hosts[0] != "ghe.example.com" {
+		t.Errorf("tokens asked for %v, want only the Enterprise host", hosts)
+	}
 }

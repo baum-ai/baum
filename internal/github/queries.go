@@ -20,7 +20,7 @@ type pageInfo struct {
 
 type actor struct {
 	Login    string
-	Typename string `graphql:"__typename" json:"__typename"`
+	Typename string `graphql:"__typename"`
 }
 
 // reviewRequest is a pending review request: the requested reviewer is a
@@ -28,7 +28,7 @@ type actor struct {
 // leaves them out.
 type reviewRequest struct {
 	RequestedReviewer struct {
-		Typename string `graphql:"__typename" json:"__typename"`
+		Typename string `graphql:"__typename"`
 		User     struct {
 			Login string
 		} `graphql:"... on User"`
@@ -284,19 +284,22 @@ type requiredChecksQuery struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
+type associatedPullRequest struct {
+	Number         int
+	State          string
+	HeadRefName    string
+	BaseRepository *struct {
+		NameWithOwner string
+	}
+}
+
 type branchPullRequestsQuery struct {
 	Repository struct {
 		Ref *struct {
 			AssociatedPullRequests struct {
-				Nodes []struct {
-					Number         int
-					State          string
-					HeadRefName    string
-					BaseRepository *struct {
-						NameWithOwner string
-					}
-				}
-			} `graphql:"associatedPullRequests(first: 20, orderBy: {field: UPDATED_AT, direction: DESC})"`
+				Nodes    []associatedPullRequest
+				PageInfo pageInfo
+			} `graphql:"associatedPullRequests(first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC})"`
 		} `graphql:"ref(qualifiedName: $ref)"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }

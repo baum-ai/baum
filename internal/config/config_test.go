@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 )
@@ -217,46 +218,84 @@ func TestSaveTightensExistingPermissions(t *testing.T) {
 	}
 }
 
-func TestResolveGitHubTokenFallsBackToGH(t *testing.T) {
-	restore := ghAuthToken
-	t.Cleanup(func() { ghAuthToken = restore })
-
-	ghAuthToken = func(context.Context) (string, error) { return "gho_from_gh\n", nil }
-	token, err := (Config{}).ResolveGitHubToken(context.Background())
-	if err != nil || token != "gho_from_gh\n" {
-		t.Errorf("gh fallback: token = %q, err = %v", token, err)
+func TestResolveGitHubTokenKeepsBaumSourcesForGitHubCom(t *testing.T) {
+	restore := ghToken
+	t.Cleanup(func() { ghToken = restore })
+	var asked []string
+	ghToken = func(host string) string {
+		asked = append(asked, host)
+		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host]
 	}
+	ctx := context.Background()
 
-	token, err = (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(context.Background())
-	if err != nil || token != "ghp_configured" {
+	if token, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "github.com"); err != nil || token != "ghp_configured" {
 		t.Errorf("configured token: %q, %v", token, err)
 	}
-
-	ghAuthToken = func(context.Context) (string, error) { return "", errors.New("not logged in") }
-	if _, err := (Config{}).ResolveGitHubToken(context.Background()); !errors.Is(err, ErrNoGitHubToken) {
-		t.Errorf("err = %v, want ErrNoGitHubToken", err)
+	if len(asked) != 0 {
+		t.Errorf("gh was asked for %v although baum had a token", asked)
+	}
+	if token, err := (Config{}).ResolveGitHubToken(ctx, "API.GitHub.com"); err != nil || token != "gho_from_gh" {
+		t.Errorf("gh fallback: token = %q, err = %v", token, err)
+	}
+	// baum's token belongs to github.com: another host gets only its own.
+	if token, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_gh" {
+		t.Errorf("Enterprise host: token = %q, err = %v", token, err)
+	}
+	if _, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "other.example.com"); !errors.Is(err, ErrNoGitHubToken) {
+		t.Errorf("unknown host: err = %v, want ErrNoGitHubToken", err)
+	}
+	if want := []string{"github.com", "ghe.example.com", "other.example.com"}; !slices.Equal(asked, want) {
+		t.Errorf("gh asked for %v, want %v", asked, want)
+	}
+	if _, err := (Config{}).ResolveGitHubToken(ctx, ""); !errors.Is(err, ErrNoGitHubToken) {
+		t.Errorf("no host: err = %v, want ErrNoGitHubToken", err)
 	}
 }
 
-// TestGHAuthTokenAsksForGitHubCom runs a stand-in gh that prints a token only
-// when asked for github.com's, as a GH_HOST pointing elsewhere would
-// otherwise switch the account.
-func TestGHAuthTokenAsksForGitHubCom(t *testing.T) {
+// standInGH puts a gh on PATH that prints token only for exactly wantArgs,
+// and isolates gh's configuration and environment tokens.
+func standInGH(t *testing.T, wantArgs, token string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-in gh is a shell script")
 	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
-		"[ \"$*\" = \"auth token --hostname github.com\" ] || { echo \"unexpected arguments: $*\" >&2; exit 2; }\n" +
-		"echo gho_github_com\n"
+		"[ \"$*\" = \"" + wantArgs + "\" ] || { echo \"unexpected arguments: $*\" >&2; exit 2; }\n" +
+		"echo " + token + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
+	t.Setenv("GH_PATH", "")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
+		t.Setenv(name, "")
+	}
+}
+
+// TestGHTokenIsAskedForTheRepositoryHost runs a stand-in gh that prints a
+// token only when asked for the requested host's, as GH_HOST pointing
+// elsewhere would otherwise switch the account.
+func TestGHTokenIsAskedForTheRepositoryHost(t *testing.T) {
+	standInGH(t, "auth token --secure-storage --hostname github.com", "gho_github_com")
 	t.Setenv("GH_HOST", "github.example.com")
-	token, err := (Config{}).ResolveGitHubToken(context.Background())
+	token, err := (Config{}).ResolveGitHubToken(context.Background(), "github.com")
 	if err != nil || token != "gho_github_com" {
 		t.Fatalf("token = %q, err = %v; want github.com's token", token, err)
+	}
+}
+
+func TestGHTokenForAnEnterpriseHost(t *testing.T) {
+	standInGH(t, "auth token --secure-storage --hostname ghe.example.com", "ghe_from_keyring")
+	ctx := context.Background()
+	if token, err := (Config{GitHubToken: "ghp_github_com"}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_keyring" {
+		t.Fatalf("token = %q, err = %v; want the Enterprise host's", token, err)
+	}
+	t.Setenv("GH_ENTERPRISE_TOKEN", "ghe_from_env")
+	t.Setenv("GITHUB_TOKEN", "ghp_github_com")
+	if token, err := (Config{}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_env" {
+		t.Fatalf("token = %q, err = %v; want GH_ENTERPRISE_TOKEN", token, err)
 	}
 }
 

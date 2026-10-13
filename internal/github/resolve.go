@@ -4,54 +4,131 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/cli/go-gh/v2/pkg/auth"
+	"github.com/cli/go-gh/v2/pkg/repository"
+	"github.com/cli/go-gh/v2/pkg/ssh"
+	graphql "github.com/cli/shurcooL-graphql"
+
+	"github.com/lastpersonlabs/baum/internal/config"
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
 )
 
-// Repository names a GitHub repository.
+// Repository names a repository on a GitHub host.
 type Repository struct {
-	Owner, Name string
+	Host, Owner, Name string
 }
 
-func (r Repository) String() string { return r.Owner + "/" + r.Name }
+// String is "owner/name" on github.com and "host/owner/name" elsewhere.
+func (r Repository) String() string {
+	if r.Host == config.GitHubHost {
+		return r.Owner + "/" + r.Name
+	}
+	return r.Host + "/" + r.Owner + "/" + r.Name
+}
 
 var (
+	hostPattern  = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$`)
 	ownerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
 	namePattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 )
 
-// ParseRepository reads "owner/name".
+// ErrInvalidRepository reports a --repo value that names no repository. It
+// does not repeat the value, which may be a URL carrying credentials.
+var ErrInvalidRepository = errors.New("--repo must be owner/name, or host/owner/name for another GitHub host")
+
+// ParseRepository reads --repo: "owner/name" on github.com, or
+// "host/owner/name" on another GitHub host such as an Enterprise Server,
+// as gh reads it.
 func ParseRepository(value string) (Repository, error) {
-	owner, name, found := strings.Cut(strings.TrimSpace(value), "/")
-	if !found || !ownerPattern.MatchString(owner) || !namePattern.MatchString(name) || name == "." || name == ".." {
-		return Repository{}, fmt.Errorf("repository %q is not owner/name", value)
+	parsed, err := repository.ParseWithHost(strings.TrimSpace(value), config.GitHubHost)
+	if err != nil {
+		return Repository{}, ErrInvalidRepository
 	}
-	return Repository{Owner: owner, Name: name}, nil
+	repo, ok := checkedRepository(parsed.Host, parsed.Owner, parsed.Name)
+	if !ok {
+		return Repository{}, ErrInvalidRepository
+	}
+	return repo, nil
 }
 
-// ErrNotGitHubRemote reports a remote URL that names no GitHub repository.
-var ErrNotGitHubRemote = errors.New("the remote is not a GitHub repository; pass --repo owner/name")
+func checkedRepository(host, owner, name string) (Repository, bool) {
+	host = auth.NormalizeHostname(host)
+	if !hostPattern.MatchString(host) || !ownerPattern.MatchString(owner) ||
+		!namePattern.MatchString(name) || name == "." || name == ".." {
+		return Repository{}, false
+	}
+	return Repository{Host: host, Owner: owner, Name: name}, true
+}
 
-// RepositoryFromRemote reads the GitHub repository a git remote URL names, in
-// the https, ssh and scp-like forms. The host must be github.com, one of its
-// subdomains (such as ssh.github.com), or an SSH host alias naming GitHub
-// (such as "github-work"); any other host is a different service.
+// ErrNotGitHubRemote reports a remote URL that names no repository on a
+// GitHub host. It does not repeat the URL, which may carry credentials.
+var ErrNotGitHubRemote = errors.New("the remote does not name a repository on a GitHub host; pass --repo")
+
+// RepositoryFromRemote reads the repository a git remote URL names, in the
+// https, ssh and scp-like forms, as gh reads it: an SSH host alias is
+// resolved through `ssh -G`, and ssh.github.com is github.com. The host must
+// be one gh treats as GitHub: github.com, a *.ghe.com tenant, a host gh is
+// logged in to, or the one GH_HOST names. Any other host is another service,
+// which must never be sent a GitHub token.
 func RepositoryFromRemote(remote string) (Repository, error) {
-	host, repository, ok := gitlocal.RemoteRepository(remote)
-	if !ok || !gitHubHost(host) {
+	u, ok := remoteURL(strings.TrimSpace(remote))
+	if !ok {
 		return Repository{}, ErrNotGitHubRemote
 	}
-	return ParseRepository(repository)
+	if u.Scheme == "ssh" {
+		u = ssh.NewTranslator().Translate(u)
+	}
+	parsed, err := repository.Parse(u.String())
+	if err != nil {
+		return Repository{}, ErrNotGitHubRemote
+	}
+	repo, ok := checkedRepository(parsed.Host, parsed.Owner, parsed.Name)
+	if !ok || !gitHubHost(repo.Host) {
+		return Repository{}, ErrNotGitHubRemote
+	}
+	return repo, nil
 }
 
+// remoteURL reads a remote as a URL, turning git's scp-like
+// "[user@]host:path" form into the ssh URL it stands for; go-gh reads only
+// the "git@host:path" spelling of that form.
+func remoteURL(remote string) (*url.URL, bool) {
+	if !strings.Contains(remote, "://") {
+		// A slash before the colon makes it a local path, and a single
+		// letter a Windows drive.
+		host, path, found := strings.Cut(remote, ":")
+		if !found || len(host) < 2 || strings.ContainsAny(host, `/\`) {
+			return nil, false
+		}
+		remote = "ssh://" + host + "/" + path
+	}
+	u, err := url.Parse(remote)
+	if err != nil || u.Hostname() == "" {
+		return nil, false
+	}
+	switch u.Scheme {
+	case "https", "http", "ssh", "git", "git+ssh", "git+https":
+		return u, true
+	}
+	return nil, false
+}
+
+// gitHubHost reports a host gh treats as GitHub.
 func gitHubHost(host string) bool {
-	if host == "github.com" || strings.HasSuffix(host, ".github.com") {
+	if host == config.GitHubHost || auth.IsTenancy(host) {
 		return true
 	}
-	return !strings.Contains(host, ".") && strings.Contains(host, "github")
+	for _, known := range auth.KnownHosts() {
+		if auth.NormalizeHostname(known) == host {
+			return true
+		}
+	}
+	return false
 }
 
 // Clone is the local clone a pull request is resolved from; *gitlocal.Repo
@@ -211,26 +288,43 @@ func defaultRepository(ctx context.Context, clone Clone, flagRepo *Repository) (
 }
 
 func sameRepository(a, b Repository) bool {
-	return strings.EqualFold(a.Owner, b.Owner) && strings.EqualFold(a.Name, b.Name)
+	return a.Host == b.Host && strings.EqualFold(a.Owner, b.Owner) && strings.EqualFold(a.Name, b.Name)
 }
 
+// pullRequestForBranch reads every pull request GitHub associates with the
+// branch, to the end of the list, before choosing: the head's open one, or
+// else the most recently updated.
 func (c *Client) pullRequestForBranch(ctx context.Context, repo Repository, branch string) (Target, error) {
-	var q branchPullRequestsQuery
-	variables := map[string]any{"owner": repo.Owner, "name": repo.Name, "ref": "refs/heads/" + branch}
-	if err := c.query(ctx, "BranchPullRequests", &q, variables); err != nil {
+	found := true
+	nodes, err := paginate(nil, func(cursor *string) ([]associatedPullRequest, pageInfo, error) {
+		var q branchPullRequestsQuery
+		variables := repoVariables(repo)
+		variables["ref"], variables["cursor"] = graphql.String("refs/heads/"+branch), (*graphql.String)(cursor)
+		if err := c.query(ctx, repo.Host, "BranchPullRequests", &q, variables); err != nil {
+			return nil, pageInfo{}, err
+		}
+		if q.Repository.Ref == nil {
+			found = false
+			return nil, pageInfo{}, nil
+		}
+		connection := q.Repository.Ref.AssociatedPullRequests
+		return connection.Nodes, connection.PageInfo, nil
+	})
+	if err != nil {
 		return Target{}, fmt.Errorf("finding the pull request for branch %s: %w", branch, err)
 	}
-	if q.Repository.Ref == nil {
+	if !found {
 		return Target{}, fmt.Errorf("%w (branch %s is not on %s)", ErrNoPullRequest, branch, repo)
 	}
 	var open, other []Target
-	for _, node := range q.Repository.Ref.AssociatedPullRequests.Nodes {
+	for _, node := range nodes {
 		if node.HeadRefName != branch || node.Number <= 0 {
 			continue
 		}
 		target := Target{Repository: repo, Number: node.Number}
 		if node.BaseRepository != nil {
-			if base, err := ParseRepository(node.BaseRepository.NameWithOwner); err == nil {
+			owner, name, _ := strings.Cut(node.BaseRepository.NameWithOwner, "/")
+			if base, ok := checkedRepository(repo.Host, owner, name); ok {
 				target.Repository = base
 			}
 		}

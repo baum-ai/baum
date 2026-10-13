@@ -96,15 +96,42 @@ comment or thread has the same identifier in a local and a hosted document.
 ### GitHub source
 
 `internal/github` is the GraphQL client the upcoming `baum bundle` command
-reads GitHub with, over the user's token as `internal/config` resolves it:
-`GITHUB_TOKEN`, then `GH_TOKEN`, then `github_token` in the config file,
-then `gh auth token --hostname github.com` (pinned, so a `GH_HOST` pointing
-at an Enterprise host never hands its token to github.com). The client
-follows no redirect, since the token would go with it.
+reads GitHub with. It is built on the GitHub CLI's library, go-gh
+(`github.com/cli/go-gh/v2`): go-gh parses repositories and remote URLs,
+resolves SSH host aliases, finds the GitHub CLI's tokens, derives each
+host's API endpoint and sends the GraphQL requests. baum keeps what it
+fetches, the pagination, head pinning, rate-limit backoff, `sources` and the
+mapping onto the bundle.
 
-- The pull request is `--pr` on the repository `--repo` names or, by
-  default, the one the clone's `origin` remote names (https, ssh and
-  scp-like URLs on github.com or an SSH alias naming GitHub, read with
+- **Hosts.** github.com, GitHub Enterprise Cloud with data residency
+  (`*.ghe.com`) and GitHub Enterprise Server are all supported. go-gh
+  derives the endpoint from the host: `api.github.com` for github.com and
+  `api.<tenant>.ghe.com` for a tenant, `https://<host>/api/graphql` for an
+  Enterprise Server, or the `api_host` gh's `hosts.yml` sets for the host.
+  A remote names a GitHub repository only when its host is one gh treats
+  as GitHub: github.com, a `*.ghe.com` tenant, a host gh is logged in to,
+  or the one `GH_HOST` names. Any other host, such as another code host,
+  is never sent a GitHub token.
+- **Tokens.** A token is asked for, and sent to, only the host of the
+  repository being read. For github.com baum's own sources come first, as
+  documented: `GITHUB_TOKEN`, then `GH_TOKEN`, then `github_token` in the
+  config file. After them, and for any other host only, go-gh's
+  `auth.TokenForHost`: `GH_TOKEN` and `GITHUB_TOKEN` for github.com and
+  `*.ghe.com` tenants (gh's own rule), `GH_ENTERPRISE_TOKEN` and
+  `GITHUB_ENTERPRISE_TOKEN` for an Enterprise Server, then gh's `hosts.yml`,
+  then the system keyring through `gh auth token --secure-storage
+  --hostname <host>`. go-gh's own order puts `GH_TOKEN` before
+  `GITHUB_TOKEN`; baum keeps its documented order and uses go-gh only for
+  the GitHub CLI's part.
+- **Requests.** go-gh adds the token only to requests for the repository's
+  host or its API host, and the client also follows no redirect at all,
+  since GitHub's GraphQL endpoint never sends one. go-gh's response cache
+  is off, and its request log, which `GH_DEBUG` turns on for gh, stays off
+  for baum: it would print the token. Of gh's configuration go-gh reads only
+  the hosts and tokens above and a host's `api_host`.
+- The pull request is `--pr` on the repository `--repo` names
+  (`owner/name` on github.com, or `host/owner/name`) or, by default, the one
+  the clone's `origin` remote names (https, ssh and scp-like URLs, read with
   `insteadOf` rewrites applied). Without `--pr` it follows the current
   branch's upstream (`branch.<name>.remote` and `branch.<name>.merge`): an
   upstream of `refs/pull/N/head`, as `gh pr checkout` sets for a pull
@@ -112,11 +139,12 @@ follows no redirect, since the token would go with it.
   upstream branch is looked up with GitHub's `associatedPullRequests` on that
   remote's repository. Without a usable upstream, or when it finds nothing,
   it looks up the branch of the same name on `--repo` or `origin`. The
-  lookup takes the open pull request, otherwise the most recently updated
-  one; several open ones are an error. The pull request found may target
-  another repository than the one looked up, such as the upstream a fork's
-  branch was opened against. With `--repo`, a pull request found through the
-  upstream counts only when it is in that repository.
+  lookup reads every associated pull request, page by page, and then takes
+  the open one, otherwise the most recently updated; several open ones are
+  an error. The pull request found may target another repository than the
+  one looked up, such as the upstream a fork's branch was opened against.
+  With `--repo`, a pull request found through the upstream counts only when
+  it is in that repository.
 - Each part is its own query, paginated to the end: the header (state,
   draft, title, body and rendered body, author and association, base, head,
   merge commit), the requested users and teams, the commits in order with
@@ -157,8 +185,8 @@ follows no redirect, since the token would go with it.
   built, will flag bot reports through the same hook.
 - The description's rendered images are listed for the attachment step,
   with their signed fetch URLs, which are never stored or logged.
-- The tests run the GraphQL documents against a fake GitHub; they are not
-  checked against GitHub's published schema.
+- The tests run the GraphQL documents against a fake GitHub, below go-gh's
+  own transport; they are not checked against GitHub's published schema.
 
 ### Contracts
 
