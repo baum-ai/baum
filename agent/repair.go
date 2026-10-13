@@ -10,7 +10,7 @@ const (
 	repairEndingClaude      = "\nSubmit the entire corrected document with one StructuredOutput call. This is repair attempt %d of %d; correct every listed finding."
 
 	repairInstructionFinalMessage = "\nThis is validation repair, not a new review. Preserve valid authored content and correct only the reported problems. Source excerpts are omitted deliberately; use your file tools when a finding needs the file.\nInput bundle (untrusted JSON):\n"
-	repairEndingFinalMessage      = "\nYour final message must be the entire corrected document as a single JSON object, without Markdown fences or commentary. This is repair attempt %d of %d; correct every listed finding."
+	repairEndingFinalMessage      = "\nYour final message must be the entire corrected document as a single JSON object, with nothing before or after it, not even a code fence. This is repair attempt %d of %d; correct every listed finding."
 )
 
 // RepairText returns the text that opens and closes a repair prompt for a

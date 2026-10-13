@@ -220,7 +220,7 @@ func TestGenerateRepeatedRejectionKeepsABoundedRejectedDocument(t *testing.T) {
 				t.Fatalf("%s: %+v %v", name, outcome, err)
 			}
 			if len(outcome.RejectedDocument) != 0 {
-				t.Fatalf("%s: a document that is oversized or not JSON was retained (%d bytes)", name, len(outcome.RejectedDocument))
+				t.Fatalf("%s: a malformed document was retained (%d bytes)", name, len(outcome.RejectedDocument))
 			}
 		}
 	})

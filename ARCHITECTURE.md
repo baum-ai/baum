@@ -427,8 +427,9 @@ The review instructions reach the loop through an interface:
 
 ```go
 type Prompts interface {
-	// Instructions returns the review instructions for a backend, with the
-	// version and digest recorded in the document's generator block.
+	// Instructions returns the review instructions for a backend. The loop
+	// ignores Version and Digest; the host records the version in the
+	// document's generator.prompt_version and keeps the digest.
 	Instructions(ctx context.Context, backend string) (Prompt, error)
 }
 
@@ -516,8 +517,8 @@ rejected document, the findings, the model and each diagnostic string, counts
 the spans it masked, and reports the closed values (identifiers, categories,
 references) in which it found a secret. `RejectSecrets` then rejects such a run
 exactly as the hosted worker does: `ReasonValidationRejected`, the document
-withheld and only its masked copy kept. The local CLI and the hosted worker
-call the same two functions.
+withheld and only its masked copy kept. They are for hosts to call, including
+the local CLI (not yet wired); today only the hosted worker calls them.
 
 ## `viewer`
 
