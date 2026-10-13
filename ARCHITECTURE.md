@@ -431,12 +431,38 @@ type Prompts interface {
 	// version and digest recorded in the document's generator block.
 	Instructions(ctx context.Context, backend string) (Prompt, error)
 }
+
+type Prompt struct {
+	Version, Body, Digest string
+	// Repair and RepairEnding replace the loop's repair wording when set.
+	Repair, RepairEnding string
+}
 ```
 
-This module ships and maintains its own public prompt. A host may supply
-another implementation; the hosted service does. The prompt is per backend
-because each backend submits its result differently. The repair
-instructions and tile guidance are part of the loop, not the prompt.
+The module ships and maintains its own public prompt in `agent/prompt`. It is
+not written yet: `prompt.Prompts` returns `prompt.ErrNotAuthored` for every
+backend, so a caller fails with that error instead of reviewing with empty
+instructions. The layout it will take is a shared `review-public-v1.md` plus a
+submit text per backend (`submit-claude.md`, `submit-codex.md`), embedded with
+`go:embed`. A host may supply another implementation; the hosted service does,
+with its private prompts. `StaticPrompts` is a fixed implementation for tests
+and simple hosts. The prompt is per backend because each backend submits its
+result differently.
+
+The loop owns the rest of what a run sends:
+
+- **Tile guidance.** It appends `tilecatalogue.Instructions(kinds)` to the
+  body for the offered tile kinds, so a prompt never carries it. A `Prompts`
+  implementation that rewrites its body per backend therefore rewrites the body
+  only.
+- **Repair text.** `agent.RepairText(backend)` returns the text that opens and
+  closes a repair prompt. A backend that submits through a `StructuredOutput`
+  tool (`claude`, `anthropic`) is told to call it again; `codex`, which answers
+  in its final message, is told to reply with the entire corrected document
+  there and to use its file tools when a finding needs the file. A prompt's
+  `Repair` and `RepairEnding`, when not empty, replace that text, for a host
+  whose instructions name the tools differently. They are not part of the
+  prompt's JSON encoding.
 
 Local generation (`baum generate`, not built yet) must start every prompt it
 sends with `sessions.GenerationRunMarker`. That is the contract session
@@ -448,10 +474,50 @@ evidence about the pull request it reviews.
 
 ### Generate and repair
 
-The loop asks the backend for a document, runs it through `review`, and on
-rejection sends the findings back for a repair, up to the configured number
-of attempts. Repairs count toward the call and token budgets. A run that
-fails records one reason from a fixed list.
+```go
+generator := agent.Generator{Backend: backend, Prompts: prompts, Validator: validator,
+	Redactor: redactor, Logger: logger}
+outcome, document, err := generator.Generate(ctx, agent.Run{
+	Bundle: b, EncodedBundle: encoded, Directory: dir, TileKinds: kinds,
+	Budgets: budgets, Endpoint: endpoint})
+```
+
+The caller unpacks the checkout (and attachments) into `Directory`, which the
+backend then runs in. `Generate` masks the secrets the model writes into
+identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
+(instructions, tile guidance, the bundle and numbered source excerpts of the
+changed files) and asks the backend for a document. A provider failure is
+retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
+`1<<min(n,4)` seconds). The document goes through `review`: the validator
+completes it and returns located findings. On findings the loop sends back the
+bundle, the rejected document and the findings, without source excerpts, as a
+repair, up to `MaxRepairAttempts` (at least one), and a repair does not
+reactivate a risk the first pass omitted
+(`review.PreserveRiskOmissionsForRepair`). Every call and token, repairs
+included, counts toward the call and token budgets, and a repair the budget
+cannot pay for fails naming it. A secret masked in an identifier ends the
+repairs: the run is rejected whatever a repair returns. After the last repair,
+or at once on a secret, a run still rejected ends with
+`ReasonValidationRejected` and the last rejected document in the outcome (at
+most `MaxRetainedDocumentBytes`, and only when it is JSON). A run that fails
+otherwise returns an error: a spent budget, `ReasonProviderUnavailable`, or the
+cancelled context.
+
+`Outcome` is what the loop reports besides the document: the model, the schema
+revision, the failure reason, the findings, the rejected document, the
+diagnostic events (at most 512 over the run), the calls, tokens, provider
+attempts, errored attempts, validation repairs and usage, the structured output
+rejections, and what the identifier pass masked. A host embeds it in its own
+outcome type, and its JSON field names are the hosted agent's wire format.
+
+The loop returns text the model wrote, so the host applies `RedactOutput` to
+every outcome before it stores or shows one: it masks the document, the kept
+rejected document, the findings, the model and each diagnostic string, counts
+the spans it masked, and reports the closed values (identifiers, categories,
+references) in which it found a secret. `RejectSecrets` then rejects such a run
+exactly as the hosted worker does: `ReasonValidationRejected`, the document
+withheld and only its masked copy kept. The local CLI and the hosted worker
+call the same two functions.
 
 ## `viewer`
 
