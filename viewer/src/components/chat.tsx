@@ -46,8 +46,10 @@ const BUBBLE =
 /** A prompt, as a bubble on the right: the side a chat puts its reader on.
  *  `avatar` is the person's picture beside it, when the host knows who typed
  *  it. `length` and `truncated` describe a preview, which `onExpand` asks the
- *  host to replace with the whole text. */
+ *  host to replace with the whole text. `kind` is "instruction" for what a
+ *  parent agent wrote its subagent, which reads the same but is no person's. */
 export function PromptBubble({
+  kind = "human",
   text,
   author,
   avatar,
@@ -56,6 +58,7 @@ export function PromptBubble({
   onExpand,
   meta,
 }: {
+  kind?: "human" | "instruction";
   text: string;
   author?: string | null;
   avatar?: ReactNode;
@@ -67,7 +70,7 @@ export function PromptBubble({
 }) {
   return (
     <div className="flex items-start justify-end gap-2">
-      <div data-message="human" className={cn(BUBBLE, "rounded-tr-sm bg-(--surface-selected)")}>
+      <div data-message={kind} className={cn(BUBBLE, "rounded-tr-sm bg-(--surface-selected)")}>
         {author ? (
           <p className="mb-0.5 min-w-0 truncate text-right text-xs font-medium text-(--text-secondary)">
             {author}
@@ -171,7 +174,7 @@ function useMounted(): boolean {
 
 /** The agent's picture: its harness's mark in a circle, beside the first
  *  bubble of a run; later bubbles keep the column so they line up. */
-function AgentAvatar({ vendor }: { vendor?: string }) {
+export function AgentAvatar({ vendor }: { vendor?: string }) {
   const brand = vendor === undefined ? null : harnessBrand(vendor);
   return (
     <span className="flex w-7 flex-none justify-center">
@@ -231,9 +234,11 @@ function BubbleMeta({ children }: { children: ReactNode }) {
 }
 
 /** One agent message, rendered as the markdown agents write. `vendor` names
- *  the agent on the first bubble of a run, as a group chat names a sender. */
+ *  the agent on the first bubble of a run, as a group chat names a sender;
+ *  `author` replaces that name, such as for a subagent's response. */
 export function AgentText({
   vendor,
+  author,
   text,
   length,
   truncated = false,
@@ -241,6 +246,7 @@ export function AgentText({
   caption,
 }: {
   vendor?: string;
+  author?: string;
   text: string;
   length?: number;
   truncated?: boolean;
@@ -253,7 +259,7 @@ export function AgentText({
       <div className={cn(BUBBLE, "bg-(--surface-card)", vendor !== undefined && "rounded-tl-sm")}>
         {vendor !== undefined ? (
           <p className="mb-0.5 text-xs font-medium text-(--text-secondary)">
-            {harnessName(vendor)}
+            {author ?? harnessName(vendor)}
           </p>
         ) : null}
         <CollapsibleText

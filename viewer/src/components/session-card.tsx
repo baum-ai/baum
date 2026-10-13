@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { estimatedTokenDetail, join, type TranscriptSession } from "../transcript";
 import { HarnessName, ModelName } from "./brand-logo";
+import { Stat } from "./stat";
 import { cn, FOCUS_RING } from "./classnames";
 import { CARD_LABEL } from "./editorial";
 import {
@@ -43,6 +44,9 @@ function outcomeRule(session: TranscriptSession): string {
 
 /** A card that answers the pointer: it lifts a pixel and takes a shadow, the
  *  one place in a flat page where depth says "this opens". */
+/** A model named by its id, when the host names none. */
+const modelId = (model: string) => model;
+
 const LIFT =
   "border-l-2 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:shadow-(--shadow-raised) motion-reduce:transition-none motion-reduce:hover:translate-y-0";
 
@@ -73,7 +77,7 @@ export function SessionCard({
   source,
   formatCost,
   renderAvatar,
-  modelLabel = (model) => model,
+  modelLabel = modelId,
   restrictedNote = "This session's prompts, metadata, usage, and activity are not shown here.",
 }: {
   session: TranscriptSession;
@@ -112,8 +116,8 @@ export function SessionCard({
   if (session.restricted) {
     return (
       <Card
-        size="panel"
-        className={cn("p-0", LIFT, "border-l-(--border-strong)")}
+        size="flush"
+        className={cn(LIFT, "border-l-(--border-strong)")}
         data-session-id={session.run_id}
       >
         <div className="flex items-center gap-3 px-5 py-3.5">
@@ -133,11 +137,7 @@ export function SessionCard({
   const toggle = () => setOpen((value) => !value);
 
   return (
-    <Card
-      size="panel"
-      className={cn("p-0", LIFT, outcomeRule(session))}
-      data-session-id={session.run_id}
-    >
+    <Card size="flush" className={cn(LIFT, outcomeRule(session))} data-session-id={session.run_id}>
       <button
         type="button"
         aria-expanded={open}
@@ -232,6 +232,7 @@ export function SessionCard({
                   focusTurn={focusTurn}
                   source={source}
                   formatCost={formatCost}
+                  modelLabel={modelLabel}
                   renderAvatar={renderAvatar}
                 />
               ) : (
@@ -325,29 +326,5 @@ function SessionTotals({
         <Stat label="Working dir" value={session.working_dir} truncate />
       ) : null}
     </dl>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  detail,
-  truncate,
-}: {
-  label: string;
-  value: ReactNode;
-  detail?: string;
-  truncate?: boolean;
-}) {
-  return (
-    <div className={cn("min-w-0", truncate && "max-w-80")}>
-      <dt className="text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">{label}</dt>
-      <dd className={cn("mt-0.5 tabular-nums text-(--text-primary)", truncate && "truncate")}>
-        {value}
-        {detail ? (
-          <span className="ml-1.5 text-xs text-(--text-tertiary) normal-case">{detail}</span>
-        ) : null}
-      </dd>
-    </div>
   );
 }

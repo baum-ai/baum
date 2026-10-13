@@ -160,6 +160,21 @@ of tool calls between them folded into one row, each call with its input
 (and output, when the host has it). A reply that is a preview is swapped for
 its whole message once the activity has arrived.
 
+An activity that carries `subagents` draws each as a card where its spawn call
+happened, closed by default: the task, harness and duration in its header, a
+badge when the spawn call's status says something, then the subagent's
+response and its totals (models, tokens, cost when the host has prices, tool
+calls, failed calls). Opening it loads the subagent's own conversation, each
+instruction its parent gave it on the right and its activity below, nested
+subagents included; when that conversation ends in the whole response, the
+response above gives way to it. A subagent with no transcript, or a host that
+cannot load one, opens onto the spawn's input. An activity that carries
+`followups` draws them after the prompt's own entries: each input that came
+after the prompt (a task notification, a subagent's report handed back, a
+slash command, an interruption) as a dashed pill naming what it was with its
+text folded behind it, as written, then what the agent did about it. An input
+that carries nothing anybody typed is not reported as missing output.
+
 Its props are plain view models (`TranscriptSession` and the types beside it
 in `@baum/viewer/transcript`, in the hosted API's field names, with the pure
 helpers the card uses) and what the host adds:
@@ -167,7 +182,9 @@ helpers the card uses) and what the host adds:
 - `source`, an optional `TranscriptSource` of loaders for what the session
   did not arrive with: the whole session when a card without replies opens
   (`loadSession`), a prompt's full text when a preview is expanded
-  (`loadPromptText`), and a prompt's agent activity (`loadTurnActivity`);
+  (`loadPromptText`), a prompt's agent activity (`loadTurnActivity`), and a
+  subagent's own conversation (`loadSubagentActivity`, given the root
+  session's run id; a rejection with `status` 404 reads as nothing captured);
 - `formatCost`, which writes a cost and whether it is a lower bound;
 - `renderAvatar`, the picture beside a person's prompt;
 - `modelLabel`, which names models (the id by default), and
@@ -175,8 +192,9 @@ helpers the card uses) and what the host adds:
   it is restricted (a neutral one by default).
 
 Leaving one out turns its feature off: no "Agent activity" without
-`loadTurnActivity`, no cost anywhere without `formatCost`, no avatar column
-without `renderAvatar`. Keep `source` stable, or it loads again. `focusTurn`
+`loadTurnActivity`, no subagent conversation without `loadSubagentActivity`,
+no cost anywhere without `formatCost`, no avatar column without
+`renderAvatar`. Keep `source` stable, or it loads again. `focusTurn`
 marks a prompt and scrolls to it; `expand` opens the card from outside.
 Character counts are code points, as the hosts count a text's full length.
 
@@ -204,8 +222,11 @@ introduced by a pill naming each session's agent, numbered when one agent has
 several ("Codex session 2"), and each session counts its own days. Days and
 times are the reader's, so they appear once the page is in the browser. A
 host passes the author's name and avatar when it has them. Each prompt is
-numbered `#N` in its corner, as the transcript numbers it. An agent reply
-(`AgentText`) renders as Markdown with any HTML tags shown as written. A
+numbered `#N` in its corner, as the transcript numbers it. A prompt bubble can
+instead carry an instruction one agent wrote another (`kind="instruction"`),
+with the writing agent's mark (`AgentAvatar`) as its avatar. An agent reply
+(`AgentText`) renders as Markdown with any HTML tags shown as written, named
+by its harness or by an `author` the host gives. A
 decision's evidence stays a short quote rather than a bubble: it is an
 excerpt from somewhere in the session, and the document does not record who
 said it.
