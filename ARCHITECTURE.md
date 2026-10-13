@@ -18,7 +18,9 @@ the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle, and
 `review` holds the document model, validation, history, refresh, output
-redaction and the tile catalogue; `agent` does not exist yet, and the Go side of
+redaction and the tile catalogue, and `agent` holds the backend interface,
+request, result, usage and event types, the budgets and the local environment
+allowlist; the Go side of
 `viewer` only embeds the built app. Until a
 package is complete, its section describes the intended shape.
 
@@ -355,13 +357,20 @@ and the model schema and prompt include only those kinds.
 
 ```go
 type Backend interface {
+	Name() string
 	Run(ctx context.Context, req Request) (Result, error)
 }
 ```
 
 A request carries the prompt, the model-facing schema, the checkout directory
-and the call and token budgets. A result carries the document, usage and an
-event log. Backends:
+and the call and token budgets, and optionally an `Endpoint` (a complete
+provider base URL and key) that replaces the backend's default. A result
+carries the document, usage and an event log. Usage can be explicitly
+unreported (`Unreported`) when a backend cannot say what a run consumed, which
+differs from zero. `LocalEnvironment` gives a CLI backend's child process only
+an allowlist of the caller's environment (paths, locale, proxy and certificate
+settings) plus the names the backend adds; provider credentials, cloud and
+GitHub tokens and the SSH agent are never passed through it. Backends:
 
 | Backend | Runs |
 | --- | --- |
