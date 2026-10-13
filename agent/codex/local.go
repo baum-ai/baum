@@ -3,6 +3,7 @@ package codex
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,7 +111,7 @@ func checkSandbox(ctx context.Context, binary, goos string) error {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) == content {
-		return nil
+		return checkWriteBlocked(ctx, binary, dir)
 	}
 	reason := firstLine(stderr.String())
 	if reason == "" {
@@ -121,6 +122,22 @@ func checkSandbox(ctx context.Context, binary, goos string) error {
 		}
 	}
 	return fmt.Errorf("codex could not start its read-only sandbox on this machine: %s; baum will not run codex without it", reason)
+}
+
+// checkWriteBlocked proves the read-only profile is enforced, not just
+// accepted: a sandboxed command that creates a file in dir must fail and leave
+// no file behind. The command is sh with the path as an argument, which works
+// the same on Linux and macOS.
+func checkWriteBlocked(ctx context.Context, binary, dir string) error {
+	probe := filepath.Join(dir, "probe")
+	defer os.Remove(probe)
+	cmd := localCommand(ctx, binary, "sandbox", "-P", ":read-only", "--", "sh", "-c", `echo x > "$1"`, "sh", probe)
+	cmd.Dir = dir
+	err := cmd.Run()
+	if _, statErr := os.Stat(probe); err == nil || statErr == nil {
+		return errors.New("codex ran a command without enforcing its read-only sandbox on this machine; baum will not run codex")
+	}
+	return nil
 }
 
 // compareVersions orders two dotted numeric versions of the same length.

@@ -166,7 +166,8 @@ Codex's own read-only sandbox:
   agent runs) is refused with a request to upgrade.
 - Before its first run, baum runs a trivial read-only command under
   `codex sandbox -P :read-only`, which starts Codex's sandbox without calling
-  a model or the network. If it fails (on Linux, typically when the kernel or
+  a model or the network, then checks that a write under the same profile is
+  refused. If either fails (on Linux, typically when the kernel or
   container forbids the user namespaces the sandbox needs), baum reports
   "codex could not start its read-only sandbox on this machine" with Codex's
   first error line and does not run Codex without it. Baum has verified this

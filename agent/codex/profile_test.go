@@ -25,7 +25,11 @@ func fakeCodex(t *testing.T, version, run string) string {
 }
 
 // workingSandbox runs the command after "--" as codex sandbox would.
-const workingSandbox = `for last; do :; done; cat "$last"; exit 0;`
+const workingSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo "Read-only file system" >&2; exit 1;; esac; cat "$last"; exit 0;`
+
+// writableSandbox lets the write probe succeed, as a sandbox that is not
+// enforced would.
+const writableSandbox = `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; exit 0;; esac; cat "$last"; exit 0;`
 
 // fakeCodexSandbox is fakeCodex with its own answer to the sandbox preflight.
 func fakeCodexSandbox(t *testing.T, version, sandbox, run string) string {
@@ -311,7 +315,7 @@ func TestUnsetCodexHomeStaysUnset(t *testing.T) {
 // and a machine where the sandbox cannot start is refused before any run.
 func TestLocalPreflightsTheReadOnlySandbox(t *testing.T) {
 	counter := filepath.Join(t.TempDir(), "preflights")
-	script := fakeCodexSandbox(t, "codex-cli 0.162.1", `echo "$@" >> `+counter+`; for last; do :; done; cat "$last"; exit 0;`,
+	script := fakeCodexSandbox(t, "codex-cli 0.162.1", `echo "$@" >> `+counter+`; for last; do :; done; cat "$last"; exit $?;`,
 		"cat >/dev/null\ncat <<'EVENTS'\n"+successEvents+"\nEVENTS\n")
 	backend := &Backend{Binary: script}
 	for range 2 {
@@ -320,7 +324,7 @@ func TestLocalPreflightsTheReadOnlySandbox(t *testing.T) {
 		}
 	}
 	lines := readLines(t, filepath.Dir(counter), "preflights")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "sandbox -P :read-only -- cat ") {
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "sandbox -P :read-only -- cat ") || !strings.HasPrefix(lines[1], "sandbox -P :read-only -- sh -c ") {
 		t.Fatalf("preflight calls %q", lines)
 	}
 
@@ -342,6 +346,32 @@ func TestLocalPreflightsTheReadOnlySandbox(t *testing.T) {
 		if _, err := failing.Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "read-only sandbox") {
 			t.Fatalf("error %v", err)
 		}
+	}
+}
+
+// The preflight passes only when a write under the read-only profile fails and
+// leaves nothing behind.
+func TestLocalPreflightRefusesAnUnenforcedSandbox(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := fakeCodexSandbox(t, "codex-cli 0.162.1", writableSandbox, "touch "+marker+"\n")
+	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
+	want := "codex ran a command without enforcing its read-only sandbox on this machine; baum will not run codex"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("codex ran without an enforced sandbox")
+	}
+	// The same fake with the write blocked passes (workingSandbox).
+	script = fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\ncat <<'EVENTS'\n"+successEvents+"\nEVENTS\n")
+	if _, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	// A sandbox that fails the write but still leaves the file is refused too.
+	leaving := `for last; do :; done; case "$*" in *"-- sh -c"*) echo x > "$last"; exit 1;; esac; cat "$last"; exit 0;`
+	script = fakeCodexSandbox(t, "codex-cli 0.162.1", leaving, "touch "+marker+"\n")
+	if _, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "without enforcing") {
+		t.Fatalf("error %v", err)
 	}
 }
 
