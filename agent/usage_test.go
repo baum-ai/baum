@@ -37,18 +37,31 @@ func TestUsageAddKeepsOnlyWhatEveryAttemptAgreesOn(t *testing.T) {
 	}
 }
 
-// The run's per-call prompt range is known only when every call reported
-// usage and the run's own total adds nothing the calls do not.
-// A run that includes an attempt without usage reporting stays unreported.
+// A run that includes an attempt without usage reporting stays unreported,
+// and the speed, 1-hour split and prompt range become unknown, whichever
+// order the attempts come in.
 func TestUsageAddKeepsUnreported(t *testing.T) {
+	reported := Usage{Input: 3, CacheCreate: 4, CacheCreate1h: new(int64(4)), Speed: new("fast"), MinPrompt: new(int64(7)), MaxPrompt: new(int64(7))}
 	var total Usage
-	total.Add(Usage{Input: 3})
+	total.Add(reported)
 	if total.Unreported || total.IsZero() {
 		t.Fatalf("reported usage = %+v", total)
 	}
-	total.Add(Usage{Unreported: true})
-	if !total.Unreported || total.Input != 3 {
-		t.Fatalf("after an unreported attempt = %+v", total)
+	for _, attempts := range [][]Usage{
+		{reported, {Unreported: true}},
+		{{Unreported: true}, reported},
+		{reported, {Unreported: true}, reported},
+	} {
+		var sum Usage
+		for _, attempt := range attempts {
+			sum.Add(attempt)
+		}
+		if !sum.Unreported || sum.Input != 3*int64(len(attempts)-1) {
+			t.Errorf("%+v summed to %+v, want unreported with the reported buckets", attempts, sum)
+		}
+		if sum.Speed != nil || sum.CacheCreate1h != nil || sum.MinPrompt != nil || sum.MaxPrompt != nil {
+			t.Errorf("%+v summed to %+v, want no speed, 1-hour split or prompt range", attempts, sum)
+		}
 	}
 	if (Usage{Unreported: true}).IsZero() {
 		t.Fatal("unreported usage is not zero")

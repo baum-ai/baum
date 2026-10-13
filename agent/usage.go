@@ -66,6 +66,11 @@ func (u *Usage) Add(other Usage) {
 		u.MinPrompt, u.MaxPrompt = &lo, &hi
 	}
 	u.Unreported = u.Unreported || other.Unreported
+	if u.Unreported {
+		// A call that reported nothing may have written to the cache, run at
+		// another speed or sent a prompt outside the range, so none is known.
+		u.CacheCreate1h, u.Speed, u.MinPrompt, u.MaxPrompt = nil, nil, nil, nil
+	}
 	u.Input += other.Input
 	u.Output += other.Output
 	u.CacheRead += other.CacheRead
