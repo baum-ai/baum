@@ -191,6 +191,31 @@ func TestUserProfileMapsUnknownOptionToUpgrade(t *testing.T) {
 	}
 }
 
+func TestUnrelatedUnknownErrorIsNotMappedToUpgrade(t *testing.T) {
+	script := fakeClaude(t, "2.1.5 (Claude Code)", "echo 'Error: Unknown error' >&2\nexit 1\n")
+	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
+	if err == nil || strings.Contains(err.Error(), "upgrade Claude Code") || !strings.HasPrefix(err.Error(), "claude code failed: ") {
+		t.Fatalf("error %v", err)
+	}
+	script = fakeClaude(t, "2.1.5 (Claude Code)", "echo \"error: unknown argument 'x'\" >&2\nexit 1\n")
+	_, err = (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
+	if err == nil || !strings.Contains(err.Error(), "upgrade Claude Code") {
+		t.Fatalf("error %v", err)
+	}
+}
+
+func TestUnknownProfileIsRefused(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := fakeClaude(t, "2.1.296", succeeding("touch "+marker))
+	_, err := (&Backend{Binary: script, Profile: 7, DefaultEndpoint: testEndpoint}).Run(context.Background(), request(t.TempDir(), nil))
+	if err == nil || !strings.Contains(err.Error(), "unknown profile 7") {
+		t.Fatalf("error %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("the process ran")
+	}
+}
+
 func TestCancellationKillsTheProcessGroup(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")

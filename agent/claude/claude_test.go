@@ -199,7 +199,7 @@ func TestClaudeUsageTakesEachCallsFinalReport(t *testing.T) {
 			if (err == nil) != (tc.wantErr == "") || err != nil && err.Error() != tc.wantErr {
 				t.Fatalf("error %v, want %q", err, tc.wantErr)
 			}
-			// The per-call prompt range is checked apart (agent_usage_test.go).
+			// The per-call prompt range is checked apart (usage_test.go).
 			got := result.Usage
 			got.MinPrompt, got.MaxPrompt = nil, nil
 			if result.Calls != tc.calls || got != tc.usage || result.Model != "fixture" {

@@ -46,6 +46,12 @@ const (
 )
 
 // Backend runs the Claude Code CLI over a request's directory.
+//
+// The child runs in its own process group, so a terminal's Ctrl-C (SIGINT) does
+// not reach it. A local caller must cancel the context it passes to Run on
+// SIGINT and SIGTERM, for example with signal.NotifyContext, or the CLI keeps
+// running after baum exits. Cancelling kills the group on Unix, and on Windows
+// only the child itself.
 type Backend struct {
 	// Binary is the claude executable. The User profile resolves it with
 	// exec.LookPath and defaults to "claude".
@@ -65,6 +71,9 @@ type Backend struct {
 func (*Backend) Name() string { return agent.BackendClaude }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+	if c.Profile != User && c.Profile != Isolated {
+		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
+	}
 	if request.MaxCalls < 1 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}

@@ -395,11 +395,15 @@ run that dies on an unknown option reports the same upgrade request.
 `CLAUDE_CONFIG_DIR` under `<run>/home`, a fixed `PATH`, and the key and base URL
 of the `Endpoint`, which it requires. Cancelling a run kills the child's
 process group on Unix; on Windows only the child itself, not its descendants.
+Because the child has its own process group, Ctrl-C does not reach it: a local
+caller must cancel the context it passes to `Run` on SIGINT and SIGTERM (for
+example with `signal.NotifyContext`), or the CLI keeps running.
 
-Local callers create a run's directory with
-`os.MkdirTemp("", agent.RunDirPrefix+"*")`, and session discovery skips any
-session recorded under a path element with that prefix, so baum's own model
-calls are not collected as the user's sessions.
+`agent.RunDirPrefix` is the convention for a local run's directory name
+(`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
+Session discovery skips sessions recorded under a path element with that
+prefix as a backstop. The primary protection is that the backend persists no
+session and loads no hooks.
 
 ### Prompts
 

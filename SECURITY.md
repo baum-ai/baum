@@ -111,8 +111,11 @@ as far as the tool allows:
   removes every tool that runs commands or reaches the network, and file
   tools are limited to the temporary checkout
   (`blockReadsOutsideWorkingDirectories`).
-- No settings file, hook, plugin or MCP server is loaded, and nothing is
-  written to the session store (`--no-session-persistence`).
+- `--setting-sources ""` skips the user, project and local settings files, so
+  only the inline `--settings` baum passes is applied; administrator-managed
+  policy settings may still apply. No MCP server is loaded
+  (`--strict-mcp-config` with an empty list), and no session is written
+  (`--no-session-persistence`).
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -120,8 +123,10 @@ as far as the tool allows:
   configure an endpoint for baum.
 - Claude Code older than the version baum was checked against is refused with a
   request to upgrade, because an older release may not honour these flags.
-- Its own sessions are made under a `baum-agent-run-*` temporary directory,
-  which session discovery skips, so a review is not collected as your work.
+- As a backstop, session discovery skips sessions recorded under a directory
+  whose name starts with `baum-agent-run-`, the name local callers are meant
+  to give a run's temporary directory. The primary protection is that no
+  session is persisted and no hook runs.
 
 What remains:
 
