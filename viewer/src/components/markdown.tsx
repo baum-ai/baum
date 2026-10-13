@@ -205,3 +205,37 @@ export function Markdown({
     </div>
   );
 }
+
+const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "a", "br"];
+
+const INLINE_COMPONENTS: Components = {
+  // Paragraphs run together as one line of text: the inline form sits inside
+  // a heading, a button or a sentence, where a block would not belong.
+  p: ({ children }) => <>{children} </>,
+  // Text only: inside a button or a link a nested link is invalid, and the
+  // row it sits in already leads somewhere.
+  a: ({ children }) => <>{children}</>,
+  br: () => " ",
+  code: ({ children }) => (
+    <code className="rounded-(--radius-sm) bg-(--surface-sunken) px-1 py-0.5">{children}</code>
+  ),
+};
+
+/** Markdown for a short line inside other text, a heading or a button: the
+ *  emphasis, strikethrough and code spans render, links read as their text,
+ *  and anything block-level (lists, headings, quotes, fences) is unwrapped
+ *  into its text. Raw HTML stays text. */
+export function InlineMarkdown({ children, className }: { children: string; className?: string }) {
+  return (
+    <span className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        allowedElements={INLINE_ELEMENTS}
+        unwrapDisallowed
+        components={INLINE_COMPONENTS}
+      >
+        {children}
+      </ReactMarkdown>
+    </span>
+  );
+}
