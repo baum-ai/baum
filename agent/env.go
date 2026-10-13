@@ -2,6 +2,7 @@ package agent
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -14,14 +15,19 @@ var allowedEnv = []string{
 
 var allowedWindowsEnv = []string{
 	"USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "PATHEXT", "COMSPEC", "TEMP", "TMP", "HOMEDRIVE", "HOMEPATH",
+	"SystemDrive", "WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "USERNAME",
+	"NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
 }
 
 // LocalEnvironment returns the variables of environ a local CLI backend may
 // pass to its child: a fixed allowlist, plus the names in extra, which the
 // calling backend trusts (for example CLAUDE_CONFIG_DIR). Provider credentials
-// and configuration, cloud and GitHub tokens and the SSH agent are never in
-// the allowlist, so they do not reach the child unless a backend names them.
-// Each element of environ is "NAME=value".
+// and configuration, cloud and GitHub tokens, Git settings and the SSH agent
+// never pass, even when extra names them. Each element of environ is
+// "NAME=value".
+//
+// This covers environment variables only. HOME and the XDG directories stay,
+// so the child can still read credentials kept in files under them.
 func LocalEnvironment(environ []string, extra ...string) []string {
 	return localEnvironment(runtime.GOOS == "windows", environ, extra)
 }
@@ -51,9 +57,22 @@ func localEnvironment(windows bool, environ, extra []string) []string {
 		if windows {
 			name = strings.ToUpper(name)
 		}
+		if denied(name) {
+			continue
+		}
 		if allowed[name] || strings.HasPrefix(name, "LC_") {
 			kept = append(kept, entry)
 		}
 	}
 	return kept
+}
+
+var deniedPrefixes = []string{"ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_", "GH_", "GIT_"}
+
+var deniedNames = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK"}
+
+// denied reports a provider or source-host credential or setting. name is
+// already upper case on Windows; elsewhere names are case-sensitive.
+func denied(name string) bool {
+	return slices.Contains(deniedNames, name) || slices.ContainsFunc(deniedPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }

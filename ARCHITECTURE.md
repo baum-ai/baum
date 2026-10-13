@@ -16,13 +16,12 @@ This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
-caps, input redaction, byte trimming and digest applied to a bundle, and
+caps, input redaction, byte trimming and digest applied to a bundle,
 `review` holds the document model, validation, history, refresh, output
 redaction and the tile catalogue, and `agent` holds the backend interface,
 request, result, usage and event types, the budgets and the local environment
-allowlist; the Go side of
-`viewer` only embeds the built app. Until a
-package is complete, its section describes the intended shape.
+allowlist; the Go side of `viewer` only embeds the built app. Until a package
+is complete, its section describes the intended shape.
 
 ## Pipeline
 
@@ -368,9 +367,11 @@ provider base URL and key) that replaces the backend's default. A result
 carries the document, usage and an event log. Usage can be explicitly
 unreported (`Unreported`) when a backend cannot say what a run consumed, which
 differs from zero. `LocalEnvironment` gives a CLI backend's child process only
-an allowlist of the caller's environment (paths, locale, proxy and certificate
-settings) plus the names the backend adds; provider credentials, cloud and
-GitHub tokens and the SSH agent are never passed through it. Backends:
+an allowlist of the caller's environment variables (paths, locale, proxy and
+certificate settings) plus the names the backend adds. Provider credentials,
+cloud and GitHub tokens, Git settings and the SSH agent never pass, even when a
+backend names them. Only variables are filtered: `HOME` and the XDG directories
+stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |

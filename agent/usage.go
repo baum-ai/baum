@@ -17,7 +17,7 @@ type Usage struct {
 	MinPrompt, MaxPrompt *int64
 	// Unreported means the backend could not report usage, so the zero buckets
 	// are unknown rather than free.
-	Unreported bool `json:"unreported,omitempty"`
+	Unreported bool
 }
 
 // empty reports no usage at all, so the attempt or call neither decides the
@@ -26,7 +26,8 @@ func (u Usage) empty() bool {
 	return u.Input+u.Output+u.CacheRead+u.CacheCreate == 0
 }
 
-// IsZero reports whether nothing was reported: no tokens, no TTL split, no speed.
+// IsZero reports whether nothing was reported: no tokens, no TTL split, no
+// speed and no Unreported mark.
 func (u Usage) IsZero() bool {
 	return u.empty() && u.CacheCreate1h == nil && u.Speed == nil && !u.Unreported
 }

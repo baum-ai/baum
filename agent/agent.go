@@ -1,3 +1,7 @@
+// Package agent defines the model backend interface and the types a run
+// exchanges with it: the request, the result, the usage and the event log, plus
+// the run budgets, the failure reasons, error classification and the
+// environment a local CLI backend's child process receives.
 package agent
 
 import (

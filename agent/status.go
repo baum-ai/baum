@@ -2,10 +2,12 @@ package agent
 
 import "strings"
 
-// ProviderErrorStatus holds the ErrorStatus classes of a provider failure, as
-// opposed to a tool error. Each is a fixed word, so it may be reported off the
-// appliance where the message it classifies may not.
-var ProviderErrorStatus = map[string]bool{
+// IsProviderErrorStatus reports whether an ErrorStatus class is a provider
+// failure, as opposed to a tool error. Each class is a fixed word, so a host may
+// report it where the message it classifies may not be reported.
+func IsProviderErrorStatus(status string) bool { return providerErrorStatuses[status] }
+
+var providerErrorStatuses = map[string]bool{
 	"authentication_error": true, "rate_limit": true, "provider_overloaded": true,
 	"invalid_schema": true, "invalid_request": true,
 }

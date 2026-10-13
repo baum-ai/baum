@@ -39,6 +39,7 @@ func TestUsageAddKeepsOnlyWhatEveryAttemptAgreesOn(t *testing.T) {
 
 // The run's per-call prompt range is known only when every call reported
 // usage and the run's own total adds nothing the calls do not.
+// A run that includes an attempt without usage reporting stays unreported.
 func TestUsageAddKeepsUnreported(t *testing.T) {
 	var total Usage
 	total.Add(Usage{Input: 3})

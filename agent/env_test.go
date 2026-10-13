@@ -63,6 +63,18 @@ func TestLocalEnvironmentExtraIsTrusted(t *testing.T) {
 	}
 }
 
+func TestLocalEnvironmentExtraCannotAdmitCredentials(t *testing.T) {
+	environ := []string{"ANTHROPIC_API_KEY=x", "OPENAI_API_KEY=x", "CODEX_API_KEY=x", "AWS_PROFILE=x", "GOOGLE_API_KEY=x", "AZURE_X=x",
+		"GITHUB_TOKEN=x", "GH_TOKEN=x", "GIT_ASKPASS=x", "SSH_AUTH_SOCK=x", "CLAUDE_CODE_USE_BEDROCK=1", "CLAUDE_CODE_USE_VERTEX=1", "CODEX_HOME=/x"}
+	extra := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "AWS_PROFILE", "GOOGLE_API_KEY", "AZURE_X", "GITHUB_TOKEN",
+		"GH_TOKEN", "GIT_ASKPASS", "SSH_AUTH_SOCK", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_HOME"}
+	for _, windows := range []bool{false, true} {
+		if got := localEnvironment(windows, environ, extra); !slices.Equal(names(got), []string{"CODEX_HOME"}) {
+			t.Errorf("windows=%v kept %v", windows, got)
+		}
+	}
+}
+
 func TestLocalEnvironmentWindows(t *testing.T) {
 	environ := []string{"Path=C:\\bin", "SystemRoot=C:\\Windows", "userprofile=C:\\u", "APPDATA=a", "=C:=C:\\", "Anthropic_Api_Key=x", "GitHub_Token=y"}
 	if got := localEnvironment(true, environ, nil); !slices.Equal(names(got), []string{"APPDATA", "Path", "SystemRoot", "userprofile"}) {

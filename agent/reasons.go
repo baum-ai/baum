@@ -1,7 +1,7 @@
 package agent
 
-// The failure reasons below are stored in the database, so their text must
-// not change.
+// The failure reasons below are text hosts may store and match when read
+// back, so it must not change.
 const (
 	ReasonValidationRejected  = "validation rejected the document"
 	ReasonProviderUnavailable = "the model provider was unavailable"
