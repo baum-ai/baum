@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 
 import { cn } from "./classnames";
 
@@ -29,27 +29,44 @@ export function Wordmark({
   return <span className={cn("tracking-[-0.02em]", wordmarkSizes[size], className)}>baum</span>;
 }
 
-/** The product's mark: a lowercase b, as the wordmark sets it, cut out of a
- *  disc of ink, drawn in
- *  `currentColor` with the card surface as the cut, so it inverts with the
- *  theme rather than needing a second asset. Decorative; the control or
- *  wordmark around it carries the name. */
+/** The product's mark: a log's cut face with its branch rising on the left,
+ *  which makes a lowercase b. It keeps its own bark and heartwood colours in
+ *  both themes. On a dark ground the dark branch would sink into it, so a
+ *  parent sets `--logo-halo` to a light colour and the mark gets a die-cut
+ *  border in it, like the stickers; unset, there is none. `public/favicon.svg`
+ *  is the same drawing. Decorative; the control or wordmark around it carries
+ *  the name. */
 export function LogoMark({ size = 20, className }: { size?: number; className?: string }) {
+  // Several marks can share a page, so each needs its own gradient ids.
+  const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      fill="none"
+      viewBox="20 23 120 120"
       aria-hidden="true"
       focusable="false"
       className={cn("flex-none", className)}
     >
-      <circle cx="12" cy="12" r="12" fill="currentColor" />
-      <g stroke="var(--surface-card)" strokeWidth="2">
-        <path d="M8.25 5.5V18" strokeLinecap="square" />
-        <circle cx="12" cy="14.25" r="3.75" />
+      <defs>
+        <radialGradient id={`${id}-bark`} cx="0.3" cy="0.25" r="0.85">
+          <stop offset="0" stopColor="#a86b3c" />
+          <stop offset="0.6" stopColor="#7a4a26" />
+          <stop offset="1" stopColor="#4e2e16" />
+        </radialGradient>
+        <radialGradient id={`${id}-face`} cx="0.4" cy="0.35" r="0.75">
+          <stop offset="0" stopColor="#fff3da" />
+          <stop offset="0.7" stopColor="#f3d9ac" />
+          <stop offset="1" stopColor="#d9b27c" />
+        </radialGradient>
+      </defs>
+      <g fill="none" stroke="var(--logo-halo, transparent)" strokeWidth="9">
+        <rect x="36.5" y="28" width="13" height="68" rx="6.5" />
+        <circle cx="80" cy="94" r="44" />
       </g>
+      <rect x="36.5" y="28" width="13" height="68" rx="6.5" fill={`url(#${id}-bark)`} />
+      <circle cx="80" cy="94" r="44" fill={`url(#${id}-bark)`} />
+      <circle cx="80" cy="94" r="35.2" fill={`url(#${id}-face)`} />
     </svg>
   );
 }
