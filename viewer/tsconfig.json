@@ -29,6 +29,8 @@
     "src/**/*",
     "app/**/*",
     "test/**/*",
+    "e2e/**/*",
+    "playwright.config.ts",
     "generated/**/*",
     "vitest.config.ts",
     "vite.app.config.ts"

@@ -101,7 +101,7 @@ jobs:
   viewer:
     name: Viewer
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: viewer
@@ -122,12 +122,34 @@ jobs:
           cache-dependency-path: viewer/pnpm-lock.yaml
 
       - name: Install dependencies
+        id: install
         run: pnpm install --frozen-lockfile
 
       # Lint, format, typecheck (with the tile types generated from
       # ../schema/review-1.json) and unit tests.
       - name: Check
         run: pnpm check
+
+      # Builds the standalone app from source and drives it in Chromium, with
+      # fixtures standing in for what `baum view` serves.
+      - name: Install Chromium
+        id: chromium
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      - name: Browser tests
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
+        run: pnpm test:e2e
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-playwright-diagnostics
+          path: |
+            viewer/playwright-report/
+            viewer/test-results/
+          if-no-files-found: warn
 
   viewer-dist:
     # Every binary embeds internal/viewer/dist, which is committed so that go
