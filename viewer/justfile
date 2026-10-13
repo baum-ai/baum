@@ -1,5 +1,7 @@
 dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
 in_container := "BAUM_OP_RUN=0 " + dev_compose + " run --build --rm --no-deps --workdir /oss/viewer ui-test"
+# Type checks, tests and builds take a host-wide heavy-check slot (see dev-compose.sh)
+heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --no-deps --workdir /oss/viewer ui-test"
 
 [private]
 default:
@@ -12,15 +14,15 @@ format-check:
     {{ in_container }} pnpm format:check
 
 typecheck:
-    {{ in_container }} pnpm typecheck
+    {{ heavy }} pnpm typecheck
 
 test:
-    {{ in_container }} pnpm test:unit
+    {{ heavy }} pnpm test:unit
 
 # Build the standalone app into ../internal/viewer/dist, which is committed
 build-app:
-    {{ in_container }} pnpm build:app
+    {{ heavy }} pnpm build:app
 
 # Run every check CI runs: lint, format check, typecheck and unit tests
 check:
-    {{ in_container }} pnpm check
+    {{ heavy }} pnpm check
