@@ -440,15 +440,16 @@ type Prompt struct {
 }
 ```
 
-The module ships and maintains its own public prompt in `agent/prompt`. It is
-not written yet: `prompt.Prompts` returns `prompt.ErrNotAuthored` for every
-backend, so a caller fails with that error instead of reviewing with empty
-instructions. The layout it will take is a shared `review-public-v1.md` plus a
-submit text per backend (`submit-claude.md`, `submit-codex.md`), embedded with
-`go:embed`. A host may supply another implementation; the hosted service does,
-with its private prompts. `StaticPrompts` is a fixed implementation for tests
-and simple hosts. The prompt is per backend because each backend submits its
-result differently.
+The module ships and maintains its own public prompt in `agent/prompt`:
+`review-public-v1.md`, shared by every backend and ending with a "Submitting"
+heading, plus a submit block per backend (`submit-claude.md`, used for claude
+and anthropic, and `submit-codex.md`), embedded with `go:embed`.
+`Prompts.Instructions` appends the backend's block under that heading, sets
+`Version` to `review-public-v1` and `Digest` to the sha256 of the composed body,
+and fails for any other backend. A host may supply another implementation; the
+hosted service does, with its private prompts. `StaticPrompts` is a fixed
+implementation for tests and simple hosts. The prompt is per backend because
+each backend submits its result differently.
 
 The loop owns the rest of what a run sends:
 
