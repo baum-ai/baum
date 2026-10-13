@@ -42,13 +42,30 @@ func (c *Backend) localBinary(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checked {
-		c.checkFailure = checkVersion(ctx, binary)
+		c.version, c.checkFailure = checkVersion(ctx, binary)
 		if c.checkFailure == nil {
 			c.checkFailure = checkSandbox(ctx, binary, runtime.GOOS)
 		}
 		c.checked = c.checkFailure == nil
 	}
 	return binary, c.checkFailure
+}
+
+// Check resolves the executable, checks its version and that its read-only
+// sandbox starts, as the first Run does, and returns the installed version.
+// Only the Local profile has a check; the Container profile returns "" and nil.
+// A host calls it before assembling anything, so a missing or old installation
+// fails at once instead of as a provider failure retried by the loop.
+func (c *Backend) Check(ctx context.Context) (version string, err error) {
+	if c.Profile != Local {
+		return "", nil
+	}
+	if _, err := c.localBinary(ctx); err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.version, nil
 }
 
 // localCommand prepares a short-lived command in the local environment. The
@@ -62,21 +79,21 @@ func localCommand(ctx context.Context, binary string, args ...string) *exec.Cmd 
 	return cmd
 }
 
-func checkVersion(ctx context.Context, binary string) error {
+func checkVersion(ctx context.Context, binary string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, err := localCommand(ctx, binary, "--version").Output()
 	if err != nil {
-		return fmt.Errorf("running %s --version: %w", binary, err)
+		return "", fmt.Errorf("running %s --version: %w", binary, err)
 	}
 	version := versionPattern.FindString(string(out))
 	if version == "" {
-		return fmt.Errorf("could not read a version from %s --version (%q); upgrade Codex to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
+		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Codex to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
 	}
 	if compareVersions(version, minimumVersion) < 0 {
-		return fmt.Errorf("codex %s is older than %s, which baum needs; upgrade Codex", version, minimumVersion)
+		return "", fmt.Errorf("codex %s is older than %s, which baum needs; upgrade Codex", version, minimumVersion)
 	}
-	return nil
+	return version, nil
 }
 
 // sandboxPlatform reports whether baum has checked that `codex sandbox`

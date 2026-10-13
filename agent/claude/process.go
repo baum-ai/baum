@@ -73,6 +73,23 @@ const minimumVersion = "2.1.0"
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
+// Check resolves the executable and checks its version, as the first Run does,
+// and returns the installed version. Only the User profile has a check; the
+// Isolated profile returns "" and nil. A host calls it before assembling
+// anything, so a missing or old installation fails at once instead of as a
+// provider failure retried by the loop.
+func (c *Backend) Check(ctx context.Context) (version string, err error) {
+	if c.Profile != User {
+		return "", nil
+	}
+	if _, err := c.userBinary(ctx); err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.version, nil
+}
+
 // userBinary resolves the executable and, once per Backend, checks its
 // version. A failed check is repeated by the next run, which may follow an
 // upgrade.
@@ -84,13 +101,13 @@ func (c *Backend) userBinary(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.versionOK {
-		c.versionErr = c.checkVersion(ctx, binary)
+		c.version, c.versionErr = c.checkVersion(ctx, binary)
 		c.versionOK = c.versionErr == nil
 	}
 	return binary, c.versionErr
 }
 
-func (c *Backend) checkVersion(ctx context.Context, binary string) error {
+func (c *Backend) checkVersion(ctx context.Context, binary string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--version")
@@ -101,16 +118,16 @@ func (c *Backend) checkVersion(ctx context.Context, binary string) error {
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("running %s --version: %w", binary, err)
+		return "", fmt.Errorf("running %s --version: %w", binary, err)
 	}
 	version := versionPattern.FindString(string(out))
 	if version == "" {
-		return fmt.Errorf("could not read a version from %s --version (%q); upgrade Claude Code to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
+		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Claude Code to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
 	}
 	if compareVersions(version, minimumVersion) < 0 {
-		return fmt.Errorf("claude %s is older than %s, which baum needs; upgrade Claude Code", version, minimumVersion)
+		return "", fmt.Errorf("claude %s is older than %s, which baum needs; upgrade Claude Code", version, minimumVersion)
 	}
-	return nil
+	return version, nil
 }
 
 // compareVersions orders two dotted numeric versions of the same length.

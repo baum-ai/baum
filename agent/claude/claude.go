@@ -66,6 +66,7 @@ type Backend struct {
 	mu         sync.Mutex
 	versionOK  bool
 	versionErr error
+	version    string
 }
 
 func (*Backend) Name() string { return agent.BackendClaude }

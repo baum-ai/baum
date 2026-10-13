@@ -61,6 +61,7 @@ type Backend struct {
 	mu           sync.Mutex
 	checked      bool
 	checkFailure error
+	version      string
 }
 
 func (*Backend) Name() string { return agent.BackendCodex }
