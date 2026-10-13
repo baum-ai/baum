@@ -21,9 +21,9 @@ Everything runs locally:
 ## Status
 
 The repository is being stood up phase by phase. The CLI skeleton, config
-layout, review schema, release pipeline, `baum sessions`, `baum validate` and
-`baum view` exist; `generate`, `bundle` and `refresh` print their help and exit
-non-zero until their phase lands.
+layout, review schema, release pipeline, `baum sessions`, `baum validate`,
+`baum bundle` and `baum view` exist; `generate` and `refresh` print their help
+and exit non-zero until their phase lands.
 
 ## Install
 
@@ -45,7 +45,12 @@ are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
 # current directory and write it to review.json.
 baum generate --pr 191 -o review.json
 
-# Assemble the generation input without calling a model, for debugging.
+# Assemble the generation input without calling a model, for debugging. Without
+# --pr it is the pull request of the current branch; --repo owner/name replaces
+# the repository the origin remote names. Only the bundle JSON goes to stdout
+# (or to -o); warnings and the bundle digest go to stderr. The clone is only
+# read: nothing is checked out or fetched, so a missing commit is reported with
+# the `git fetch` to run.
 baum bundle --pr 191 -o bundle.json
 
 # Serve the viewer for a document on localhost and open it in the browser.
@@ -163,9 +168,8 @@ prompt), and not at all when its agent's own store already has it.
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.
 
-The generation bundle's session evidence is built from the sessions
-`baum view` links; the `baum bundle` command that writes it is not built yet.
-Each session carries its title, branch, models, timing and outcome, its first
+The generation bundle's session evidence, which `baum bundle` writes, is
+built from the sessions `baum view` links. Each session carries its title, branch, models, timing and outcome, its first
 and latest prompts with the agent's final reply, the files inside the clone
 each prompt read or edited (subagents' work counts toward the prompt that
 started them), and its shell commands as paraphrases: program name, a
@@ -196,7 +200,21 @@ max_tokens = 2000000
 
 [caps]
 # Overrides for the generation bundle caps, by name. Defaults apply otherwise.
+# max_sessions = 12
 ```
+
+The caps are `max_sessions` (12), `max_prompts_per_session` (2),
+`max_command_events_per_session` (20), `max_comments` (40),
+`max_hunk_patch_lines` (200), `max_bytes` (262144; the encoded bundle apart
+from the diff index), `max_diff_index_bytes` (524288), `max_diff_files` (3000),
+`max_diff_patch_bytes` (104857600), `max_images` (20), `max_image_bytes`
+(10485760), `max_image_alt_bytes` (512), and the code checkout's
+`checkout_max_file_bytes` (1048576), `checkout_max_total_bytes` (209715200) and
+`checkout_max_total_files` (20000). The defaults are the hosted service's, so
+the same pull request is trimmed the same way in both places. An unknown name
+or a negative value is an error. Trimming cuts text in the documented order
+and says so in the bundle's `truncated` notes; it never drops a hunk from the
+diff index, and a diff index over its budget fails the command instead.
 
 Precedence is flags, then environment, then the file, then defaults. The
 environment variables are:
@@ -209,7 +227,7 @@ environment variables are:
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
-For the upcoming `baum bundle` command, baum reads the pull request, its
+For `baum bundle`, baum reads the pull request, its
 commits, checks and statuses, comments, reviews and review threads, and the
 base branch's protection from GitHub's GraphQL API, through the GitHub CLI's
 library. It works with github.com, GitHub Enterprise Cloud and GitHub
@@ -219,7 +237,7 @@ from the GitHub CLI (`gh auth login`). An `api_host` override in the GitHub
 CLI's `hosts.yml` is not honoured. A token that cannot read part of it
 (a fine-grained token without checks access, say) leaves that part out of
 the bundle, recorded as unavailable in its `sources`; a check's `required`
-stays unknown unless the protection is readable. The repository will be
+stays unknown unless the protection is readable. The repository is
 `--repo` or the one `origin` names, and the pull request `--pr` or the one
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 

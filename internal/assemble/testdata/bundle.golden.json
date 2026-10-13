@@ -1,0 +1,311 @@
+{
+  "repository": "acme/demo",
+  "pull_request": {
+    "number": 7,
+    "state": "open",
+    "draft": false,
+    "title": "Keep the notes in sync",
+    "body": "## Summary\n\nKeep the notes in sync. Follow-up to #9, tracked as DEMO-12.\n\n## Screenshot\n\n![Diagram](https://github.com/user-attachments/assets/0f3b8c1e-5a4d-4e6f-9a7b-1c2d3e4f5a6b)\n\nTest token: xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X (ask xxx.xxxxxxxx@xxxxxxx.xxx)\n",
+    "author_login": "ada",
+    "author_association": "MEMBER",
+    "author_bot": false,
+    "base_ref": "main",
+    "base_sha": "7fa265fe77466b657fe809c68bace19399cf38f3",
+    "head_ref": "feature",
+    "head_sha": "e2ed45f8edb72027ccfe6a2c2cb7bec2e8c8326c",
+    "merge_base_sha": "9875e5bc8d185b0fb28e3fd9830b26ae545e0a27",
+    "requested_reviewers": [
+      "grace"
+    ],
+    "opened_at": "2026-06-03T10:00:00Z",
+    "commits": [
+      {
+        "sha": "4731145f4277ee4cb638b013f8228ab41941fb00",
+        "subject": "Add notes and settings",
+        "committed_at": "2026-06-03T10:00:00Z"
+      },
+      {
+        "sha": "e2ed45f8edb72027ccfe6a2c2cb7bec2e8c8326c",
+        "subject": "Rename the guide and refresh the logo",
+        "committed_at": "2026-06-03T11:30:00Z",
+        "additions": 1,
+        "deletions": 1
+      }
+    ]
+  },
+  "diff": [
+    {
+      "id": "h_1943d418c248",
+      "path": "assets/logo.bin",
+      "change": "modified",
+      "role": "code",
+      "additions": 0,
+      "deletions": 0,
+      "diff_url": "diff-ed3274a5910c5629371fde83e208cc6abd1d3276a0307b5bf8cc86e3b7d336c4R0",
+      "textless": true,
+      "textless_reason": "binary"
+    },
+    {
+      "id": "h_10fa30552629",
+      "path": "config/settings.env",
+      "change": "added",
+      "role": "config",
+      "start_line": 1,
+      "line_count": 2,
+      "additions": 2,
+      "deletions": 0,
+      "diff_url": "diff-bd47942fa21b5a9e8416d23e68cdb98bc54e3a94379c4688a312985ba1481364R1",
+      "patch": "@@ -0,0 +1,2 @@\n+HF_TOKEN=xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X\n+MODE=test"
+    },
+    {
+      "id": "h_a4a0d25bf943",
+      "path": "docs/guide.md",
+      "old_path": "docs/old-guide.md",
+      "change": "renamed",
+      "role": "docs",
+      "start_line": 3,
+      "line_count": 7,
+      "additions": 1,
+      "deletions": 1,
+      "diff_url": "diff-07fdd026b11c494c3b62c97f764f6939803c453389ebefd6b05e6f187d44859aR3",
+      "patch": "@@ -3,7 +3,7 @@ guide line 2\n guide line 3\n guide line 4\n guide line 5\n-guide line 6\n+guide line six\n guide line 7\n guide line 8\n guide line 9"
+    },
+    {
+      "id": "h_bcca20ed01de",
+      "path": "docs/new.md",
+      "change": "added",
+      "role": "docs",
+      "start_line": 1,
+      "line_count": 3,
+      "additions": 3,
+      "deletions": 0,
+      "diff_url": "diff-eae8d22bc4fc6d599e92d3cc7266ae3adb0e1ffa3c89a8d9cbbb33eec9462386R1",
+      "patch": "@@ -0,0 +1,3 @@\n+# New\n+\n+A page."
+    },
+    {
+      "id": "h_e76fc2d327ac",
+      "path": "src/list.go",
+      "change": "modified",
+      "role": "code",
+      "start_line": 1,
+      "line_count": 7,
+      "additions": 1,
+      "deletions": 0,
+      "diff_url": "diff-abc890692ca063b38130b08f61e7fe366e10b58aa51215a8699f3ea4b39de80dR1",
+      "patch": "@@ -1,6 +1,7 @@\n package demo\n \n func First() int {\n+\t// note: keep in sync with the schema\n \treturn 1\n }\n "
+    },
+    {
+      "id": "h_e76fc2d327ac-2",
+      "path": "src/list.go",
+      "change": "modified",
+      "role": "code",
+      "start_line": 19,
+      "line_count": 6,
+      "additions": 1,
+      "deletions": 0,
+      "diff_url": "diff-abc890692ca063b38130b08f61e7fe366e10b58aa51215a8699f3ea4b39de80dR19",
+      "patch": "@@ -18,5 +19,6 @@ func First() int {\n // filler 12\n \n func Second() int {\n+\t// note: keep in sync with the schema\n \treturn 2\n }"
+    },
+    {
+      "id": "h_862baa4fa52a",
+      "path": "src/shift.go",
+      "change": "modified",
+      "role": "code",
+      "start_line": 1,
+      "line_count": 7,
+      "additions": 1,
+      "deletions": 1,
+      "diff_url": "diff-fae99e4fd4d33ec9de4f5723192fca7a78db05a8ae43d1430fdffebb85925114R1",
+      "patch": "@@ -1,7 +1,7 @@\n package demo\n \n // Limit bounds the retries.\n-const Limit = 10\n+const Limit = 25\n \n // trailing line 1\n // trailing line 2"
+    }
+  ],
+  "checks": [
+    {
+      "id": "check_run:101",
+      "name": "build",
+      "kind": "check_run",
+      "conclusion": "success",
+      "status": "completed",
+      "required": true,
+      "url": "https://github.com/acme/demo/runs/101",
+      "completed_at": "2026-06-03T12:20:00Z"
+    },
+    {
+      "id": "SC_1",
+      "name": "ci/lint",
+      "kind": "status",
+      "conclusion": "success",
+      "status": "success",
+      "required": false
+    }
+  ],
+  "conversation": [
+    {
+      "id": "1001",
+      "kind": "comment",
+      "author_login": "grace",
+      "author_association": "MEMBER",
+      "bot": false,
+      "body": "Did the settings file ship a real token? xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X Contact xxx.xxxxxxxx@xxxxxxx.xxx",
+      "created_at": "2026-06-03T12:40:00Z"
+    },
+    {
+      "id": "1002",
+      "kind": "review",
+      "author_login": "grace",
+      "author_association": "MEMBER",
+      "bot": false,
+      "body": "Please drop the token.",
+      "created_at": "2026-06-03T12:50:00Z",
+      "state": "changes_requested",
+      "commit": "e2ed45f8edb72027ccfe6a2c2cb7bec2e8c8326c"
+    },
+    {
+      "id": "1003",
+      "kind": "review_comment",
+      "author_login": "grace",
+      "author_association": "MEMBER",
+      "bot": false,
+      "body": "Remove this.",
+      "created_at": "2026-06-03T12:51:00Z",
+      "path": "config/settings.env",
+      "review": "1002",
+      "thread": "PRRT_1",
+      "thread_root": true
+    }
+  ],
+  "threads": [
+    {
+      "id": "PRRT_1",
+      "path": "config/settings.env",
+      "line": 3,
+      "resolved": false,
+      "outdated": false,
+      "url": "https://github.com/acme/demo/pull/7#discussion_r1003"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "codex-session-2",
+      "vendor": "codex",
+      "restricted": false,
+      "models": [
+        "gpt-5"
+      ],
+      "title": "Refresh the logo",
+      "branch": "feature",
+      "started_at": "2026-06-03T09:30:00Z",
+      "ended_at": "2026-06-03T10:00:00Z",
+      "outcome": "uncommitted",
+      "prompts": [
+        {
+          "at": "2026-06-03T09:30:00Z",
+          "index": 1,
+          "id": "p-1",
+          "text": "Replace assets/logo.bin",
+          "touched_paths": [
+            "assets/logo.bin"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-session-1",
+      "vendor": "claude_code",
+      "restricted": false,
+      "models": [
+        "claude-opus-5"
+      ],
+      "title": "Keep the notes in sync",
+      "branch": "feature",
+      "started_at": "2026-06-03T10:10:00Z",
+      "ended_at": "2026-06-03T11:20:00Z",
+      "outcome": "committed",
+      "prompts": [
+        {
+          "at": "2026-06-03T10:10:00Z",
+          "index": 1,
+          "id": "p-1",
+          "text": "Add the note to both functions in src/list.go",
+          "reply": "Done.",
+          "touched_paths": [
+            "src/list.go"
+          ]
+        },
+        {
+          "at": "2026-06-03T10:40:00Z",
+          "index": 2,
+          "id": "p-2",
+          "text": "Delegate the settings and docs. The token is xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X, mail xxx.xxxxxxxx@xxxxxxx.xxx",
+          "reply": "The subagent finished.",
+          "touched_paths": [
+            "config/settings.env",
+            "docs/guide.md",
+            "docs/new.md"
+          ]
+        }
+      ],
+      "command_events": [
+        {
+          "id": "t-1",
+          "time": "2026-06-03T10:50:00Z",
+          "outcome": "succeeded",
+          "commands": [
+            {
+              "program": "go",
+              "category": "test",
+              "target": "src/..."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "kind": "follow_up",
+      "value": "#9",
+      "source": "body"
+    },
+    {
+      "kind": "issue_key",
+      "value": "DEMO-12",
+      "source": "body"
+    }
+  ],
+  "attachments": [
+    {
+      "id": "att_e2c78b005247d6ebad92943f2ca709ac",
+      "path": "attachments/att_e2c78b005247d6ebad92943f2ca709ac.png",
+      "source_url": "https://github.com/user-attachments/assets/0f3b8c1e-5a4d-4e6f-9a7b-1c2d3e4f5a6b",
+      "content_type": "image/png",
+      "alt": "Diagram of xxx.xxxxxxxx@xxxxxxx.xxx",
+      "heading": "Screenshot",
+      "position": 1,
+      "width": 1,
+      "height": 1,
+      "sha256": "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581"
+    }
+  ],
+  "review_config": {
+    "present": true,
+    "digest": "33b36cc31cc8fb41f55d51b2da59ed6610547ba5a854a8f716391f01f58dd05c",
+    "content": "Prefer small functions and name the invariant a change relies on.\n"
+  },
+  "sources": {
+    "attachments": true,
+    "checks": true,
+    "comments": true,
+    "commits": true,
+    "diff": true,
+    "previous_version": false,
+    "pull_request": true,
+    "references": true,
+    "requested_reviewers": true,
+    "required_checks": true,
+    "review_md": true,
+    "review_threads": true,
+    "reviews": true,
+    "sessions": true
+  }
+}

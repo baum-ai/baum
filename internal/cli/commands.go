@@ -19,18 +19,6 @@ model backend, validates the result and writes a baum.review/1 document.`,
 	return cmd
 }
 
-func newBundleCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "bundle",
-		Short: "Assemble the generation input for a pull request without calling a model",
-		RunE:  notImplemented,
-	}
-	cmd.Flags().Int("pr", 0, "pull request number")
-	cmd.Flags().String("repo", "", "GitHub repository as owner/name (defaults to the origin remote)")
-	cmd.Flags().StringP("output", "o", "", "write the bundle to this file instead of stdout")
-	return cmd
-}
-
 func newViewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "view [document.json]",

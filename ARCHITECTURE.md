@@ -95,8 +95,7 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` is the GraphQL client the upcoming `baum bundle` command
-reads GitHub with. It reads hosts, repositories, remote URLs, SSH host
+`internal/github` is the GraphQL client `baum bundle` reads GitHub with. It reads hosts, repositories, remote URLs, SSH host
 aliases and tokens as the GitHub CLI does, through its library go-gh
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
 themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
@@ -725,7 +724,7 @@ allowed.
 ### Local session evidence
 
 `locallink.BuildSessionEvidence` is the bundle's sessions source on this
-machine; the `baum bundle` command that will call it is not built yet. It
+machine; `baum bundle` calls it through `internal/assemble`. It
 takes the pull request's commits as the clone holds them (`gitlocal.Commits`
 from the merge base to the head), a directory in the clone, the session store
 overrides with the `--previous-path` directories the repository used to live
@@ -978,7 +977,28 @@ fetches it under `refs/baum/`, with the user's git configuration and no
 hooks. A partial clone missing the pull request's objects is reported, not
 fetched from on demand.
 
-`baum bundle` stops after step 5. `baum validate` checks a stored document with
+`baum bundle` stops after step 5, and never fetches: a pull request commit
+the clone lacks fails the command with the `git fetch` to run, so it reads
+git objects only and leaves refs, index, working tree and configuration
+alone. It is `internal/assemble`, which follows the hosted assembler's order
+over the same `bundle` functions with the sources above behind small
+interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
+the pull request header, checks and conversation, the diff index, commit
+changes, sessions, references, attachments, `REVIEW.md` at the base commit,
+the checkout export, then caps, redaction, byte trimming and the digest. Sessions
+follow the comparison because they need its merge base, and command targets
+are checked by `locallink` (changed paths and the clone's files) rather than
+by `bundle.KeepKnownCommandTargets`. A session source that fails leaves the
+bundle without sessions and a warning. Image downloads carry no credentials: GitHub
+renders each source signed, and only its upload hosts are contacted. The
+bundle is written as `json.Marshal` encodes it plus a newline, so its digest
+is the SHA-256 of the output without that newline, and it holds no timestamp
+of its own: the same inputs produce the same bytes. `Assemble` can also
+write the checkout (a gzip tar read by `bundle.UnpackCheckout`) and the
+attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
+`Request`, for `baum generate`; `baum bundle` discards both. The checkout is
+exported either way, since a file the checkout budget omits makes its hunks
+textless. `baum validate`  checks a stored document with
 `review.DocumentValidator.ValidateStored`, against its bundle when one is given,
 and `baum refresh` runs the `review` steps on an existing document. `baum view`
 serves the viewer, the document, its versions, the cached images, and the sessions and commits linked
