@@ -14,7 +14,14 @@
       "version": "19"
     }
   },
-  "ignorePatterns": ["coverage/**", "generated/**", "src/precompiled/**"],
+  "ignorePatterns": [
+    "coverage/**",
+    "e2e-dist/**",
+    "generated/**",
+    "playwright-report/**",
+    "src/precompiled/**",
+    "test-results/**"
+  ],
   "rules": {
     "eqeqeq": ["error", "smart"],
     "no-alert": "error",

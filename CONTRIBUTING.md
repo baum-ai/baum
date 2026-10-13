@@ -28,7 +28,8 @@ linux, macOS and Windows.
 
 The viewer in `viewer/` is a pnpm package with checks of its own: run
 `pnpm install` and `pnpm check` there (lint, format check, typecheck and unit
-tests). Its [README](viewer/README.md) describes the seams a host connects.
+tests), and `pnpm test:e2e` for the browser tests of the standalone app. Its
+[README](viewer/README.md) describes the seams a host connects.
 
 ## Coding conventions
 

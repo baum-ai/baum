@@ -376,9 +376,11 @@ byte-identical.
 
 ## Development
 
-Repository checks run in Docker with `just viewer::check` from the repository
-root. The recipes install dependencies in the shared `ui-test` service and
-preserve `BAUM_DEV_CPUSET`. The pnpm commands below describe in-container
+Repository checks run in Docker with `just viewer::check`, and the browser
+tests with `just viewer::e2e`, from the repository root. The recipes install
+dependencies in the shared `ui-test` service, which also holds Chromium, and
+preserve `BAUM_DEV_CPUSET`. `just viewer::pnpm exec playwright test e2e/<file>`
+runs one spec. The pnpm commands below describe in-container
 commands; standalone consumers require Node.js 24 and pnpm.
 
 ```sh
@@ -388,6 +390,8 @@ just check            # the same, through this directory's justfile
 pnpm format           # format with Biome
 pnpm build:app        # build the standalone app into ../internal/viewer/dist
 pnpm test:unit:watch  # watch the unit tests while editing
+pnpm test:e2e         # browser tests of the standalone app (Playwright)
+just e2e              # the same, through this directory's justfile
 ```
 
 Unit tests use Vitest and sit beside the code they cover; fixtures live in
@@ -399,3 +403,34 @@ compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` 
 `EventSource`. `src/typography.test.ts` fails on a font size outside the type scale
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.
+
+### Browser tests
+
+`e2e/` holds Playwright specs that drive the standalone app in Chromium.
+`pnpm test:e2e` builds the app from source into `e2e-dist/` (not the committed
+bundle, so a stale one cannot hide a failure) and starts `e2e/server.ts`, a
+small stand-in for `baum view`. It serves the built files with the same
+security headers as `internal/viewserver` (the content security policy is kept
+equal to its `contentSecurityPolicy`), `GET /api/document` with the schema's
+synthetic example (`../schema/review-example.json`, what `baum view --sample`
+shows), a quiet `/api/events`, `/api/sessions` answering that no sessions are
+available, and `/api/patch` answering no patch for a path the document cites (404 for any other, as `viewserver` does). Opening the page as `/?csp=off` serves it without the policy, which `untrusted.spec.ts` uses so that sanitization is tested on its own rather than masked by the policy. The suite needs no Go binary
+and no hosted API. A spec changes what one page sees with `page.route`
+(`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay
+parallel.
+
+| Spec | What it covers |
+| --- | --- |
+| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render |
+| `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
+| `section.spec.ts` | a section's blocks (intent, entities, behavior, decisions, table, code, diagram); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
+| `checks.spec.ts` | the Details tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
+| `sessions.spec.ts` | the Sessions and Commits groups with and without `/api/sessions` (document fallback with the server's reason, request failure, loading), a linked session's transcript and its failure and Retry, the Activity tab |
+| `theme.spec.ts` | light and dark follow the system, change while open, keep text readable, and colour highlighted code in each |
+| `untrusted.spec.ts` | hostile Markdown and HTML (`<script>`, `javascript:` links, `onerror`, `onclick`, `<iframe>`, `<form>`, `<svg>`) renders as inert text and runs nothing; plain-text fields and code excerpts show markup as written |
+
+Fixtures are synthetic: the schema's example, `e2e/local-sessions.ts` for the
+local session answers, and documents the specs edit from the example. The app
+has no file picker, upload or drag and drop (see Standalone app), and draws no
+description images, as it supplies no `AttachmentUrlProvider`; the specs assert
+both. The hosted app's integration with the viewer stays covered by `ui/e2e`.

@@ -26,3 +26,12 @@ build-app:
 # Run every check CI runs: lint, format check, typecheck and unit tests
 check:
     {{ heavy }} pnpm check
+
+# Browser tests: the standalone app, built and served inside the container
+e2e:
+    {{ heavy }} pnpm test:e2e
+
+# Run an arbitrary viewer command, including a focused browser spec, in Docker.
+[positional-arguments]
+pnpm *args:
+    {{ heavy }} pnpm "$@"

@@ -98,6 +98,7 @@
     "format:check": "biome format .",
     "test:unit": "vitest run --coverage",
     "test:unit:watch": "vitest",
+    "test:e2e": "playwright test",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:unit"
   },
   "peerDependencies": {
@@ -114,6 +115,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "24.13.2",
     "@types/pluralize": "^0.0.33",
