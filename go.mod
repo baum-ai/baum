@@ -3,6 +3,9 @@ module github.com/lastpersonlabs/baum
 go 1.26.6
 
 require (
+	github.com/cli/go-gh/v2 v2.16.1
+	github.com/cli/safeexec v1.0.1
+	github.com/cli/shurcooL-graphql v0.0.4
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
@@ -25,6 +28,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

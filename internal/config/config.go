@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli/go-gh/v2/pkg/auth"
+	"github.com/cli/safeexec"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -27,6 +29,10 @@ const (
 	EnvBackend         = "BAUM_BACKEND"
 	EnvModel           = "BAUM_MODEL"
 )
+
+// GitHubHost is github.com, the host GITHUB_TOKEN, GH_TOKEN and github_token
+// belong to.
+const GitHubHost = "github.com"
 
 // Backend names a model backend. Auto picks one at run time, see Detect.
 type Backend string
@@ -232,30 +238,74 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// ghAuthToken asks the GitHub CLI for the token of its active account. A
-// variable so tests can stand in for the binary.
-var ghAuthToken = func(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+// ghToken is the GitHub CLI's token for host, as gh resolves it: GH_TOKEN and
+// GITHUB_TOKEN for github.com and GitHub Enterprise Cloud with data
+// residency (*.ghe.com), GH_ENTERPRISE_TOKEN and GITHUB_ENTERPRISE_TOKEN for
+// an Enterprise Server, then gh's hosts.yml, then the system keyring. A
+// variable so tests can stand in for it.
+var ghToken = func(ctx context.Context, host string) (string, error) {
+	if token, _ := auth.TokenFromEnvOrConfig(host); token != "" {
+		return token, nil
+	}
+	return ghKeyringToken(ctx, host)
+}
+
+// ghKeyringWaitDelay bounds how long a cancelled `gh auth token` may keep
+// its output open, for instance through a helper it started.
+const ghKeyringWaitDelay = time.Second
+
+// ghKeyringToken asks gh for host's token from the system keyring, as go-gh
+// does, but under ctx: a keyring that waits for the user to unlock it must
+// not outlive a cancelled command. gh is GH_PATH or the gh on PATH; no gh, or
+// no token, is "".
+func ghKeyringToken(ctx context.Context, host string) (string, error) {
+	gh := os.Getenv("GH_PATH")
+	if gh == "" {
+		var err error
+		if gh, err = safeexec.LookPath("gh"); err != nil {
+			return "", nil
+		}
+	}
+	cmd := exec.CommandContext(ctx, gh, "auth", "token", "--secure-storage", "--hostname", host)
+	cmd.WaitDelay = ghKeyringWaitDelay
+	out, err := cmd.Output()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", fmt.Errorf("asking gh for the token of %s: %w", host, ctxErr)
+	}
 	if err != nil {
-		return "", err
+		return "", nil
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ErrNoGitHubToken is returned when no token is configured and gh has none.
-var ErrNoGitHubToken = errors.New("no GitHub token: set GITHUB_TOKEN, add github_token to the config file, or run `gh auth login`")
+// ErrNoGitHubToken is returned when no token is configured for a host and gh
+// has none either.
+var ErrNoGitHubToken = errors.New("no GitHub token")
 
-// ResolveGitHubToken returns the configured token, falling back to
-// `gh auth token` when none is set.
-func (c Config) ResolveGitHubToken(ctx context.Context) (string, error) {
-	if c.GitHubToken != "" {
+// ResolveGitHubToken returns the token for the GitHub host whose repository
+// is read, and never another host's. For github.com baum's own sources come
+// first: GITHUB_TOKEN, GH_TOKEN, then github_token in the config file. After
+// them, and for any other host only, the GitHub CLI's token for that host
+// (see ghToken). Cancelling ctx stops a keyring lookup still waiting.
+func (c Config) ResolveGitHubToken(ctx context.Context, host string) (string, error) {
+	host = auth.NormalizeHostname(strings.TrimSpace(host))
+	if host == "" {
+		return "", fmt.Errorf("%w: no host given", ErrNoGitHubToken)
+	}
+	if host == GitHubHost && c.GitHubToken != "" {
 		return c.GitHubToken, nil
 	}
-	token, err := ghAuthToken(ctx)
-	if err != nil || token == "" {
-		return "", ErrNoGitHubToken
+	token, err := ghToken(ctx, host)
+	if err != nil {
+		return "", err
 	}
-	return token, nil
+	if token = strings.TrimSpace(token); token != "" {
+		return token, nil
+	}
+	if host == GitHubHost {
+		return "", fmt.Errorf("%w for %s: set GITHUB_TOKEN, add github_token to the config file, or run `gh auth login`", ErrNoGitHubToken, host)
+	}
+	return "", fmt.Errorf("%w for %s: set GH_ENTERPRISE_TOKEN or run `gh auth login --hostname %s`", ErrNoGitHubToken, host, host)
 }
 
 // ErrNoBackend is returned by Detect when nothing usable is available.
