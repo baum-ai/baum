@@ -33,6 +33,12 @@ type Caps struct {
 	MaxImageAltBytes int
 }
 
+// PromptScanChars is the most characters of a prompt's text, and of its
+// reply, a session source reads. It is generous enough that the cut never
+// fires in practice: byte trimming (Fit) is what bounds prompt text, in the
+// documented trim order. It keeps one oversized prompt from being read whole.
+const PromptScanChars = 1 << 20
+
 // DiffLimits returns the limits BuildDiffIndexWithin reads.
 func (c Caps) DiffLimits() DiffLimits {
 	return DiffLimits{MaxFiles: c.MaxDiffFiles, MaxPatchBytes: c.MaxDiffPatchBytes, MaxHunkLines: c.MaxHunkPatchLines}

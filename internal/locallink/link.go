@@ -7,11 +7,12 @@
 //
 // It never fetches. Commits the clone does not hold make the answer
 // unavailable rather than being downloaded, and nothing here contacts a
-// server. Every piece of text it returns has been redacted the way
+// server. Every piece of text Resolve returns has been redacted the way
 // "baum sessions" redacts its listing.
 //
-// A caller such as "baum view" serves the Result; a later "baum bundle"
-// evidence step can build on Resolve without an HTTP server.
+// A caller such as "baum view" serves the Result. BuildSessionEvidence gives
+// "baum bundle" the same linked sessions as bundle sessions, which the
+// bundle's own input redaction masks.
 package locallink
 
 import (
@@ -227,24 +228,36 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	load := req.Sessions
-	if since, ok := sessionsSince(commits); ok && load.Since.Before(since) {
-		load.Since = since
-	}
-	found, report, err := sessions.Load(ctx, dir, load)
+	found, truth, err := loadSessions(ctx, dir, req.Sessions, commits, req.Warn)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading sessions: %w", err)
+		return Result{}, err
 	}
-	if req.Warn != nil {
+	return match(ctx, engine, found, commits, truth)
+}
+
+// loadSessions reads the sessions recorded for the clone containing dir that
+// were written recently enough to match commits, and the ground truth the
+// commits' Entire-Checkpoint trailers give, with the sessions only those
+// checkpoints hold. baum's own generation runs are left out of both.
+func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
+		opts.Since = since
+	}
+	found, report, err := sessions.Load(ctx, dir, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading sessions: %w", err)
+	}
+	if warn != nil {
 		for _, skipped := range report.Skipped {
-			_, _ = fmt.Fprintf(req.Warn, "warning: skipped %s: %s\n", skipped.Path, skipped.Reason)
+			_, _ = fmt.Fprintf(warn, "warning: skipped %s: %s\n", skipped.Path, skipped.Reason)
 		}
 		for _, failure := range report.Failures {
-			_, _ = fmt.Fprintf(req.Warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
+			_, _ = fmt.Fprintf(warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	truth, extra := checkpointLinks(ctx, dir, commits, found, req.Warn)
-	return match(ctx, engine, append(found, extra...), commits, truth)
+	truth, extra := checkpointLinks(ctx, dir, commits, found, warn)
+	found, truth = withoutGenerationRuns(append(found, extra...), truth)
+	return found, truth, nil
 }
 
 // match links sessions to commits and builds the redacted result. Each commit
@@ -252,26 +265,11 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // Entire checkpoint records, if any, then by the matcher's default steps until
 // its files are explained.
 func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
-	// A session can arrive more than once under one id, and the matcher
-	// identifies a run by its id, so only the best reading of each id is
-	// matched: one with a transcript, then the newest.
-	latest := make(map[string]snapshot, len(found))
-	var ids []string
-	for _, s := range found {
-		if err := ctx.Err(); err != nil {
-			return Result{}, err
-		}
-		next := snapshot{session: s, correlated: sessioncorrelate.Correlate(s.Graph, s.Vendor)}
-		current, seen := latest[s.ID]
-		if !seen {
-			ids = append(ids, s.ID)
-		}
-		if !seen || next.newerThan(current) {
-			latest[s.ID] = next
-		}
+	ids, latest, edges, err := linkSessions(ctx, found, commits, truth)
+	if err != nil {
+		return Result{}, err
 	}
 	rows := make(map[string]Row, len(latest))
-	candidates := make([]linkage.RunCandidate, 0, len(latest))
 	for _, id := range ids {
 		snap := latest[id]
 		row, err := rowOf(engine, snap.session, snap.correlated)
@@ -279,28 +277,11 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 			return Result{}, err
 		}
 		rows[id] = row
-		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
-	}
-
-	var edges []linkage.Edge
-	cfg := linkage.DefaultConfig()
-	for _, c := range commits {
-		if err := ctx.Err(); err != nil {
-			return Result{}, err
-		}
-		commitEdges, err := commitEdges(enrichedOf(c), truth[c.OID], candidates, cfg)
-		if err != nil {
-			return Result{}, fmt.Errorf("matching commit %s: %w", c.OID, err)
-		}
-		edges = append(edges, commitEdges...)
 	}
 
 	links := map[string][]Link{}
 	linked := map[string]bool{}
 	for _, edge := range edges {
-		if edge.Status != linkage.StatusMatched || edge.RunID == "" {
-			continue
-		}
 		links[edge.CommitSHA] = append(links[edge.CommitSHA], Link{
 			Session: edge.RunID, Method: string(edge.Method), Confidence: edge.Confidence,
 		})
@@ -344,6 +325,53 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		})
 	}
 	return result, nil
+}
+
+// linkSessions matches found to commits. ids are the distinct session ids in
+// the order found lists them, latest the best reading of each, and edges the
+// matched edges that name a session.
+func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) ([]string, map[string]snapshot, []linkage.Edge, error) {
+	// A session can arrive more than once under one id, and the matcher
+	// identifies a run by its id, so only the best reading of each id is
+	// matched: one with a transcript, then the newest.
+	latest := make(map[string]snapshot, len(found))
+	var ids []string
+	for _, s := range found {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
+		next := snapshot{session: s, correlated: sessioncorrelate.Correlate(s.Graph, s.Vendor)}
+		current, seen := latest[s.ID]
+		if !seen {
+			ids = append(ids, s.ID)
+		}
+		if !seen || next.newerThan(current) {
+			latest[s.ID] = next
+		}
+	}
+	candidates := make([]linkage.RunCandidate, 0, len(latest))
+	for _, id := range ids {
+		snap := latest[id]
+		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
+	}
+
+	var edges []linkage.Edge
+	cfg := linkage.DefaultConfig()
+	for _, c := range commits {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
+		commitEdges, err := commitEdges(enrichedOf(c), truth[c.OID], candidates, cfg)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("matching commit %s: %w", c.OID, err)
+		}
+		for _, edge := range commitEdges {
+			if edge.Status == linkage.StatusMatched && edge.RunID != "" {
+				edges = append(edges, edge)
+			}
+		}
+	}
+	return ids, latest, edges, nil
 }
 
 func sortLinks(links []Link) {
