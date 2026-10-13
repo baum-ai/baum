@@ -1102,8 +1102,12 @@ the unpacked tree's paths as the known checkout paths) and
 `DocumentValidator.CompleteWithPrompt` derives the host-owned fields and records
 the model and prompt version, and `ValidateStored` checks the result strictly
 against the bundle. Failures are `*generate.Error` values of a category (input,
-backend, budget, validation, interrupted) that `cli.ExitCode` maps to exit codes
-2, 3, 4, 5 and 130. The document is returned only for a run that passed every
+backend, budget, validation, interrupted, internal) that `cli.ExitCode` maps to
+exit codes 2, 3, 4, 5, 130 and 1. A failure to mask the output is internal, as
+the hosted worker reports it as a plain failure rather than a rejected
+document. A spent `pass_timeout` is reported as the budget
+`generation budget exceeded: pass_timeout` and is not retried; the run's wall
+clock as `wall_clock`. The document is returned only for a run that passed every
 step, and written by the command afterwards.
 
 Git reads (the comparison, patches, blobs and the exports) run in a private

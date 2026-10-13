@@ -16,6 +16,8 @@ package generate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,6 +55,10 @@ const (
 	CategoryValidation Category = "validation"
 	// CategoryInterrupted is a run stopped by SIGINT or SIGTERM.
 	CategoryInterrupted Category = "interrupted"
+	// CategoryInternal is a failure of baum's own steps, such as masking the
+	// output. The hosted worker treats it as a plain failure, not a rejected
+	// document, so it exits with the generic code.
+	CategoryInternal Category = "internal"
 )
 
 // Error is a failure of one category. Its text never holds a secret the model
@@ -130,6 +136,14 @@ type Result struct {
 func Run(ctx context.Context, o Options) (result Result, err error) {
 	started := time.Now()
 	defer func() { result.Elapsed = time.Since(started) }()
+	// Written for every outcome, early failures included.
+	defer func() {
+		if o.DiagnosticsOut != "" {
+			if writeErr := WriteDiagnostics(o.DiagnosticsOut, err, result.Outcome); writeErr != nil && o.Progress != nil {
+				_, _ = fmt.Fprintf(o.Progress, "could not write the diagnostics: %v\n", writeErr)
+			}
+		}
+	}()
 	progress := func(format string, args ...any) {
 		if o.Progress != nil {
 			_, _ = fmt.Fprintf(o.Progress, format+"\n", args...)
@@ -278,18 +292,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	result.Outcome = outcome
 	defer func() {
-		if o.DiagnosticsOut == "" {
-			return
-		}
-		encoded, marshalErr := json.MarshalIndent(result.Outcome, "", "  ")
-		if marshalErr == nil {
-			marshalErr = WriteFileAtomic(o.DiagnosticsOut, append(encoded, '\n'))
-		}
-		if marshalErr != nil {
-			progress("could not write the diagnostics: %v", marshalErr)
-		}
-	}()
-	defer func() {
 		if err == nil {
 			progress("generated in %s: %s, %d repair(s)", time.Since(started).Round(time.Second), spent(outcome), outcome.ValidationRepairs)
 		} else if outcome.Calls > 0 || outcome.Tokens > 0 {
@@ -298,10 +300,11 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}()
 
 	if genErr != nil {
-		return result, fail(classify(ctx, runCtx, genErr), genErr)
+		category, cause := classify(ctx, runCtx, genErr)
+		return result, fail(category, cause)
 	}
 	if redactErr != nil {
-		return result, fail(CategoryBackend, fmt.Errorf("masking the output: %w", redactErr))
+		return result, fail(CategoryInternal, fmt.Errorf("masking the output: %w", redactErr))
 	}
 	if outcome.Reason == agent.ReasonValidationRejected {
 		return result, rejection(fail, outcome.Findings)
@@ -315,6 +318,10 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		result.Outcome = outcome
 		return result, rejection(fail, findings)
 	}
+	// CompleteWithPrompt already validates the full document, so this strict
+	// check of the stored form is defence in depth, as the hosted worker's
+	// storage path is: no document the model can write reaches it, because the
+	// host normalises line ranges and unresolved anchors before it.
 	if stored := validator.ValidateStored(completed, &b); len(stored) > 0 {
 		outcome.Reason, outcome.Findings = agent.ReasonValidationRejected, strings.Join(stored, "\n")
 		result.Outcome = outcome
@@ -343,18 +350,20 @@ func rejection(fail func(Category, error) error, findings string) error {
 	return fail(CategoryValidation, fmt.Errorf("%s:\n  %s", agent.ReasonValidationRejected, text))
 }
 
-// classify maps a failure of the loop to its category.
-func classify(parent, run context.Context, err error) Category {
+// classify maps a failure of the loop to its category and the error to report:
+// an interrupted run says so, and a spent wall clock names that budget, as the
+// hosted worker does.
+func classify(parent, run context.Context, err error) (Category, error) {
 	text := err.Error()
 	switch {
 	case parent.Err() != nil:
-		return CategoryInterrupted
+		return CategoryInterrupted, errors.New("interrupted")
 	case errors.Is(run.Err(), context.DeadlineExceeded):
-		return CategoryBudget
+		return CategoryBudget, errors.New(agent.GenerationBudgetExceededReason("wall_clock"))
 	case strings.HasPrefix(text, agent.GenerationBudgetExceededReason("")):
-		return CategoryBudget
+		return CategoryBudget, err
 	default:
-		return CategoryBackend
+		return CategoryBackend, err
 	}
 }
 
@@ -377,6 +386,9 @@ func (p markedPrompts) Instructions(ctx context.Context, backend string) (agent.
 		return prompt, err
 	}
 	prompt.Body = sessions.GenerationRunMarker + "\n" + prompt.Body
+	// Digest stays the sha256 of Body, which is what is sent.
+	sum := sha256.Sum256([]byte(prompt.Body))
+	prompt.Digest = hex.EncodeToString(sum[:])
 	return prompt, nil
 }
 
@@ -387,9 +399,15 @@ type passBounded struct {
 }
 
 func (p passBounded) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	pass, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
-	return p.Backend.Run(ctx, request)
+	result, err := p.Backend.Run(pass, request)
+	if err != nil && ctx.Err() == nil && errors.Is(pass.Err(), context.DeadlineExceeded) {
+		// The pass's own deadline fired, not the run's or the user's: a spent
+		// budget, which the loop does not retry.
+		return result, errors.New(agent.GenerationBudgetExceededReason("pass_timeout"))
+	}
+	return result, err
 }
 
 // checkoutPaths lists the repository paths of the regular files of the
@@ -480,3 +498,28 @@ func (h progressHandler) Handle(_ context.Context, record slog.Record) error {
 
 func (h progressHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h progressHandler) WithGroup(string) slog.Handler      { return h }
+
+// diagnostics is the file --diagnostics writes: how the run ended and the
+// redacted outcome. An early failure has an empty outcome.
+type diagnostics struct {
+	Result   string        `json:"result"`
+	Category Category      `json:"category,omitempty"`
+	Error    string        `json:"error,omitempty"`
+	Outcome  agent.Outcome `json:"outcome"`
+}
+
+// WriteDiagnostics writes the run's end state to path: ok or failed, the
+// category and the (already redacted) error text of a failure, and the
+// outcome, whose size the loop bounds (at most agent.MaxDiagnostics events
+// and a retained document of at most agent.MaxRetainedDocumentBytes).
+func WriteDiagnostics(path string, runErr error, outcome agent.Outcome) error {
+	d := diagnostics{Result: "ok", Outcome: outcome}
+	if runErr != nil {
+		d.Result, d.Category, d.Error = "failed", CategoryOf(runErr), runErr.Error()
+	}
+	encoded, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		return err
+	}
+	return WriteFileAtomic(path, append(encoded, '\n'))
+}

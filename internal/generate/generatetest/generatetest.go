@@ -93,7 +93,21 @@ func Document(dir string, edit func(map[string]any)) ([]byte, error) {
 		"sections": []any{map[string]any{
 			"id": "sec_changes", "title": "Changes", "kind": "logical", "hunks": ids,
 			"summary":   map[string]any{"text": "The whole change.", "anchors": []any{map[string]any{"type": "hunk", "id": ids[0]}}},
-			"attention": nil, "risks": []any{}, "evidence": []any{}, "blocks": []any{},
+			"attention": map[string]any{"text": "Check the settings handling.", "refs": []any{"rsk_settings", "ev_unit"}},
+			"assessment": map[string]any{
+				"level": 3, "factors": []any{"untrusted_input"},
+				"reasons": []any{map[string]any{"text": "Settings come from the environment.", "anchors": []any{map[string]any{"type": "hunk", "id": ids[0]}}}},
+			},
+			"risks": []any{map[string]any{
+				"id": "rsk_settings", "tier": "medium", "category": "data_integrity", "source": "model",
+				"text": "Settings are read from the environment without validation.", "finding": nil,
+				"anchors": []any{map[string]any{"type": "hunk", "id": ids[0]}},
+			}},
+			"evidence": []any{map[string]any{
+				"id": "ev_unit", "kind": "test", "claim": "The change is covered by the demo tests.", "status": "asserted", "source": "model",
+				"anchors": []any{map[string]any{"type": "hunk", "id": ids[0]}}, "detail": nil,
+			}},
+			"blocks": []any{},
 		}},
 	}
 	if edit != nil {

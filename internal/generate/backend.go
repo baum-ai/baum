@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/lastpersonlabs/baum/agent"
 	"github.com/lastpersonlabs/baum/agent/claude"
@@ -41,6 +42,8 @@ func DefaultBackends() Backends {
 type Selected struct {
 	Backend CheckedBackend
 	Version string
+	// Model is the model the backend was built with; empty is its default.
+	Model string
 }
 
 // Select resolves the requested backend, checking that it can run.
@@ -49,14 +52,19 @@ type Selected struct {
 // and fails naming both reasons when neither does. claude and codex fail with
 // their own check's reason. anthropic and cursor-agent are not implemented in
 // this version: auto skips them and naming one fails.
-func Select(ctx context.Context, requested config.Backend, model string, backends Backends) (Selected, error) {
-	try := func(build func(string) CheckedBackend) (Selected, error) {
+//
+// A model names a model of one backend, so with auto it applies to the first
+// choice, claude, only: when auto falls back to codex, codex runs with its own
+// default model, and skipped says so. skipped also receives why claude was
+// skipped; nil discards both.
+func Select(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
+	try := func(build func(string) CheckedBackend, model string) (Selected, error) {
 		backend := build(model)
 		version, err := backend.Check(ctx)
 		if err != nil {
 			return Selected{}, err
 		}
-		return Selected{Backend: backend, Version: version}, nil
+		return Selected{Backend: backend, Version: version, Model: model}, nil
 	}
 	fail := func(err error) (Selected, error) {
 		if ctx.Err() != nil {
@@ -66,13 +74,13 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 	}
 	switch requested {
 	case config.BackendClaude:
-		selected, err := try(backends.Claude)
+		selected, err := try(backends.Claude, model)
 		if err != nil {
 			return fail(err)
 		}
 		return selected, nil
 	case config.BackendCodex:
-		selected, err := try(backends.Codex)
+		selected, err := try(backends.Codex, model)
 		if err != nil {
 			return fail(err)
 		}
@@ -80,11 +88,17 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 	case config.BackendAnthropic, config.BackendCursorAgent:
 		return fail(fmt.Errorf("the %s backend is not available in this version of baum; use --backend claude, codex or auto", requested))
 	case config.BackendAuto, "":
-		selected, claudeErr := try(backends.Claude)
+		selected, claudeErr := try(backends.Claude, model)
 		if claudeErr == nil {
 			return selected, nil
 		}
-		selected, codexErr := try(backends.Codex)
+		if skipped != nil && ctx.Err() == nil {
+			_, _ = fmt.Fprintf(skipped, "claude skipped: %v\n", claudeErr)
+			if model != "" {
+				_, _ = fmt.Fprintf(skipped, "the model %q was meant for claude; codex uses its own default model\n", model)
+			}
+		}
+		selected, codexErr := try(backends.Codex, "")
 		if codexErr == nil {
 			return selected, nil
 		}

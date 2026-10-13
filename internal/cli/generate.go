@@ -51,7 +51,15 @@ bundle and the pull request's head and merge-base files, with its tools
 restricted to reading, and is removed afterwards.
 
 Progress goes to stderr; stdout holds only the document. Budgets come from the
-config file (run_timeout, max_calls, max_tokens).
+config file: run_timeout (the whole run), pass_timeout (each model call),
+max_calls and max_tokens. --model names a model of one backend, so with
+--backend auto it applies to claude only; if auto falls back to codex, codex
+uses its own default model and stderr says why claude was skipped.
+
+--diagnostics writes how the run ended and its redacted outcome, also when it
+fails after the command line was accepted. --keep-run-dir keeps the agent's run
+directory and prints its path; it can hold partially masked rejected documents
+(rejected-N.json) and read-only trees, so run chmod -R u+w on it before rm -rf.
 
 Exit codes: 0 success; 1 other failure; 2 input (bad flags, no such pull
 request, commits missing from the clone, bundle over its caps); 3 backend (not
@@ -76,7 +84,7 @@ written); 130 interrupted.`,
 	cmd.Flags().StringP("output", "o", "", "write the document to this file instead of stdout")
 	cmd.Flags().String("bundle-out", "", "also write the exact bundle the agent was given to this file, for debugging")
 	cmd.Flags().String("diagnostics", "", "write the run's redacted outcome (usage, repairs, findings, bounded events) to this file, also when the run fails")
-	cmd.Flags().Bool("keep-run-dir", false, "keep the agent's run directory and print its path")
+	cmd.Flags().Bool("keep-run-dir", false, "keep the agent's run directory and print its path (it may hold unmasked-in-part rejected documents and read-only trees)")
 	cmd.Flags().StringArray("previous-path", nil, "directory the repository used to live at (repeatable)")
 	cmd.Flags().String("claude-dir", "", "Claude Code projects directory (default ~/.claude/projects)")
 	cmd.Flags().String("codex-dir", "", "Codex sessions directory (default ~/.codex/sessions)")
@@ -91,7 +99,22 @@ func interruptedError() error {
 	return &generate.Error{Category: generate.CategoryInterrupted, Err: errors.New("interrupted")}
 }
 
+// runGenerate runs the command and, for a failure before the pipeline started,
+// writes the minimal --diagnostics file the pipeline would have written.
 func runGenerate(cmd *cobra.Command, _ []string) error {
+	started := false
+	err := doGenerate(cmd, &started)
+	if err != nil && !started {
+		if path, _ := cmd.Flags().GetString("diagnostics"); path != "" {
+			if info, statErr := os.Stat(filepath.Dir(path)); statErr == nil && info.IsDir() {
+				_ = generate.WriteDiagnostics(path, err, agent.Outcome{})
+			}
+		}
+	}
+	return err
+}
+
+func doGenerate(cmd *cobra.Command, started *bool) error {
 	flags := cmd.Flags()
 	number, _ := flags.GetInt("pr")
 	repoFlag, _ := flags.GetString("repo")
@@ -143,7 +166,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	defer stop()
 	stderr := cmd.ErrOrStderr()
 
-	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends())
+	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
 	if err != nil {
 		return err
 	}
@@ -172,10 +195,11 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		Images:   newImageFetcher(),
 		Warn:     stderr,
 	}
+	*started = true
 	result, err := generate.Run(ctx, generate.Options{
 		Assembler: assembler,
 		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps)},
-		Backend:   selected.Backend, BackendVersion: selected.Version, Model: cfg.Model,
+		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
 		Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
 	})

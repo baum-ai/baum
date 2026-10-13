@@ -1,6 +1,7 @@
 package generate_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"go/ast"
@@ -28,17 +29,17 @@ func fakes(claude, codex *generatetest.Backend) generate.Backends {
 func TestAutoPicksClaudeThenCodex(t *testing.T) {
 	claude := &generatetest.Backend{BackendName: "claude", Version: "2.1.9"}
 	codex := &generatetest.Backend{BackendName: "codex", Version: "0.200.0"}
-	selected, err := generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex))
+	selected, err := generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex), nil)
 	if err != nil || selected.Backend.Name() != "claude" || selected.Version != "2.1.9" {
 		t.Fatalf("both installed: %v %v", selected, err)
 	}
 	claude.CheckErr = errors.New("claude is too old")
-	selected, err = generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex))
+	selected, err = generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex), nil)
 	if err != nil || selected.Backend.Name() != "codex" {
 		t.Fatalf("claude failing: %v %v", selected, err)
 	}
 	codex.CheckErr = errors.New("sandbox cannot start")
-	_, err = generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex))
+	_, err = generate.Select(context.Background(), config.BackendAuto, "", fakes(claude, codex), nil)
 	if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "too old") || !strings.Contains(err.Error(), "sandbox cannot start") {
 		t.Fatalf("neither usable: %v", err)
 	}
@@ -47,15 +48,15 @@ func TestAutoPicksClaudeThenCodex(t *testing.T) {
 func TestExplicitBackendsAndTheUnavailableOnes(t *testing.T) {
 	claude := &generatetest.Backend{BackendName: "claude"}
 	codex := &generatetest.Backend{BackendName: "codex"}
-	if selected, err := generate.Select(context.Background(), config.BackendCodex, "", fakes(claude, codex)); err != nil || selected.Backend.Name() != "codex" {
+	if selected, err := generate.Select(context.Background(), config.BackendCodex, "", fakes(claude, codex), nil); err != nil || selected.Backend.Name() != "codex" {
 		t.Fatalf("codex: %v %v", selected, err)
 	}
 	claude.CheckErr = errors.New("not installed")
-	if _, err := generate.Select(context.Background(), config.BackendClaude, "", fakes(claude, codex)); err == nil || generate.CategoryOf(err) != generate.CategoryBackend {
+	if _, err := generate.Select(context.Background(), config.BackendClaude, "", fakes(claude, codex), nil); err == nil || generate.CategoryOf(err) != generate.CategoryBackend {
 		t.Fatalf("claude explicit with a failing check should not fall back: %v", err)
 	}
 	for _, name := range []config.Backend{config.BackendAnthropic, config.BackendCursorAgent} {
-		_, err := generate.Select(context.Background(), name, "", fakes(claude, codex))
+		_, err := generate.Select(context.Background(), name, "", fakes(claude, codex), nil)
 		if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "not available in this version") {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -78,21 +79,21 @@ func fakeBinary(t *testing.T, name, script string) {
 func TestDefaultBackendsWithBinariesOnPath(t *testing.T) {
 	t.Run("none installed", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends())
+		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends(), nil)
 		if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "finding Claude Code") || !strings.Contains(err.Error(), "finding Codex") {
 			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("claude found", func(t *testing.T) {
 		fakeBinary(t, "claude", `echo "2.1.7 (Claude Code)"`)
-		selected, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends())
+		selected, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends(), nil)
 		if err != nil || selected.Backend.Name() != "claude" || selected.Version != "2.1.7" {
 			t.Fatalf("%v %v", selected, err)
 		}
 	})
 	t.Run("claude too old falls back to codex failing its checks", func(t *testing.T) {
 		fakeBinary(t, "claude", `echo "1.0.0"`)
-		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends())
+		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends(), nil)
 		if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "older than") {
 			t.Fatalf("err = %v", err)
 		}
@@ -133,6 +134,33 @@ func TestGenerateOnlyBuildsLocalProfiles(t *testing.T) {
 	for _, want := range []string{"claude.User", "codex.Local"} {
 		if !strings.Contains(string(source), want) {
 			t.Errorf("DefaultBackends does not build %s", want)
+		}
+	}
+}
+
+func TestAutoAppliesTheModelToClaudeOnly(t *testing.T) {
+	var models []string
+	backends := generate.Backends{
+		Claude: func(model string) generate.CheckedBackend {
+			models = append(models, "claude:"+model)
+			return &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
+		},
+		Codex: func(model string) generate.CheckedBackend {
+			models = append(models, "codex:"+model)
+			return &generatetest.Backend{BackendName: "codex"}
+		},
+	}
+	var skipped bytes.Buffer
+	selected, err := generate.Select(context.Background(), config.BackendAuto, "opus", backends, &skipped)
+	if err != nil || selected.Backend.Name() != "codex" || selected.Model != "" {
+		t.Fatalf("%+v %v", selected, err)
+	}
+	if strings.Join(models, ",") != "claude:opus,codex:" {
+		t.Errorf("models = %v", models)
+	}
+	for _, want := range []string{"claude skipped: not installed", `"opus"`, "codex uses its own default model"} {
+		if !strings.Contains(skipped.String(), want) {
+			t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
 		}
 	}
 }

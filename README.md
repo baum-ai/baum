@@ -98,7 +98,10 @@ baum sends it no credential of its own.
 `--backend auto` (the default, or `backend` in the config file) uses `claude`
 when it is installed and passes its checks (a recent enough version), and `codex`
 otherwise (recent enough, and its read-only sandbox starts on this machine).
-`--backend claude` and `--backend codex` use exactly that one. The `anthropic`
+`--backend claude` and `--backend codex` use exactly that one. `--model` names
+a model of one backend, so with `auto` it applies to `claude` only: when `auto`
+falls back to `codex`, codex uses its own default model, and stderr says why
+claude was skipped. The `anthropic`
 and `cursor-agent` backends are named by the config but are not available in
 this version: asking for one fails, and `auto` skips them.
 
@@ -116,22 +119,26 @@ mode 0600. Progress goes to stderr: the bundle digest, the backend and its
 version, each pass and repair, then the calls and tokens spent (or "usage not
 reported") and the wall time. Afterwards it prints `view it with: baum view
 review.json`, or tells you to save the document when it went to stdout.
-`--bundle-out` also writes the exact bundle the agent was given, `--diagnostics`
-writes the run's redacted outcome (usage, repairs, findings and at most 512
-bounded events) even when the run fails, and `--keep-run-dir` keeps the run
-directory and prints its path. Budgets are the config file's `run_timeout`
-(wall clock for the run), `pass_timeout` (each model call), `max_calls` and
-`max_tokens`.
+`--bundle-out` also writes the exact bundle the agent was given, and
+`--diagnostics` writes how the run ended (`ok` or `failed`, the failure's
+category and message) with its redacted outcome (usage, repairs, findings and at
+most 512 bounded events), also when the run fails, including an early failure
+such as a missing commit or an unavailable backend; only a command-line error
+writes none. `--keep-run-dir` keeps the run directory and prints its path: it
+can hold rejected documents (`rejected-N.json`) that were masked only in part,
+and its trees are read-only, so run `chmod -R u+w` on it before `rm -rf`. Budgets are the config file's `run_timeout`
+(wall clock for the run), `pass_timeout` (each model call; a call that
+exceeds it is not retried), `max_calls` and `max_tokens`.
 
 Exit status:
 
 | Code | Meaning |
 | --- | --- |
 | 0 | the document was written |
-| 1 | any other failure |
+| 1 | any other failure, including an internal one such as masking the output failing (the hosted worker also reports that as a plain failure, not a rejected document) |
 | 2 | input: bad flags, no such pull request, a commit missing from the clone, a bundle or checkout over its caps, GitHub unreachable |
 | 3 | backend: not installed, too old, its sandbox cannot start, or the provider was unavailable after retries |
-| 4 | budget: model calls, tokens or the wall clock were spent |
+| 4 | budget: model calls, tokens, a model call's `pass_timeout` or the run's wall clock were spent |
 | 5 | validation: the document was still invalid after the repairs, or held a secret in a closed value |
 | 130 | interrupted by SIGINT or SIGTERM |
 

@@ -52,6 +52,8 @@ func ExitCode(err error) int {
 		return ExitValidation
 	case generate.CategoryInterrupted:
 		return ExitInterrupted
+	case generate.CategoryInternal:
+		return ExitFailure
 	}
 	return ExitFailure
 }

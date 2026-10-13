@@ -256,11 +256,208 @@ func TestBudgetsAreTheBudgetCategory(t *testing.T) {
 			return agent.Result{}, ctx.Err()
 		}
 		_, err := generate.Run(context.Background(), options)
-		if generate.CategoryOf(err) != generate.CategoryBudget {
+		if generate.CategoryOf(err) != generate.CategoryBudget || err.Error() != agent.GenerationBudgetExceededReason("wall_clock") {
 			t.Fatalf("err = %v (%q)", err, generate.CategoryOf(err))
 		}
 		f.requireClean(t)
 	})
+	t.Run("pass timeout", func(t *testing.T) {
+		f := newFixture(t)
+		options := f.options(t)
+		options.PassTimeout = 50 * time.Millisecond
+		options.Budgets.MaxProviderAttempts = 3
+		f.backend.RunFunc = func(ctx context.Context, _ agent.Request, _ int) (agent.Result, error) {
+			<-ctx.Done()
+			return agent.Result{}, ctx.Err()
+		}
+		_, err := generate.Run(context.Background(), options)
+		if generate.CategoryOf(err) != generate.CategoryBudget || err.Error() != agent.GenerationBudgetExceededReason("pass_timeout") {
+			t.Fatalf("err = %v (%q)", err, generate.CategoryOf(err))
+		}
+		if len(f.backend.Requests) != 1 {
+			t.Errorf("a spent pass budget was retried: %d requests", len(f.backend.Requests))
+		}
+		f.requireClean(t)
+	})
+}
+
+func TestRealisticDocumentKeepsItsRiskEvidenceAndAssessment(t *testing.T) {
+	f := newFixture(t)
+	result, err := generate.Run(context.Background(), f.options(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Sections []struct {
+			Kind       string           `json:"kind"`
+			Assessment map[string]any   `json:"assessment"`
+			Risks      []map[string]any `json:"risks"`
+			Evidence   []map[string]any `json:"evidence"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(result.Document, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Sections) != 1 {
+		t.Fatalf("sections = %d", len(document.Sections))
+	}
+	section := document.Sections[0]
+	if section.Kind != "logical" || section.Assessment == nil || len(section.Risks) != 1 || len(section.Evidence) != 1 {
+		t.Errorf("section = %+v", section)
+	}
+}
+
+func TestSecretInFreeTextIsMaskedAndCounted(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		document, err := generatetest.Document(request.Directory, func(d map[string]any) {
+			section := d["sections"].([]any)[0].(map[string]any)
+			section["summary"].(map[string]any)["text"] = "The change reads " + assembletest.PlantedSecret + " from the settings."
+		})
+		return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 10}, err
+	}
+	options := f.options(t)
+	options.DiagnosticsOut = filepath.Join(t.TempDir(), "diagnostics.json")
+	result, err := generate.Run(context.Background(), options)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, f.progress.String())
+	}
+	if strings.Contains(string(result.Document), assembletest.PlantedSecret) || !strings.Contains(string(result.Document), "The change reads") {
+		t.Errorf("the free text was not masked in place: %.400s", result.Document)
+	}
+	raw, readErr := os.ReadFile(options.DiagnosticsOut)
+	var diagnostics struct {
+		Outcome struct {
+			OutputMaskedSpans int `json:"output_masked_spans"`
+		} `json:"outcome"`
+	}
+	if readErr != nil || json.Unmarshal(raw, &diagnostics) != nil || diagnostics.Outcome.OutputMaskedSpans == 0 {
+		t.Errorf("diagnostics lack the masked count: %v\n%s", readErr, raw)
+	}
+	if strings.Contains(string(raw), assembletest.PlantedSecret) {
+		t.Error("the secret is in the diagnostics")
+	}
+}
+
+// unresolvable are anchors a model can invent. The host does not reject a
+// document for them: it drops what does not resolve, clamps line ranges to the
+// hunk, and downgrades evidence that cites one to an assertion.
+var unresolvable = map[string]func(hunk string) map[string]any{
+	"unknown hunk":      func(string) map[string]any { return map[string]any{"type": "hunk", "id": "h_deadbeef0000"} },
+	"file not in clone": func(string) map[string]any { return map[string]any{"type": "file", "path": "nowhere/missing.go"} },
+	"lines out of range": func(hunk string) map[string]any {
+		return map[string]any{"type": "hunk", "id": hunk, "lines": []any{90000, 90001}}
+	},
+}
+
+func evidenceOf(t *testing.T, document []byte) map[string]any {
+	t.Helper()
+	var decoded struct {
+		Sections []struct {
+			Evidence []map[string]any `json:"evidence"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(document, &decoded); err != nil || len(decoded.Sections) != 1 || len(decoded.Sections[0].Evidence) != 1 {
+		t.Fatalf("document: %v\n%.300s", err, document)
+	}
+	return decoded.Sections[0].Evidence[0]
+}
+
+func TestUnresolvableEvidenceAnchorsAreDowngradedNotTrusted(t *testing.T) {
+	for name, anchor := range unresolvable {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.backend.RunFunc = func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+				document, err := generatetest.Document(request.Directory, func(d map[string]any) {
+					section := d["sections"].([]any)[0].(map[string]any)
+					risk := section["risks"].([]any)[0].(map[string]any)
+					hunk := risk["anchors"].([]any)[0].(map[string]any)["id"].(string)
+					evidence := section["evidence"].([]any)[0].(map[string]any)
+					evidence["status"] = "verified"
+					evidence["anchors"] = append(evidence["anchors"].([]any), anchor(hunk))
+				})
+				return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 10}, err
+			}
+			result, err := generate.Run(context.Background(), f.options(t))
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, f.progress.String())
+			}
+			if status := evidenceOf(t, result.Document)["status"]; status != "asserted" {
+				t.Errorf("evidence status = %v, want asserted", status)
+			}
+		})
+	}
+}
+
+func resultOf(document []byte, err error) (agent.Result, error) {
+	return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 10}, err
+}
+
+// verifiedWithoutACheck is a document the validator rejects: a risk that names
+// no hunk at all, which the host cannot invent.
+func riskWithoutAHunk(request agent.Request) ([]byte, error) {
+	return generatetest.Document(request.Directory, func(d map[string]any) {
+		d["sections"].([]any)[0].(map[string]any)["risks"].([]any)[0].(map[string]any)["anchors"] = []any{}
+	})
+}
+
+func TestUnanchoredRiskIsRepairedOrRejected(t *testing.T) {
+	t.Run("repaired", func(t *testing.T) {
+		f := newFixture(t)
+		f.backend.RunFunc = func(_ context.Context, request agent.Request, n int) (agent.Result, error) {
+			if n == 0 {
+				return resultOf(riskWithoutAHunk(request))
+			}
+			return resultOf(generatetest.Document(request.Directory, nil))
+		}
+		result, err := generate.Run(context.Background(), f.options(t))
+		if err != nil || result.Outcome.ValidationRepairs != 1 || len(result.Document) == 0 {
+			t.Fatalf("err=%v repairs=%d\n%s", err, result.Outcome.ValidationRepairs, f.progress.String())
+		}
+		f.requireClean(t)
+	})
+	t.Run("rejected", func(t *testing.T) {
+		f := newFixture(t)
+		f.backend.RunFunc = func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+			return resultOf(riskWithoutAHunk(request))
+		}
+		result, err := generate.Run(context.Background(), f.options(t))
+		if generate.CategoryOf(err) != generate.CategoryValidation || result.Document != nil {
+			t.Fatalf("err = %v, document %d bytes", err, len(result.Document))
+		}
+		if result.Outcome.ValidationRepairs != 2 || result.Outcome.Findings == "" {
+			t.Errorf("outcome = repairs %d, findings %q", result.Outcome.ValidationRepairs, result.Outcome.Findings)
+		}
+		f.requireClean(t)
+	})
+}
+
+func TestEarlyFailureWritesDiagnostics(t *testing.T) {
+	f := newFixture(t)
+	options := f.options(t)
+	options.Assembler = &assemble.Assembler{GitHub: &assembletest.GitHub{Err: errors.New("boom")}, Git: options.Assembler.(*assemble.Assembler).Git}
+	options.DiagnosticsOut = filepath.Join(t.TempDir(), "diagnostics.json")
+	if _, err := generate.Run(context.Background(), options); generate.CategoryOf(err) != generate.CategoryInput {
+		t.Fatalf("err = %v", err)
+	}
+	raw, err := os.ReadFile(options.DiagnosticsOut)
+	if err != nil || !strings.Contains(string(raw), `"category": "input"`) || !strings.Contains(string(raw), `"result": "failed"`) {
+		t.Errorf("diagnostics: %v\n%s", err, raw)
+	}
+}
+
+func TestInterruptedLoopSaysSo(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	f.backend.RunFunc = func(ctx context.Context, _ agent.Request, _ int) (agent.Result, error) {
+		cancel()
+		<-ctx.Done()
+		return agent.Result{}, ctx.Err()
+	}
+	_, err := generate.Run(ctx, f.options(t))
+	if generate.CategoryOf(err) != generate.CategoryInterrupted || err.Error() != "interrupted" {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestProviderUnavailableIsBackend(t *testing.T) {

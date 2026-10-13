@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,6 +33,19 @@ func generateEnv(t *testing.T) (*generatetest.Backend, []string) {
 	}
 	t.Cleanup(func() { generateBackends = old })
 	return stub, stores
+}
+
+// writeConfig replaces the config file bundleEnv points XDG_CONFIG_HOME at.
+func writeConfig(t *testing.T, content string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "baum")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(dir, "config.toml")) })
 }
 
 func TestGenerateWritesOnlyTheDocumentToStdout(t *testing.T) {
@@ -123,9 +137,16 @@ func TestGenerateFailuresKeepTheirExitCodesAndWriteNothing(t *testing.T) {
 		{"unknown backend", []string{"--pr", "7", "--backend", "gpt"}, nil, ExitInput, "unknown backend"},
 		{"provider down", []string{"--pr", "7"}, func() {
 			stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
-				return agent.Result{}, context.DeadlineExceeded
+				return agent.Result{}, errors.New("503")
 			}
-		}, ExitBackend, ""},
+		}, ExitBackend, agent.ReasonProviderUnavailable},
+		{"pass timeout", []string{"--pr", "7"}, func() {
+			writeConfig(t, "[budgets]\npass_timeout = \"50ms\"\n")
+			stub.RunFunc = func(ctx context.Context, _ agent.Request, _ int) (agent.Result, error) {
+				<-ctx.Done()
+				return agent.Result{}, ctx.Err()
+			}
+		}, ExitBudget, agent.GenerationBudgetExceededReason("pass_timeout")},
 		{"rejected", []string{"--pr", "7"}, func() {
 			stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
 				return agent.Result{Document: []byte(`{"schema":"baum.review/1"}`), Model: "m", Calls: 1, Tokens: 1}, nil
@@ -139,7 +160,7 @@ func TestGenerateFailuresKeepTheirExitCodesAndWriteNothing(t *testing.T) {
 				c.edit()
 			}
 			args := append(append([]string{"generate"}, c.args...), stores...)
-			if c.name == "rejected" || c.name == "provider down" {
+			if c.name == "rejected" || c.name == "provider down" || c.name == "pass timeout" {
 				args = append(args, "-o", path)
 			}
 			stdout, _, err := run(t, args...)
@@ -187,5 +208,18 @@ func TestGenerateInterruptedExitsWithItsCode(t *testing.T) {
 	_, _, err := run(t, append([]string{"generate", "--pr", "7"}, stores...)...)
 	if ExitCode(err) != ExitInterrupted {
 		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
+	}
+}
+
+func TestGenerateDiagnosticsForEarlyFailures(t *testing.T) {
+	_, stores := generateEnv(t)
+	path := filepath.Join(t.TempDir(), "diagnostics.json")
+	_, _, err := run(t, append([]string{"generate", "--pr", "7", "--backend", "anthropic", "--diagnostics", path}, stores...)...)
+	if ExitCode(err) != ExitBackend {
+		t.Fatalf("err = %v", err)
+	}
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil || !strings.Contains(string(raw), `"category": "backend"`) {
+		t.Errorf("diagnostics: %v\n%s", readErr, raw)
 	}
 }
