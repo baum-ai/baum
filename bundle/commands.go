@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -76,8 +77,9 @@ var commandCategories = map[string]string{
 	"just": "build",
 }
 
-func categorize(program string, args []string) string {
-	base := path.Base(program)
+// categorize reads the category of a program, by its base name, from its
+// arguments.
+func categorize(base string, args []string) string {
 	if table, ok := commandFirstArgCategories[base]; ok {
 		if firstArg := firstNonFlagArg(args); firstArg != "" {
 			if category, ok := table[firstArg]; ok {
@@ -104,40 +106,96 @@ func firstNonFlagArg(args []string) string {
 }
 
 // firstRepositoryPathArg returns the first argument that looks like a
-// repository-relative path, skipping flags and non-path words such as a
-// subcommand keyword ("test", "build").
+// repository-relative path, skipping flags, non-path words such as a
+// subcommand keyword ("test", "build"), and the value of a flag that carries
+// code, a message or a credential (textValueFlag).
 func firstRepositoryPathArg(args []string) string {
-	for _, a := range args {
-		if looksLikeRepositoryPath(a) {
-			return a
+	for i := 0; i < len(args); i++ {
+		if textValueFlag(args[i]) {
+			i++
+			continue
+		}
+		if looksLikeRepositoryPath(args[i]) {
+			return args[i]
 		}
 	}
 	return ""
 }
 
-// looksLikeRepositoryPath reports whether arg is plausibly a
-// repository-relative path, the only kind of target a command event keeps:
-// local (not absolute, not a flag, not escaping through ".." with either
-// separator), not a URL, scp/rsync remote or Windows drive path, and
-// containing a "/" or a file extension. "@", ":" and "\\" are valid in
-// repository filenames, so only their structural use is rejected.
-func looksLikeRepositoryPath(arg string) bool {
-	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "~") {
-		return false
-	}
-	if hasRemotePrefix(arg) || !filepath.IsLocal(arg) || !filepath.IsLocal(strings.ReplaceAll(arg, "\\", "/")) {
-		return false
-	}
-	return strings.Contains(arg, "/") || strings.Contains(path.Base(arg), ".")
+// codeOrMessageFlags take code to run or a message as their value
+// (sh -c, python -c, node -e, perl -e, git commit -m, ...), which is never a
+// path to keep.
+var codeOrMessageFlags = map[string]bool{
+	"-c": true, "--command": true, "-e": true, "--eval": true, "--exec": true, "--execute": true,
+	"-m": true, "--message": true, "-p": true, "--print": true, "-r": true, "--run": true,
 }
 
-// hasRemotePrefix reports whether arg starts with URL, scp/rsync or Windows
-// drive syntax: a ":" in its first path component ("https://host/x",
-// "user:token@host/x", "host:dir/file", "C:\\Users"). Git applies the same
-// rule to tell scp-style remotes from local paths.
-func hasRemotePrefix(arg string) bool {
-	first, _, _ := strings.Cut(strings.ReplaceAll(arg, "\\", "/"), "/")
-	return strings.Contains(first, ":")
+// textValueFlag reports whether arg is a flag whose value is code, a message
+// or a credential: one of codeOrMessageFlags, or a flag naming a password,
+// token, secret, key or credential.
+func textValueFlag(arg string) bool {
+	if codeOrMessageFlags[arg] {
+		return true
+	}
+	if !strings.HasPrefix(arg, "-") {
+		return false
+	}
+	name := strings.ToLower(arg)
+	for _, word := range []string{"pass", "token", "secret", "key", "auth", "cred"} {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeRepositoryPath reports whether arg is strictly a
+// repository-relative path, the only kind of target a command event keeps. It
+// must be local (not absolute, not escaping through ".."), contain a "/" or a
+// file extension, and hold only path characters: whitespace, quotes, "=",
+// "@", ":", "\" and shell metacharacters mark a word that is (or may hide)
+// code, a message, an assignment, a remote or a credential, so such a word is
+// dropped rather than guessed at, even where it could be a legitimate file
+// name.
+func looksLikeRepositoryPath(arg string) bool {
+	if arg == "" || strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "/") || !safeWord(arg) {
+		return false
+	}
+	if !filepath.IsLocal(arg) {
+		return false
+	}
+	base := path.Base(arg)
+	return strings.Contains(arg, "/") || (strings.Contains(base, ".") && strings.Trim(base, ".") != "")
+}
+
+// unsafeWordRunes are the characters a kept program name or target never
+// holds: quoting, assignment, remote and drive syntax, Windows separators and
+// shell metacharacters.
+const unsafeWordRunes = "\"'`=@:\\$;&|<>(){}[]*?!#~%^,"
+
+// safeWord reports whether word holds only printable characters that are
+// neither whitespace nor unsafeWordRunes.
+func safeWord(word string) bool {
+	for _, r := range word {
+		if unicode.IsSpace(r) || !unicode.IsPrint(r) || strings.ContainsRune(unsafeWordRunes, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// programName is a command word's base name across "/" and "\\" separators,
+// or "" when the word names a directory (ends in a separator), is dynamic
+// (wordLiteral gave ""), or is not a plain name, so no path fragment or other
+// raw text becomes the program.
+func programName(word string) string {
+	if i := strings.LastIndexAny(word, "/\\"); i >= 0 {
+		word = word[i+1:]
+	}
+	if word == "" || strings.Trim(word, ".") == "" || !safeWord(word) {
+		return ""
+	}
+	return word
 }
 
 // ParseCommandParaphrase extracts one entry per simple command from a possibly
@@ -162,11 +220,13 @@ func ParseCommandParaphrase(command string) []CommandEntry {
 		for i, word := range call.Args {
 			args[i] = wordLiteral(word)
 		}
-		program := path.Base(args[0])
+		// A command whose program is dynamic or not a plain name is left out:
+		// nothing about it can be told without its raw text.
+		program := programName(args[0])
 		if program == "" {
 			return true
 		}
-		entry := CommandEntry{Program: program, Category: categorize(args[0], args[1:])}
+		entry := CommandEntry{Program: program, Category: categorize(program, args[1:])}
 		entry.Target = firstRepositoryPathArg(args[1:])
 		entries = append(entries, entry)
 		return true

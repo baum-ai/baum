@@ -8,3 +8,8 @@
 # Synthetic Claude transcript lines that exercise worktree relocation records;
 # the path is the example repository's, not a developer's.
 sessions/claudesession/ingest_test.go worktree
+
+# Synthetic session paths in agent worktree directories inside a checkout,
+# the layout the path relativization rules strip; not a developer's checkout.
+linkage/sessioncorrelate/paths_test.go worktree
+internal/locallink/sessionevidence_test.go worktree

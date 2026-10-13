@@ -11,7 +11,7 @@ import (
 
 	"github.com/lastpersonlabs/baum/bundle"
 	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
+	"github.com/lastpersonlabs/baum/linkage"
 	"github.com/lastpersonlabs/baum/sessions"
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
@@ -102,7 +102,7 @@ func evidenceTree() sessions.Session {
 
 func evidenceOf(t *testing.T, s sessions.Session, maxPrompts, maxCommandEvents int) bundle.Session {
 	t.Helper()
-	item, ok := sessionEvidence(s, sessioncorrelate.Correlate(s.Graph, s.Vendor), 0.9, maxPrompts, maxCommandEvents)
+	item, ok := sessionEvidence(s, 0.9, []string{"/home/dev/widgets"}, maxPrompts, maxCommandEvents)
 	if !ok {
 		t.Fatal("no top-level session")
 	}
@@ -216,7 +216,7 @@ func TestSessionEvidenceCarriesNoRawCommandsOutputsOrAbsolutePaths(t *testing.T)
 }
 
 func TestSessionEvidenceWithoutTopLevelSession(t *testing.T) {
-	if _, ok := sessionEvidence(sessions.Session{ID: "x", Graph: &session.Graph{}}, sessioncorrelate.Result{}, 1, 1, 1); ok {
+	if _, ok := sessionEvidence(sessions.Session{ID: "x", Graph: &session.Graph{}}, 1, nil, 1, 1); ok {
 		t.Error("an empty graph has no session evidence")
 	}
 }
@@ -284,7 +284,7 @@ func TestBuildSessionEvidenceWithoutCommits(t *testing.T) {
 // runs before trimming, and never reaches the encoded bundle.
 func TestBuildSessionEvidenceIsRedactedByTheBundle(t *testing.T) {
 	f := linktest.New(t)
-	f.AddSession(t, "bbbbbbbb-0000-4000-8000-000000000002", f.Repo, "mail "+linktest.Email+" the key "+linktest.Secret)
+	f.AddSessionWithSubagent(t, "bbbbbbbb-0000-4000-8000-000000000002", f.Repo, "mail "+linktest.Email+" the key "+linktest.Secret)
 	sessionsFound := buildEvidence(t, evidenceRequest(t, f))
 	if len(sessionsFound) != 2 {
 		t.Fatalf("sessions = %+v", sessionsFound)
@@ -306,10 +306,15 @@ func TestBuildSessionEvidenceIsRedactedByTheBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, leaked := range []string{linktest.Email, "ada.lovelace", linktest.Secret, f.Repo} {
+	// The subagent read and ran commands on absolute paths in the clone, and
+	// its command set a token: only the repository-relative path is kept.
+	for _, leaked := range []string{linktest.Email, "ada.lovelace", linktest.Secret, f.Repo, filepath.Base(f.Repo) + "/", "hunter2", "API_TOKEN", "FAIL in"} {
 		if strings.Contains(string(encoded), leaked) {
 			t.Errorf("bundle leaks %q:\n%s", leaked, encoded)
 		}
+	}
+	if !strings.Contains(string(encoded), `"touched_paths":["b.txt"]`) {
+		t.Errorf("the subagent's read should be kept as a repository-relative path:\n%s", encoded)
 	}
 	if b.MaskedSpanCount < 4 || !strings.Contains(string(encoded), `"text":"mail `) || !strings.Contains(string(encoded), "about the feature") {
 		t.Errorf("masked %d spans; the masked text should survive:\n%s", b.MaskedSpanCount, encoded)
@@ -343,5 +348,129 @@ func TestBuildSessionEvidenceReadsPreviousPaths(t *testing.T) {
 	got := buildEvidence(t, req)
 	if len(got) != 1 || got[0].RootSessionID != "dddddddd-0000-4000-8000-000000000004" {
 		t.Errorf("with the previous path: sessions = %+v", got)
+	}
+}
+
+func TestSessionEvidenceBranchIsTheTopLevelSessions(t *testing.T) {
+	tree := evidenceTree()
+	tree.Graph.Sessions[0].GitBranch = nil
+	tree.Graph.Sessions[1].GitBranch = text("another-repositorys-branch")
+	if got := evidenceOf(t, tree, 1, 0); got.Branch != "" {
+		t.Errorf("branch = %q, want none: only the top-level session's counts", got.Branch)
+	}
+}
+
+// A touched path outside the clone's checkouts is dropped, even when the
+// session ran in a directory above the clone that would make it relative.
+func TestSessionEvidenceKeepsOnlyPathsInTheClone(t *testing.T) {
+	tree := evidenceTree()
+	tree.Graph.Sessions[0].WorkingDir = text("/home/dev")
+	tree.Graph.FileTouches = append(tree.Graph.FileTouches,
+		session.FileTouch{ID: "f-8", SessionID: "s-root", UserInputID: "u-1", Path: "/home/dev/other-client/secrets.env", Kind: session.TouchRead},
+		session.FileTouch{ID: "f-9", SessionID: "s-root", UserInputID: "u-1", Path: "/home/dev/widgets/.claude/worktrees/feat/pkg/a.go", Kind: session.TouchEdit})
+	got := evidenceOf(t, tree, 1, 0)
+	if want := []string{"main.go", "pkg/a.go"}; !reflect.DeepEqual(got.Prompts[0].TouchedPaths, want) {
+		t.Errorf("touched paths = %v, want %v", got.Prompts[0].TouchedPaths, want)
+	}
+}
+
+func TestSessionEvidenceBoundsPromptAndReplyText(t *testing.T) {
+	tree := evidenceTree()
+	long := strings.Repeat("é", bundle.PromptScanChars+10)
+	tree.Graph.UserInputs[0].Text = long
+	tree.Graph.AssistantMessages[1].Text = &long
+	prompt := evidenceOf(t, tree, 1, 0).Prompts[0]
+	if want := strings.Repeat("é", bundle.PromptScanChars); prompt.Text != want || prompt.Reply != want {
+		t.Errorf("prompt and reply are %d and %d characters, want %d", len([]rune(prompt.Text)), len([]rune(prompt.Reply)), bundle.PromptScanChars)
+	}
+}
+
+func TestSortSessionEvidence(t *testing.T) {
+	session := func(id string, confidence float64, started *time.Time) bundle.Session {
+		s := bundle.Session{RootSessionID: id, Confidence: confidence}
+		if started != nil {
+			s.StartedAt, s.HasStartedAt, s.StartedAtValue = started, true, *started
+		}
+		return s
+	}
+	got := []bundle.Session{
+		session("e-unknown-start", 0.9, nil),
+		session("f-low", 0.5, minute(0)),
+		session("d-late", 0.9, minute(30)),
+		session("b-tie", 0.9, minute(10)),
+		session("a-tie", 0.9, minute(10)),
+		session("c-certain", 1, minute(50)),
+		session("a-unknown-start", 0.9, nil),
+	}
+	sortSessionEvidence(got)
+	var ids []string
+	for _, s := range got {
+		ids = append(ids, s.RootSessionID)
+	}
+	want := []string{"c-certain", "a-tie", "b-tie", "d-late", "a-unknown-start", "e-unknown-start", "f-low"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Errorf("order = %v, want %v", ids, want)
+	}
+}
+
+func TestLinkConfidenceIsTheBestEdge(t *testing.T) {
+	got := linkConfidence([]linkage.Edge{
+		{CommitSHA: "c1", RunID: "a", Confidence: 0.55},
+		{CommitSHA: "c2", RunID: "a", Confidence: 0.95},
+		{CommitSHA: "c3", RunID: "a", Confidence: 0.7},
+		{CommitSHA: "c1", RunID: "b", Confidence: 0.6},
+	})
+	if want := map[string]float64{"a": 0.95, "b": 0.6}; !reflect.DeepEqual(got, want) {
+		t.Errorf("confidence = %v, want %v", got, want)
+	}
+}
+
+// A subagent's file reads and commands count toward the top-level prompt that
+// spawned it, end to end from a Claude Code store.
+func TestBuildSessionEvidenceAttributesASubagent(t *testing.T) {
+	f := linktest.New(t).NoSession(t)
+	f.AddSessionWithSubagent(t, "eeeeeeee-0000-4000-8000-000000000005", f.Repo, "add the feature")
+	got := buildEvidence(t, evidenceRequest(t, f))
+	if len(got) != 1 {
+		t.Fatalf("sessions = %+v", got)
+	}
+	s := got[0]
+	if !reflect.DeepEqual(s.Models, []string{"claude-haiku-5", "claude-opus-5"}) {
+		t.Errorf("models = %v", s.Models)
+	}
+	if len(s.Prompts) != 1 || s.Prompts[0].Text != "add the feature" || !reflect.DeepEqual(s.Prompts[0].TouchedPaths, []string{"b.txt"}) {
+		t.Errorf("prompts = %+v", s.Prompts)
+	}
+	type event struct {
+		Outcome  string
+		Commands []bundle.CommandEntry
+	}
+	var events []event
+	for _, e := range s.CommandEvents {
+		events = append(events, event{e.Outcome, e.Commands})
+	}
+	want := []event{
+		{"succeeded", []bundle.CommandEntry{{Program: "git", Category: "git"}}},
+		{"failed", []bundle.CommandEntry{{Program: "cat", Category: "other"}, {Program: "go", Category: "test", Target: "./..."}}},
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Errorf("command events = %+v, want %+v", events, want)
+	}
+}
+
+// baum view's /api/sessions leaves baum's own generation runs out too, so it
+// links the same sessions the bundle does.
+func TestResolveExcludesGenerationRuns(t *testing.T) {
+	f := linktest.New(t)
+	f.AddSession(t, "cccccccc-0000-4000-8000-000000000003", f.Repo, sessions.GenerationRunMarker+"\nReview the pull request.")
+	result := resolve(t, request(f))
+	if !result.Available || len(result.Sessions) != 1 || result.Sessions[0].ID != linktest.SessionID {
+		t.Fatalf("sessions = %+v", result.Sessions)
+	}
+	if links := result.Commits[0].Links; len(links) != 1 || links[0].Session != linktest.SessionID {
+		t.Errorf("first commit links = %+v", links)
+	}
+	if _, kept := result.Graphs["cccccccc-0000-4000-8000-000000000003"]; kept {
+		t.Error("the generation run's graph must not be kept")
 	}
 }

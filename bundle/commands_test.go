@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,13 +154,69 @@ func TestParseCommandParaphraseDropsNonRepositoryTargets(t *testing.T) {
 		"cat ..\\..\\secret.txt":                               "",
 		"cat \\\\server\\share\\notes.txt":                     "",
 		"cat user:token@example.com/file.txt":                  "",
-		"cat packages/@acme/widget/index.ts":                   "packages/@acme/widget/index.ts",
-		"cat docs/release:notes.md":                            "docs/release:notes.md",
-		"cat src/weird\\\\name.txt":                            "src/weird\\\\name.txt",
+		// "@", ":" and "\\" can be in a file name, but a target holding one is
+		// dropped rather than told apart from a remote or a credential.
+		"cat packages/@acme/widget/index.ts": "",
+		"cat docs/release:notes.md":          "",
+		"cat src/weird\\\\name.txt":          "",
+		"cat .":                              "",
+		"cat src/main.go":                    "src/main.go",
+		"cat README.md":                      "README.md",
 	} {
 		entries := ParseCommandParaphrase(command)
 		if len(entries) != 1 || entries[0].Target != want {
 			t.Errorf("%q: want target %q, got %+v", command, want, entries)
+		}
+	}
+}
+
+// No part of a command's raw text but a strictly path-shaped argument becomes
+// its target: not inline code, a commit message, an assignment, a remote or
+// a search pattern.
+func TestParseCommandParaphraseKeepsNoRawTextAsTarget(t *testing.T) {
+	for command, want := range map[string][]CommandEntry{
+		`bash -c "cd web/app && API_TOKEN=hunter2 npm test"`:  {{Program: "bash", Category: "other"}},
+		`sh -c 'python3 scripts/x.py --password hunter2'`:     {{Program: "sh", Category: "other"}},
+		`git commit -m "Fix src/x.go for customer Acme Corp"`: {{Program: "git", Category: "git"}},
+		`git commit -m "Bump version to 1.2.3"`:               {{Program: "git", Category: "git"}},
+		`git commit -m fix.go`:                                {{Program: "git", Category: "git"}},
+		`python3 -c "import os; print(os.environ['SECRET'])"`: {{Program: "python3", Category: "other"}},
+		`node -e "require('./x.js')" app.js`:                  {{Program: "node", Category: "other", Target: "app.js"}},
+		`env DB_PASSWORD=hunter2.prod ./run.sh`:               {{Program: "env", Category: "other", Target: "./run.sh"}},
+		`ssh deploy@db.internal.example.com`:                  {{Program: "ssh", Category: "other"}},
+		`grep -r "TODO(alice)." .`:                            {{Program: "grep", Category: "other"}},
+		`mysql --password hunter2.prod schema.sql`:            {{Program: "mysql", Category: "other", Target: "schema.sql"}},
+		`curl -H "Authorization: Bearer x" -o out/page.html`:  {{Program: "curl", Category: "other", Target: "out/page.html"}},
+		`echo "$SECRET" > notes/today.txt`:                    {{Program: "echo", Category: "other"}},
+		`cat src/*.go`:                                        {{Program: "cat", Category: "other"}},
+	} {
+		got := ParseCommandParaphrase(command)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s:\n got %+v\nwant %+v", command, got, want)
+		}
+		encoded := fmt.Sprintf("%+v", got)
+		for _, leaked := range []string{"hunter2", "Acme", "1.2.3", "SECRET", "internal.example", "TODO", "API_TOKEN", "Bearer"} {
+			if strings.Contains(encoded, leaked) {
+				t.Errorf("%s: paraphrase leaks %q: %s", command, leaked, encoded)
+			}
+		}
+	}
+}
+
+// The program is a plain base name across both separators, never a path
+// fragment; a command whose program is a directory or dynamic is left out.
+func TestParseCommandParaphraseProgramIsAPlainName(t *testing.T) {
+	for command, want := range map[string][]CommandEntry{
+		`C:\\Users\\alice\\bin\\deploy.exe --prod`: {{Program: "deploy.exe", Category: "other"}},
+		`/home/user/ test`:                         nil,
+		`"$HOME/bin/tool" run`:                     nil,
+		`$(which go) test ./...`:                   {{Program: "which", Category: "other"}},
+		`'my tool' x.txt`:                          nil,
+		`./scripts/migrate-db up`:                  {{Program: "migrate-db", Category: "migrate"}},
+		`/home/user/ test && go vet ./...`:         {{Program: "go", Category: "lint", Target: "./..."}},
+	} {
+		if got := ParseCommandParaphrase(command); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s:\n got %+v\nwant %+v", command, got, want)
 		}
 	}
 }

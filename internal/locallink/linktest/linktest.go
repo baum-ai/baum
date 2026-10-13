@@ -126,6 +126,41 @@ func (f Fixture) AddSession(t *testing.T, id, cwd, prompt string) {
 	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(cwd), id+".jsonl"), transcript(id, cwd, prompt, f.Commits[0]))
 }
 
+// AddSessionWithSubagent is AddSession for a session that, after its commit,
+// spawned a subagent which read b.txt and ran a shell command, both by
+// absolute paths under cwd. The command also sets a token in its
+// environment.
+func (f Fixture) AddSessionWithSubagent(t *testing.T, id, cwd, prompt string) {
+	t.Helper()
+	dir := filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(cwd))
+	const usage = `{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard"}`
+	main := strings.TrimSuffix(transcript(id, cwd, prompt, f.Commits[0]), "\n")
+	common := func(kind, uuid, parent, at string, sidechain bool) string {
+		return fmt.Sprintf(`"cwd":%q,"gitBranch":"feature","isSidechain":%t,"sessionId":%q,"type":%q,"uuid":%q,"parentUuid":%s,"timestamp":%q`,
+			cwd, sidechain, id, kind, uuid, parent, at)
+	}
+	main += "\n" + strings.Join([]string{
+		`{` + common("assistant", "a-2", `"u-2"`, "2026-07-01T10:31:00.000Z", false) + `,"requestId":"req_2","message":{"id":"msg_2","role":"assistant","model":"claude-opus-5","stop_reason":"tool_use","usage":` + usage +
+			`,"content":[{"type":"tool_use","id":"toolu_spawn","name":"Agent","input":{"description":"Check the notes","subagent_type":"Explore"}}]}}`,
+		`{` + common("user", "u-3", `"a-2"`, "2026-07-01T10:35:00.000Z", false) + `,"promptId":"p-1","message":{"role":"user","content":[{"tool_use_id":"toolu_spawn","type":"tool_result","content":"The notes are fine."}]},"toolUseResult":{"agentId":"s1","agentType":"Explore","status":"completed","content":"The notes are fine.","totalTokens":100}}`,
+	}, "\n") + "\n"
+	write(t, filepath.Join(dir, id+".jsonl"), main)
+
+	notes, command := filepath.Join(cwd, "b.txt"), "cat "+filepath.Join(cwd, "b.txt")+" && API_TOKEN=hunter2 go test ./..."
+	sub := func(line string) string { return line + `,"agentId":"s1"}` }
+	subagent := []string{
+		sub(`{` + common("user", "s-1", "null", "2026-07-01T10:32:00.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":"Check the notes"}`),
+		sub(`{` + common("assistant", "s-2", `"s-1"`, "2026-07-01T10:33:00.000Z", true) + `,"requestId":"req_s1","message":{"id":"msg_s1","role":"assistant","model":"claude-haiku-5","stop_reason":"tool_use","usage":` + usage +
+			fmt.Sprintf(`,"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":%q}}]}`, notes)),
+		sub(`{` + common("user", "s-3", `"s-2"`, "2026-07-01T10:33:30.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":"b"}]}`),
+		sub(`{` + common("assistant", "s-4", `"s-3"`, "2026-07-01T10:34:00.000Z", true) + `,"requestId":"req_s2","message":{"id":"msg_s2","role":"assistant","model":"claude-haiku-5","stop_reason":"tool_use","usage":` + usage +
+			fmt.Sprintf(`,"content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":{"command":%q}}]}`, command)),
+		sub(`{` + common("user", "s-5", `"s-4"`, "2026-07-01T10:34:30.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":[{"tool_use_id":"toolu_test","type":"tool_result","content":"FAIL in ` + cwd + `","is_error":true}]},"toolUseResult":{"stdout":"","stderr":"FAIL","interrupted":false,"isImage":false,"noOutputExpected":false}`),
+	}
+	write(t, filepath.Join(dir, id, "subagents", "agent-s1.jsonl"), strings.Join(subagent, "\n")+"\n")
+	write(t, filepath.Join(dir, id, "subagents", "agent-s1.meta.json"), `{"agentType":"Explore","description":"Check the notes","toolUseId":"toolu_spawn","spawnDepth":1}`)
+}
+
 // NoSession returns f's stores with the session removed.
 func (f Fixture) NoSession(t *testing.T) Fixture {
 	t.Helper()

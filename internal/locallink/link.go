@@ -238,7 +238,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // loadSessions reads the sessions recorded for the clone containing dir that
 // were written recently enough to match commits, and the ground truth the
 // commits' Entire-Checkpoint trailers give, with the sessions only those
-// checkpoints hold.
+// checkpoints hold. baum's own generation runs are left out of both.
 func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
@@ -256,7 +256,8 @@ func loadSessions(ctx context.Context, dir string, opts sessions.Options, commit
 		}
 	}
 	truth, extra := checkpointLinks(ctx, dir, commits, found, warn)
-	return append(found, extra...), truth, nil
+	found, truth = withoutGenerationRuns(append(found, extra...), truth)
+	return found, truth, nil
 }
 
 // match links sessions to commits and builds the redacted result. Each commit

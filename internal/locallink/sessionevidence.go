@@ -3,15 +3,20 @@ package locallink
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lastpersonlabs/baum/bundle"
 	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/lastpersonlabs/baum/linkage"
 	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
 	"github.com/lastpersonlabs/baum/sessions"
+	"github.com/lastpersonlabs/baum/sessions/collector"
 	"github.com/lastpersonlabs/baum/sessions/session"
 )
 
@@ -39,16 +44,17 @@ type EvidenceRequest struct {
 
 // BuildSessionEvidence returns the bundle sessions for the pull request
 // commits: every session on this machine matched to one of them, as Resolve
-// matches them, except baum's own generation runs (sessions.IsGenerationRun).
-// They are ordered by linkage confidence, the highest any of the session's
-// edges has, then by start, earliest first and unknown last, then by id.
+// matches them, baum's own generation runs left out
+// (sessions.IsGenerationRun). They are ordered by linkage confidence, the
+// highest any of the session's edges has, then by start, earliest first and
+// unknown last, then by id.
 //
 // The sessions are not redacted: the bundle's input redaction (bundle.Redact)
 // masks them with the rest of the bundle before it is trimmed or written, as
 // for every other source. A command event carries only the paraphrase
-// bundle.ParseCommandParaphrase gives and a touched path only a
-// repository-relative one, so no raw command line, tool output or absolute
-// path is returned.
+// bundle.ParseCommandParaphrase gives, and a touched path only a path inside
+// one of the clone's checkouts, made relative to it; prompt and reply text
+// is bounded by bundle.PromptScanChars.
 func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Session, error) {
 	evidence := []bundle.Session{}
 	if len(req.Commits) == 0 {
@@ -62,27 +68,45 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if err != nil {
 		return nil, err
 	}
-	found, truth = withoutGenerationRuns(found, truth)
 	ids, latest, edges, err := linkSessions(ctx, found, req.Commits, truth)
 	if err != nil {
 		return nil, err
 	}
+	roots, err := cloneRoots(ctx, dir, req.Sessions.PreviousPaths)
+	if err != nil {
+		return nil, err
+	}
+	confidence := linkConfidence(edges)
+	for _, id := range ids {
+		linked, ok := confidence[id]
+		if !ok {
+			continue
+		}
+		s := latest[id].session
+		sessionRoots := append(slices.Clone(roots), s.RepoRoot, s.WorktreeRoot)
+		if item, ok := sessionEvidence(s, linked, sessionRoots, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession); ok {
+			evidence = append(evidence, item)
+		}
+	}
+	sortSessionEvidence(evidence)
+	return evidence, nil
+}
+
+// linkConfidence is each linked session's confidence: the highest of its
+// matched edges, over all the commits it is linked to.
+func linkConfidence(edges []linkage.Edge) map[string]float64 {
 	confidence := map[string]float64{}
 	for _, edge := range edges {
 		if current, seen := confidence[edge.RunID]; !seen || edge.Confidence > current {
 			confidence[edge.RunID] = edge.Confidence
 		}
 	}
-	for _, id := range ids {
-		linked, ok := confidence[id]
-		if !ok {
-			continue
-		}
-		snap := latest[id]
-		if item, ok := sessionEvidence(snap.session, snap.correlated, linked, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession); ok {
-			evidence = append(evidence, item)
-		}
-	}
+	return confidence
+}
+
+// sortSessionEvidence orders sessions by confidence, highest first, then by
+// start, earliest first and unknown last, then by id.
+func sortSessionEvidence(evidence []bundle.Session) {
 	slices.SortStableFunc(evidence, func(a, b bundle.Session) int {
 		if a.Confidence != b.Confidence {
 			return cmp.Compare(b.Confidence, a.Confidence)
@@ -98,7 +122,32 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 		}
 		return strings.Compare(a.RootSessionID, b.RootSessionID)
 	})
-	return evidence, nil
+}
+
+// cloneRoots are the checkouts of the clone containing dir: every working
+// tree git lists (deleted ones included), the checkout holding dir, and the
+// directories the repository used to live at. A touched path outside all of
+// them is not the repository's.
+func cloneRoots(ctx context.Context, dir string, previous []string) ([]string, error) {
+	var roots []string
+	if worktrees, err := gitlocal.Worktrees(ctx, dir); err == nil {
+		for _, worktree := range worktrees {
+			roots = append(roots, worktree.Path)
+		}
+	}
+	root, err := collector.RepoRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	roots = append(roots, root)
+	for _, path := range previous {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("previous path %q: %w", path, err)
+		}
+		roots = append(roots, abs)
+	}
+	return roots, nil
 }
 
 // withoutGenerationRuns drops baum's own generation runs before matching, so
@@ -128,9 +177,12 @@ func withoutGenerationRuns(found []sessions.Session, truth map[string][]string) 
 // sessionEvidence projects one linked session tree into its bundle session.
 // Prompts are the top-level session's human prompts; nested sessions' file
 // touches count toward the root prompt that spawned them, at any depth, and
-// command events are taken from the whole tree. ok is false for a graph
-// without a top-level session.
-func sessionEvidence(s sessions.Session, correlated sessioncorrelate.Result, confidence float64, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
+// command events are taken from the whole tree. The branch is the top-level
+// session's own, as the hosted service records it: a branch seen elsewhere in
+// the tree can belong to another repository. Touched paths resolve only
+// inside roots, the clone's checkouts. ok is false for a graph without a
+// top-level session.
+func sessionEvidence(s sessions.Session, confidence float64, roots []string, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
 	root := s.Root()
 	if root == nil {
 		return bundle.Session{}, false
@@ -146,9 +198,6 @@ func sessionEvidence(s sessions.Session, correlated sessioncorrelate.Result, con
 	if root.GitBranch != nil {
 		item.Branch = *root.GitBranch
 	}
-	if item.Branch == "" && len(correlated.Branches) > 0 {
-		item.Branch = correlated.Branches[0]
-	}
 	if root.StartedAt != nil {
 		started := *root.StartedAt
 		item.StartedAt, item.HasStartedAt, item.StartedAtValue = &started, true, started
@@ -158,7 +207,7 @@ func sessionEvidence(s sessions.Session, correlated sessioncorrelate.Result, con
 		item.EndedAt = &ended
 	}
 	item.Prompts = prompts(graph, root.ID, maxPrompts)
-	attachTouchedPaths(graph, s.Vendor, item.Prompts)
+	attachTouchedPaths(graph, s.Vendor, roots, item.Prompts)
 	item.CommandEvents = commandEvents(graph, maxCommandEvents)
 	return item, true
 }
@@ -195,7 +244,10 @@ func prompts(graph *session.Graph, rootID string, limit int) []bundle.Prompt {
 		if i != 0 && len(human)-i >= limit {
 			continue
 		}
-		prompt := bundle.Prompt{Index: input.Ordinal, ID: input.ID, Text: input.Text, Reply: reply(graph, input.ID)}
+		prompt := bundle.Prompt{
+			Index: input.Ordinal, ID: input.ID,
+			Text: leadingChars(input.Text, bundle.PromptScanChars), Reply: leadingChars(reply(graph, input.ID), bundle.PromptScanChars),
+		}
 		if input.TriggeredAt != nil {
 			at := *input.TriggeredAt
 			prompt.At = &at
@@ -233,8 +285,9 @@ func newerMessage(a, b *session.AssistantMessage) bool {
 
 // attachTouchedPaths gives each prompt the distinct repository-relative paths
 // read or edited under it, including by the sessions it spawned at any depth,
-// sorted. A path that cannot be made repository-relative is left out.
-func attachTouchedPaths(graph *session.Graph, vendor string, prompts []bundle.Prompt) {
+// sorted. An absolute path outside every root, and a relative one the
+// resolver cannot place, is left out.
+func attachTouchedPaths(graph *session.Graph, vendor string, roots []string, prompts []bundle.Prompt) {
 	if len(prompts) == 0 {
 		return
 	}
@@ -243,7 +296,7 @@ func attachTouchedPaths(graph *session.Graph, vendor string, prompts []bundle.Pr
 		byID[prompts[i].ID] = &prompts[i]
 	}
 	owners := newPromptOwners(graph)
-	resolver := sessioncorrelate.NewPathResolver(graph, vendor)
+	resolver := sessioncorrelate.NewPathResolver(graph, vendor, sessioncorrelate.WithCloneRoots(roots...))
 	touched := map[string]map[string]bool{}
 	for _, touch := range graph.FileTouches {
 		if touch.Kind != session.TouchRead && touch.Kind != session.TouchEdit {
@@ -422,6 +475,15 @@ func compareTimes(a, b *time.Time) int {
 		return 1
 	}
 	return a.Compare(*b)
+}
+
+// leadingChars is s cut to its first limit characters, as the hosted
+// service's left(text, limit) cuts stored prompt and reply text.
+func leadingChars(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return string([]rune(s)[:limit])
 }
 
 func derefString(s *string) string {

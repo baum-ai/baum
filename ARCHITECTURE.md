@@ -282,11 +282,13 @@ another implementation; the hosted service does. The prompt is per backend
 because each backend submits its result differently. The repair
 instructions and tile guidance are part of the loop, not the prompt.
 
-Every prompt a local generation run sends starts with
-`sessions.GenerationRunMarker`. A CLI backend records its run in the same
-session stores as the developer's own sessions, in a worktree of the same
-clone, and the marker is how session evidence leaves baum's own runs out (see
-"Local session evidence").
+Local generation (`baum generate`, not built yet) must start every prompt it
+sends with `sessions.GenerationRunMarker`. That is the contract session
+evidence relies on: a CLI backend records its run in the same session stores
+as the developer's own sessions, in a worktree of the same clone, and local
+linkage leaves out every session whose top-level prompt starts with the
+marker (see "Local session evidence"). A run without it would be read as
+evidence about the pull request it reviews.
 
 ### Generate and repair
 
@@ -613,47 +615,73 @@ allowed.
 ### Local session evidence
 
 `locallink.BuildSessionEvidence` is the bundle's sessions source on this
-machine. It takes the pull request's commits as the clone holds them
-(`gitlocal.Commits` from the merge base to the head), a directory in the
-clone, the session store overrides with the `--previous-path` directories the
-repository used to live at, and the bundle caps `MaxPromptsPerSession` and
-`MaxCommandEventsPerSession`. It loads and matches sessions exactly
-as steps 4 to 7 of "Local session linkage" do, after leaving out baum's own
-generation runs: a session whose top-level session has a prompt starting with
-`sessions.GenerationRunMarker` is neither linked nor allowed to take a link
-from another session, and is dropped from an Entire checkpoint's ground truth
-too. Each session linked to at least one commit becomes one bundle session:
+machine; the `baum bundle` command that will call it is not built yet. It
+takes the pull request's commits as the clone holds them (`gitlocal.Commits`
+from the merge base to the head), a directory in the clone, the session store
+overrides with the `--previous-path` directories the repository used to live
+at, and the bundle caps `MaxPromptsPerSession` and
+`MaxCommandEventsPerSession`. It loads and matches sessions exactly as steps 4
+to 7 of "Local session linkage" do. Loading leaves out baum's own generation
+runs, for `baum view` too: a session whose top-level session has a prompt
+starting with `sessions.GenerationRunMarker` is neither linked nor allowed to
+take a link from another session, and is dropped from an Entire checkpoint's
+ground truth. Each session linked to at least one commit becomes one bundle
+session:
 
 - `id` is the vendor's session id, the one `/api/sessions` lists, and
   `vendor` the agent that ran. The session tree is one entry: a subagent is
   never a session of its own.
 - `models` are the distinct models of every invocation in the tree, sorted;
-  `title`, `branch` (else the first branch `sessioncorrelate` found), start,
-  end and `outcome` are the top-level session's.
+  `title`, `branch`, start, end and `outcome` are the top-level session's, the
+  branch only as that session recorded it (a branch seen in a subagent can be
+  another repository's).
 - `prompts` are the top-level session's human prompts and slash commands with
   text, by turn index: the first and the latest `MaxPromptsPerSession - 1`
   (none at 0). Each carries the latest non-blank reply the model gave it, and
-  as `touched_paths` the distinct paths read or edited under it, including by
-  the subagents it spawned at any depth. Paths are made repository-relative
-  by `sessioncorrelate.PathResolver`, the rules `Correlate` applies; a path it
-  cannot make relative (a file outside the clone) is left out.
+  prompt and reply are cut to `bundle.PromptScanChars` characters, as the
+  hosted service reads them. As `touched_paths` each has the distinct paths
+  read or edited under it, including by the subagents it spawned at any
+  depth. `sessioncorrelate.PathResolver` places them with the hosted rules
+  (recorded repository and worktree roots, then working directories, then
+  anchors, with a leading in-repo agent worktree such as
+  `{.claude,.agents}/worktrees/<name>/` removed), and with the clone's checkouts given
+  (`WithCloneRoots`: every worktree git lists, the checkout itself and the
+  previous paths) an absolute path resolves only inside one of them. A file
+  outside the clone, beside it or in the home directory, is left out, even
+  when the session ran in a directory above the clone.
 - `command_events` are the tree's execute tool calls that carry a command
   line, the latest `MaxCommandEventsPerSession` (all at 0) in time order.
   Each is `bundle.ParseCommandParaphrase` of the command: per simple command
-  of a pipeline or `&&`/`;` chain, the program's base name (an absolute
-  executable keeps only its name), its closed category and the first
-  argument that is a repository-relative path. Its `outcome` is the tool
-  result's status as `bundle.CommandOutcome` maps it, `unknown` without a
-  result. Command lines and tool output never leave the session graph.
-- The linkage confidence is the highest of the session's matched edges.
-  Sessions are returned by confidence, then start (unknown last), then id,
-  which is the order `bundle.ApplyCaps` cuts them in.
+  of a pipeline or `&&`/`;` chain, the program's base name across `/` and
+  `\` (a command whose program is dynamic, a directory or not a plain name
+  is left out), its closed category, and a target only when an argument is
+  strictly path-shaped: local, with a `/` or an extension, and free of
+  whitespace, quotes, `=`, `@`, `:`, `\` and shell metacharacters. The value
+  after a flag that carries code, a message or a credential (`-c`, `-e`,
+  `-m`, `--message`, `--eval`, a flag naming a password or token, ...) is
+  never a target. A target is dropped rather than guessed. Its `outcome` is
+  the tool result's status as `bundle.CommandOutcome` maps it, `unknown`
+  without a result. Command lines and tool output never leave the session
+  graph.
+- The linkage confidence is the highest of the session's matched edges, over
+  every commit it is linked to. Sessions are returned by confidence, then
+  start (unknown last), then id, which is the order `bundle.ApplyCaps` cuts
+  them in.
 
 The sessions are returned unredacted: `bundle.Redact`, the bundle's input
 redaction, masks their titles, branches, prompts, replies, paths and command
 fields with the rest of the bundle, before trimming. `bundle.CommandText`,
-`bundle.ParseCommandParaphrase` and `bundle.CommandOutcome` are the same
-helpers the hosted service paraphrases its stored command events with.
+`bundle.ParseCommandParaphrase`, `bundle.CommandOutcome` and
+`bundle.PromptScanChars` are the ones the hosted service uses for its stored
+sessions.
+
+Known differences from the hosted service's database queries, accepted as
+they are: blank prompt and reply text is told by Go's `strings.TrimSpace`
+rather than PostgreSQL's `btrim` (which trims spaces only); an empty model
+name is not listed; a tool call is counted toward the command-event cap only
+when `bundle.CommandText` finds a command in it, where the query also counts
+an array of empty strings; and when a tool use has more than one result the
+first one recorded decides its outcome.
 
 ### Session transcripts
 

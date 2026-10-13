@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -95,6 +96,7 @@ type options struct {
 	repositoryRootsSet bool
 	primaryRepository  string
 	repositoryRoots    []RepositoryRoots
+	cloneRoots         []string
 }
 
 // WithEditedFiles adds repository-relative paths the source reported as
@@ -193,6 +195,17 @@ type workingDirs struct {
 	pooled            *stringSet
 	bySession         map[string]*stringSet
 	recordedBySession map[string]*stringSet
+	// roots and rootsBySession hold only recorded repository and worktree
+	// roots, which relativization tries before any cwd.
+	roots          *stringSet
+	rootsBySession map[string]*stringSet
+}
+
+func (w workingDirs) rootsOf(sessionID string) []string {
+	if set, known := w.rootsBySession[sessionID]; known {
+		return set.values()
+	}
+	return nil
 }
 
 func (w workingDirs) recordedOf(sessionID string) []string {
@@ -213,6 +226,19 @@ func collectDirs(graph *session.Graph, keys attributeKeys) workingDirs {
 	dirs := workingDirs{
 		recorded: newStringSet(), pooled: newStringSet(),
 		bySession: map[string]*stringSet{}, recordedBySession: map[string]*stringSet{},
+		roots: newStringSet(), rootsBySession: map[string]*stringSet{},
+	}
+	addRoot := func(sessionID, value string) {
+		if value = cleanPath(value); value == "" {
+			return
+		}
+		set, known := dirs.rootsBySession[sessionID]
+		if !known {
+			set = newStringSet()
+			dirs.rootsBySession[sessionID] = set
+		}
+		set.add(value)
+		dirs.roots.add(value)
 	}
 	add := func(sessionID, value string, recorded bool) {
 		if value = cleanPath(value); value == "" {
@@ -242,9 +268,11 @@ func collectDirs(graph *session.Graph, keys attributeKeys) workingDirs {
 		}
 		if row.RepoRoot != nil {
 			add(row.ID, *row.RepoRoot, false)
+			addRoot(row.ID, *row.RepoRoot)
 		}
 		if row.WorktreeRoot != nil {
 			add(row.ID, *row.WorktreeRoot, false)
+			addRoot(row.ID, *row.WorktreeRoot)
 		}
 	}
 	for _, attribute := range graph.Attributes {
@@ -404,6 +432,9 @@ func (c repositoryClassifier) classify(
 			repositoryID = movedSessions[touch.SessionID]
 			relative, ok = reported, repositoryID != ""
 		}
+		if ok {
+			relative, ok = withoutAgentWorktree(relative)
+		}
 		if !ok || repositoryID == c.primary {
 			continue
 		}
@@ -542,7 +573,7 @@ func fileEvidence(graph *session.Graph, dirs workingDirs, editedFiles, fileAncho
 			continue
 		}
 		reported := cleanPath(touch.Path)
-		path, ok := repoRelative(reported, dirs.of(touch.SessionID), dirs.pooled.values(), anchors)
+		path, ok := dirs.repoRelative(reported, touch.SessionID, anchors)
 		if !ok {
 			// One unrelativizable path can appear in dozens of touches and the
 			// warnings land in a TEXT[] column, so each is reported once.
@@ -562,29 +593,82 @@ func fileEvidence(graph *session.Graph, dirs workingDirs, editedFiles, fileAncho
 	return files, warnings
 }
 
-// repoRelative rewrites one absolute path to be relative to the repository
-// root. The session's own cwd values are tried first and the longest match
-// wins, then the rest of the tree's — a nested session frequently records no
-// cwd of its own but runs inside the tree that spawned it — then the anchor
-// rule. A path nothing relativizes is not evidence.
-func repoRelative(path string, own, pooled, anchors []string) (string, bool) {
+// agentWorktree is the prefix an agent worktree inside the checkout adds to a
+// path relativized against the main checkout. The pull request names the file
+// without it.
+var agentWorktree = regexp.MustCompile(`^(?:\.claude|\.agents|\.codex|\.cursor)/worktrees/[^/]+/|^\.worktrees/[^/]+/`)
+
+// repoRelative rewrites one path reported in sessionID to be relative to the
+// repository root. Recorded repository and worktree roots are tried first
+// (the session's own, then the tree's; longest wins, so a worktree inside the
+// checkout beats the checkout): a cwd can be a subdirectory, and cutting
+// against it would drop the path's leading directories. Then the session's
+// own cwd values, longest first, then the rest of the tree's (a nested
+// session frequently records no cwd of its own but runs inside the tree that
+// spawned it), then the anchor rule. A leading agent worktree is removed, and
+// a cwd inside an in-repo agent worktree the tree worked in never cuts deeper
+// than that worktree (outsideCwdInAgentWorktree). A path nothing relativizes is
+// not evidence.
+func (w workingDirs) repoRelative(path, sessionID string, anchors []string) (string, bool) {
 	parsed := sourcepath.Parse(path)
 	if !parsed.Valid() {
 		return "", false
 	}
 	if parsed.IsRepositoryRelative() {
-		return parsed.String(), true
+		return withoutAgentWorktree(parsed.String())
 	}
 	if !parsed.IsAbsolute() {
 		return "", false
 	}
-	if relative, ok := stripLongestDir(parsed.String(), own); ok {
-		return relative, true
-	}
-	if relative, ok := stripLongestDir(parsed.String(), pooled); ok {
-		return relative, true
+	for i, dirs := range [][]string{w.rootsOf(sessionID), w.roots.values(), w.of(sessionID), w.pooled.values()} {
+		if relative, ok := stripLongestDir(parsed.String(), dirs); ok {
+			if i >= 2 {
+				relative = w.outsideCwdInAgentWorktree(parsed.String(), relative)
+			}
+			return withoutAgentWorktree(relative)
+		}
 	}
 	return anchoredSuffix(parsed.String(), anchors)
+}
+
+// inRepoWorktreeDir finds an agent worktree directory that tools create
+// inside the checkout (<checkout>/{.claude,.agents}/worktrees/<name>).
+// Cursor and Codex can keep theirs in
+// the home directory (~/.cursor/worktrees/<repo>/<id>/,
+// ~/.codex/worktrees/<id>/<repo>/), where the directory after the marker is
+// not the checkout, so their markers, and .worktrees, are not used.
+var inRepoWorktreeDir = regexp.MustCompile(`/(?:\.claude|\.agents)/worktrees/[^/]+`)
+
+// outsideCwdInAgentWorktree re-cuts path at the in-repo agent worktree
+// holding it when relative, its cut against a working directory, starts
+// below that worktree: an agent that cds into platform/ of
+// <checkout>/{.claude,.agents}/worktrees/<name> still edits platform/x.go,
+// not x.go.
+// The worktree counts only when the tree worked in it, so it is one of the
+// tree's working directories or roots; when several nested worktrees are,
+// the innermost one cuts. A worktree nested inside one the tree worked in is
+// re-cut at the outer one, and the leading-worktree strip then removes the
+// inner prefix, which gives the same repo-relative path. Directory names are
+// compared exactly (drive letters are normalized first), so a Windows path
+// that spells a directory in another case keeps the cwd cut.
+func (w workingDirs) outsideCwdInAgentWorktree(path, relative string) string {
+	matches := inRepoWorktreeDir.FindAllStringIndex(path, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		end := matches[i][1]
+		if end >= len(path) || path[end] != '/' || !w.pooled.seen[path[:end]] {
+			continue
+		}
+		if inWorktree := path[end+1:]; len(inWorktree) > len(relative) {
+			return inWorktree
+		}
+		return relative
+	}
+	return relative
+}
+
+func withoutAgentWorktree(path string) (string, bool) {
+	path = agentWorktree.ReplaceAllString(path, "")
+	return path, path != ""
 }
 
 func stripLongestDir(path string, dirs []string) (string, bool) {
@@ -621,7 +705,9 @@ func relativeTouchPaths(graph *session.Graph) []string {
 	anchors := newStringSet()
 	for _, touch := range graph.FileTouches {
 		if path := cleanPath(touch.Path); sourcepath.IsRepositoryRelative(path) {
-			anchors.add(path)
+			if path, ok := withoutAgentWorktree(path); ok {
+				anchors.add(path)
+			}
 		}
 	}
 	return anchors.values()

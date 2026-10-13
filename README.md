@@ -163,16 +163,18 @@ prompt), and not at all when its agent's own store already has it.
 Titles, prompts and every other text printed go through the same redaction
 as the review bundle: secrets and e-mail addresses are masked in place.
 
-The review bundle takes the sessions linked to the pull request's commits the
-way `baum view` links them, `--previous-path` included. Each carries its
-title, branch, models, timing and outcome, its first and latest prompts with
-the agent's final reply and the repository files each prompt read or edited
-(subagents' work counts toward the prompt that started them), and its shell
-commands as paraphrases: program name, a category such as `test` or `build`,
-a repository-relative target and whether the command succeeded, failed or was
-interrupted. Command lines, their output and paths outside the repository are
-never included, and all text is redacted. The agent runs baum itself starts
-to write a review are left out.
+The generation bundle's session evidence is built from the sessions
+`baum view` links; the `baum bundle` command that writes it is not built yet.
+Each session carries its title, branch, models, timing and outcome, its first
+and latest prompts with the agent's final reply, the files inside the clone
+each prompt read or edited (subagents' work counts toward the prompt that
+started them), and its shell commands as paraphrases: program name, a
+category such as `test` or `build`, a target only when an argument is plainly
+a repository-relative path, and whether the command succeeded, failed or was
+interrupted. Command lines, their output, inline code, commit messages and
+paths outside the clone are never included, and all text is redacted before
+the bundle is trimmed or written. Sessions of baum's own generation runs are
+left out, from the bundle and from `baum view` alike.
 
 ## Configuration
 
