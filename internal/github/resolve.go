@@ -57,10 +57,14 @@ func gitHubHost(host string) bool {
 // Clone is the local clone a pull request is resolved from; *gitlocal.Repo
 // implements it.
 type Clone interface {
-	// RemoteURL is the URL of the clone's origin remote, "" without one.
-	RemoteURL(ctx context.Context) (string, error)
+	// RemoteFetchURL is the URL git fetches the named remote from, with
+	// insteadOf rewrites applied; "" when there is no such remote.
+	RemoteFetchURL(ctx context.Context, remote string) (string, error)
 	// CurrentBranch is the branch HEAD is on, "" when detached.
 	CurrentBranch(ctx context.Context) (string, error)
+	// BranchUpstream is the branch's branch.<name>.remote and
+	// branch.<name>.merge, each "" when unset.
+	BranchUpstream(ctx context.Context, branch string) (remote, merge string, err error)
 }
 
 var _ Clone = (*gitlocal.Repo)(nil)
@@ -90,27 +94,42 @@ var (
 	ErrAmbiguousPullRequest = errors.New("the current branch has several open pull requests; pass --pr")
 )
 
-// ResolvePR finds the pull request to work on. The repository is --repo or
-// the one the clone's origin remote names; the pull request is --pr or, by
-// default, the pull request whose head is the current branch, as GitHub's
-// associatedPullRequests lists it: the open one, or else the most recently
-// updated. A branch pushed from a fork resolves to the pull request's base
-// repository. With both flags given it makes no request.
+// pullRef is the ref GitHub serves a pull request's head (or test merge)
+// under, which `gh pr checkout` sets as a fork branch's upstream.
+var pullRef = regexp.MustCompile(`^refs/pull/([1-9][0-9]*)/(?:head|merge)$`)
+
+// ResolvePR finds the pull request to work on. With --pr it is that pull
+// request on --repo or on the repository the clone's origin remote names,
+// and no request is made. Otherwise it follows the current branch:
+//
+//   - When the branch's upstream is refs/pull/N/head (or /merge) of a GitHub
+//     remote, it is pull request N there.
+//   - When the upstream is a branch of a GitHub remote, it is the pull
+//     request whose head is that branch, as GitHub's associatedPullRequests
+//     lists it: the open one, or else the most recently updated. That pull
+//     request may target another repository, such as the upstream of a fork.
+//   - Failing those, it is the pull request whose head is the branch of the
+//     same name on --repo or origin.
+//
+// With --repo, a pull request found through the upstream counts only when it
+// is in that repository. Remote URLs are read with insteadOf applied.
 func (c *Client) ResolvePR(ctx context.Context, clone Clone, opts ResolveOptions) (Target, error) {
 	if opts.PR < 0 {
 		return Target{}, fmt.Errorf("pull request number must be positive, got %d", opts.PR)
 	}
-	var repo Repository
-	var err error
+	var flagRepo *Repository
 	if opts.Repo != "" {
-		repo, err = ParseRepository(opts.Repo)
-	} else {
-		repo, err = originRepository(ctx, clone)
-	}
-	if err != nil {
-		return Target{}, err
+		repo, err := ParseRepository(opts.Repo)
+		if err != nil {
+			return Target{}, err
+		}
+		flagRepo = &repo
 	}
 	if opts.PR > 0 {
+		repo, err := defaultRepository(ctx, clone, flagRepo)
+		if err != nil {
+			return Target{}, err
+		}
 		return Target{Repository: repo, Number: opts.PR}, nil
 	}
 	branch, err := clone.CurrentBranch(ctx)
@@ -120,11 +139,68 @@ func (c *Client) ResolvePR(ctx context.Context, clone Clone, opts ResolveOptions
 	if branch == "" {
 		return Target{}, ErrDetachedHead
 	}
+
+	accept := func(target Target) bool { return flagRepo == nil || sameRepository(target.Repository, *flagRepo) }
+	// asked is the head branch already looked up through the upstream, so
+	// the fallback does not ask GitHub the same question twice.
+	var asked *Target
+	remote, merge, err := clone.BranchUpstream(ctx, branch)
+	if err != nil {
+		return Target{}, fmt.Errorf("reading the upstream of branch %s: %w", branch, err)
+	}
+	if upstream, ok := upstreamRepository(ctx, clone, remote, merge); ok {
+		if match := pullRef.FindStringSubmatch(merge); match != nil {
+			number, _ := strconv.Atoi(match[1])
+			if target := (Target{Repository: upstream, Number: number}); accept(target) {
+				return target, nil
+			}
+		} else if name, ok := strings.CutPrefix(merge, "refs/heads/"); ok && name != "" {
+			target, err := c.pullRequestForBranch(ctx, upstream, name)
+			if err != nil && !errors.Is(err, ErrNoPullRequest) {
+				return Target{}, err
+			}
+			if err == nil && accept(target) {
+				return target, nil
+			}
+			if name == branch {
+				asked = &Target{Repository: upstream}
+			}
+		}
+	}
+
+	repo, err := defaultRepository(ctx, clone, flagRepo)
+	if err != nil {
+		return Target{}, err
+	}
+	if asked != nil && sameRepository(asked.Repository, repo) {
+		return Target{}, fmt.Errorf("%w (branch %s on %s)", ErrNoPullRequest, branch, repo)
+	}
 	return c.pullRequestForBranch(ctx, repo, branch)
 }
 
-func originRepository(ctx context.Context, clone Clone) (Repository, error) {
-	remote, err := clone.RemoteURL(ctx)
+// upstreamRepository is the GitHub repository a branch's upstream remote
+// names. The remote may be a remote's name or, as git allows, a URL.
+func upstreamRepository(ctx context.Context, clone Clone, remote, merge string) (Repository, bool) {
+	if remote == "" || remote == "." || merge == "" {
+		return Repository{}, false
+	}
+	url, err := clone.RemoteFetchURL(ctx, remote)
+	if err != nil {
+		return Repository{}, false
+	}
+	if url == "" {
+		url = remote
+	}
+	repo, err := RepositoryFromRemote(url)
+	return repo, err == nil
+}
+
+// defaultRepository is --repo when given, else the repository origin names.
+func defaultRepository(ctx context.Context, clone Clone, flagRepo *Repository) (Repository, error) {
+	if flagRepo != nil {
+		return *flagRepo, nil
+	}
+	remote, err := clone.RemoteFetchURL(ctx, gitlocal.DefaultRemote)
 	if err != nil {
 		return Repository{}, fmt.Errorf("reading the origin remote: %w", err)
 	}
@@ -132,6 +208,10 @@ func originRepository(ctx context.Context, clone Clone) (Repository, error) {
 		return Repository{}, ErrNoRemote
 	}
 	return RepositoryFromRemote(remote)
+}
+
+func sameRepository(a, b Repository) bool {
+	return strings.EqualFold(a.Owner, b.Owner) && strings.EqualFold(a.Name, b.Name)
 }
 
 func (c *Client) pullRequestForBranch(ctx context.Context, repo Repository, branch string) (Target, error) {

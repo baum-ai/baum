@@ -95,46 +95,70 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`baum` reads GitHub through `internal/github`, a GraphQL client over the
-user's token, resolved by `internal/config`: `GITHUB_TOKEN`, then
-`GH_TOKEN`, then `github_token` in the config file, then `gh auth token`.
+`internal/github` is the GraphQL client the upcoming `baum bundle` command
+reads GitHub with, over the user's token as `internal/config` resolves it:
+`GITHUB_TOKEN`, then `GH_TOKEN`, then `github_token` in the config file,
+then `gh auth token --hostname github.com` (pinned, so a `GH_HOST` pointing
+at an Enterprise host never hands its token to github.com). The client
+follows no redirect, since the token would go with it.
 
 - The pull request is `--pr` on the repository `--repo` names or, by
   default, the one the clone's `origin` remote names (https, ssh and
-  scp-like URLs on github.com or an SSH alias naming GitHub). Without `--pr`
-  it is the pull request whose head is the current branch, from GitHub's
-  `associatedPullRequests`: the open one, otherwise the most recently
-  updated; several open ones are an error. A branch pushed from a fork
-  resolves to the pull request's base repository.
+  scp-like URLs on github.com or an SSH alias naming GitHub, read with
+  `insteadOf` rewrites applied). Without `--pr` it follows the current
+  branch's upstream (`branch.<name>.remote` and `branch.<name>.merge`): an
+  upstream of `refs/pull/N/head`, as `gh pr checkout` sets for a pull
+  request from a fork, is pull request N of that remote's repository, and an
+  upstream branch is looked up with GitHub's `associatedPullRequests` on that
+  remote's repository. Without a usable upstream, or when it finds nothing,
+  it looks up the branch of the same name on `--repo` or `origin`. The
+  lookup takes the open pull request, otherwise the most recently updated
+  one; several open ones are an error. The pull request found may target
+  another repository than the one looked up, such as the upstream a fork's
+  branch was opened against. With `--repo`, a pull request found through the
+  upstream counts only when it is in that repository.
 - Each part is its own query, paginated to the end: the header (state,
   draft, title, body and rendered body, author and association, base, head,
-  merge commit, requested users and teams), the commits in order with
+  merge commit), the requested users and teams, the commits in order with
   subjects and parents, the issue comments, the submitted reviews, the review
   threads with identity, resolution and every comment, the check suites with
   every run and the commit statuses of the head commit itself, and the base
   branch's protection. Every page of a pull-request-scoped part reads the
   head again; when it moved, the whole fetch starts over, up to three times,
   so every part describes one head.
+- The token owner's own draft review comments, which only they can see, are
+  left out, as is a thread holding nothing else.
 - A check is required when the base branch's classic protection rule or a
   ruleset requires its name as a status check context. Protection that
   cannot be read in full (no access, no such branch, more rules than one
   page) leaves every `required` null rather than false.
 - A part GitHub refuses, such as checks for a fine-grained token without
-  that permission, is left empty and recorded false in `sources`
-  (`pull_request`, `commits`, `comments`, `reviews`, `review_threads`,
-  `checks`, `required_checks`); the reason is returned beside it. Review
-  comments come from the threads, so they are absent with them.
+  that permission, or team reviewers for a classic token without
+  `read:org`, is left empty and recorded false in `sources`
+  (`pull_request`, `requested_reviewers`, `commits`, `comments`, `reviews`,
+  `review_threads`, `checks`, `required_checks`); the reason is returned
+  beside it. Only the header is required: without it the fetch fails.
+- Review comments are read only through the review threads, as the hosted
+  service reads them from its thread snapshot. When the threads part fails,
+  every inline review comment is missing too; `sources` records only
+  `review_threads` as false, and the returned reasons add a
+  `review_comments` entry saying so.
 - Rate limits and secondary limits are retried after the reset GitHub
   names, or with backoff from one minute when it names none; a 502, 503 or
   504 is retried with backoff from one second. A reset more than two minutes
-  away, or a limit that persists through four retries, fails the fetch with
-  the time to try again.
+  away, or a limit that persists through four retries, fails the fetch,
+  with the time to try again when GitHub gave one. Cancellation ends a wait
+  at once.
 - A Bot's comment that opens with the summary-comment marker is a baum
   host's own summary and is left out; a person's comment with the marker
-  stays. The REVIEW.md marker registry, once built, will flag bot reports
-  through the same hook.
+  stays. The marker the hosted App wrote before the product's rename is not
+  recognised locally, so such an old summary comment stays in the
+  conversation, flagged as a bot's. The REVIEW.md marker registry, once
+  built, will flag bot reports through the same hook.
 - The description's rendered images are listed for the attachment step,
   with their signed fetch URLs, which are never stored or logged.
+- The tests run the GraphQL documents against a fake GitHub; they are not
+  checked against GitHub's published schema.
 
 ### Contracts
 

@@ -11,7 +11,7 @@ import (
 // maps its synchronized rows, through the same bundle helpers.
 func mapEvidence(raw rawEvidence, sources bundle.Sources, opts FetchOptions) Evidence {
 	b := bundle.Bundle{Repository: raw.repository, Sources: sources}
-	b.PullRequest = pullRequest(raw.header, raw.commits)
+	b.PullRequest = pullRequest(raw.header, raw.reviewers, raw.commits)
 	b.Checks = checks(raw.suites, raw.statuses, raw.required, sources[SourceRequiredChecks])
 	b.Conversation = conversation(raw, opts.BotReportMarkers)
 	b.Threads = []bundle.Thread{}
@@ -30,14 +30,14 @@ func mapEvidence(raw rawEvidence, sources bundle.Sources, opts FetchOptions) Evi
 	}
 }
 
-func pullRequest(header pullRequestHeader, commits []commitNode) bundle.PullRequest {
+func pullRequest(header pullRequestHeader, reviewers []reviewRequest, commits []commitNode) bundle.PullRequest {
 	openedAt := header.CreatedAt
 	pr := bundle.PullRequest{
 		Number: header.Number, State: bundle.PullRequestState(header.State, header.Merged), Draft: header.IsDraft,
 		Title: header.Title, Body: header.Body, AuthorLogin: login(header.Author),
 		AuthorAssociation: header.AuthorAssociation, AuthorBot: bundle.IsBotActor(typename(header.Author)),
 		BaseRef: header.BaseRefName, BaseSHA: header.BaseRefOID, HeadRef: header.HeadRefName, HeadSHA: header.HeadRefOID,
-		RequestedReviewers: requestedReviewers(header.ReviewRequests.Nodes), OpenedAt: &openedAt,
+		RequestedReviewers: requestedReviewers(reviewers), OpenedAt: &openedAt,
 	}
 	if header.Merged && header.MergeCommit != nil {
 		pr.MergedSHA = header.MergeCommit.OID
@@ -160,7 +160,7 @@ func conversation(raw rawEvidence, botReportMarkers []string) []bundle.Conversat
 		add(item)
 	}
 	for _, thread := range raw.threads {
-		for _, comment := range thread.Comments.Nodes {
+		for _, comment := range submittedComments(thread) {
 			if comment.FullDatabaseID == 0 {
 				continue
 			}
@@ -182,14 +182,15 @@ func conversation(raw rawEvidence, botReportMarkers []string) []bundle.Conversat
 func threadInputs(threads []reviewThread) []bundle.ReviewThreadInput {
 	inputs := make([]bundle.ReviewThreadInput, 0, len(threads))
 	for _, thread := range threads {
-		if thread.ID == "" {
+		comments := submittedComments(thread)
+		if thread.ID == "" || len(comments) == 0 {
 			continue
 		}
 		input := bundle.ReviewThreadInput{
 			ID: thread.ID, Path: thread.Path, Side: thread.DiffSide, Line: thread.Line,
 			Resolved: thread.IsResolved, Outdated: thread.IsOutdated,
 		}
-		for _, comment := range thread.Comments.Nodes {
+		for _, comment := range comments {
 			input.Comments = append(input.Comments, bundle.ReviewThreadComment{
 				ID: strconv.FormatInt(int64(comment.FullDatabaseID), 10), URL: comment.URL,
 			})
@@ -197,6 +198,19 @@ func threadInputs(threads []reviewThread) []bundle.ReviewThreadInput {
 		inputs = append(inputs, input)
 	}
 	return inputs
+}
+
+// submittedComments leaves out the token owner's draft comments, which no
+// one else can see; a thread holding only drafts is not yet on GitHub for
+// anyone else either.
+func submittedComments(thread reviewThread) []reviewComment {
+	comments := make([]reviewComment, 0, len(thread.Comments.Nodes))
+	for _, comment := range thread.Comments.Nodes {
+		if !strings.EqualFold(comment.State, "PENDING") {
+			comments = append(comments, comment)
+		}
+	}
+	return comments
 }
 
 func login(a *actor) string {

@@ -123,3 +123,67 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	}
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "refs/heads/"), nil
 }
+
+// RemoteFetchURL is the URL git fetches the named remote from, with the
+// user's url.<base>.insteadOf rewrites applied, or "" when the clone has no
+// such remote. It reads configuration only and never contacts the remote.
+func (r *Repo) RemoteFetchURL(ctx context.Context, name string) (string, error) {
+	if !validRemoteName(name) {
+		return "", nil
+	}
+	done, err := r.begin()
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 8 << 10, timeout: r.opts.CommandTimeout},
+		"remote", "get-url", name)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", nil // no such remote
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// BranchUpstream is the upstream configured for a local branch: the
+// branch.<name>.remote (a remote name, a URL, or "." for the clone itself)
+// and branch.<name>.merge (the ref fetched, such as refs/heads/main), each ""
+// when unset.
+func (r *Repo) BranchUpstream(ctx context.Context, branch string) (remote, merge string, err error) {
+	if !validRefName(branch) {
+		return "", "", nil
+	}
+	done, err := r.begin()
+	if err != nil {
+		return "", "", err
+	}
+	defer done()
+	get := func(key string) (string, error) {
+		out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 8 << 10, timeout: r.opts.CommandTimeout},
+			"config", "--get", "branch."+branch+"."+key)
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+				return "", nil // the key is not set
+			}
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	if remote, err = get("remote"); err != nil {
+		return "", "", err
+	}
+	if merge, err = get("merge"); err != nil {
+		return "", "", err
+	}
+	return remote, merge, nil
+}
+
+func validRemoteName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, "-") && !strings.ContainsFunc(name, func(r rune) bool {
+		return r <= ' ' || r == 0x7f
+	})
+}

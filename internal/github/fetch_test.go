@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,11 +52,6 @@ func pullRequestData(head string) map[string]any {
 			"authorAssociation": "MEMBER",
 			"baseRefName":       "main", "baseRefOid": baseSHA, "headRefName": "feature/sizes", "headRefOid": head,
 			"merged": false, "mergeCommit": nil,
-			"reviewRequests": map[string]any{"nodes": []any{
-				map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": "reviewer-one"}},
-				map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "slug": "platform-team"}},
-				map[string]any{"requestedReviewer": nil},
-			}},
 		},
 	}}
 }
@@ -65,10 +62,17 @@ func prConnection(head, field string, connection map[string]any) fakeResponse {
 
 func reviewCommentNode(id, login, typename, body, path, clock, reviewID string) map[string]any {
 	return map[string]any{
-		"fullDatabaseId": id, "authorAssociation": "MEMBER", "author": map[string]any{"login": login, "__typename": typename},
+		"fullDatabaseId": id, "state": "SUBMITTED", "authorAssociation": "MEMBER", "author": map[string]any{"login": login, "__typename": typename},
 		"body": body, "path": path, "url": "https://github.com/acme/widgets/pull/7#discussion_r" + id,
 		"createdAt": at(clock), "pullRequestReview": map[string]any{"fullDatabaseId": reviewID},
 	}
+}
+
+// draftCommentNode is the token owner's own pending review comment.
+func draftCommentNode(id, path, clock string) map[string]any {
+	node := reviewCommentNode(id, "token-owner", "User", "Draft, not yet submitted.", path, clock, "299")
+	node["state"] = "PENDING"
+	return node
 }
 
 func checkRunNode(id int, name, status string, conclusion any) map[string]any {
@@ -84,6 +88,19 @@ func checkRunNode(id int, name, status string, conclusion any) map[string]any {
 func fixtureRoutes(t *testing.T) map[string]route {
 	return map[string]route{
 		"PullRequest": func(gqlRequest, int) fakeResponse { return data(pullRequestData(headSHA)) },
+		"PullRequestReviewRequests": pages(t, map[string]func() fakeResponse{
+			"": func() fakeResponse {
+				return prConnection(headSHA, "reviewRequests", page([]any{
+					map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": "reviewer-one"}},
+				}, "requests-1"))
+			},
+			"requests-1": func() fakeResponse {
+				return prConnection(headSHA, "reviewRequests", page([]any{
+					map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "slug": "platform-team"}},
+					map[string]any{"requestedReviewer": nil},
+				}, ""))
+			},
+		}),
 		"PullRequestCommits": pages(t, map[string]func() fakeResponse{
 			"": func() fakeResponse {
 				return prConnection(headSHA, "commits", page([]any{map[string]any{"commit": map[string]any{
@@ -126,13 +143,19 @@ func fixtureRoutes(t *testing.T) map[string]route {
 			"": func() fakeResponse {
 				return prConnection(headSHA, "reviewThreads", page([]any{map[string]any{
 					"id": "PRRT_1", "path": "size.go", "diffSide": "RIGHT", "line": 12, "isResolved": true, "isOutdated": false,
-					"comments": page([]any{reviewCommentNode("301", "octo-reviewer", "User", "Round half up.", "size.go", "03:21:00", "201")}, "thread-comments-1"),
+					"comments": page([]any{
+						reviewCommentNode("301", "octo-reviewer", "User", "Round half up.", "size.go", "03:21:00", "201"),
+						draftCommentNode("304", "size.go", "03:22:00"),
+					}, "thread-comments-1"),
 				}}, "threads-1"))
 			},
 			"threads-1": func() fakeResponse {
 				return prConnection(headSHA, "reviewThreads", page([]any{map[string]any{
 					"id": "PRRT_2", "path": "old.go", "diffSide": "LEFT", "line": 3, "isResolved": false, "isOutdated": false,
 					"comments": page([]any{reviewCommentNode("303", "cursor-bugbot", "Bot", "Possible nil dereference.", "old.go", "03:23:00", "203")}, ""),
+				}, map[string]any{
+					"id": "PRRT_3", "path": "draft.go", "diffSide": "RIGHT", "line": 8, "isResolved": false, "isOutdated": false,
+					"comments": page([]any{draftCommentNode("305", "draft.go", "03:24:00")}, ""),
 				}}, ""))
 			},
 		}),
@@ -255,7 +278,7 @@ func TestFetchMapsEveryPageOntoTheBundle(t *testing.T) {
 		t.Errorf("images (-want +got):\n%s", diff)
 	}
 	wantSources := bundle.Sources{
-		SourcePullRequest: true, SourceCommits: true, SourceComments: true, SourceReviews: true,
+		SourcePullRequest: true, SourceRequestedReviewers: true, SourceCommits: true, SourceComments: true, SourceReviews: true,
 		SourceReviewThreads: true, SourceChecks: true, SourceRequiredChecks: true,
 	}
 	if diff := cmp.Diff(wantSources, evidence.Sources); diff != "" || len(evidence.Unavailable) != 0 {
@@ -285,7 +308,7 @@ func TestFetchSendsTheTokenAndGitHubFieldNames(t *testing.T) {
 	queries := joinQueries(fake.recorded())
 	for _, field := range []string{
 		"bodyHTML", "baseRefOid", "headRefOid", "fullDatabaseId", "authorAssociation", "__typename",
-		"reviewRequests(first: 100)", "isResolved", "isOutdated", "diffSide", "reviewThreads(first: 50, after: $cursor)",
+		"reviewRequests(first: 100, after: $cursor)", "state", "isResolved", "isOutdated", "diffSide", "reviewThreads(first: 50, after: $cursor)",
 		"object(oid: $oid)", "$oid:GitObjectID!", "checkType: ALL", "permalink", "targetUrl",
 		"refUpdateRule", "requiredStatusCheckContexts", "... on RequiredStatusChecksParameters",
 	} {
@@ -357,7 +380,8 @@ func TestFetchRecordsAPartGitHubRefuses(t *testing.T) {
 	}
 	// A thread page failing after the first leaves no partial thread list,
 	// and no review comment from the pages that did arrive.
-	if len(evidence.Threads) != 0 || evidence.Sources[SourceReviewThreads] || evidence.Unavailable[SourceReviewThreads] == nil {
+	if len(evidence.Threads) != 0 || evidence.Sources[SourceReviewThreads] || evidence.Unavailable[SourceReviewThreads] == nil ||
+		evidence.Unavailable[UnavailableReviewComments] == nil {
 		t.Errorf("threads = %v, sources = %v", evidence.Threads, evidence.Sources)
 	}
 	for _, item := range evidence.Conversation {
@@ -469,5 +493,114 @@ func TestFetchFlagsRegisteredBotReports(t *testing.T) {
 		if item.BotReport != (item.ID == "104") {
 			t.Errorf("item %s BotReport = %v", item.ID, item.BotReport)
 		}
+	}
+}
+
+func TestFetchLeavesOutDraftReviewComments(t *testing.T) {
+	evidence, err := newFakeGitHub(t, fixtureRoutes(t)).client(nil).Fetch(context.Background(), acme, 7, FetchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range evidence.Conversation {
+		if item.ID == "304" || item.ID == "305" {
+			t.Errorf("draft comment %s entered the conversation", item.ID)
+		}
+	}
+	for _, thread := range evidence.Threads {
+		if thread.ID == "PRRT_3" {
+			t.Error("a thread holding only drafts entered the threads")
+		}
+	}
+	if len(evidence.Threads) != 2 {
+		t.Errorf("threads = %+v", evidence.Threads)
+	}
+}
+
+func TestFetchKeepsGoingWhenTeamReviewersNeedAScope(t *testing.T) {
+	routes := fixtureRoutes(t)
+	routes["PullRequestReviewRequests"] = func(gqlRequest, int) fakeResponse {
+		return graphQLError(map[string]any{"repository": map[string]any{"pullRequest": nil}}, "INSUFFICIENT_SCOPES",
+			"Your token has not been granted the required scopes to execute this query. The 'slug' field requires one of the following scopes: ['read:org'].")
+	}
+	evidence, err := newFakeGitHub(t, routes).client(nil).Fetch(context.Background(), acme, 7, FetchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.PullRequest.RequestedReviewers == nil || len(evidence.PullRequest.RequestedReviewers) != 0 ||
+		evidence.Sources[SourceRequestedReviewers] || evidence.Unavailable[SourceRequestedReviewers] == nil {
+		t.Errorf("reviewers = %#v, sources = %v, unavailable = %v",
+			evidence.PullRequest.RequestedReviewers, evidence.Sources, evidence.Unavailable)
+	}
+	if evidence.PullRequest.Title == "" || !evidence.Sources[SourceCommits] || !evidence.Sources[SourceChecks] || len(evidence.Conversation) == 0 {
+		t.Errorf("the rest of the pull request should be read: sources = %v", evidence.Sources)
+	}
+}
+
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	var mu sync.Mutex
+	var elsewhere []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		elsewhere = append(elsewhere, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	t.Cleanup(other.Close)
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusMovedPermanently} {
+		fake := newFakeGitHub(t, map[string]route{"PullRequest": func(gqlRequest, int) fakeResponse {
+			return fakeResponse{status: status, header: http.Header{"Location": {other.URL + "/graphql"}}, body: map[string]any{}}
+		}})
+		if _, err := fake.client(nil).Fetch(context.Background(), acme, 7, FetchOptions{}); err == nil {
+			t.Errorf("%d: the fetch followed the redirect", status)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(elsewhere) != 0 {
+		t.Errorf("the other host received %d requests, with Authorization %q", len(elsewhere), elsewhere)
+	}
+}
+
+func TestRateLimitedErrorHasNoResumeTimeGitHubDidNotGive(t *testing.T) {
+	routes := fixtureRoutes(t)
+	routes["PullRequest"] = func(gqlRequest, int) fakeResponse {
+		return fakeResponse{status: http.StatusTooManyRequests, body: map[string]any{"message": "slow down"}}
+	}
+	fake := newFakeGitHub(t, routes)
+	var waits []time.Duration
+	_, err := fake.client(&waits).Fetch(context.Background(), acme, 7, FetchOptions{})
+	var limited *RateLimitedError
+	if !errors.As(err, &limited) || !limited.ResumeAt.IsZero() || !strings.Contains(limited.Error(), "try again later") {
+		t.Fatalf("err = %v, want a rate limit without a resume time", err)
+	}
+	if len(waits) != 4 || fake.callCount("PullRequest") != 5 {
+		t.Errorf("waits = %v after %d calls; want four backoffs and five calls", waits, fake.callCount("PullRequest"))
+	}
+}
+
+func TestFetchStopsWaitingWhenCancelled(t *testing.T) {
+	routes := fixtureRoutes(t)
+	routes["PullRequestComments"] = func(gqlRequest, int) fakeResponse {
+		return fakeResponse{status: http.StatusServiceUnavailable, body: map[string]any{"message": "unavailable"}}
+	}
+	fake := newFakeGitHub(t, routes)
+	c := New("test-token", Options{Endpoint: fake.server.URL})
+	c.retryBackoff = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for fake.callCount("PullRequestComments") == 0 {
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+	}()
+	started := time.Now()
+	_, err := c.Fetch(ctx, acme, 7, FetchOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("Fetch took %v to notice the cancellation", elapsed)
 	}
 }

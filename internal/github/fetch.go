@@ -13,14 +13,20 @@ import (
 
 // The bundle sources a fetch records, one per part read from GitHub. A part
 // is true when GitHub returned all of it, even when that is nothing.
+// Review comments are read with the review threads, so they have no source
+// of their own: when the threads fail, Unavailable says so under
+// UnavailableReviewComments.
 const (
-	SourcePullRequest    = "pull_request"
-	SourceCommits        = "commits"
-	SourceComments       = "comments"
-	SourceReviews        = "reviews"
-	SourceReviewThreads  = "review_threads"
-	SourceChecks         = "checks"
-	SourceRequiredChecks = "required_checks"
+	SourcePullRequest        = "pull_request"
+	SourceRequestedReviewers = "requested_reviewers"
+	SourceCommits            = "commits"
+	SourceComments           = "comments"
+	SourceReviews            = "reviews"
+	SourceReviewThreads      = "review_threads"
+	SourceChecks             = "checks"
+	SourceRequiredChecks     = "required_checks"
+
+	UnavailableReviewComments = "review_comments"
 )
 
 // ErrHeadMoved reports a pull request whose head changed while it was being
@@ -98,6 +104,7 @@ func (c *Client) Fetch(ctx context.Context, repo Repository, number int, opts Fe
 type rawEvidence struct {
 	repository string
 	header     pullRequestHeader
+	reviewers  []reviewRequest
 	commits    []commitNode
 	comments   []issueComment
 	reviews    []review
@@ -121,6 +128,7 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 		name string
 		read func() error
 	}{
+		{SourceRequestedReviewers, func() (err error) { raw.reviewers, err = f.reviewRequests(ctx); return err }},
 		{SourceCommits, func() (err error) { raw.commits, err = f.commits(ctx); return err }},
 		{SourceComments, func() (err error) { raw.comments, err = f.comments(ctx); return err }},
 		{SourceReviews, func() (err error) { raw.reviews, err = f.reviews(ctx); return err }},
@@ -141,6 +149,9 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 			sources[part.name] = false
 			unavailable[part.name] = err
 		}
+	}
+	if threadsErr := unavailable[SourceReviewThreads]; threadsErr != nil {
+		unavailable[UnavailableReviewComments] = fmt.Errorf("review comments are read with the review threads: %w", threadsErr)
 	}
 	evidence := mapEvidence(raw, sources, opts)
 	evidence.Unavailable = unavailable
@@ -180,6 +191,23 @@ func (f partReader) variables(cursor *string) map[string]any {
 
 func (f partReader) notFound() error {
 	return fmt.Errorf("%w: pull request %s#%d", ErrNotFound, f.repo, f.number)
+}
+
+func (f partReader) reviewRequests(ctx context.Context) ([]reviewRequest, error) {
+	return paginate(nil, func(cursor *string) ([]reviewRequest, pageInfo, error) {
+		var q reviewRequestsQuery
+		if err := f.client.query(ctx, "PullRequestReviewRequests", &q, f.variables(cursor)); err != nil {
+			return nil, pageInfo{}, err
+		}
+		pr := q.Repository.PullRequest
+		if pr == nil {
+			return nil, pageInfo{}, f.notFound()
+		}
+		if pr.HeadRefOID != f.head {
+			return nil, pageInfo{}, ErrHeadMoved
+		}
+		return pr.ReviewRequests.Nodes, pr.ReviewRequests.PageInfo, nil
+	})
 }
 
 func (f partReader) commits(ctx context.Context) ([]commitNode, error) {

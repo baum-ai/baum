@@ -238,6 +238,28 @@ func TestResolveGitHubTokenFallsBackToGH(t *testing.T) {
 	}
 }
 
+// TestGHAuthTokenAsksForGitHubCom runs a stand-in gh that prints a token only
+// when asked for github.com's, as a GH_HOST pointing elsewhere would
+// otherwise switch the account.
+func TestGHAuthTokenAsksForGitHubCom(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in gh is a shell script")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"[ \"$*\" = \"auth token --hostname github.com\" ] || { echo \"unexpected arguments: $*\" >&2; exit 2; }\n" +
+		"echo gho_github_com\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("GH_HOST", "github.example.com")
+	token, err := (Config{}).ResolveGitHubToken(context.Background())
+	if err != nil || token != "gho_github_com" {
+		t.Fatalf("token = %q, err = %v; want github.com's token", token, err)
+	}
+}
+
 func TestDetect(t *testing.T) {
 	onPath := func(names ...string) func(string) (string, error) {
 		return func(name string) (string, error) {

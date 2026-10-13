@@ -11,7 +11,7 @@ import (
 // Every pull-request-scoped page also reads the head, so a push between pages
 // is noticed. They follow the hosted service's documents for the same rows,
 // adding thread identity and resolution, the pull request's author
-// association and requested reviewers, and branch protection.
+// association, requested reviewers and branch protection.
 
 type pageInfo struct {
 	HasNextPage bool
@@ -56,15 +56,26 @@ type pullRequestHeader struct {
 	MergeCommit       *struct {
 		OID string `graphql:"oid"`
 	}
-	ReviewRequests struct {
-		Nodes []reviewRequest
-	} `graphql:"reviewRequests(first: 100)"`
 }
 
 type pullRequestQuery struct {
 	Repository *struct {
 		NameWithOwner string
 		PullRequest   *pullRequestHeader `graphql:"pullRequest(number: $number)"`
+	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
+// reviewRequestsQuery is its own part: a team reviewer needs read:org, which
+// a classic token may lack, and that must not fail the whole fetch.
+type reviewRequestsQuery struct {
+	Repository struct {
+		PullRequest *struct {
+			HeadRefOID     string `graphql:"headRefOid"`
+			ReviewRequests struct {
+				Nodes    []reviewRequest
+				PageInfo pageInfo
+			} `graphql:"reviewRequests(first: 100, after: $cursor)"`
+		} `graphql:"pullRequest(number: $number)"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
@@ -137,8 +148,12 @@ type reviewsQuery struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
+// reviewComment carries its state because the token owner's own draft
+// comments (PENDING) are visible to them; they are not part of the
+// conversation.
 type reviewComment struct {
 	FullDatabaseID    githubapi.BigInt
+	State             string
 	AuthorAssociation string
 	Author            *actor
 	Body              string

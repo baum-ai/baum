@@ -82,3 +82,33 @@ func TestCurrentBranch(t *testing.T) {
 		t.Fatalf("detached: %q, %v", got, err)
 	}
 }
+
+func TestRemoteFetchURLAppliesInsteadOf(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	git(t, f.dir, "config", "url.https://github.com/.insteadOf", "gh:")
+	git(t, f.dir, "remote", "add", "origin", "gh:acme/widgets")
+	ctx := context.Background()
+	if got, err := r.RemoteFetchURL(ctx, "origin"); err != nil || got != "https://github.com/acme/widgets" {
+		t.Errorf("origin = %q, %v; want the rewritten URL", got, err)
+	}
+	for _, name := range []string{"upstream", "", "--upload-pack=x"} {
+		if got, err := r.RemoteFetchURL(ctx, name); err != nil || got != "" {
+			t.Errorf("remote %q = %q, %v; want none", name, got, err)
+		}
+	}
+}
+
+func TestBranchUpstream(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	git(t, f.dir, "config", "branch.topic/sizes.remote", "upstream")
+	git(t, f.dir, "config", "branch.topic/sizes.merge", "refs/pull/42/head")
+	ctx := context.Background()
+	if remote, merge, err := r.BranchUpstream(ctx, "topic/sizes"); err != nil || remote != "upstream" || merge != "refs/pull/42/head" {
+		t.Errorf("upstream = %q, %q, %v", remote, merge, err)
+	}
+	if remote, merge, err := r.BranchUpstream(ctx, "main"); err != nil || remote != "" || merge != "" {
+		t.Errorf("no upstream = %q, %q, %v", remote, merge, err)
+	}
+}

@@ -64,7 +64,7 @@ func New(token string, opts Options) *Client {
 		Base:   githubapi.RateLimitTransport(base),
 	}
 	return &Client{
-		gql:              graphql.NewClient(endpoint, &http.Client{Transport: transport}),
+		gql:              graphql.NewClient(endpoint, &http.Client{Transport: transport, CheckRedirect: refuseRedirect}),
 		maxRetries:       4,
 		maxWait:          2 * time.Minute,
 		rateLimitBackoff: time.Minute,
@@ -73,6 +73,15 @@ func New(token string, opts Options) *Client {
 		sleep:            sleep,
 	}
 }
+
+// errRedirect reports a redirect the client refused to follow.
+var errRedirect = errors.New("github answered with a redirect, which baum does not follow")
+
+// refuseRedirect follows no redirect. The token transport sets the
+// Authorization header on every request it sends, including one to another
+// host, so a followed redirect could hand the token to it; GitHub's GraphQL
+// endpoint never redirects.
+func refuseRedirect(*http.Request, []*http.Request) error { return errRedirect }
 
 // NewFromConfig returns a client for the token cfg resolves: the configured
 // one (GITHUB_TOKEN, then GH_TOKEN, then the config file), or `gh auth token`
@@ -118,14 +127,10 @@ func (c *Client) query(ctx context.Context, operation string, q any, variables m
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		wait, limited, retry := c.retryWait(err, attempt)
+		wait, resumeAt, limited, retry := c.retryWait(err, attempt)
 		switch {
 		case limited && (!retry || attempt >= c.maxRetries || wait > c.maxWait):
-			limit := &RateLimitedError{Err: err}
-			if wait > 0 {
-				limit.ResumeAt = c.now().Add(wait)
-			}
-			return limit
+			return &RateLimitedError{ResumeAt: resumeAt, Err: err}
 		case !retry || attempt >= c.maxRetries:
 			if graphQLErrorMentions(err, "could not resolve to a") {
 				return fmt.Errorf("%w: %s", ErrNotFound, graphQLMessages(err))
@@ -138,24 +143,25 @@ func (c *Client) query(ctx context.Context, operation string, q any, variables m
 	}
 }
 
-// retryWait says how long to wait before retrying err, whether err is a rate
-// limit, and whether it is worth retrying at all.
-func (c *Client) retryWait(err error, attempt int) (wait time.Duration, limited, retry bool) {
+// retryWait says how long to wait before retrying err, when GitHub said to
+// resume (zero when it did not say), whether err is a rate limit, and whether
+// it is worth retrying at all.
+func (c *Client) retryWait(err error, attempt int) (wait time.Duration, resumeAt time.Time, limited, retry bool) {
 	var rateLimit *githubapi.RateLimitError
 	if errors.As(err, &rateLimit) || graphQLErrorMentions(err, "rate limit") {
 		if rateLimit != nil && !rateLimit.ResumeAt.IsZero() {
-			return max(rateLimit.ResumeAt.Sub(c.now()), 0), true, true
+			return max(rateLimit.ResumeAt.Sub(c.now()), 0), rateLimit.ResumeAt, true, true
 		}
-		return c.rateLimitBackoff << attempt, true, true
+		return c.rateLimitBackoff << attempt, time.Time{}, true, true
 	}
 	var network graphql.NetworkError
 	if errors.As(err, &network) {
 		switch network.StatusCode() {
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			return c.retryBackoff << attempt, false, true
+			return c.retryBackoff << attempt, time.Time{}, false, true
 		}
 	}
-	return 0, false, false
+	return 0, time.Time{}, false, false
 }
 
 // graphQLErrorMentions reports a GraphQL application error whose message

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,11 +13,24 @@ import (
 )
 
 type stubClone struct {
-	remote, branch string
+	// remotes maps remote names to their fetch URLs.
+	remotes                       map[string]string
+	branch                        string
+	upstreamRemote, upstreamMerge string
 }
 
-func (c stubClone) RemoteURL(context.Context) (string, error)     { return c.remote, nil }
+func (c stubClone) RemoteFetchURL(_ context.Context, name string) (string, error) {
+	return c.remotes[name], nil
+}
 func (c stubClone) CurrentBranch(context.Context) (string, error) { return c.branch, nil }
+func (c stubClone) BranchUpstream(_ context.Context, branch string) (string, string, error) {
+	if branch != c.branch {
+		return "", "", nil
+	}
+	return c.upstreamRemote, c.upstreamMerge, nil
+}
+
+func origin(url string) map[string]string { return map[string]string{"origin": url} }
 
 func TestRepositoryFromRemote(t *testing.T) {
 	for remote, want := range map[string]Repository{
@@ -66,7 +80,7 @@ func TestParseRepository(t *testing.T) {
 func TestResolvePRFromFlagsMakesNoRequest(t *testing.T) {
 	c := newFakeGitHub(t, map[string]route{}).client(nil)
 	ctx := context.Background()
-	clone := stubClone{remote: "git@github.com:acme/widgets.git", branch: "feature"}
+	clone := stubClone{remotes: origin("git@github.com:acme/widgets.git"), branch: "feature"}
 	if got, err := c.ResolvePR(ctx, clone, ResolveOptions{PR: 7}); err != nil || got != (Target{Repository: acme, Number: 7}) {
 		t.Errorf("--pr on origin: %v, %v", got, err)
 	}
@@ -79,8 +93,8 @@ func TestResolvePRFromFlagsMakesNoRequest(t *testing.T) {
 		want  error
 	}{
 		"no origin":         {clone: stubClone{}, opts: ResolveOptions{PR: 7}, want: ErrNoRemote},
-		"non-GitHub origin": {clone: stubClone{remote: "https://gitlab.com/acme/widgets.git"}, opts: ResolveOptions{PR: 7}, want: ErrNotGitHubRemote},
-		"detached HEAD":     {clone: stubClone{remote: "git@github.com:acme/widgets.git"}, want: ErrDetachedHead},
+		"non-GitHub origin": {clone: stubClone{remotes: origin("https://gitlab.com/acme/widgets.git")}, opts: ResolveOptions{PR: 7}, want: ErrNotGitHubRemote},
+		"detached HEAD":     {clone: stubClone{remotes: origin("git@github.com:acme/widgets.git")}, want: ErrDetachedHead},
 	} {
 		if _, err := c.ResolvePR(ctx, test.clone, test.opts); !errors.Is(err, test.want) {
 			t.Errorf("%s: err = %v, want %v", name, err, test.want)
@@ -132,7 +146,7 @@ func TestResolvePRFromTheCurrentBranch(t *testing.T) {
 				}
 				return data(map[string]any{"repository": map[string]any{"ref": test.ref}})
 			}})
-			got, err := fake.client(nil).ResolvePR(context.Background(), stubClone{remote: "https://github.com/acme/widgets.git", branch: "feature"}, ResolveOptions{})
+			got, err := fake.client(nil).ResolvePR(context.Background(), stubClone{remotes: origin("https://github.com/acme/widgets.git"), branch: "feature"}, ResolveOptions{})
 			if test.err != nil {
 				if !errors.Is(err, test.err) {
 					t.Fatalf("err = %v, want %v", err, test.err)
@@ -143,6 +157,88 @@ func TestResolvePRFromTheCurrentBranch(t *testing.T) {
 				t.Fatalf("ResolvePR = %v, %v; want %v", got, err, test.want)
 			}
 		})
+	}
+}
+
+// branchRoutes answers BranchPullRequests from prs, keyed by
+// "owner/name refs/heads/branch"; any other question has no pull request.
+func branchRoutes(t *testing.T, prs map[string][]any) map[string]route {
+	return map[string]route{"BranchPullRequests": func(request gqlRequest, _ int) fakeResponse {
+		key := fmt.Sprintf("%v/%v %v", request.Variables["owner"], request.Variables["name"], request.Variables["ref"])
+		nodes, ok := prs[key]
+		if !ok {
+			nodes = []any{}
+		}
+		return data(map[string]any{"repository": map[string]any{"ref": map[string]any{"associatedPullRequests": map[string]any{"nodes": nodes}}}})
+	}}
+}
+
+func TestResolvePRFromTheBranchUpstream(t *testing.T) {
+	upstreamWidgets := Repository{Owner: "upstream", Name: "widgets"}
+	remotes := map[string]string{
+		"origin":   "https://github.com/acme/widgets.git",
+		"upstream": "https://github.com/upstream/widgets.git",
+		"fork":     "https://github.com/someone/widgets.git",
+	}
+	prs := map[string][]any{
+		"someone/widgets refs/heads/sizes-upstream": {associated(12, "OPEN", "sizes-upstream", "upstream/widgets")},
+		"acme/widgets refs/heads/sizes":             {associated(21, "OPEN", "sizes", "acme/widgets")},
+		"other/repo refs/heads/sizes":               {associated(31, "OPEN", "sizes", "other/repo")},
+	}
+	for name, test := range map[string]struct {
+		clone    stubClone
+		opts     ResolveOptions
+		want     Target
+		requests int
+	}{
+		"gh pr checkout of a fork pull request": {
+			clone: stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "upstream", upstreamMerge: "refs/pull/42/head"},
+			want:  Target{Repository: upstreamWidgets, Number: 42},
+		},
+		"an upstream given as a URL": {
+			clone: stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "git@github.com:upstream/widgets.git", upstreamMerge: "refs/pull/5/head"},
+			want:  Target{Repository: upstreamWidgets, Number: 5},
+		},
+		"an upstream branch with another name": {
+			clone:    stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "fork", upstreamMerge: "refs/heads/sizes-upstream"},
+			want:     Target{Repository: upstreamWidgets, Number: 12},
+			requests: 1,
+		},
+		"no pull request through the upstream falls back to origin": {
+			clone:    stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "fork", upstreamMerge: "refs/heads/unknown"},
+			want:     Target{Repository: acme, Number: 21},
+			requests: 2,
+		},
+		"an upstream outside --repo falls back to --repo": {
+			clone:    stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "upstream", upstreamMerge: "refs/pull/42/head"},
+			opts:     ResolveOptions{Repo: "other/repo"},
+			want:     Target{Repository: Repository{Owner: "other", Name: "repo"}, Number: 31},
+			requests: 1,
+		},
+		"a local upstream is ignored": {
+			clone:    stubClone{remotes: remotes, branch: "sizes", upstreamRemote: ".", upstreamMerge: "refs/heads/main"},
+			want:     Target{Repository: acme, Number: 21},
+			requests: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeGitHub(t, branchRoutes(t, prs))
+			got, err := fake.client(nil).ResolvePR(context.Background(), test.clone, test.opts)
+			if err != nil || got != test.want {
+				t.Fatalf("ResolvePR = %v, %v; want %v", got, err, test.want)
+			}
+			if n := len(fake.recorded()); n != test.requests {
+				t.Errorf("made %d requests, want %d", n, test.requests)
+			}
+		})
+	}
+
+	// The same question is not asked twice when the upstream is origin's
+	// branch of the same name.
+	fake := newFakeGitHub(t, branchRoutes(t, nil))
+	clone := stubClone{remotes: remotes, branch: "sizes", upstreamRemote: "origin", upstreamMerge: "refs/heads/sizes"}
+	if _, err := fake.client(nil).ResolvePR(context.Background(), clone, ResolveOptions{}); !errors.Is(err, ErrNoPullRequest) || len(fake.recorded()) != 1 {
+		t.Errorf("err = %v after %d requests; want ErrNoPullRequest after one", err, len(fake.recorded()))
 	}
 }
 
@@ -161,7 +257,7 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 	if err := os.MkdirAll(ghDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte("#!/bin/sh\necho gh-cli-token\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte("#!/bin/sh\n[ \"$*\" = \"auth token --hostname github.com\" ] || exit 2\necho gh-cli-token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

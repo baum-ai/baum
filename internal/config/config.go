@@ -232,10 +232,12 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// ghAuthToken asks the GitHub CLI for the token of its active account. A
-// variable so tests can stand in for the binary.
+// ghAuthToken asks the GitHub CLI for the token of its active github.com
+// account. The host is pinned: baum only talks to github.com, and GH_HOST
+// would otherwise hand it an Enterprise token. A variable so tests can stand
+// in for the binary.
 var ghAuthToken = func(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com").Output()
 	if err != nil {
 		return "", err
 	}

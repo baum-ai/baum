@@ -194,14 +194,15 @@ environment variables are:
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
-baum reads the pull request, its commits, checks and statuses, comments,
-reviews and review threads, and the base branch's protection from GitHub's
-GraphQL API with that token. A token that cannot read part of it (a
-fine-grained token without checks access, say) leaves that part out of the
-bundle, recorded as unavailable in its `sources`; a check's `required` stays unknown unless the
-protection is readable. The repository is `--repo` or the one `origin`
-names, and the pull request is `--pr` or the one whose head is the current
-branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
+For the upcoming `baum bundle` command, baum reads the pull request, its
+commits, checks and statuses, comments, reviews and review threads, and the
+base branch's protection from GitHub's GraphQL API with that token. A token
+that cannot read part of it (a fine-grained token without checks access,
+say) leaves that part out of the bundle, recorded as unavailable in its
+`sources`; a check's `required` stays unknown unless the protection is
+readable. The repository will be `--repo` or the one `origin` names, and the
+pull request `--pr` or the one for the current branch. See
+[ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
 `backend = "auto"` picks the first of `claude`, `codex` and `cursor-agent`
 found on `PATH`, and falls back to `anthropic` when `ANTHROPIC_API_KEY` is set.
