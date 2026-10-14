@@ -39,6 +39,15 @@ func IsCommitCommand(command string) bool {
 }
 
 func isShellCommit(call *syntax.CallExpr) bool {
+	if !isShellScript(call) {
+		return false
+	}
+	script, ok := staticWord(call.Args[2])
+	return ok && IsCommitCommand(script)
+}
+
+// isShellScript reports whether call is `bash|sh|zsh -c <script>`.
+func isShellScript(call *syntax.CallExpr) bool {
 	if len(call.Args) < 3 {
 		return false
 	}
@@ -52,8 +61,7 @@ func isShellCommit(call *syntax.CallExpr) bool {
 	if !strings.HasPrefix(flags, "-") || !strings.Contains(strings.TrimLeft(flags, "-"), "c") {
 		return false
 	}
-	script, ok := staticWord(call.Args[2])
-	return ok && IsCommitCommand(script)
+	return true
 }
 
 func staticWord(word *syntax.Word) (string, bool) {
@@ -117,12 +125,70 @@ func gitGlobalOptionTakesArgument(option string) bool {
 	}
 }
 
-// CommitSHAs extracts commit hashes from `git commit` stdout and from a
-// following `git log --oneline` used to expose the result of a quiet commit.
-func CommitSHAs(stdout string) []string {
+// TrustsOnelineLog reports whether a trailing `git log --oneline` in command
+// only runs after a successful commit: `git log` follows `git commit` through
+// `&&`. Newline or `;` separated scripts keep going when the commit fails (a
+// rejecting hook, nothing to commit), so the SHA `git log` prints is then the
+// previous HEAD's.
+func TrustsOnelineLog(command string) bool {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return false
+	}
+	trusted := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if trusted {
+			return false
+		}
+		switch node := node.(type) {
+		case *syntax.BinaryCmd:
+			if node.Op == syntax.AndStmt && containsCall(node.X, isGitCommit) && containsCall(node.Y, isGitLog) {
+				trusted = true
+			}
+		case *syntax.CallExpr:
+			if isShellScript(node) {
+				script, ok := staticWord(node.Args[2])
+				trusted = ok && TrustsOnelineLog(script)
+			}
+		}
+		return !trusted
+	})
+	return trusted
+}
+
+func containsCall(node syntax.Node, match func(*syntax.CallExpr) bool) bool {
+	found := false
+	syntax.Walk(node, func(n syntax.Node) bool {
+		if call, ok := n.(*syntax.CallExpr); ok && match(call) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func isGitLog(call *syntax.CallExpr) bool {
+	if len(call.Args) < 2 || call.Args[0].Lit() != "git" {
+		return false
+	}
+	for _, arg := range call.Args[1:] {
+		if arg.Lit() == "log" {
+			return true
+		}
+	}
+	return false
+}
+
+// CommitSHAs extracts commit hashes from `git commit` stdout and, when
+// trustOneline is set (see TrustsOnelineLog), from a following
+// `git log --oneline` used to expose the result of a quiet commit.
+func CommitSHAs(stdout string, trustOneline bool) []string {
 	var shas []string
 	for _, m := range commitSHARe.FindAllStringSubmatch(stdout, -1) {
 		shas = append(shas, m[1])
+	}
+	if !trustOneline {
+		return shas
 	}
 	if m := onelineSHARe.FindStringSubmatch(stdout); m != nil {
 		shas = append(shas, m[1])
