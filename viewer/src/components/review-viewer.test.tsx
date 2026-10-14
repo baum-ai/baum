@@ -394,8 +394,20 @@ describe("ReviewViewer's review time estimate", () => {
     ).not.toBeNull();
   });
 
-  it("says nothing when the estimate is null, absent or outside the schema's range", async () => {
-    for (const minutes of [null, undefined, 0, 0.4, -3, 241, 5000, Number.NaN, Infinity]) {
+  it("says nothing when the estimate is null, absent or not a whole number from 1 to 240", async () => {
+    for (const minutes of [
+      null,
+      undefined,
+      0,
+      0.4,
+      1.4,
+      240.4,
+      -3,
+      241,
+      5000,
+      Number.NaN,
+      Infinity,
+    ]) {
       const container = await render(
         <Host>
           <ReviewViewer document={withMinutes(minutes)} />
