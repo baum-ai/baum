@@ -132,7 +132,7 @@ func lenientFixture() []byte {
 	// attention reference, a revision named by role, no review_version and an
 	// excerpt named by header only.
 	return []byte(`{
-	  "summary": {"text": "Changes parser behavior.", "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "authorship": {"declared": "unknown", "declared_tools": null}},
+	  "summary": {"text": "Changes parser behavior.", "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
 	  "sections": [{
 	    "id": "Parser Core", "title": "Parser", "kind": "logical",
 	    "hunks": ["h_0123456789ab", "h_0123456789ab", "h_ffffffffffff"],
@@ -777,7 +777,11 @@ func TestReviewMinutesIsOptionalAndKeptInRange(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			doc, err := decodeObject(authoredFixture(), "fixture")
 			checkNoError(t, err)
-			if tc.value != absent {
+			// The model is always asked for one, but a stored document from before
+			// the estimate, or a repaired one, may lack it.
+			if tc.value == absent {
+				delete(doc["summary"].(map[string]any), "review_minutes")
+			} else {
 				doc["summary"].(map[string]any)["review_minutes"] = tc.value
 			}
 			published, findings := v.Complete(tileJSON(t, doc), bundle, "", "fixture-model", now)
@@ -819,5 +823,13 @@ func TestModelSchemaAsksForReviewMinutes(t *testing.T) {
 		if _, bounded := minutes[key]; bounded {
 			t.Errorf("the model schema bounds summary.review_minutes with %s", key)
 		}
+	}
+	// The model always gives an estimate: required and not nullable, so a
+	// strict provider cannot answer null and skip it.
+	if !containsString(stringSlice(summary["required"]), "review_minutes") {
+		t.Error("the model schema does not require summary.review_minutes")
+	}
+	if acceptsNull(minutes) {
+		t.Errorf("the model schema lets summary.review_minutes be null: %v", minutes)
 	}
 }
