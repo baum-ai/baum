@@ -118,8 +118,9 @@ left out rather than shown empty or failed:
 Decisions show who took them: a section's Key decisions and the Activity
 tab's list badge each one Human or Agent, and an agent decision carrying
 `approved_by_human` reads "Agent · approved" with a tick, so the approval is
-in words rather than colour alone. It still counts as the agent's in the
-Activity tab's agent and person tally. A decision that carries them also
+in words rather than colour alone. The Activity tab lists the agent's own
+calls first, then those made or approved by a person, an approved agent
+decision among the latter. A decision that carries them also
 shows what prompted it and why ("Prompted by review: …") and the session's
 own words as a quote; both are plain text from the session, never Markdown.
 

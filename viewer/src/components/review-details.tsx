@@ -15,7 +15,7 @@ import { HarnessName, ModelName } from "./brand-logo";
 import { cn } from "./classnames";
 import { EM_DASH, formatDate, formatDuration } from "./format";
 import { ChevronDownIcon } from "./icons";
-import { Markdown } from "./markdown";
+import { InlineMarkdown } from "./markdown";
 import { ChecksPart } from "./review-checks";
 import { ReviewExchange, StackReviewExchange } from "./review-exchange";
 import {
@@ -391,9 +391,11 @@ function DecisionGroup({ label, decisions }: { label: string; decisions: ListedD
                   aria-hidden
                   className="mt-1.5 flex-none -rotate-90 text-(--text-tertiary) transition-transform group-open:rotate-0"
                 />
-                <Markdown className="line-clamp-2 min-w-0 flex-1 text-(--text-primary) group-open:line-clamp-none">
+                {/* A title in a disclosure: links read as text and blocks
+                    unwrap, so the summary holds no block or control. */}
+                <InlineMarkdown className="line-clamp-2 min-w-0 flex-1 text-(--text-primary) group-open:line-clamp-none">
                   {decision.text}
-                </Markdown>
+                </InlineMarkdown>
               </summary>
               <div className="mt-1.5 space-y-1.5 pl-[18px]">
                 <DecisionContext decision={decision} />

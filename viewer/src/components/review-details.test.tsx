@@ -29,6 +29,25 @@ describe("review activity", () => {
     expect(checks).toBeLessThan(html.indexOf('aria-label="Review exchange"'));
   });
 
+  it("draws a decision's title and alternative inline: links read as text, HTML stays text", () => {
+    const document = fixture();
+    const block = document.sections
+      .flatMap((section) => section.blocks)
+      .find((candidate) => candidate.kind === "decisions") as Extract<Block, { kind: "decisions" }>;
+    block.items![0]!.text = "Use [the cache](https://example.com) <b>now</b>";
+    block.items![0]!.rejected = "- A [list](https://example.com)";
+    const html = renderToStaticMarkup(
+      <ReviewActivity document={document} onSelectSection={() => {}} />,
+    );
+    const decisions = html.slice(html.indexOf('aria-label="Decisions"'));
+    expect(decisions).toContain("Use the cache &lt;b&gt;now&lt;/b&gt;");
+    expect(decisions).toContain("A list");
+    expect(decisions).not.toContain('href="https://example.com"');
+    // Each title holds no block and no control.
+    for (const [, title] of decisions.matchAll(/<summary[^>]*>([^]*?)<\/summary>/g))
+      expect(title).not.toMatch(/<(p|ul|a)[ >]/);
+  });
+
   it("leaves the checks out when the host says so", () => {
     const html = renderToStaticMarkup(
       <ReviewActivity document={fixture()} checks={null} onSelectSection={() => {}} />,
