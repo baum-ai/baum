@@ -630,6 +630,20 @@ export function riskLifecycleTone(risk: Risk, sectionState: SectionState): Tone 
  *  of names rather than as the names themselves. */
 const ACRONYMS = new Set(["ui", "api"]);
 
+/** The version before which `riskEvidenceReviewVersion` looks for a risk's
+ *  evidence: undefined when the risk's evidence is the current one, or when
+ *  no earlier version exists. */
+export function riskEvidenceBound(
+  risk: Risk,
+  sectionState: SectionState,
+  reviewVersion: number,
+): number | undefined {
+  let before = sectionState === "stale" ? reviewVersion : undefined;
+  if (risk.state === "mitigated" && risk.mitigated_version)
+    before = Math.min(before ?? risk.mitigated_version, risk.mitigated_version);
+  return before && before > 1 ? before : undefined;
+}
+
 /** The review whose diff still holds a risk's code evidence, when the one
  *  being read no longer does: the last version before the risk was mitigated,
  *  or before the one being read if its section is obsolete, in which the
@@ -642,10 +656,8 @@ export function riskEvidenceReviewVersion(
   reviewVersion: number,
   activeVersions?: readonly number[],
 ): number | undefined {
-  let before = sectionState === "stale" ? reviewVersion : undefined;
-  if (risk.state === "mitigated" && risk.mitigated_version)
-    before = Math.min(before ?? risk.mitigated_version, risk.mitigated_version);
-  if (!before || before <= 1) return undefined;
+  const before = riskEvidenceBound(risk, sectionState, reviewVersion);
+  if (!before) return undefined;
   if (!activeVersions) return before - 1;
   const earlier = activeVersions.filter((version) => version < before);
   return earlier.length > 0 ? Math.max(...earlier) : undefined;
