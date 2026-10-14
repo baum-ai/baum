@@ -127,7 +127,7 @@ func gitGlobalOptionTakesArgument(option string) bool {
 
 // TrustsOnelineLog reports whether a trailing `git log --oneline` in command
 // only runs after a successful commit: `git log` follows `git commit` through
-// `&&`. Newline or `;` separated scripts keep going when the commit fails (a
+// `&&` alone. Newline, `;` and `||` continue when the commit fails (a
 // rejecting hook, nothing to commit), so the SHA `git log` prints is then the
 // previous HEAD's.
 func TrustsOnelineLog(command string) bool {
@@ -142,7 +142,7 @@ func TrustsOnelineLog(command string) bool {
 		}
 		switch node := node.(type) {
 		case *syntax.BinaryCmd:
-			if node.Op == syntax.AndStmt && containsCall(node.X, isGitCommit) && containsCall(node.Y, isGitLog) {
+			if node.Op == syntax.AndStmt && ranThroughAnd(node.X, isGitCommit) && ranThroughAnd(node.Y, isGitLog) {
 				trusted = true
 			}
 		case *syntax.CallExpr:
@@ -156,15 +156,19 @@ func TrustsOnelineLog(command string) bool {
 	return trusted
 }
 
-func containsCall(node syntax.Node, match func(*syntax.CallExpr) bool) bool {
-	found := false
-	syntax.Walk(node, func(n syntax.Node) bool {
-		if call, ok := n.(*syntax.CallExpr); ok && match(call) {
-			found = true
-		}
-		return !found
-	})
-	return found
+// ranThroughAnd reports whether node is, or is an `&&` chain containing, a
+// call matching match: the chain only completes when that call succeeded. A
+// `||`, `;`, pipeline, negation or background command does not qualify.
+func ranThroughAnd(node syntax.Node, match func(*syntax.CallExpr) bool) bool {
+	switch node := node.(type) {
+	case *syntax.Stmt:
+		return !node.Negated && !node.Background && !node.Coprocess && node.Cmd != nil && ranThroughAnd(node.Cmd, match)
+	case *syntax.BinaryCmd:
+		return node.Op == syntax.AndStmt && (ranThroughAnd(node.X, match) || ranThroughAnd(node.Y, match))
+	case *syntax.CallExpr:
+		return match(node)
+	}
+	return false
 }
 
 func isGitLog(call *syntax.CallExpr) bool {

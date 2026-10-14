@@ -71,6 +71,9 @@ func TestOnelineSHAIsTrustedOnlyAfterASuccessfulCommit(t *testing.T) {
 		{"git commit -q -F - <<'EOF'\nmessage\nEOF\ngit log --oneline -1", false},
 		{"git commit -q -m x; git log --oneline -1", false},
 		{"git log --oneline -1 && git commit -q -m x", false},
+		{"git commit -q -m x || true && git log --oneline -1", false},
+		{"git commit -q -m x || git log --oneline -1", false},
+		{"git commit -q -m x && echo done && git log --oneline -1", true},
 		{"git commit -q -m x", false},
 	}
 	for _, tt := range tests {
