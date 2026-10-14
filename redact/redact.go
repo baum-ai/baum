@@ -381,7 +381,7 @@ func (e *Engine) RedactContext(ctx context.Context, text string) (string, Summar
 	return string(masked), summary, nil
 }
 
-var mentionPattern = regexp.MustCompile(`(^|[^\w@/])@[A-Za-z0-9][A-Za-z0-9-]*`)
+var mentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9@/])@[A-Za-z0-9][A-Za-z0-9-]*`)
 
 // StripMentions turns @-mentions into plain names and returns how many it
 // rewrote. It cannot tell a person from an annotation such as @Override, so

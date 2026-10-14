@@ -274,6 +274,13 @@ func TestIdentitiesRedactsEmailAndDefangsMention(t *testing.T) {
 	}
 }
 
+func TestIdentitiesDefangsMentionInEmphasis(t *testing.T) {
+	got, changed := Identities("_@octocat_ approved")
+	if want := "_octocat_ approved"; got != want || !changed {
+		t.Fatalf("Identities = %q, %v; want %q, true", got, changed, want)
+	}
+}
+
 func TestRedactContextCancelledDuringAddressPass(t *testing.T) {
 	e, err := New()
 	if err != nil {
