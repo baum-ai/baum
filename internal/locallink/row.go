@@ -33,7 +33,7 @@ func RowOf(engine *redact.Engine, s sessions.Session) (Row, error) {
 
 func rowOf(engine *redact.Engine, s sessions.Session, correlated sessioncorrelate.Result) (Row, error) {
 	row := Row{
-		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID, Path: s.Path, Notes: s.Notes,
+		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID, Path: s.Path,
 		Outcome: session.OutcomeUnknown,
 	}
 	if root := s.Root(); root != nil {
@@ -51,6 +51,20 @@ func rowOf(engine *redact.Engine, s sessions.Session, correlated sessioncorrelat
 	}
 	if row.Branch == "" && len(correlated.Branches) > 0 {
 		row.Branch = correlated.Branches[0]
+	}
+	if row.Branch != "" {
+		branch, _, err := engine.Redact(row.Branch)
+		if err != nil {
+			return Row{}, err
+		}
+		row.Branch = branch
+	}
+	for _, note := range s.Notes {
+		note, _, err := engine.Redact(note)
+		if err != nil {
+			return Row{}, err
+		}
+		row.Notes = append(row.Notes, note)
 	}
 	for _, ref := range correlated.CommitRefs {
 		if row.Commits == nil {
