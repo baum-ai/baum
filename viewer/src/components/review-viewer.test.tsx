@@ -380,8 +380,22 @@ describe("ReviewViewer's review time estimate", () => {
     ).not.toBeNull();
   });
 
-  it("says nothing when the estimate is null, absent or not a positive number", async () => {
-    for (const minutes of [null, undefined, 0]) {
+  it("speaks of one minute in the singular", async () => {
+    const container = await render(
+      <Host>
+        <ReviewViewer document={withMinutes(1)} />
+      </Host>,
+    );
+    expect(head(container)).toContain("~1 min to review");
+    expect(
+      container.querySelector(
+        'header [title="Estimated time to read this review: about 1 minute"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it("says nothing when the estimate is null, absent or outside the schema's range", async () => {
+    for (const minutes of [null, undefined, 0, 0.4, -3, 241, 5000, Number.NaN, Infinity]) {
       const container = await render(
         <Host>
           <ReviewViewer document={withMinutes(minutes)} />

@@ -195,12 +195,11 @@ export function ReviewHeader({
   // Summary says why, and a "not assessed" mark would read as a finding.
   const risk = assessedRisk(document);
   // The estimate is the head's alone: it says what reading the review costs,
-  // which is of use before the reader starts, not once the bar stands in.
+  // which is of use before the reader starts, not once the bar stands in. The
+  // document is untrusted, so only the schema's 1–240 minutes show.
   const minutes = ofPullRequest?.summary.review_minutes;
-  const reviewMinutes =
-    typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
-      ? Math.round(minutes)
-      : null;
+  const rounded = typeof minutes === "number" ? Math.round(minutes) : Number.NaN;
+  const reviewMinutes = rounded >= 1 && rounded <= 240 ? rounded : null;
   // Any disagreement earns the caveat, and the caveat claims no direction. The
   // live state can lag the forge, and the document is written when the review
   // is generated: either can be the staler of the two, and the page cannot
