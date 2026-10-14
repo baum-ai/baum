@@ -215,7 +215,7 @@ export function ReviewHistory({
             <p className="mb-3 text-base font-medium text-(--text-tertiary)">
               Historical · Review v{selection.version}
               {state?.status === "ready" &&
-                ` · Reviewed ${shortSha(state.document.review.head)} · ${formatDateTime(state.document.review.generated_at)}`}
+                ` · Generated against ${shortSha(state.document.review.head)} · ${formatDateTime(state.document.review.generated_at)}`}
             </p>
             {!state || state.status === "loading" ? (
               <p role="status" className="text-base text-(--text-tertiary)">

@@ -495,14 +495,14 @@ describe("ReviewViewer and its host's renders", () => {
     const container = await render(view());
     const compare = container.querySelector('[aria-label="Compare v2"]') as HTMLInputElement;
     await act(async () => compare.click());
-    expect(container.textContent).toContain("Historical · Review v2 · Reviewed");
+    expect(container.textContent).toContain("Historical · Review v2 · Generated against");
     const before = calls.length;
 
     await act(async () => root!.render(view()));
 
     expect(calls).toHaveLength(before);
     expect(container.textContent).not.toContain("Loading review v2");
-    expect(container.textContent).toContain("Historical · Review v2 · Reviewed");
+    expect(container.textContent).toContain("Historical · Review v2 · Generated against");
   });
 
   it("shows the Summary for a group the host has not supplied, without writing the URL", async () => {
