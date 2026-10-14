@@ -377,3 +377,96 @@ export function ChevronRightIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Passed: a tick in a ring, for a check that went green. */
+export function CircleCheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="m5.6 8.2 1.7 1.7 3.2-3.4" />
+    </Icon>
+  );
+}
+
+/** Failed: a cross in a ring. */
+export function CircleCrossIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="m6 6 4 4M10 6l-4 4" />
+    </Icon>
+  );
+}
+
+/** Not yet: a broken ring, for a review nobody has given or a check still
+ *  running. */
+export function CircleDashedIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="6" strokeDasharray="2.4 2.4" />
+    </Icon>
+  );
+}
+
+/** A warning triangle, for something that blocks the work: a conflict. */
+export function WarningIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.5 14 13H2Z" />
+      <path d="M8 6.5v3M8 11.2v.1" />
+    </Icon>
+  );
+}
+
+/** A merge: two branches joining, for a pull request ready to go in. */
+export function MergeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="4.5" cy="3.5" r="1.5" />
+      <circle cx="4.5" cy="12.5" r="1.5" />
+      <circle cx="11.5" cy="8" r="1.5" />
+      <path d="M4.5 5v6M4.5 5c0 2.2 2 3 5.5 3" />
+    </Icon>
+  );
+}
+
+/** A stack: two layers, one over the other. */
+export function StackIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.5 14 6 8 9.5 2 6Z" />
+      <path d="m2 9.5 6 3.5 6-3.5" />
+    </Icon>
+  );
+}
+
+/** Sliders: settings that tune what a view shows, rather than the gear's
+ *  account-wide ones. */
+export function SlidersIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4h6M12.5 4h1M2.5 8h2M8.5 8h5M2.5 12h8M13.5 12h0" />
+      <circle cx="10.5" cy="4" r="1.5" />
+      <circle cx="6.5" cy="8" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+    </Icon>
+  );
+}
+
+/** Up, for a figure that rose. */
+export function ArrowUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 13V3M4 7l4-4 4 4" />
+    </Icon>
+  );
+}
+
+/** Down, for a figure that fell. */
+export function ArrowDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 3v10M4 9l4 4 4-4" />
+    </Icon>
+  );
+}
