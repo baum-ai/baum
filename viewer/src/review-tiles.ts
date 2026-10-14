@@ -28,7 +28,6 @@ export function tileAnchors(value: unknown): Anchor[] {
   return anchors
     .filter((anchor): anchor is TileAnchor => anchorShape(anchor))
     .map((anchor) => {
-      if (anchor.type === "external_url") return { ...anchor, label: anchor.label ?? anchor.url };
       if (
         anchor.type === "pr_comment" &&
         typeof anchor.id === "string" &&

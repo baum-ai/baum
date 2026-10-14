@@ -69,7 +69,7 @@ export type Anchor =
   | { type: "bot_report"; id: string }
   | { type: "issue"; system: string; key: string }
   | { type: "spec"; page: string; assertion?: string }
-  | { type: "external_url"; url: string; label: string }
+  | { type: "external_url"; url: string; label?: string }
   | { type: "attachment"; url: string; id?: string };
 
 export type Risk = {
@@ -276,10 +276,10 @@ export type IndexedReport = {
   id: string;
   tool: string;
   marker: string;
-  comment: number;
+  comment?: number;
   head: string | null;
   summary: string;
-  url: string;
+  url?: string;
 };
 
 export type IndexedComment = {
@@ -288,7 +288,7 @@ export type IndexedComment = {
   author: string;
   bot: boolean;
   created_at: string;
-  url: string;
+  url?: string;
 };
 
 export type IndexedThread = {
@@ -306,7 +306,7 @@ export type SessionPrompt = { index: number; id: string; at: string; text: strin
 export type IndexedSession = {
   id: string;
   vendor: string;
-  models: string[];
+  models?: string[];
   title: string | null;
   git_branch?: string | null;
   started_at?: string | null;
@@ -324,7 +324,7 @@ export type IndexedPR = {
   number: number;
   title: string;
   state: "open" | "merged" | "closed";
-  url: string;
+  url?: string;
 };
 
 export type Implements =
@@ -420,7 +420,7 @@ export type ReviewDocument = {
       anchors: Anchor[];
       observed_sessions: number;
       observed_vendors: string[];
-      observed_models: string[];
+      observed_models?: string[];
     };
     /** Absent on documents generated before risk scores existed. */
     risk_score?: RiskScore;
@@ -1044,7 +1044,7 @@ export function reviewExchange(document: ReviewDocument): ExchangeEvent[] {
       }
       if (anchor.type === "bot_report") {
         const report = document.index.reports.find((candidate) => candidate.id === anchor.id);
-        const found = report ? comment(report.comment) : null;
+        const found = report?.comment !== undefined ? comment(report.comment) : null;
         if (found) return found;
       }
     }
@@ -1122,7 +1122,7 @@ export function reviewExchange(document: ReviewDocument): ExchangeEvent[] {
         if (anchor.type === "pr_comment") return [anchor.id];
         if (anchor.type === "bot_report") {
           const report = document.index.reports.find((candidate) => candidate.id === anchor.id);
-          return report ? [report.comment] : [];
+          return report?.comment !== undefined ? [report.comment] : [];
         }
         return [];
       }),
@@ -1681,7 +1681,7 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
       };
     case "external_url":
       return {
-        label: anchor.label,
+        label: anchor.label ?? anchor.url,
         href: repositoryLink(document, anchor.url),
         kind: "External link",
       };
