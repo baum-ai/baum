@@ -104,6 +104,90 @@ request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
 account.
 
+The `claude` backend (`agent/claude`, the `User` profile) restricts Claude Code
+as far as the tool allows:
+
+- Only the `Read`, `Glob` and `Grep` tools are available. Restricted mode
+  removes every tool that runs commands or reaches the network, and file
+  tools are limited to the temporary checkout
+  (`blockReadsOutsideWorkingDirectories`).
+- `--setting-sources ""` skips the user, project and local settings files, so
+  only the inline `--settings` baum passes is applied; administrator-managed
+  policy settings may still apply. No MCP server is loaded
+  (`--strict-mcp-config` with an empty list), and no session is written
+  (`--no-session-persistence`).
+- The process gets an allowlist of your environment variables. Provider
+  credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
+  `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
+  removed. `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` are set only when you
+  configure an endpoint for baum.
+- Claude Code older than the version baum was checked against is refused with a
+  request to upgrade, because an older release may not honour these flags.
+- As a backstop, session discovery skips sessions recorded under a directory
+  whose name starts with `baum-agent-run-`, the name local callers are meant
+  to give a run's temporary directory. The primary protection is that no
+  session is persisted and no hook runs.
+
+What remains:
+
+- It runs under your login and your `HOME`, so it uses your Claude
+  subscription or key. Claude Code may still update `~/.claude.json` and its
+  caches.
+- Credentials kept in files under `HOME` stay readable by the Claude Code
+  process itself. Its tools cannot read outside the checkout, but a flaw in
+  Claude Code or its restricted mode would not be stopped by baum.
+- Only environment variables are filtered, not files, the network or other
+  processes running as you.
+
+The `codex` backend (`agent/codex`, the `Local` profile) runs `codex exec` in
+Codex's own read-only sandbox:
+
+- `--sandbox read-only` stops commands the model runs from writing files or
+  reaching the network. It does **not** confine reads to the checkout: the
+  model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
+  a pull request could try to persuade it to. Baum adds no further
+  restriction, and the model's answer is the only thing baum keeps.
+- `--ephemeral` writes no session, and the `hooks`, `apps` and `multi_agent`
+  features are disabled. Web search is off and approvals are never requested.
+- `--ignore-rules` skips user and project execpolicy `.rules` files, and
+  `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
+  `CODEX_HOME`). Codex's help says nothing more about either. In particular,
+  baum does not turn off `AGENTS.md` instructions, whether in `CODEX_HOME` or in
+  the checkout, so a pull request's `AGENTS.md` may be read by the model as
+  instructions.
+- The process gets the same environment allowlist as the `claude` backend, plus
+  `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
+  provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
+  are set only when you configure an endpoint for baum.
+- It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
+  The output schema is written to a private temporary file that is removed
+  after the run; baum never writes into `CODEX_HOME`.
+- Codex older than the version baum was checked against (the one the hosted
+  agent runs) is refused with a request to upgrade.
+- Before its first run, baum runs a trivial read-only command under
+  `codex sandbox -P :read-only`, which starts Codex's sandbox without calling
+  a model or the network, then checks that a write under the same profile is
+  refused. If either fails (on Linux, typically when the kernel or
+  container forbids the user namespaces the sandbox needs), baum reports
+  "codex could not start its read-only sandbox on this machine" with Codex's
+  first error line and does not run Codex without it. Baum has verified this
+  only for Linux. On Windows the local `codex` backend is refused, because
+  Codex's Windows sandbox was not examined; on macOS the same preflight runs
+  but was not tested.
+
+What remains for `codex`:
+
+- Everything the model reads, which can be any file your account can read, is
+  sent to the model provider as part of the conversation.
+- Users who keep their Codex credentials in the operating system keyring through
+  `config.toml` may appear logged out, because `--ignore-user-config` skips that
+  file. Baum does not pass the desktop session variables the keyring needs; sign
+  in with `codex login` so the login is stored in `CODEX_HOME`.
+
+The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
+`Container` profile for the hosted review agent, which runs inside its own
+container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or

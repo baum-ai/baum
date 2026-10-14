@@ -8,6 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/baumai/baum/agent"
 	"github.com/baumai/baum/sessions/cursortranscript"
 )
 
@@ -93,5 +94,48 @@ func TestFindSessionsDoesNotReportBrokenOtherRepository(t *testing.T) {
 	}
 	if len(sessions) != 3 || len(report.Skipped) != 0 {
 		t.Fatalf("sessions/report = %+v / %+v", sessions, report)
+	}
+}
+
+func TestFindSessionsSkipsBaumAgentRuns(t *testing.T) {
+	source := filepath.Join("..", "..", "cursortranscript", "testdata", "store.vscdb")
+	body, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(t.TempDir(), "state.vscdb")
+	if err := os.WriteFile(store, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both composers lack the bubble they list, so collecting either is a
+	// reported failure: the first proves the rows are read, the second that
+	// the run directory is skipped before that.
+	for id, workspace := range map[string]string{"normal": "/repo/work", "self-run": "/repo/" + agent.RunDirPrefix + "123"} {
+		identifier := `{"workspaceIdentifier":{"uri":{"scheme":"file","fsPath":"` + workspace + `"}}}`
+		if _, err := db.Exec(`INSERT INTO composerHeaders VALUES (?, '', 0, 0, 0, 0, 0, 0, ?)`, id, identifier); err != nil {
+			t.Fatal(err)
+		}
+		composer := `{"composerId":"` + id + `","workspaceIdentifier":{"uri":{"scheme":"file","fsPath":"` + workspace + `"}},"fullConversationHeadersOnly":[{"bubbleId":"missing","type":1}]}`
+		if _, err := db.Exec(`INSERT INTO cursorDiskKV VALUES (?, ?)`, "composerData:"+id, composer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := FindSessions([]string{store}, []string{filepath.FromSlash("/repo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reported []string
+	for _, skipped := range report.Skipped {
+		reported = append(reported, skipped.Path)
+	}
+	if len(reported) != 1 || reported[0] != store+"#normal" {
+		t.Fatalf("reported %v, want only the normal composer", reported)
 	}
 }

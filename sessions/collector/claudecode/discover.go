@@ -118,7 +118,7 @@ func eligible(c candidate, roots []string) (cwd string, ok bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	return cwd, model.PathWithinAny(roots, cwd), nil
+	return cwd, model.PathWithinAny(roots, cwd) && !model.IsAgentRun(cwd), nil
 }
 
 // buildSession names the files an eligible transcript needs for upload.

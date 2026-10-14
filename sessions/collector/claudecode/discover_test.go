@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baumai/baum/agent"
 	"github.com/baumai/baum/sessions/collector/model"
 )
 
@@ -162,5 +163,25 @@ func TestEncodeProjectDir(t *testing.T) {
 	want := "-home-user-my-repo-v2"
 	if got != want {
 		t.Errorf("EncodeProjectDir = %q, want %q", got, want)
+	}
+}
+
+func TestFindSessionsSkipsBaumAgentRuns(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	projects := filepath.Join(base, "claude", "projects")
+	for id, launchDir := range map[string]string{
+		"aaaaaaaa-0000-4000-8000-000000000001": repo,
+		"bbbbbbbb-0000-4000-8000-000000000002": filepath.Join(repo, agent.RunDirPrefix+"123"),
+		"cccccccc-0000-4000-8000-000000000003": filepath.Join(repo, agent.RunDirPrefix+"123", "checkout"),
+	} {
+		writeFile(t, filepath.Join(projects, EncodeProjectDir(launchDir), id+".jsonl"), transcript(id, launchDir))
+	}
+	found, report, err := FindSessions(projects, []string{repo})
+	if err != nil || len(report.Skipped) != 0 {
+		t.Fatalf("%v %+v", err, report)
+	}
+	if len(found) != 1 || found[0].WorkingDir != repo {
+		t.Fatalf("sessions = %+v, want only the one in the repository itself", found)
 	}
 }

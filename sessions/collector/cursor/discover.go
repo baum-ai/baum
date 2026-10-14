@@ -68,7 +68,7 @@ func findStoreSessions(path string, roots []string) ([]model.Session, model.Scan
 			continue
 		}
 		workingDir := workspaceWorkingDir(root.WorkspaceIdentifier)
-		if workingDir == "" || !model.PathWithinAny(roots, workingDir) {
+		if workingDir == "" || !model.PathWithinAny(roots, workingDir) || model.IsAgentRun(workingDir) {
 			continue
 		}
 		tree, err := store.Tree(root.ComposerID)

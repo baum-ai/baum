@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/baumai/baum/internal/generate"
 )
 
 // buildVersion is injected by the release build through -ldflags -X; local
@@ -19,6 +21,42 @@ var buildVersion string
 // later phase. The command still prints its help so the intended interface is
 // visible.
 var ErrNotImplemented = errors.New("not implemented yet")
+
+// Exit codes of the command line. Failures of "baum generate" carry one of the
+// named categories; everything else, a bad command or a failure of another
+// command, exits with ExitFailure.
+const (
+	ExitFailure     = 1
+	ExitInput       = 2
+	ExitBackend     = 3
+	ExitBudget      = 4
+	ExitValidation  = 5
+	ExitInterrupted = 130
+)
+
+// ExitCode is the process exit code for the error Run returned; nil is 0.
+func ExitCode(err error) int {
+	switch generate.CategoryOf(err) {
+	case "":
+		if err == nil {
+			return 0
+		}
+		return ExitFailure
+	case generate.CategoryInput:
+		return ExitInput
+	case generate.CategoryBackend:
+		return ExitBackend
+	case generate.CategoryBudget:
+		return ExitBudget
+	case generate.CategoryValidation:
+		return ExitValidation
+	case generate.CategoryInterrupted:
+		return ExitInterrupted
+	case generate.CategoryInternal:
+		return ExitFailure
+	}
+	return ExitFailure
+}
 
 // Run dispatches args to the matching subcommand.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {

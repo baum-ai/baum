@@ -16,11 +16,12 @@ This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
-caps, input redaction, byte trimming and digest applied to a bundle, and
+caps, input redaction, byte trimming and digest applied to a bundle,
 `review` holds the document model, validation, history, refresh, output
-redaction and the tile catalogue; `agent` does not exist yet, and the Go side of
-`viewer` only embeds the built app. Until a
-package is complete, its section describes the intended shape.
+redaction and the tile catalogue, and `agent` holds the backend interface,
+request, result, usage and event types, the budgets and the local environment
+allowlist; the Go side of `viewer` only embeds the built app. Until a package
+is complete, its section describes the intended shape.
 
 ## Pipeline
 
@@ -355,24 +356,70 @@ and the model schema and prompt include only those kinds.
 
 ```go
 type Backend interface {
+	Name() string
 	Run(ctx context.Context, req Request) (Result, error)
 }
 ```
 
 A request carries the prompt, the model-facing schema, the checkout directory
-and the call and token budgets. A result carries the document, usage and an
-event log. Backends:
+and the call and token budgets, and optionally an `Endpoint` (a complete
+provider base URL and key) that replaces the backend's default. A result
+carries the document, usage and an event log. Usage can be explicitly
+unreported (`Unreported`) when a backend cannot say what a run consumed, which
+differs from zero. `LocalEnvironment` gives a CLI backend's child process only
+an allowlist of the caller's environment variables (paths, locale, proxy and
+certificate settings) plus the names the backend adds. Provider credentials,
+cloud and GitHub tokens, Git settings and the SSH agent never pass, even when a
+backend names them. Only variables are filtered: `HOME` and the XDG directories
+stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
 | `anthropic` | the Anthropic API directly, with read-only file tools over the checkout |
-| `claude` | `claude -p` restricted to read-only tools, submitting through structured output |
-| `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema |
+| `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
+| `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
 | `cursor-agent` | `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
 leaves open.
+
+`agent/claude` has two profiles over the same read-only flags, which are not
+configurable. `User`, the zero value, is for local runs: the child gets
+`LocalEnvironment` plus `CLAUDE_CONFIG_DIR`, the user's own `HOME` and login,
+the binary found on `PATH`, and `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`
+only when an `Endpoint` is given. Before its first run a `Backend` runs
+`claude --version` once and refuses a release older than the pinned minimum; a
+run that dies on an unknown option reports the same upgrade request.
+`Isolated` is for a host that supplies the whole environment: `HOME` and
+`CLAUDE_CONFIG_DIR` under `<run>/home`, a fixed `PATH`, and the key and base URL
+of the `Endpoint`, which it requires. Cancelling a run kills the child's
+process group on Unix; on Windows only the child itself, not its descendants.
+Because the child has its own process group, Ctrl-C does not reach it: a local
+caller must cancel the context it passes to `Run` on SIGINT and SIGTERM (for
+example with `signal.NotifyContext`), or the CLI keeps running.
+
+`agent/codex` has the same shape. `Local`, the zero value, runs `codex exec
+--sandbox read-only` with the user's own `HOME` and `CODEX_HOME` (so `codex
+login` works), `LocalEnvironment` plus `CODEX_HOME`, and `CODEX_API_KEY` and the
+base URL only when an `Endpoint` is given. The output schema goes to a private
+temporary file removed after the run, never into `CODEX_HOME`. Once per
+`Backend` it checks `codex --version` against the pinned minimum (the release
+the hosted agent runs) and runs `codex sandbox -P :read-only -- cat <file>` to
+prove the read-only sandbox starts on this machine, refusing the run otherwise
+(and always on Windows, where the sandbox was not examined). A run that dies on
+an unknown option reports the upgrade request. `Container` is for a host that already runs
+inside its own boundary: it passes `--sandbox danger-full-access`, puts `HOME`
+and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
+`Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces
+this. `codex.StrictSchema` turns the lenient review schema into the form
+OpenAI's strict structured outputs accept.
+
+`agent.RunDirPrefix` is the convention for a local run's directory name
+(`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
+Session discovery skips sessions recorded under a path element with that
+prefix as a backstop. The primary protection is that the backend persists no
+session and loads no hooks.
 
 ### Prompts
 
@@ -380,19 +427,48 @@ The review instructions reach the loop through an interface:
 
 ```go
 type Prompts interface {
-	// Instructions returns the review instructions for a backend, with the
-	// version and digest recorded in the document's generator block.
+	// Instructions returns the review instructions for a backend. The loop
+	// ignores Version and Digest; the host records the version in the
+	// document's generator.prompt_version and keeps the digest.
 	Instructions(ctx context.Context, backend string) (Prompt, error)
+}
+
+type Prompt struct {
+	Version, Body, Digest string
+	// Repair and RepairEnding replace the loop's repair wording when set.
+	Repair, RepairEnding string
 }
 ```
 
-This module ships and maintains its own public prompt. A host may supply
-another implementation; the hosted service does. The prompt is per backend
-because each backend submits its result differently. The repair
-instructions and tile guidance are part of the loop, not the prompt.
+The module ships and maintains its own public prompt in `agent/prompt`:
+`review-public-v1.md`, shared by every backend and ending with a "Submitting"
+heading, plus a submit block per backend (`submit-claude.md`, used for claude
+and anthropic, and `submit-codex.md`), embedded with `go:embed`.
+`Prompts.Instructions` appends the backend's block under that heading, sets
+`Version` to `review-public-v1` and `Digest` to the sha256 of the composed body,
+and fails for any other backend. A host may supply another implementation; the
+hosted service does, with its private prompts. `StaticPrompts` is a fixed
+implementation for tests and simple hosts. The prompt is per backend because
+each backend submits its result differently.
 
-Local generation (`baum generate`, not built yet) must start every prompt it
-sends with `sessions.GenerationRunMarker`. That is the contract session
+The loop owns the rest of what a run sends:
+
+- **Tile guidance.** It appends `tilecatalogue.Instructions(kinds)` to the
+  body for the offered tile kinds, so a prompt never carries it. A `Prompts`
+  implementation that rewrites its body per backend therefore rewrites the body
+  only.
+- **Repair text.** `agent.RepairText(backend)` returns the text that opens and
+  closes a repair prompt. A backend that submits through a `StructuredOutput`
+  tool (`claude`, `anthropic`) is told to call it again; `codex`, which answers
+  in its final message, is told to reply with the entire corrected document
+  there and to use its file tools when a finding needs the file. A prompt's
+  `Repair` and `RepairEnding`, when not empty, replace that text, for a host
+  whose instructions name the tools differently. They are not part of the
+  prompt's JSON encoding.
+
+Local generation (`baum generate`, in `internal/generate`) starts every prompt
+it sends, repairs included, with `sessions.GenerationRunMarker`; its `Prompts`
+wrapper prepends the marker to the body. That is the contract session
 evidence relies on: a CLI backend records its run in the same session stores
 as the developer's own sessions, in a worktree of the same clone, and local
 linkage leaves out every session whose top-level prompt starts with the
@@ -401,10 +477,50 @@ evidence about the pull request it reviews.
 
 ### Generate and repair
 
-The loop asks the backend for a document, runs it through `review`, and on
-rejection sends the findings back for a repair, up to the configured number
-of attempts. Repairs count toward the call and token budgets. A run that
-fails records one reason from a fixed list.
+```go
+generator := agent.Generator{Backend: backend, Prompts: prompts, Validator: validator,
+	Redactor: redactor, Logger: logger}
+outcome, document, err := generator.Generate(ctx, agent.Run{
+	Bundle: b, EncodedBundle: encoded, Directory: dir, TileKinds: kinds,
+	Budgets: budgets, Endpoint: endpoint})
+```
+
+The caller unpacks the checkout (and attachments) into `Directory`, which the
+backend then runs in. `Generate` masks the secrets the model writes into
+identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
+(instructions, tile guidance, the bundle and numbered source excerpts of the
+changed files) and asks the backend for a document. A provider failure is
+retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
+`1<<min(n,4)` seconds). The document goes through `review`: the validator
+completes it and returns located findings. On findings the loop sends back the
+bundle, the rejected document and the findings, without source excerpts, as a
+repair, up to `MaxRepairAttempts` (at least one), and a repair does not
+reactivate a risk the first pass omitted
+(`review.PreserveRiskOmissionsForRepair`). Every call and token, repairs
+included, counts toward the call and token budgets, and a repair the budget
+cannot pay for fails naming it. A secret masked in an identifier ends the
+repairs: the run is rejected whatever a repair returns. After the last repair,
+or at once on a secret, a run still rejected ends with
+`ReasonValidationRejected` and the last rejected document in the outcome (at
+most `MaxRetainedDocumentBytes`, and only when it is JSON). A run that fails
+otherwise returns an error: a spent budget, `ReasonProviderUnavailable`, or the
+cancelled context.
+
+`Outcome` is what the loop reports besides the document: the model, the schema
+revision, the failure reason, the findings, the rejected document, the
+diagnostic events (at most 512 over the run), the calls, tokens, provider
+attempts, errored attempts, validation repairs and usage, the structured output
+rejections, and what the identifier pass masked. A host embeds it in its own
+outcome type, and its JSON field names are the hosted agent's wire format.
+
+The loop returns text the model wrote, so the host applies `RedactOutput` to
+every outcome before it stores or shows one: it masks the document, the kept
+rejected document, the findings, the model and each diagnostic string, counts
+the spans it masked, and reports the closed values (identifiers, categories,
+references) in which it found a secret. `RejectSecrets` then rejects such a run
+exactly as the hosted worker does: `ReasonValidationRejected`, the document
+withheld and only its masked copy kept. They are for hosts to call, including
+the local CLI (not yet wired); today only the hosted worker calls them.
 
 ## `viewer`
 
@@ -964,6 +1080,35 @@ context ends the event streams and shuts the server down.
    enabled;
 7. validates, derives and redacts the document, and stores it as the next
    version.
+
+Today `baum generate` is `internal/generate` (the pipeline) and
+`internal/cli/generate.go`. It runs steps 1 to 4 and 6 and 7 without the
+previous version and the store (a later change adds them): it selects and
+checks the backend first (`claude.Backend.Check`, `codex.Backend.Check`; `auto`
+tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
+written to temporary files outside the run directory, creates the run
+directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
+archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
+bundle's own caps, and runs `agent.Generator` with the `claude.User` or
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this). The
+wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
+bounds each backend call, and SIGINT and SIGTERM cancel the context so the
+backend's process group is killed and the run directory removed.
+
+Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
+`agent.RedactOutput` masks the document, findings, model and diagnostics (with
+the unpacked tree's paths as the known checkout paths) and
+`agent.RejectSecrets` rejects a run that masked a secret in a closed value; then
+`DocumentValidator.CompleteWithPrompt` derives the host-owned fields and records
+the model and prompt version, and `ValidateStored` checks the result strictly
+against the bundle. Failures are `*generate.Error` values of a category (input,
+backend, budget, validation, interrupted, internal) that `cli.ExitCode` maps to
+exit codes 2, 3, 4, 5, 130 and 1. A failure to mask the output is internal, as
+the hosted worker reports it as a plain failure rather than a rejected
+document. A spent `pass_timeout` is reported as the budget
+`generation budget exceeded: pass_timeout` and is not retried; the run's wall
+clock as `wall_clock`. The document is returned only for a run that passed every
+step, and written by the command afterwards.
 
 Git reads (the comparison, patches, blobs and the exports) run in a private
 temporary bare repository that borrows the clone's objects and has default

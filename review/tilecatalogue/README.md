@@ -23,6 +23,10 @@ when it starts. The document model is described in
   kinds are removed before validation, so they never cause a repair
   ([`tile_kinds.go`](../tile_kinds.go)).
 - An unknown or repeated kind is an error.
+- `Instructions(kinds)` is the text a run adds to the prompt body for the
+  offered kinds (the tile guidance and their catalogue entries), empty when
+  none are offered. The generate-and-repair loop appends it, so a prompt never
+  carries it ([`instructions.go`](instructions.go)).
 
 ## Sources
 

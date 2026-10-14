@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baumai/baum/agent"
 	"github.com/baumai/baum/sessions/collector/model"
 )
 
@@ -151,5 +152,22 @@ func TestFindSessionsFallsBackToTheRootRollout(t *testing.T) {
 	}
 	if len(sessions[0].Warnings) == 0 {
 		t.Error("the fallback was not reported as a warning")
+	}
+}
+
+func TestFindSessionsSkipsBaumAgentRuns(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	sessionsDir := filepath.Join(base, "codex", "sessions")
+	writeFile(t, filepath.Join(sessionsDir, "2026", "07", "01", "rollout-in-repo.jsonl"), rollout("in-repo", repo))
+	writeFile(t, filepath.Join(sessionsDir, "2026", "07", "02", "rollout-run.jsonl"), rollout("run", filepath.Join(repo, agent.RunDirPrefix+"123")))
+	writeFile(t, filepath.Join(sessionsDir, "2026", "07", "03", "rollout-run-checkout.jsonl"),
+		rollout("run-checkout", filepath.Join(repo, agent.RunDirPrefix+"123", "checkout")))
+	sessions, _, err := FindSessions(sessionsDir, []string{repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "in-repo" {
+		t.Fatalf("sessions = %+v, want only in-repo", sessions)
 	}
 }
