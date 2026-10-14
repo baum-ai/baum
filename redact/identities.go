@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var emailPattern = regexp.MustCompile(`(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`)
+var emailPattern = regexp.MustCompile(`(?i)[\p{L}\p{M}0-9._%+-]+(?:@|%40)[\p{L}\p{M}0-9.-]+\.[\p{L}\p{M}]{2,}`)
 
 // Identities removes what must never be published in text sent to a
 // code host: an email address, replaced with "[redacted]", and an @mention, which

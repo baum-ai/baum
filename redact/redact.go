@@ -15,6 +15,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/baum-ai/goredact"
 )
@@ -38,12 +40,13 @@ const (
 	emailLookahead  = 254
 )
 
-// emailRule masks e-mail addresses. Every @ triggers it; the validator then
-// looks for a local part before the @ and a dotted domain after it, never
-// crossing a newline.
+// emailRule masks e-mail addresses. Every @, and its percent-encoded form
+// %40, triggers it; the validator then looks for a local part before the
+// trigger and a dotted domain after it, never crossing a newline. Letters
+// may be any Unicode letter, so internationalised addresses are masked too.
 var emailRule = goredact.CustomRule{
 	ID:            EmailRuleID,
-	Triggers:      []string{"@"},
+	Triggers:      []string{"@", "%40"},
 	Confidence:    goredact.ConfidenceMedium,
 	MaxLookbehind: emailLookbehind,
 	MaxLookahead:  emailLookahead,
@@ -62,7 +65,8 @@ func validateEmail(window []byte, trigStart, trigEnd int) (start, end int, ok bo
 // matches: the whole run of local-part bytes before the @, and the domain
 // up to the furthest label of two or more letters that ends on a word
 // boundary, so a trailing ".1", "-1" or "2" leaves the address itself
-// masked. Under (?i), "K" (U+212A) and "ſ" (U+017F) count as letters.
+// masked. Any Unicode letter counts as a letter, as do "K" (U+212A) and "ſ" (U+017F)
+// under (?i).
 // When the domain runs to the end of a window cut short (cut), the
 // address may go on past it, so the whole visible run is masked, provided
 // it already holds a dot: a dotless run is no address, and an exact-fit
@@ -72,7 +76,7 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 	for start > 0 {
 		if isLocalPartByte(text[start-1]) {
 			start--
-		} else if n := foldedLetterBefore(text, start); n > 0 {
+		} else if n := unicodeLetterBefore(text, start); n > 0 {
 			start -= n
 		} else {
 			break
@@ -85,7 +89,7 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 	for run < len(text) {
 		if isDomainByte(text[run]) {
 			run++
-		} else if n := foldedLetterAt(text, run); n > 0 {
+		} else if n := unicodeLetterAt(text, run); n > 0 {
 			run += n
 		} else {
 			break
@@ -110,7 +114,7 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 			}
 			if isASCIILetter(text[i]) {
 				i++
-			} else if n := foldedLetterAt(text, i); n > 0 {
+			} else if n := unicodeLetterAt(text, i); n > 0 {
 				i += n
 			} else {
 				break
@@ -124,32 +128,38 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 	return start, end, true
 }
 
-// wordBoundary reports whether \b holds before text[i]: exactly one side is
-// an ASCII word byte.
+// wordBoundary reports whether a word boundary holds before text[i]: exactly
+// one side is a word character, an ASCII word byte or a Unicode letter.
 func wordBoundary(text []byte, i int) bool {
-	return isWordByte(text[i-1]) != (i < len(text) && isWordByte(text[i]))
+	before := isWordByte(text[i-1]) || unicodeLetterBefore(text, i) > 0
+	after := i < len(text) && (isWordByte(text[i]) || unicodeLetterAt(text, i) > 0)
+	return before != after
 }
 
 func isWordByte(b byte) bool { return isASCIILetter(b) || isASCIIDigit(b) || b == '_' }
 
-// foldedLetterAt and foldedLetterBefore return the byte length of a "K"
-// (U+212A) or "ſ" (U+017F) starting at, or ending at, text[i], or 0.
-func foldedLetterAt(text []byte, i int) int {
-	switch {
-	case i+3 <= len(text) && text[i] == 0xE2 && text[i+1] == 0x84 && text[i+2] == 0xAA:
-		return 3
-	case i+2 <= len(text) && text[i] == 0xC5 && text[i+1] == 0xBF:
-		return 2
+// unicodeLetterAt and unicodeLetterBefore return the byte length of a
+// non-ASCII letter or combining mark starting at, or ending at, text[i], or
+// 0. This covers "K" (U+212A) and "ſ" (U+017F), which (?i) folds to ASCII
+// letters, and the letters of internationalised addresses.
+func unicodeLetterAt(text []byte, i int) int {
+	if i >= len(text) || text[i] < utf8.RuneSelf {
+		return 0
+	}
+	r, n := utf8.DecodeRune(text[i:])
+	if r != utf8.RuneError && (unicode.IsLetter(r) || unicode.IsMark(r)) {
+		return n
 	}
 	return 0
 }
 
-func foldedLetterBefore(text []byte, i int) int {
-	switch {
-	case i >= 3 && text[i-3] == 0xE2 && text[i-2] == 0x84 && text[i-1] == 0xAA:
-		return 3
-	case i >= 2 && text[i-2] == 0xC5 && text[i-1] == 0xBF:
-		return 2
+func unicodeLetterBefore(text []byte, i int) int {
+	if i <= 0 || text[i-1] < utf8.RuneSelf {
+		return 0
+	}
+	r, n := utf8.DecodeLastRune(text[:i])
+	if r != utf8.RuneError && (unicode.IsLetter(r) || unicode.IsMark(r)) {
+		return n
 	}
 	return 0
 }
@@ -177,18 +187,23 @@ func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 // eachEmail calls visit with the offsets of every address in src, in full,
 // and stops with ctx's error if ctx ends.
 func eachEmail(ctx context.Context, src []byte, visit func(start, end int)) error {
-	for at := bytes.IndexByte(src, '@'); at >= 0; {
+	for i := 0; i < len(src); i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if start, end, ok := matchEmail(src, at, at+1, false); ok {
+		width := 0
+		switch {
+		case src[i] == '@':
+			width = 1
+		case src[i] == '%' && i+3 <= len(src) && src[i+1] == '4' && src[i+2] == '0':
+			width = 3
+		}
+		if width == 0 {
+			continue
+		}
+		if start, end, ok := matchEmail(src, i, i+width, false); ok {
 			visit(start, end)
 		}
-		next := bytes.IndexByte(src[at+1:], '@')
-		if next < 0 {
-			break
-		}
-		at += 1 + next
 	}
 	return nil
 }

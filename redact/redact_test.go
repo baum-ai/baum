@@ -281,6 +281,33 @@ func TestIdentitiesDefangsMentionInEmphasis(t *testing.T) {
 	}
 }
 
+func TestEncodedAndInternationalisedAddressesAreMasked(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ in, addr string }{
+		{"https://x.test/u?email=ada%40example.com&x=1", "ada%40example.com"},
+		{"https://x.test/u?email=ada%40EXAMPLE.com", "ada%40EXAMPLE.com"},
+		{"ada@exämple.com", "ada@exämple.com"},
+		{"ädä@example.com", "ädä@example.com"},
+		{"ada@example.рф", "ada@example.рф"},
+	} {
+		got, summary, err := e.Redact(c.in)
+		if err != nil || strings.Contains(got, "ada") || strings.Contains(got, "ädä") || summary.ByRule[EmailRuleID] != 1 {
+			t.Errorf("Redact(%q) = %q, %+v, %v", c.in, got, summary, err)
+		}
+		found, err := e.FindContext(context.Background(), c.in)
+		if err != nil || len(found) == 0 || c.in[found[0].Start:found[0].End] != c.addr || c.in[found[len(found)-1].Start:found[len(found)-1].End] != c.addr {
+			t.Errorf("FindContext(%q) = %+v, %v", c.in, found, err)
+		}
+		cleaned, changed := Identities(c.in)
+		if !changed || strings.Contains(cleaned, "ada") || strings.Contains(cleaned, "ädä") {
+			t.Errorf("Identities(%q) = %q", c.in, cleaned)
+		}
+	}
+}
+
 func TestRedactContextCancelledDuringAddressPass(t *testing.T) {
 	e, err := New()
 	if err != nil {
