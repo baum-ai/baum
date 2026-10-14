@@ -11,8 +11,12 @@ import (
 // reconcileAuthoredHistory restores published identities for validation and
 // completion. The uploaded candidate stays authored-only so completion can
 // independently distinguish omitted risks from explicit reactivations.
-// attachments are the images this generation was offered.
-func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersion, attachments []bundlepkg.Attachment, lifecycle bool) ([]byte, error) {
+// attachments are the images this generation was offered, and diff the hunks
+// it reviews: the hunk anchors of everything carried over (sections and risks
+// the model left out) are fitted to them as authored anchors are, since a
+// carried anchor names its hunk's lines at the earlier version and the model
+// cannot repair content it did not write.
+func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersion, attachments []bundlepkg.Attachment, diff []bundlepkg.Hunk, lifecycle bool) ([]byte, error) {
 	next, err := decodeObject(document, "generated review")
 	if err != nil {
 		return nil, err
@@ -78,7 +82,66 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 		}
 	}
 	next["sections"] = sections
+	if previous != nil && len(diff) > 0 {
+		hunks := make(map[string]bundlepkg.Hunk, len(diff))
+		for _, hunk := range diff {
+			hunks[hunk.ID] = hunk
+		}
+		clampHunkAnchorLines(next, hunks)
+	}
 	return json.Marshal(next)
+}
+
+// FitPreviousHunkAnchors moves the hunk anchors of b's previous version to
+// where their hunks sit in b's diff. A hunk ID names the hunk's content, so a
+// rebase that shifts the hunk keeps its ID and moves its lines: an anchor
+// recorded at the previous version is shifted by as many lines as its hunk
+// moved (when Previous.HunkStartLines knows where the hunk was) and then
+// fitted to the hunk as an authored anchor is. The model is shown, and the
+// host carries over, the hunk's current lines rather than lines it no longer
+// occupies.
+func FitPreviousHunkAnchors(b *bundlepkg.Bundle) error {
+	if b == nil || b.Previous == nil || len(b.Diff) == 0 {
+		return nil
+	}
+	hunks := make(map[string]bundlepkg.Hunk, len(b.Diff))
+	for _, hunk := range b.Diff {
+		hunks[hunk.ID] = hunk
+	}
+	for index, section := range b.Previous.Sections {
+		if len(section.Content) == 0 {
+			continue
+		}
+		var content any
+		if err := json.Unmarshal(section.Content, &content); err != nil {
+			return fmt.Errorf("previous section %s is not valid JSON: %w", section.ID, err)
+		}
+		walkJSON(content, func(candidate map[string]any) {
+			if candidate["type"] != "hunk" {
+				return
+			}
+			id, _ := candidate["id"].(string)
+			hunk, known := hunks[id]
+			start, recorded := b.Previous.HunkStartLines[id]
+			lines, present := candidate["lines"].([]any)
+			if !known || !recorded || !present || len(lines) != 2 || hunk.StartLine == start {
+				return
+			}
+			shift := float64(hunk.StartLine - start)
+			for i, line := range lines {
+				if number, ok := jsonIntegerNumber(line); ok {
+					lines[i] = number + shift
+				}
+			}
+		})
+		clampHunkAnchorLines(content, hunks)
+		encoded, err := json.Marshal(content)
+		if err != nil {
+			return err
+		}
+		b.Previous.Sections[index].Content = encoded
+	}
+	return nil
 }
 
 // RestoreOmittedPreviousSections returns the authored document with each
@@ -252,7 +315,7 @@ func PreserveRiskOmissionsForRepair(previous *bundlepkg.PreviousVersion, assesse
 	if err != nil {
 		return repaired
 	}
-	if _, err := reconcileAuthoredHistory(assessed, previous, nil, false); err != nil {
+	if _, err := reconcileAuthoredHistory(assessed, previous, nil, nil, false); err != nil {
 		return repaired
 	}
 	assessedRoot, err := decodeObject(assessed, "generated review")

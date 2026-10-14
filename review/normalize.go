@@ -89,12 +89,20 @@ func authoredIdentifiers(value any, strict map[string]any) []authoredIdentifier 
 // usable overlap is made canonical; a range that cannot select the hunk's
 // right side is removed so consumers fall back to showing the full hunk.
 func (n *authoredNormalizer) hunkAnchorLines(root map[string]any) {
-	walkJSON(root, func(candidate map[string]any) {
+	clampHunkAnchorLines(root, n.hunks)
+}
+
+// clampHunkAnchorLines applies hunkAnchorLines' rule to every hunk anchor in
+// value against hunks. A hunk ID names the hunk's content, so it survives a
+// rebase that moves the hunk; an anchor carried from an earlier version can
+// then name the right hunk at lines it no longer occupies.
+func clampHunkAnchorLines(value any, hunks map[string]bundlepkg.Hunk) {
+	walkJSON(value, func(candidate map[string]any) {
 		if candidate["type"] != "hunk" {
 			return
 		}
 		id, _ := candidate["id"].(string)
-		hunk, known := n.hunks[id]
+		hunk, known := hunks[id]
 		lines, present := candidate["lines"].([]any)
 		if !known || !present {
 			return

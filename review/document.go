@@ -611,7 +611,7 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	if err != nil {
 		return document, err.Error()
 	}
-	reconciled, err := reconcileAuthoredHistory(encoded, bundle.Previous, bundle.Attachments, false)
+	reconciled, err := reconcileAuthoredHistory(encoded, bundle.Previous, bundle.Attachments, bundle.Diff, false)
 	if err != nil {
 		return encoded, err.Error()
 	}
@@ -783,7 +783,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	if findings != "" {
 		return nil, findings
 	}
-	document, err := reconcileAuthoredHistory(document, b.Previous, b.Attachments, true)
+	document, err := reconcileAuthoredHistory(document, b.Previous, b.Attachments, b.Diff, true)
 	if err != nil {
 		return nil, err.Error()
 	}

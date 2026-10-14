@@ -162,9 +162,9 @@ func TestRestoreOmittedPreviousSectionsKeepsRiskHistory(t *testing.T) {
 	checkEqual(t, nil, sections.Sections[0].Risks[0]["state"])
 	checkEqual(t, 0, len(sections.Sections[1].Risks))
 
-	direct, err := reconcileAuthoredHistory(candidate, previous, nil, true)
+	direct, err := reconcileAuthoredHistory(candidate, previous, nil, nil, true)
 	checkNoError(t, err)
-	early, err := reconcileAuthoredHistory(restored, previous, nil, true)
+	early, err := reconcileAuthoredHistory(restored, previous, nil, nil, true)
 	checkNoError(t, err)
 	var want, got any
 	checkNoError(t, json.Unmarshal(direct, &want))
@@ -177,4 +177,107 @@ func TestRestoreOmittedPreviousSectionsKeepsRiskHistory(t *testing.T) {
 	if same, err := RestoreOmittedPreviousSections(unchanged, previous, nil); err != nil || string(same) != string(unchanged) {
 		t.Fatalf("a document omitting nothing changed: %v", err)
 	}
+}
+
+// A hunk ID names the hunk's content, so a rebase that moves the hunk keeps
+// its ID. Content carried over from the previous version (a section the
+// model left out, a risk it dropped) is fitted to the hunk's current lines,
+// as an authored anchor is: a range that no longer overlaps the hunk is
+// removed and one that still does is clamped. The model cannot repair content
+// it did not write, so a stale range would otherwise fail every repair.
+func TestCarriedHunkAnchorsFitTheirMovedHunk(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	// The hunk sat at lines 10-14 and now sits at 110-114.
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "a.go", StartLine: 110, LineCount: 5}}}
+	anchor := func(lines ...int) []any {
+		return []any{map[string]any{"type": "hunk", "id": testHunk, "lines": []any{float64(lines[0]), float64(lines[1])}}}
+	}
+	gone := historySection("gone", testHunk, "rsk_gone")
+	gone["summary"].(map[string]any)["anchors"] = anchor(10, 12)
+	gone["risks"].([]any)[0].(map[string]any)["anchors"] = anchor(108, 111)
+	kept := historySection("kept", testHunk, "rsk_dropped")
+	kept["risks"].([]any)[0].(map[string]any)["anchors"] = anchor(11, 11)
+	previous := &bundlepkg.PreviousVersion{Version: 1}
+	for _, section := range []map[string]any{gone, kept} {
+		content, err := json.Marshal(section)
+		checkNoError(t, err)
+		previous.Sections = append(previous.Sections, bundlepkg.PreviousSection{ID: section["id"].(string), Content: content})
+	}
+	bundle.Previous = previous
+	// The model omits sec_gone and writes sec_kept without its risk.
+	candidate := historyCandidate(t, []any{historySection("kept", testHunk)})
+
+	_, findings := v.Prepare(candidate, bundle, t.TempDir())
+	checkEqual(t, "", findings)
+
+	reconciled, err := reconcileAuthoredHistory(candidate, previous, nil, bundle.Diff, true)
+	checkNoError(t, err)
+	var doc struct {
+		Sections []struct {
+			ID      string `json:"id"`
+			Summary struct {
+				Anchors []map[string]any `json:"anchors"`
+			} `json:"summary"`
+			Risks []struct {
+				ID      string           `json:"id"`
+				Anchors []map[string]any `json:"anchors"`
+			} `json:"risks"`
+		} `json:"sections"`
+	}
+	checkNoError(t, json.Unmarshal(reconciled, &doc))
+	checkEqual(t, "sec_gone", doc.Sections[0].ID)
+	if lines, ok := doc.Sections[0].Summary.Anchors[0]["lines"]; ok {
+		t.Fatalf("a carried range outside the moved hunk was kept: %v", lines)
+	}
+	checkEqual(t, []any{float64(110), float64(111)}, doc.Sections[0].Risks[0].Anchors[0]["lines"])
+	checkEqual(t, "sec_kept", doc.Sections[1].ID)
+	checkEqual(t, "rsk_dropped", doc.Sections[1].Risks[0].ID)
+	if lines, ok := doc.Sections[1].Risks[0].Anchors[0]["lines"]; ok {
+		t.Fatalf("a dropped risk's carried range outside the moved hunk was kept: %v", lines)
+	}
+}
+
+// The previous version's hunk anchors move with their hunks: shifted by as
+// many lines as the hunk moved, then fitted to it. An anchor whose hunk's
+// earlier position is unknown is only fitted, and anchors to hunks no longer
+// in the diff are left as they were.
+func TestFitPreviousHunkAnchorsFollowsMovedHunks(t *testing.T) {
+	const other, gone = "h_aaaaaaaaaaaa", "h_bbbbbbbbbbbb"
+	anchor := func(id string, lines ...int) map[string]any {
+		return map[string]any{"type": "hunk", "id": id, "lines": []any{float64(lines[0]), float64(lines[1])}}
+	}
+	section := map[string]any{"id": "sec_a", "summary": map[string]any{"text": "Changes.", "anchors": []any{
+		anchor(testHunk, 12, 13), anchor(other, 5, 9), anchor(gone, 1, 2),
+	}}}
+	content, err := json.Marshal(section)
+	checkNoError(t, err)
+	b := &bundlepkg.Bundle{
+		Diff: []bundlepkg.Hunk{{ID: testHunk, StartLine: 110, LineCount: 5}, {ID: other, StartLine: 7, LineCount: 2}},
+		Previous: &bundlepkg.PreviousVersion{Version: 1, HunkStartLines: map[string]int{testHunk: 10, gone: 1},
+			Sections: []bundlepkg.PreviousSection{{ID: "sec_a", Content: content}}},
+	}
+	checkNoError(t, FitPreviousHunkAnchors(b))
+	var fitted struct {
+		Summary struct {
+			Anchors []map[string]any `json:"anchors"`
+		} `json:"summary"`
+	}
+	checkNoError(t, json.Unmarshal(b.Previous.Sections[0].Content, &fitted))
+	checkEqual(t, []any{float64(112), float64(113)}, fitted.Summary.Anchors[0]["lines"])
+	checkEqual(t, []any{float64(7), float64(8)}, fitted.Summary.Anchors[1]["lines"])
+	checkEqual(t, []any{float64(1), float64(2)}, fitted.Summary.Anchors[2]["lines"])
+	if strings.Contains(string(mustMarshal(t, b.Previous)), "112") == false {
+		t.Fatal("the fitted lines are not in the bundle's previous version")
+	}
+	if strings.Contains(string(mustMarshal(t, b.Previous)), "hunk_start_lines") || strings.Contains(string(mustMarshal(t, b.Previous)), "HunkStartLines") {
+		t.Fatal("the recorded start lines were serialized into the bundle")
+	}
+}
+
+func mustMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	checkNoError(t, err)
+	return encoded
 }
