@@ -620,4 +620,49 @@ describe("ReviewViewer's pane dividers", () => {
     expect(grid.style.getPropertyValue("--conversation-width")).toBe("500px");
     stored.mockRestore();
   });
+
+  it("keeps the grid and the divider's value in step when a drag ends without a pointerup or at the starting width", async () => {
+    Element.prototype.setPointerCapture ??= () => {};
+    Element.prototype.releasePointerCapture ??= () => {};
+    const container = await render(
+      <Host>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    const divider = container.querySelector<HTMLElement>(
+      '[role="separator"][aria-label="Resize the side pane"]',
+    )!;
+    const grid = container.querySelector<HTMLElement>("[style*='--conversation-width']")!;
+    const pointer = (type: string, clientX = 0) =>
+      act(async () => {
+        divider.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX }));
+      });
+    const inStep = () =>
+      expect(grid.style.getPropertyValue("--conversation-width")).toBe(
+        `${divider.getAttribute("aria-valuenow")}px`,
+      );
+    const start = Number(divider.getAttribute("aria-valuenow"));
+
+    // Lost capture commits what the drag showed.
+    await pointer("pointerdown");
+    await pointer("pointermove", -500);
+    await pointer("lostpointercapture");
+    expect(divider.getAttribute("aria-valuenow")).toBe("500");
+    inStep();
+
+    // A drag back to the width it started from settles on that width.
+    await pointer("pointerdown");
+    await pointer("pointermove", -300);
+    await pointer("pointermove", -start);
+    await pointer("pointerup");
+    expect(divider.getAttribute("aria-valuenow")).toBe(String(start));
+    inStep();
+
+    // A cancelled drag shows the chosen width again.
+    await pointer("pointerdown");
+    await pointer("pointermove", -600);
+    await pointer("pointercancel");
+    expect(divider.getAttribute("aria-valuenow")).toBe(String(start));
+    inStep();
+  });
 });

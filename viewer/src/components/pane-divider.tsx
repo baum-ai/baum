@@ -53,6 +53,22 @@ export function PaneDivider({
   const [dragging, setDragging] = useState(false);
   // The last width previewed by the drag in progress.
   const previewed = useRef<number | null>(null);
+  // Set when a drag ends, so the next render puts the grid's variable back in
+  // step with the width the state settled on, which may be none of the widths
+  // the drag showed (the chosen width can clamp to the one it started from, and
+  // React then writes nothing).
+  const resync = useRef(false);
+  const finish = (commit: boolean) => {
+    if (commit && previewed.current !== null) onWidth(previewed.current);
+    previewed.current = null;
+    resync.current = true;
+    setDragging(false);
+  };
+  useEffect(() => {
+    if (!resync.current || dragging) return;
+    resync.current = false;
+    onPreview?.(width);
+  });
   // Undefined rather than zero when either pane has not been laid out yet: a
   // zero would clamp the width to the minimum on the way past, and a reader
   // would find their split reset by a measurement taken too early.
@@ -111,17 +127,13 @@ export function PaneDivider({
       }}
       onPointerUp={(event) => {
         event.currentTarget.releasePointerCapture(event.pointerId);
-        setDragging(false);
-        if (previewed.current !== null) onWidth(previewed.current);
-        previewed.current = null;
+        finish(true);
       }}
-      onPointerCancel={() => {
-        setDragging(false);
-        // The drag was abandoned: show the chosen width again.
-        if (previewed.current !== null) onPreview?.(width);
-        previewed.current = null;
+      onPointerCancel={() => finish(false)}
+      // Capture lost without a pointerup: what the drag showed is chosen.
+      onLostPointerCapture={() => {
+        if (dragging) finish(true);
       }}
-      onLostPointerCapture={() => setDragging(false)}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 64 : 16;
         if (event.key === grow) {
