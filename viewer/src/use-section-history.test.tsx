@@ -22,13 +22,18 @@ function Probe(props: {
   document: ReviewDocument;
   versions: number[];
   load: LoadReviewVersion;
+  shown: ReviewDocument | null;
   onResult: (result: ReturnType<typeof useSectionHistory>) => void;
 }) {
-  props.onResult(useSectionHistory(props.document, props.versions, props.load));
+  props.onResult(useSectionHistory(props.document, props.versions, props.load, props.shown));
   return null;
 }
 
-async function mount(review: ReviewDocument, versions: number[]) {
+async function mount(
+  review: ReviewDocument,
+  versions: number[],
+  shown: ReviewDocument | null = null,
+) {
   const load = vi.fn<LoadReviewVersion>(async (version) => ({
     status: "ready",
     document: { ...structuredClone(review), review: { ...review.review, version } },
@@ -41,6 +46,7 @@ async function mount(review: ReviewDocument, versions: number[]) {
         document={review}
         versions={versions}
         load={load}
+        shown={shown}
         onResult={(value) => {
           result = value;
         }}
@@ -76,6 +82,16 @@ describe("section history", () => {
     risk.state = "mitigated";
     risk.mitigated_version = 3;
     const { load, result } = await mount(review, [4, 3, 2, 1]);
+    expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 2]);
+    expect(result()).not.toBeNull();
+  });
+
+  it("also reads the versions that an earlier version on screen asks about", async () => {
+    const earlier = current();
+    earlier.review.version = 3;
+    const stale = earlier.sections.find((section) => section.risks.length > 0)!;
+    stale.derived.state = "stale";
+    const { load, result } = await mount(current(), [3, 2, 1], earlier);
     expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 2]);
     expect(result()).not.toBeNull();
   });

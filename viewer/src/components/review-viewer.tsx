@@ -438,9 +438,9 @@ function ReviewWorkspace<F extends ReviewFile>({
     if (composerFocus === 0 || !pane) return;
     focusComposer.current?.(pane);
   }, [composerFocus]);
-  const sectionHistory = useSectionHistory(document, versions, loadVersion);
   const historicalDocument =
     historyView.state?.status === "ready" ? historyView.state.document : null;
+  const sectionHistory = useSectionHistory(document, versions, loadVersion, historicalDocument);
   const historicalOnly = Boolean(historyView.selection && !historyView.selection.compare);
   const navigationDocument = historicalOnly ? historicalDocument : document;
   const comparing = Boolean(historyView.selection?.compare);
