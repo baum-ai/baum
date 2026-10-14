@@ -3,7 +3,7 @@
 //
 // Three files are embedded:
 //
-//	review-public-v1.md   the review instructions shared by every backend,
+//	review-public-v2.md   the review instructions shared by every backend,
 //	                      ending with the "## 10. Submitting" heading
 //	submit-claude.md      how a StructuredOutput backend submits the document
 //	submit-codex.md       how a final-message backend returns the document
@@ -25,10 +25,10 @@ import (
 )
 
 // Version is the prompt version recorded in the document's generator block.
-// Change it with the text of review-public-v1.md.
-const Version = "review-public-v1"
+// Change it with the text of review-public-v2.md.
+const Version = "review-public-v2"
 
-//go:embed review-public-v1.md
+//go:embed review-public-v2.md
 var reviewPublic string
 
 //go:embed submit-claude.md

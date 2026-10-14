@@ -115,7 +115,8 @@ section states, timestamps, risk lifecycle), and ignores it if you write it.
 {
   "schema": "baum.review/1",
   "summary": { text, review_exchange: { summary }, change_kind, implements,
-               release_note, breaking_change, attention, authorship },
+               release_note, breaking_change, review_minutes, attention,
+               authorship },
   "sections": [ ... ],
   "relations": [ ... ]
 }
@@ -146,6 +147,12 @@ risk's `state`, `introduced_version` or `mitigated_version`.
   otherwise null.
 - `breaking_change`: what breaks for whom (callers, stored data, config,
   API clients) if anything does, otherwise null. Check this; do not assume.
+- `review_minutes`: whole minutes a native English speaker who knows the
+  project and its context needs to read this review once: the summary, every
+  section with its steps, risks, evidence and decisions, and the code
+  excerpts and images it shows. Size it to the document you wrote, once the
+  rest is settled. It is not the time to review the diff independently, and
+  not a measure of risk.
 - `attention`: null, or `{text, refs}` naming the one or two things the
   approver must look at before approving, with `refs` listing the IDs of the
   sections that hold them. Use it for an active high or critical risk, a

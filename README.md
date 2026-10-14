@@ -109,7 +109,7 @@ The document goes through the same steps as a hosted one: the model's output is
 repaired against the validator (two repairs at most), secrets and e-mail
 addresses are masked, a secret written into an identifier rejects the run,
 fields baum owns (the summary's title and author, statistics, the index, the
-generator block with the model, prompt version `review-public-v1` and schema
+generator block with the model, prompt version `review-public-v2` and schema
 revision) are derived, and the stored form is checked strictly. A document that
 fails any step is not written. Hunks may be shared by sections or left
 unassigned; `generate` does not require each hunk to appear exactly once.
@@ -332,7 +332,7 @@ describes how they fit together and what a host implements.
 | Package | What it does |
 | --- | --- |
 | `agent` | the model backend interface and the Claude Code and Codex backends, the generate-and-repair loop (`Generator`) with its `Prompts` interface, repair text and output redaction, the run budgets and the environment allowlist for local CLI backends |
-| `agent/prompt` | the public review prompt (`review-public-v1`) this module ships, with a submit block per backend |
+| `agent/prompt` | the public review prompt (`review-public-v2`) this module ships, with a submit block per backend |
 | `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, the `REVIEW.md` loader, reference extraction and bot flags, the code checkout archive, description image handling, the paraphrase of a session's shell commands, and the caps, input redaction, byte trimming and digest applied to a bundle |
 | `review` | the review document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh and the tile catalogue (`review/tilecatalogue`) |
 | `sessions` | finds the sessions recorded for a repository and maps them into the shared `session.Graph` model |

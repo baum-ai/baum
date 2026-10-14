@@ -104,7 +104,7 @@ func TestValidFirstPassIsCompleteStrictAndClean(t *testing.T) {
 	}
 	generator := document.Review.Generator
 	if document.Review.Repository != "acme/demo" || document.Review.Head != f.repo.Head ||
-		generator.Model != "stub-model" || generator.PromptVersion != "review-public-v1" || generator.SchemaRevision == "" {
+		generator.Model != "stub-model" || generator.PromptVersion != "review-public-v2" || generator.SchemaRevision == "" {
 		t.Errorf("document review block = %+v", document.Review)
 	}
 	if strings.Contains(string(result.Document), assembletest.PlantedSecret) {
