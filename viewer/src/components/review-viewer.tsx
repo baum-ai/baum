@@ -407,6 +407,10 @@ function ReviewWorkspace<F extends ReviewFile>({
   const workspace = useVisibleHeight<HTMLDivElement>();
   const split = useConversationWidth();
   const rail = useRailWidth();
+  // A divider drag sets its width on the grid until the pointer is released:
+  // choosing it on every move re-renders the whole review.
+  const previewWidth = (variable: string) => (width: number) =>
+    workspace.current?.style.setProperty(variable, `${width}px`);
   // The side pane can fold to a strip at the window's edge, so the review
   // pane has the width when the talk is not the point.
   const [chatCollapsed, setChatCollapsed] = useConversationCollapsed();
@@ -1310,6 +1314,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             <PaneDivider
               width={rail.width}
               onWidth={rail.choose}
+              onPreview={previewWidth("--rail-width")}
               reviewRef={reviewPane}
               paneRef={railPane}
               limits={RAIL_LIMITS}
@@ -1385,6 +1390,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             <PaneDivider
               width={split.width}
               onWidth={split.choose}
+              onPreview={previewWidth("--conversation-width")}
               onFit={split.fit}
               reviewRef={reviewPane}
               paneRef={conversationPane}

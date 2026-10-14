@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 
 import { clampWidth, CONVERSATION_LIMITS, type PaneLimits } from "../use-conversation-width";
 import { cn, FOCUS_RING } from "./classnames";
@@ -18,6 +18,7 @@ import { cn, FOCUS_RING } from "./classnames";
 export function PaneDivider({
   width,
   onWidth,
+  onPreview,
   onFit,
   reviewRef,
   paneRef,
@@ -29,6 +30,11 @@ export function PaneDivider({
   width: number;
   /** A width the reader chose. Remembered. */
   onWidth: (width: number) => void;
+  /** Shows a width while the pointer drags, without choosing it: the caller
+   *  sets it where the layout reads it, so nothing re-renders per move.
+   *  `onWidth` then gets the last one, once, when the drag ends. Without it,
+   *  every move is chosen. */
+  onPreview?: (width: number) => void;
   /** The chosen width brought inside what the row can give. Not remembered,
    *  so a window too narrow to show the reader's split does not erase it.
    *  Only one pane may fit itself to the row: two each giving the review pane
@@ -45,6 +51,8 @@ export function PaneDivider({
   className?: string;
 }) {
   const [dragging, setDragging] = useState(false);
+  // The last width previewed by the drag in progress.
+  const previewed = useRef<number | null>(null);
   // Undefined rather than zero when either pane has not been laid out yet: a
   // zero would clamp the width to the minimum on the way past, and a reader
   // would find their split reset by a measurement taken too early.
@@ -96,13 +104,23 @@ export function PaneDivider({
         if (!dragging) return;
         const box = paneRef.current?.getBoundingClientRect();
         if (!box) return;
-        onWidth(clamp(side === "after" ? box.right - event.clientX : event.clientX - box.left));
+        const next = clamp(side === "after" ? box.right - event.clientX : event.clientX - box.left);
+        if (!onPreview) return onWidth(next);
+        previewed.current = next;
+        onPreview(next);
       }}
       onPointerUp={(event) => {
         event.currentTarget.releasePointerCapture(event.pointerId);
         setDragging(false);
+        if (previewed.current !== null) onWidth(previewed.current);
+        previewed.current = null;
       }}
-      onPointerCancel={() => setDragging(false)}
+      onPointerCancel={() => {
+        setDragging(false);
+        // The drag was abandoned: show the chosen width again.
+        if (previewed.current !== null) onPreview?.(width);
+        previewed.current = null;
+      }}
       onLostPointerCapture={() => setDragging(false)}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 64 : 16;

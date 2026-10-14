@@ -586,3 +586,38 @@ describe("ReviewViewer and its host's renders", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("ReviewViewer's pane dividers", () => {
+  it("previews a drag on the grid and chooses the width once, when the pointer is released", async () => {
+    Element.prototype.setPointerCapture ??= () => {};
+    Element.prototype.releasePointerCapture ??= () => {};
+    const container = await render(
+      <Host>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    const divider = container.querySelector<HTMLElement>(
+      '[role="separator"][aria-label="Resize the side pane"]',
+    )!;
+    const grid = container.querySelector<HTMLElement>("[style*='--conversation-width']")!;
+    const stored = vi.spyOn(Storage.prototype, "setItem");
+    const pointer = (type: string, clientX = 0) =>
+      act(async () => {
+        divider.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX }));
+      });
+    await pointer("pointerdown");
+    // jsdom lays nothing out, so the pane's right edge is 0 and a width is
+    // the pointer's distance to the left of it.
+    await pointer("pointermove", -420);
+    await pointer("pointermove", -450);
+    await pointer("pointermove", -500);
+    expect(grid.style.getPropertyValue("--conversation-width")).toBe("500px");
+    expect(stored).not.toHaveBeenCalled();
+    await pointer("pointerup");
+    expect(stored.mock.calls.filter(([key]) => key === "baum.review.conversation-width")).toEqual([
+      ["baum.review.conversation-width", "500"],
+    ]);
+    expect(grid.style.getPropertyValue("--conversation-width")).toBe("500px");
+    stored.mockRestore();
+  });
+});
