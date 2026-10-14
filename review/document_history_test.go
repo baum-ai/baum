@@ -239,22 +239,27 @@ func TestCarriedHunkAnchorsFitTheirMovedHunk(t *testing.T) {
 }
 
 // The previous version's hunk anchors move with their hunks: shifted by as
-// many lines as the hunk moved, then fitted to it. An anchor whose hunk's
-// earlier position is unknown is only fitted, and anchors to hunks no longer
-// in the diff are left as they were.
+// many lines as the hunk moved, then fitted to it. A hunk whose line count
+// changed kept its ID with different context, so no shift is known and the
+// range is removed. An anchor whose hunk's earlier position is unknown is only
+// fitted, and anchors to hunks no longer in the diff are left as they were.
 func TestFitPreviousHunkAnchorsFollowsMovedHunks(t *testing.T) {
-	const other, gone = "h_aaaaaaaaaaaa", "h_bbbbbbbbbbbb"
+	const other, gone, reshaped = "h_aaaaaaaaaaaa", "h_bbbbbbbbbbbb", "h_cccccccccccc"
 	anchor := func(id string, lines ...int) map[string]any {
 		return map[string]any{"type": "hunk", "id": id, "lines": []any{float64(lines[0]), float64(lines[1])}}
 	}
 	section := map[string]any{"id": "sec_a", "summary": map[string]any{"text": "Changes.", "anchors": []any{
-		anchor(testHunk, 12, 13), anchor(other, 5, 9), anchor(gone, 1, 2),
+		anchor(testHunk, 12, 13), anchor(other, 5, 9), anchor(gone, 1, 2), anchor(reshaped, 31, 31),
 	}}}
 	content, err := json.Marshal(section)
 	checkNoError(t, err)
 	b := &bundlepkg.Bundle{
-		Diff: []bundlepkg.Hunk{{ID: testHunk, StartLine: 110, LineCount: 5}, {ID: other, StartLine: 7, LineCount: 2}},
-		Previous: &bundlepkg.PreviousVersion{Version: 1, HunkStartLines: map[string]int{testHunk: 10, gone: 1},
+		Diff: []bundlepkg.Hunk{
+			{ID: testHunk, StartLine: 110, LineCount: 5}, {ID: other, StartLine: 7, LineCount: 2},
+			// A context line was added above the change: same ID, one line more.
+			{ID: reshaped, StartLine: 90, LineCount: 6},
+		},
+		Previous: &bundlepkg.PreviousVersion{Version: 1, HunkRanges: map[string][2]int{testHunk: {10, 5}, gone: {1, 2}, reshaped: {30, 5}},
 			Sections: []bundlepkg.PreviousSection{{ID: "sec_a", Content: content}}},
 	}
 	checkNoError(t, FitPreviousHunkAnchors(b))
@@ -267,10 +272,13 @@ func TestFitPreviousHunkAnchorsFollowsMovedHunks(t *testing.T) {
 	checkEqual(t, []any{float64(112), float64(113)}, fitted.Summary.Anchors[0]["lines"])
 	checkEqual(t, []any{float64(7), float64(8)}, fitted.Summary.Anchors[1]["lines"])
 	checkEqual(t, []any{float64(1), float64(2)}, fitted.Summary.Anchors[2]["lines"])
+	if lines, ok := fitted.Summary.Anchors[3]["lines"]; ok {
+		t.Fatalf("an anchor on a hunk whose context changed was shifted to %v", lines)
+	}
 	if strings.Contains(string(mustMarshal(t, b.Previous)), "112") == false {
 		t.Fatal("the fitted lines are not in the bundle's previous version")
 	}
-	if strings.Contains(string(mustMarshal(t, b.Previous)), "hunk_start_lines") || strings.Contains(string(mustMarshal(t, b.Previous)), "HunkStartLines") {
+	if strings.Contains(string(mustMarshal(t, b.Previous)), "HunkRanges") {
 		t.Fatal("the recorded start lines were serialized into the bundle")
 	}
 }

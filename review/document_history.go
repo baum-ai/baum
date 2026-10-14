@@ -93,10 +93,13 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 }
 
 // FitPreviousHunkAnchors moves the hunk anchors of b's previous version to
-// where their hunks sit in b's diff. A hunk ID names the hunk's content, so a
-// rebase that shifts the hunk keeps its ID and moves its lines: an anchor
-// recorded at the previous version is shifted by as many lines as its hunk
-// moved (when Previous.HunkStartLines knows where the hunk was) and then
+// where their hunks sit in b's diff. A hunk ID names the path and changed
+// lines, so a rebase that shifts the hunk keeps its ID and moves its lines.
+// When Previous.HunkRanges shows the hunk with the same line count, its
+// layout is taken as unchanged and an anchor is shifted by as many lines as
+// the hunk moved. When the count differs, the hunk's context changed (the ID
+// ignores context), so no shift is known to keep the anchored lines: the
+// range is removed and the anchor names the whole hunk. Either way it is then
 // fitted to the hunk as an authored anchor is. The model is shown, and the
 // host carries over, the hunk's current lines rather than lines it no longer
 // occupies.
@@ -122,12 +125,19 @@ func FitPreviousHunkAnchors(b *bundlepkg.Bundle) error {
 			}
 			id, _ := candidate["id"].(string)
 			hunk, known := hunks[id]
-			start, recorded := b.Previous.HunkStartLines[id]
+			previous, recorded := b.Previous.HunkRanges[id]
 			lines, present := candidate["lines"].([]any)
-			if !known || !recorded || !present || len(lines) != 2 || hunk.StartLine == start {
+			if !known || !recorded || !present || len(lines) != 2 {
 				return
 			}
-			shift := float64(hunk.StartLine - start)
+			if previous[1] != hunk.LineCount {
+				delete(candidate, "lines")
+				return
+			}
+			if hunk.StartLine == previous[0] {
+				return
+			}
+			shift := float64(hunk.StartLine - previous[0])
 			for i, line := range lines {
 				if number, ok := jsonIntegerNumber(line); ok {
 					lines[i] = number + shift

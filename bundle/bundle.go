@@ -313,10 +313,11 @@ type ReviewConfig struct {
 type PreviousVersion struct {
 	Version  int               `json:"version"`
 	Sections []PreviousSection `json:"sections"`
-	// HunkStartLines is where each hunk's right side started in the previous
-	// version, by hunk ID, for the host to move the sections' hunk anchors
-	// to where the same hunk sits now. It is never part of the bundle.
-	HunkStartLines map[string]int `json:"-"`
+	// HunkRanges is each hunk's right side in the previous version, by hunk
+	// ID: its first line and line count. The host uses it to move the
+	// sections' hunk anchors to where the same hunk sits now. It is never
+	// part of the bundle.
+	HunkRanges map[string][2]int `json:"-"`
 }
 
 type PreviousSection struct {
