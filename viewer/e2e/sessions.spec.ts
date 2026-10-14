@@ -138,12 +138,38 @@ test("a session the machine does not link falls back to the list", async ({ page
   await expect(page.locator("#review-section")).not.toContainText("Add a retry budget");
 });
 
-test("the Activity tab lists the document's own sessions and their prompts", async ({ page }) => {
+test("the Activity tab lists the document's own sessions, each card opening its session", async ({
+  page,
+}) => {
   await page.goto("/");
 
   await page.getByRole("tab", { name: "Activity" }).click();
 
   const activity = page.getByRole("tabpanel", { name: "Activity" });
-  await expect(activity).toContainText("Add a retry policy with exponential backoff");
+  // CI leads the tab, before the exchange.
+  await expect(activity.getByRole("region").first()).toHaveAccessibleName("Checks");
   await expect(activity).toContainText("Acme-agent");
+  // One of the sample's five threads is still open, a must-fix finding: it
+  // leads the exchange with the way to it, and the critical count is red.
+  const exchange = activity.getByRole("region", { name: "Review exchange" });
+  await expect(exchange).toContainText("1 unresolved thread of 5");
+  await expect(exchange).toContainText("RoleFromRequest trusts a client-controlled header");
+  await expect(exchange.getByRole("link", { name: "api/auth.go:28" })).toHaveAttribute(
+    "href",
+    /discussion_r7202$/,
+  );
+  const critical = exchange
+    .locator("dt", { hasText: "critical issue found" })
+    .locator("~ dd")
+    .first();
+  await expect(critical).toHaveCSS("color", "rgb(186, 58, 49)");
+
+  // The card is the target, not only the harness at its head: its prompts
+  // are in the session it opens. The harness's hit area lies over the title,
+  // so the click lands where a pointer would rather than on the title itself.
+  await activity
+    .getByRole("region", { name: "Linked sessions" })
+    .getByText("Add retry budget and dead letters")
+    .click({ force: true });
+  await expect(page).toHaveURL(/pane=session&session=785faefe-40b5-5521-9932-4dc2d659ec1d/);
 });

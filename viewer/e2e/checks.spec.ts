@@ -1,12 +1,25 @@
 import { expect, sampleDocument, serveDocument, test } from "./fixtures.ts";
 
-const details = (page: import("@playwright/test").Page) =>
-  page.getByRole("tabpanel", { name: "Details" }).getByRole("region", { name: "Checks" });
+type Page = import("@playwright/test").Page;
 
-test("the Details tab names the failing check and lists every check on the reviewed head", async ({
+// CI leads the side pane's Activity tab.
+const details = (page: Page) =>
+  page.getByRole("tabpanel", { name: "Activity" }).getByRole("region", { name: "Checks" });
+
+async function openActivity(page: Page) {
+  await page.getByRole("tab", { name: "Activity" }).click();
+}
+
+test("the Activity tab names the failing check and lists every check on the reviewed head", async ({
   page,
 }) => {
   await page.goto("/");
+  // Failing CI flags the tab that holds it, not Details.
+  const dot = (name: string) =>
+    page.getByRole("tab", { name, exact: true }).locator("span[aria-hidden]");
+  await expect(dot("Activity")).toHaveCount(1);
+  await expect(dot("Details")).toHaveCount(0);
+  await openActivity(page);
   const checks = details(page);
 
   await expect(checks.getByRole("status")).toHaveText("CI failing · 1 check failed");
@@ -29,6 +42,7 @@ test("a required check that fails blocks, and an all-green head reads green", as
   for (const check of blocked.index.checks) if (check.name === "lint") check.required = true;
   await serveDocument(page, blocked);
   await page.goto("/");
+  await openActivity(page);
   await expect(details(page)).toContainText("Checks blocking");
   await expect(
     details(page).getByRole("listitem").filter({ hasText: "lint" }).first(),
@@ -42,6 +56,7 @@ test("a required check that fails blocks, and an all-green head reads green", as
   await page.unroute("**/api/document");
   await serveDocument(page, green);
   await page.goto("/");
+  await openActivity(page);
   await expect(details(page).getByRole("status")).toContainText("CI green");
   await expect(details(page)).not.toContainText("Checks failing");
 });
@@ -53,6 +68,7 @@ test("a check from an earlier head does not paint this one red", async ({ page }
   }
   await serveDocument(page, document);
   await page.goto("/");
+  await openActivity(page);
 
   // The status is drawn, and it is not red.
   await expect(details(page).getByRole("status")).toContainText("CI pending");

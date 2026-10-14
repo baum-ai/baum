@@ -25,6 +25,7 @@ import {
 import { cn, FOCUS_RING } from "./classnames";
 import { CodeFileLink } from "./code-file-link";
 import { CheckIcon, ExternalLinkIcon } from "./icons";
+import { InlineMarkdown } from "./markdown";
 import { Badge } from "./ui";
 
 /** The small pieces every pane of a review document is built from. */
@@ -325,12 +326,20 @@ const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
 export function DecisionContext({
   decision,
 }: {
-  decision: Pick<Decision, "trigger" | "rationale" | "evidence">;
+  decision: Pick<Decision, "trigger" | "rationale" | "evidence" | "rejected">;
 }) {
   const trigger = decision.trigger ? TRIGGER_LABEL[decision.trigger] : undefined;
-  if (!trigger && !decision.rationale && !decision.evidence) return null;
+  if (!trigger && !decision.rationale && !decision.evidence && !decision.rejected) return null;
   return (
     <div className="space-y-1 text-base">
+      {decision.rejected && (
+        // Inline, so a long alternative wraps under its label the way the
+        // reason does.
+        <p className="text-(--text-secondary)">
+          <span className="text-(--text-tertiary)">Instead of: </span>
+          <InlineMarkdown>{decision.rejected}</InlineMarkdown>
+        </p>
+      )}
       {(trigger || decision.rationale) && (
         <p className="text-(--text-secondary)">
           {trigger && (

@@ -51,9 +51,9 @@ export function ReviewNavigator({
   onOpen: () => void;
   /** The side pane, which below `xl` is a sheet this bar opens rather than
    *  a second page under the review: its name ("Conversation", or "Details"
-   *  without one), whether one of its tabs flags something, and whether it is
-   *  open. */
-  aside: { label: string; alert: boolean; expanded: boolean; onOpen: () => void };
+   *  without one), what its tabs flag in words, if anything, and whether it
+   *  is open. */
+  aside: { label: string; alert: string | null; expanded: boolean; onOpen: () => void };
 }) {
   return (
     <div
@@ -99,7 +99,7 @@ export function ReviewNavigator({
       </IconButton>
       <span aria-hidden className="mx-0.5 h-6 w-px flex-none bg-(--border-subtle)" />
       <IconButton
-        label={aside.alert ? `${aside.label}: CI checks failing` : aside.label}
+        label={aside.alert ? `${aside.label}: ${aside.alert}` : aside.label}
         aria-expanded={aside.expanded}
         aria-controls="review-aside"
         onClick={aside.onOpen}

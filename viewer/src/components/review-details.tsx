@@ -7,15 +7,17 @@ import {
   type IndexedSession,
   type ReviewDocument,
   reviewDecisions,
+  type SectionDecision,
   riskSegments,
   TIER_COLOR,
 } from "../review-document";
 import { HarnessName, ModelName } from "./brand-logo";
-import { QuotedPrompts } from "./chat";
+import { cn } from "./classnames";
 import { EM_DASH, formatDate, formatDuration } from "./format";
-import { Markdown } from "./markdown";
+import { ChevronDownIcon } from "./icons";
+import { InlineMarkdown } from "./markdown";
 import { ChecksPart } from "./review-checks";
-import { ReviewExchange } from "./review-exchange";
+import { ReviewExchange, StackReviewExchange } from "./review-exchange";
 import {
   AnchorChips,
   DecisionByBadge,
@@ -28,12 +30,13 @@ import {
   Part,
   TierDot,
 } from "./review-parts";
+import { Skeleton } from "./states";
 import { Badge } from "./ui";
 import { useScrollingFlag } from "./use-scrolling-flag";
 
 /** The pull request's standing facts, for the conversation pane's Details
- *  tab: whether CI passed, who wrote it and with what, what it says it
- *  implements, and how big it is. Narrow by design — the pane is 320px at
+ *  tab: who wrote it and with what, what it says it implements, and how big
+ *  it is, after whether CI passed when the Activity tab does not show it. Narrow by design — the pane is 320px at
  *  its smallest — so every part is a list or a two-up grid. */
 export function ReviewDetails({
   document,
@@ -165,16 +168,42 @@ export function ReviewDetails({
   );
 }
 
-/** How the change came about, for the conversation pane's Activity tab: the
- *  review tools' back and forth, the coding sessions behind it, and the
- *  decisions the review recorded. */
+/** A stack member's own review, for an Activity tab that gathers a stack's. */
+export type ActivityMember = {
+  number: number;
+  document: ReviewDocument;
+  /** Names the member beside what came from it, such as a link to its page. */
+  tag: ReactNode;
+};
+
+/** The member reviews a stack's Activity tab gathers, as far as they are
+ *  read. */
+export type ActivityMembers = {
+  members: ActivityMember[];
+  /** Some members' reviews have not answered yet. */
+  loading: boolean;
+  /** Drawn under the checks, such as which members could not be read. */
+  note?: ReactNode;
+};
+
+/** What still needs the author and how the change came about, for the
+ *  conversation pane's Activity tab: whether CI passed, the review tools'
+ *  back and forth, the coding sessions behind it, and the decisions the
+ *  review recorded. */
 export function ReviewActivity({
   document,
+  checks,
+  members,
   onSelectSection,
   onSelectSession,
   onViewSessions,
 }: {
   document: ReviewDocument;
+  /** Replaces the Checks part; null leaves it out. */
+  checks?: ReactNode;
+  /** A stack's member reviews: each part then gathers theirs rather than
+   *  reading the document's own. */
+  members?: ActivityMembers;
   onSelectSection: (id: string) => void;
   /** Opens one linked session in the Sessions pane. The document's session
    *  ids are the pull request's run ids, so the rail can name the same one. */
@@ -182,78 +211,208 @@ export function ReviewActivity({
   /** Opens the Sessions pane on the whole list; without it the link is not drawn. */
   onViewSessions?: () => void;
 }) {
-  const decisions = reviewDecisions(document);
+  const checksPart = checks === undefined ? <ChecksPart document={document} /> : checks;
+  if (members) {
+    return (
+      <StackActivity
+        checks={checksPart}
+        members={members}
+        onSelectSession={onSelectSession}
+        onViewSessions={onViewSessions}
+      />
+    );
+  }
+  const decisions: ListedDecision[] = reviewDecisions(document).map((decision) => ({
+    ...decision,
+    key: `${decision.section}-${decision.id}`,
+    section: { title: decision.sectionTitle, select: () => onSelectSection(decision.section) },
+  }));
   return (
     <div className="space-y-7">
+      {checksPart}
+
       <ReviewExchange document={document} onSelectSection={onSelectSection} />
 
-      <Part
-        label="Linked sessions"
-        aside={
-          onViewSessions && document.index.sessions.length > 0 ? (
-            <JumpLink className="text-xs" onClick={onViewSessions}>
-              View all sessions →
-            </JumpLink>
-          ) : undefined
-        }
-      >
-        {document.index.sessions.length === 0 ? (
-          <None>No coding session is linked to this pull request.</None>
-        ) : (
-          <ul className="space-y-2">
-            {document.index.sessions.map((session) => (
-              <SessionItem
-                key={session.id}
-                session={session}
-                onOpen={
-                  onSelectSession && !session.restricted
-                    ? () => onSelectSession(session.id)
-                    : undefined
-                }
-              />
-            ))}
-          </ul>
-        )}
-      </Part>
+      <LinkedSessions
+        sessions={document.index.sessions}
+        empty="No coding session is linked to this pull request."
+        onSelectSession={onSelectSession}
+        onViewSessions={onViewSessions}
+      />
 
-      {decisions.length > 0 && (
-        <Part
-          label="Decisions"
-          aside={
-            <span className="text-xs text-(--text-tertiary)">
-              {decisions.filter((item) => item.by === "agent").length} agent ·{" "}
-              {decisions.filter((item) => item.by === "human").length} person
-            </span>
-          }
-        >
-          {/* The tab is theirs, so the decisions are listed rather than
-              folded behind a count. */}
-          <ul className="divide-y divide-(--border-subtle)">
-            {decisions.map((decision) => (
-              <li
-                key={`${decision.section}-${decision.id}`}
-                className="space-y-1 py-2.5 text-base first:pt-0 last:pb-0"
-              >
-                <div className="flex items-start gap-2">
-                  <DecisionByBadge decision={decision} />
-                  <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                    {decision.text}
-                  </Markdown>
-                </div>
-                {decision.rejected && (
-                  <div className="text-(--text-tertiary)">
-                    Instead of <Markdown className="inline-block">{decision.rejected}</Markdown>
-                  </div>
-                )}
-                <DecisionContext decision={decision} />
-                <JumpLink className="text-xs" onClick={() => onSelectSection(decision.section)}>
-                  {decision.sectionTitle} →
-                </JumpLink>
-              </li>
-            ))}
-          </ul>
-        </Part>
+      <Decisions decisions={decisions} />
+    </div>
+  );
+}
+
+/** A stack's Activity tab: its checks, then each part gathered from the
+ *  members' reviews, every thread and decision tagged with its member. */
+function StackActivity({
+  checks,
+  members: { members, loading, note },
+  onSelectSession,
+  onViewSessions,
+}: {
+  checks: ReactNode;
+  members: ActivityMembers;
+  onSelectSession?: (id: string) => void;
+  onViewSessions?: () => void;
+}) {
+  // A session can have produced commits in several members; it is listed
+  // once, and in full when any member's review carries it in full.
+  const sessions = new Map<string, IndexedSession>();
+  for (const member of members) {
+    for (const session of member.document.index.sessions) {
+      const listed = sessions.get(session.id);
+      if (!listed || (listed.restricted && !session.restricted)) sessions.set(session.id, session);
+    }
+  }
+  const decisions: ListedDecision[] = members.flatMap((member) =>
+    reviewDecisions(member.document).map((decision) => ({
+      ...decision,
+      key: `${member.number}:${decision.section}-${decision.id}`,
+      section: undefined,
+      member: member.tag,
+    })),
+  );
+  return (
+    <div className="space-y-7">
+      {checks}
+      {note}
+      {loading ? (
+        <Skeleton height={200} />
+      ) : (
+        <>
+          <StackReviewExchange members={members} />
+
+          <LinkedSessions
+            sessions={[...sessions.values()]}
+            empty="No coding session is linked to these pull requests."
+            onSelectSession={onSelectSession}
+            onViewSessions={onViewSessions}
+          />
+
+          <Decisions decisions={decisions} />
+        </>
       )}
+    </div>
+  );
+}
+
+function LinkedSessions({
+  sessions,
+  empty,
+  onSelectSession,
+  onViewSessions,
+}: {
+  sessions: IndexedSession[];
+  empty: string;
+  onSelectSession?: (id: string) => void;
+  onViewSessions?: () => void;
+}) {
+  return (
+    <Part
+      label="Linked sessions"
+      aside={
+        onViewSessions && sessions.length > 0 ? (
+          <JumpLink className="text-xs" onClick={onViewSessions}>
+            View all sessions →
+          </JumpLink>
+        ) : undefined
+      }
+    >
+      {sessions.length === 0 ? (
+        <None>{empty}</None>
+      ) : (
+        <ul className="space-y-2">
+          {sessions.map((session) => (
+            <SessionItem
+              key={session.id}
+              session={session}
+              onOpen={
+                onSelectSession && !session.restricted
+                  ? () => onSelectSession(session.id)
+                  : undefined
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </Part>
+  );
+}
+
+/** A decision as listed: where it leads — its section in this review, or
+ *  the stack member it came from. */
+type ListedDecision = Omit<SectionDecision, "section"> & {
+  key: string;
+  section?: { title: string; select: () => void };
+  member?: ReactNode;
+};
+
+function Decisions({ decisions }: { decisions: ListedDecision[] }) {
+  if (decisions.length === 0) return null;
+  return (
+    <Part label="Decisions">
+      {/* The tab is theirs, so the decisions are listed rather than folded
+          behind a count — but as titles, the calls the agent made on its own
+          first: those are what a reviewer has to check. Why, what was turned
+          down and the session's words open per row. */}
+      <div className="space-y-3">
+        <DecisionGroup
+          label="Agent's own calls"
+          decisions={decisions.filter((item) => item.by === "agent" && !item.approved_by_human)}
+        />
+        <DecisionGroup
+          label="Made or approved by a person"
+          decisions={decisions.filter((item) => item.by === "human" || item.approved_by_human)}
+        />
+      </div>
+    </Part>
+  );
+}
+
+/** One group of decisions, each a title that opens onto what prompted it, the
+ *  alternative turned down, the session's words and its section. */
+function DecisionGroup({ label, decisions }: { label: string; decisions: ListedDecision[] }) {
+  if (decisions.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-1 text-xs text-(--text-tertiary)">
+        {label} · {decisions.length}
+      </p>
+      <ul className="divide-y divide-(--border-subtle)">
+        {decisions.map((decision) => (
+          <li key={decision.key} className="py-1.5 text-base">
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-start gap-1.5 [&::-webkit-details-marker]:hidden">
+                <ChevronDownIcon
+                  size={12}
+                  aria-hidden
+                  className="mt-1.5 flex-none -rotate-90 text-(--text-tertiary) transition-transform group-open:rotate-0"
+                />
+                {/* A title in a disclosure: links read as text and blocks
+                    unwrap, so the summary holds no block or control. */}
+                <InlineMarkdown className="line-clamp-2 min-w-0 flex-1 text-(--text-primary) group-open:line-clamp-none">
+                  {decision.text}
+                </InlineMarkdown>
+              </summary>
+              <div className="mt-1.5 space-y-1.5 pl-[18px]">
+                <DecisionContext decision={decision} />
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <DecisionByBadge decision={decision} />
+                  {decision.member}
+                  {decision.section && (
+                    <JumpLink className="text-xs" onClick={decision.section.select}>
+                      {decision.section.title} →
+                    </JumpLink>
+                  )}
+                </div>
+              </div>
+            </details>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -327,24 +486,39 @@ export function SessionItem({
     session.prompt_count != null ? pluralize("prompt", session.prompt_count, true) : null,
     session.tool_calls != null ? pluralize("tool call", session.tool_calls, true) : null,
   ].filter(Boolean);
+  const [firstModel, ...otherModels] = session.models;
   return (
-    <Item className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <Item
+      className={cn(
+        "space-y-1.5",
+        onOpen && "relative cursor-pointer transition-colors hover:bg-(--surface-hover)",
+      )}
+    >
+      {/* One row: the first model, and how many more beside it, named in
+          its tooltip, rather than a badge each that wraps the header. */}
+      <div className="flex min-w-0 items-center gap-2">
         {onOpen ? (
-          <JumpLink tone="primary" className="font-medium" onClick={onOpen}>
-            <HarnessName vendor={session.vendor} /> →
+          // Its hit area covers the card, so the whole card opens the session
+          // while the harness stays the one control a keyboard reaches.
+          <JumpLink
+            tone="primary"
+            className="flex-none font-medium after:absolute after:inset-0 after:content-['']"
+            onClick={onOpen}
+          >
+            <HarnessName vendor={session.vendor} />
           </JumpLink>
         ) : (
-          <HarnessName vendor={session.vendor} className="font-medium" />
+          <HarnessName vendor={session.vendor} className="flex-none font-medium" />
         )}
-        {session.models.map((model) => (
-          <Badge key={model} size="compact">
-            <ModelName model={model} size={12} />
+        {firstModel && (
+          <Badge size="compact" className="min-w-0">
+            <ModelName model={firstModel} size={12} />
           </Badge>
-        ))}
-        {session.outcome && (
-          <Badge size="compact" tone={session.outcome === "committed" ? "positive" : "neutral"}>
-            {humanize(session.outcome)}
+        )}
+        {otherModels.length > 0 && (
+          // Above the card's hit area, so its tooltip still shows.
+          <Badge size="compact" className="relative flex-none" title={otherModels.join(", ")}>
+            +{otherModels.length}
           </Badge>
         )}
       </div>
@@ -357,36 +531,6 @@ export function SessionItem({
           {session.title && session.git_branch ? " · " : ""}
           {session.git_branch && <code className="font-mono text-base">{session.git_branch}</code>}
         </p>
-      )}
-      {session.prompts && session.prompts.length > 0 && (
-        <details className="group">
-          <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
-            {pluralize("prompt", session.prompts.length, true)}
-          </summary>
-          <QuotedPrompts className="mt-2" prompts={session.prompts} />
-        </details>
-      )}
-      {session.events && session.events.length > 0 && (
-        <details>
-          <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
-            {pluralize("event", session.events.length, true)}
-          </summary>
-          <ul className="mt-2 space-y-1">
-            {session.events.map((event) => (
-              <li key={event.id} className="flex gap-2 text-base">
-                <span className="w-12 flex-none text-(--text-tertiary)" title={event.at}>
-                  {event.at.slice(11, 16)}
-                </span>
-                <span className="w-16 flex-none text-(--text-tertiary)">
-                  {humanize(event.verb)}
-                </span>
-                <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                  {event.summary}
-                </Markdown>
-              </li>
-            ))}
-          </ul>
-        </details>
       )}
     </Item>
   );

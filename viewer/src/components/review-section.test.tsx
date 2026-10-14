@@ -195,7 +195,7 @@ describe("review section decisions", () => {
     const own = page.querySelector('[id$="-dec_own"]')!;
     const ownWhy = [...own.querySelectorAll("p")].find((p) => p.textContent === "Own initiative");
     expect(ownWhy).toBeDefined();
-    expect(own.querySelector("span")!.textContent).toBe("Human");
+    expect([...own.querySelectorAll("span")].map((span) => span.textContent)).toContain("Human");
   });
 });
 

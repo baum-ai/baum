@@ -253,6 +253,20 @@ export function formatDateTime(iso: string): string {
   return `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(iso))} UTC`;
 }
 
+const shortDateTimeLabel = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "UTC",
+});
+
+/** An instant as a day and a time without the year, for a run of events close
+ *  together; `formatDateTime` gives the whole of it, for a tooltip. */
+export function formatShortDateTime(iso: string): string {
+  return shortDateTimeLabel.format(new Date(iso));
+}
+
 /** GitHub's picture for a login, from the public redirect every profile has.
  *  A GitHub App's login ends in "[bot]" and has no such page, so it gets no
  *  URL and the caller falls back to initials. */
