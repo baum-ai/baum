@@ -360,6 +360,47 @@ const labels = (section: { id: string }, document: ReviewDocument) => (
   </a>
 );
 
+const head = (container: HTMLElement) => container.querySelector("header")?.textContent ?? "";
+
+describe("ReviewViewer's review time estimate", () => {
+  const withMinutes = (review_minutes: number | null | undefined) =>
+    ({ ...current, summary: { ...current.summary, review_minutes } }) as ReviewDocument;
+
+  it("states the estimate in the head when the document has one", async () => {
+    const container = await render(
+      <Host>
+        <ReviewViewer document={withMinutes(7)} header={{ pullRequest: { repository: "a/b" } }} />
+      </Host>,
+    );
+    expect(head(container)).toContain("~7 min to review");
+    expect(
+      container.querySelector(
+        'header [title="Estimated time to read this review: about 7 minutes"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it("says nothing when the estimate is null, absent or not a positive number", async () => {
+    for (const minutes of [null, undefined, 0]) {
+      const container = await render(
+        <Host>
+          <ReviewViewer document={withMinutes(minutes)} />
+        </Host>,
+      );
+      expect(head(container)).not.toContain("min to review");
+    }
+  });
+
+  it("leaves it out of a review headed for something other than one pull request", async () => {
+    const container = await render(
+      <Host>
+        <ReviewViewer document={withMinutes(7)} header={{ heading: "Split the importer" }} />
+      </Host>,
+    );
+    expect(head(container)).not.toContain("min to review");
+  });
+});
+
 describe("ReviewViewer for a review of more than one pull request", () => {
   it("titles the head with the host's heading and none of the document's pull request", async () => {
     const container = await render(

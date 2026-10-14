@@ -194,6 +194,13 @@ export function ReviewHeader({
   // figures, carries it as a pill. Not assessed shows nothing in either: the
   // Summary says why, and a "not assessed" mark would read as a finding.
   const risk = assessedRisk(document);
+  // The estimate is the head's alone: it says what reading the review costs,
+  // which is of use before the reader starts, not once the bar stands in.
+  const minutes = ofPullRequest?.summary.review_minutes;
+  const reviewMinutes =
+    typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+      ? Math.round(minutes)
+      : null;
   // Any disagreement earns the caveat, and the caveat claims no direction. The
   // live state can lag the forge, and the document is written when the review
   // is generated: either can be the staler of the two, and the page cannot
@@ -331,6 +338,18 @@ export function ReviewHeader({
                 </span>
                 <BranchChip name={facts.branches.base} />
               </span>
+            ) : null}
+            {reviewMinutes !== null ? (
+              <>
+                {repositoryFullName ? <Dot /> : null}
+                <span
+                  title={`Estimated time to read this review: about ${reviewMinutes} ${
+                    reviewMinutes === 1 ? "minute" : "minutes"
+                  }`}
+                >
+                  ~{reviewMinutes} min to review
+                </span>
+              </>
             ) : null}
             {githubUrl ? (
               <a

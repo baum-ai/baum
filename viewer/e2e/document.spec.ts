@@ -86,3 +86,28 @@ test("a document that fails to render offers a retry instead of a blank page", a
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   expect(browserErrors.length).toBeGreaterThan(0);
 });
+
+test("the head states the review time estimate when the document has one", async ({ page }) => {
+  const document = sampleDocument();
+  document.summary.review_minutes = 7;
+  await serveDocument(page, document);
+  await page.goto("/");
+
+  await expect(page.getByText("~7 min to review")).toBeVisible();
+  await expect(
+    page.getByTitle("Estimated time to read this review: about 7 minutes"),
+  ).toBeVisible();
+});
+
+test("the head shows no estimate when the document has none or null", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByText("min to review")).toHaveCount(0);
+
+  const document = sampleDocument();
+  document.summary.review_minutes = null;
+  await serveDocument(page, document);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByText("min to review")).toHaveCount(0);
+});

@@ -99,7 +99,7 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
@@ -428,7 +428,7 @@ parallel.
 
 | Spec | What it covers |
 | --- | --- |
-| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render |
+| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render; the head's review time estimate, present, null and absent |
 | `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
 | `section.spec.ts` | a section's blocks (intent, entities, behavior, decisions, table, code, diagram); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
 | `checks.spec.ts` | the Activity tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |

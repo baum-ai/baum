@@ -391,6 +391,10 @@ export type ReviewDocument = {
     change_kind: string;
     implements: Implements[];
     release_note: string | null;
+    /** The generator's estimate of the minutes a native English speaker who
+     *  knows the project needs to read the review, 1 to 240. Absent on
+     *  documents generated before the estimate existed and on stack reviews. */
+    review_minutes?: number | null;
     breaking_change: string | null;
     attention: Attention;
     /** The generator's account of how the review went. It was a plain string
