@@ -1186,7 +1186,8 @@ func TestRedactPreviousScansFreeTextKeys(t *testing.T) {
 	content, err := json.Marshal(map[string]any{
 		"decisions": []any{map[string]any{"id": "d1", "evidence": "quote " + plantedSecret}},
 		"anchor":    map[string]any{"type": "prompt", "input": "mail person@example.com"},
-		"column":    map[string]any{"type": "text " + plantedSecret, "category": "cat person@example.com"},
+		"column":    map[string]any{"type": "text " + plantedSecret},
+		"step":      map[string]any{"evidence": []any{"ev_one", "ev_two"}, "category": "security"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1199,11 +1200,12 @@ func TestRedactPreviousScansFreeTextKeys(t *testing.T) {
 	if strings.Contains(redacted, plantedSecret) || strings.Contains(redacted, "person@example.com") {
 		t.Fatalf("free-text keys kept a leak: %s", redacted)
 	}
-	if bundle.MaskedSpanCount != 4 {
-		t.Fatalf("masked spans = %d, want 4", bundle.MaskedSpanCount)
+	if bundle.MaskedSpanCount != 3 {
+		t.Fatalf("masked spans = %d, want 3", bundle.MaskedSpanCount)
 	}
-	if !strings.Contains(redacted, `"type":"prompt"`) || !strings.Contains(redacted, `"id":"d1"`) {
-		t.Fatalf("discriminator or id changed: %s", redacted)
+	if !strings.Contains(redacted, `"type":"prompt"`) || !strings.Contains(redacted, `"id":"d1"`) ||
+		!strings.Contains(redacted, `"evidence":["ev_one","ev_two"]`) || !strings.Contains(redacted, `"category":"security"`) {
+		t.Fatalf("discriminator, id, evidence refs or category changed: %s", redacted)
 	}
 }
 
