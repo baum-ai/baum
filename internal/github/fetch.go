@@ -7,8 +7,8 @@ import (
 
 	graphql "github.com/cli/shurcooL-graphql"
 
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/githubapi"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/githubapi"
 )
 
 // The bundle sources a fetch records, one per part read from GitHub. A part

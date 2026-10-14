@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func name(value string) *string { return &value }

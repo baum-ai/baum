@@ -17,8 +17,8 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
-	reviewschema "github.com/lastpersonlabs/baum/schema"
+	bundlepkg "github.com/baumai/baum/bundle"
+	reviewschema "github.com/baumai/baum/schema"
 )
 
 // reviewSchema is the review document schema, owned by the open-source baum

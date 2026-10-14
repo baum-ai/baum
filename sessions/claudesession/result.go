@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/lastpersonlabs/baum/linkage/gitevidence"
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/linkage/gitevidence"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // policyDenials are refusals that came from a rule rather than from a person.

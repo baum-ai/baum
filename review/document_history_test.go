@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // Lifecycle fields and repeated risk IDs are decided by the platform: an

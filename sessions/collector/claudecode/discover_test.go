@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/baumai/baum/sessions/collector/model"
 )
 
 // transcript builds a minimal parseable Claude Code transcript with a sidecar

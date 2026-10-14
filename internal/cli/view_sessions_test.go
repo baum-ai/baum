@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
-	"github.com/lastpersonlabs/baum/schema"
+	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/schema"
 )
 
 // startView runs "baum view" with args until the test ends and returns its URL.

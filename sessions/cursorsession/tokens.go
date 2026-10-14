@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/cursortranscript"
 )
 
 type tokenEstimator struct {

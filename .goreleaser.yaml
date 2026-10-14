@@ -23,7 +23,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/lastpersonlabs/baum/internal/cli.buildVersion={{ .Version }}
+      - -s -w -X github.com/baumai/baum/internal/cli.buildVersion={{ .Version }}
     goos:
       - linux
       - darwin
@@ -64,7 +64,7 @@ changelog:
 
 release:
   github:
-    owner: lastpersonlabs
+    owner: baumai
     name: baum
   draft: false
   prerelease: auto

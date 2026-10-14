@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/goldentest"
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/internal/goldentest"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func buildClaudeLines(t *testing.T, lines ...string) (*session.Graph, *Report) {

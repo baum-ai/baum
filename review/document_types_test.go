@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 func TestDocumentRoundTripPreservesOptionalFields(t *testing.T) {

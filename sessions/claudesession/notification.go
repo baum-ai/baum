@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // A long-running tool hands off: its tool result says the command moved to the

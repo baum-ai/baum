@@ -3,7 +3,7 @@ package cursorsession
 import (
 	"fmt"
 
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // Report accounts for every bubble read and every row emitted.

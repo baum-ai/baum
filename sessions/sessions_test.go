@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/collector/entire"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/collector/entire"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 // fixture is a fake machine: a git clone whose checkpoint branch holds one

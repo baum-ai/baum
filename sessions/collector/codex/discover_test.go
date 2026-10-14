@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/baumai/baum/sessions/collector/model"
 )
 
 func writeFile(t *testing.T, path, content string) {

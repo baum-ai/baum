@@ -1,8 +1,8 @@
 package sessioncorrelate
 
 import (
-	"github.com/lastpersonlabs/baum/sessions/session"
-	"github.com/lastpersonlabs/baum/sessions/sourcepath"
+	"github.com/baumai/baum/sessions/session"
+	"github.com/baumai/baum/sessions/sourcepath"
 )
 
 // PathResolver makes individual file touches repo-relative by the same rules

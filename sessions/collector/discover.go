@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/collector/codex"
-	"github.com/lastpersonlabs/baum/sessions/collector/cursor"
-	"github.com/lastpersonlabs/baum/sessions/collector/model"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/collector/codex"
+	"github.com/baumai/baum/sessions/collector/cursor"
+	"github.com/baumai/baum/sessions/collector/model"
 )
 
 // Session and SessionFile are the shared discovery result shape.

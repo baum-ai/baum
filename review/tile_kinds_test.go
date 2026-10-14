@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/lastpersonlabs/baum/review/tilecatalogue"
+	"github.com/baumai/baum/review/tilecatalogue"
 )
 
 func TestSchemaWithoutTilesChangesNothingButTiles(t *testing.T) {

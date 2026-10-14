@@ -4,7 +4,7 @@ import (
 	"slices"
 	"time"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 const (

@@ -30,8 +30,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/lastpersonlabs/baum/sessions/prompttext"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/prompttext"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // Limits bound a transcript. Text limits are in bytes, cut at a character.

@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // firstLineBufferBytes is the read buffer DecodeFirst starts with. Decode needs

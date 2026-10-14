@@ -3,10 +3,10 @@ package locallink
 import (
 	"time"
 
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/redact"
-	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/linkage/sessioncorrelate"
+	"github.com/baumai/baum/redact"
+	"github.com/baumai/baum/sessions"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // Row is one session as "baum sessions" lists it, and the JSON shape of its

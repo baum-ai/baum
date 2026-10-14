@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/internal/locallink/linktest"
 )
 
 // numbered is a file of n numbered lines.

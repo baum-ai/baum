@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // OutputRedactor masks secret spans in what a model returned, before it is

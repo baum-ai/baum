@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 func assessedSection(id string, level int, reasons ...string) documentSection {

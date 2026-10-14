@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/linkage"
+	"github.com/baumai/baum/linkage"
 )
 
 func approxEqual(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

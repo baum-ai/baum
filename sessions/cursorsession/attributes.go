@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func (f *composerState) addAttributes() error {

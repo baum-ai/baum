@@ -3,7 +3,7 @@ package steps
 import (
 	"strings"
 
-	"github.com/lastpersonlabs/baum/linkage"
+	"github.com/baumai/baum/linkage"
 )
 
 const StartCommitStepID = "start_commit"

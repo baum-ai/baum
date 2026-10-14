@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
+	"github.com/baumai/baum/internal/locallink"
 )
 
 // patchTimeout bounds one patch computation, which outlives the request that

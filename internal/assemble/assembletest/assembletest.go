@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/internal/github"
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/internal/github"
+	"github.com/baumai/baum/internal/gitlocal"
 )
 
 // PlantedSecret is a made-up Hugging Face token, planted in the pull request's

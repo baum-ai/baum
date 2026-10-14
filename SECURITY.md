@@ -14,7 +14,7 @@ each of which talks to its own provider under your own account):
   coding-agent sessions that were linked to the pull request (prompts,
   paraphrased commands and touched paths). Its free-text and URL fields,
   the diff included, are sent **after** secrets and e-mail addresses are
-  masked with [goredact](https://github.com/lastpersonlabs/goredact).
+  masked with [goredact](https://github.com/baumai/goredact).
   `REVIEW.md` is the exception: it is sent as it is, like the rest of the
   repository.
 

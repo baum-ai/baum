@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
+	"github.com/baumai/baum/internal/locallink"
 )
 
 func TestFailedAnswersAreKeptBriefly(t *testing.T) {

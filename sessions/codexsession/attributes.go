@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/codextranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/codextranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func (f *threadState) applyContext(line codextranscript.Line) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/review/tilecatalogue"
+	bundlepkg "github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/review/tilecatalogue"
 )
 
 func tileFixture() map[string]any {

@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
-	"github.com/lastpersonlabs/baum/linkage"
+	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/linkage"
 )
 
 // A commit with no checkpoint goes through the same loop as the hosted

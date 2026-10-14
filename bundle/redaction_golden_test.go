@@ -13,8 +13,8 @@ import (
 
 	"github.com/lastpersonlabs/goredact"
 
-	"github.com/lastpersonlabs/baum/internal/goldentest"
-	"github.com/lastpersonlabs/baum/redact"
+	"github.com/baumai/baum/internal/goldentest"
+	"github.com/baumai/baum/redact"
 )
 
 // corpusBundle places text in the named bundle field of an otherwise empty

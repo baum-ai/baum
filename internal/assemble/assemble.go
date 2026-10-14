@@ -24,9 +24,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/internal/github"
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/internal/github"
+	"github.com/baumai/baum/internal/gitlocal"
 )
 
 // GitHub reads one pull request's metadata, checks and conversation;

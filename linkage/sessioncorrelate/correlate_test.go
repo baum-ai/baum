@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func at(offset int) *time.Time {

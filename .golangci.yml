@@ -17,7 +17,7 @@ linters:
         - (*os.File).Close
         - (*database/sql.DB).Close
         - (*database/sql.Rows).Close
-        - (*github.com/lastpersonlabs/baum/sessions/cursortranscript.Store).Close
+        - (*github.com/baumai/baum/sessions/cursortranscript.Store).Close
         - os.RemoveAll
 
 formatters:
@@ -27,4 +27,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/lastpersonlabs/baum
+        - github.com/baumai/baum

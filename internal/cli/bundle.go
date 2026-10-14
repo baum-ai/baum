@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/baum/internal/assemble"
-	"github.com/lastpersonlabs/baum/internal/config"
-	"github.com/lastpersonlabs/baum/internal/github"
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/sessions"
+	"github.com/baumai/baum/internal/assemble"
+	"github.com/baumai/baum/internal/config"
+	"github.com/baumai/baum/internal/github"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/sessions"
 )
 
 // pullRequestSource is what "baum bundle" asks GitHub: which pull request to

@@ -1,6 +1,6 @@
 package steps
 
-import "github.com/lastpersonlabs/baum/linkage"
+import "github.com/baumai/baum/linkage"
 
 const CoauthorAgentStepID = "coauthor_agent"
 

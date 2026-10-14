@@ -56,7 +56,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lastpersonlabs/baum/bundle"
+	"github.com/baumai/baum/bundle"
 )
 
 // Defaults match the hosted git mirror's limits.

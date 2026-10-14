@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func TestBuildPortableMapsReducedFidelityCursorSession(t *testing.T) {

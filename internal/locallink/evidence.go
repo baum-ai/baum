@@ -3,11 +3,11 @@ package locallink
 import (
 	"strings"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/linkage"
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/linkage"
+	"github.com/baumai/baum/linkage/sessioncorrelate"
+	"github.com/baumai/baum/sessions"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // candidateOf projects a session read from this machine into the matcher's

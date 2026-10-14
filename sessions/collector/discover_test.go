@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 // claudeTranscript builds a minimal parseable Claude Code transcript with a

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/linkage/sessioncorrelate"
+	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func buildDiffs(t *testing.T, bubbles []*cursortranscript.Bubble, unlisted []*cursortranscript.Bubble, refs cursortranscript.CodeBlockData, diffs []*cursortranscript.CodeBlockDiff) (*session.Graph, *Report) {

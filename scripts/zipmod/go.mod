@@ -1,4 +1,4 @@
-module github.com/lastpersonlabs/baum/scripts/zipmod
+module github.com/baumai/baum/scripts/zipmod
 
 go 1.26.6
 

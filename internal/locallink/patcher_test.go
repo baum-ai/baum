@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/baumai/baum/internal/gitlocal"
 )
 
 type listing map[string]gitlocal.ChangedFile

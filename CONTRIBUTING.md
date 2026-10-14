@@ -57,7 +57,7 @@ tests), and `pnpm test:e2e` for the browser tests of the standalone app. Its
   pulled into the monorepo from its root with
 
   ```sh
-  git subtree pull --prefix=oss https://github.com/lastpersonlabs/baum.git main
+  git subtree pull --prefix=oss https://github.com/baumai/baum.git main
   ```
 
   so keep its commits as they are: no force pushes to `main`.

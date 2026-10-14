@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lastpersonlabs/baum/internal/cli"
+	"github.com/baumai/baum/internal/cli"
 )
 
 func main() {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/collector/entire"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/collector/entire"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 // The fixture checkpoint 0004a7a444a0 records these two sessions.

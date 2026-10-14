@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
-	"github.com/lastpersonlabs/baum/redact"
-	"github.com/lastpersonlabs/baum/sessions"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/redact"
+	"github.com/baumai/baum/sessions"
 )
 
 func TestResolveAcceptsAbbreviatedIds(t *testing.T) {

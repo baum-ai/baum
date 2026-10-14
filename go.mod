@@ -1,4 +1,4 @@
-module github.com/lastpersonlabs/baum
+module github.com/baumai/baum
 
 go 1.26.6
 

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
+	"github.com/baumai/baum/internal/locallink"
 )
 
 // sessionsTimeout bounds one computation of /api/sessions. A store or clone

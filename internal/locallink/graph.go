@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lastpersonlabs/baum/redact"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/redact"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // RedactGraph encodes a session graph as JSON and masks every secret and

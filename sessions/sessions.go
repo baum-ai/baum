@@ -15,17 +15,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/sessions/claudesession"
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/codexsession"
-	"github.com/lastpersonlabs/baum/sessions/codextranscript"
-	"github.com/lastpersonlabs/baum/sessions/collector"
-	"github.com/lastpersonlabs/baum/sessions/collector/model"
-	"github.com/lastpersonlabs/baum/sessions/cursorsession"
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/sessions/claudesession"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/codexsession"
+	"github.com/baumai/baum/sessions/codextranscript"
+	"github.com/baumai/baum/sessions/collector"
+	"github.com/baumai/baum/sessions/collector/model"
+	"github.com/baumai/baum/sessions/cursorsession"
+	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/session"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 // Entire is the source slug of sessions read from Entire checkpoints. It is a

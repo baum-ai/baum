@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/baumai/baum/internal/gitlocal"
 )
 
 // privateRepo is the private repository List, Read and Touched read objects

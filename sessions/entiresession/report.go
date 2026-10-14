@@ -1,11 +1,11 @@
 package entiresession
 
 import (
-	"github.com/lastpersonlabs/baum/sessions/claudesession"
-	"github.com/lastpersonlabs/baum/sessions/codexsession"
-	"github.com/lastpersonlabs/baum/sessions/cursorsession"
-	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/claudesession"
+	"github.com/baumai/baum/sessions/codexsession"
+	"github.com/baumai/baum/sessions/cursorsession"
+	"github.com/baumai/baum/sessions/entirecheckpoint"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // Report accounts for all Entire-owned source records and carries delegated

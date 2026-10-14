@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions"
+	"github.com/baumai/baum/sessions/collector/claudecode"
 )
 
 const (

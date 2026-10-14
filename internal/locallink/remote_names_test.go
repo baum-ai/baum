@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/internal/locallink/linktest"
 )
 
 func TestResolveBoundsRemoteNames(t *testing.T) {

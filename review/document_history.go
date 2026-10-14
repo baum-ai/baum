@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // reconcileAuthoredHistory restores published identities for validation and

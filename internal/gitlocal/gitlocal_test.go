@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/bundle"
+	"github.com/baumai/baum/bundle"
 )
 
 func requireGit(t *testing.T) {

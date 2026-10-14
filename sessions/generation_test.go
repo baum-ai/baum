@@ -3,7 +3,7 @@ package sessions
 import (
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func TestIsGenerationRun(t *testing.T) {

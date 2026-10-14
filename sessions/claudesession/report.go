@@ -3,8 +3,8 @@ package claudesession
 import (
 	"fmt"
 
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // Report says what a transcript tree became, and what it did not.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/cursortranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 func (f *composerState) addTool(input *session.UserInput, invocation *session.ModelInvocation, bubble *cursortranscript.Bubble) error {

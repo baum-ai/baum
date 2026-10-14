@@ -26,13 +26,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/linkage"
-	"github.com/lastpersonlabs/baum/linkage/sessioncorrelate"
-	"github.com/lastpersonlabs/baum/redact"
-	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/linkage"
+	"github.com/baumai/baum/linkage/sessioncorrelate"
+	"github.com/baumai/baum/redact"
+	"github.com/baumai/baum/sessions"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // Codes say why a Result is unavailable, for a reader to branch on. The

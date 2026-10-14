@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 func refreshFixture(t *testing.T) (*DocumentValidator, *bundlepkg.Bundle, []byte) {

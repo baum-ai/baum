@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lastpersonlabs/baum/sessions/codextranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/codextranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 // applyTokenUsageRecord counts a token_usage_record's own usage once. From the

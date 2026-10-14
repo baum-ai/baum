@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
-	"github.com/lastpersonlabs/baum/redact"
-	"github.com/lastpersonlabs/baum/sessions"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/internal/locallink"
+	"github.com/baumai/baum/redact"
+	"github.com/baumai/baum/sessions"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 type sessionsOptions struct {

@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lastpersonlabs/baum/sessions/collector/claudecode"
-	"github.com/lastpersonlabs/baum/sessions/vendors"
+	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baumai/baum/sessions/vendors"
 )
 
 // worktreeFixture is a clone with linked worktrees and a session recorded in

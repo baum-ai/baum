@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 func resolvedSchema(t *testing.T, encoded []byte) *jsonschema.Resolved {

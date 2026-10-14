@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/claudetranscript"
-	"github.com/lastpersonlabs/baum/sessions/session"
+	"github.com/baumai/baum/sessions/claudetranscript"
+	"github.com/baumai/baum/sessions/session"
 )
 
 type pendingAttribute struct {

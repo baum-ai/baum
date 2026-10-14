@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // authoredNormalizer maps a document the lenient contract accepts onto the

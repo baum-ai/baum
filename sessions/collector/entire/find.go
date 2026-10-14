@@ -18,8 +18,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 const (

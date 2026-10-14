@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lastpersonlabs/baum/sessions/sqliteread"
+	"github.com/baumai/baum/sessions/sqliteread"
 )
 
 const (

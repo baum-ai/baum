@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/review"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/review"
 )
 
 func runValidate(cmd *cobra.Command, documentPath, bundlePath string) error {

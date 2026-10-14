@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // Refresh changes evidence and derived summaries in place, preserving the

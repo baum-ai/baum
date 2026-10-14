@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/gitlocal"
+	"github.com/baumai/baum/internal/gitlocal"
 )
 
 // maxMetadataBytes bounds one metadata.json read by Sessions; a larger one is

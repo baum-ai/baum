@@ -1,8 +1,8 @@
 package assemble
 
 import (
-	"github.com/lastpersonlabs/baum/bundle"
-	"github.com/lastpersonlabs/baum/internal/config"
+	"github.com/baumai/baum/bundle"
+	"github.com/baumai/baum/internal/config"
 )
 
 // Limits are the caps one assembly runs within.

@@ -12,12 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
-	"github.com/lastpersonlabs/baum/internal/openurl"
-	"github.com/lastpersonlabs/baum/internal/viewserver"
-	"github.com/lastpersonlabs/baum/review"
-	"github.com/lastpersonlabs/baum/schema"
-	"github.com/lastpersonlabs/baum/sessions"
+	"github.com/baumai/baum/internal/locallink"
+	"github.com/baumai/baum/internal/openurl"
+	"github.com/baumai/baum/internal/viewserver"
+	"github.com/baumai/baum/review"
+	"github.com/baumai/baum/schema"
+	"github.com/baumai/baum/sessions"
 )
 
 // Seams for tests: the browser is never opened and the server is stopped

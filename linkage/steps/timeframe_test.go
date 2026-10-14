@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/linkage"
+	"github.com/baumai/baum/linkage"
 )
 
 func mustParse(t *testing.T, value string) time.Time {

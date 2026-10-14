@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lastpersonlabs/baum/sessions/entirecheckpoint"
-	"github.com/lastpersonlabs/baum/sessions/session"
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/entirecheckpoint"
+	"github.com/baumai/baum/sessions/session"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // EnvelopeData is the standalone Entire-owned enrichment for a graph. The

@@ -31,9 +31,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink"
-	"github.com/lastpersonlabs/baum/internal/viewer"
-	"github.com/lastpersonlabs/baum/redact"
+	"github.com/baumai/baum/internal/locallink"
+	"github.com/baumai/baum/internal/viewer"
+	"github.com/baumai/baum/redact"
 )
 
 // MaxDocumentBytes is the largest document the server accepts, at start-up and

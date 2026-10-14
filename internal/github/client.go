@@ -20,8 +20,8 @@ import (
 	"github.com/cli/go-gh/v2/pkg/auth"
 	graphql "github.com/cli/shurcooL-graphql"
 
-	"github.com/lastpersonlabs/baum/githubapi"
-	"github.com/lastpersonlabs/baum/internal/config"
+	"github.com/baumai/baum/githubapi"
+	"github.com/baumai/baum/internal/config"
 )
 
 // TokenSource returns the token for one GitHub host. The client asks it only

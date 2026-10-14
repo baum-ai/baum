@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lastpersonlabs/baum/internal/locallink/linktest"
+	"github.com/baumai/baum/internal/locallink/linktest"
 )
 
 func patch(t *testing.T, req PatchRequest) PatchResult {

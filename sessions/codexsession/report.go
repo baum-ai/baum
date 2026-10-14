@@ -3,8 +3,8 @@ package codexsession
 import (
 	"fmt"
 
-	"github.com/lastpersonlabs/baum/sessions/codextranscript"
-	"github.com/lastpersonlabs/baum/sessions/traceprocessing"
+	"github.com/baumai/baum/sessions/codextranscript"
+	"github.com/baumai/baum/sessions/traceprocessing"
 )
 
 // Report accounts for every rollout record and every emitted graph row.

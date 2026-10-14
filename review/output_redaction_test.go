@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	bundlepkg "github.com/lastpersonlabs/baum/bundle"
+	bundlepkg "github.com/baumai/baum/bundle"
 )
 
 // Both are detected by goredact's balanced profile: a database URL with
