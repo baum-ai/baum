@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -129,9 +130,13 @@ func TestGenerateValidFirstPass(t *testing.T) {
 	if request.Directory != run.Directory || request.MaxCalls != 4 || request.MaxTokens != 1000 || !strings.Contains(string(request.Schema), `"schema"`) {
 		t.Fatalf("request: %+v", request)
 	}
+	readOnly := os.FileMode(0400)
+	if runtime.GOOS == "windows" {
+		readOnly = 0444 // Windows reports its read-only attribute for everyone
+	}
 	for _, name := range []string{"bundle.json", "schema.json"} {
 		info, err := os.Stat(filepath.Join(run.Directory, name))
-		if err != nil || info.Mode().Perm() != 0400 {
+		if err != nil || info.Mode().Perm() != readOnly {
 			t.Fatalf("%s: %v %v", name, info, err)
 		}
 	}

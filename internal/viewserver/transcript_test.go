@@ -324,7 +324,13 @@ func TestReplaceHome(t *testing.T) {
 }
 
 func TestReplaceHomeFollowsTheHomesLink(t *testing.T) {
-	dir := t.TempDir()
+	// Resolved, so the only link the home's resolution follows is the test's
+	// own: the temporary directory sits behind one on macOS (/var is
+	// /private/var) and under a short name on Windows (RUNNER~1).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(dir, "real")
 	link := filepath.Join(dir, "link")
 	if err := os.Mkdir(target, 0o700); err != nil {
