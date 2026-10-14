@@ -155,7 +155,7 @@ func (f Fixture) AddSessionWithSubagent(t *testing.T, id, cwd, prompt string) {
 		sub(`{` + common("user", "s-3", `"s-2"`, "2026-07-01T10:33:30.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":[{"tool_use_id":"toolu_read","type":"tool_result","content":"b"}]}`),
 		sub(`{` + common("assistant", "s-4", `"s-3"`, "2026-07-01T10:34:00.000Z", true) + `,"requestId":"req_s2","message":{"id":"msg_s2","role":"assistant","model":"claude-haiku-5","stop_reason":"tool_use","usage":` + usage +
 			fmt.Sprintf(`,"content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":{"command":%q}}]}`, command)),
-		sub(`{` + common("user", "s-5", `"s-4"`, "2026-07-01T10:34:30.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":[{"tool_use_id":"toolu_test","type":"tool_result","content":"FAIL in ` + cwd + `","is_error":true}]},"toolUseResult":{"stdout":"","stderr":"FAIL","interrupted":false,"isImage":false,"noOutputExpected":false}`),
+		sub(`{` + common("user", "s-5", `"s-4"`, "2026-07-01T10:34:30.000Z", true) + `,"promptId":"p-s","message":{"role":"user","content":[{"tool_use_id":"toolu_test","type":"tool_result","content":` + fmt.Sprintf("%q", "FAIL in "+cwd) + `,"is_error":true}]},"toolUseResult":{"stdout":"","stderr":"FAIL","interrupted":false,"isImage":false,"noOutputExpected":false}`),
 	}
 	write(t, filepath.Join(dir, id, "subagents", "agent-s1.jsonl"), strings.Join(subagent, "\n")+"\n")
 	write(t, filepath.Join(dir, id, "subagents", "agent-s1.meta.json"), `{"agentType":"Explore","description":"Check the notes","toolUseId":"toolu_spawn","spawnDepth":1}`)
