@@ -754,3 +754,62 @@ func TestDecisionContextFieldsAreOptional(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewMinutesIsOptionalAndKeptInRange(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	bundle := &bundlepkg.Bundle{Repository: "org/repo", PullRequest: bundlepkg.PullRequest{Number: 1, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb"}, Sources: bundlepkg.Sources{"diff": true}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}}}
+	absent := struct{}{}
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  any
+	}{
+		{"absent", absent, absent},
+		{"null", nil, absent},
+		{"in range", 7, 7.0},
+		{"fraction", 2.6, 3.0},
+		{"zero", 0, 1.0},
+		{"too long", 600, 240.0},
+		{"not a number", "five", absent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := decodeObject(authoredFixture(), "fixture")
+			checkNoError(t, err)
+			if tc.value != absent {
+				doc["summary"].(map[string]any)["review_minutes"] = tc.value
+			}
+			published, findings := v.Complete(tileJSON(t, doc), bundle, "", "fixture-model", now)
+			checkEqual(t, "", findings)
+			if stored := v.ValidateStored(published, bundle); len(stored) > 0 {
+				t.Fatalf("published document is not a valid stored document: %v", stored)
+			}
+			out, err := decodeObject(published, "published")
+			checkNoError(t, err)
+			got, present := out["summary"].(map[string]any)["review_minutes"]
+			if tc.want == absent {
+				if present {
+					t.Fatalf("review_minutes = %v, want absent", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("review_minutes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestModelSchemaAsksForReviewMinutes(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	encoded, err := v.ModelSchema(nil)
+	checkNoError(t, err)
+	var schema map[string]any
+	checkNoError(t, json.Unmarshal(encoded, &schema))
+	summary := schema["properties"].(map[string]any)["summary"].(map[string]any)
+	if _, ok := summary["properties"].(map[string]any)["review_minutes"]; !ok {
+		t.Fatal("the model schema does not offer summary.review_minutes")
+	}
+}

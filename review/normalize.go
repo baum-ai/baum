@@ -50,6 +50,7 @@ func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundl
 		n.hunks[h.ID] = h
 	}
 	n.walk(root, strict)
+	reviewMinutes(root)
 	n.hunkAnchorLines(root)
 	n.sections(root)
 	return root, n.findings
@@ -84,6 +85,25 @@ func authoredIdentifiers(value any, strict map[string]any) []authoredIdentifier 
 		return cmp.Or(strings.Compare(a.text, b.text), strings.Compare(a.normalized, b.normalized), cmp.Compare(a.limit, b.limit))
 	})
 }
+
+// reviewMinutes keeps the model's review time estimate within the schema's
+// range: it is a rough figure, not worth a repair call. A fraction rounds to
+// whole minutes and a value that is not a number is dropped.
+func reviewMinutes(root map[string]any) {
+	summary, _ := root["summary"].(map[string]any)
+	value, present := summary["review_minutes"]
+	if !present || value == nil {
+		return
+	}
+	number, ok := value.(float64)
+	if !ok || math.IsInf(number, 0) || math.IsNaN(number) {
+		delete(summary, "review_minutes")
+		return
+	}
+	summary["review_minutes"] = min(max(math.Round(number), minReviewMinutes), maxReviewMinutes)
+}
+
+const minReviewMinutes, maxReviewMinutes = 1, 240
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A
 // usable overlap is made canonical; a range that cannot select the hunk's

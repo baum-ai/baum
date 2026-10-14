@@ -99,9 +99,12 @@ type documentSummary struct {
 	Implements     json.RawMessage        `json:"implements"`
 	ReleaseNote    *string                `json:"release_note"`
 	BreakingChange *string                `json:"breaking_change"`
-	Attention      json.RawMessage        `json:"attention"`
-	Author         documentAuthor         `json:"author"`
-	Authorship     documentAuthorship     `json:"authorship"`
+	// ReviewMinutes is absent on documents generated before the estimate
+	// existed and on stack reviews.
+	ReviewMinutes *int               `json:"review_minutes,omitempty"`
+	Attention     json.RawMessage    `json:"attention"`
+	Author        documentAuthor     `json:"author"`
+	Authorship    documentAuthorship `json:"authorship"`
 	// RiskScore is absent on documents generated before assessments existed.
 	RiskScore *documentRiskScore `json:"risk_score,omitempty"`
 }
