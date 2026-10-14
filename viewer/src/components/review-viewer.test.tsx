@@ -235,8 +235,11 @@ describe("ReviewViewer without host slots", () => {
     const asideOpener = container.querySelector<HTMLButtonElement>(
       '[aria-controls="review-aside"]',
     )!;
-    // The example's CI is failing, which the button flags from the bar.
-    expect(asideOpener.getAttribute("aria-label")).toBe("Details: CI checks failing");
+    // The example's CI is failing and a thread is open, which the button
+    // flags from the bar.
+    expect(asideOpener.getAttribute("aria-label")).toBe(
+      "Details: CI checks failing, review threads unresolved",
+    );
     expect(aside.className).toMatch(/(^| )hidden( |$)/);
     await act(async () => asideOpener.click());
     expect(aside.className).not.toMatch(/(^| )hidden( |$)/);
@@ -402,6 +405,11 @@ describe("ReviewViewer for a review of more than one pull request", () => {
   });
 });
 
+const hostChecks = (document: ReviewDocument) => ({
+  content: <p>Host checks for v{document.review.version}</p>,
+  failing: false,
+});
+
 describe("ReviewViewer's side pane for a host", () => {
   it("leaves out the Activity tab, and a stored Activity choice opens Details", async () => {
     localStorage.setItem("baum.review.conversation-tab", "activity");
@@ -426,22 +434,29 @@ describe("ReviewViewer's side pane for a host", () => {
     expect(single.querySelector("#conversation-tab-activity")).not.toBeNull();
   });
 
-  it("draws the host's checks in Details, or none, in place of the document's", async () => {
-    localStorage.setItem("baum.review.conversation-tab", "details");
+  it("draws the host's checks at the head of Activity, or none, in place of the document's", async () => {
+    localStorage.setItem("baum.review.conversation-tab", "activity");
     const container = await render(
       <Host>
-        <ReviewViewer
-          document={current}
-          detailsChecks={(document) => ({
-            content: <p>Host checks for v{document.review.version}</p>,
-            failing: false,
-          })}
-        />
+        <ReviewViewer document={current} detailsChecks={hostChecks} />
       </Host>,
     );
-    const details = container.querySelector("#conversation-panel-details");
-    expect(details?.textContent).toContain("Host checks for v3");
-    expect(details?.textContent).not.toContain("on this head");
+    const activity = container.querySelector("#conversation-panel-activity");
+    expect(activity?.textContent).toContain("Host checks for v3");
+    expect(activity?.textContent).not.toContain("on this head");
+    act(() => root?.unmount());
+    root = null;
+
+    // Without the Activity tab they lead Details instead.
+    localStorage.setItem("baum.review.conversation-tab", "details");
+    const stacked = await render(
+      <Host>
+        <ReviewViewer document={current} detailsChecks={hostChecks} hideActivity />
+      </Host>,
+    );
+    expect(stacked.querySelector("#conversation-panel-details")?.textContent).toContain(
+      "Host checks for v3",
+    );
     act(() => root?.unmount());
     root = null;
 
@@ -450,6 +465,7 @@ describe("ReviewViewer's side pane for a host", () => {
         <ReviewViewer
           document={current}
           detailsChecks={() => ({ content: null, failing: false })}
+          hideActivity
         />
       </Host>,
     );

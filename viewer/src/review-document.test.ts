@@ -16,6 +16,7 @@ import {
   intentPrompts,
   livePullRequestState,
   normalizeReviewDocument,
+  type FindingSeverity,
   type ReviewDocument,
   type RiskScore,
   type Risk,
@@ -25,6 +26,9 @@ import {
   reviewDecisions,
   reviewExchange,
   reviewExchangeFacts,
+  reviewThreadStatus,
+  type ReviewExchangeFacts,
+  combineExchangeFacts,
   riskEvidenceReviewVersion,
   riskLifecycleLabel,
   riskLifecycleTone,
@@ -1169,6 +1173,122 @@ describe("reviewExchangeFacts", () => {
 
   it("is absent when the document states no account at all", () => {
     expect(reviewExchangeFacts(withExchange(undefined))).toBeNull();
+  });
+});
+
+const indexedThread = (id: string, resolved: boolean, outdated = false) => ({
+  id,
+  path: "pkg/a.go",
+  line: outdated ? null : 12,
+  resolved,
+  outdated,
+});
+
+const openIds = (status: ReturnType<typeof reviewThreadStatus>) =>
+  status?.open.map((open) => open.thread.id);
+
+const exchangeFacts = (overrides: Partial<ReviewExchangeFacts>): ReviewExchangeFacts => ({
+  reviews: null,
+  backAndForths: null,
+  criticalIssues: null,
+  changesAfterOpen: null,
+  summary: "One account",
+  counted: true,
+  ...overrides,
+});
+
+describe("combineExchangeFacts", () => {
+  it("sums each figure over the accounts that state it, with no summary", () => {
+    const combined = combineExchangeFacts([
+      exchangeFacts({
+        reviews: 3,
+        criticalIssues: 1,
+        changesAfterOpen: { commits: 2, additions: 10, deletions: 4 },
+      }),
+      exchangeFacts({ reviews: 2, changesAfterOpen: { commits: 1, additions: 5, deletions: 1 } }),
+    ]);
+    expect(combined).toEqual({
+      reviews: 5,
+      backAndForths: null,
+      criticalIssues: 1,
+      changesAfterOpen: { commits: 3, additions: 15, deletions: 5 },
+      summary: null,
+      counted: true,
+    });
+  });
+
+  it("has nothing to combine without an account", () => {
+    expect(combineExchangeFacts([])).toBeNull();
+  });
+});
+
+describe("reviewThreadStatus", () => {
+  const withThreads = (
+    synced: boolean,
+    threads: ReturnType<typeof indexedThread>[],
+    findings: { thread: string; severity: FindingSeverity }[] = [],
+  ): ReviewDocument => ({
+    ...document,
+    review: { ...document.review, sources: { review_threads: synced } },
+    agent_reviews: [
+      {
+        ...document.agent_reviews[0]!,
+        findings: findings.map(({ thread, severity }) => ({
+          id: `f_${thread}`,
+          severity,
+          text: `on ${thread}`,
+          section: null,
+          anchors: [{ type: "review_thread", id: thread }],
+          state: "open",
+          addressed_by: null,
+        })),
+      },
+    ],
+    index: { ...document.index, threads },
+  });
+
+  // GitHub still lists an outdated thread nobody resolved as unresolved.
+  it("lists unresolved threads, outdated ones included", () => {
+    const status = reviewThreadStatus(
+      withThreads(true, [
+        indexedThread("T1", true),
+        indexedThread("T2", false),
+        indexedThread("T3", false, true),
+      ]),
+    );
+    expect(openIds(status)).toEqual(["T2", "T3"]);
+    expect(status?.total).toBe(3);
+  });
+
+  it("puts the worst finding first and a person's thread after every finding", () => {
+    const status = reviewThreadStatus(
+      withThreads(
+        true,
+        [
+          indexedThread("T1", false),
+          indexedThread("T2", false),
+          indexedThread("T3", false),
+          indexedThread("T4", false),
+        ],
+        [
+          { thread: "T2", severity: "consider" },
+          { thread: "T3", severity: "should_fix" },
+          { thread: "T4", severity: "must_fix" },
+        ],
+      ),
+    );
+    expect(openIds(status)).toEqual(["T4", "T3", "T2", "T1"]);
+    expect(status?.open[0]).toMatchObject({ tool: "cursor", finding: { text: "on T4" } });
+    expect(status?.open[3]).toMatchObject({ tool: null, finding: null });
+  });
+
+  it("reads synced threads with none open as all clear", () => {
+    expect(reviewThreadStatus(withThreads(true, []))).toEqual({ open: [], total: 0 });
+  });
+
+  it("is unknown when the document carries no synced threads", () => {
+    expect(reviewThreadStatus(withThreads(false, [indexedThread("T1", false)]))).toBeNull();
+    expect(reviewThreadStatus(document)).toBeNull();
   });
 });
 

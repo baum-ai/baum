@@ -98,7 +98,8 @@ test("fields that are plain text show markup as written", async ({ page }) => {
   await expect(title).toContainText(`<img src=x onerror="window.__pwned='title'"> Title`);
   await expect(title.locator("img")).toHaveCount(0);
 
-  await page.getByRole("tabpanel", { name: "Details" }).getByText("6 checks on this head").click();
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tabpanel", { name: "Activity" }).getByText("6 checks on this head").click();
   await expect(page.getByRole("list", { name: "Checks on this head" })).toContainText(
     "<script>window.__pwned='check'</script> check",
   );

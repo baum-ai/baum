@@ -30,7 +30,7 @@ test("a section shows its summary, intent, entities, behavior, decisions and sou
 
   const decisions = pane.getByRole("region", { name: "Key decisions" });
   await expect(decisions).toContainText("Use plain doubling with a cap");
-  await expect(decisions).toContainText("Rejected:");
+  await expect(decisions).toContainText("Instead of:");
   await expect(decisions.getByText("Human").first()).toBeVisible();
   await expect(decisions.getByText("Agent").first()).toBeVisible();
 });

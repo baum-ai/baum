@@ -25,6 +25,7 @@ import {
 import { cn, FOCUS_RING } from "./classnames";
 import { CodeFileLink } from "./code-file-link";
 import { CheckIcon, ExternalLinkIcon } from "./icons";
+import { Markdown } from "./markdown";
 import { Badge } from "./ui";
 
 /** The small pieces every pane of a review document is built from. */
@@ -311,6 +312,10 @@ export function DecisionByBadge({
   return <Badge size="compact">Agent</Badge>;
 }
 
+/** Markdown that flows on from its label rather than starting a block of its
+ *  own: a long alternative wraps under the label the way the reason does. */
+const INLINE_MARKDOWN = "inline [&_p]:inline";
+
 const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
   request: "Requested",
   review: "Prompted by review",
@@ -325,12 +330,19 @@ const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
 export function DecisionContext({
   decision,
 }: {
-  decision: Pick<Decision, "trigger" | "rationale" | "evidence">;
+  decision: Pick<Decision, "trigger" | "rationale" | "evidence" | "rejected">;
 }) {
   const trigger = decision.trigger ? TRIGGER_LABEL[decision.trigger] : undefined;
-  if (!trigger && !decision.rationale && !decision.evidence) return null;
+  if (!trigger && !decision.rationale && !decision.evidence && !decision.rejected) return null;
   return (
     <div className="space-y-1 text-base">
+      {decision.rejected && (
+        // A div: the Markdown draws its own paragraphs, which a <p> cannot hold.
+        <div className="text-(--text-secondary)">
+          <span className="text-(--text-tertiary)">Instead of: </span>
+          <Markdown className={INLINE_MARKDOWN}>{decision.rejected}</Markdown>
+        </div>
+      )}
       {(trigger || decision.rationale) && (
         <p className="text-(--text-secondary)">
           {trigger && (

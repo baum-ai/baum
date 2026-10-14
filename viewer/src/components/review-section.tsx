@@ -620,19 +620,12 @@ function BlockView({
           <ul className="space-y-1.5">
             {decisions.items.map((decision) => (
               <Item key={decision.id} id={itemId(decision.id)} className="space-y-1.5">
-                <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
-                  <DecisionByBadge decision={decision} />
-                  <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                    {decision.text}
-                  </Markdown>
-                </div>
-                {decision.rejected && (
-                  <div className="text-base text-(--text-tertiary)">
-                    Rejected: <Markdown className="inline-block">{decision.rejected}</Markdown>
-                  </div>
-                )}
+                <Markdown className="text-(--text-primary)">{decision.text}</Markdown>
                 <DecisionContext decision={decision} />
-                <AnchorChips document={document} anchors={decision.anchors} />
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <DecisionByBadge decision={decision} />
+                  <AnchorChips document={document} anchors={decision.anchors} />
+                </div>
               </Item>
             ))}
           </ul>

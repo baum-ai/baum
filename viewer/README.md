@@ -79,7 +79,7 @@ lists them. The foot of the pane offers the same steps, so a reader who
 reaches the end of a section goes straight on to the next. A step lands the
 new place at its top, under the bar. The side pane is a sheet too, nearly the
 window's height, opened from the bar's last button (named after the pane,
-and flagged while CI is failing) rather than stacked under the review, so
+and flagged while CI is failing or a review thread is unresolved) rather than stacked under the review, so
 the page ends where the review does. Going anywhere, from either sheet,
 closes it.
 
@@ -108,8 +108,9 @@ left out rather than shown empty or failed:
 | `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
-| `detailsChecks` | the Details tab's Checks part for the document the tab describes, in place of the document's own checks, and whether it shows a failure (which flags the tab); null content leaves the part out. For checks gathered from elsewhere, such as a stack review's members |
-| `hideActivity` | leaves out the side pane's Activity tab; a reader whose last tab was Activity sees Details |
+| `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
+| `activityMembers` | a stack's member reviews for the Activity tab, for the document it describes: each with its number and a tag (such as a link to its page), whether some are still loading, and a note (such as which could not be read). Under the checks the tab then gathers the members' open review threads, each tagged with its member, their exchange figures summed with no full exchange, their sessions once each, and their decisions tagged with their member; an open thread in any member flags the tab |
+| `hideActivity` | leaves out the side pane's Activity tab, and the Checks part moves to the head of Details; a reader whose last tab was Activity sees Details |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
@@ -429,7 +430,7 @@ parallel.
 | `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render |
 | `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
 | `section.spec.ts` | a section's blocks (intent, entities, behavior, decisions, table, code, diagram); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
-| `checks.spec.ts` | the Details tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
+| `checks.spec.ts` | the Activity tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
 | `sessions.spec.ts` | the Sessions and Commits groups with and without `/api/sessions` (document fallback with the server's reason, request failure, loading), a linked session's transcript and its failure and Retry, the Activity tab |
 | `theme.spec.ts` | light and dark follow the system, change while open, keep text readable, and colour highlighted code in each |
 | `untrusted.spec.ts` | hostile Markdown and HTML (`<script>`, `javascript:` links, `onerror`, `onclick`, `<iframe>`, `<form>`, `<svg>`) renders as inert text and runs nothing; plain-text fields and code excerpts show markup as written |

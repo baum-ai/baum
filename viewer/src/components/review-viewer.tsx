@@ -15,6 +15,7 @@ import {
   type LoadReviewVersion,
   type ReviewDocument,
   RISK_SCORE_MEANING,
+  reviewThreadStatus,
   riskCategory,
   riskLabel,
   type Section,
@@ -49,7 +50,7 @@ import {
   TeamChatIcon,
 } from "./icons";
 import { PaneDivider } from "./pane-divider";
-import { ReviewActivity, ReviewDetails } from "./review-details";
+import { type ActivityMembers, ReviewActivity, ReviewDetails } from "./review-details";
 import { ChangesOverview, RisksOverview } from "./review-groups";
 import {
   REVIEW_BAR_PX,
@@ -215,6 +216,9 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
    *  such as checks gathered from elsewhere; null content leaves the part
    *  out. */
   detailsChecks?: (document: ReviewDocument) => ReviewDetailsChecks;
+  /** A stack's member reviews for the Activity tab to gather, for the
+   *  document it describes, in place of the document's own activity. */
+  activityMembers?: (document: ReviewDocument) => ActivityMembers;
   /** Leaves out the side pane's Activity tab. */
   hideActivity?: boolean;
   /** Puts the cursor in the conversation's text box once the side pane has
@@ -340,6 +344,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   commits,
   conversation,
   detailsChecks,
+  activityMembers,
   hideActivity = false,
   focusConversation,
   hunkPatches = null,
@@ -790,25 +795,48 @@ function ReviewWorkspace<F extends ReviewFile>({
   const barDocument = navigationDocument;
   const barHistorical = historicalOnly;
   const barChecks = barDocument && detailsChecks ? detailsChecks(barDocument) : null;
+  // CI leads the Activity tab, with the review threads: what still needs the
+  // author. Without that tab it stays at the head of Details.
+  const checksFailing = barChecks
+    ? barChecks.failing
+    : Boolean(barDocument && checkStatus(barDocument).state === "failing");
+  const barMembers = barDocument && activityMembers ? activityMembers(barDocument) : undefined;
+  const threadsOpen = (
+    barMembers
+      ? barMembers.members.map((member) => member.document)
+      : barDocument
+        ? [barDocument]
+        : []
+  ).some((shown) => (reviewThreadStatus(shown)?.open.length ?? 0) > 0);
   const barTabs: { value: ConversationTab; label: string; icon: ReactNode; tone?: "critical" }[] = [
     ...(conversation ? [{ value: "chat" as const, label: "Chat", icon: <TeamChatIcon /> }] : []),
     {
       value: "details",
       label: "Details",
       icon: <ChecksIcon />,
-      // Failing CI is the one detail worth flagging from another tab.
-      tone: (
-        barChecks
-          ? barChecks.failing
-          : barDocument && checkStatus(barDocument).state === "failing"
-      )
-        ? "critical"
-        : undefined,
+      tone: hideActivity && checksFailing ? "critical" : undefined,
     },
     ...(hideActivity
       ? []
-      : [{ value: "activity" as const, label: "Activity", icon: <SessionsIcon /> }]),
+      : [
+          {
+            value: "activity" as const,
+            label: "Activity",
+            icon: <SessionsIcon />,
+            // Failing CI or a thread nobody resolved is worth flagging from
+            // another tab.
+            tone: checksFailing || threadsOpen ? ("critical" as const) : undefined,
+          },
+        ]),
   ];
+  // What the tabs' dots flag, in words for the bar's button below xl.
+  const barAlert =
+    [
+      checksFailing ? "CI checks failing" : null,
+      !hideActivity && threadsOpen ? "review threads unresolved" : null,
+    ]
+      .filter(Boolean)
+      .join(", ") || null;
   const asideLabel = conversation ? "Conversation" : "Details";
   // The tabs and the fold share the pane's first line; folding only exists
   // from xl up, where the panes sit side by side. Below xl the pane is a
@@ -948,7 +976,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             onOpen={() => setSheet("rail")}
             aside={{
               label: asideLabel,
-              alert: barTabs.some((tab) => tab.tone),
+              alert: barAlert,
               expanded: asideOpen,
               onOpen: () => setSheet("aside"),
             }}
@@ -1439,7 +1467,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                       {historicalNote}
                       <ReviewDetails
                         document={barDocument}
-                        checks={barChecks ? barChecks.content : undefined}
+                        checks={hideActivity ? (barChecks ? barChecks.content : undefined) : null}
                       />
                     </>
                   ) : (
@@ -1458,6 +1486,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         {historicalNote}
                         <ReviewActivity
                           document={barDocument}
+                          checks={barChecks ? barChecks.content : undefined}
+                          members={barMembers}
                           onSelectSection={selectSection}
                           onSelectSession={
                             barHistorical || !sessions

@@ -1275,6 +1275,81 @@ export function reviewExchangeFacts(document: ReviewDocument): ReviewExchangeFac
   };
 }
 
+/** Several pull requests' accounts as one, such as a stack's members': each
+ *  figure summed over the accounts that state it, and unknown only when none
+ *  does. The prose of one account does not stand for the others, so there is
+ *  no summary. */
+export function combineExchangeFacts(accounts: ReviewExchangeFacts[]): ReviewExchangeFacts | null {
+  if (accounts.length === 0) return null;
+  const sum = (figure: (facts: ReviewExchangeFacts) => number | null) => {
+    const stated = accounts.map(figure).filter((value) => value != null);
+    return stated.length > 0 ? stated.reduce((total, value) => total + value, 0) : null;
+  };
+  const changes = accounts.flatMap((facts) =>
+    facts.changesAfterOpen ? [facts.changesAfterOpen] : [],
+  );
+  return {
+    reviews: sum((facts) => facts.reviews),
+    backAndForths: sum((facts) => facts.backAndForths),
+    criticalIssues: sum((facts) => facts.criticalIssues),
+    changesAfterOpen:
+      changes.length > 0
+        ? {
+            commits: changes.reduce((total, change) => total + change.commits, 0),
+            additions: changes.reduce((total, change) => total + change.additions, 0),
+            deletions: changes.reduce((total, change) => total + change.deletions, 0),
+          }
+        : null,
+    summary: null,
+    counted: accounts.some((facts) => facts.counted),
+  };
+}
+
+export type OpenThread = {
+  thread: IndexedThread;
+  /** The agent finding the thread carries, when a review tool opened it; a
+   *  person's thread has none. */
+  finding: Finding | null;
+  tool: string | null;
+};
+
+export type ReviewThreadStatus = { open: OpenThread[]; total: number };
+
+const SEVERITY_RANK: Record<FindingSeverity, number> = { must_fix: 0, should_fix: 1, consider: 2 };
+
+/** The pull request's review threads nobody has resolved, worst first: a
+ *  must-fix finding before a should-fix, and a thread no tool graded after
+ *  every finding, each group in index order. An outdated thread nobody
+ *  resolved is still open, as it is on GitHub. Without synced threads the
+ *  status is unknown rather than all clear. */
+export function reviewThreadStatus(document: ReviewDocument): ReviewThreadStatus | null {
+  if (document.review.sources.review_threads !== true) return null;
+  const raised = new Map<string, { finding: Finding; tool: string }>();
+  for (const review of document.agent_reviews) {
+    for (const finding of review.findings) {
+      for (const anchor of finding.anchors) {
+        if (anchor.type === "review_thread") raised.set(anchor.id, { finding, tool: review.tool });
+      }
+    }
+  }
+  const open = document.index.threads
+    .filter((thread) => !thread.resolved)
+    .map((thread) => {
+      const by = raised.get(thread.id);
+      return { thread, finding: by?.finding ?? null, tool: by?.tool ?? null };
+    })
+    .toSorted(compareOpenThreads);
+  return { open, total: document.index.threads.length };
+}
+
+/** Worst first: a must-fix finding before a should-fix, and a thread no tool
+ *  graded after every finding. A stable sort keeps each group in the order
+ *  it was given. */
+export function compareOpenThreads(left: OpenThread, right: OpenThread): number {
+  const rank = (open: OpenThread) => (open.finding ? SEVERITY_RANK[open.finding.severity] : 3);
+  return rank(left) - rank(right);
+}
+
 export type SectionDecision = Decision & {
   section: string;
   sectionTitle: string;

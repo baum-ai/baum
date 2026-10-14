@@ -19,6 +19,72 @@ describe("review details", () => {
   });
 });
 
+describe("review activity", () => {
+  it("leads with the checks, then the review exchange", () => {
+    const html = renderToStaticMarkup(
+      <ReviewActivity document={fixture()} onSelectSection={() => {}} />,
+    );
+    const checks = html.indexOf('aria-label="Checks"');
+    expect(checks).toBeGreaterThanOrEqual(0);
+    expect(checks).toBeLessThan(html.indexOf('aria-label="Review exchange"'));
+  });
+
+  it("leaves the checks out when the host says so", () => {
+    const html = renderToStaticMarkup(
+      <ReviewActivity document={fixture()} checks={null} onSelectSection={() => {}} />,
+    );
+    expect(html).not.toContain('aria-label="Checks"');
+  });
+});
+
+describe("a stack's review activity", () => {
+  const member = (number: number) => {
+    const document = fixture();
+    document.review.pull_request = number;
+    // One thread open and one resolved in each member.
+    document.review.sources = { ...document.review.sources, review_threads: true };
+    document.index.threads = [
+      { id: `t${number}a`, path: `web/${number}.ts`, line: 3, resolved: false },
+      { id: `t${number}b`, path: `web/${number}.ts`, line: 9, resolved: true },
+    ];
+    return { number, document, tag: <a href={`/pull/${number}`}>#{number}</a> };
+  };
+  const render = (members: ReturnType<typeof member>[], loading = false) =>
+    renderToStaticMarkup(
+      <ReviewActivity
+        document={fixture()}
+        checks={null}
+        members={{ members, loading, note: <p>Member note</p> }}
+        onSelectSection={() => {}}
+      />,
+    );
+
+  it("gathers the members' threads, sessions and decisions, each tagged with its member", () => {
+    const one = fixture();
+    const html = render([member(51), member(52)]);
+    expect(html).toContain("Member note");
+    expect(html).toContain("2 unresolved threads");
+    expect(html).toContain("of 4");
+    expect(html).toContain("web/51.ts:3");
+    expect(html).toContain("web/52.ts:3");
+    // Each member's run of turns is read on its own page.
+    expect(html).not.toContain("Full exchange");
+    // The two members list the same sessions, so each is listed once.
+    const sessions = html.slice(html.indexOf('aria-label="Linked sessions"'));
+    expect(sessions.slice(0, sessions.indexOf("</section>")).split("<li").length - 1).toBe(
+      one.index.sessions.length,
+    );
+    expect(html).toContain('href="/pull/51"');
+    expect(html).toContain('href="/pull/52"');
+  });
+
+  it("waits for the members' reviews before drawing their parts", () => {
+    const html = render([member(51)], true);
+    expect(html).toContain("Member note");
+    expect(html).not.toContain('aria-label="Review exchange"');
+  });
+});
+
 describe("review activity sessions", () => {
   it("says why a restricted indexed session carries no content", () => {
     const document = fixture();
@@ -56,8 +122,10 @@ describe("review activity decisions", () => {
     expect(html).toContain("Agent · approved");
     expect(html).toContain('title="Proposed by the agent and approved by a person"');
     expect(html).toContain(">Human</span>");
-    // An approved decision is still the agent's in the tally.
-    expect(html).toContain("1 agent · 1 person");
+    // A decision a person approved is settled, so it is listed with theirs
+    // rather than with the calls still to check, and still names the agent.
+    expect(html).toContain("Made or approved by a person · 2");
+    expect(html).not.toContain("own calls");
   });
 
   it("does not mark a plain agent decision as approved", () => {
