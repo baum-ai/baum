@@ -117,7 +117,7 @@ export function SessionCard({
     return (
       <Card
         size="flush"
-        className={cn(LIFT, "border-l-(--border-strong)")}
+        className="border-l-2 border-l-(--border-strong)"
         data-session-id={session.run_id}
       >
         <div className="flex items-center gap-3 px-5 py-3.5">
