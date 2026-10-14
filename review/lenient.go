@@ -30,6 +30,15 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 	}
 	defs, _ := lenient["$defs"].(map[string]any)
 	relaxTileCodeFile(defs)
+	// The review time estimate is rough: normalization rounds and clamps it
+	// (reviewMinutes), so a provider never rejects a reply over its range.
+	properties, _ := lenient["properties"].(map[string]any)
+	summary, _ := properties["summary"].(map[string]any)
+	summaryProperties, _ := summary["properties"].(map[string]any)
+	if minutes, ok := summaryProperties["review_minutes"].(map[string]any); ok {
+		delete(minutes, "minimum")
+		delete(minutes, "maximum")
+	}
 	relaxSchema(lenient, defs)
 	for _, def := range defs {
 		if node, ok := def.(map[string]any); ok {

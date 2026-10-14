@@ -809,7 +809,15 @@ func TestModelSchemaAsksForReviewMinutes(t *testing.T) {
 	var schema map[string]any
 	checkNoError(t, json.Unmarshal(encoded, &schema))
 	summary := schema["properties"].(map[string]any)["summary"].(map[string]any)
-	if _, ok := summary["properties"].(map[string]any)["review_minutes"]; !ok {
+	minutes, ok := summary["properties"].(map[string]any)["review_minutes"].(map[string]any)
+	if !ok {
 		t.Fatal("the model schema does not offer summary.review_minutes")
+	}
+	// Normalization keeps the estimate in range, so the model schema does not
+	// bound it and a provider cannot reject a reply over it.
+	for _, key := range []string{"minimum", "maximum"} {
+		if _, bounded := minutes[key]; bounded {
+			t.Errorf("the model schema bounds summary.review_minutes with %s", key)
+		}
 	}
 }
