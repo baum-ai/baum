@@ -193,7 +193,7 @@ container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 Report suspected vulnerabilities privately, not through a public issue or
 pull request:
 
-- Email: **security@lastpersonlabs.com**
+- Email: **security@usebaum.com**
 
 Include a description of the issue and its impact, steps to reproduce or a
 minimal test case, and the affected version or commit. We acknowledge reports

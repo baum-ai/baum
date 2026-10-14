@@ -16,7 +16,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lastpersonlabs/goredact"
+	"github.com/baum-ai/goredact"
 )
 
 // EmailRuleID is the id the e-mail rule reports its findings under.

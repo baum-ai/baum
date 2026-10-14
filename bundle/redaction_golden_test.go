@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lastpersonlabs/goredact"
+	"github.com/baum-ai/goredact"
 
 	"github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/redact"
