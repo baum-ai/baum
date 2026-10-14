@@ -19,6 +19,12 @@ afterEach(() => {
   root = null;
 });
 
+const settle = (until: () => boolean, tries = 100) =>
+  act(async () => {
+    for (let wait = 0; wait < tries && !until(); wait++)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
 function document(): ReviewDocument {
   const value = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
   const hunk = value.index.hunks.find((candidate) => candidate.id === "h_picker")!;
@@ -162,11 +168,6 @@ describe("hunk evidence", () => {
     );
     // Highlighted code is coloured by `--syntax-*` variables.
     const highlighted = () => container.querySelector('[style*="--syntax-"]') !== null;
-    const settle = (until: () => boolean, tries = 100) =>
-      act(async () => {
-        for (let wait = 0; wait < tries && !until(); wait++)
-          await new Promise((resolve) => setTimeout(resolve, 20));
-      });
     // Long enough for shiki to load and tokenise, were it going to.
     await settle(highlighted, 25);
     expect(highlighted()).toBe(false);
