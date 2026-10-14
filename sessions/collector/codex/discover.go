@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/baumai/baum/sessions/codextranscript"
-	"github.com/baumai/baum/sessions/collector/model"
-	"github.com/baumai/baum/sessions/vendors"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/collector/model"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 type Entry struct {

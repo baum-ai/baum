@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/session"
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 type PortableReport struct {

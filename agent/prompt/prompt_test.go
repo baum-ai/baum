@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/agent/prompt"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
 )
 
 func readFile(t *testing.T, name string) string {

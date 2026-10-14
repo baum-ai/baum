@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/baumai/baum/internal/locallink"
-	"github.com/baumai/baum/internal/transcript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/transcript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 const (

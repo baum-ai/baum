@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/baumai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate"
 )
 
 // buildVersion is injected by the release build through -ldflags -X; local

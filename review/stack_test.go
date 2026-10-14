@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 func stackFixture() map[string]any {

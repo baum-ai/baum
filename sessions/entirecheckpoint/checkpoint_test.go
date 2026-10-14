@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/baumai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/internal/goldentest"
 )
 
 func TestCorpusFixturesGolden(t *testing.T) {

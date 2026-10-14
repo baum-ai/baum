@@ -3,8 +3,8 @@ package cursorsession
 import (
 	"fmt"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 type bubbleBatch struct {

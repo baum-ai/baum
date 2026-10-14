@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/sessions/vendors"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // TestLoadNeverFetchesFromAPartialClone reads the Entire checkpoint branch of a

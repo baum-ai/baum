@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 func request(f linktest.Fixture) Request {

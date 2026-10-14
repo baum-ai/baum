@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 var testEndpoint = &agent.Endpoint{BaseURL: "https://proxy.example/openai", Key: "test-key"}

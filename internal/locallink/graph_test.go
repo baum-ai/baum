@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/redact"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/redact"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // A secret's keyword at the end of one string must not mask the ids, kinds

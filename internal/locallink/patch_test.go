@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 func patch(t *testing.T, req PatchRequest) PatchResult {

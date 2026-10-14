@@ -1,6 +1,6 @@
 package claudesession
 
-import "github.com/baumai/baum/sessions/session"
+import "github.com/baum-ai/baum/sessions/session"
 
 // verbs is the Claude tool name → our verb table.
 var verbs = map[string]session.ToolVerb{

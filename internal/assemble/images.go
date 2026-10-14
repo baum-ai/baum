@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // Description images are downloaded under the hosted limits: each download

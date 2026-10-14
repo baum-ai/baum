@@ -14,8 +14,8 @@ import (
 	"github.com/cli/go-gh/v2/pkg/ssh"
 	graphql "github.com/cli/shurcooL-graphql"
 
-	"github.com/baumai/baum/internal/config"
-	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 // Repository names a repository on a GitHub host.

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // tarFiles reads the regular files of a tar archive into name -> content.

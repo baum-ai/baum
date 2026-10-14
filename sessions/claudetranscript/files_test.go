@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/internal/goldentest"
-	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
 
 // FixtureSession is the transcript tree under testdata: a main thread, the

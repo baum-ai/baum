@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/linkage"
 )
 
 const testAncestorSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

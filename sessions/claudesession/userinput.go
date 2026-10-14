@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/baumai/baum/sessions/claudetranscript"
-	"github.com/baumai/baum/sessions/prompttext"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/prompttext"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 const interruptMarker = "[Request interrupted by user"

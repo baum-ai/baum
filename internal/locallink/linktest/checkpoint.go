@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
 
 // AddEditor adds a Claude Code session with the given id to the fixture's

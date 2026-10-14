@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/baumai/baum/internal/locallink"
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 // patchDocument cites a hunk in each of paths.

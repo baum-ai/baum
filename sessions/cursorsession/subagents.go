@@ -3,8 +3,8 @@ package cursorsession
 import (
 	"encoding/json"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func (f *composerState) resolveChildren(tree *cursortranscript.Tree) map[string]*session.SpawnLink {

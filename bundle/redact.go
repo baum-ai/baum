@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/baumai/baum/redact"
+	"github.com/baum-ai/baum/redact"
 )
 
 // Redact masks secrets and e-mail addresses in every bundle string field,

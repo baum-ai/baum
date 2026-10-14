@@ -1,6 +1,6 @@
 package traceprocessing
 
-import "github.com/baumai/baum/sessions/session"
+import "github.com/baum-ai/baum/sessions/session"
 
 // RowTally is the non-serialized count of every graph row type.
 type RowTally struct {

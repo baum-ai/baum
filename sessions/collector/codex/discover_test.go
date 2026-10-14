@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/sessions/collector/model"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/sessions/collector/model"
 )
 
 func writeFile(t *testing.T, path, content string) {

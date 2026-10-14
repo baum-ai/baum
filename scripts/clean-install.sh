@@ -2,14 +2,14 @@
 # Install baum the way a user does, from a module-proxy-shaped source tree, with
 # no Node.js on PATH, then smoke test the installed binary.
 #
-# This proves that "go install github.com/baumai/baum/cmd/baum@version"
+# This proves that "go install github.com/baum-ai/baum/cmd/baum@version"
 # needs nothing but Go: the viewer bundle under internal/viewer/dist is
 # committed, so the module zip carries it. The zip is built from the committed
 # files at HEAD only, as the module proxy builds it from a tag; uncommitted
 # changes are not installed. Runs on Linux, macOS and Windows (Git Bash).
 set -euo pipefail
 
-module=github.com/baumai/baum
+module=github.com/baum-ai/baum
 version=v0.0.0-cleaninstall
 
 cd "$(dirname "$0")/.."

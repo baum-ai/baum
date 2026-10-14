@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/baumai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/config"
 )
 
 // These strings are stored in the database and matched when read back.

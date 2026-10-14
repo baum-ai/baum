@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/goldentest"
-	"github.com/baumai/baum/sessions/codextranscript"
-	collectcodex "github.com/baumai/baum/sessions/collector/codex"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	collectcodex "github.com/baum-ai/baum/sessions/collector/codex"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func TestFixtureGolden(t *testing.T) {

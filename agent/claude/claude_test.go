@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 // testEndpoint lets the Isolated profile run the fake executables below.

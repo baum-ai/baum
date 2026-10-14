@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/internal/assemble"
-	"github.com/baumai/baum/internal/config"
-	"github.com/baumai/baum/internal/generate"
-	"github.com/baumai/baum/internal/github"
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // generateBackends builds the local backends; tests replace it with stubs.

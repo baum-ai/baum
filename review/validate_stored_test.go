@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 func storedExample(t *testing.T) map[string]any {

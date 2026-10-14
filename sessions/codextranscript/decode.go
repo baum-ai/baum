@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 // firstLineBufferBytes is the read buffer DecodeFirst starts with. Decode needs

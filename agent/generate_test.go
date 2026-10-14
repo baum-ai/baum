@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/review"
-	"github.com/baumai/baum/review/tilecatalogue"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 const testHunk = "h_0123456789ab"

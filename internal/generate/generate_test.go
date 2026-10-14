@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/internal/assemble"
-	"github.com/baumai/baum/internal/assemble/assembletest"
-	"github.com/baumai/baum/internal/generate"
-	"github.com/baumai/baum/internal/generate/generatetest"
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // fixture is a pipeline over the fixture clone with its run directories under

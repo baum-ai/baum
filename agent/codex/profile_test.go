@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 const successEvents = `{"type":"turn.started"}

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/locallink/linktest"
-	"github.com/baumai/baum/linkage"
-	"github.com/baumai/baum/sessions"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/linkage"
+	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func minute(n int) *time.Time {

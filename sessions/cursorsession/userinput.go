@@ -3,8 +3,8 @@ package cursorsession
 import (
 	"encoding/json"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func (f *composerState) addUserInput(bubble *cursortranscript.Bubble, ordinal int) (*session.UserInput, error) {

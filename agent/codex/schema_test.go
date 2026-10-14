@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/baumai/baum/schema"
+	"github.com/baum-ai/baum/schema"
 )
 
 // OpenAI strict structured outputs reject the lenient contract as written;

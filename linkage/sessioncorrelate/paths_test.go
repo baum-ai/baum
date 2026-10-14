@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // A cwd inside the repository must not cut the path's leading directories

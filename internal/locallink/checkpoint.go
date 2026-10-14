@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/linkage"
-	"github.com/baumai/baum/linkage/steps"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/linkage"
+	"github.com/baum-ai/baum/linkage/steps"
+	"github.com/baum-ai/baum/sessions"
 )
 
 var checkpointIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)

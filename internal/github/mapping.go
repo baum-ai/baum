@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // mapEvidence maps what a fetch read onto the bundle as the hosted service

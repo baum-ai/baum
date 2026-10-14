@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/baumai/baum/linkage/gitevidence"
-	"github.com/baumai/baum/sessions/codextranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/linkage/gitevidence"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func (f *threadState) toolOutput(line codextranscript.Line, callID string, output json.RawMessage) (accountCategory, string, error) {

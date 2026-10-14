@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 // Decode reads a transcript as classified lines.

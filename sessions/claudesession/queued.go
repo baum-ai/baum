@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/baumai/baum/sessions/claudetranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // queuedInput is one queue identity while the graph is being built.

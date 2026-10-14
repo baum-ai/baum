@@ -3,7 +3,7 @@ package steps
 import (
 	"testing"
 
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/linkage"
 )
 
 func TestCoauthorEmptyIsNoop(t *testing.T) {

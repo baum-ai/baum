@@ -9,7 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // Both are detected by the redactor: a database URL with credentials and a

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const codexImport = "github.com/baumai/baum/agent/codex"
+const codexImport = "github.com/baum-ai/baum/agent/codex"
 
 // violations reports the ways a Go source file could select the unsandboxed
 // Container profile of this package, however it spells the import:

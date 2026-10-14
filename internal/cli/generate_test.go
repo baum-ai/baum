@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/internal/generate"
-	"github.com/baumai/baum/internal/generate/generatetest"
-	"github.com/baumai/baum/review"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/review"
 )
 
 // generateEnv is bundleEnv with a stub backend in place of the local CLIs.

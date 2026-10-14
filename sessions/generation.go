@@ -3,7 +3,7 @@ package sessions
 import (
 	"strings"
 
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // GenerationRunMarker starts the prompt of every agent run baum itself starts

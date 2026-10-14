@@ -18,8 +18,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/baumai/baum/internal/viewer"
-	"github.com/baumai/baum/schema"
+	"github.com/baum-ai/baum/internal/viewer"
+	"github.com/baum-ai/baum/schema"
 )
 
 const (

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/assemble"
-	"github.com/baumai/baum/internal/assemble/assembletest"
-	"github.com/baumai/baum/internal/config"
-	"github.com/baumai/baum/internal/github"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/github"
 )
 
 // fakeGitHub stands in for GitHub: it answers ResolvePR and Fetch from the

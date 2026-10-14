@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/baumai/baum/sessions/collector/model"
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/vendors"
+	"github.com/baum-ai/baum/sessions/collector/model"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 const payloadName = "cursor-tree.json"

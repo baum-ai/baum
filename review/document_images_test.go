@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 const testAttachment = "att_0123456789abcdef0123456789abcdef"

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/linkage"
 )
 
 // SessionWindow is how long before a pull request's first commit a session may

@@ -1,6 +1,6 @@
 package traceprocessing
 
-import "github.com/baumai/baum/sessions/session"
+import "github.com/baum-ai/baum/sessions/session"
 
 type IDNamespace []string
 

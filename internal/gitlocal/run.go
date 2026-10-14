@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/internal/textclean"
+	"github.com/baum-ai/baum/internal/textclean"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
 )
 
 // File is one concrete Cursor state.vscdb on disk.

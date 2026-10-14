@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 const (

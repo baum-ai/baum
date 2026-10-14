@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/baumai/baum/internal/locallink"
-	"github.com/baumai/baum/internal/transcript"
-	"github.com/baumai/baum/redact"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/transcript"
+	"github.com/baum-ai/baum/redact"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // errNotLinked is a session id the sessions answer does not list.

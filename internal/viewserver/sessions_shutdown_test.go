@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/locallink"
 )
 
 func TestFailedAnswersAreKeptBriefly(t *testing.T) {

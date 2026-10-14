@@ -1,6 +1,6 @@
 package cursorsession
 
-import "github.com/baumai/baum/sessions/session"
+import "github.com/baum-ai/baum/sessions/session"
 
 func toolVerb(name string) session.ToolVerb {
 	switch name {

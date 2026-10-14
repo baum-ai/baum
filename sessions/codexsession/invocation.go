@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/baumai/baum/sessions/codextranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func (f *threadState) startBatch(line codextranscript.Line) *session.ModelInvocation {

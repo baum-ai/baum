@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/baumai/baum/sessions/claudetranscript"
-	"github.com/baumai/baum/sessions/session"
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 const Vendor = "claude_code"

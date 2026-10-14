@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/review"
-	"github.com/baumai/baum/review/tilecatalogue"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 // Generator is the generate-and-repair loop: it asks the backend for a review

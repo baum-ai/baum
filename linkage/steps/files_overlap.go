@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/linkage"
 )
 
 const (

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/agent/internal/proc"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/internal/proc"
 )
 
 // Profile selects the sandbox, environment and credentials the Codex process gets.

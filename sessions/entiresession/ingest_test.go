@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/goldentest"
-	"github.com/baumai/baum/sessions/claudesession"
-	"github.com/baumai/baum/sessions/claudetranscript"
-	"github.com/baumai/baum/sessions/cursorsession"
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/entirecheckpoint"
-	"github.com/baumai/baum/sessions/session"
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/sessions/claudesession"
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/cursorsession"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 func TestFixtureGoldens(t *testing.T) {

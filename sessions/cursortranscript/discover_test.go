@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/baumai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/internal/goldentest"
 )
 
 func TestDiscoverAndRoots(t *testing.T) {

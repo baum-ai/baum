@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 const maxSourceContextBytes = 96 << 10

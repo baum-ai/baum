@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/sessions/vendors"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // FileKind says what a session file is to the source that produced it.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/linkage"
-	"github.com/baumai/baum/linkage/steps"
+	"github.com/baum-ai/baum/linkage"
+	"github.com/baum-ai/baum/linkage/steps"
 )
 
 func TestMatchCommitsExcludesMergesAndPreservesOrder(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/baumai/baum/sessions/codextranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 type toolEvidence struct {

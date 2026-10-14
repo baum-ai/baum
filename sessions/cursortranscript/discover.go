@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/baumai/baum/sessions/sqliteread"
+	"github.com/baum-ai/baum/sessions/sqliteread"
 )
 
 // SessionRef is the store index entry for one composer.

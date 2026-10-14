@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // hostedGit runs git in a bare mirror the way the hosted git mirror service

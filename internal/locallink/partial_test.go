@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 // A partial clone that has the commits but not their trees cannot list the

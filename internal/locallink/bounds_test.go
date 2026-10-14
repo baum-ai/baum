@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/internal/locallink/linktest"
-	"github.com/baumai/baum/redact"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/redact"
+	"github.com/baum-ai/baum/sessions"
 )
 
 func TestResolveAcceptsAbbreviatedIds(t *testing.T) {

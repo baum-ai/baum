@@ -21,7 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 // Version is the prompt version recorded in the document's generator block.

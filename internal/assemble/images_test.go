@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 func TestHTTPImageFetcher(t *testing.T) {

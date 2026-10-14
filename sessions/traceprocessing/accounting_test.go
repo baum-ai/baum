@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/baumai/baum/sessions/claudesession"
-	"github.com/baumai/baum/sessions/codexsession"
-	"github.com/baumai/baum/sessions/cursorsession"
-	"github.com/baumai/baum/sessions/entiresession"
-	"github.com/baumai/baum/sessions/session"
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/claudesession"
+	"github.com/baum-ai/baum/sessions/codexsession"
+	"github.com/baum-ai/baum/sessions/cursorsession"
+	"github.com/baum-ai/baum/sessions/entiresession"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 func TestAccountingCompatibility(t *testing.T) {

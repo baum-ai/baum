@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/bundle"
 )
 
 func requireGit(t *testing.T) {

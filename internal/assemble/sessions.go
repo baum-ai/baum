@@ -4,10 +4,10 @@ import (
 	"context"
 	"io"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/internal/locallink"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // LocalSessions finds the sessions recorded on this machine for the clone

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/review"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/review"
 )
 
 // maxDiagnosticStringBytes bounds each string of a returned diagnostic event.

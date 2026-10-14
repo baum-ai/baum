@@ -3,7 +3,7 @@ package steps
 import (
 	"strings"
 
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/linkage"
 )
 
 const BranchStepID = "branch"

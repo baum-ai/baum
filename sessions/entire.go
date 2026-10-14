@@ -10,12 +10,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/sessions/collector"
-	"github.com/baumai/baum/sessions/collector/entire"
-	"github.com/baumai/baum/sessions/entirecheckpoint"
-	"github.com/baumai/baum/sessions/entiresession"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/sessions/collector"
+	"github.com/baum-ai/baum/sessions/collector/entire"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
+	"github.com/baum-ai/baum/sessions/entiresession"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // maxParallel bounds how many sessions are mapped, or checkpoints read, at

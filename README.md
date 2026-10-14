@@ -1,6 +1,6 @@
 # baum
 
-[![CI](https://github.com/baumai/baum/actions/workflows/check.yml/badge.svg)](https://github.com/baumai/baum/actions/workflows/check.yml)
+[![CI](https://github.com/baum-ai/baum/actions/workflows/check.yml/badge.svg)](https://github.com/baum-ai/baum/actions/workflows/check.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 baum is a local-first pull request review generator and viewer. One
@@ -31,11 +31,11 @@ versions yet.
 With Go:
 
 ```sh
-go install github.com/baumai/baum/cmd/baum@latest
+go install github.com/baum-ai/baum/cmd/baum@latest
 ```
 
 Or download an archive for linux, macOS or Windows from the
-[releases page](https://github.com/baumai/baum/releases). Binaries
+[releases page](https://github.com/baum-ai/baum/releases). Binaries
 are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
 2.29 or newer.
 
@@ -340,7 +340,7 @@ describes how they fit together and what a host implements.
 | `sessions/{claude,codex,cursor,entire}*` | one parser and mapper per vendor, with golden tests |
 | `linkage` | matches commits of a pull request to the sessions that produced them |
 | `linkage/sessioncorrelate` | extracts commit refs, branches and touched files from a session graph, and makes a file touch's path repository-relative |
-| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/baumai/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
+| `redact` | masks secrets and e-mail addresses with [goredact](https://github.com/baum-ai/goredact), and removes e-mail addresses and @mentions from text bound for a code host |
 | `githubapi` | the GitHub GraphQL transport that recognises primary and secondary rate limits, and GitHub's GraphQL scalars |
 | `schema` | the review schema and its validator |
 

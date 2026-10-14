@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 // MaxPatchBytes is the largest file patch Patch returns. A larger one is

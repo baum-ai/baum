@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/agent/internal/proc"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/internal/proc"
 )
 
 // maxOutputTokens bounds one model response. A large review submitted through

@@ -29,13 +29,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/agent/prompt"
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/assemble"
-	"github.com/baumai/baum/internal/github"
-	"github.com/baumai/baum/review"
-	"github.com/baumai/baum/sessions"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // Category classifies why a run failed.

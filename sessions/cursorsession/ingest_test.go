@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/baumai/baum/internal/goldentest"
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func fixtureTree(t *testing.T) *cursortranscript.Tree {

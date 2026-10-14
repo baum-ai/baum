@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/agent/claude"
-	"github.com/baumai/baum/agent/codex"
-	"github.com/baumai/baum/internal/config"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/config"
 )
 
 // CheckedBackend is a backend that can verify, before any work is done, that

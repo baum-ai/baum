@@ -8,8 +8,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
 )
 
 func TestFindSessionsFiltersByRepositoryAndCarriesNestedTree(t *testing.T) {

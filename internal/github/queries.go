@@ -3,7 +3,7 @@ package github
 import (
 	"time"
 
-	"github.com/baumai/baum/githubapi"
+	"github.com/baum-ai/baum/githubapi"
 )
 
 // The GraphQL documents, one per part of the bundle so that a part GitHub

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func TestTallyRows(t *testing.T) {

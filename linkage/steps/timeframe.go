@@ -5,7 +5,7 @@ package steps
 import (
 	"time"
 
-	"github.com/baumai/baum/linkage"
+	"github.com/baum-ai/baum/linkage"
 )
 
 const TimeframeStepID = "timeframe"

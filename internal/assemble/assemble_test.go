@@ -15,13 +15,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/assemble"
-	"github.com/baumai/baum/internal/assemble/assembletest"
-	"github.com/baumai/baum/internal/github"
-	"github.com/baumai/baum/internal/gitlocal"
-	"github.com/baumai/baum/internal/goldentest"
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 type run struct {

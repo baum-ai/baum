@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/internal/locallink"
-	"github.com/baumai/baum/schema"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/schema"
 )
 
 const (

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 const successEvents = `{"type":"assistant","message":{"id":"m1","model":"fixture","usage":{"input_tokens":1,"output_tokens":1}}}

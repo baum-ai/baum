@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/baumai/baum/sessions/sourcepath"
+	"github.com/baum-ai/baum/sessions/sourcepath"
 )
 
 const (

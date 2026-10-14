@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/baumai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
 )
 
 type tokenEstimator struct {

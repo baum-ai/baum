@@ -12,7 +12,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/repository"
 
-	"github.com/baumai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/config"
 )
 
 type stubClone struct {

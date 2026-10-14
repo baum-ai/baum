@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/baumai/baum/sessions/claudesession"
-	"github.com/baumai/baum/sessions/claudetranscript"
-	"github.com/baumai/baum/sessions/codexsession"
-	"github.com/baumai/baum/sessions/codextranscript"
-	"github.com/baumai/baum/sessions/cursorsession"
-	"github.com/baumai/baum/sessions/cursortranscript"
-	"github.com/baumai/baum/sessions/entirecheckpoint"
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/claudesession"
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/codexsession"
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/cursorsession"
+	"github.com/baum-ai/baum/sessions/cursortranscript"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 type delegateFunc func(*entirecheckpoint.SessionSnapshot) (*session.Graph, *DelegateReport, error)

@@ -3,7 +3,7 @@ package codextranscript
 import (
 	"encoding/json"
 
-	"github.com/baumai/baum/sessions/traceprocessing"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 type Shape struct {

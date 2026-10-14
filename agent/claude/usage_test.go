@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/agent"
+	"github.com/baum-ai/baum/agent"
 )
 
 // Claude Code's stream reports each call's 1-hour cache writes and its speed.

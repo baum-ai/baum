@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/bundle"
-	"github.com/baumai/baum/internal/github"
-	"github.com/baumai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 // PlantedSecret is a made-up Hugging Face token, planted in the pull request's

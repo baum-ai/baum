@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/baumai/baum/agent"
-	"github.com/baumai/baum/bundle"
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 )
 
 // Backend is an agent.Backend and a generate.CheckedBackend whose runs a test

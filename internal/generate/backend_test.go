@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/internal/config"
-	"github.com/baumai/baum/internal/generate"
-	"github.com/baumai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
 )
 
 func fakes(claude, codex *generatetest.Backend) generate.Backends {

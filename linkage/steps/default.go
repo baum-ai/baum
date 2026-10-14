@@ -1,6 +1,6 @@
 package steps
 
-import "github.com/baumai/baum/linkage"
+import "github.com/baum-ai/baum/linkage"
 
 // Default returns the built-in steps in linkage.DefaultMatchSteps order, one
 // per id. The pipeline (the linkage package) can't import this package back (it

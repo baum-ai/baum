@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/baumai/baum/sessions"
-	"github.com/baumai/baum/sessions/collector/claudecode"
+	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
 
 // EarlierSnapshot returns stores holding an earlier reading of the fixture's

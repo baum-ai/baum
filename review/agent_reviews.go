@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 // threadIndex lists the bundle's review threads as the document indexes them.

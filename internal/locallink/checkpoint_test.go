@@ -8,9 +8,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/baumai/baum/internal/locallink/linktest"
-	"github.com/baumai/baum/linkage"
-	"github.com/baumai/baum/sessions/vendors"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/linkage"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 func TestEntireCheckpointID(t *testing.T) {

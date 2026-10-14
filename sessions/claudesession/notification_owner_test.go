@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func buildNotificationLines(t *testing.T, lines ...string) (*session.Graph, *Report) {

@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baumai/baum/internal/textclean"
-	"github.com/baumai/baum/linkage/gitevidence"
-	"github.com/baumai/baum/sessions/session"
-	"github.com/baumai/baum/sessions/sourcepath"
+	"github.com/baum-ai/baum/internal/textclean"
+	"github.com/baum-ai/baum/linkage/gitevidence"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/sourcepath"
 )
 
 // Role is how a session relates to a commit SHA: created it, mentioned it,

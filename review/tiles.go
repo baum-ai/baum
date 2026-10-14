@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 // Tile payloads remain raw JSON in stored documents. These projections only

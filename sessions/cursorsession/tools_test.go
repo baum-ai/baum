@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 func TestToolStatusesAndDecisions(t *testing.T) {

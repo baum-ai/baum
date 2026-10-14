@@ -1,4 +1,4 @@
-module github.com/baumai/baum
+module github.com/baum-ai/baum
 
 go 1.26.6
 

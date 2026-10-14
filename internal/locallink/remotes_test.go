@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/baumai/baum/internal/locallink/linktest"
+	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
 // A fork clone has the fork as origin and the pull request's repository as

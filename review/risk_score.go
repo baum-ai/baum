@@ -3,7 +3,7 @@ package review
 import (
 	"strings"
 
-	bundlepkg "github.com/baumai/baum/bundle"
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 // RiskRubricVersion names the rules riskScore applies. A change to the scale,
