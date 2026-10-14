@@ -33,7 +33,7 @@ func RowOf(engine *redact.Engine, s sessions.Session) (Row, error) {
 
 func rowOf(engine *redact.Engine, s sessions.Session, correlated sessioncorrelate.Result) (Row, error) {
 	row := Row{
-		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID, Path: s.Path,
+		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID,
 		Outcome: session.OutcomeUnknown,
 	}
 	if root := s.Root(); root != nil {
@@ -66,6 +66,11 @@ func rowOf(engine *redact.Engine, s sessions.Session, correlated sessioncorrelat
 		}
 		row.Notes = append(row.Notes, note)
 	}
+	path, _, err := engine.Redact(s.Path)
+	if err != nil {
+		return Row{}, err
+	}
+	row.Path = path
 	for _, ref := range correlated.CommitRefs {
 		if row.Commits == nil {
 			row.Commits = map[string][]string{}

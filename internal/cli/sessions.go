@@ -102,10 +102,18 @@ func runSessions(cmd *cobra.Command, dir string, opts sessionsOptions) error {
 	}
 	stderr := cmd.ErrOrStderr()
 	for _, skipped := range report.Skipped {
-		_, _ = fmt.Fprintf(stderr, "warning: skipped %s: %s\n", skipped.Path, skipped.Reason)
+		line, _, err := engine.Redact(fmt.Sprintf("warning: skipped %s: %s", skipped.Path, skipped.Reason))
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(stderr, line)
 	}
 	for _, failure := range report.Failures {
-		_, _ = fmt.Fprintf(stderr, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
+		line, _, err := engine.Redact(fmt.Sprintf("warning: %s session %s: %v", failure.Source, failure.Path, failure.Err))
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(stderr, line)
 	}
 
 	if opts.dump != "" {
