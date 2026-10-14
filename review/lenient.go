@@ -42,6 +42,13 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 		delete(minutes, "minimum")
 		delete(minutes, "maximum")
 		minutes["type"] = "number"
+		// The stored description allows a null or absent estimate for older
+		// documents; the model is told to always give one.
+		if description, _ := minutes["description"].(string); description != "" {
+			if cut := strings.Index(description, " Null or absent"); cut >= 0 {
+				minutes["description"] = description[:cut] + " Always give an estimate."
+			}
+		}
 		if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "review_minutes") {
 			summary["required"] = append(required, "review_minutes")
 		}

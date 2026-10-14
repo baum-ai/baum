@@ -832,4 +832,9 @@ func TestModelSchemaAsksForReviewMinutes(t *testing.T) {
 	if acceptsNull(minutes) {
 		t.Errorf("the model schema lets summary.review_minutes be null: %v", minutes)
 	}
+	// Its description must not tell the model it may leave it out.
+	description, _ := minutes["description"].(string)
+	if strings.Contains(strings.ToLower(description), "null") || !strings.Contains(description, "Always give an estimate") {
+		t.Errorf("summary.review_minutes description = %q", description)
+	}
 }
