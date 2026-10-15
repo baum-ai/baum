@@ -478,8 +478,8 @@ MIT, see [LICENSE](LICENSE).
 `--port 8080` selects a port; `--no-open` prints the private launch URL without
 opening a browser. Keep the process running until you finish; Ctrl-C stops it.
 A second invocation opens the existing instance, even if another port was
-requested. The initial page currently confirms API readiness; the inbox SPA
-is a separate interface over these endpoints.
+requested. The embedded local application opens its multi-repository inbox,
+with the shared PR review page, history, generation jobs and repository settings.
 
 The URL carries a random capability in its fragment, which the bootstrap
 removes from browser history before exchanging it for an HttpOnly,
@@ -586,3 +586,10 @@ or stale discovery) does not prove it closed. Historical rows retain their last
 review without claiming to know the current remote head. Explicit `--store`
 overrides remain standalone CLI stores unless the host supplies that store
 mapping; the default index uses each clone's normal common-directory/XDG store.
+
+The local application in [`app/`](app/README.md) uses the current hosted PR
+page's shared review viewer and visual tokens, with local document, history,
+attachment and redacted-session sources. Its inbox filters across registered
+repositories, supports selected generation with cost/isolation confirmation,
+and exposes live jobs/cancellation and per-repository settings. Saved history
+remains readable offline. The app sends no requests to a hosted baum service.

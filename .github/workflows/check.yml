@@ -147,6 +147,24 @@ jobs:
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         run: pnpm test:e2e
 
+      - name: Set up Go for the local app server fixture
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check and build local application
+        working-directory: app
+        run: pnpm install --frozen-lockfile && pnpm check && pnpm build
+
+      - name: Build local server browser fixture
+        working-directory: .
+        run: CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture
+
+      - name: Local application browser tests
+        working-directory: app
+        run: pnpm test:e2e
+
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

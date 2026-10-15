@@ -1,0 +1,73 @@
+@import "tailwindcss";
+@import "../../viewer/src/viewer.css";
+@source "../../viewer/src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.local-chrome {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface-card);
+}
+.local-main {
+  padding: 1.5rem;
+  max-width: 1600px;
+  margin: auto;
+  min-width: 0;
+}
+.local-panel {
+  padding: 1rem;
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+}
+.local-field {
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  max-width: 100%;
+}
+.local-table {
+  position: relative;
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+td,
+th {
+  padding: 0.65rem;
+  border-bottom: 1px solid var(--border-default);
+}
+dialog {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  padding: 1.5rem;
+  max-width: calc(100vw - 2rem);
+  width: 36rem;
+}
+dialog::backdrop {
+  background: #0008;
+}
+@media (width >= 64rem) {
+  html:has([data-review-page]) {
+    scroll-padding-top: calc(48px + 0.5rem);
+  }
+}
+
+.local-main:has([data-review-page]) {
+  padding: 0;
+  max-width: none;
+}

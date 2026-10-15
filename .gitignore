@@ -24,3 +24,8 @@ node_modules/
 
 # The built standalone viewer is committed (see viewer/README.md).
 !/internal/viewer/dist/
+
+!/internal/localapp/dist/
+/app/playwright-report/
+/app/test-results/
+/app/e2e/fixture

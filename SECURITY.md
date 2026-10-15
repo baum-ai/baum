@@ -263,3 +263,10 @@ usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. A second `baum ui` invocation
 cannot open a second queue because it reuses the existing instance first.
+
+The embedded local application exchanges the fragment token before fetching
+repository data and clears it from history. Every application request is
+same-origin; the app has no hosted baum API dependency. Review content uses the
+same sanitizers and safe rendering components as the hosted PR page and `baum
+view`. Stored document rendering failures remain within the PR pane. The app
+never supplies approvals, merge actions or discussion mutation controls.

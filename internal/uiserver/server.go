@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/baum-ai/baum/internal/localapp"
 )
 
 type Options struct {
@@ -115,7 +118,7 @@ func (s *Server) authorized(r *http.Request) bool {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
@@ -130,18 +133,20 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 		}
-		if r.URL.Path == "/" && (r.Method == "GET" || r.Method == "HEAD") {
-			h.Set("Content-Type", "text/html; charset=utf-8")
-			if r.Method != "HEAD" {
-				_, _ = io.WriteString(w, bootstrapHTML)
+		if (r.Method == "GET" || r.Method == "HEAD") && !strings.HasPrefix(r.URL.Path, "/api/") {
+			path := strings.TrimPrefix(r.URL.Path, "/")
+			if path == "" {
+				path = "index.html"
 			}
-			return
-		}
-		if r.URL.Path == "/launch.js" && (r.Method == "GET" || r.Method == "HEAD") {
-			h.Set("Content-Type", "text/javascript; charset=utf-8")
-			if r.Method != "HEAD" {
-				_, _ = io.WriteString(w, bootstrapJS)
+			if !fs.ValidPath(path) {
+				http.NotFound(w, r)
+				return
 			}
+			if _, err := fs.Stat(localapp.Assets(), path); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			http.FileServer(http.FS(localapp.Assets())).ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == "/api/auth/exchange" && r.Method == "POST" {
@@ -273,6 +278,3 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-const bootstrapHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="/launch.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`
-const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(token){const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');}const response=await fetch('/api/repos');if(!response.ok)throw Error('Open the URL printed by baum ui to authorize this browser.');const repos=await response.json();status.textContent='Local API ready. '+repos.length+' registered clone(s).';}catch(error){status.textContent=error.message;}})();`

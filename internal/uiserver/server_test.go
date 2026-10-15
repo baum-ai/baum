@@ -59,7 +59,7 @@ func TestSecurityBoundary(t *testing.T) {
 		status                                             int
 	}{
 		{name: "bootstrap", method: "GET", path: "/", status: 200},
-		{name: "script", method: "GET", path: "/launch.js", status: 200},
+		{name: "unknown asset", method: "GET", path: "/launch.js", status: 404},
 		{name: "no token", method: "GET", path: "/api/repos", status: 401},
 		{name: "health private", method: "GET", path: "/api/health", status: 401},
 		{name: "wrong token", method: "GET", path: "/api/repos", auth: "Bearer wrong", status: 401},

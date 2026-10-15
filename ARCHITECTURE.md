@@ -1279,3 +1279,14 @@ A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 Estimates and job confirmation never infer the default model or replace it with
 a different priced model. Unknown actual usage remains null.
+
+### Local application presentation
+
+`app/` builds into the committed `internal/localapp/dist` embed. `uiserver`
+serves its public static shell behind the existing bound-Host check; all data,
+auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
+supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
+PR page, sourcing documents, immutable versions, patches, sessions and commits
+from registered local clones. The renderer stays in `viewer/`; the app owns
+only local inbox, jobs, confirmation and settings presentation. The common
+viewer build/freshness scripts include both embedded applications.

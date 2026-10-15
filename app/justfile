@@ -1,0 +1,13 @@
+dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
+heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --no-deps --workdir /oss/app ui-test"
+
+check:
+    {{ heavy }} pnpm check
+
+build:
+    {{ heavy }} pnpm build
+
+e2e:
+    {{ heavy }} pnpm build
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
+    {{ heavy }} pnpm test:e2e

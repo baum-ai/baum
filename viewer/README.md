@@ -441,3 +441,11 @@ local session answers, and documents the specs edit from the example. The app
 has no file picker, upload or drag and drop (see Standalone app), and draws no
 description images, as it supplies no `AttachmentUrlProvider`; the specs assert
 both. The hosted app's integration with the viewer stays covered by `ui/e2e`.
+
+The local multi-repository app in [`../app/`](../app/README.md) consumes the
+same public viewer components and uses the exported `local-sessions` and
+`local-transcript` parsers for the local server’s redacted answers.
+
+Review part headers wrap their controls below the label when space is tight;
+wide surface-filter strips scroll within their own bounded container so the
+Summary never widens a narrow page.
