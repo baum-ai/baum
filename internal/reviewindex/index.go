@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
@@ -44,9 +45,11 @@ type Entry struct {
 	RiskScore     json.RawMessage       `json:"risk_score"`
 	// Historical includes saved reviews outside the current discovered inbox.
 	// Their state is UNKNOWN unless the saved document already says closed/merged.
-	Historical bool   `json:"historical"`
-	Stale      bool   `json:"stale"`
-	StoreError string `json:"store_error,omitempty"`
+	Historical        bool   `json:"historical"`
+	Stale             bool   `json:"stale"`
+	StoreError        string `json:"store_error,omitempty"`
+	Checks            string `json:"checks"`
+	MetadataFetchedAt string `json:"metadata_fetched_at,omitempty"`
 }
 type Problem struct {
 	CloneID string `json:"clone_id"`
@@ -66,6 +69,8 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 	discovered := map[store.Key]discovery.PullRequest{}
 	stale := map[string]bool{}
 	seenRepo := map[string]bool{}
+	observations := map[store.Key]discovery.Observation{}
+	discoveryFetched := map[string]time.Time{}
 	for _, clone := range clones {
 		repository := strings.ToLower(clone.Repository)
 		if seenRepo[repository] {
@@ -82,8 +87,12 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 		}
 		snapshot, err := s.Discovery.Cached(ctx, parsed)
 		stale[repository] = err != nil || snapshot.Stale
+		discoveryFetched[repository] = snapshot.FetchedAt
 		if err != nil && ctx.Err() != nil {
 			return out, ctx.Err()
+		}
+		for _, value := range snapshot.Observations {
+			observations[store.Key{Repository: repository, Number: value.Number}] = value
 		}
 		for _, pr := range snapshot.PullRequests {
 			pr.Repository = repository
@@ -163,6 +172,30 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 	for key, pr := range discovered {
 		if !covered[key] {
 			out.Entries = append(out.Entries, Entry{PullRequest: pr, Status: "no_review", Stale: stale[key.Repository]})
+		}
+	}
+	for i := range out.Entries {
+		entry := &out.Entries[i]
+		key := store.Key{Repository: entry.PullRequest.Repository, Number: entry.PullRequest.Number}
+		if value, ok := observations[key]; ok {
+			// A newer discovery head wins over a previous metadata fetch. Never
+			// label old-head checks as checks on the current revision.
+			if !entry.Historical && value.FetchedAt.Before(discoveryFetched[key.Repository]) {
+				continue
+			}
+			entry.PullRequest.HeadSHA = value.HeadSHA
+			entry.PullRequest.Title = value.Title
+			entry.PullRequest.State = value.State
+			entry.PullRequest.Draft = value.Draft
+			entry.Stale = stale[key.Repository] || time.Since(value.FetchedAt) > 2*time.Minute
+			entry.Checks = value.Checks
+			entry.MetadataFetchedAt = value.FetchedAt.UTC().Format(time.RFC3339Nano)
+			if entry.Latest != nil && (entry.Status == "unknown" || entry.Status == "current" || entry.Status == "outdated") {
+				entry.Status = "outdated"
+				if entry.Latest.Head == value.HeadSHA {
+					entry.Status = "current"
+				}
+			}
 		}
 	}
 	sort.Slice(out.Entries, func(i, j int) bool {

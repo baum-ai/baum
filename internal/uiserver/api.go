@@ -21,6 +21,7 @@ type LocalAPI struct {
 	Registry         *repos.Registry
 	Config           config.Config
 	PRs, Index, Jobs http.Handler
+	Background       http.Handler
 	Changed          func()
 }
 
@@ -57,6 +58,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	}
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
+	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
 	mux.Handle("/api/jobs", provider(a.Jobs, "runner_unavailable"))
 	mux.Handle("/api/jobs/", provider(a.Jobs, "runner_unavailable"))

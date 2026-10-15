@@ -40,6 +40,18 @@ type PullRequest struct {
 	TeamMembershipKnown bool `json:"team_membership_known"`
 }
 
+// Observation contains only safe current GitHub metadata, never description
+// bodies, signed image URLs or session contents.
+type Observation struct {
+	Number    int       `json:"number"`
+	HeadSHA   string    `json:"head_sha"`
+	Title     string    `json:"title"`
+	State     string    `json:"state"`
+	Draft     bool      `json:"draft"`
+	FetchedAt time.Time `json:"fetched_at"`
+	Checks    string    `json:"checks"`
+}
+
 type RateLimit struct {
 	Remaining *int      `json:"remaining"`
 	Reset     time.Time `json:"reset"`
@@ -48,6 +60,7 @@ type RateLimit struct {
 
 type Snapshot struct {
 	Repository   string        `json:"repository"`
+	Observations []Observation `json:"observations,omitempty"`
 	Viewer       string        `json:"viewer"`
 	PullRequests []PullRequest `json:"pull_requests"`
 	Stale        bool          `json:"stale"`
@@ -77,12 +90,13 @@ type Service struct {
 	directory string
 	mu        sync.Mutex
 	now       func() time.Time
+	validated map[string]bool
 }
 
 // New uses directory as a dedicated private cache directory. An empty path
 // selects $XDG_CACHE_HOME/baum/discovery (or the OS user cache directory).
 func New(client *github.Client, directory string) *Service {
-	return &Service{client: client, directory: directory, now: time.Now}
+	return &Service{client: client, directory: directory, now: time.Now, validated: map[string]bool{}}
 }
 
 func (s *Service) path(identity, repository string) (string, error) {
@@ -148,6 +162,8 @@ func save(path string, cache diskCache) error {
 // partitions results by credential, so changing accounts cannot reuse an inbox.
 // Disk snapshots are always stale until a successful conditional poll.
 func (s *Service) Cached(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err
@@ -160,7 +176,7 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache.Snapshot.Stale = true
+	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.validated[path] || !s.now().Before(cache.Snapshot.NextPoll)
 	return cache.Snapshot, nil
 }
 
@@ -313,6 +329,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	now := s.now()
 	shared := poll{rate: budget.Snapshot.Rate}
 	if deadline := shared.ResetIfExhausted(); deadline.After(now) {
+		s.validated[path] = false
 		snapshot := cache.Snapshot
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
@@ -342,11 +359,13 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
+		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
 		snapshot.Rate = p.rate
 		p.cache.Interval = interval
 	}
+	s.validated[path] = err == nil
 	p.cache.Snapshot = snapshot
 	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}}); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
@@ -429,4 +448,31 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil
+}
+
+// Observe retains fresh free metadata for open and saved historical PRs. A
+// separate service instance still treats the disk cache as stale on startup.
+func (s *Service) Observe(ctx context.Context, repository github.Repository, value Observation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return err
+	}
+	cache, err := load(path)
+	if err != nil {
+		return err
+	}
+	for i, old := range cache.Snapshot.Observations {
+		if old.Number == value.Number {
+			cache.Snapshot.Observations[i] = value
+			return save(path, cache)
+		}
+	}
+	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
+	return save(path, cache)
 }

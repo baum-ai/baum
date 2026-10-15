@@ -27,9 +27,14 @@ isolation confirmation when generated individually. Generation confirms an
 approximate price and configured model; unknown prices cannot start a run.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs can be cancelled. Existing reviews stay readable
-while regeneration runs. Repository settings share automatic opt-in, daily cap,
-backend and model overrides across its registered clones. The background
-scheduler is separate work; opting in here only records that preference.
+while regeneration runs. Repository settings share backend and model overrides across registered clones.
+GitHub discovery and the latest saved review's free evidence refresh periodically
+while the local server runs, including PR heads/states, checks, conversation,
+bot reports and local session links. Cached data loads immediately; offline,
+rate-limited and failed refreshes are visible and retried with backoff. Model
+calls only run after an explicit generation request and spend confirmation.
+Legacy automatic/cap settings are retained for compatibility but never schedule
+paid work and have no controls in this app.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 `pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes committed assets

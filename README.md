@@ -114,8 +114,8 @@ when unset) lets the UI load the last inbox without network access. Files have
 mode 0600 and are partitioned by host, credential fingerprint and repository;
 a changed token cannot reuse another account's inbox. The cache stores only
 inbox metadata, conditional response fields and polling state, never tokens,
-PR bodies or signed image URLs. Cached reads are explicitly stale until a
-successful poll. This service neither fetches git objects nor generates reviews.
+PR bodies or signed image URLs. Disk reads on startup are stale until a successful poll; this process
+serves validated cached results as fresh until their next polling deadline. This service neither fetches git objects nor generates reviews.
 
 ### Registered repositories
 
@@ -140,8 +140,9 @@ Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
 settings; omitted flags preserve existing settings. A cap must be finite and
 nonnegative; zero allows no automatic spending, and an unset cap has no
 repository override. Empty `--backend=` or `--model=` resets that override to
-inherit the resolved global configuration. These settings are stored for the
-future job runner; this command does not schedule or generate reviews.
+inherit the resolved global configuration. Automatic/cap settings are retained for compatibility only: the local app
+never schedules paid generation, even when automatic is true. Backend and model
+overrides apply to explicitly requested generation.
 
 The registry also provides an internal HTTP handler for `GET/POST /api/repos`,
 `DELETE /api/repos/{id}`, and `PUT /api/repos/{id}/settings`. POST takes
@@ -623,3 +624,33 @@ attachment and redacted-session sources. Its inbox filters across registered
 repositories, supports selected generation with cost/isolation confirmation,
 and exposes live jobs/cancellation and per-repository settings. Saved history
 remains readable offline. The app sends no requests to a hosted baum service.
+
+### Background metadata refresh
+
+While `baum ui` runs, a single background worker polls registered repositories
+without delaying the cached inbox or startup. Linked worktrees sharing a common
+git directory are deduplicated; independent clones keep separate saved histories.
+Discovery honors conditional ETags, unchanged-result backoff, polling intervals
+and shared REST rate budgets. Current PR metadata and each latest saved review's
+evidence refresh normally once a minute; failures back off to fifteen minutes,
+and GitHub retry/reset deadlines take precedence. Metadata rate exhaustion pauses
+other PRs and repositories on that host. Each network operation is cancellable
+and bounded to 45 seconds; shutdown waits for the worker to stop.
+
+The worker updates PR heads, titles, draft/closed/merged states and check summaries,
+including PRs with no generated review and saved PRs absent from the open inbox.
+For saved reviews it reuses model-free `refresh`: checks for the reviewed revision,
+threads, bot reports, local session links and derived evidence are recomputed,
+while authored content, generation provenance, attachments and older versions
+stay unchanged. Current-head checks are read separately after a head moves, so
+checks from the saved revision never masquerade as checks on the new head.
+Concurrent generation/refresh uses the store's compare-and-swap publication;
+a race is retried on a later pass instead of overwriting newer work.
+
+`GET /api/background` exposes per-repository success, fixed failure category and
+next retry; authenticated index events update the app. Discovery rate information
+remains available from `/api/prs`. Offline/cache results remain readable and
+explicitly stale. Only minimized heads/state/title/check metadata is added to
+the private discovery cache; raw PR bodies, signed image URLs and session text
+are not cached there. No background task queues generation or calls a model,
+regardless of legacy automatic-generation preferences. Paid work is on demand.

@@ -134,6 +134,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(page.getByText(/cancelled/).first()).toBeVisible();
   await page.getByRole("link", { name: "Repositories & settings" }).click();
   const settings = page.getByRole("region", { name: "Repository acme/demo", exact: true });
+  await expect(settings.getByText(/Model generation runs only when you request and confirm it/)).toBeVisible();
+  await expect(settings.getByRole("checkbox", {name:/automatic generation/})).toHaveCount(0);
+  await expect(settings.getByRole("spinbutton", {name:/Daily automatic cap/})).toHaveCount(0);
   await settings.getByRole("textbox", { name: "Model override" }).fill("claude-sonnet-4-5");
   await settings.getByRole("button", { name: "Save repository settings" }).click();
   await expect(settings.getByRole("textbox", { name: "Model override" })).toHaveValue(

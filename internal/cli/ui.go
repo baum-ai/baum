@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
@@ -46,9 +47,10 @@ func runUI(cmd *cobra.Command, _ []string) error {
 			_ = server.Publish("index", struct{}{})
 		}
 	}
+	worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
 	var queue *jobs.Queue
 	jobHandler := &deferredJobs{}
-	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: jobHandler, Changed: changed}
+	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: jobHandler, Background: worker.Handler(), Changed: changed}
 	ctx, stop := viewContext()
 	defer stop()
 	handler := api.Handler()
@@ -86,6 +88,9 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Serving on this machine only. Keep the launch URL private. Press Ctrl-C to stop.")
 	watchContext, cancelWatch := context.WithCancel(ctx)
+	backgroundDone := make(chan struct{})
+	go func() { defer close(backgroundDone); worker.Run(watchContext) }()
+	defer func() { cancelWatch(); <-backgroundDone }()
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)

@@ -134,7 +134,7 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	}
 	before := len(f.requests)
 	cached, err := s.Cached(context.Background(), testRepo)
-	if err != nil || !cached.Stale || len(cached.PullRequests) != 4 || len(f.requests) != before {
+	if err != nil || cached.Stale || len(cached.PullRequests) != 4 || len(f.requests) != before {
 		t.Fatalf("cache-only result %#v %v", cached, err)
 	}
 	f.offline = true
@@ -354,5 +354,48 @@ func TestBudgetSharedAcrossRepositoriesAndRestart(t *testing.T) {
 				t.Fatal("deadline expiry did not permit a request")
 			}
 		})
+	}
+}
+
+func TestLiveFreshnessAndRestart(t *testing.T) {
+	f := recordedFixture()
+	s, now := service(t, f)
+	ctx := context.Background()
+	if _, err := s.Poll(ctx, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Cached(ctx, testRepo)
+	if err != nil || got.Stale {
+		t.Fatalf("live cache stale: %+v %v", got, err)
+	}
+	restarted := New(s.client, s.directory)
+	restarted.now = s.now
+	got, err = restarted.Cached(ctx, testRepo)
+	if err != nil || !got.Stale {
+		t.Fatalf("disk cache fresh on restart: %+v %v", got, err)
+	}
+	*now = now.Add(time.Minute)
+	got, err = s.Cached(ctx, testRepo)
+	if err != nil || !got.Stale {
+		t.Fatalf("expired cache fresh: %+v %v", got, err)
+	}
+	if err := s.Observe(ctx, testRepo, Observation{Number: 9, HeadSHA: "moved", State: "MERGED", FetchedAt: *now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Poll(ctx, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Cached(ctx, testRepo)
+	if err != nil || got.Stale || len(got.Observations) != 1 || got.Observations[0].State != "MERGED" {
+		t.Fatalf("observation lost %+v %v", got, err)
+	}
+	f.offline = true
+	*now = now.Add(time.Hour)
+	if _, err := s.Poll(ctx, testRepo); err == nil {
+		t.Fatal("expected offline error")
+	}
+	got, _ = s.Cached(ctx, testRepo)
+	if !got.Stale {
+		t.Fatal("offline cache fresh")
 	}
 }

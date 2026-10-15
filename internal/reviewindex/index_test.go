@@ -194,3 +194,35 @@ func TestCorruptStoreDoesNotHideOtherRepositoryHistory(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestFreshMetadataOverridesDiscoveryAndRetainsHistoricalPRs(t *testing.T) {
+	ctx := context.Background()
+	common := t.TempDir()
+	versions, err := store.Open(common, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, 9} {
+		doc, _ := json.Marshal(map[string]any{"review": map[string]any{"repository": "acme/a", "pull_request": n, "version": 1, "pr_state": "open"}})
+		if err := versions.Put(ctx, store.Key{Repository: "acme/a", Number: n}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "old"}, Document: doc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	snapshot := discovery.Snapshot{FetchedAt: now.Add(-time.Second), PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "old", State: "OPEN"}}, Observations: []discovery.Observation{{Number: 1, HeadSHA: "new", State: "OPEN", Checks: "failure", FetchedAt: now}, {Number: 9, HeadSHA: "old", State: "MERGED", Checks: "success", FetchedAt: now}}}
+	s := Service{Registry: registry{{ID: "clone", Repository: "acme/a", CommonDir: common, Available: true}}, Discovery: source{"acme/a": snapshot}}
+	got, err := s.Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 2 || got.Entries[0].Status != "outdated" || got.Entries[0].Checks != "failure" || got.Entries[1].PullRequest.State != "MERGED" || !got.Entries[1].Historical || got.Entries[1].Status != "current" || got.Entries[1].Stale {
+		t.Fatalf("entries %+v", got.Entries)
+	}
+	snapshot.FetchedAt = now.Add(time.Second)
+	snapshot.PullRequests[0].HeadSHA = "latest"
+	s.Discovery = source{"acme/a": snapshot}
+	got, err = s.Build(ctx)
+	if err != nil || got.Entries[0].PullRequest.HeadSHA != "latest" || got.Entries[0].Checks != "" {
+		t.Fatalf("old observation overwrote discovery %+v %v", got, err)
+	}
+}

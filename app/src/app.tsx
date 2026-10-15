@@ -119,6 +119,7 @@ function Workspace({ url }: { url: UrlState }) {
   const [clones, setClones] = useState<Clone[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot>({ entries: [], problems: [] });
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [background, setBackground] = useState<{repository:string;error?:string;next_refresh:string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -139,17 +140,19 @@ function Workspace({ url }: { url: UrlState }) {
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
     try {
-      const [repos, index, jobList, discovery] = await Promise.all([
+      const [repos, index, jobList, discovery, sync] = await Promise.all([
         request<Clone[]>("/api/repos"),
         request<Snapshot>("/api/index?history=1"),
         request<{ jobs?: Job[] }>("/api/jobs"),
         request<typeof rates>("/api/prs"),
+        request<typeof background>("/api/background"),
       ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
       setSnapshot(index);
       setJobs(jobList.jobs ?? []);
       setRates(discovery);
+      setBackground(Array.isArray(sync) ? sync : []);
       setError("");
       setRevision((n) => n + 1);
     } catch (e) {
@@ -222,6 +225,12 @@ function Workspace({ url }: { url: UrlState }) {
         <LocalLink href="/?page=settings">Repositories & settings</LocalLink>
         <span className="text-xs text-(--text-tertiary)">On this machine</span>
       </header>
+      {background.filter((state) => state.error).map((state) => (
+        <Alert key={state.repository}>
+          {state.repository}: background metadata refresh is unavailable ({state.error}).
+          Cached reviews remain readable. Next retry: {new Date(state.next_refresh).toLocaleTimeString()}.
+        </Alert>
+      ))}
       <main className="local-main">
         {error ? (
           <Alert>
@@ -580,17 +589,15 @@ function RepositorySettings({
   clone: Clone;
   save: (settings: Clone["settings"]) => Promise<void>;
 }) {
-  const [automatic, setAutomatic] = useState(clone.settings.automatic);
-  const [cap, setCap] = useState(String(clone.settings.daily_cap ?? ""));
-  const [backend, setBackend] = useState(clone.settings.backend ?? "");
+    const [backend, setBackend] = useState(clone.settings.backend ?? "");
   const [model, setModel] = useState(clone.settings.model ?? "");
   const [pending, setPending] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setPending(true);
     void save({
-      automatic,
-      daily_cap: cap === "" ? null : Number(cap),
+      automatic: clone.settings.automatic,
+      daily_cap: clone.settings.daily_cap,
       backend: backend || null,
       model: model || null,
     }).finally(() => setPending(false));
@@ -618,29 +625,11 @@ function RepositorySettings({
             placeholder="Global default"
           />
         </Field>
-        <Field label="Daily automatic cap (USD)">
-          <input
-            className="local-field"
-            type="number"
-            min="0"
-            step="any"
-            value={cap}
-            onChange={(e) => setCap(e.target.value)}
-            placeholder="Unset"
-          />
-        </Field>
+
       </div>
-      <label className="block">
-        <input
-          type="checkbox"
-          checked={automatic}
-          onChange={(e) => setAutomatic(e.target.checked)}
-        />{" "}
-        Opt in to automatic generation
-      </label>
       <p className="text-xs">
-        Automatic generation requires the background scheduler. Unset cap is not zero; a zero cap
-        prevents automatic spending.
+        GitHub metadata and saved review evidence refresh in the background. Model generation
+        runs only when you request and confirm it.
       </p>
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save repository settings"}
