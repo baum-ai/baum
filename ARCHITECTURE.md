@@ -1189,3 +1189,19 @@ Estimated cost comes from a price list at
 with a public key embedded in the binary, caches it under the XDG cache
 directory, and falls back to a snapshot embedded at release when the list
 cannot be fetched or verified.
+
+## Explicit local repository registry
+
+`internal/repos` owns the private SQLite database beside `config.Path()` and
+reuses `gitlocal` and `github.RepositoryFromRemote` for offline clone discovery.
+The `clones` table keys canonical working-tree roots separately from the shared
+common git directory and normalized repository identity (host-qualified for Enterprise). The
+`repositories` table holds settings shared by all clones of that identity.
+Transactions serialize registration and settings edits across processes; a list
+reprobes paths and reports changed/missing clones unavailable without rewriting
+them. No clone-on-demand or generation runner is involved.
+
+`internal/cli` and the reusable `Registry.Handler` use the same service. The
+handler exposes registry operations only; the future UI host owns listening,
+instance lifecycle, authentication and host/origin validation. It must mount the
+handler behind that middleware. The existing document viewer does not mount it.

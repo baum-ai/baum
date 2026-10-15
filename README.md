@@ -83,6 +83,38 @@ baum validate review.json
 baum validate review.json --bundle bundle.json
 ```
 
+### Registered repositories
+
+`baum repos add <path>` registers an existing GitHub clone or linked worktree;
+`baum repos list` shows its canonical path, common git directory, GitHub identity,
+availability and settings (`--json` emits structured records). Registration reads
+local git metadata only: it never clones, fetches, calls a model or starts a job.
+`baum repos remove <path-or-id>` works even after a clone disappears.
+
+Records live in `repos.sqlite` beside the XDG `config.toml`, with mode 0600.
+Independent clones and linked worktrees keep separate IDs; repository settings
+are shared by normalized GitHub identity (`owner/name` on github.com, `host/owner/name` on
+GitHub Enterprise), matching the review version store.
+Origin is preferred when it names GitHub; otherwise other remotes are considered
+in name order. Moved, missing or replaced clones remain listed as unavailable.
+Re-add a moved clone at its new path and remove its old record explicitly.
+
+Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
+`--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
+settings; omitted flags preserve existing settings. A cap must be finite and
+nonnegative; zero allows no automatic spending, and an unset cap has no
+repository override. Empty `--backend=` or `--model=` resets that override to
+inherit the resolved global configuration. These settings are stored for the
+future job runner; this command does not schedule or generate reviews.
+
+The registry also provides an internal HTTP handler for `GET/POST /api/repos`,
+`DELETE /api/repos/{id}`, and `PUT /api/repos/{id}/settings`. POST takes
+`{"path":"/clone","settings":{...}}`; omitting settings preserves them. PUT
+replaces all repository settings; null backend/model/cap clears an override.
+The handler is an integration boundary for the future local UI host, which must
+provide authentication and host/origin checks. No UI listener is shipped here,
+and `baum view` does not expose these routes.
+
 ### baum generate
 
 ```sh

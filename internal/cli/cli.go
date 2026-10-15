@@ -97,6 +97,7 @@ and serves an embedded viewer for it on localhost.`,
 		newValidateCommand(),
 		newRefreshCommand(),
 		newSessionsCommand(),
+		newReposCommand(),
 	)
 	return cmd
 }
