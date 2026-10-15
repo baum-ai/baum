@@ -239,12 +239,19 @@ function InboxRow({
 }) {
   const pr = entry.pull_request;
   const score = entry.risk_score?.score;
+  const lowerBound = entry.risk_score?.status === "lower_bound";
+  const riskLabel =
+    score == null
+      ? "Risk not scored"
+      : lowerBound
+        ? `Risk at least ${score} of 5; incomplete coverage may hide a higher risk.`
+        : `Risk ${score} of 5`;
   const tone =
     score == null
       ? "text-(--text-disabled)"
       : score >= 5
         ? "text-(--status-critical)"
-        : score === 4
+        : score === 4 || lowerBound
           ? "text-(--status-caution)"
           : score === 3
             ? "text-(--text-secondary)"
@@ -267,11 +274,14 @@ function InboxRow({
         onChange={(e) => toggle(e.target.checked)}
       />
       <span
-        title={score == null ? "Not scored" : `Risk ${score} of 5`}
+        role="img"
+        aria-label={riskLabel}
+        title={riskLabel}
         className={cn("inbox-risk font-mono text-base font-medium tabular-nums", tone)}
       >
         <span className="sr-only">Risk </span>
         {score ?? "—"}
+        {score != null && lowerBound ? "+" : null}
         {score != null ? <span className="text-(--text-tertiary)">/5</span> : null}
       </span>
       <div className="min-w-0">

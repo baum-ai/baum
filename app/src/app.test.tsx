@@ -23,7 +23,7 @@ const entry = (number: number, status = "no_review", historical = false): Entry 
   status,
   version_count: status === "no_review" ? 0 : 1,
   latest: null,
-  risk_score: { score: 5, status: "ready" },
+  risk_score: { score: 5, status: "assessed" },
   historical,
   stale: false,
 });
@@ -202,4 +202,25 @@ it("keeps collapsed selections and selects only expanded visible rows", async ()
   expect(
     node.querySelector<HTMLInputElement>('input[aria-label="Select acme/demo #2"]')!.checked,
   ).toBe(false);
+});
+
+it("distinguishes lower-bound risk from exact and unscored reviews", async () => {
+  const bound = entry(1);
+  bound.risk_score = { score: 1, status: "lower_bound" };
+  const exact = entry(2);
+  exact.risk_score = { score: 1, status: "assessed" };
+  const unknown = entry(3);
+  unknown.risk_score = null;
+  entries = [bound, exact, unknown];
+  await act(async () => root.render(<App />));
+  const risks = Array.from(node.querySelectorAll<HTMLElement>(".inbox-risk"));
+  expect(risks[0]!.textContent).toContain("1+/5");
+  expect(risks[0]!.getAttribute("aria-label")).toContain("at least 1 of 5");
+  expect(risks[0]!.title).toContain("incomplete coverage");
+  expect(risks[0]!.className).not.toContain("status-positive");
+  expect(risks[1]!.textContent).toContain("1/5");
+  expect(risks[1]!.textContent).not.toContain("+");
+  expect(risks[1]!.getAttribute("aria-label")).toBe("Risk 1 of 5");
+  expect(risks[2]!.textContent).toContain("—");
+  expect(risks[2]!.getAttribute("aria-label")).toBe("Risk not scored");
 });

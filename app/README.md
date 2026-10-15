@@ -15,7 +15,9 @@ The inbox spans registered clones, showing review status, risk, versions,
 generation date, backend/model and recorded cost. It follows the Focus view’s
 compact rows: risk at the left, a prominent title over repository/author/PR
 metadata, and aligned review and generation figures. Below desktop width the
-figures move under the title. Collapsible groups show Review requested, Your
+figures move under the title. Incomplete risk assessments show a lower bound
+(`N+/5`) with an explicit “at least” description and caution styling rather
+than a reassuring low-risk colour. Collapsible groups show Review requested, Your
 pull requests and Other pull requests, with each row in one group; Saved history
 has its own group. Collapsing keeps selections, and Select all selects only
 currently expanded visible rows. Requested, authored, outdated,
