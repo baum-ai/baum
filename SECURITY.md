@@ -233,7 +233,7 @@ authentication. No route enables CORS. The capability is valid only while the
 instance runs; keep the printed URL and its mode-0600 instance file private.
 Processes running as your user can read that file and access the API.
 
-The per-user instance directory must be mode 0700. A second invocation verifies
+The per-user instance directory must be mode 0700 on Unix; Windows uses a protected current-user DACL. A second invocation verifies
 the existing instance using its capability before opening it, without sending
 that capability to a redirect, proxy, non-loopback host or baum server. SQLite
 OS locking prevents concurrent owners and releases locks after process exit.

@@ -4,7 +4,10 @@ import (
 	"fmt"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/spf13/cobra"
 )
@@ -29,7 +32,15 @@ func runUI(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer func() { _ = registry.Close() }()
-	api := uiserver.LocalAPI{Registry: registry, Config: cfg}
+	discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
+	index := &reviewindex.Service{Registry: registry, Discovery: discover}
+	var server *uiserver.Server
+	changed := func() {
+		if server != nil {
+			_ = server.Publish("index", struct{}{})
+		}
+	}
+	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Changed: changed}
 	ctx, stop := viewContext()
 	defer stop()
 	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: api.Handler()})
@@ -37,6 +48,7 @@ func runUI(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer func() { _ = instance.Close() }()
+	server = instance.Server
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), instance.URL)
 	noOpen, _ := cmd.Flags().GetBool("no-open")
 	if !noOpen {

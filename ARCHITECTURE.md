@@ -1089,8 +1089,9 @@ context ends the event streams and shuts the server down.
 `baum generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
 repository/PR version, and passes `review.PreviousVersionOf` into
-`assemble.Request.Previous`. It selects and
-checks the backend first (`claude.Backend.Check`, `codex.Backend.Check`; `auto`
+`assemble.Request.Previous`. After resolving the pull request and recording its
+run, it selects and checks the backend before assembling (`claude.Backend.Check`,
+`codex.Backend.Check`; `auto`
 tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
@@ -1228,3 +1229,9 @@ PR, immutable version and attachment ID, committed atomically by `Store.Put`.
 `generate` returns copies from the original, hash-checked assembly archive,
 not agent-visible files. Reads expose only raster images listed in that
 version's document. Existing stores without the table remain readable.
+`internal/reviewindex` rebuilds an in-memory projection of discovery and registered
+version stores. `store.Snapshot` reads latest metadata, count and small document
+summaries in one transaction, plus separate latest-started run records. It does
+not move document bodies or maintain a second database. CLI generation publishes
+lease-based run status independently of immutable successful version history;
+expired leases are read as interrupted without mutating stores during indexing.

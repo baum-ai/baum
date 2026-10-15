@@ -354,3 +354,35 @@ func TestGenerateEnterpriseDocumentStoresAndReopensWithHostKey(t *testing.T) {
 		t.Fatalf("reopen Enterprise review: %v\n%s", err, stderr)
 	}
 }
+
+func TestGeneratePublishesRunStateForConcurrentLocalReaders(t *testing.T) {
+	stub, sessions := generateEnv(t)
+	root := t.TempDir()
+	versions, err := store.Open("", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
+		snapshot, err := versions.Snapshot(context.Background())
+		if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "generating" || snapshot[0].VersionCount != 0 {
+			t.Fatalf("running snapshot=%+v err=%v", snapshot, err)
+		}
+		return agent.Result{}, errors.New("provider unavailable")
+	}
+	_, _, err = run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...)
+	if generate.CategoryOf(err) != generate.CategoryBackend {
+		t.Fatal(err)
+	}
+	snapshot, err := versions.Snapshot(context.Background())
+	if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "failed" || snapshot[0].Run.Reason != "backend" || snapshot[0].VersionCount != 0 {
+		t.Fatalf("failed snapshot=%+v err=%v", snapshot, err)
+	}
+	stub.RunFunc = nil
+	if _, stderr, err := run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...); err != nil {
+		t.Fatal(err, stderr)
+	}
+	snapshot, err = versions.Snapshot(context.Background())
+	if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "completed" || snapshot[0].VersionCount != 1 {
+		t.Fatalf("completed snapshot=%+v err=%v", snapshot, err)
+	}
+}

@@ -1,0 +1,129 @@
+package reviewindex
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/store"
+)
+
+type registry []repos.Clone
+
+func (r registry) List(context.Context) ([]repos.Clone, error) { return r, nil }
+
+type source map[string]discovery.Snapshot
+
+func (s source) Cached(_ context.Context, r github.Repository) (discovery.Snapshot, error) {
+	return s[r.String()], nil
+}
+func TestStatusesIsolationAndHistory(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	stores := map[string]*store.Store{}
+	clones := registry{}
+	discovered := source{}
+	for _, repository := range []string{"acme/a", "acme/b"} {
+		common := filepath.Join(root, repository)
+		s, err := store.Open(common, "", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stores[repository] = s
+		clones = append(clones, repos.Clone{ID: repository, Repository: repository, CommonDir: common, Available: true})
+		prs := []discovery.PullRequest{}
+		for n := 1; n <= 6; n++ {
+			prs = append(prs, discovery.PullRequest{Repository: repository, Number: n, HeadSHA: "head", State: "OPEN"})
+		}
+		discovered[repository] = discovery.Snapshot{PullRequests: prs}
+	}
+	put := func(repository string, n int, head, state string) {
+		t.Helper()
+		doc := map[string]any{"review": map[string]any{"repository": repository, "pull_request": n, "version": 1, "pr_state": state}, "summary": map[string]any{"risk_score": map[string]any{"score": 17}}}
+		raw, _ := json.Marshal(doc)
+		err := stores[repository].Put(ctx, store.Key{Repository: repository, Number: n}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: head, Backend: "claude", Model: "model", GeneratedAt: "2026-10-15T12:00:00Z"}, Document: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("acme/a", 2, "head", "open")
+	put("acme/a", 3, "old", "open")
+	put("acme/a", 7, "old", "merged")
+	put("acme/a", 8, "old", "open")
+	for _, n := range []int{4, 5} {
+		id, err := stores["acme/a"].BeginRun(ctx, store.Key{Repository: "acme/a", Number: n}, time.Now().Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 5 {
+			if err = stores["acme/a"].FinishRun(ctx, id, "budget"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	service := &Service{Registry: clones, Discovery: discovered}
+	snapshot, err := service.Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[int]string{1: "no_review", 2: "current", 3: "outdated", 4: "generating", 5: "failed", 6: "no_review", 7: "unknown", 8: "unknown"}
+	for _, row := range snapshot.Entries {
+		if row.PullRequest.Repository == "acme/b" {
+			if row.Status != "no_review" {
+				t.Fatalf("repository leaked %+v", row)
+			}
+			continue
+		}
+		if row.Status != expected[row.PullRequest.Number] {
+			t.Fatalf("row=%+v", row)
+		}
+		if row.PullRequest.Number == 7 && (!row.Historical || row.PullRequest.State != "MERGED") {
+			t.Fatal(row)
+		}
+		if row.PullRequest.Number == 8 && row.PullRequest.State != "UNKNOWN" {
+			t.Fatal(row)
+		}
+		if row.PullRequest.Number == 2 && (row.Latest.RecordedCostUSD != nil || row.VersionCount != 1 || string(row.RiskScore) != `{"score":17}`) {
+			t.Fatal(row)
+		}
+	}
+	for _, query := range []string{"", "?history=1"} {
+		w := httptest.NewRecorder()
+		service.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/index"+query, nil))
+		var got Snapshot
+		if err = json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		want := 12
+		if query != "" {
+			want = 14
+		}
+		if len(got.Entries) != want {
+			t.Fatalf("query=%s entries=%d", query, len(got.Entries))
+		}
+	}
+}
+
+type broken struct{}
+
+func (broken) Snapshot(context.Context) ([]store.Summary, error) {
+	return nil, errors.New("private filesystem path")
+}
+func TestUnreadableStoreAndWorktreeDeduplication(t *testing.T) {
+	clone := repos.Clone{ID: "one", Repository: "a/b", CommonDir: "same", Available: true}
+	other := clone
+	other.ID = "two"
+	calls := 0
+	s := &Service{Registry: registry{clone, other}, Discovery: source{"a/b": {PullRequests: []discovery.PullRequest{{Number: 7, HeadSHA: "head"}}}}, OpenStore: func(string) (Reader, error) { calls++; return broken{}, nil }}
+	got, err := s.Build(context.Background())
+	if err != nil || calls != 1 || len(got.Problems) != 1 || len(got.Entries) != 1 || got.Entries[0].Status != "unknown" || got.Entries[0].StoreError != "store_unreadable" {
+		t.Fatalf("%+v %v calls=%d", got, err, calls)
+	}
+}
