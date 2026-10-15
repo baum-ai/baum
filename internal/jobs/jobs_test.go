@@ -38,7 +38,7 @@ func newQueue(t *testing.T) (*Queue, *fakeExecutor) {
 	t.Helper()
 	price := 2.0
 	f := &fakeExecutor{head: "first", price: &price, started: make(chan Prepared, 10), release: make(chan struct{})}
-	q, e := Open(filepath.Join(t.TempDir(), "jobs.json"), f, 1, nil)
+	q, e := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -161,7 +161,7 @@ func TestUnknownPriceAndChangedHeadAreFailClosed(t *testing.T) {
 	}
 }
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "jobs.json")
+	path := filepath.Join(privateDir(t), "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
 	if e := os.WriteFile(path, raw, 0600); e != nil {
 		t.Fatal(e)
@@ -233,7 +233,7 @@ func TestSlowPreflightDoesNotBlockCancellationAndConcurrentEstimateUse(t *testin
 	price := 1.0
 	base := &fakeExecutor{head: "first", price: &price, started: make(chan Prepared, 3), release: make(chan struct{})}
 	f := &blockedPrepare{fakeExecutor: base, block: make(chan struct{}), entered: make(chan struct{}, 3)}
-	q, e := Open(filepath.Join(t.TempDir(), "jobs.json"), f, 1, nil)
+	q, e := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -309,4 +309,13 @@ func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
 			t.Fatal("queued state changes not broadcast", foundQueued, foundCancelled)
 		}
 	}
+}
+
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if e := os.Chmod(dir, 0700); e != nil {
+		t.Fatal(e)
+	}
+	return dir
 }

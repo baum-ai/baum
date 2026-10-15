@@ -1,8 +1,9 @@
 package pricing
 
 import (
-	"github.com/baum-ai/baum/agent"
 	"testing"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 func TestLocalEstimateRequiresKnownExplicitModel(t *testing.T) {
