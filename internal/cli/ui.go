@@ -100,7 +100,7 @@ type deferredJobs struct{ handler http.Handler }
 
 func (h *deferredJobs) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.handler == nil {
-		http.Error(w, "runner unavailable", 503)
+		http.Error(w, "runner unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	h.handler.ServeHTTP(w, r)

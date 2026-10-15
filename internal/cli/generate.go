@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -197,6 +198,17 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	key := store.Key{Repository: target.Repository.String(), Number: target.Number}
 	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
 	if err != nil {
+		// Preflight failures are attempts too: keep the terminal's existing failure
+		// status visible even though the shared publication pipeline has not begun.
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		reason := string(generate.CategoryOf(err))
+		if reason == "" {
+			reason = "internal"
+		}
+		if id, recordErr := versions.BeginRun(recordCtx, key, time.Now().Add(time.Minute)); recordErr == nil {
+			_ = versions.FinishRun(recordCtx, id, reason)
+		}
 		return err
 	}
 
