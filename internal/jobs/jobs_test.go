@@ -267,3 +267,46 @@ func TestSlowPreflightDoesNotBlockCancellationAndConcurrentEstimateUse(t *testin
 		t.Fatal("estimate consumed other than once", one, two)
 	}
 }
+
+func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
+	q, f := newQueue(t)
+	notifications := make(chan Job, 10)
+	q.changed = func(job Job) {
+		_ = q.List()
+		raw, e := os.ReadFile(q.path)
+		if e != nil {
+			t.Error(e)
+		}
+		var saved []Job
+		if e = json.Unmarshal(raw, &saved); e != nil {
+			t.Error(e)
+		}
+		notifications <- job
+	}
+	first := estimate(t, q, "single", Item{"clone", 1})
+	if _, e := q.Submit(context.Background(), first.ID, true, false); e != nil {
+		t.Fatal(e)
+	}
+	<-f.started
+	queued := estimate(t, q, "single", Item{"clone", 2})
+	jobs, e := q.Submit(context.Background(), queued.ID, true, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = q.Cancel(jobs[0].ID); e != nil {
+		t.Fatal(e)
+	}
+	foundQueued, foundCancelled := false, false
+	deadline := time.After(time.Second)
+	for !foundQueued || !foundCancelled {
+		select {
+		case job := <-notifications:
+			if job.ID == jobs[0].ID {
+				foundQueued = foundQueued || job.State == "queued"
+				foundCancelled = foundCancelled || job.State == "cancelled"
+			}
+		case <-deadline:
+			t.Fatal("queued state changes not broadcast", foundQueued, foundCancelled)
+		}
+	}
+}

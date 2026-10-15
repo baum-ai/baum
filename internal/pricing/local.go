@@ -1,7 +1,7 @@
 package pricing
 
 // The core pricing files and baseline in this package are copied from
-// platform/internal/analytics/pricing. Keep their rates, signature key and
+// the monorepo pricing package. Keep their rates, signature key and
 // normalization tests synchronized when updating either module.
 
 import (

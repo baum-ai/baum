@@ -13,6 +13,11 @@ import (
 // Publish runs the same validation/repair pipeline for CLI and queued jobs and
 // atomically appends only a completed document to the version store.
 func Publish(ctx context.Context, versions *store.Store, key store.Key, o Options, cost func(Result) *float64) (result Result, err error) {
+	defer func() {
+		if err != nil && o.DiagnosticsOut != "" {
+			_ = WriteDiagnostics(o.DiagnosticsOut, err, result.Outcome)
+		}
+	}()
 	latest, err := versions.Latest(ctx, key)
 	previous := 0
 	if err != nil && !errors.Is(err, store.ErrNotFound) {

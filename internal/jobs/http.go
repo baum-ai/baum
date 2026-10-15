@@ -57,7 +57,7 @@ func (q *Queue) Handler() http.Handler {
 		}
 		v, e := q.Submit(r.Context(), request.EstimateID, request.ConfirmEstimate, request.ConfirmIsolation)
 		if e != nil {
-			http.Error(w, e.Error(), 409)
+			http.Error(w, "estimate expired, generation inputs changed, confirmation missing, or job already running", 409)
 			return
 		}
 		respond(w, map[string]any{"jobs": v})
