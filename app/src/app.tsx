@@ -19,6 +19,8 @@ import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import {
   request,
+  reviewJob,
+  isActiveJob,
   filtered,
   rowKey,
   cost,
@@ -179,14 +181,30 @@ function Workspace({ url }: { url: UrlState }) {
     "";
   const filter = url.search.get("filter") ?? "all";
   const repo = url.search.get("repo") ?? "";
-  const rows = filtered(snapshot.entries, filter, repo);
-  const selectedEntry = snapshot.entries.find(
-    (e) =>
-      e.pull_request.number === Number(url.search.get("pr")) &&
-      cloneFor(e) === url.search.get("clone"),
+  const indexedEntries = snapshot.entries.map((entry) =>
+    isActiveJob(reviewJob(entry, jobs)) ? { ...entry, status: "generating" } : entry,
   );
+  const rows = filtered(indexedEntries, filter, repo);
+  const requestedNumber = Number(url.search.get("pr"));
+  const requestedClone = url.search.get("clone");
+  const requestedRepository = clones.find((clone) => clone.id === requestedClone)?.repository;
+  const selectedEntry =
+    indexedEntries.find(
+      (entry) =>
+        entry.pull_request.number === requestedNumber && cloneFor(entry) === requestedClone,
+    ) ??
+    indexedEntries.find(
+      (entry) =>
+        requestedRepository &&
+        entry.pull_request.number === requestedNumber &&
+        entry.pull_request.repository.toLowerCase() === requestedRepository.toLowerCase(),
+    );
   const page = url.search.get("page") ?? "inbox";
   const generate = async (entries: Entry[], mode: "single" | "batch") => {
+    if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
+      setEstimateError("A review of a selected pull request is already queued or running.");
+      return;
+    }
     setEstimate(null);
     setEstimateError("");
     setIsolation(false);
@@ -252,6 +270,8 @@ function Workspace({ url }: { url: UrlState }) {
             entry={selectedEntry}
             clone={cloneFor(selectedEntry)}
             revision={revision}
+            job={reviewJob(selectedEntry, jobs)}
+            changed={reload}
             generate={() => void generate([selectedEntry], "single")}
           />
         ) : (
@@ -262,7 +282,13 @@ function Workspace({ url }: { url: UrlState }) {
                 Refresh from GitHub
               </Button>
               <Button
-                disabled={selection.size === 0 || estimating}
+                disabled={
+                  selection.size === 0 ||
+                  estimating ||
+                  indexedEntries.some(
+                    (entry) => selection.has(rowKey(entry)) && isActiveJob(reviewJob(entry, jobs)),
+                  )
+                }
                 onClick={() =>
                   void generate(
                     snapshot.entries.filter((e) => selection.has(rowKey(e))),
@@ -357,10 +383,23 @@ function Workspace({ url }: { url: UrlState }) {
             )}
           </>
         )}
-        {jobs.some((j) => j.state === "running" || j.state === "queued") && page !== "jobs" ? (
+        {jobs.some(
+          (j) =>
+            isActiveJob(j) &&
+            (!selectedEntry ||
+              j.repository.toLowerCase() !== selectedEntry.pull_request.repository.toLowerCase() ||
+              j.pr !== selectedEntry.pull_request.number),
+        ) && page !== "jobs" ? (
           <div className="mt-4">
             <Jobs
-              jobs={jobs.filter((j) => j.state === "running" || j.state === "queued")}
+              jobs={jobs.filter(
+                (j) =>
+                  isActiveJob(j) &&
+                  (!selectedEntry ||
+                    j.repository.toLowerCase() !==
+                      selectedEntry.pull_request.repository.toLowerCase() ||
+                    j.pr !== selectedEntry.pull_request.number),
+              )}
               changed={reload}
             />
           </div>

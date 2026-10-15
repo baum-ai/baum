@@ -119,6 +119,19 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByText(/Estimated cost:/)).toBeVisible();
   await page.getByRole("button", { name: "Confirm estimate and generate" }).click();
+  const progress = page.getByRole("region", { name: "Review generation", exact: true });
+  await expect(progress).toBeVisible();
+  await expect(page.getByText("No generated review yet.", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /Generating review|Review queued/ }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Generate review", exact: true })).toHaveCount(0);
+  await expect(progress.getByRole("button", { name: "Cancel job", exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/review-generating.png",
+    fullPage: false,
+    animations: "disabled",
+  });
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
@@ -129,7 +142,15 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await page.getByRole("button", { name: "Confirm estimate and generate", exact: true }).click();
+  await expect(
+    page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Generating review|Review queued/ }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
+  await expect(page.getByText("Review generation cancelled", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Jobs", exact: true }).click();
   await expect(page.getByText(/cancelled/).first()).toBeVisible();
   await page.getByRole("link", { name: "Repositories & settings" }).click();
