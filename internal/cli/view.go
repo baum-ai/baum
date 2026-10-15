@@ -30,6 +30,9 @@ var (
 )
 
 func runView(cmd *cobra.Command, args []string) error {
+	if err := checkStoredFlags(cmd); err != nil {
+		return err
+	}
 	flags := cmd.Flags()
 	sample, _ := flags.GetBool("sample")
 	watch, _ := flags.GetBool("watch")
@@ -45,8 +48,8 @@ func runView(cmd *cobra.Command, args []string) error {
 	if given != 1 {
 		return errors.New("give exactly one of a document file, --sample and --pr")
 	}
-	if flags.Changed("pr") {
-		return errors.New("view --pr needs the local version store, which is not in this build; pass a document file or --sample")
+	if flags.Changed("pr") && watch {
+		return errors.New("--watch needs a document file; stored versions are immutable")
 	}
 	if watch && sample {
 		return errors.New("--watch needs a document file; --sample is fixed")
@@ -88,6 +91,12 @@ func runView(cmd *cobra.Command, args []string) error {
 	if sample {
 		opts.Sample = true
 		opts.Document = schema.Example
+	} else if flags.Changed("pr") {
+		_, _, v, err := loadStoredVersion(cmd)
+		if err != nil {
+			return err
+		}
+		opts.Document = v.Document
 	} else {
 		opts.Path = args[0]
 	}

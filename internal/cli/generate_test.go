@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
 
@@ -221,5 +223,107 @@ func TestGenerateDiagnosticsForEarlyFailures(t *testing.T) {
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil || !strings.Contains(string(raw), `"category": "backend"`) {
 		t.Errorf("diagnostics: %v\n%s", readErr, raw)
+	}
+}
+
+func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
+	stub, stores := generateEnv(t)
+	root := filepath.Join(t.TempDir(), "custom versions")
+	args := append([]string{"generate", "--pr", "7", "--store", root}, stores...)
+	var inputs []bundle.Bundle
+	stub.RunFunc = func(ctx context.Context, req agent.Request, n int) (agent.Result, error) {
+		raw, err := os.ReadFile(filepath.Join(req.Directory, "bundle.json"))
+		if err != nil {
+			return agent.Result{}, err
+		}
+		var b bundle.Bundle
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return agent.Result{}, err
+		}
+		inputs = append(inputs, b)
+		doc, err := generatetest.Document(req.Directory, nil)
+		return agent.Result{Document: doc, Model: "stub-model", Calls: 1, Tokens: 100}, err
+	}
+	first, stderr, err := run(t, args...)
+	if err != nil {
+		t.Fatalf("first: %v %s", err, stderr)
+	}
+	second, stderr, err := run(t, args...)
+	if err != nil {
+		t.Fatalf("second: %v %s", err, stderr)
+	}
+	if !strings.Contains(stderr, "--store ") {
+		t.Fatal("store override missing from reopen hint")
+	}
+	if len(inputs) != 2 || inputs[0].Previous != nil || inputs[1].Previous == nil || inputs[1].Previous.Version != 1 {
+		t.Fatalf("previous not supplied: %+v", inputs)
+	}
+	previous := inputs[1].Previous.Sections[0]
+	if previous.ID != "sec_changes" || strings.Contains(string(previous.Content), `"derived"`) || !strings.Contains(string(previous.Content), `"introduced_version":1`) {
+		t.Fatalf("previous lost history or kept derived fields: %s", previous.Content)
+	}
+	var completed struct {
+		Review struct {
+			Version         int
+			PreviousVersion *int `json:"previous_version"`
+		}
+		Sections []struct {
+			ID    string
+			Risks []struct {
+				ID         string
+				Introduced int `json:"introduced_version"`
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(second), &completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed.Review.Version != 2 || completed.Review.PreviousVersion == nil || *completed.Review.PreviousVersion != 1 || completed.Sections[0].ID != "sec_changes" || completed.Sections[0].Risks[0].Introduced != 1 {
+		t.Fatalf("unstable section/risk history: %+v", completed)
+	}
+	versions, err := store.Open("", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: "acme/widgets", Number: 7}
+	// Repository is derived from the actual generated document, never the path.
+	var identity struct{ Review struct{ Repository string } }
+	if err := json.Unmarshal([]byte(first), &identity); err != nil {
+		t.Fatal(err)
+	}
+	key.Repository = identity.Review.Repository
+	stored, err := versions.Get(context.Background(), key, 1)
+	if err != nil || string(stored.Document)+"\n" != first {
+		t.Fatalf("version one replaced: %v", err)
+	}
+	metadata, err := versions.Versions(context.Background(), key)
+	if err != nil || len(metadata) != 2 {
+		t.Fatalf("versions %+v %v", metadata, err)
+	}
+	m := metadata[0]
+	if m.Head == "" || m.Base == "" || m.MergeBase == "" || len(m.BundleDigest) != 64 || m.Backend != "claude" || m.BackendVersion != "9.9.9" || m.Model != "stub-model" || m.Schema != "baum.review/1" || m.SchemaRevision == "" || m.PromptVersion == "" || len(m.PromptDigest) != 64 || m.GeneratedAt == "" || m.Calls != 1 || m.Tokens != 100 {
+		t.Fatalf("incomplete metadata: %+v", m)
+	}
+	for _, version := range []string{"1", "2"} {
+		_, stderr, err := run(t, "validate", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", version)
+		if err != nil {
+			t.Fatalf("validate stored %s: %v %s", version, err, stderr)
+		}
+	}
+	// Serving an immutable selected version needs no live GitHub lookup.
+	_, stop := stubViewSeams(t)
+	stop()
+	if _, stderr, err := run(t, "view", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", "1", "--no-open"); err != nil {
+		t.Fatalf("view stored: %v %s", err, stderr)
+	}
+	stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
+		return agent.Result{}, errors.New("provider unavailable")
+	}
+	if _, _, err := run(t, args...); err == nil {
+		t.Fatal("failed run succeeded")
+	}
+	after, err := versions.Versions(context.Background(), key)
+	if err != nil || len(after) != 2 {
+		t.Fatalf("failed run published: %+v %v", after, err)
 	}
 }

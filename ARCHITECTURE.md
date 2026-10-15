@@ -262,6 +262,11 @@ The stored contract stays strict; leniency exists only in derived views.
 
 ### History
 
+`review.PreviousVersionOf` converts a stored document into `bundle.PreviousVersion`,
+stripping section `derived` fields, applying positional labels to blank titles
+and carrying the hunk ranges that let anchors follow a shifted hunk. Both the
+hosted builder and local generation call this helper.
+
 Given the previous version, `review` keeps sections stable:
 
 - earlier sections stay first, in their original order, with the same IDs;
@@ -1081,9 +1086,10 @@ context ends the event streams and shuts the server down.
 7. validates, derives and redacts the document, and stores it as the next
    version.
 
-Today `baum generate` is `internal/generate` (the pipeline) and
-`internal/cli/generate.go`. It runs steps 1 to 4 and 6 and 7 without the
-previous version and the store (a later change adds them): it selects and
+`baum generate` is `internal/generate` (the pipeline) and
+`internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
+repository/PR version, and passes `review.PreviousVersionOf` into
+`assemble.Request.Previous`. It selects and
 checks the backend first (`claude.Backend.Check`, `codex.Backend.Check`; `auto`
 tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
@@ -1108,7 +1114,27 @@ the hosted worker reports it as a plain failure rather than a rejected
 document. A spent `pass_timeout` is reported as the budget
 `generation budget exceeded: pass_timeout` and is not retried; the run's wall
 clock as `wall_clock`. The document is returned only for a run that passed every
-step, and written by the command afterwards.
+step, and published by the command afterwards. `internal/store` keeps
+immutable documents and metadata in SQLite under the common git directory
+(`baum/reviews/versions.sqlite`), so linked worktrees share one history. A new
+store falls back to the XDG data directory (or `~/.local/share`) when git is
+read-only, keyed by the canonical common-directory digest; `--store` overrides
+the root. Existing local or fallback history wins over creating another store,
+and a read-only existing store fails writes without hiding its history.
+Repository names, including GitHub host, and pull request numbers key rows.
+
+`Latest`, `Versions`, `Get` and `Put` expose the local history. `Put` publishes
+metadata and document in one transaction only if the expected previous version
+is still latest, so concurrent runs cannot assign a different predecessor to
+a completed document. A losing run reports a conflict; generation failure or
+cancellation before publication writes no version. Export errors after
+publication leave the successfully generated version available. Metadata records full revision IDs,
+bundle digest, backend and installed version, actual model, schema revision,
+prompt version/digest, applied REVIEW.md digest and generation time/usage.
+`view --pr` and `validate --pr` read the latest locally without GitHub; both
+accept `--version`, `--repo` and `--store`. Reads never create a store. The
+viewer can open an earlier version via the CLI selector; browser version
+navigation is not yet connected. `--watch` remains for document files only.
 
 Git reads (the comparison, patches, blobs and the exports) run in a private
 temporary bare repository that borrows the clone's objects and has default
@@ -1153,7 +1179,7 @@ exported either way, since a file the checkout budget omits makes its hunks
 textless. `baum validate`  checks a stored document with
 `review.DocumentValidator.ValidateStored`, against its bundle when one is given,
 and `baum refresh` runs the `review` steps on an existing document. `baum view`
-serves the viewer, the document, its versions, the cached images, and the sessions and commits linked
+serves the viewer, the selected document, and the sessions and commits linked
 to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the
 document's own session metadata.

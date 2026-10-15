@@ -174,3 +174,33 @@ func TestTrustedWorktreesRefusesBroadMainEntries(t *testing.T) {
 		t.Errorf("the file system root as the main worktree = %+v", got)
 	}
 }
+
+func TestCommonDirIsSharedAcrossLinkedWorktrees(t *testing.T) {
+	requireGit(t)
+	main := initRepo(t)
+	write(t, main, "a.txt", "a\n", 0o644)
+	commit(t, main, "start")
+	linked := filepath.Join(t.TempDir(), "linked")
+	git(t, main, "worktree", "add", "-q", "-b", "linked", linked)
+	var common string
+	for _, dir := range []string{main, linked} {
+		repo, err := Open(context.Background(), dir, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := repo.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		got, err := filepath.EvalSymlinks(repo.CommonDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if common == "" {
+			common = got
+		} else if got != common {
+			t.Fatalf("linked common dir %s differs from %s", got, common)
+		}
+	}
+}

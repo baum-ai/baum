@@ -16,6 +16,10 @@ func runValidate(cmd *cobra.Command, documentPath, bundlePath string) error {
 	if err != nil {
 		return fmt.Errorf("read document: %w", err)
 	}
+	return validateDocument(cmd, document, documentPath, bundlePath)
+}
+
+func validateDocument(cmd *cobra.Command, document []byte, documentPath, bundlePath string) error {
 	var generation *bundle.Bundle
 	if bundlePath != "" {
 		raw, err := os.ReadFile(bundlePath)

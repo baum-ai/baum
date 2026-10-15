@@ -23,8 +23,8 @@ Everything runs locally:
 The repository is being stood up phase by phase. The CLI skeleton, config
 layout, review schema, release pipeline, `baum sessions`, `baum validate`,
 `baum bundle`, `baum generate` and `baum view` exist; `refresh` prints its help
-and exits non-zero until its phase lands. `generate` does not cache or store
-versions yet.
+and exits non-zero until its phase lands. `generate` stores immutable local
+versions and reuses the previous version for section and risk history.
 
 ## Install
 
@@ -45,6 +45,11 @@ are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
 # Build the review document for pull request 191 of the repository in the
 # current directory and write it to review.json (see "baum generate" below).
 baum generate --pr 191 -o review.json
+
+# Open or validate the latest local version, or select an earlier version.
+baum view --pr 191
+baum view --pr 191 --version 1
+baum validate --pr 191
 
 # Assemble the generation input without calling a model, for debugging. Without
 # --pr it is the pull request of the current branch; --repo owner/name replaces
@@ -83,15 +88,16 @@ baum validate review.json --bundle bundle.json
 ```sh
 baum generate [--pr N] [--repo owner/name] [--backend auto|claude|codex]
               [--model M] [-o review.json] [--bundle-out bundle.json]
-              [--diagnostics outcome.json] [--keep-run-dir]
+              [--diagnostics outcome.json] [--keep-run-dir] [--store directory]
 ```
 
 `generate` assembles the same bundle as `baum bundle`, unpacks the pull
 request's head and merge-base files into a private temporary directory
 (`baum-agent-run-*`, mode 0700, removed when the command ends, also on Ctrl-C),
 and has a coding agent installed on your machine read them and write the
-review. Your clone and working tree are only read, as for `baum bundle`; nothing
-is checked out or fetched. The agent runs under your own login with its
+review. Git objects, refs, index and working tree are only read, as for
+`baum bundle`; nothing is checked out or fetched. The local version store is
+written under the shared git directory, or the fallback/override below. The agent runs under your own login with its
 read-only mode, as described in [SECURITY.md](SECURITY.md#agent-isolation);
 baum sends it no credential of its own.
 
@@ -114,11 +120,31 @@ revision) are derived, and the stored form is checked strictly. A document that
 fails any step is not written. Hunks may be shared by sections or left
 unassigned; `generate` does not require each hunk to appear exactly once.
 
+Every successful generation is saved before its document is printed or exported.
+The store is `<common git directory>/baum/reviews/versions.sqlite`, shared by
+all linked worktrees. If a new store cannot be created because the git directory
+is read-only, it uses `$XDG_DATA_HOME/baum/reviews/<clone digest>/versions.sqlite`
+(`~/.local/share` when XDG_DATA_HOME is unset or relative). `--store directory`
+selects an explicit store root. Repository names (including the GitHub host) and
+pull request numbers isolate histories even in a shared override directory.
+
+Publication is one SQLite transaction: the completed document and metadata
+(revisions, bundle digest, backend/model, schema/prompt/policy identities and
+generation timing/usage) appear together. Earlier versions remain immutable.
+A second generation supplies the previous document to the shared history logic,
+which retains section IDs, stale sections and risk introductions/mitigations.
+Concurrent runs may both generate from the same version; only one publishes,
+and the other fails with a conflict asking you to generate again. Generation
+failures and cancellation before publication publish no version. A later stdout
+or export failure leaves the successfully generated version stored. An existing store is always preferred,
+even if read-only; a write then fails rather than silently hiding its history.
+A fallback store continues to be used if the clone later becomes writable.
+
 Only the document goes to stdout, or to `-o`, which is written atomically with
 mode 0600. Progress goes to stderr: the bundle digest, the backend and its
 version, each pass and repair, then the calls and tokens spent (or "usage not
 reported") and the wall time. Afterwards it prints `view it with: baum view
-review.json`, or tells you to save the document when it went to stdout.
+review.json` for an exported file, and `baum view --pr N` for the stored version.
 `--bundle-out` also writes the exact bundle the agent was given, and
 `--diagnostics` writes how the run ended (`ok` or `failed`, the failure's
 category and message) with its redacted outcome (usage, repairs, findings and at
@@ -144,9 +170,14 @@ Exit status:
 
 `baum view` serves a document with schema or rule findings anyway and prints
 the findings to stderr, as `baum validate` does. The document must be valid
-JSON of at most 32 MiB. `baum view --pr N`, which would open the latest
-generated document for a pull request, is not available yet: it needs the
-local version store, which is not in this build.
+JSON of at most 32 MiB. `baum view --pr N` and `baum validate --pr N` read the
+latest local version from the clone in the current directory, without GitHub
+access. `--version N` selects a historical version. `--repo owner/name` and
+`--store directory` select the same repository and store used by generation;
+these flags require `--pr`. Reads do not create a store. A missing version
+reports that a review must first be generated. `--watch` requires a document
+file; stored versions are immutable. The viewer opens the selected version;
+its browser version picker is not connected to the local store yet.
 
 From local data only, `baum view` can also show the coding-agent sessions
 linked to the pull request. When the viewer asks, `baum view` reads the clone

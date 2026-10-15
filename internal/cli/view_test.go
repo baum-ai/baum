@@ -136,15 +136,21 @@ func TestViewBrowserFailureIsOnlyAWarning(t *testing.T) {
 	}
 }
 
-func TestViewPRNeedsTheVersionStore(t *testing.T) {
-	stubViewSeams(t)
-	for _, args := range [][]string{{"view", "--pr", "1"}, {"view", "--pr", "0"}} {
-		stdout, _, err := run(t, args...)
-		if err == nil || !strings.Contains(err.Error(), "needs the local version store, which is not in this build") {
-			t.Errorf("%v: err = %v", args, err)
+func TestViewPRReportsMissingVersionAndInvalidNumber(t *testing.T) {
+	bundleEnv(t)
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"view", "--pr", "7", "--repo", "acme/demo"}, "no stored review version"},
+		{[]string{"view", "--pr", "0"}, "--pr must be positive"},
+	} {
+		stdout, _, err := run(t, tt.args...)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%v: %v", tt.args, err)
 		}
 		if stdout != "" {
-			t.Errorf("%v: stdout = %q", args, stdout)
+			t.Error(stdout)
 		}
 	}
 }

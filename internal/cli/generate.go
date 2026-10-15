@@ -10,11 +10,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -36,13 +39,16 @@ does, and has a coding agent installed on this machine (Claude Code or Codex,
 under your own login) read the bundle and a read-only checkout of the pull
 request and write the review. The document is repaired against the validator,
 has secrets masked, is completed with the fields baum derives and is checked
-strictly; only then is it written, to stdout or to the file given with -o. A
+strictly; only then is it stored as the next local version and written to
+stdout or to the file given with -o. The previous local version supplies
+section and risk history. --store overrides the local store directory. A
 document that cannot be made valid is never written.
 
 The pull request is --pr, or the one for the current branch; the repository is
---repo, or the one the clone's origin remote names. Like "baum bundle", it only
-reads the clone: it checks nothing out and does not touch your working tree,
-index or refs, and it fetches nothing.
+--repo, or the one the clone's origin remote names. It checks nothing out,
+does not touch your working tree, index or refs, and fetches nothing. The local
+version store is written under the shared git directory, or the fallback or
+override selected by --store.
 
 --backend auto uses claude when it is installed and passes its checks, and
 codex otherwise. The anthropic and cursor-agent backends are not available in
@@ -81,6 +87,7 @@ written); 130 interrupted.`,
 	cmd.Flags().String("repo", "", "GitHub repository as owner/name (defaults to the origin remote)")
 	cmd.Flags().String("backend", "", "model backend: auto, claude or codex (anthropic and cursor-agent are not available yet)")
 	cmd.Flags().String("model", "", "model name for the selected backend")
+	cmd.Flags().String("store", "", "local version store directory (default: shared git directory, with XDG data fallback)")
 	cmd.Flags().StringP("output", "o", "", "write the document to this file instead of stdout")
 	cmd.Flags().String("bundle-out", "", "also write the exact bundle the agent was given to this file, for debugging")
 	cmd.Flags().String("diagnostics", "", "write the run's redacted outcome (usage, repairs, findings, bounded events) to this file, also when the run fails")
@@ -189,6 +196,25 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		return input(err)
 	}
 
+	storePath, _ := flags.GetString("store")
+	versions, err := store.Open(clone.CommonDir(), storePath, true)
+	if err != nil {
+		return input(fmt.Errorf("open version store: %w", err))
+	}
+	key := store.Key{Repository: target.Repository.String(), Number: target.Number}
+	latest, err := versions.Latest(ctx, key)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return input(err)
+	}
+	previousNumber := 0
+	var previous *bundle.PreviousVersion
+	if err == nil {
+		previousNumber = latest.Metadata.Version
+		previous, err = review.PreviousVersionOf(latest.Document, previousNumber)
+		if err != nil {
+			return input(fmt.Errorf("read previous version: %w", err))
+		}
+	}
 	assembler := &assemble.Assembler{
 		GitHub: client, Git: clone,
 		Sessions: assemble.LocalSessions{Dir: clone.Dir(), Stores: stores, Warn: stderr},
@@ -198,7 +224,7 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 	*started = true
 	result, err := generate.Run(ctx, generate.Options{
 		Assembler: assembler,
-		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps)},
+		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps), Previous: previous},
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
 		Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
@@ -207,6 +233,21 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		return err
 	}
 
+	if err := versions.Put(ctx, key, previousNumber, store.Version{Metadata: result.Metadata, Document: result.Document}); err != nil {
+		publishErr := fmt.Errorf("store generated version: %w", err)
+		if ctx.Err() != nil {
+			publishErr = interruptedError()
+		}
+		if diagnostics != "" {
+			_ = generate.WriteDiagnostics(diagnostics, publishErr, result.Outcome)
+		}
+		return publishErr
+	}
+	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
+	if storePath != "" {
+		hint += fmt.Sprintf(" --store %q", storePath)
+	}
+	_, _ = fmt.Fprintf(stderr, "stored version %d; view it with: %s\n", result.Metadata.Version, hint)
 	document := result.Document
 	if len(document) == 0 || document[len(document)-1] != '\n' {
 		document = append(append([]byte(nil), document...), '\n')

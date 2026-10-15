@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -124,6 +125,7 @@ type Options struct {
 type Result struct {
 	// Document is the finished, strictly valid document. Nil on any failure.
 	Document []byte
+	Metadata store.Metadata
 	Outcome  agent.Outcome
 	// RunDir is the run directory when KeepRunDir kept it.
 	RunDir string
@@ -327,6 +329,26 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		result.Outcome = outcome
 		return result, rejection(fail, outcome.Findings)
 	}
+	var stored struct {
+		Schema string `json:"schema"`
+		Review struct {
+			Version     int    `json:"version"`
+			GeneratedAt string `json:"generated_at"`
+			Generator   struct {
+				Model          string  `json:"model"`
+				SchemaRevision string  `json:"schema_revision"`
+				PromptVersion  string  `json:"prompt_version"`
+				ReviewMD       *string `json:"review_md"`
+			} `json:"generator"`
+		} `json:"review"`
+	}
+	if err := json.Unmarshal(completed, &stored); err != nil {
+		return result, err
+	}
+	result.Metadata = store.Metadata{Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
+		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
+		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
+		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
 	result.Document = completed
 	return result, nil
 }

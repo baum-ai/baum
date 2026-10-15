@@ -129,6 +129,7 @@ type Options struct {
 // Repo is a local clone. Close removes its private repository.
 type Repo struct {
 	dir     string
+	common  string
 	objects string
 	shallow string
 	mirror  string
@@ -238,12 +239,12 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 		return nil, err
 	}
 	out, err := run(ctx, runSpec{dir: abs, env: userEnv(), limit: 64 << 10, timeout: opts.CommandTimeout},
-		"rev-parse", "--show-toplevel", "--git-path", "objects", "--git-path", "shallow", "--show-object-format")
+		"rev-parse", "--show-toplevel", "--git-path", "objects", "--git-path", "shallow", "--show-object-format", "--git-common-dir")
 	if err != nil {
 		return nil, fmt.Errorf("opening repository: %w", err)
 	}
 	fields := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	if len(fields) != 4 {
+	if len(fields) != 5 {
 		return nil, errors.New("opening repository: unexpected rev-parse output")
 	}
 	absolute := func(path string) string {
@@ -254,7 +255,7 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	}
 	r := &Repo{
 		dir: filepath.Clean(fields[0]), objects: absolute(fields[1]), shallow: absolute(fields[2]),
-		opts: opts, readers: map[*archiveReader]struct{}{},
+		common: absolute(fields[4]), opts: opts, readers: map[*archiveReader]struct{}{},
 	}
 	if err := checkTempDir(r.dir, opts.TempDir); err != nil {
 		return nil, err
@@ -305,6 +306,9 @@ func orDefault(v, d int64) int64 {
 	}
 	return v
 }
+
+// CommonDir is the shared git directory, identical across linked worktrees.
+func (r *Repo) CommonDir() string { return r.common }
 
 // Dir is the clone's top-level directory.
 func (r *Repo) Dir() string { return r.dir }
