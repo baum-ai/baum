@@ -43,6 +43,7 @@ type PullRequest struct {
 type RateLimit struct {
 	Remaining *int      `json:"remaining"`
 	Reset     time.Time `json:"reset"`
+	RetryAt   time.Time `json:"retry_at"`
 }
 
 type Snapshot struct {
@@ -127,7 +128,7 @@ func save(path string, cache diskCache) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	if _, err = file.Write(data); err != nil {
 		file.Close()
 		return err
@@ -170,7 +171,7 @@ type poll struct {
 var errRateLimit = errors.New("GitHub rate limit exhausted")
 
 func (p *poll) get(ctx context.Context, path string, into any) error {
-	if p.rate.Remaining != nil && *p.rate.Remaining == 0 && p.rate.Reset.After(p.now) {
+	if p.ResetIfExhausted().After(p.now) {
 		return errRateLimit
 	}
 	old := p.cache.Responses[path]
@@ -194,9 +195,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		} else if parsed, err := http.ParseTime(headers.Get("Retry-After")); err == nil {
 			resume = parsed
 		}
-		p.rate.Reset = maxTime(p.rate.Reset, resume)
-		zero := 0
-		p.rate.Remaining = &zero
+		p.rate.RetryAt = resume
 		return errRateLimit
 	}
 	if status == 304 {
@@ -310,7 +309,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 		snapshot.Stale = true
 		snapshot.Error = err.Error()
 		snapshot.Rate = p.rate
-		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.rate.Reset)
+		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
 		if p.unchanged {
@@ -329,10 +328,11 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	return snapshot, err
 }
 func (p *poll) ResetIfExhausted() time.Time {
+	resume := p.rate.RetryAt
 	if p.rate.Remaining != nil && *p.rate.Remaining == 0 {
-		return p.rate.Reset
+		resume = maxTime(resume, p.rate.Reset)
 	}
-	return time.Time{}
+	return resume
 }
 
 func (p *poll) discover(ctx context.Context, repository github.Repository) (Snapshot, error) {

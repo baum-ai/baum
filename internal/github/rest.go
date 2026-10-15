@@ -67,7 +67,7 @@ func (r *RESTReader) Read(ctx context.Context, path, etag string) (int, http.Hea
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("GitHub discovery request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20+1))
 	if err != nil || len(body) > 8<<20 {
 		return 0, nil, nil, fmt.Errorf("GitHub discovery response unreadable or too large")

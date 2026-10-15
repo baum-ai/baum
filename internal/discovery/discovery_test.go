@@ -22,13 +22,15 @@ type roundTrip func(*http.Request) (*http.Response, error)
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type fixture struct {
-	mu          sync.Mutex
-	requests    []*http.Request
-	offline     bool
-	limited     bool
-	status      map[string]int
-	pages       map[string]string
-	conditional bool
+	mu           sync.Mutex
+	requests     []*http.Request
+	offline      bool
+	limited      bool
+	status       map[string]int
+	pages        map[string]string
+	conditional  bool
+	secondary    bool
+	pollInterval string
 }
 
 func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
@@ -42,6 +44,10 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 		return nil, errors.New("network unreachable")
 	}
 	h := http.Header{"Etag": []string{`"recorded-v1"`}, "X-Ratelimit-Remaining": []string{"100"}, "X-Ratelimit-Reset": []string{"2000000000"}}
+	h.Set("Link", `<https://outside.example/steal>; rel="next"`)
+	if f.pollInterval != "" {
+		h.Set("X-Poll-Interval", f.pollInterval)
+	}
 	status := 200
 	body := f.pages[r.URL.RequestURI()]
 	if body == "" {
@@ -58,6 +64,11 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 		status = 403
 		h.Set("X-RateLimit-Remaining", "0")
 		body = `{"message":"API rate limit exceeded"}`
+	}
+	if f.secondary {
+		status = 403
+		h.Set("Retry-After", "90")
+		body = `{"message":"secondary rate limit"}`
 	}
 	return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
@@ -216,4 +227,74 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestCacheStripsUnusedPrivateFieldsAndIgnoresLinkURLs(t *testing.T) {
+	f := recordedFixture()
+	f.pages["/repos/acme/app/pulls?state=open&per_page=100&page=1"] = strings.Replace(f.pages["/repos/acme/app/pulls?state=open&per_page=100&page=1"], `"number":1,`, `"number":1,"body":"https://private-user-images.githubusercontent.com/a?jwt=private-signed-value","unused":{"secret":"unused-secret"},`, 1)
+	s, _ := service(t, f)
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(s.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(s.directory, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-signed-value", "unused-secret", "synthetic", "private-user-images"} {
+		if strings.Contains(string(contents), secret) {
+			t.Errorf("unused private data persisted: %s", secret)
+		}
+	}
+}
+func TestMalformedCacheAndMalformedAPI(t *testing.T) {
+	f := recordedFixture()
+	s, _ := service(t, f)
+	reader, err := s.client.REST(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := s.path(reader.CacheIdentity(), testRepo.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not JSON"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Cached(context.Background(), testRepo); err == nil {
+		t.Fatal("accepted malformed cache")
+	}
+	if _, err := s.Poll(context.Background(), testRepo); err == nil {
+		t.Fatal("ignored unreadable cache")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	f.pages["/repos/acme/app/pulls?state=open&per_page=100&page=1"] = `[{"number":1}]`
+	got, err := s.Poll(context.Background(), testRepo)
+	if err == nil || !got.Stale || len(got.PullRequests) != 0 {
+		t.Fatalf("partial/incomplete response published %#v %v", got, err)
+	}
+}
+
+func TestSecondaryRateAndServerPollingInterval(t *testing.T) {
+	f := recordedFixture()
+	f.pollInterval = "300"
+	s, now := service(t, f)
+	first, err := s.Poll(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.NextPoll.Sub(*now) != 5*time.Minute {
+		t.Fatalf("ignored server interval %v", first.NextPoll.Sub(*now))
+	}
+	*now = first.NextPoll
+	f.secondary = true
+	limited, err := s.Poll(context.Background(), testRepo)
+	if !errors.Is(err, errRateLimit) || limited.NextPoll.Sub(*now) != 90*time.Second || limited.Rate.Remaining == nil || *limited.Rate.Remaining != 100 || !limited.Rate.RetryAt.Equal(limited.NextPoll) {
+		t.Fatalf("secondary budget %#v %v", limited, err)
+	}
 }
