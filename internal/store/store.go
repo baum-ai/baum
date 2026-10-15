@@ -308,7 +308,7 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 	if err := json.Unmarshal(document, &after); err != nil {
 		return err
 	}
-	if before != after || !strings.EqualFold(after.Review.Repository, k.Repository) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
+	if before != after || !strings.EqualFold(after.Review.Repository, k.documentRepository()) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
 		return errors.New("refresh changed generation identity")
 	}
 	db, err := s.database(true)

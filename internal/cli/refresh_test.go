@@ -91,3 +91,27 @@ func TestRefreshRejectsHistoricalVersionSelector(t *testing.T) {
 		t.Fatal("accepted historical refresh")
 	}
 }
+
+func TestRefreshEnterpriseReviewKeepsHostScopedHistory(t *testing.T) {
+	_, sessions := generateEnv(t)
+	root := filepath.Join(t.TempDir(), "reviews")
+	repository := "acme.ghe.com/acme/demo"
+	flags := append([]string{"--pr", "7", "--repo", repository, "--store", root}, sessions...)
+	if _, stderr, err := run(t, append([]string{"generate"}, flags...)...); err != nil {
+		t.Fatalf("generate: %v\n%s", err, stderr)
+	}
+	if _, stderr, err := run(t, append([]string{"refresh"}, flags...)...); err != nil {
+		t.Fatalf("refresh: %v\n%s", err, stderr)
+	}
+	versions, err := store.Open("", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := versions.Versions(context.Background(), store.Key{Repository: repository, Number: 7})
+	if err != nil || len(all) != 1 {
+		t.Fatalf("Enterprise history: %+v %v", all, err)
+	}
+	if _, _, err := run(t, "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
+		t.Fatal(err)
+	}
+}

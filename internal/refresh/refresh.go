@@ -48,14 +48,18 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 		} `json:"review"`
 		Index struct {
 			Hunks []struct {
-				Path string `json:"path"`
+				ID       string `json:"id"`
+				Path     string `json:"path"`
+				Change   string `json:"change"`
+				Role     string `json:"role"`
+				NewRange []int  `json:"new_range"`
 			} `json:"hunks"`
 		} `json:"index"`
 	}
 	if err := json.Unmarshal(saved.Document, &stored); err != nil {
 		return nil, err
 	}
-	if stored.Review.Head != saved.Metadata.Head || stored.Review.Base != saved.Metadata.Base || stored.Review.MergeBase != saved.Metadata.MergeBase || stored.Review.Version != saved.Metadata.Version || !strings.EqualFold(stored.Review.Repository, repository.String()) || stored.Review.PullRequest != number {
+	if stored.Review.Head != saved.Metadata.Head || stored.Review.Base != saved.Metadata.Base || stored.Review.MergeBase != saved.Metadata.MergeBase || stored.Review.Version != saved.Metadata.Version || !strings.EqualFold(stored.Review.Repository, repository.Owner+"/"+repository.Name) || stored.Review.PullRequest != number {
 		return nil, fmt.Errorf("stored review identity does not match metadata")
 	}
 	evidence, err := r.GitHub.Fetch(ctx, repository, number, github.FetchOptions{ChecksHead: stored.Review.Head})
@@ -64,6 +68,14 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 	}
 	var b bundle.Bundle
 	evidence.Apply(&b)
+	// Findings are located against the reviewed diff, not a newly fetched head.
+	for _, h := range stored.Index.Hunks {
+		hunk := bundle.Hunk{ID: h.ID, Path: h.Path, Change: h.Change, Role: h.Role}
+		if len(h.NewRange) == 2 {
+			hunk.StartLine, hunk.LineCount = h.NewRange[0], h.NewRange[1]
+		}
+		b.Diff = append(b.Diff, hunk)
+	}
 	b.PullRequest.MergeBaseSHA = stored.Review.MergeBase
 	commits, err := r.Git.Commits(ctx, stored.Review.MergeBase, stored.Review.Head)
 	if err != nil {

@@ -285,7 +285,10 @@ rebuilds the session index from the bundle and carries over, for each readable s
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
 so prompts that decisions cited at generation keep their bounded text while
-a prompt only an earlier refresh added is not carried again.
+a prompt only an earlier refresh added is not carried again. Local refresh also
+reconstructs the reviewed hunks' IDs, paths, roles and line ranges from the saved
+index, so agent findings keep their section and hunk locations and section
+finding counts follow resolution and reopening.
 
 Everything a model returns is untrusted. `review.OutputRedactor` masks a
 document, or any other text a host passes it (the findings, the diagnostics);

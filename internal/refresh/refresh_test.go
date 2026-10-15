@@ -116,8 +116,9 @@ func TestRefreshBotReportsAndResolvedReopenedFindings(t *testing.T) {
 	doc := object(t, schema.Example)
 	header := doc["review"].(map[string]any)
 	saved := store.Version{Document: schema.Example, Metadata: store.Metadata{Version: 3, Head: header["head"].(string), Base: header["base"].(string), MergeBase: header["merge_base"].(string)}}
-	path := doc["index"].(map[string]any)["hunks"].([]any)[0].(map[string]any)["path"].(string)
-	source := &sources{evidence: github.Evidence{Repository: "example-org/taskline", PullRequest: bundle.PullRequest{Number: 212, State: "open", HeadSHA: saved.Metadata.Head, BaseSHA: saved.Metadata.Base}, Sources: bundle.Sources{"review_threads": true}, Threads: []bundle.Thread{{ID: "PRRT_1", Path: path}}, Conversation: []bundle.ConversationItem{
+	// Two sections contain this path. The current thread line picks the later hunk.
+	path, line := "api/handler.go", 38
+	source := &sources{evidence: github.Evidence{Repository: "example-org/taskline", PullRequest: bundle.PullRequest{Number: 212, State: "open", HeadSHA: saved.Metadata.Head, BaseSHA: saved.Metadata.Base}, Sources: bundle.Sources{"review_threads": true}, Threads: []bundle.Thread{{ID: "PRRT_1", Path: path, Line: &line}}, Conversation: []bundle.ConversationItem{
 		{ID: "100", Kind: "review", Bot: true, BotTool: "Cursor", AuthorLogin: "cursor[bot]", State: "commented", Commit: saved.Metadata.Head},
 		{ID: "200", Kind: "review_comment", Bot: true, BotTool: "Cursor", AuthorLogin: "cursor[bot]", Path: path, Review: "100", Thread: "PRRT_1", ThreadRoot: true, Body: "### Guard the parser\n\n**High Severity**\n\nIt can be nil."},
 		{ID: "300", Kind: "comment", Bot: true, BotReport: true, BotTool: "CI", Body: "Checks completed."},
@@ -141,6 +142,27 @@ func TestRefreshBotReportsAndResolvedReopenedFindings(t *testing.T) {
 		}
 		if finding["state"] != state {
 			t.Fatalf("finding state %v, want %s", finding["state"], state)
+		}
+		if finding["section"] != "sec_mechanical" {
+			t.Fatalf("finding lost section location: %v", finding)
+		}
+		located := false
+		for _, anchor := range finding["anchors"].([]any) {
+			a := anchor.(map[string]any)
+			located = located || a["type"] == "hunk" && a["id"] == "h_a0480f808203"
+		}
+		if !located {
+			t.Fatalf("finding lost line-specific hunk anchor: %v", finding)
+		}
+		wantOpen := float64(1)
+		if resolved {
+			wantOpen = 0
+		}
+		for _, entry := range after["sections"].([]any) {
+			section := entry.(map[string]any)
+			if section["id"] == "sec_mechanical" && section["derived"].(map[string]any)["open_findings"] != wantOpen {
+				t.Fatalf("wrong section finding count: %v", section["derived"])
+			}
 		}
 		reports := after["index"].(map[string]any)["reports"].([]any)
 		if len(reports) != 1 || reports[0].(map[string]any)["summary"] != "Checks completed." {
