@@ -7,12 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
 
 func version(k Key, n int) Version {
-	return Version{Metadata: Metadata{Version: n, Head: "revision", BundleDigest: "digest", Backend: "claude", PromptVersion: "prompt"}, Document: []byte(fmt.Sprintf(`{"review":{"repository":%q,"pull_request":%d,"version":%d}}`, k.Repository, k.Number, n))}
+	repository := k.Repository
+	if parts := strings.Split(repository, "/"); len(parts) == 3 {
+		repository = parts[1] + "/" + parts[2]
+	}
+	return Version{Metadata: Metadata{Version: n, Head: "revision", BundleDigest: "digest", Backend: "claude", PromptVersion: "prompt"}, Document: []byte(fmt.Sprintf(`{"review":{"repository":%q,"pull_request":%d,"version":%d}}`, repository, k.Number, n))}
 }
 func opened(t *testing.T) *Store {
 	t.Helper()
@@ -202,5 +207,27 @@ func TestExplicitStoreNeverFallsBack(t *testing.T) {
 	key := Key{"owner/repo", 7}
 	if err := s.Put(context.Background(), key, 0, version(key, 1)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnterpriseDocumentsUseOwnerNameButHistoriesKeepTheirHost(t *testing.T) {
+	s := opened(t)
+	ctx := context.Background()
+	keys := []Key{{"ghe.one.test/Acme/Widgets", 7}, {"ghe.two.test/acme/widgets", 7}, {"acme/widgets", 7}}
+	for i, key := range keys {
+		v := Version{Metadata: Metadata{Version: 1, Head: fmt.Sprintf("head-%d", i)}, Document: []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1}}`)}
+		if err := s.Put(ctx, key, 0, v); err != nil {
+			t.Fatalf("store %s: %v", key.Repository, err)
+		}
+	}
+	for i, key := range keys {
+		got, err := s.Latest(ctx, key)
+		if err != nil || got.Metadata.Head != fmt.Sprintf("head-%d", i) {
+			t.Fatalf("crossed host identity for %s: %+v %v", key.Repository, got.Metadata, err)
+		}
+		wrong := Version{Metadata: Metadata{Version: 2}, Document: []byte(`{"review":{"repository":"other/widgets","pull_request":7,"version":2}}`)}
+		if err := s.Put(ctx, key, 1, wrong); err == nil {
+			t.Fatalf("accepted another repository for %s", key.Repository)
+		}
 	}
 }
