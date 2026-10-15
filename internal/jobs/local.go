@@ -153,24 +153,29 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	guarded := headAssembler{Assembler: assembler, head: p.HeadSHA}
 	list := pricing.Active()
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, versions, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 { return list.OutcomeCost(r.Outcome.Model, r.Outcome) })
+	result, e := generate.Publish(ctx, versions, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+		backend.repairs = pass - 1
+		if !valid {
+			backend.repairs = pass
+		}
+		progress(Progress{Phase: "validating", Calls: backend.calls, Tokens: backend.tokens, Repairs: backend.repairs})
+	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 { return list.OutcomeCost(r.Outcome.Model, r.Outcome) })
 	progress(Progress{Phase: "publishing", Calls: result.Outcome.Calls, Tokens: result.Outcome.Tokens, Repairs: result.Outcome.ValidationRepairs})
 	return list.OutcomeCost(result.Outcome.Model, result.Outcome), e
 }
 
 type trackedBackend struct {
 	agent.Backend
-	progress              func(Progress)
-	calls, tokens, passes int
+	progress               func(Progress)
+	calls, tokens, repairs int
 }
 
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
-	b.progress(Progress{Phase: "generating", Calls: b.calls, Tokens: b.tokens, Repairs: max(0, b.passes-1)})
+	b.progress(Progress{Phase: "generating", Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs})
 	result, e := b.Backend.Run(ctx, r)
 	b.calls += result.Calls
 	b.tokens += result.Tokens
-	b.passes++
-	b.progress(Progress{Phase: "validating", Calls: b.calls, Tokens: b.tokens, Repairs: max(0, b.passes-1)})
+	b.progress(Progress{Phase: "validating", Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs})
 	return result, e
 }
 

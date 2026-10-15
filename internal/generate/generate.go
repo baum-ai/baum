@@ -109,6 +109,8 @@ type Options struct {
 	// Progress receives one line per step; nil discards them. The document is
 	// never written to it.
 	Progress io.Writer
+	// OnValidation receives fixed validation milestones, without model text.
+	OnValidation func(pass int, valid bool)
 	// KeepRunDir keeps the run directory and reports its path on Progress.
 	KeepRunDir bool
 	// BundleOut, when not empty, receives the exact bundle the model was given.
@@ -285,7 +287,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	generator := agent.Generator{
 		Backend: backend, Prompts: prompts, Validator: validator, Redactor: redactor,
-		Logger: slog.New(progressHandler{w: o.Progress}),
+		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
 	}
 	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets,
@@ -499,16 +501,27 @@ func WriteFileAtomic(path string, data []byte) (err error) {
 // progressHandler prints the loop's milestones as lines for a person. It
 // prints counts and fixed words only: never a finding, a model's text or a
 // path, so what it writes needs no masking.
-type progressHandler struct{ w io.Writer }
+type progressHandler struct {
+	w         io.Writer
+	validated func(int, bool)
+}
 
-func (h progressHandler) Enabled(context.Context, slog.Level) bool { return h.w != nil }
+func (h progressHandler) Enabled(context.Context, slog.Level) bool {
+	return h.w != nil || h.validated != nil
+}
 
 func (h progressHandler) Handle(_ context.Context, record slog.Record) error {
+	if h.w == nil {
+		h.w = io.Discard
+	}
 	attrs := map[string]slog.Value{}
 	record.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value; return true })
 	switch record.Message {
 	case "review document validated":
 		pass := attrs["pass"].Int64()
+		if h.validated != nil {
+			h.validated(int(pass), attrs["valid"].Bool())
+		}
 		if attrs["valid"].Bool() {
 			_, _ = fmt.Fprintf(h.w, "pass %d: the document is valid\n", pass)
 		} else {

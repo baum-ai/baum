@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -88,7 +89,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	if path == "" {
 		root := os.Getenv("XDG_STATE_HOME")
-		if root == "" {
+		if !filepath.IsAbs(root) {
 			home, e := os.UserHomeDir()
 			if e != nil {
 				return nil, e
@@ -96,6 +97,18 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			root = filepath.Join(home, ".local", "state")
 		}
 		path = filepath.Join(root, "baum", "jobs.json")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode().Perm()&0077 != 0 {
+			return nil, errors.New("job state directory must be private (0700)")
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	q := &Queue{path: path, executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed}
@@ -242,12 +255,19 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 		return nil, errors.New("no eligible pull requests")
 	}
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	var notifications []Job
+	defer func() {
+		q.mu.Unlock()
+		for _, j := range notifications {
+			q.notify(j)
+		}
+	}()
 	if _, ok := q.estimates[estimateID]; !ok || time.Now().After(e.ExpiresAt) || q.ctx.Err() != nil {
 		return nil, errors.New("estimate expired or already submitted")
 	}
 	before := append([]Job(nil), q.jobs...)
 	out := []Job{}
+	changes := []Job{}
 	for _, p := range prepared {
 		existing := -1
 		for i, j := range q.jobs {
@@ -270,23 +290,32 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 			j.Reason = "superseded"
 			j.Phase = "finished"
 			j.UpdatedAt = time.Now().UTC()
+			changes = append(changes, *j)
 		}
 		now := time.Now().UTC()
 		j := Job{ID: id(), Prepared: p, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 		q.jobs = append(q.jobs, j)
+		changes = append(changes, j)
 		out = append(out, j)
 	}
 	if err := q.save(); err != nil {
 		q.jobs = before
 		return nil, err
 	}
+	notifications = changes
 	delete(q.estimates, estimateID)
 	q.signal()
 	return out, nil
 }
 func (q *Queue) Cancel(jobID string) (Job, error) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	var notification *Job
+	defer func() {
+		q.mu.Unlock()
+		if notification != nil {
+			q.notify(*notification)
+		}
+	}()
 	for i := range q.jobs {
 		j := &q.jobs[i]
 		if j.ID != jobID {
@@ -307,6 +336,8 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 				*j = old
 				return Job{}, e
 			}
+			copy := *j
+			notification = &copy
 		}
 		return *j, nil
 	}
