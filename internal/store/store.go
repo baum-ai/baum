@@ -45,23 +45,24 @@ func (k Key) documentRepository() string {
 // Metadata records reproducible input identities and the generation that
 // produced a version. Policy is the digest of the applied base REVIEW.md, null when absent.
 type Metadata struct {
-	Version        int           `json:"version"`
-	Head           string        `json:"head"`
-	Base           string        `json:"base"`
-	MergeBase      string        `json:"merge_base"`
-	BundleDigest   string        `json:"bundle_digest"`
-	Backend        string        `json:"backend"`
-	BackendVersion string        `json:"backend_version"`
-	Model          string        `json:"model"`
-	Schema         string        `json:"schema"`
-	SchemaRevision string        `json:"schema_revision"`
-	PromptVersion  string        `json:"prompt_version"`
-	PromptDigest   string        `json:"prompt_digest"`
-	Policy         *string       `json:"policy"`
-	GeneratedAt    string        `json:"generated_at"`
-	Elapsed        time.Duration `json:"elapsed_ns"`
-	Calls          int           `json:"calls"`
-	Tokens         int           `json:"tokens"`
+	Version         int           `json:"version"`
+	Head            string        `json:"head"`
+	Base            string        `json:"base"`
+	MergeBase       string        `json:"merge_base"`
+	BundleDigest    string        `json:"bundle_digest"`
+	Backend         string        `json:"backend"`
+	BackendVersion  string        `json:"backend_version"`
+	Model           string        `json:"model"`
+	Schema          string        `json:"schema"`
+	SchemaRevision  string        `json:"schema_revision"`
+	PromptVersion   string        `json:"prompt_version"`
+	PromptDigest    string        `json:"prompt_digest"`
+	Policy          *string       `json:"policy"`
+	GeneratedAt     string        `json:"generated_at"`
+	Elapsed         time.Duration `json:"elapsed_ns"`
+	Calls           int           `json:"calls"`
+	Tokens          int           `json:"tokens"`
+	RecordedCostUSD *float64      `json:"recorded_cost_usd"`
 }
 
 type Version struct {
@@ -143,7 +144,7 @@ func openRoot(root string, write bool) (*Store, error) {
 		return nil, err
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version))`)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
 	return s, err
 }
 func (s *Store) path() string { return filepath.Join(s.root, "versions.sqlite") }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -121,7 +122,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
-func doGenerate(cmd *cobra.Command, started *bool) error {
+func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	flags := cmd.Flags()
 	number, _ := flags.GetInt("pr")
 	repoFlag, _ := flags.GetString("repo")
@@ -173,11 +174,6 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 	defer stop()
 	stderr := cmd.ErrOrStderr()
 
-	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
-	if err != nil {
-		return err
-	}
-
 	clone, err := gitlocal.Open(ctx, ".", gitlocal.Options{})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -215,6 +211,49 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 			return input(fmt.Errorf("read previous version: %w", err))
 		}
 	}
+	runID, err := versions.BeginRun(ctx, key, time.Now().Add(2*time.Minute))
+	if err != nil {
+		return input(fmt.Errorf("record generation run: %w", err))
+	}
+	stopHeartbeat := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ticker.C:
+				heartbeatCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = versions.HeartbeatRun(heartbeatCtx, runID, time.Now().Add(2*time.Minute))
+				cancel()
+			}
+		}
+	}()
+	published := false
+	defer func() {
+		close(stopHeartbeat)
+		<-heartbeatDone
+		reason := ""
+		if !published {
+			reason = string(generate.CategoryOf(runErr))
+			if reason == "" {
+				reason = "internal"
+			}
+		}
+		finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := versions.FinishRun(finishCtx, runID, reason); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: record generation outcome: %v\n", err)
+		}
+	}()
+	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
+	if err != nil {
+		return err
+	}
+
 	assembler := &assemble.Assembler{
 		GitHub: client, Git: clone,
 		Sessions: assemble.LocalSessions{Dir: clone.Dir(), Stores: stores, Warn: stderr},
@@ -243,6 +282,7 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		}
 		return publishErr
 	}
+	published = true
 	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
 	if storePath != "" {
 		hint += fmt.Sprintf(" --store %q", storePath)

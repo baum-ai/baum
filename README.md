@@ -441,3 +441,36 @@ reviewed and merged here as usual and then pulled into the monorepo.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+### Local review index
+
+The local application's review index joins cached GitHub discovery with the
+existing version stores of registered clones. It reads stores through one SQLite
+snapshot per store, so concurrent `baum generate` publication cannot mix a new
+version with an old count. Linked worktrees sharing a common git directory share
+one index row; independent clones keep their own histories and clone IDs. There
+is no second index database and rebuilding never copies or deletes reviews.
+
+An inbox row reports `no_review`, `current` (saved and discovered heads match),
+`outdated` (heads differ), `generating`, or `failed`. Missing head evidence or an
+unreadable store reports `unknown`; filesystem errors are reported without
+exposing their paths. Rows carry version count, the latest version's generation
+time, backend/model, risk assessment and recorded USD cost. Cost is null when
+none was recorded, including current CLI backends, rather than an invented zero.
+
+Once the repository and store are resolved, terminal generation records its run
+separately from successful versions. Failures use only the fixed categories
+`input`, `backend`, `budget`, `validation`, `interrupted`, and `internal`; failed
+attempts never add a version. A process renews its two-minute lease every thirty
+seconds, including while assembling evidence. A killed process becomes
+`failed`/`interrupted` when that lease expires. The most recently started attempt
+controls status, so an older attempt finishing cannot overwrite a newer one.
+
+The authenticated UI host can mount `GET /api/index`; `?history=1` also includes
+saved reviews absent from the currently discovered inbox. Closed and merged
+states already recorded in a saved document survive there. A saved open PR
+missing from discovery has state `UNKNOWN`, because absence (including offline
+or stale discovery) does not prove it closed. Historical rows retain their last
+review without claiming to know the current remote head. Explicit `--store`
+overrides remain standalone CLI stores unless the host supplies that store
+mapping; the default index uses each clone's normal common-directory/XDG store.
