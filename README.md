@@ -87,6 +87,30 @@ baum validate review.json
 baum validate review.json --bundle bundle.json
 ```
 
+### Pull request discovery
+
+The internal discovery service supplies the local UI with open pull requests
+for each registered GitHub identity. It records the head SHA, author, draft and
+fork flags, direct or team review requests for the token owner, and the author's
+repository write permission. Unreadable author permissions stay null; unreadable
+team membership is explicitly marked unknown. Existing token permissions are
+used as they are; baum never requests additional scopes.
+
+Discovery uses read-only REST requests, with the same host and token routing as
+bundle generation. Every page is conditionally fetched with its ETag. Polling
+starts at 30 seconds and backs off to 15 minutes when unchanged, honoring a
+longer GitHub polling interval, rate-limit reset or Retry-After. Rate remaining
+and reset time are returned with the snapshot; a network or required API failure
+keeps the last complete inbox and marks it stale with a diagnostic.
+
+A private cache under `$XDG_CACHE_HOME/baum/discovery` (the OS cache directory
+when unset) lets the UI load the last inbox without network access. Files have
+mode 0600 and are partitioned by host, credential fingerprint and repository;
+a changed token cannot reuse another account's inbox. The cache stores only
+inbox metadata, conditional response fields and polling state, never tokens,
+PR bodies or signed image URLs. Cached reads are explicitly stale until a
+successful poll. This service neither fetches git objects nor generates reviews.
+
 ### Registered repositories
 
 `baum repos add <path>` registers an existing GitHub clone or linked worktree;
