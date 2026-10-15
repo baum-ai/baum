@@ -41,8 +41,9 @@ const mark: Record<CodeDiffLine["kind"], string> = {
 
 /** One file's hunks. Highlighting is client-only: the first render is the
  *  plain text, and the tokens replace it once they are ready. */
-function CodeDiffTable({ file }: { file: CodeDiffFile }) {
-  const highlighted = useHighlightedHunks(file.path, file.hunks);
+function CodeDiffTable({ file, highlight }: { file: CodeDiffFile; highlight: boolean }) {
+  // An empty path has no language, which reads as "do not highlight".
+  const highlighted = useHighlightedHunks(highlight ? file.path : "", file.hunks);
   return (
     <div className="relative min-w-0 overflow-x-auto">
       <table className="w-full table-fixed border-collapse font-mono text-xs leading-[1.55] sm:text-base">
@@ -97,10 +98,14 @@ function CodeDiffTable({ file }: { file: CodeDiffFile }) {
 export function CodeDiff({
   files,
   bare = false,
+  highlight = true,
   className,
 }: {
   files: readonly CodeDiffFile[];
   bare?: boolean;
+  /** False for a diff that is on the page but not yet shown, so nothing is
+   *  tokenised until the reader can see it. */
+  highlight?: boolean;
   className?: string;
 }) {
   const id = useId();
@@ -188,7 +193,7 @@ export function CodeDiff({
               {/* Stays on the page for aria-controls; a folded file draws and
                   highlights nothing. */}
               <div id={body} hidden={!expanded}>
-                {expanded ? <CodeDiffTable file={file} /> : null}
+                {expanded ? <CodeDiffTable file={file} highlight={highlight} /> : null}
               </div>
             </article>
           );

@@ -32,12 +32,26 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 	relaxTileCodeFile(defs)
 	// The review time estimate is rough: normalization rounds and clamps it
 	// (reviewMinutes), so a provider never rejects a reply over its range.
+	// The stored contract lets it be absent, for documents from before the
+	// estimate existed, but the model always gives one: required and never
+	// null, so a strict provider cannot answer null and skip it.
 	properties, _ := lenient["properties"].(map[string]any)
 	summary, _ := properties["summary"].(map[string]any)
 	summaryProperties, _ := summary["properties"].(map[string]any)
 	if minutes, ok := summaryProperties["review_minutes"].(map[string]any); ok {
 		delete(minutes, "minimum")
 		delete(minutes, "maximum")
+		minutes["type"] = "number"
+		// The stored description allows a null or absent estimate for older
+		// documents; the model is told to always give one.
+		if description, _ := minutes["description"].(string); description != "" {
+			if cut := strings.Index(description, " Null or absent"); cut >= 0 {
+				minutes["description"] = description[:cut] + " Always give an estimate."
+			}
+		}
+		if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "review_minutes") {
+			summary["required"] = append(required, "review_minutes")
+		}
 	}
 	relaxSchema(lenient, defs)
 	for _, def := range defs {

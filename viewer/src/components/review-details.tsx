@@ -72,7 +72,7 @@ export function ReviewDetails({
                 ) : (
                   <ObservedLine
                     vendors={summary.authorship.observed_vendors}
-                    models={summary.authorship.observed_models}
+                    models={summary.authorship.observed_models ?? []}
                   />
                 ),
             },
@@ -486,7 +486,7 @@ export function SessionItem({
     session.prompt_count != null ? pluralize("prompt", session.prompt_count, true) : null,
     session.tool_calls != null ? pluralize("tool call", session.tool_calls, true) : null,
   ].filter(Boolean);
-  const [firstModel, ...otherModels] = session.models;
+  const [firstModel, ...otherModels] = session.models ?? [];
   return (
     <Item
       className={cn(
