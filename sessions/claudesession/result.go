@@ -121,7 +121,8 @@ func (f *fileState) noteCommit(
 	if err := json.Unmarshal(use.Input, &input); err != nil || !gitevidence.IsCommitCommand(input.Command) {
 		return
 	}
-	if len(gitevidence.CommitSHAs(evidence.Stdout)) > 0 || len(gitevidence.CommitSHAs(text)) > 0 {
+	trust := gitevidence.TrustsOnelineLog(input.Command)
+	if len(gitevidence.CommitSHAs(evidence.Stdout, trust)) > 0 || len(gitevidence.CommitSHAs(text, trust)) > 0 {
 		f.committed = true
 	}
 }
