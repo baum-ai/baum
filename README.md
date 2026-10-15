@@ -96,8 +96,10 @@ Independent clones and linked worktrees keep separate IDs; repository settings
 are shared by normalized GitHub identity (`owner/name` on github.com, `host/owner/name` on
 GitHub Enterprise), matching the review version store.
 Origin is preferred when it names GitHub; otherwise other remotes are considered
-in name order. Moved, missing or replaced clones remain listed as unavailable.
-Re-add a moved clone at its new path and remove its old record explicitly.
+in name order. Missing paths and paths that now name a different repository or
+common git directory remain listed as unavailable. Restoring the same repository
+at the same canonical paths makes it available again. Re-add a moved clone at its
+new path and remove its old record explicitly.
 
 Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
 `--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
