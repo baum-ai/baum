@@ -45,7 +45,12 @@ repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
 verified, baum uses a copy embedded at release. Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
-anywhere else.
+anywhere else. Local inbox discovery also reads GitHub's REST API using that
+same token and derived host, without redirects or extra scopes. Its private
+0600 cache contains minimal inbox metadata and ETags, partitioned by a credential
+fingerprint and repository. Tokens, PR bodies and signed image URLs are never
+put in that cache. Cached and offline results are marked stale; unreadable
+author write permissions remain unknown, rather than granting automatic work.
 
 ## What `baum view` shows
 
