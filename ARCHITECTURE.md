@@ -1222,6 +1222,8 @@ access, always marking the snapshot stale. `Service.Poll` serializes polls,
 honors its next deadline, issues ETag conditional requests for every page and
 backs off for unchanged data, GitHub's polling interval and rate reset. It
 returns rate budget/reset rather than sleeping through an exhausted budget.
+Host-and-credential budget files share exhaustion and secondary retry deadlines
+across repositories and service restarts, before any new request is sent.
 A required request failure preserves the last complete inbox as stale; optional
 team or permission failures keep their fields unknown. Snapshots and minimal
 conditional response bodies are atomically replaced in private cache files,
