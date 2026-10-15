@@ -245,6 +245,9 @@ func (s *Service) Sync(ctx context.Context) {
 						var limited *github.RateLimitedError
 						if errors.As(err, &limited) {
 							state.Error = "rate_limited"
+							// Retry the uncompleted target with the next budget window. Skipping
+							// it can starve every second target when each window funds one PR.
+							s.cursors[name] = (cursor + i) % len(targets)
 							next = maxTime(next, limited.ResumeAt)
 							s.hostPause[repo.Host] = next
 							s.nextRepo = names[(repoIndex+1)%len(names)]

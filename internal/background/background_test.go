@@ -130,27 +130,37 @@ func TestRunCancellation(t *testing.T) {
 }
 
 func TestRateBudgetEventuallyReachesEveryPRAndRepository(t *testing.T) {
-	now := time.Now()
-	d := &fakeDiscovery{}
-	calls := 0
-	seen := map[string]bool{}
-	s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{2, 3}, nil }, Refresh: func(_ context.Context, clone repos.Clone, n int) (discovery.Observation, error) {
-		calls++
-		if calls%2 == 0 {
-			return discovery.Observation{}, &github.RateLimitedError{ResumeAt: now.Add(time.Minute), Err: errors.New("limited")}
-		}
-		seen[clone.Repository+string(rune('0'+n))] = true
-		return discovery.Observation{Number: n, HeadSHA: "head"}, nil
-	}}
-	for i := 0; i < 14; i++ {
-		s.Sync(context.Background())
-		now = now.Add(time.Minute)
-	}
-	for _, repo := range []string{"acme/a", "acme/b"} {
-		for _, n := range []string{"1", "2", "3"} {
-			if !seen[repo+n] {
-				t.Fatalf("starved %s PR%s, reached %v", repo, n, seen)
+	for _, count := range []int{2, 3, 4} {
+		t.Run(string(rune('0'+count)), func(t *testing.T) {
+			now := time.Now()
+			d := &fakeDiscovery{}
+			calls := 0
+			seen := map[string]bool{}
+			s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) {
+				var saved []int
+				for n := 2; n <= count; n++ {
+					saved = append(saved, n)
+				}
+				return saved, nil
+			}, Refresh: func(_ context.Context, clone repos.Clone, n int) (discovery.Observation, error) {
+				calls++
+				if calls%2 == 0 {
+					return discovery.Observation{}, &github.RateLimitedError{ResumeAt: now.Add(time.Minute), Err: errors.New("limited")}
+				}
+				seen[clone.Repository+string(rune('0'+n))] = true
+				return discovery.Observation{Number: n, HeadSHA: "head"}, nil
+			}}
+			for i := 0; i < 14; i++ {
+				s.Sync(context.Background())
+				now = now.Add(time.Minute)
 			}
-		}
+			for _, repo := range []string{"acme/a", "acme/b"} {
+				for n := 1; n <= count; n++ {
+					if !seen[repo+string(rune('0'+n))] {
+						t.Fatalf("starved %s PR%d, reached %v", repo, n, seen)
+					}
+				}
+			}
+		})
 	}
 }
