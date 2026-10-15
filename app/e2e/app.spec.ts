@@ -32,6 +32,20 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("region", { name: "Pull request inbox" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: "test-results/inbox-narrow.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const requested = page.getByRole("button", { name: /Review requested/ });
+  await requested.click();
+  await expect(requested).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);
+  await requested.click();
   await page.getByRole("combobox").first().selectOption("mine");
   await expect(page.getByRole("link", { name: /without a review/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);

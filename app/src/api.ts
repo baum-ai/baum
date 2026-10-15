@@ -17,6 +17,7 @@ export type PR = {
   number: number;
   head_sha: string;
   title: string;
+  author?: string;
   url: string;
   state: string;
   draft: boolean;

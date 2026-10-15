@@ -7,15 +7,15 @@ import {
   type ReactNode,
   type FormEvent,
 } from "react";
-import { formatShortDateTime } from "@baum/viewer/components/format";
 import { LogoMark } from "@baum/viewer/components/editorial";
-import { Button, Alert, Badge } from "@baum/viewer/components/ui";
+import { Button, Alert } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
   ViewerLinkProvider,
   type UrlState,
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
+import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import {
   request,
@@ -333,88 +333,13 @@ function Workspace({ url }: { url: UrlState }) {
                 </p>
               </div>
             ) : (
-              <div className="local-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>
-                        <input
-                          type="checkbox"
-                          aria-label="Select all visible pull requests"
-                          checked={rows.length > 0 && rows.every((e) => selection.has(rowKey(e)))}
-                          onChange={(event) =>
-                            setSelection(
-                              event.target.checked ? new Set(rows.map(rowKey)) : new Set(),
-                            )
-                          }
-                        />
-                      </th>
-                      <th>Pull request</th>
-                      <th>Review</th>
-                      <th>Risk</th>
-                      <th>Versions</th>
-                      <th>Generated</th>
-                      <th>Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((entry) => (
-                      <tr key={rowKey(entry)}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${entry.pull_request.repository} #${entry.pull_request.number}`}
-                            checked={selection.has(rowKey(entry))}
-                            onChange={(event) =>
-                              setSelection((last) => {
-                                const next = new Set(last);
-                                if (event.target.checked) next.add(rowKey(entry));
-                                else next.delete(rowKey(entry));
-                                return next;
-                              })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <LocalLink
-                            href={`/?clone=${encodeURIComponent(cloneFor(entry))}&pr=${entry.pull_request.number}`}
-                          >
-                            {entry.pull_request.repository} #{entry.pull_request.number}:{" "}
-                            {entry.pull_request.title || "Saved review"}
-                          </LocalLink>
-                          <div className="text-xs text-(--text-tertiary)">
-                            {[
-                              entry.pull_request.draft ? "Draft" : null,
-                              entry.pull_request.fork ? "Fork" : null,
-                              entry.stale ? "Stale discovery" : null,
-                              !entry.pull_request.team_membership_known
-                                ? "Team requests unknown"
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </div>
-                        </td>
-                        <td>
-                          <Badge>{entry.status.replaceAll("_", " ")}</Badge>
-                          {entry.failure_reason ? <p>{entry.failure_reason}</p> : null}
-                        </td>
-                        <td>{entry.risk_score?.score ?? "—"}</td>
-                        <td>{entry.version_count}</td>
-                        <td>
-                          {entry.latest?.generated_at
-                            ? formatShortDateTime(entry.latest.generated_at)
-                            : "—"}
-                          <div className="text-xs">
-                            {entry.latest?.backend} {entry.latest?.model}
-                          </div>
-                        </td>
-                        <td>{cost(entry.latest?.recorded_cost_usd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <Inbox
+                rows={rows}
+                cloneFor={cloneFor}
+                selection={selection}
+                setSelection={setSelection}
+                Link={LocalLink}
+              />
             )}
           </>
         )}
