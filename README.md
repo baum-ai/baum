@@ -505,7 +505,40 @@ Authenticated endpoints include `/api/repos` and repository settings,
 Document, version, image and linkage endpoints require `?clone=<registry id>&pr=N`
 with optional `&version=N` (default latest); paths cannot select arbitrary
 files or unregistered clones. Settings and diagnostics never return tokens.
-Jobs report `runner_unavailable` until the background runner is installed.
+`baum ui --concurrency N` controls concurrent generation (default 1, maximum 16).
+The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
+`~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
+restarting marks unfinished running jobs interrupted and resumes queued jobs.
+Only one queued or running job exists per repository/PR across registered clones.
+A newly confirmed head replaces queued work; running work must finish or be
+cancelled first. Cancelling propagates to the backend process group and removes
+its temporary checkout and archives. Failed, cancelled and interrupted attempts
+never publish a partial version.
+
+`POST /api/jobs/estimate` accepts `{items:[{clone,pr}],mode:"single"|"batch"}`.
+An estimate expires after five minutes. `POST /api/jobs` requires its
+`estimate_id` and `confirm_estimate:true`; it rechecks head, backend, model,
+budgets and price version before enqueueing. Execution checks them again and
+refuses changed inputs before a model call. An explicit model with known rates
+is required; unknown backend default models have no invented estimate.
+Estimates use the signed published full price list, falling back to the embedded
+release baseline if download or verification fails. The estimate uses the
+highest listed charged-token rates and reserves one budget-sized cache read per
+call. It is a planning estimate, not a hard dollar ceiling: cached reads are
+outside the charged-token budget and provider usage can overshoot a call limit.
+Actual cost is nullable when usage, speed, cache TTL or applicable tier is
+unknown; each job records the price list version. Successful versions use the
+same in-process generate/repair/validation/publication pipeline as the terminal.
+
+A fork head, author without write permission or unknown permission additionally
+requires `confirm_isolation:true` on a single-PR request. This is separate from
+spend confirmation: the backend's read-only mode runs under your account, with
+its documented limitations. These PRs are excluded from batch estimates and
+cannot be forced into a batch by posting confirmation flags. GitHub permissions
+and fork identity come from fresh server-side evidence, never browser fields.
+`GET /api/jobs` returns history; `POST /api/jobs/{id}/cancel` accepts `{}`.
+Progress notifications include job ID, phase, calls, tokens and repair counts,
+never prompts or model text.
 `GET /api/events` streams index/progress notifications, replaying from
 `Last-Event-ID`; a client outside the bounded replay window receives `reset`
 and must rebuild its index. A local snapshot watcher also notifies clients when

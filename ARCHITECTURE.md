@@ -1218,7 +1218,7 @@ run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
 Document selectors resolve registered clone IDs, never request-provided paths.
 The server makes no baum-server requests. Discovery and index are separate
-providers; a missing generation runner is an explicit unavailable capability.
+providers; the generation runner is mounted only after acquiring the single-instance lock.
 
 A private SQLite write lock keeps one process per user, with an authenticated
 health probe before another invocation trusts the private capability file.
@@ -1259,3 +1259,23 @@ team or permission failures keep their fields unknown. Snapshots and minimal
 conditional response bodies are atomically replaced in private cache files,
 partitioned by host/credential fingerprint/repository. The index consumes these
 snapshots; it never treats missing PRs in an open-only snapshot as closed.
+
+### Persistent generation jobs
+
+`internal/jobs` serializes queue mutations in a private atomic JSON journal,
+without duplicating review documents. Workers use the same `generate.Publish`
+entry point as the terminal: previous-version lookup, run lease, generation and
+strict validation, then atomic version publication. Running journal entries are
+interrupted on restart; queued entries retain their confirmed input fingerprint.
+Fresh GitHub REST evidence authorizes the head and isolation warning; all
+preflight I/O happens outside the queue mutex so cancellation stays responsive.
+The runner has no subprocess invocation of baum itself. Only the existing
+read-only agent backends run child processes, cancelled through their context.
+
+`internal/pricing` ports the platform's pure pricing implementation and baseline
+into the independent OSS module; its signature, tier and normalization tests are
+retained. Keep these copied core files synchronized with the platform package.
+A bounded HTTPS downloader refuses redirects, verifies the existing release
+signing key, rejects flattened lists and installs only newer full-format lists.
+Estimates and job confirmation never infer the default model or replace it with
+a different priced model. Unknown actual usage remains null.

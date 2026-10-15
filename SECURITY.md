@@ -251,3 +251,15 @@ or WebP copies. They reject SVG/HTML and never follow document URLs. Images
 carry nosniff and a sandboxed, deny-all content security policy. Local successful
 versions retain their captured images atomically alongside the document;
 removing a registry entry does not delete that history.
+
+The authenticated job API derives repository, head, fork and author permissions
+from registered clones and fresh GitHub evidence. A five-minute estimate is
+bound to the head, selected model/backend, budgets and price list version;
+confirmation cannot authorize changed inputs. Forks, non-writers and unknown
+permissions require a separate single-PR isolation acknowledgement and are
+excluded from batch generation. Cancellation reaches the existing backend
+process-group cleanup. Job history contains fixed failure reasons and bounded
+usage metadata, never arbitrary provider errors, prompts or rejected documents.
+The private journal persists queued/running/terminal states; crashed running
+entries become interrupted before work resumes. A second `baum ui` invocation
+cannot open a second queue because it reuses the existing instance first.

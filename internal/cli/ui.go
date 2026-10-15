@@ -3,12 +3,15 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -16,6 +19,7 @@ import (
 
 func newUICommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "ui", Short: "Open the authenticated local application", Args: cobra.NoArgs, RunE: runUI}
+	cmd.Flags().Int("concurrency", 1, "maximum concurrent generation jobs (1–16)")
 	cmd.Flags().Int("port", 0, "listen on this port instead of a free one")
 	cmd.Flags().Bool("no-open", false, "print the private launch URL without opening a browser")
 	return cmd
@@ -42,7 +46,9 @@ func runUI(cmd *cobra.Command, _ []string) error {
 			_ = server.Publish("index", struct{}{})
 		}
 	}
-	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Changed: changed}
+	var queue *jobs.Queue
+	jobHandler := &deferredJobs{}
+	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: jobHandler, Changed: changed}
 	ctx, stop := viewContext()
 	defer stop()
 	handler := api.Handler()
@@ -53,6 +59,21 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = instance.Close() }()
 	server = instance.Server
+	if !instance.Existing {
+		concurrency, _ := cmd.Flags().GetInt("concurrency")
+		queue, err = jobs.Open("", &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{})}, concurrency, func(job jobs.Job) {
+			_ = server.Publish("progress", map[string]any{"job": job})
+			if job.Phase == "finished" {
+				changed()
+			}
+		})
+		if err != nil {
+			return err
+		}
+		defer queue.Close()
+		jobHandler.handler = queue.Handler()
+		go func() { _ = pricing.Refresh(ctx) }()
+	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), instance.URL)
 	noOpen, _ := cmd.Flags().GetBool("no-open")
 	if !noOpen {
@@ -72,4 +93,15 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	}()
 	defer func() { cancelWatch(); <-watchDone }()
 	return instance.Server.Serve(ctx)
+}
+
+// Deferred until this process owns the per-user instance lock.
+type deferredJobs struct{ handler http.Handler }
+
+func (h *deferredJobs) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.handler == nil {
+		http.Error(w, "runner unavailable", 503)
+		return
+	}
+	h.handler.ServeHTTP(w, r)
 }

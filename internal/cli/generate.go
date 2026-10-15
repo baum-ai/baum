@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,14 +10,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -198,57 +195,6 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		return input(fmt.Errorf("open version store: %w", err))
 	}
 	key := store.Key{Repository: target.Repository.String(), Number: target.Number}
-	latest, err := versions.Latest(ctx, key)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return input(err)
-	}
-	previousNumber := 0
-	var previous *bundle.PreviousVersion
-	if err == nil {
-		previousNumber = latest.Metadata.Version
-		previous, err = review.PreviousVersionOf(latest.Document, previousNumber)
-		if err != nil {
-			return input(fmt.Errorf("read previous version: %w", err))
-		}
-	}
-	runID, err := versions.BeginRun(ctx, key, time.Now().Add(2*time.Minute))
-	if err != nil {
-		return input(fmt.Errorf("record generation run: %w", err))
-	}
-	stopHeartbeat := make(chan struct{})
-	heartbeatDone := make(chan struct{})
-	go func() {
-		defer close(heartbeatDone)
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopHeartbeat:
-				return
-			case <-ticker.C:
-				heartbeatCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				_ = versions.HeartbeatRun(heartbeatCtx, runID, time.Now().Add(2*time.Minute))
-				cancel()
-			}
-		}
-	}()
-	published := false
-	defer func() {
-		close(stopHeartbeat)
-		<-heartbeatDone
-		reason := ""
-		if !published {
-			reason = string(generate.CategoryOf(runErr))
-			if reason == "" {
-				reason = "internal"
-			}
-		}
-		finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := versions.FinishRun(finishCtx, runID, reason); err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: record generation outcome: %v\n", err)
-		}
-	}()
 	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
 	if err != nil {
 		return err
@@ -261,28 +207,17 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		Warn:     stderr,
 	}
 	*started = true
-	result, err := generate.Run(ctx, generate.Options{
+	result, err := generate.Publish(ctx, versions, key, generate.Options{
 		Assembler: assembler,
-		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps), Previous: previous},
+		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps)},
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
 		Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}
 
-	if err := versions.Put(ctx, key, previousNumber, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
-		publishErr := fmt.Errorf("store generated version: %w", err)
-		if ctx.Err() != nil {
-			publishErr = interruptedError()
-		}
-		if diagnostics != "" {
-			_ = generate.WriteDiagnostics(diagnostics, publishErr, result.Outcome)
-		}
-		return publishErr
-	}
-	published = true
 	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
 	if storePath != "" {
 		hint += fmt.Sprintf(" --store %q", storePath)
