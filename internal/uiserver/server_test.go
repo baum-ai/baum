@@ -137,7 +137,7 @@ func TestEventsReplayAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	reader := bufio.NewReader(resp.Body)
 	var got strings.Builder
 	for !strings.Contains(got.String(), "id: 3\n") {
@@ -163,7 +163,7 @@ func TestEventsReplayAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	reader = bufio.NewReader(resp.Body)
 	got.Reset()
 	for !strings.Contains(got.String(), "event: reset") {

@@ -48,8 +48,8 @@ func TestSecondInstanceReusesLiveServerAndStaleMetadataIsReplaced(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer replacement.Close()
-	defer replacement.Server.listener.Close()
+	defer func() { _ = replacement.Close() }()
+	defer func() { _ = replacement.Server.listener.Close() }()
 	if replacement.Existing || replacement.URL == first.URL {
 		t.Fatal("did not replace stale instance")
 	}
@@ -73,8 +73,8 @@ func TestStartCancelledWhileLockOwnerNotServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer owner.Close()
-	defer owner.Server.listener.Close()
+	defer func() { _ = owner.Close() }()
+	defer func() { _ = owner.Server.listener.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if other, err := Start(ctx, directory, 0, Options{}); err == nil {

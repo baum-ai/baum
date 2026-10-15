@@ -1064,7 +1064,7 @@ cut sets `truncated`. The body is built once per session and answer and kept
 with it.
 
 The server exposes `Mux` and `Use` so a host with its own routes or
-authentication, such as a later `baum ui`, extends it without changing these
+authentication extends it without changing these
 rules; its handlers sit behind the host check and the headers. Cancelling the
 context ends the event streams and shuts the server down.
 
@@ -1205,8 +1205,8 @@ reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
 `internal/cli` and the reusable `Registry.Handler` use the same service. The
-handler exposes registry operations only; the future UI host owns listening,
-instance lifecycle, authentication and host/origin validation. It must mount the
+handler exposes registry operations only; `internal/uiserver` owns listening,
+instance lifecycle, authentication and host/origin validation and mounts the
 handler behind that middleware. The existing document viewer does not mount it.
 
 ## Authenticated local application host
@@ -1252,6 +1252,8 @@ access, always marking the snapshot stale. `Service.Poll` serializes polls,
 honors its next deadline, issues ETag conditional requests for every page and
 backs off for unchanged data, GitHub's polling interval and rate reset. It
 returns rate budget/reset rather than sleeping through an exhausted budget.
+Host-and-credential budget files share exhaustion and secondary retry deadlines
+across repositories and service restarts, before any new request is sent.
 A required request failure preserves the last complete inbox as stale; optional
 team or permission failures keep their fields unknown. Snapshots and minimal
 conditional response bodies are atomically replaced in private cache files,

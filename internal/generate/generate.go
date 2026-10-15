@@ -259,6 +259,10 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			return result, fail(CategoryInput, fmt.Errorf("unpacking the description images: %w", err))
 		}
 	}
+	captured, err := capturedAttachments(attachmentsPath, b.Attachments)
+	if err != nil {
+		return result, fail(CategoryInput, err)
+	}
 	// A path the checkout holds may stay in the returned document as it is.
 	checkout := checkoutPaths(runDir, limits.Checkout.MaxTotalFiles)
 
@@ -350,10 +354,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
 		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
-	result.Attachments, err = capturedAttachments(attachmentsPath, b.Attachments)
-	if err != nil {
-		return result, err
-	}
+	result.Attachments = captured
 	result.Document = completed
 	return result, nil
 }

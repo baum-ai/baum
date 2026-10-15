@@ -22,7 +22,8 @@ Everything runs locally:
 
 The repository is being stood up phase by phase. The CLI skeleton, config
 layout, review schema, release pipeline, `baum sessions`, `baum validate`,
-`baum bundle`, `baum generate` and `baum view` exist; `refresh` prints its help
+`baum bundle`, `baum generate`, `baum view`, `baum repos` and `baum ui` exist;
+`refresh` prints its help
 and exits non-zero until its phase lands. `generate` stores immutable local
 versions and reuses the previous version for section and risk history.
 
@@ -42,6 +43,10 @@ are built with `CGO_ENABLED=0` and have no runtime dependencies beyond `git`
 ## Commands
 
 ```sh
+# Register a clone and start the authenticated local application API.
+baum repos add /path/to/clone
+baum ui
+
 # Build the review document for pull request 191 of the repository in the
 # current directory and write it to review.json (see "baum generate" below).
 baum generate --pr 191 -o review.json
@@ -95,7 +100,9 @@ used as they are; baum never requests additional scopes.
 Discovery uses read-only REST requests, with the same host and token routing as
 bundle generation. Every page is conditionally fetched with its ETag. Polling
 starts at 30 seconds and backs off to 15 minutes when unchanged, honoring a
-longer GitHub polling interval, rate-limit reset or Retry-After. Rate remaining
+longer GitHub polling interval, rate-limit reset or Retry-After. Rate budgets
+and retry deadlines are shared across repositories for the same host and
+credential, and persist across restarts. Rate remaining
 and reset time are returned with the snapshot; a network or required API failure
 keeps the last complete inbox and marks it stale with a diagnostic.
 
@@ -137,9 +144,8 @@ The registry also provides an internal HTTP handler for `GET/POST /api/repos`,
 `DELETE /api/repos/{id}`, and `PUT /api/repos/{id}/settings`. POST takes
 `{"path":"/clone","settings":{...}}`; omitting settings preserves them. PUT
 replaces all repository settings; null backend/model/cap clears an override.
-The handler is an integration boundary for the future local UI host, which must
-provide authentication and host/origin checks. No UI listener is shipped here,
-and `baum view` does not expose these routes.
+`baum ui` mounts this handler behind authentication and Host/Origin checks.
+`baum view` does not expose these routes.
 
 ### baum generate
 
@@ -502,11 +508,14 @@ files or unregistered clones. Settings and diagnostics never return tokens.
 Jobs report `runner_unavailable` until the background runner is installed.
 `GET /api/events` streams index/progress notifications, replaying from
 `Last-Event-ID`; a client outside the bounded replay window receives `reset`
-and must rebuild its index.
+and must rebuild its index. A local snapshot watcher also notifies clients when
+a terminal generation changes the index. Viewer evidence is reused in a bounded
+16-document cache; at most four local git/linkage reads run at once across it.
 
 New generated versions retain captured description images in the same SQLite
 transaction as the document. Only listed PNG, JPEG, GIF and WebP copies are
-stored, up to 20 images of 10 MiB each, and are served with their verified
+stored, up to 20 images of 10 MiB each (actual images exceeding these bounds
+fail before running a model), and are served with their verified
 content type. Older versions without retained copies return not found; the
 server never downloads a document's image URLs. The renderer host can use
 `AttachmentUrlProvider` to resolve these image endpoints. Sessions, transcripts

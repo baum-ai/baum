@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+
+	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -9,7 +12,6 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/uiserver"
-	"github.com/spf13/cobra"
 )
 
 func newUICommand() *cobra.Command {
@@ -43,7 +45,9 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Changed: changed}
 	ctx, stop := viewContext()
 	defer stop()
-	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: api.Handler()})
+	handler := api.Handler()
+	defer handler.Close()
+	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: handler})
 	if err != nil {
 		return err
 	}
@@ -60,5 +64,12 @@ func runUI(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Serving on this machine only. Keep the launch URL private. Press Ctrl-C to stop.")
+	watchContext, cancelWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		instance.Server.WatchIndex(watchContext, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
+	}()
+	defer func() { cancelWatch(); <-watchDone }()
 	return instance.Server.Serve(ctx)
 }

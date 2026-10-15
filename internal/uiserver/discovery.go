@@ -56,7 +56,7 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 		d := json.NewDecoder(r.Body)
 		d.DisallowUnknownFields()
 		if d.Decode(&body) != nil || d.Decode(new(any)) != io.EOF || body.Clone == "" {
-			http.Error(w, "clone is required", 400)
+			http.Error(w, "clone is required", http.StatusBadRequest)
 			return
 		}
 		name, err := RegisteredRepository(r.Context(), registry, body.Clone)

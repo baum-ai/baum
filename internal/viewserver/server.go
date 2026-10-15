@@ -203,6 +203,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	s.mux.HandleFunc("GET /api/commits", s.handleCommits)
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleTranscript)
 	s.mux.HandleFunc("GET /api/patch", s.handlePatch)
 	s.mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })

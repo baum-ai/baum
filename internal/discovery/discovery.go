@@ -67,6 +67,11 @@ type diskCache struct {
 	Interval  time.Duration
 }
 
+// Budget files are shared by service instances, alongside repository caches.
+// Serialize in-process polls so a newly exhausted budget is visible before the
+// next repository starts. Atomic disk replacement also preserves it on restart.
+var budgetMu sync.Mutex
+
 type Service struct {
 	client    *github.Client
 	directory string
@@ -282,6 +287,8 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	budgetMu.Lock()
+	defer budgetMu.Unlock()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err
@@ -294,14 +301,33 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return Snapshot{}, loadErr
 	}
+	budgetPath, err := s.path(reader.CacheIdentity(), "")
+	if err != nil {
+		return Snapshot{}, err
+	}
+	budgetPath += ".budget"
+	budget, budgetErr := load(budgetPath)
+	if budgetErr != nil && !errors.Is(budgetErr, os.ErrNotExist) {
+		return Snapshot{}, budgetErr
+	}
 	now := s.now()
+	shared := poll{rate: budget.Snapshot.Rate}
+	if deadline := shared.ResetIfExhausted(); deadline.After(now) {
+		snapshot := cache.Snapshot
+		snapshot.Repository = repository.String()
+		snapshot.Stale = true
+		snapshot.Error = errRateLimit.Error()
+		snapshot.Rate = shared.rate
+		snapshot.NextPoll = maxTime(snapshot.NextPoll, deadline)
+		return snapshot, errRateLimit
+	}
 	if now.Before(cache.Snapshot.NextPoll) {
 		return cache.Snapshot, nil
 	}
 	if cache.Responses == nil {
 		cache.Responses = map[string]cachedResponse{}
 	}
-	p := poll{reader: reader, cache: cache, now: now, unchanged: true, minimum: 30 * time.Second}
+	p := poll{reader: reader, cache: cache, rate: shared.rate, now: now, unchanged: true, minimum: 30 * time.Second}
 	snapshot, err := p.discover(ctx, repository)
 	if err != nil {
 		snapshot = cache.Snapshot
@@ -322,6 +348,9 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 		p.cache.Interval = interval
 	}
 	p.cache.Snapshot = snapshot
+	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}}); saveErr != nil {
+		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
+	}
 	if saveErr := save(path, p.cache); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery cache: %w", saveErr)
 	}

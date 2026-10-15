@@ -2,14 +2,12 @@ package uiserver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/baum-ai/baum/internal/config"
-	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
@@ -26,7 +24,15 @@ type LocalAPI struct {
 	Changed          func()
 }
 
-func (a LocalAPI) Handler() http.Handler {
+// LocalHandler owns bounded per-document viewer resources.
+type LocalHandler struct {
+	http.Handler
+	documents *documentCache
+}
+
+func (h *LocalHandler) Close() { h.documents.close() }
+func (a LocalAPI) Handler() *LocalHandler {
+	cache := newDocumentCache()
 	mux := http.NewServeMux()
 	registry := a.Registry.Handler()
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +49,7 @@ func (a LocalAPI) Handler() http.Handler {
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
-				http.Error(w, "capability unavailable", 503)
+				http.Error(w, "capability unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			writeJSON(w, map[string]any{"available": false, "code": code})
@@ -83,6 +89,10 @@ func (a LocalAPI) Handler() http.Handler {
 		writeJSON(w, versions)
 	})
 	document := func(w http.ResponseWriter, r *http.Request) {
+		if !acquire(r.Context(), cache.requests) {
+			return
+		}
+		defer func() { <-cache.requests }()
 		c, key, n, ok := a.selector(w, r)
 		if !ok {
 			return
@@ -111,64 +121,19 @@ func (a LocalAPI) Handler() http.Handler {
 			_, _ = w.Write(version.Document)
 			return
 		}
-		patcher := new(locallink.Patcher)
-		viewer, err := viewserver.New(viewserver.Options{Document: version.Document, Sessions: func(ctx context.Context, v viewserver.Review) (locallink.Result, error) {
-			return locallink.Resolve(ctx, locallink.Request{Dir: c.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase})
-		}, Patch: func(ctx context.Context, v viewserver.Review, path string) (locallink.PatchResult, error) {
-			return patcher.Patch(ctx, locallink.PatchRequest{Dir: c.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
-		}})
+		viewer, release, err := cache.get(c, version.Document)
 		if err != nil {
 			apiError(w, err)
 			return
 		}
-		defer viewer.Close()
+		defer release()
 		viewer.Mux().ServeHTTP(w, r)
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
-	mux.HandleFunc("GET /api/commits", func(w http.ResponseWriter, r *http.Request) {
-		c, key, n, ok := a.selector(w, r)
-		if !ok {
-			return
-		}
-		s, err := store.Open(c.CommonDir, "", false)
-		if err != nil {
-			apiError(w, err)
-			return
-		}
-		var v store.Version
-		if n == 0 {
-			v, err = s.Latest(r.Context(), key)
-		} else {
-			v, err = s.Get(r.Context(), key, n)
-		}
-		if err != nil {
-			apiError(w, err)
-			return
-		}
-		var doc struct {
-			Review struct {
-				Repository, Head, Base string
-				MergeBase              string `json:"merge_base"`
-			}
-		}
-		if json.Unmarshal(v.Document, &doc) != nil {
-			http.Error(w, "invalid stored document", 500)
-			return
-		}
-		result, err := locallink.Resolve(r.Context(), locallink.Request{Dir: c.Path, Repository: doc.Review.Repository, Head: doc.Review.Head, Base: doc.Review.Base, MergeBase: doc.Review.MergeBase})
-		if err != nil {
-			apiError(w, err)
-			return
-		}
-		if !result.Available {
-			writeJSON(w, result)
-			return
-		}
-		writeJSON(w, result.Commits)
-	})
+	mux.HandleFunc("GET /api/commits", document)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {
@@ -189,7 +154,7 @@ func (a LocalAPI) Handler() http.Handler {
 		_, _ = w.Write(image.Bytes)
 	})
 
-	return mux
+	return &LocalHandler{Handler: mux, documents: cache}
 }
 func (a LocalAPI) selector(w http.ResponseWriter, r *http.Request) (repos.Clone, store.Key, int, bool) {
 	q := r.URL.Query()
@@ -201,7 +166,7 @@ func (a LocalAPI) selector(w http.ResponseWriter, r *http.Request) (repos.Clone,
 		n, nerr = strconv.Atoi(raw)
 	}
 	if id == "" || err != nil || number <= 0 || nerr != nil || n < 0 {
-		http.Error(w, "clone and positive pr required; version must be nonnegative", 400)
+		http.Error(w, "clone and positive pr required; version must be nonnegative", http.StatusBadRequest)
 		return repos.Clone{}, store.Key{}, 0, false
 	}
 	clones, err := a.Registry.List(r.Context())

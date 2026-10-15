@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -123,10 +122,10 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		t.Fatal("unreadable permission treated as known")
 	}
 	entries, err := os.ReadDir(s.directory)
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 {
 		t.Fatalf("cache entries %v %v", entries, err)
 	}
-	info, err := os.Stat(filepath.Join(s.directory, entries[0].Name()))
+	info, err := os.Stat(repositoryCachePath(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +181,7 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 		t.Fatalf("rate result %#v %v", limited, err)
 	}
 	before = len(f.requests)
-	if _, err := s.Poll(context.Background(), testRepo); err != nil || len(f.requests) != before {
+	if _, err := s.Poll(context.Background(), testRepo); !errors.Is(err, errRateLimit) || len(f.requests) != before {
 		t.Fatal("exhausted rate limit retried early")
 	}
 }
@@ -236,11 +235,7 @@ func TestCacheStripsUnusedPrivateFieldsAndIgnoresLinkURLs(t *testing.T) {
 	if _, err := s.Poll(context.Background(), testRepo); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(s.directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents, err := os.ReadFile(filepath.Join(s.directory, entries[0].Name()))
+	contents, err := os.ReadFile(repositoryCachePath(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,5 +291,68 @@ func TestSecondaryRateAndServerPollingInterval(t *testing.T) {
 	limited, err := s.Poll(context.Background(), testRepo)
 	if !errors.Is(err, errRateLimit) || limited.NextPoll.Sub(*now) != 90*time.Second || limited.Rate.Remaining == nil || *limited.Rate.Remaining != 100 || !limited.Rate.RetryAt.Equal(limited.NextPoll) {
 		t.Fatalf("secondary budget %#v %v", limited, err)
+	}
+}
+
+func repositoryCachePath(t *testing.T, s *Service) string {
+	t.Helper()
+	reader, err := s.client.REST(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := s.path(reader.CacheIdentity(), testRepo.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestBudgetSharedAcrossRepositoriesAndRestart(t *testing.T) {
+	for _, secondary := range []bool{false, true} {
+		t.Run(fmt.Sprintf("secondary=%t", secondary), func(t *testing.T) {
+			f := recordedFixture()
+			f.limited = !secondary
+			f.secondary = secondary
+			s, now := service(t, f)
+			first, err := s.Poll(context.Background(), testRepo)
+			if !errors.Is(err, errRateLimit) {
+				t.Fatalf("first poll: %#v %v", first, err)
+			}
+			before := len(f.requests)
+			other := github.Repository{Host: testRepo.Host, Owner: testRepo.Owner, Name: "other"}
+			blocked, err := s.Poll(context.Background(), other)
+			if !errors.Is(err, errRateLimit) || len(f.requests) != before || !blocked.Stale || !blocked.NextPoll.Equal(first.NextPoll) {
+				t.Fatalf("same credential sent request %#v %v requests=%d", blocked, err, len(f.requests)-before)
+			}
+			restarted := New(s.client, s.directory)
+			restarted.now = s.now
+			if _, err := restarted.Poll(context.Background(), other); !errors.Is(err, errRateLimit) || len(f.requests) != before {
+				t.Fatalf("restart ignored budget %v", err)
+			}
+			// Another account on the same host has a different budget.
+			accountRequests := 0
+			isolated := New(github.New(func(context.Context, string) (string, error) { return "another-account", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) { accountRequests++; return nil, errors.New("offline") })}), s.directory)
+			isolated.now = s.now
+			_, _ = isolated.Poll(context.Background(), other)
+			if accountRequests != 1 {
+				t.Fatalf("other account inherited exhausted budget: %d requests", accountRequests)
+			}
+			// The same credential string on another host also has a different budget.
+			t.Setenv("GH_HOST", "github.enterprise.example")
+			hostRequests := 0
+			hostService := New(github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) { hostRequests++; return nil, errors.New("offline") })}), s.directory)
+			hostService.now = s.now
+			_, _ = hostService.Poll(context.Background(), github.Repository{Host: "github.enterprise.example", Owner: "acme", Name: "app"})
+			if hostRequests != 1 {
+				t.Fatalf("other host inherited exhausted budget: %d requests", hostRequests)
+			}
+			*now = first.NextPoll
+			f.limited = false
+			f.secondary = false
+			_, _ = restarted.Poll(context.Background(), other)
+			if len(f.requests) == before {
+				t.Fatal("deadline expiry did not permit a request")
+			}
+		})
 	}
 }

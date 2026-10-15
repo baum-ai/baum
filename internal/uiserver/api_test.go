@@ -22,7 +22,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer registry.Close()
+	defer func() { _ = registry.Close() }()
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)
@@ -49,6 +49,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	cfg.GitHubToken = "secret-github"
 	cfg.AnthropicAPIKey = "secret-model"
 	handler := LocalAPI{Registry: registry, Config: cfg}.Handler()
+	defer handler.Close()
 	selector := "?clone=" + clone.ID + "&pr=7"
 	for _, tt := range []struct {
 		path string
@@ -77,7 +78,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.listener.Close()
+	defer func() { _ = s.listener.Close() }()
 	w := request(t, s, "DELETE", "/api/repos/"+clone.ID, "", "https://evil.example", "application/json", "Bearer "+s.launch, "{}")
 	if w.Code != http.StatusForbidden {
 		t.Fatal(w.Code)

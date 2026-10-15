@@ -195,3 +195,22 @@ func (s *Server) finishSessions() {
 		_, _ = fmt.Fprintln(s.opts.Warn, "warning: a sessions computation did not stop in time")
 	}
 }
+
+// handleCommits shares the linked-session computation and its bounds.
+func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
+	result, ok := s.sessionsResult(r.Context())
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if !result.Available {
+		_ = json.NewEncoder(w).Encode(result)
+		return
+	}
+	commits := result.Commits
+	if commits == nil {
+		commits = []locallink.Commit{}
+	}
+	_ = json.NewEncoder(w).Encode(commits)
+}

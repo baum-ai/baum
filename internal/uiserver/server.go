@@ -120,13 +120,13 @@ func (s *Server) Handler() http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
 		if s.origin == "" || r.Host != strings.TrimPrefix(s.origin, "http://") {
-			http.Error(w, "forbidden host", 403)
+			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if r.Header.Get("Origin") != s.origin || err != nil || kind != "application/json" {
-				http.Error(w, "same-origin JSON request required", 403)
+				http.Error(w, "same-origin JSON request required", http.StatusForbidden)
 				return
 			}
 		}
@@ -152,15 +152,15 @@ func (s *Server) Handler() http.Handler {
 			d := json.NewDecoder(r.Body)
 			d.DisallowUnknownFields()
 			if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF || !same(input.Token, s.launch) {
-				http.Error(w, "unauthorized", 401)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "baum_ui", Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
-			w.WriteHeader(204)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if !s.authorized(r) {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		switch r.URL.Path {
@@ -218,7 +218,7 @@ func (s *Server) Publish(kind string, data any) error {
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	f, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unavailable", 500)
+		http.Error(w, "streaming unavailable", http.StatusInternalServerError)
 		return
 	}
 	var after uint64
@@ -226,7 +226,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		var err error
 		after, err = strconv.ParseUint(raw, 10, 64)
 		if err != nil {
-			http.Error(w, "invalid event cursor", 400)
+			http.Error(w, "invalid event cursor", http.StatusBadRequest)
 			return
 		}
 	}

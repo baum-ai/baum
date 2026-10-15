@@ -189,7 +189,7 @@ func running(ctx context.Context, path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 128))
 	if err != nil || response.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
 		return "", false
