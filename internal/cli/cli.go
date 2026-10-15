@@ -98,6 +98,7 @@ and serves an embedded viewer for it on localhost.`,
 		newRefreshCommand(),
 		newSessionsCommand(),
 		newReposCommand(),
+		newUICommand(),
 	)
 	return cmd
 }

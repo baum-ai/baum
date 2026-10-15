@@ -65,8 +65,9 @@ type Metadata struct {
 }
 
 type Version struct {
-	Metadata Metadata        `json:"metadata"`
-	Document json.RawMessage `json:"document"`
+	Attachments []Attachment    `json:"-"`
+	Metadata    Metadata        `json:"metadata"`
+	Document    json.RawMessage `json:"document"`
 }
 type Store struct{ root string }
 
@@ -255,6 +256,9 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 	if !strings.EqualFold(doc.Review.Repository, k.documentRepository()) || doc.Review.PullRequest != k.Number || doc.Review.Version != v.Metadata.Version {
 		return errors.New("document identity does not match stored version")
 	}
+	if err := validateAttachments(v); err != nil {
+		return err
+	}
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return err
@@ -281,6 +285,9 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 	}
 	if n != 1 {
 		return ErrConflict
+	}
+	if err := saveAttachments(ctx, tx, k, v); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

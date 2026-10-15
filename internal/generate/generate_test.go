@@ -88,7 +88,8 @@ func TestValidFirstPassIsCompleteStrictAndClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, f.progress.String())
 	}
-	var document struct {
+	if len(result.Attachments) != 1 || !bytes.Equal(result.Attachments[0].Bytes,assembletest.PNG) { t.Fatalf("captured images unavailable after run cleanup: %+v",result.Attachments) }
+ var document struct {
 		Review struct {
 			Repository string `json:"repository"`
 			Head       string `json:"head"`

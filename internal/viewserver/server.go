@@ -484,3 +484,11 @@ func (h *hub) broadcast() {
 		}
 	}
 }
+
+// Close cancels computations when a host serves Mux without Listen/Serve.
+// Call it only after requests using that mux have finished.
+func (s *Server) Close() {
+	s.lifeCancel()
+	s.stop.Do(func() { close(s.done) })
+	s.finishSessions()
+}

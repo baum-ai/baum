@@ -66,7 +66,7 @@ address, which stops other websites in your browser from reading it, but any
 other user or process on the same machine can request the port while it runs
 and read everything it serves, transcripts included, even without permission
 to read your `~/.claude` or other session stores. Do not run `baum view` on a
-shared machine. `baum ui` will add token authentication.
+shared machine. `baum ui` adds the separate authenticated boundary described below.
 
 ## Reading your clone without downloading anything
 
@@ -197,10 +197,9 @@ Registration and availability checks read local git metadata only; they do not
 resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
 preferences default off and registration does not start any background work.
 
-The registry HTTP handler is currently an internal integration boundary, not a
-running server. A future local UI host must authenticate requests and validate
-Host and Origin before mounting it: its write routes can register local paths,
-remove records and change settings. `baum view` exposes none of these routes.
+The registry HTTP handler is mounted by `baum ui` behind its authenticated
+Host/Origin boundary: its write routes can register local paths, remove records
+and change settings. `baum view` exposes none of these routes.
 
 ## Reporting a vulnerability
 
@@ -221,3 +220,29 @@ exposed while triggering the issue, treat it as compromised and rotate it.
 
 This policy covers the baum repository. It does not cover the model
 providers, GitHub, or the coding-agent tools whose sessions baum reads.
+
+## Authenticated local application
+
+`baum ui` accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
+local data; every API requires the random private launch capability or an
+HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
+browser receives the capability in a URL fragment, removes it from history,
+and sends it in the same-origin JSON exchange body. All mutations require the
+exact local Origin and JSON content type, including requests using Bearer
+authentication. No route enables CORS. The capability is valid only while the
+instance runs; keep the printed URL and its mode-0600 instance file private.
+Processes running as your user can read that file and access the API.
+
+The per-user instance directory must be mode 0700. A second invocation verifies
+the existing instance using its capability before opening it, without sending
+that capability to a redirect, proxy, non-loopback host or baum server. SQLite
+OS locking prevents concurrent owners and releases locks after process exit.
+
+Document selectors must name a registered clone. Linked transcripts use the
+same redaction and linked-session allowlist as `baum view`; file patches are
+restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
+Stored image APIs return only document-listed, content-checked PNG, JPEG, GIF
+or WebP copies. They reject SVG/HTML and never follow document URLs. Images
+carry nosniff and a sandboxed, deny-all content security policy. Local successful
+versions retain their captured images atomically alongside the document;
+removing a registry entry does not delete that history.

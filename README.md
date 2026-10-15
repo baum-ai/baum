@@ -441,3 +441,50 @@ reviewed and merged here as usual and then pulled into the monorepo.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+### Local application server
+
+`baum ui` starts the local application API on `127.0.0.1` at a free port.
+`--port 8080` selects a port; `--no-open` prints the private launch URL without
+opening a browser. Keep the process running until you finish; Ctrl-C stops it.
+A second invocation opens the existing instance, even if another port was
+requested. The initial page currently confirms API readiness; the inbox SPA
+is a separate interface over these endpoints.
+
+The URL carries a random capability in its fragment, which the bootstrap
+removes from browser history before exchanging it for an HttpOnly,
+SameSite=Strict session cookie. The capability remains valid for the lifetime
+of this instance so subsequent invocations and a desktop host can authorize a
+new browser. It is kept only in the private per-user instance file and printed
+launch URL. API clients may use `Authorization: Bearer <capability>` instead of
+a cookie. All mutations, including token exchange, require the exact local
+`Origin` and `Content-Type: application/json`; no CORS access is enabled.
+Only the exact bound `127.0.0.1:port` Host is accepted.
+
+The instance lock and 0600 capability file live under
+`$XDG_RUNTIME_DIR/baum`, or `$XDG_STATE_HOME/baum` (default
+`~/.local/state/baum`). That directory must be private (0700). The OS releases
+the SQLite instance lock after a crash; stale capability files are replaced
+only by the next lock owner. The desktop host can use the same start/lock and
+exchange APIs without opening a browser.
+
+Authenticated endpoints include `/api/repos` and repository settings,
+`/api/prs`, `/api/index`, `/api/document`, `/api/versions`, `/api/sessions`
+(and `/api/sessions/{id}`), `/api/commits`, `/api/patch`,
+`/api/attachments/{id}`, `/api/jobs`, `/api/settings` and `/api/diagnostics`.
+Document, version, image and linkage endpoints require `?clone=<registry id>&pr=N`
+with optional `&version=N` (default latest); paths cannot select arbitrary
+files or unregistered clones. Settings and diagnostics never return tokens.
+Jobs report `runner_unavailable` until the background runner is installed.
+`GET /api/events` streams index/progress notifications, replaying from
+`Last-Event-ID`; a client outside the bounded replay window receives `reset`
+and must rebuild its index.
+
+New generated versions retain captured description images in the same SQLite
+transaction as the document. Only listed PNG, JPEG, GIF and WebP copies are
+stored, up to 20 images of 10 MiB each, and are served with their verified
+content type. Older versions without retained copies return not found; the
+server never downloads a document's image URLs. The renderer host can use
+`AttachmentUrlProvider` to resolve these image endpoints. Sessions, transcripts
+and patches follow the existing viewer's local linkage, redaction and cited
+path restrictions. `baum view` remains the independent document viewer.

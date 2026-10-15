@@ -1205,3 +1205,26 @@ them. No clone-on-demand or generation runner is involved.
 handler exposes registry operations only; the future UI host owns listening,
 instance lifecycle, authentication and host/origin validation. It must mount the
 handler behind that middleware. The existing document viewer does not mount it.
+
+## Authenticated local application host
+
+`internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
+HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+Its public bootstrap contains no local data or capability; all API providers
+run behind the same middleware. `LocalAPI` composes the registry, read-only
+version store and existing `viewserver` linkage/transcript/patch handlers.
+Document selectors resolve registered clone IDs, never request-provided paths.
+The server makes no baum-server requests. Discovery and index are separate
+providers; a missing generation runner is an explicit unavailable capability.
+
+A private SQLite write lock keeps one process per user, with an authenticated
+health probe before another invocation trusts the private capability file.
+Cleanup removes that file before releasing the lock. SSE has a bounded
+in-memory event log; reconnect replays notifications or asks for an index reset.
+It does not persist a second review index.
+
+Version image copies use an additive `attachments` table keyed by repository,
+PR, immutable version and attachment ID, committed atomically by `Store.Put`.
+`generate` returns copies from the original, hash-checked assembly archive,
+not agent-visible files. Reads expose only raster images listed in that
+version's document. Existing stores without the table remain readable.

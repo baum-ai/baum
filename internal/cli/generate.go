@@ -233,7 +233,7 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		return err
 	}
 
-	if err := versions.Put(ctx, key, previousNumber, store.Version{Metadata: result.Metadata, Document: result.Document}); err != nil {
+	if err := versions.Put(ctx, key, previousNumber, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
 		publishErr := fmt.Errorf("store generated version: %w", err)
 		if ctx.Err() != nil {
 			publishErr = interruptedError()
