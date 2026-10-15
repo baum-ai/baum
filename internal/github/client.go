@@ -35,8 +35,8 @@ type Options struct {
 	Transport http.RoundTripper
 }
 
-// Client is a GitHub GraphQL client that reads any GitHub host with that
-// host's token.
+// Client reads GitHub GraphQL evidence and read-only REST discovery metadata
+// from any recognized GitHub host with that host's token.
 type Client struct {
 	tokens        TokenSource
 	transport     http.RoundTripper

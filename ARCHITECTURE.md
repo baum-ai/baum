@@ -96,7 +96,8 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` is the GraphQL client `baum bundle` reads GitHub with. It reads hosts, repositories, remote URLs, SSH host
+`internal/github` is the GraphQL client `baum bundle` reads GitHub with, and
+the bounded read-only REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
 aliases and tokens as the GitHub CLI does, through its library go-gh
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
 themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
@@ -130,11 +131,12 @@ backoff, `sources` and the mapping onto the bundle.
   be unlocked. go-gh's own order puts `GH_TOKEN` before `GITHUB_TOKEN`;
   baum keeps its documented order and uses go-gh only for the GitHub CLI's
   part.
-- **Requests.** The token goes only to the host's GraphQL endpoint, the
-  client follows no redirect at all (GitHub's GraphQL endpoint never sends
-  one), and requests carry `User-Agent: baum` and no other header of the
-  client's own. Nothing is cached and nothing is logged; `GH_DEBUG` has no
-  effect. Responses reach the mapping exactly as GitHub sent them.
+- **Requests.** The token goes only to the host's derived API endpoint, the
+  client follows no redirect at all, and requests identify `User-Agent: baum`.
+  REST discovery also sends the JSON accept header, a pinned API version and
+  conditional ETags. Bundle requests are not cached and nothing is logged;
+  `GH_DEBUG` has no effect. Discovery caches only its minimal inbox response fields, as described
+  below. Responses reach the mapping exactly as GitHub sent them.
 - The pull request is `--pr` on the repository `--repo` names
   (`owner/name` on github.com, or `host/owner/name`) or, by default, the one
   the clone's `origin` remote names (https, ssh and scp-like URLs, read with
@@ -1213,3 +1215,23 @@ summaries in one transaction, plus separate latest-started run records. It does
 not move document bodies or maintain a second database. CLI generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
+
+### Local pull request discovery
+
+`internal/discovery` reads all open PR pages, the authenticated user, the user's
+teams and per-author repository permissions through `internal/github.REST`.
+It uses numeric pagination, never an API-provided URL, and refuses redirects.
+Missing team scope and unreadable permissions are explicit unknown evidence;
+a fork or unknown author permission must not become an automatic-generation
+authorization. This service has no generation or GitHub mutation capability.
+
+`Service.Cached` resolves the local credential and reads disk without network
+access, always marking the snapshot stale. `Service.Poll` serializes polls,
+honors its next deadline, issues ETag conditional requests for every page and
+backs off for unchanged data, GitHub's polling interval and rate reset. It
+returns rate budget/reset rather than sleeping through an exhausted budget.
+A required request failure preserves the last complete inbox as stale; optional
+team or permission failures keep their fields unknown. Snapshots and minimal
+conditional response bodies are atomically replaced in private cache files,
+partitioned by host/credential fingerprint/repository. The index consumes these
+snapshots; it never treats missing PRs in an open-only snapshot as closed.

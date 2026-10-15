@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,5 +128,69 @@ func TestUnreadableStoreAndWorktreeDeduplication(t *testing.T) {
 	got, err := s.Build(context.Background())
 	if err != nil || calls != 1 || len(got.Problems) != 1 || len(got.Entries) != 1 || got.Entries[0].Status != "unknown" || got.Entries[0].StoreError != "store_unreadable" {
 		t.Fatalf("%+v %v calls=%d", got, err, calls)
+	}
+}
+
+func BenchmarkBuildManyRepositories(b *testing.B) {
+	root := b.TempDir()
+	clones := registry{}
+	discovered := source{}
+	ctx := context.Background()
+	for repository := 0; repository < 20; repository++ {
+		name := fmt.Sprintf("acme/repo-%d", repository)
+		common := filepath.Join(root, name)
+		versions, err := store.Open(common, "", true)
+		if err != nil {
+			b.Fatal(err)
+		}
+		clones = append(clones, repos.Clone{ID: name, Repository: name, CommonDir: common, Available: true})
+		prs := []discovery.PullRequest{}
+		for pr := 1; pr <= 10; pr++ {
+			prs = append(prs, discovery.PullRequest{Repository: name, Number: pr, HeadSHA: "head", State: "OPEN"})
+			for version := 1; version <= 5; version++ {
+				document := []byte(fmt.Sprintf(`{"review":{"repository":%q,"pull_request":%d,"version":%d},"padding":%q}`, name, pr, version, strings.Repeat("x", 32<<10)))
+				if err = versions.Put(ctx, store.Key{Repository: name, Number: pr}, version-1, store.Version{Metadata: store.Metadata{Version: version, Head: "head"}, Document: document}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+		discovered[name] = discovery.Snapshot{PullRequests: prs}
+	}
+	service := &Service{Registry: clones, Discovery: discovered}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		snapshot, err := service.Build(ctx)
+		if err != nil || len(snapshot.Entries) != 200 {
+			b.Fatalf("entries=%d err=%v", len(snapshot.Entries), err)
+		}
+	}
+}
+
+func TestCorruptStoreDoesNotHideOtherRepositoryHistory(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	good := filepath.Join(root, "good")
+	bad := filepath.Join(root, "bad")
+	versions, err := store.Open(good, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = versions.Put(ctx, store.Key{Repository: "a/good", Number: 7}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "head"}, Document: []byte(`{"review":{"repository":"a/good","pull_request":7,"version":1,"pr_state":"closed"}}`)}); err != nil {
+		t.Fatal(err)
+	}
+	corrupt, err := store.Open(bad, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(corrupt.Root(), "versions.sqlite"), []byte("corrupt database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Registry: registry{{ID: "good", Repository: "a/good", CommonDir: good, Available: false}, {ID: "bad", Repository: "a/bad", CommonDir: bad, Available: true}}, Discovery: source{"a/bad": {PullRequests: []discovery.PullRequest{{Number: 7, HeadSHA: "head", State: "OPEN"}}}}}
+	got, err := service.Build(ctx)
+	if err != nil || len(got.Entries) != 2 || len(got.Problems) != 2 {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if got.Entries[0].PullRequest.Repository != "a/bad" || got.Entries[0].StoreError != "store_unreadable" || got.Entries[1].PullRequest.State != "CLOSED" || !got.Entries[1].Historical {
+		t.Fatal(got)
 	}
 }
