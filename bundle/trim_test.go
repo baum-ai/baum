@@ -1176,3 +1176,54 @@ func TestFitBytesShortensAnOversizedCitedPromptBeforeDroppingSessions(t *testing
 		})
 	}
 }
+
+// A previous section's free-text keys are redacted, not exempted.
+func TestRedactPreviousScansFreeTextKeys(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(map[string]any{
+		"decisions": []any{map[string]any{"id": "d1", "evidence": "quote " + plantedSecret}},
+		"anchor":    map[string]any{"type": "prompt", "input": "mail person@example.com"},
+		"column":    map[string]any{"type": "text " + plantedSecret},
+		"step":      map[string]any{"evidence": []any{"ev_one", "ev_two"}, "category": "security"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &Bundle{Previous: &PreviousVersion{Sections: []PreviousSection{{ID: "sec_x", Title: "X", Content: content}}}}
+	if err := Redact(context.Background(), bundle, redactor); err != nil {
+		t.Fatal(err)
+	}
+	redacted := string(bundle.Previous.Sections[0].Content)
+	if strings.Contains(redacted, plantedSecret) || strings.Contains(redacted, "person@example.com") {
+		t.Fatalf("free-text keys kept a leak: %s", redacted)
+	}
+	if bundle.MaskedSpanCount != 3 {
+		t.Fatalf("masked spans = %d, want 3", bundle.MaskedSpanCount)
+	}
+	if !strings.Contains(redacted, `"type":"prompt"`) || !strings.Contains(redacted, `"id":"d1"`) ||
+		!strings.Contains(redacted, `"evidence":["ev_one","ev_two"]`) || !strings.Contains(redacted, `"category":"security"`) {
+		t.Fatalf("discriminator, id, evidence refs or category changed: %s", redacted)
+	}
+}
+
+// A review thread's path and URL are redacted like the conversation's.
+func TestRedactMasksThreadPathAndURL(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &Bundle{Threads: []Thread{{ID: "t1", Path: "docs/people/ada@example.com.md", URL: "https://x.test/?token=" + plantedSecret}}}
+	if err := Redact(context.Background(), bundle, redactor); err != nil {
+		t.Fatal(err)
+	}
+	thread := bundle.Threads[0]
+	if strings.Contains(thread.Path, "ada@example.com") || strings.Contains(thread.URL, plantedSecret) || thread.ID != "t1" {
+		t.Fatalf("thread = %+v", thread)
+	}
+	if bundle.MaskedSpanCount != 2 {
+		t.Fatalf("masked spans = %d, want 2", bundle.MaskedSpanCount)
+	}
+}
