@@ -204,3 +204,75 @@ func TestExplicitStoreNeverFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRefreshFencesConcurrentWritersAndPreservesHistory(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	first, second := version(key, 1), version(key, 2)
+	if err := s.Put(ctx, key, 0, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, key, 1, second); err != nil {
+		t.Fatal(err)
+	}
+	changed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":2},"refreshed":true}`)
+	if err := s.RefreshCurrent(ctx, key, first, first.Document); !errors.Is(err, ErrConflict) {
+		t.Fatalf("refreshed older version: %v", err)
+	}
+	if err := s.RefreshCurrent(ctx, key, second, changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshCurrent(ctx, key, second, second.Document); !errors.Is(err, ErrConflict) {
+		t.Fatalf("overwrote concurrent refresh: %v", err)
+	}
+	got, err := s.Latest(ctx, key)
+	if err != nil || string(got.Document) != string(changed) || got.Metadata != second.Metadata {
+		t.Fatalf("latest: %+v %v", got, err)
+	}
+	old, err := s.Get(ctx, key, 1)
+	if err != nil || string(old.Document) != string(first.Document) {
+		t.Fatalf("history changed: %+v %v", old, err)
+	}
+	if err := s.Put(ctx, key, 2, version(key, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshCurrent(ctx, key, got, second.Document); !errors.Is(err, ErrConflict) {
+		t.Fatalf("overwrote new generation: %v", err)
+	}
+}
+
+func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
+	s := opened(t)
+	ctx := context.Background()
+	key := Key{"owner/repo", 7}
+	saved := version(key, 1)
+	if err := s.Put(ctx, key, 0, saved); err != nil {
+		t.Fatal(err)
+	}
+	const count = 8
+	start := make(chan struct{})
+	results := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := range count {
+		wg.Go(func() {
+			<-start
+			changed := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"refresh":%d}`, i))
+			results <- s.RefreshCurrent(ctx, key, saved, changed)
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, ErrConflict) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("published %d concurrent refreshes", successes)
+	}
+}
