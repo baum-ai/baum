@@ -188,6 +188,20 @@ The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 
+## Local repository registry
+
+`baum repos` stores clone paths, git common directories, normalized GitHub
+identities and generation preferences in a 0600 SQLite database beside the XDG
+config file. Remote URLs and their credentials are never persisted or returned.
+Registration and availability checks read local git metadata only; they do not
+resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
+preferences default off and registration does not start any background work.
+
+The registry HTTP handler is currently an internal integration boundary, not a
+running server. A future local UI host must authenticate requests and validate
+Host and Origin before mounting it: its write routes can register local paths,
+remove records and change settings. `baum view` exposes none of these routes.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or
