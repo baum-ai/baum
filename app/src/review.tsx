@@ -8,7 +8,7 @@ import { AttachmentUrlProvider } from "@baum/viewer/host";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
-import { request, selector, documentRequest, type Entry } from "./api";
+import { request, selector, documentRequest, type Entry, type Job, isActiveJob, cost } from "./api";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -60,13 +60,27 @@ export function LocalReview({
   clone,
   revision,
   generate,
+  job,
+  changed,
 }: {
   entry: Entry;
   clone: string;
   revision: number;
   generate: () => void;
+  job?: Job;
+  changed: () => Promise<void>;
 }) {
   const pr = entry.pull_request;
+  const generating = isActiveJob(job) || (!job && entry.status === "generating");
+  const generationState = generating
+    ? "pending"
+    : job?.state === "failed" || job?.state === "interrupted"
+      ? "failed"
+      : entry.status === "generating"
+        ? undefined
+        : entry.status === "current" || entry.status === "outdated" || entry.status === "failed"
+          ? entry.status
+          : undefined;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -169,23 +183,28 @@ export function LocalReview({
               state: pr.state.toLowerCase(),
             },
             back: { href: "/", label: "Inbox" },
-            generation: {
-              state:
-                entry.status === "generating"
-                  ? "pending"
-                  : entry.status === "current" ||
-                      entry.status === "outdated" ||
-                      entry.status === "failed"
-                    ? entry.status
-                    : undefined,
-            },
+            generation: { state: generationState, rewriting: generating && Boolean(doc) },
             beside: (
-              <Button onClick={generate}>{doc ? "Regenerate review" : "Generate review"}</Button>
+              <Button disabled={generating} onClick={generate}>
+                {generating
+                  ? job?.state === "queued"
+                    ? "Review queued"
+                    : "Generating review…"
+                  : doc
+                    ? "Regenerate review"
+                    : "Generate review"}
+              </Button>
             ),
           }}
           placeholder={
             <div className="p-4 space-y-3">
-              {failed && entry.version_count > 0 ? (
+              {generating ? (
+                <p role="status">
+                  {job?.state === "queued"
+                    ? "Review generation is queued."
+                    : "Generating review… This page will update when it is ready."}
+                </p>
+              ) : failed && entry.version_count > 0 ? (
                 <Alert>
                   Review could not be read.{" "}
                   <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
@@ -193,13 +212,30 @@ export function LocalReview({
               ) : (
                 <p>{entry.version_count === 0 ? "No generated review yet." : "Loading review…"}</p>
               )}
-              <Button onClick={generate}>Generate review</Button>
+              {!generating ? <Button onClick={generate}>Generate review</Button> : null}
             </div>
           }
           notices={
-            entry.stale ? (
-              <Alert>Discovery is stale. Refresh the inbox to check the current head.</Alert>
-            ) : undefined
+            <>
+              {job && (job.state !== "completed" || !doc) ? (
+                <ReviewJob key={job.id} job={job} changed={changed} />
+              ) : null}
+              {failed && doc ? (
+                <Alert>
+                  The latest review could not be read. This saved version remains available.{" "}
+                  <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
+                </Alert>
+              ) : null}
+              {generating && doc ? (
+                <Alert>
+                  A new review is being generated. This saved version remains available while it
+                  runs.
+                </Alert>
+              ) : null}
+              {entry.stale ? (
+                <Alert>Discovery is stale. Refresh the inbox to check the current head.</Alert>
+              ) : null}
+            </>
           }
           sessions={
             lists
@@ -231,4 +267,48 @@ class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolea
       this.props.children
     );
   }
+}
+
+function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState("");
+  const active = isActiveJob(job);
+  const title =
+    job.state === "queued"
+      ? "Review queued"
+      : job.state === "running"
+        ? "Generating review"
+        : job.state === "completed"
+          ? "Review completed; loading the saved review…"
+          : `Review generation ${job.state}`;
+  return (
+    <section aria-label="Review generation" className="mb-3 local-panel space-y-2">
+      <p role="status">
+        <strong>{title}</strong>
+        {active ? ` · ${job.phase}` : ""}
+      </p>
+      <p className="text-xs text-(--text-tertiary)">
+        Calls {job.calls} · Tokens {job.tokens} · Repairs {job.repairs} · Recorded cost{" "}
+        {cost(job.actual_cost_usd)}
+      </p>
+      {job.reason ? <p>{job.reason}</p> : null}
+      {error ? <Alert>{error}</Alert> : null}
+      {active ? (
+        <Button
+          variant="secondary"
+          disabled={cancelling}
+          onClick={() => {
+            setCancelling(true);
+            setError("");
+            void request(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+              .then(changed)
+              .catch(() => setError("The job could not be cancelled. Try again."))
+              .finally(() => setCancelling(false));
+          }}
+        >
+          {cancelling ? "Cancelling…" : "Cancel job"}
+        </Button>
+      ) : null}
+    </section>
+  );
 }

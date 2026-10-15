@@ -29,7 +29,11 @@ isolation confirmation when generated individually. Generation confirms an
 approximate price and configured model; unknown prices cannot start a run.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs can be cancelled. Existing reviews stay readable
-while regeneration runs. Repository settings share automatic opt-in, daily cap,
+while regeneration runs. A PR page uses the queue’s active job for that
+repository and PR across registered clones, showing queued/running progress
+and cancellation even before its first document exists. Duplicate generation
+controls stay disabled until that job finishes, and completion/cancellation
+updates the page through SSE. Repository settings share automatic opt-in, daily cap,
 backend and model overrides across its registered clones. The background
 scheduler is separate work; opting in here only records that preference.
 

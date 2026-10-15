@@ -140,3 +140,15 @@ export function filtered(entries: Entry[], filter: string, repository: string) {
 export function cost(value: number | null | undefined) {
   return formatUSD(value);
 }
+
+export function isActiveJob(job: Job | undefined): boolean {
+  return job?.state === "queued" || job?.state === "running";
+}
+/** A queue entry belongs to the PR, including its GitHub host, across clones.
+ * Active work takes precedence over earlier terminal attempts. */
+export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
+  const matches = (job: Job) =>
+    job.pr === entry.pull_request.number &&
+    job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase();
+  return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
+}
