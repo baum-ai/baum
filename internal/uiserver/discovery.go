@@ -12,7 +12,7 @@ import (
 )
 
 // DiscoveryCache is shared with the review index. Cached must never contact
-// GitHub; refreshing is an explicit authenticated same-origin mutation.
+// GitHub; polling runs in the background or an authenticated same-origin mutation.
 type DiscoveryCache interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
 	Poll(context.Context, github.Repository) (discovery.Snapshot, error)

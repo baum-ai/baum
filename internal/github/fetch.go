@@ -43,6 +43,10 @@ const maxPages = 1000
 
 // FetchOptions adjust what Fetch flags.
 type FetchOptions struct {
+	// MetadataOnly reads the PR header and current checks without fetching
+	// conversations, review threads, commit lists or protection rules.
+	MetadataOnly bool
+
 	// ChecksHead reads checks for this reviewed commit, while PR metadata stays current.
 	// Empty uses the current pull request head.
 	ChecksHead string
@@ -147,6 +151,9 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 		{SourceRequiredChecks, func() (err error) { raw.required, err = f.requiredChecks(ctx, raw.header.BaseRefName); return err }},
 	}
 	for _, part := range parts {
+		if opts.MetadataOnly && part.name != SourceChecks {
+			continue
+		}
 		err := part.read()
 		switch {
 		case err == nil:

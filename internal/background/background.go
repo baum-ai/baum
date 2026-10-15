@@ -51,6 +51,8 @@ type Service struct {
 	mu        sync.Mutex
 	states    map[string]State
 	hostPause map[string]time.Time
+	cursors   map[string]int
+	nextRepo  string
 }
 
 func (s *Service) now() time.Time {
@@ -143,7 +145,16 @@ func (s *Service) Sync(ctx context.Context) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
+	if s.nextRepo != "" {
+		index := sort.SearchStrings(names, s.nextRepo)
+		if index < len(names) {
+			names = append(append([]string{}, names[index:]...), names[:index]...)
+		}
+	}
+	if s.cursors == nil {
+		s.cursors = map[string]int{}
+	}
+	for repoIndex, name := range names {
 		if ctx.Err() != nil {
 			return
 		}
@@ -181,50 +192,64 @@ func (s *Service) Sync(ctx context.Context) {
 					next = maxTime(next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
 				}
 			} else {
-				for _, clone := range groups[name] {
-					targets := map[int]bool{}
-					for _, pr := range snapshot.PullRequests {
-						targets[pr.Number] = true
+
+				type target struct {
+					clone  repos.Clone
+					number int
+				}
+				var targets []target
+				for cloneIndex, clone := range groups[name] {
+					numbers := map[int]bool{}
+					if cloneIndex == 0 {
+						for _, pr := range snapshot.PullRequests {
+							numbers[pr.Number] = true
+						}
 					}
 					saved, err := s.Saved(ctx, clone)
 					if err != nil {
 						state.Error = "store_unreadable"
 					}
 					for _, number := range saved {
-						targets[number] = true
+						numbers[number] = true
 					}
-					numbers := make([]int, 0, len(targets))
-					for number := range targets {
-						numbers = append(numbers, number)
+					sorted := make([]int, 0, len(numbers))
+					for number := range numbers {
+						sorted = append(sorted, number)
 					}
-					sort.Ints(numbers)
-					for _, number := range numbers {
-						if ctx.Err() != nil {
-							return
-						}
-						requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-						observation, err := s.Refresh(requestCtx, clone, number)
-						cancel()
-						if observation.Number > 0 && observation.HeadSHA != "" {
-							if observeErr := s.Discovery.Observe(ctx, repo, observation); observeErr != nil {
-								state.Error = "cache_unavailable"
-							}
-						}
-						if err != nil {
-							state.Error = "metadata_unavailable"
-							state.Problems = append(state.Problems, Problem{number, "metadata_unavailable"})
-							var limited *github.RateLimitedError
-							if errors.As(err, &limited) {
-								state.Error = "rate_limited"
-								next = maxTime(next, limited.ResumeAt)
-								s.hostPause[repo.Host] = next
-								break
-							}
-							continue
+					sort.Ints(sorted)
+					for _, number := range sorted {
+						targets = append(targets, target{clone, number})
+					}
+				}
+				cursor := 0
+				if len(targets) > 0 {
+					cursor = s.cursors[name] % len(targets)
+				}
+				for i := 0; i < len(targets); i++ {
+					if ctx.Err() != nil {
+						return
+					}
+					current := targets[(cursor+i)%len(targets)]
+					requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+					observation, err := s.Refresh(requestCtx, current.clone, current.number)
+					cancel()
+					s.cursors[name] = (cursor + i + 1) % len(targets)
+					if observation.Number > 0 && observation.HeadSHA != "" {
+						if observeErr := s.Discovery.Observe(ctx, repo, observation); observeErr != nil {
+							state.Error = "cache_unavailable"
 						}
 					}
-					if state.Error == "rate_limited" {
-						break
+					if err != nil {
+						state.Error = "metadata_unavailable"
+						state.Problems = append(state.Problems, Problem{current.number, "metadata_unavailable"})
+						var limited *github.RateLimitedError
+						if errors.As(err, &limited) {
+							state.Error = "rate_limited"
+							next = maxTime(next, limited.ResumeAt)
+							s.hostPause[repo.Host] = next
+							s.nextRepo = names[(repoIndex+1)%len(names)]
+							break
+						}
 					}
 				}
 			}
@@ -234,7 +259,9 @@ func (s *Service) Sync(ctx context.Context) {
 			state.LastSuccess = s.now()
 		} else if state.Failures == 0 {
 			state.Failures = previous.Failures + 1
-			next = maxTime(next, s.now().Add(min(s.interval()*time.Duration(1<<min(state.Failures-1, 8)), 15*time.Minute)))
+			if state.Error != "rate_limited" {
+				next = maxTime(next, s.now().Add(min(s.interval()*time.Duration(1<<min(state.Failures-1, 8)), 15*time.Minute)))
+			}
 		}
 		state.NextRefresh = next
 		s.put(state)

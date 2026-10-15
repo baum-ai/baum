@@ -717,3 +717,24 @@ func TestFetchChecksReviewedHeadWhileMetadataStaysCurrent(t *testing.T) {
 		t.Fatalf("metadata reader head changed: %+v", evidence)
 	}
 }
+
+func TestMetadataOnlyFetchSkipsUnusedEvidence(t *testing.T) {
+	fake := newFakeGitHub(t, fixtureRoutes(t))
+	evidence, err := fake.client(nil).Fetch(context.Background(), acme, 7, FetchOptions{MetadataOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.PullRequest.HeadSHA != headSHA || len(evidence.Checks) == 0 || !evidence.Sources[SourceChecks] {
+		t.Fatalf("missing metadata %+v", evidence)
+	}
+	for _, request := range fake.recorded() {
+		switch request.OperationName {
+		case "PullRequest", "HeadChecks", "CheckSuiteRuns":
+		default:
+			t.Errorf("unused evidence fetched: %s", request.OperationName)
+		}
+	}
+	if len(evidence.PullRequest.Commits) != 0 || len(evidence.Threads) != 0 || len(evidence.Conversation) != 0 || evidence.Sources[SourceRequiredChecks] {
+		t.Fatal("metadata-only fetch loaded unused evidence")
+	}
+}

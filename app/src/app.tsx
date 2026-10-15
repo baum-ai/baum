@@ -119,7 +119,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [clones, setClones] = useState<Clone[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot>({ entries: [], problems: [] });
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [background, setBackground] = useState<{repository:string;error?:string;next_refresh:string}[]>([]);
+  const [background, setBackground] = useState<
+    { repository: string; error?: string; next_refresh: string }[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -225,12 +227,15 @@ function Workspace({ url }: { url: UrlState }) {
         <LocalLink href="/?page=settings">Repositories & settings</LocalLink>
         <span className="text-xs text-(--text-tertiary)">On this machine</span>
       </header>
-      {background.filter((state) => state.error).map((state) => (
-        <Alert key={state.repository}>
-          {state.repository}: background metadata refresh is unavailable ({state.error}).
-          Cached reviews remain readable. Next retry: {new Date(state.next_refresh).toLocaleTimeString()}.
-        </Alert>
-      ))}
+      {background
+        .filter((state) => state.error)
+        .map((state) => (
+          <Alert key={state.repository}>
+            {state.repository}: background metadata refresh is unavailable ({state.error}). Cached
+            reviews remain readable. Next retry: {new Date(state.next_refresh).toLocaleTimeString()}
+            .
+          </Alert>
+        ))}
       <main className="local-main">
         {error ? (
           <Alert>
@@ -589,7 +594,7 @@ function RepositorySettings({
   clone: Clone;
   save: (settings: Clone["settings"]) => Promise<void>;
 }) {
-    const [backend, setBackend] = useState(clone.settings.backend ?? "");
+  const [backend, setBackend] = useState(clone.settings.backend ?? "");
   const [model, setModel] = useState(clone.settings.model ?? "");
   const [pending, setPending] = useState(false);
   const submit = (event: FormEvent) => {
@@ -625,11 +630,10 @@ function RepositorySettings({
             placeholder="Global default"
           />
         </Field>
-
       </div>
       <p className="text-xs">
-        GitHub metadata and saved review evidence refresh in the background. Model generation
-        runs only when you request and confirm it.
+        GitHub metadata and saved review evidence refresh in the background. Model generation runs
+        only when you request and confirm it.
       </p>
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save repository settings"}

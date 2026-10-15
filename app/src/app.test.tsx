@@ -224,3 +224,27 @@ it("distinguishes lower-bound risk from exact and unscored reviews", async () =>
   expect(risks[2]!.textContent).toContain("—");
   expect(risks[2]!.getAttribute("aria-label")).toBe("Risk not scored");
 });
+
+it("shows failed background refresh without hiding cached reviews", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/api/background"
+      ? Promise.resolve(
+          Response.json([
+            {
+              repository: "acme/demo",
+              error: "metadata_unavailable",
+              next_refresh: "2026-10-15T12:01:00Z",
+            },
+          ]),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain(
+    "background metadata refresh is unavailable (metadata_unavailable)",
+  );
+  expect(node.textContent).toContain("Cached reviews remain readable");
+  expect(node.querySelector('[aria-label="Select acme/demo #1"]')).not.toBeNull();
+});

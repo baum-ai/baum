@@ -89,6 +89,7 @@ type Service struct {
 	client    *github.Client
 	directory string
 	mu        sync.Mutex
+	liveMu    sync.Mutex
 	now       func() time.Time
 	validated map[string]bool
 }
@@ -162,8 +163,6 @@ func save(path string, cache diskCache) error {
 // partitions results by credential, so changing accounts cannot reuse an inbox.
 // Disk snapshots are always stale until a successful conditional poll.
 func (s *Service) Cached(ctx context.Context, repository github.Repository) (Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err
@@ -176,7 +175,7 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.validated[path] || !s.now().Before(cache.Snapshot.NextPoll)
+	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.isValidated(path) || !s.now().Before(cache.Snapshot.NextPoll)
 	return cache.Snapshot, nil
 }
 
@@ -329,7 +328,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	now := s.now()
 	shared := poll{rate: budget.Snapshot.Rate}
 	if deadline := shared.ResetIfExhausted(); deadline.After(now) {
-		s.validated[path] = false
+		s.setValidated(path, false)
 		snapshot := cache.Snapshot
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
@@ -365,7 +364,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 		snapshot.Rate = p.rate
 		p.cache.Interval = interval
 	}
-	s.validated[path] = err == nil
+	s.setValidated(path, err == nil)
 	p.cache.Snapshot = snapshot
 	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}}); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
@@ -475,4 +474,15 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
 	return save(path, cache)
+}
+
+func (s *Service) isValidated(path string) bool {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	return s.validated[path]
+}
+func (s *Service) setValidated(path string, value bool) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	s.validated[path] = value
 }

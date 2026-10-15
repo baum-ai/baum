@@ -3,6 +3,7 @@ package background
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os/exec"
@@ -66,6 +67,9 @@ func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.
 	raw, _ := json.Marshal(doc)
 	key := store.Key{Repository: "example-org/taskline", Number: 212}
 	saved := store.Version{Document: raw, Metadata: store.Metadata{Version: 1, Head: head, Base: head, MergeBase: head, Backend: "codex", Model: "priced", GeneratedAt: header["generated_at"].(string)}}
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+	attachmentID := "att_e7b5a4d8274ca858a94cbc586c93c37a"
+	saved.Attachments = []store.Attachment{{ID: attachmentID, ContentType: "image/png", Bytes: png}}
 	if err := versions.Put(ctx, key, 0, saved); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +88,10 @@ func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.
 	_ = json.Unmarshal(latest.Document, &after)
 	if observation.State != "MERGED" || observation.Checks != "failure" || !reflect.DeepEqual(saved.Metadata, latest.Metadata) {
 		t.Fatalf("observation=%+v metadata=%+v", observation, latest.Metadata)
+	}
+	attachment, err := versions.Attachment(ctx, key, 1, attachmentID)
+	if err != nil || !bytes.Equal(attachment.Bytes, png) {
+		t.Fatal("refresh changed retained attachment", err)
 	}
 	beforeSections := doc["sections"].([]any)
 	afterSections := after["sections"].([]any)

@@ -399,3 +399,43 @@ func TestLiveFreshnessAndRestart(t *testing.T) {
 		t.Fatal("offline cache fresh")
 	}
 }
+
+func TestCachedNeverWaitsForNetworkPoll(t *testing.T) {
+	f := recordedFixture()
+	blocked := false
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if blocked {
+			once.Do(func() { close(started) })
+			<-release
+		}
+		return f.roundTrip(r)
+	})})
+	s := New(client, t.TempDir())
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	blocked = true
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = s.Poll(context.Background(), testRepo) }()
+	<-started
+	returned := make(chan error, 1)
+	go func() { _, err := s.Cached(context.Background(), testRepo); returned <- err }()
+	select {
+	case err := <-returned:
+		close(release)
+		<-done
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("cached inbox blocked on network poll")
+	}
+}

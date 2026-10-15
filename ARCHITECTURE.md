@@ -1302,3 +1302,22 @@ PR page, sourcing documents, immutable versions, patches, sessions and commits
 from registered local clones. The renderer stays in `viewer/`; the app owns
 only local inbox, jobs, confirmation and settings presentation. The common
 viewer build/freshness scripts include both embedded applications.
+
+### Free background synchronization
+
+`internal/background` runs one cancellable worker after the local instance lock
+is acquired. It has registry/discovery/metadata capabilities only; the generation
+queue and model backends are not dependencies. It polls immediately without
+blocking HTTP startup, then schedules discovery and latest-review evidence with
+conditional-cache deadlines, bounded requests, error backoff and host rate resets.
+Per-repository target cursors and repository rotation prevent a small renewed
+GitHub budget from perpetually serving only the first PRs. Linked worktrees are
+deduplicated by common git directory. No-review PRs fetch only a header and checks;
+saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+
+Discovery's live freshness map uses its own short mutex; cached readers never
+wait behind a network poll. Disk-only startup remains stale. Minimized current
+head/state/title/check observations share the private credential-partitioned
+cache and augment the index, including historical PRs. A newer discovery result
+wins over older observations. Authenticated `/api/background` and index events
+report refresh health without filesystem paths, credentials or remote bodies.

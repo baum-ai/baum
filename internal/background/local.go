@@ -34,7 +34,7 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (disc
 	key := store.Key{Repository: repo.String(), Number: number}
 	saved, err := versions.Latest(ctx, key)
 	if errors.Is(err, store.ErrNotFound) {
-		evidence, err := l.Client.Fetch(ctx, repo, number, github.FetchOptions{})
+		evidence, err := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
 		if err != nil {
 			return discovery.Observation{}, err
 		}
@@ -69,7 +69,7 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (disc
 		return observation, err
 	}
 	if observation.HeadSHA != saved.Metadata.Head {
-		current, fetchErr := l.Client.Fetch(ctx, repo, number, github.FetchOptions{})
+		current, fetchErr := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
 		if fetchErr != nil {
 			observation.Checks = "unknown"
 			return observation, fetchErr
