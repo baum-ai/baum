@@ -22,10 +22,10 @@ Everything runs locally:
 
 The repository is being stood up phase by phase. The CLI skeleton, config
 layout, review schema, release pipeline, `baum sessions`, `baum validate`,
-`baum bundle`, `baum generate`, `baum view`, `baum repos` and `baum ui` exist;
-`refresh` prints its help
-and exits non-zero until its phase lands. `generate` stores immutable local
-versions and reuses the previous version for section and risk history.
+`baum bundle`, `baum generate`, `baum refresh`, `baum view`, `baum repos` and
+`baum ui` exist. `generate` stores local versions and reuses the previous version
+for section and risk history. `refresh` updates evidence in the latest version
+without a model call; replaced versions stay frozen.
 
 ## Install
 
@@ -55,6 +55,9 @@ baum generate --pr 191 -o review.json
 baum view --pr 191
 baum view --pr 191 --version 1
 baum validate --pr 191
+
+# Update the latest saved review evidence without calling a model.
+baum refresh --pr 191
 
 # Assemble the generation input without calling a model, for debugging. Without
 # --pr it is the pull request of the current branch; --repo owner/name replaces
@@ -147,6 +150,32 @@ replaces all repository settings; null backend/model/cap clears an override.
 `baum ui` mounts this handler behind authentication and Host/Origin checks.
 `baum view` does not expose these routes.
 
+### baum refresh
+
+```sh
+baum refresh [--pr N] [--repo owner/name] [--store directory]
+             [--previous-path directory]
+```
+
+`refresh` re-reads GitHub checks/statuses, bot reports, review threads and agent
+reviews, and re-links local sessions to the saved review's commit range. It
+updates only the latest saved document, with no model call, new review version,
+checkout export or image download. Version, generation time and provenance,
+authored prose, section grouping, image blocks and attachment indexes stay as
+saved. Older versions remain unchanged. It requires an existing review: run
+`generate` first when none exists. Without `--pr`, it uses the current branch's
+pull request; `--repo` and `--store` select the same repository and history as
+`generate` and `view`.
+
+The review is current only when both its saved head and base match GitHub;
+otherwise it becomes outdated. Checks are loaded for the saved reviewed head,
+and cannot verify evidence after the pull request moves to a newer head.
+Missing or unsupported evidence is downgraded. Failures leave the document
+unchanged and exit non-zero; they never implicitly generate or record a failed
+generation. Concurrent refresh or generation rejects a stale replacement, so
+retry against the latest document. Refresh updates the store, not JSON files
+previously exported with `generate -o`.
+
 ### baum generate
 
 ```sh
@@ -194,7 +223,8 @@ pull request numbers isolate histories even in a shared override directory.
 
 Publication is one SQLite transaction: the completed document and metadata
 (revisions, bundle digest, backend/model, schema/prompt/policy identities and
-generation timing/usage) appear together. Earlier versions remain immutable.
+generation timing/usage) appear together. Versions replaced by a later
+generation remain immutable; the latest version can refresh its evidence.
 A second generation supplies the previous document to the shared history logic,
 which retains section IDs, stale sections and risk introductions/mitigations.
 Concurrent runs may both generate from the same version; only one publishes,

@@ -282,13 +282,15 @@ Given the previous version, `review` keeps sections stable:
 ### Refresh and redaction
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
-document without a model call; the platform's refresh uses it (the
-`baum refresh` command is not implemented yet). It rebuilds the session
-index from the bundle and carries over, for each readable session the
+document without a model call; both the platform and `baum refresh` use it. It
+rebuilds the session index from the bundle and carries over, for each readable session the
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
 so prompts that decisions cited at generation keep their bounded text while
-a prompt only an earlier refresh added is not carried again.
+a prompt only an earlier refresh added is not carried again. Local refresh also
+reconstructs the reviewed hunks' IDs, paths, roles and line ranges from the saved
+index, so agent findings keep their section and hunk locations and section
+finding counts follow resolution and reopening.
 
 Everything a model returns is untrusted. `review.OutputRedactor` masks a
 document, or any other text a host passes it (the findings, the diagnostics);
@@ -1118,7 +1120,8 @@ document. A spent `pass_timeout` is reported as the budget
 `generation budget exceeded: pass_timeout` and is not retried; the run's wall
 clock as `wall_clock`. The document is returned only for a run that passed every
 step, and published by the command afterwards. `internal/store` keeps
-immutable documents and metadata in SQLite under the common git directory
+versioned documents and immutable generation metadata in SQLite under the
+common git directory
 (`baum/reviews/versions.sqlite`), so linked worktrees share one history. A new
 store falls back to the XDG data directory (or `~/.local/share`) when git is
 read-only, keyed by the canonical common-directory digest; `--store` overrides
@@ -1126,7 +1129,11 @@ the root. Existing local or fallback history wins over creating another store,
 and a read-only existing store fails writes without hiding its history.
 Repository names, including GitHub host, and pull request numbers key rows.
 
-`Latest`, `Versions`, `Get` and `Put` expose the local history. `Put` publishes
+`Latest`, `Versions`, `Get` and `Put` expose the local history.
+`RefreshCurrent` updates only the latest document with one SQLite statement
+fenced by both its version number and exact previous bytes, preserving
+metadata and every replaced version. Concurrent refreshes and generations
+cannot overwrite a document prepared against older evidence. `Put` publishes
 metadata and document in one transaction only if the expected previous version
 is still latest, so concurrent runs cannot assign a different predecessor to
 a completed document. A losing run reports a conflict; generation failure or
@@ -1181,7 +1188,12 @@ attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
 exported either way, since a file the checkout budget omits makes its hunks
 textless. `baum validate`  checks a stored document with
 `review.DocumentValidator.ValidateStored`, against its bundle when one is given,
-and `baum refresh` runs the `review` steps on an existing document. `baum view`
+and `baum refresh` uses `internal/refresh` to fetch current GitHub metadata
+with checks pinned to the saved head, re-link local sessions against the saved
+merge-base/head range and redact bounded evidence before calling
+`DocumentValidator.Refresh`. It exports no checkout, downloads no images and
+imports no model backend. Currency requires both saved head and base to match;
+command failures leave the existing document unchanged. `baum view`
 serves the viewer, the selected document, and the sessions and commits linked
 to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the

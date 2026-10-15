@@ -699,3 +699,21 @@ func TestResponseTextIsNotRewritten(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchChecksReviewedHeadWhileMetadataStaysCurrent(t *testing.T) {
+	routes := fixtureRoutes(t)
+	routes["HeadChecks"] = func(request gqlRequest, _ int) fakeResponse {
+		if request.Variables["oid"] != movedSHA {
+			t.Errorf("checks oid = %v", request.Variables["oid"])
+		}
+		return data(map[string]any{"repository": map[string]any{"object": map[string]any{"oid": movedSHA, "checkSuites": page([]any{}, ""), "status": nil}}})
+	}
+	fake := newFakeGitHub(t, routes)
+	evidence, err := fake.client(nil).Fetch(context.Background(), acme, 7, FetchOptions{ChecksHead: movedSHA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.PullRequest.HeadSHA != headSHA || !evidence.Sources[SourceChecks] || !evidence.Sources[SourceCommits] || !evidence.Sources[SourceReviewThreads] {
+		t.Fatalf("metadata reader head changed: %+v", evidence)
+	}
+}

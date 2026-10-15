@@ -43,6 +43,10 @@ const maxPages = 1000
 
 // FetchOptions adjust what Fetch flags.
 type FetchOptions struct {
+	// ChecksHead reads checks for this reviewed commit, while PR metadata stays current.
+	// Empty uses the current pull request head.
+	ChecksHead string
+
 	// BotReportMarkers are the bot-report markers of the base branch's
 	// REVIEW.md marker registry. The registry is not built yet, so callers
 	// pass none.
@@ -124,6 +128,10 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 		return Evidence{}, err
 	}
 	f := partReader{client: c, repo: repo, number: number, head: raw.header.HeadRefOID}
+	checksReader := f
+	if opts.ChecksHead != "" {
+		checksReader.head = opts.ChecksHead
+	}
 	sources := bundle.Sources{SourcePullRequest: true}
 	unavailable := map[string]error{}
 	parts := []struct {
@@ -135,7 +143,7 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 		{SourceComments, func() (err error) { raw.comments, err = f.comments(ctx); return err }},
 		{SourceReviews, func() (err error) { raw.reviews, err = f.reviews(ctx); return err }},
 		{SourceReviewThreads, func() (err error) { raw.threads, err = f.threads(ctx); return err }},
-		{SourceChecks, func() (err error) { raw.suites, raw.statuses, err = f.checks(ctx); return err }},
+		{SourceChecks, func() (err error) { raw.suites, raw.statuses, err = checksReader.checks(ctx); return err }},
 		{SourceRequiredChecks, func() (err error) { raw.required, err = f.requiredChecks(ctx, raw.header.BaseRefName); return err }},
 	}
 	for _, part := range parts {
