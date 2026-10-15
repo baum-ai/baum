@@ -102,8 +102,11 @@ func (a LocalAPI) Handler() http.Handler {
 			apiError(w, err)
 			return
 		}
-		if len(version.Document)>viewserver.MaxDocumentBytes {http.Error(w,"stored document too large",http.StatusRequestEntityTooLarge);return}
- if r.URL.Path == "/api/document" {
+		if len(version.Document) > viewserver.MaxDocumentBytes {
+			http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if r.URL.Path == "/api/document" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(version.Document)
 			return

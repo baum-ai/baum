@@ -56,7 +56,9 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
-	if err := protectDirectory(directory); err != nil { return nil, err }
+	if err := protectDirectory(directory); err != nil {
+		return nil, err
+	}
 	lockpath := filepath.Join(directory, "ui.lock.sqlite")
 	f, err := os.OpenFile(lockpath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -69,7 +71,7 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 	if err != nil {
 		return nil, err
 	}
-	if !privateFile(lockpath,info) {
+	if !privateFile(lockpath, info) {
 		return nil, errors.New("ui lock file must be private (0600)")
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.ToSlash(lockpath)}).String()+"?_pragma=busy_timeout(0)")
@@ -152,7 +154,7 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 }
 func running(ctx context.Context, path string) (string, bool) {
 	info, err := os.Lstat(path)
-	if err != nil || !privateFile(path,info) || info.Size() > 4096 {
+	if err != nil || !privateFile(path, info) || info.Size() > 4096 {
 		return "", false
 	}
 	data, err := os.ReadFile(path)

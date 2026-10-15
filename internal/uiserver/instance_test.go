@@ -4,9 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
-"runtime"
 )
 
 func TestSecondInstanceReusesLiveServerAndStaleMetadataIsReplaced(t *testing.T) {
@@ -55,7 +55,9 @@ func TestSecondInstanceReusesLiveServerAndStaleMetadataIsReplaced(t *testing.T) 
 	}
 }
 func TestPrivateInstanceDirectory(t *testing.T) {
- if runtime.GOOS == "windows" {t.Skip("Windows protects the current-user DACL instead of Unix mode bits")}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows protects the current-user DACL instead of Unix mode bits")
+	}
 	directory := filepath.Join(t.TempDir(), "public")
 	if err := os.Mkdir(directory, 0755); err != nil {
 		t.Fatal(err)
