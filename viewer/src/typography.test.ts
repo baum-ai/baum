@@ -16,12 +16,14 @@ function sources(dir: string): string[] {
   });
 }
 
+const forbidden =
+  /(?<![\w-])text-(?:\[\d+(?:\.\d+)?(?:px|rem|em)\]|(?:2xs|sm|md|xl|4xl|5xl)(?![\w-]))/;
+
 describe("typography", () => {
   it("uses the type scale's steps rather than arbitrary or retired sizes", () => {
     // 2xs, sm, md and xl were steps once; the scale no longer defines them,
     // so a class naming one would silently set no size at all. 4xl and 5xl
     // belong to hosts, not to the viewer.
-    const forbidden = /\btext-(\[\d+(\.\d+)?(px|rem|em)\]|2xs|sm|md|xl|4xl|5xl)\b/;
     const offenders = sources(fileURLToPath(new URL(".", import.meta.url))).flatMap((path) => {
       const lines = readFileSync(path, "utf8").split("\n");
       return lines.flatMap((line, index) =>
@@ -29,5 +31,12 @@ describe("typography", () => {
       );
     });
     expect(offenders).toEqual([]);
+  });
+
+  it("matches arbitrary and retired sizes in real markup, and only those", () => {
+    for (const line of ['"text-[13px] x"', "'\"text-[13px]\"'", '"sm:text-sm"', '"text-xl/5"'])
+      expect(forbidden.test(line), line).toBe(true);
+    for (const line of ['"text-2xl"', '"text-3xs"', '"text-(--text-secondary)"'])
+      expect(forbidden.test(line), line).toBe(false);
   });
 });
