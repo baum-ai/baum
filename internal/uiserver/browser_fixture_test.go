@@ -96,11 +96,28 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		review["pr_state"] = "open"
 		review["head"] = repo.Head
+		if n == 1 {
+			review["head"] = repo.MergeBase
+			review["base"] = repo.MergeBase
+		}
 		review["base"] = repo.Base
+		if n == 1 {
+			review["base"] = repo.MergeBase
+		}
 		review["merge_base"] = repo.MergeBase
 		doc["summary"].(map[string]any)["text"] = fmt.Sprintf("Local fixture review version %d", n)
+		id := fmt.Sprintf("att_%032d", n)
+		doc["index"].(map[string]any)["attachments"] = []any{map[string]any{"id": id, "alt": fmt.Sprintf("Captured image v%d", n), "position": 1, "source_url": "https://github.com/user-attachments/assets/fixture", "content_type": "image/png", "width": 1, "height": 1}}
+		for _, section := range doc["sections"].([]any) {
+			for _, block := range section.(map[string]any)["blocks"].([]any) {
+				b := block.(map[string]any)
+				if b["kind"] == "images" {
+					b["items"] = []any{map[string]any{"attachment": id, "caption": fmt.Sprintf("Captured image v%d", n)}}
+				}
+			}
+		}
 		document, _ := json.Marshal(doc)
-		err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, n-1, store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document})
+		err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, n-1, store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: assembletest.PNG}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,11 +139,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			body = map[string]any{"state": "open", "head": map[string]any{"sha": repo.Head, "repo": map[string]any{"full_name": headRepo}}, "user": map[string]any{"login": "author"}}
 		} else {
-			var query struct{ Query string }
+			var query struct {
+				Query     string
+				Variables struct{ Number int }
+			}
 			_ = json.NewDecoder(r.Body).Decode(&query)
 			switch {
 			case strings.Contains(query.Query, "query PullRequest("):
-				body = map[string]any{"data": map[string]any{"repository": map[string]any{"nameWithOwner": "acme/demo", "pullRequest": map[string]any{"number": 7, "state": "OPEN", "isDraft": false, "title": "Generated local review", "body": "A synthetic local change.", "bodyHTML": "<p>A synthetic local change.</p>", "createdAt": "2026-10-01T10:00:00Z", "author": map[string]any{"login": "author", "__typename": "User"}, "authorAssociation": "MEMBER", "baseRefName": "main", "baseRefOid": repo.Base, "headRefName": "feature", "headRefOid": repo.Head, "merged": false}}}}
+				body = map[string]any{"data": map[string]any{"repository": map[string]any{"nameWithOwner": "acme/demo", "pullRequest": map[string]any{"number": query.Variables.Number, "state": "OPEN", "isDraft": false, "title": "Generated local review", "body": "A synthetic local change.", "bodyHTML": "<p>A synthetic local change.</p>", "createdAt": "2026-10-01T10:00:00Z", "author": map[string]any{"login": "author", "__typename": "User"}, "authorAssociation": "MEMBER", "baseRefName": "main", "baseRefOid": repo.Base, "headRefName": "feature", "headRefOid": repo.Head, "merged": false}}}}
 			case strings.Contains(query.Query, "query HeadChecks("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}}
 			case strings.Contains(query.Query, "query RequiredChecks("):
@@ -148,7 +168,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			return agent.Result{}, ctx.Err()
-		case <-time.After(750 * time.Millisecond):
+		case <-time.After(3 * time.Second):
 		}
 		document, e := generatetest.Document(r.Directory, nil)
 		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}, e

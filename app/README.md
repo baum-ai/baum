@@ -9,8 +9,7 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as `ui/app/review-viewer-host.tsx` and the hosted
-PR route. Hosted discussion, approvals and GitHub mutations are absent.
+sources through the same slots as the hosted PR route. Hosted discussion, approvals and GitHub mutations are absent.
 
 The inbox spans registered clones, showing review status, risk, versions,
 generation date, backend/model and recorded cost. Requested, authored, outdated,

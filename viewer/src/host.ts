@@ -1,10 +1,11 @@
+import type { ReviewDocument } from "./review-document";
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
 /** Resolves an attachment of the document being read, by the id its
  *  `index.attachments` lists, to an address the browser can load it from. The
  *  host knows where its copies are kept and whose pull request this is; the
  *  viewer never does. */
-export type AttachmentUrl = (attachmentId: string) => string;
+export type AttachmentUrl = (attachmentId: string, document?: ReviewDocument) => string;
 
 const AttachmentUrlContext = createContext<AttachmentUrl | null>(null);
 

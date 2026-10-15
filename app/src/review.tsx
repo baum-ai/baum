@@ -1,9 +1,9 @@
-import { Component, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Component, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
 import { Alert, Button } from "@baum/viewer/components/ui";
-import { useUrlState } from "@baum/viewer/navigation";
+import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
@@ -67,15 +67,32 @@ export function LocalReview({
   generate: () => void;
 }) {
   const pr = entry.pull_request;
-  const { search } = useUrlState();
-  const selectedVersion = Number(search.get("review")) || undefined;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
   const [sessions, setSessions] = useState<SessionsLoad>({ state: "loading" });
-  const query = selector(clone, pr.number);
+  const loadVersion = useCallback(
+    async (version: number): Promise<ReviewVersionState> => {
+      try {
+        return { status: "ready", document: await documentRequest(clone, pr.number, version) };
+      } catch {
+        return { status: "failed" };
+      }
+    },
+    [clone, pr.number],
+  );
+  const history = useHistoryView(doc?.review.version, loadVersion);
+  const viewedVersion =
+    history.selection && !history.selection.compare ? history.selection.version : undefined;
+  const viewedDocument = viewedVersion
+    ? history.state?.status === "ready"
+      ? history.state.document
+      : null
+    : doc;
+  const query = selector(clone, pr.number, viewedVersion);
+  const latestQuery = selector(clone, pr.number);
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
@@ -84,7 +101,7 @@ export function LocalReview({
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
       });
-    request<{ version: number }[]>(`/api/versions?${query}`, undefined, "GET", abort.signal)
+    request<{ version: number }[]>(`/api/versions?${latestQuery}`, undefined, "GET", abort.signal)
       .then((rows) => {
         setVersions(rows.map((row) => row.version));
         setHistoryFailed(false);
@@ -93,9 +110,10 @@ export function LocalReview({
         if (!abort.signal.aborted) setHistoryFailed(true);
       });
     return () => abort.abort();
-  }, [clone, pr.number, query, revision, retry]);
+  }, [clone, pr.number, latestQuery, revision, retry]);
   useEffect(() => {
-    if (!doc) return;
+    if (!viewedDocument) return;
+    setSessions({ state: "loading" });
     const abort = new AbortController();
     request<unknown>(`/api/sessions?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
@@ -107,8 +125,8 @@ export function LocalReview({
         if (!abort.signal.aborted) setSessions({ state: "request-failed" });
       });
     return () => abort.abort();
-  }, [doc, query]);
-  const lists = doc ? sessionLists(sessions, doc) : null;
+  }, [viewedDocument, query]);
+  const lists = viewedDocument ? sessionLists(sessions, viewedDocument) : null;
   const patches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
     return (path: string, version: number) => {
@@ -129,22 +147,16 @@ export function LocalReview({
     };
   }, [clone, pr.number]);
   const attachments = useMemo(
-    () => (id: string) =>
-      `/api/attachments/${encodeURIComponent(id)}?${selector(clone, pr.number, selectedVersion)}`,
-    [clone, pr.number, selectedVersion],
+    () => (id: string, document?: ReviewDocument) =>
+      `/api/attachments/${encodeURIComponent(id)}?${selector(clone, pr.number, document?.review.version)}`,
+    [clone, pr.number],
   );
-  const loadVersion = async (version: number): Promise<ReviewVersionState> => {
-    try {
-      return { status: "ready", document: await documentRequest(clone, pr.number, version) };
-    } catch {
-      return { status: "failed" };
-    }
-  };
   return (
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
         <ReviewViewer
           document={doc}
+          history={history}
           versions={versions.filter((v) => v !== doc?.review.version)}
           loadVersion={loadVersion}
           versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}

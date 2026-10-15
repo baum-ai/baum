@@ -442,6 +442,10 @@ has no file picker, upload or drag and drop (see Standalone app), and draws no
 description images, as it supplies no `AttachmentUrlProvider`; the specs assert
 both. The hosted app's integration with the viewer stays covered by `ui/e2e`.
 
+Attachment resolvers may receive the rendered document as a second argument,
+so a host whose captures are version-scoped can serve each comparison pane’s
+images from that snapshot. Existing one-argument resolvers remain supported.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.

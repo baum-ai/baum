@@ -59,7 +59,12 @@ const attachment = (id: string, alt: string, [width, height] = [10, 10]) => ({
   alt,
 });
 
-function mount(ids: string[], captions: Record<string, string> = {}, size?: [number, number]) {
+function mount(
+  ids: string[],
+  captions: Record<string, string> = {},
+  size?: [number, number],
+  url?: string,
+) {
   const review = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
   review.index.attachments = ids.map((id) => attachment(id, `Alt ${id}`, size));
   const block = {
@@ -74,7 +79,7 @@ function mount(ids: string[], captions: Record<string, string> = {}, size?: [num
   root = createRoot(container);
   act(() =>
     root!.render(
-      <AttachmentUrlProvider resolve={(id) => `/attachments/${id}`}>
+      <AttachmentUrlProvider resolve={(id) => url ?? `/attachments/${id}`}>
         <ReviewImages document={review} block={block} />
       </AttachmentUrlProvider>,
     ),
@@ -193,4 +198,50 @@ describe("ReviewImages", () => {
       Object.defineProperty(HTMLElement.prototype, "offsetHeight", offsetHeight);
     }
   });
+});
+
+it("resolves each compared image against its own document version", () => {
+  const first = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+  first.review.version = 1;
+  first.index.attachments = [attachment("att_aa", "Earlier")];
+  const current = structuredClone(first);
+  current.review.version = 2;
+  const block = {
+    kind: "images",
+    items: [{ attachment: "att_aa" }],
+    source: [{ type: "pr_body", section: null }],
+  } as Extract<Block, { kind: "images" }>;
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() =>
+    root!.render(
+      <AttachmentUrlProvider
+        resolve={(id, doc) => `/attachments/${id}?version=${doc?.review.version}`}
+      >
+        <ReviewImages document={first} block={block} />
+        <ReviewImages document={current} block={block} />
+      </AttachmentUrlProvider>,
+    ),
+  );
+  expect([...container.querySelectorAll("img")].map((img) => img.getAttribute("src"))).toEqual([
+    "/attachments/att_aa?version=1",
+    "/attachments/att_aa?version=2",
+  ]);
+});
+
+it("retains local document selectors and fragments when retrying an image", () => {
+  const container = mount(
+    ["att_aa"],
+    {},
+    undefined,
+    "/attachments/att_aa?clone=one&pr=7&version=1#capture",
+  );
+  fail(container, "Alt att_aa");
+  act(() =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Retry loading Alt att_aa"]')!.click(),
+  );
+  expect(container.querySelector("img")?.getAttribute("src")).toBe(
+    "/attachments/att_aa?clone=one&pr=7&version=1&attempt=1#capture",
+  );
 });

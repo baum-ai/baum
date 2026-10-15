@@ -612,7 +612,12 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
         <Button type="submit">Register clone</Button>
       </form>
       {clones.map((clone) => (
-        <div className="local-panel space-y-3" key={clone.id}>
+        <div
+          role="region"
+          aria-label={`Repository ${clone.repository}`}
+          className="local-panel space-y-3"
+          key={clone.id}
+        >
           <h2 className="text-lg">{clone.repository}</h2>
           <p>
             {clone.path} — {clone.available ? "Available" : "Unavailable; history retained"}
