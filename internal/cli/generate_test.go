@@ -327,3 +327,30 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 		t.Fatalf("failed run published: %+v %v", after, err)
 	}
 }
+
+func TestGenerateEnterpriseDocumentStoresAndReopensWithHostKey(t *testing.T) {
+	_, sessions := generateEnv(t)
+	root := filepath.Join(t.TempDir(), "reviews")
+	repository := "acme.ghe.com/acme/demo"
+	stdout, stderr, err := run(t, append([]string{"generate", "--pr", "7", "--repo", repository, "--store", root}, sessions...)...)
+	if err != nil {
+		t.Fatalf("generate Enterprise review: %v\n%s", err, stderr)
+	}
+	var doc struct{ Review struct{ Repository string } }
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc.Review.Repository != "acme/demo" {
+		t.Fatalf("document repository = %q, error %v", doc.Review.Repository, err)
+	}
+	versions, err := store.Open("", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versions.Latest(context.Background(), store.Key{Repository: repository, Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versions.Latest(context.Background(), store.Key{Repository: "acme/demo", Number: 7}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Enterprise review crossed host: %v", err)
+	}
+	if _, stderr, err := run(t, "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
+		t.Fatalf("reopen Enterprise review: %v\n%s", err, stderr)
+	}
+}

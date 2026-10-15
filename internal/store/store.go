@@ -33,6 +33,15 @@ type Key struct {
 func (k Key) valid() bool        { return strings.TrimSpace(k.Repository) != "" && k.Number > 0 }
 func (k Key) repository() string { return strings.ToLower(k.Repository) }
 
+// Documents name owner/repository; the storage key also carries an Enterprise host.
+func (k Key) documentRepository() string {
+	parts := strings.Split(k.Repository, "/")
+	if len(parts) == 3 {
+		return parts[1] + "/" + parts[2]
+	}
+	return k.Repository
+}
+
 // Metadata records reproducible input identities and the generation that
 // produced a version. Policy is the digest of the applied base REVIEW.md, null when absent.
 type Metadata struct {
@@ -243,7 +252,7 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 	if err := json.Unmarshal(v.Document, &doc); err != nil {
 		return err
 	}
-	if !strings.EqualFold(doc.Review.Repository, k.Repository) || doc.Review.PullRequest != k.Number || doc.Review.Version != v.Metadata.Version {
+	if !strings.EqualFold(doc.Review.Repository, k.documentRepository()) || doc.Review.PullRequest != k.Number || doc.Review.Version != v.Metadata.Version {
 		return errors.New("document identity does not match stored version")
 	}
 	metadata, err := json.Marshal(v.Metadata)
