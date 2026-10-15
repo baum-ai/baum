@@ -95,7 +95,9 @@ used as they are; baum never requests additional scopes.
 Discovery uses read-only REST requests, with the same host and token routing as
 bundle generation. Every page is conditionally fetched with its ETag. Polling
 starts at 30 seconds and backs off to 15 minutes when unchanged, honoring a
-longer GitHub polling interval, rate-limit reset or Retry-After. Rate remaining
+longer GitHub polling interval, rate-limit reset or Retry-After. Rate budgets
+and retry deadlines are shared across repositories for the same host and
+credential, and persist across restarts. Rate remaining
 and reset time are returned with the snapshot; a network or required API failure
 keeps the last complete inbox and marks it stale with a diagnostic.
 
