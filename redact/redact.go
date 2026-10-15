@@ -54,7 +54,15 @@ var emailRule = goredact.CustomRule{
 }
 
 func validateEmail(window []byte, trigStart, trigEnd int) (start, end int, ok bool) {
-	return matchEmail(window, trigStart, trigEnd, trigEnd+emailLookahead == len(window))
+	return matchEmail(window, trigStart, trigEnd, trigEnd+emailLookahead == len(window), nil)
+}
+
+// localScan remembers where the previous trigger's local part began, so
+// that a run of local-part bytes holding many triggers ("a%40a%40a%40...")
+// is scanned once, not once per trigger.
+type localScan struct {
+	at, start int
+	valid     bool
 }
 
 // matchEmail finds the address around the @ at text[at:after]. It masks at
@@ -71,9 +79,18 @@ func validateEmail(window []byte, trigStart, trigEnd int) (start, end int, ok bo
 // address may go on past it, so the whole visible run is masked, provided
 // it already holds a dot: a dotless run is no address, and an exact-fit
 // window must not turn it into one.
-func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) {
+//
+// prev, when not nil, carries the scan of the previous trigger in the same
+// text, which must lie before at; it keeps a scan over many triggers linear.
+func matchEmail(text []byte, at, after int, cut bool, prev *localScan) (start, end int, ok bool) {
 	start = at
 	for start > 0 {
+		if prev != nil && prev.valid && start == prev.at {
+			// The run reached the previous trigger, which is local-part
+			// bytes itself; it continues back exactly as that scan found.
+			start = prev.start
+			break
+		}
 		if isLocalPartByte(text[start-1]) {
 			start--
 		} else if n := unicodeLetterBefore(text, start); n > 0 {
@@ -81,6 +98,9 @@ func matchEmail(text []byte, at, after int, cut bool) (start, end int, ok bool) 
 		} else {
 			break
 		}
+	}
+	if prev != nil {
+		*prev = localScan{at: at, start: start, valid: true}
 	}
 	if start == at {
 		return 0, 0, false
@@ -187,6 +207,7 @@ func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 // eachEmail calls visit with the offsets of every address in src, in full,
 // and stops with ctx's error if ctx ends.
 func eachEmail(ctx context.Context, src []byte, visit func(start, end int)) error {
+	var prev localScan
 	for i := 0; i < len(src); i++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -201,7 +222,7 @@ func eachEmail(ctx context.Context, src []byte, visit func(start, end int)) erro
 		if width == 0 {
 			continue
 		}
-		if start, end, ok := matchEmail(src, i, i+width, false); ok {
+		if start, end, ok := matchEmail(src, i, i+width, false, &prev); ok {
 			visit(start, end)
 		}
 	}
