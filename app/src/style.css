@@ -36,19 +36,115 @@ body {
   padding: 0.4rem 0.6rem;
   max-width: 100%;
 }
-.local-table {
-  position: relative;
-  overflow-x: auto;
+/* The local inbox follows the hosted Focus rows with local evidence columns. */
+.local-inbox {
+  min-width: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
 }
-table {
-  width: 100%;
-  text-align: left;
-  border-collapse: collapse;
+.inbox-columns {
+  display: grid;
+  grid-template-columns: 1rem 2.5rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: center;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  min-width: 0;
 }
-td,
-th {
-  padding: 0.65rem;
+.inbox-columns-head {
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
   border-bottom: 1px solid var(--border-default);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.inbox-title-heading {
+  grid-column: 2 / -1;
+}
+.inbox-bucket {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.inbox-row {
+  row-gap: 0.3rem;
+  padding-top: 0.8rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.inbox-row:last-child {
+  border-bottom: 0;
+}
+.inbox-row:hover {
+  background: var(--surface-hover);
+}
+.inbox-row > input,
+.inbox-risk {
+  align-self: start;
+  margin-top: 0.15rem;
+}
+.inbox-pr-title {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.inbox-meta {
+  overflow-wrap: anywhere;
+  margin-top: 0.2rem;
+  line-height: 1.5;
+}
+.inbox-review {
+  grid-column: 3;
+  min-width: 0;
+}
+.inbox-generation {
+  display: none;
+  grid-column: 3;
+  overflow-wrap: anywhere;
+}
+.inbox-model {
+  display: none;
+}
+.inbox-cost {
+  display: none;
+  grid-column: 3;
+}
+@media (width >= 48rem) {
+  .inbox-columns {
+    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 9rem 10rem 5rem;
+  }
+  .inbox-title-heading,
+  .inbox-review,
+  .inbox-generation,
+  .inbox-cost {
+    grid-column: auto;
+  }
+  .inbox-row {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+  .inbox-row > input,
+  .inbox-risk {
+    align-self: center;
+    margin-top: 0;
+  }
+  .inbox-pr-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .inbox-meta {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .inbox-model {
+    display: block;
+    margin-top: 0.2rem;
+  }
+  .inbox-generation,
+  .inbox-cost {
+    display: block;
+  }
 }
 dialog {
   background: var(--surface-card);

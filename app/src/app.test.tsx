@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
@@ -22,7 +23,7 @@ const entry = (number: number, status = "no_review", historical = false): Entry 
   status,
   version_count: status === "no_review" ? 0 : 1,
   latest: null,
-  risk_score: { score: 42, status: "ready" },
+  risk_score: { score: 5, status: "ready" },
   historical,
   stale: false,
 });
@@ -161,4 +162,44 @@ it("shows an unpriced model exclusion and keeps generation disabled", async () =
       (b) => b.textContent === "Confirm estimate and generate",
     )!.disabled,
   ).toBe(true);
+});
+
+it("groups requested PRs before authored PRs once and keeps saved history separate", () => {
+  const requested = entry(1);
+  requested.pull_request.authored_by_me = true;
+  const mine = entry(2);
+  const other = entry(3);
+  const history = entry(4, "current", true);
+  const groups = inboxGroups([history, other, mine, requested]);
+  expect(
+    groups.map((group) => [group.id, group.rows.map((row) => row.pull_request.number)]),
+  ).toEqual([
+    ["requested", [1]],
+    ["mine", [2]],
+    ["other", [3]],
+    ["history", [4]],
+  ]);
+});
+it("keeps collapsed selections and selects only expanded visible rows", async () => {
+  entries = [entry(1), entry(2), entry(3)];
+  await act(async () => root.render(<App />));
+  const box = node.querySelector<HTMLInputElement>(
+    'input[aria-label="Select all visible pull requests"]',
+  )!;
+  await act(async () => box.click());
+  expect(node.textContent).toContain("Generate selected (3)");
+  const requested = Array.from(node.querySelectorAll("button")).find((button) =>
+    button.textContent?.includes("Review requested"),
+  )!;
+  await act(async () => requested.click());
+  expect(requested.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => box.click());
+  expect(node.textContent).toContain("Generate selected (1)");
+  await act(async () => requested.click());
+  expect(
+    node.querySelector<HTMLInputElement>('input[aria-label="Select acme/demo #1"]')!.checked,
+  ).toBe(true);
+  expect(
+    node.querySelector<HTMLInputElement>('input[aria-label="Select acme/demo #2"]')!.checked,
+  ).toBe(false);
 });

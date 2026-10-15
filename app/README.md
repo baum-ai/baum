@@ -12,7 +12,13 @@ adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion, approvals and GitHub mutations are absent.
 
 The inbox spans registered clones, showing review status, risk, versions,
-generation date, backend/model and recorded cost. Requested, authored, outdated,
+generation date, backend/model and recorded cost. It follows the Focus view’s
+compact rows: risk at the left, a prominent title over repository/author/PR
+metadata, and aligned review and generation figures. Below desktop width the
+figures move under the title. Collapsible groups show Review requested, Your
+pull requests and Other pull requests, with each row in one group; Saved history
+has its own group. Collapsing keeps selections, and Select all selects only
+currently expanded visible rows. Requested, authored, outdated,
 no-review, repository and saved-history filters do not discard cached reviews.
 Stale discovery and unknown team membership/cost remain explicit. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
