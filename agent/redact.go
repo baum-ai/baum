@@ -36,6 +36,8 @@ func RedactOutput(ctx context.Context, validator *review.DocumentValidator, reda
 		if err != nil {
 			redacted, closed = nil, 0
 			outcome.Findings, outcome.Model, outcome.RejectedDocument, outcome.Diagnostics = "", "", nil, nil
+			outcome.Accounting.ClearStrings()
+			outcome.Usage.Speed = nil
 		}
 	}()
 	o, err := review.NewOutputRedactor(validator, redactor, b, checkout)
@@ -59,6 +61,31 @@ func RedactOutput(ctx context.Context, validator *review.DocumentValidator, reda
 			return nil, 0, err
 		}
 	}
+
+	var fields []*string
+	if outcome.Usage.Speed != nil {
+		fields = append(fields, outcome.Usage.Speed)
+	}
+	if a := outcome.Accounting; a != nil {
+		if a.Usage.Speed != nil {
+			fields = append(fields, a.Usage.Speed)
+		}
+		for i := range a.Attempts {
+			attempt := &a.Attempts[i]
+			fields = append(fields, &attempt.Model, &attempt.ModelSource)
+			if attempt.Usage.Speed != nil {
+				fields = append(fields, attempt.Usage.Speed)
+			}
+		}
+	}
+	for _, field := range fields {
+		masked, maskErr := o.Text(ctx, *field)
+		if maskErr != nil {
+			return nil, 0, maskErr
+		}
+		*field = boundedBytes(masked, maxDiagnosticStringBytes)
+	}
+
 	for i := range outcome.Diagnostics {
 		event := &outcome.Diagnostics[i]
 		event.Kind = boundedBytes(event.Kind, maxDiagnosticStringBytes)

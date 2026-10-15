@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -70,5 +71,19 @@ func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
 				t.Fatal("budget change not fingerprinted", e)
 			}
 		})
+	}
+}
+
+func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
+	var reports []Progress
+	b := &trackedBackend{Backend: &generatetest.Backend{RunFunc: func(context.Context, agent.Request, int) (agent.Result, error) {
+		return agent.Result{Model: "untrusted-model", Calls: 1, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, CacheRead: 90, Speed: new("untrusted-speed")}}, nil
+	}}, progress: func(p Progress) { reports = append(reports, p) }}
+	if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	got := reports[len(reports)-1]
+	if got.Accounting == nil || got.Accounting.Usage.CacheRead != 90 || got.Accounting.Usage.Input != 6 || got.Accounting.Usage.Speed != nil || got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil || got.CostReason != "metadata_pending_redaction" {
+		t.Fatalf("unsafe or lossy progress: %+v", got)
 	}
 }

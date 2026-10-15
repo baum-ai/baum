@@ -118,7 +118,7 @@ it("matches active PR jobs across clones while isolating GitHub hosts and PRs", 
 it("shows queued initial generation and progress instead of an empty review", async () => {
   await render(job("queued"));
   expect(node.textContent).toContain("Review generation is queued");
-  expect(node.textContent).toContain("Calls 2 · Tokens 600 · Repairs 1");
+  expect(node.textContent).toContain("Calls 2 · Repairs 1");
   expect(node.textContent).not.toContain("No generated review yet");
   expect(
     Array.from(node.querySelectorAll("button")).find(

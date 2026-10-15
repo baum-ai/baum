@@ -171,7 +171,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		case <-time.After(3 * time.Second):
 		}
 		document, e := generatetest.Document(r.Directory, nil)
-		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}, e
+		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
 	}}
 	server, err := New(Options{})
 	if err != nil {

@@ -102,3 +102,42 @@ func TestClaudeUsageCarriesThePerCallPromptRange(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudePreservesEachModelsFinalBuckets(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	events := `{"type":"assistant","message":{"id":"m1","model":"first-model","usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":50,"speed":"standard"}}}
+{"type":"assistant","message":{"id":"m1","model":"first-model","usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":50,"speed":"standard"}}}
+{"type":"assistant","message":{"id":"m2","model":"repair-model","usage":{"input_tokens":4,"output_tokens":2,"cache_read_input_tokens":60,"speed":"fast"}}}
+{"type":"result","subtype":"success","structured_output":{},"usage":{"input_tokens":14,"output_tokens":5,"cache_read_input_tokens":110}}`
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+events+"\nEVENTS\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}).Run(context.Background(), agent.Request{Directory: t.TempDir(), Schema: []byte(`{}`), MaxCalls: 5, MaxTokens: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.UsageAttempts) != 2 || got.UsageAttempts[0].Model != "first-model" || got.UsageAttempts[0].Usage.Output != 3 || got.UsageAttempts[1].Model != "repair-model" || got.UsageAttempts[1].Usage.CacheRead != 60 || got.Usage.CacheRead != 110 {
+		t.Fatalf("lost models or double counted snapshots: %+v", got)
+	}
+	if *got.UsageAttempts[0].Usage.Speed != "standard" || *got.UsageAttempts[1].Usage.Speed != "fast" || got.Usage.Speed != nil {
+		t.Fatal("lost pricing speed")
+	}
+}
+
+func TestSuccessfulInternalRetryKeepsAbandonedCallPartial(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	events := `{"type":"stream_event","event":{"type":"message_start","message":{"id":"abandoned","model":"first","usage":{"input_tokens":10,"cache_read_input_tokens":90}}}}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"retry","model":"second","usage":{"input_tokens":5,"cache_read_input_tokens":50}}}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}}
+{"type":"result","subtype":"success","structured_output":{},"usage":{}}`
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+events+"\nEVENTS\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}).Run(context.Background(), agent.Request{Directory: t.TempDir(), Schema: []byte(`{}`), MaxCalls: 5, MaxTokens: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Usage.Unreported || len(got.UsageAttempts) != 2 || !got.UsageAttempts[0].Usage.Unreported || !got.UsageAttempts[0].Failed || got.UsageAttempts[1].Usage.Unreported || got.Usage.CacheRead != 140 {
+		t.Fatalf("abandoned report treated as final: %+v", got)
+	}
+}

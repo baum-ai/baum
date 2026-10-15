@@ -311,11 +311,14 @@ func TestGenerateRetriesProviderFailures(t *testing.T) {
 		generator.RetryDelay = func(attempt int) time.Duration { delays = append(delays, attempt); return 0 }
 		backend.run = func(_ context.Context, _ Request, n int) (Result, error) {
 			if n == 0 {
-				return Result{Calls: 1, Tokens: 2, Events: []Event{{Kind: "error", Status: "rate_limit"}}}, errors.New("private provider failure")
+				return Result{Model: "first-model", Usage: Usage{Input: 1, Output: 1, CacheRead: 100}, Calls: 1, Tokens: 2, Events: []Event{{Kind: "error", Status: "rate_limit"}}}, errors.New("private provider failure")
 			}
-			return Result{Document: authoredFixture(), Calls: 1, Tokens: 10}, nil
+			return Result{Document: authoredFixture(), Model: "second-model", Usage: Usage{Input: 2, Output: 8, CacheRead: 200}, Calls: 1, Tokens: 10}, nil
 		}
 		outcome, _, err := generator.Generate(context.Background(), run)
+		if outcome.Accounting == nil || len(outcome.Accounting.Attempts) != 2 || outcome.Accounting.Usage.CacheRead != 300 || !outcome.Accounting.Attempts[0].Failed || outcome.Accounting.Attempts[1].Model != "second-model" {
+			t.Fatalf("retry usage lost: %+v", outcome.Accounting)
+		}
 		if err != nil || outcome.Reason != "" || outcome.ProviderAttempts != 2 || outcome.ErroredAttempts != 1 || outcome.Calls != 2 || outcome.Tokens != 12 || len(outcome.Diagnostics) != 1 {
 			t.Fatalf("%+v %v", outcome, err)
 		}

@@ -103,7 +103,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
 	if p.EstimateUSD == nil {
 		p.BlockedReason = "unknown_model_price"
 	}
@@ -147,36 +147,69 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
-	backend := &trackedBackend{Backend: selected.Backend, progress: progress}
+	list := pricing.Active()
+	if list.Version() != p.PriceVersion {
+		return nil, errors.New("price list changed; estimate again")
+	}
+	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
 	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
 	guarded := headAssembler{Assembler: assembler, head: p.HeadSHA}
-	list := pricing.Active()
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, versions, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := generate.Publish(ctx, versions, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass
 		}
-		progress(Progress{Phase: "validating", Calls: backend.calls, Tokens: backend.tokens, Repairs: backend.repairs})
+		backend.report("validating")
 	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 { return list.OutcomeCost(r.Outcome.Model, r.Outcome) })
-	progress(Progress{Phase: "publishing", Calls: result.Outcome.Calls, Tokens: result.Outcome.Tokens, Repairs: result.Outcome.ValidationRepairs})
+	backend.repairs = result.Outcome.ValidationRepairs
+	backend.accounting = result.Outcome.Accounting.Clone()
+	backend.redacted = true
+	backend.report("publishing")
 	return list.OutcomeCost(result.Outcome.Model, result.Outcome), e
 }
 
 type trackedBackend struct {
+	prices   *pricing.List
+	redacted bool
 	agent.Backend
 	progress               func(Progress)
 	calls, tokens, repairs int
+	accounting             *agent.Accounting
 }
 
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
-	b.progress(Progress{Phase: "generating", Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs})
+	b.report("generating")
 	result, e := b.Backend.Run(ctx, r)
 	b.calls += result.Calls
 	b.tokens += result.Tokens
-	b.progress(Progress{Phase: "validating", Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs})
+	next := &agent.Accounting{}
+	if b.accounting != nil {
+		*next = *b.accounting
+		next.Attempts = append([]agent.UsageAttempt(nil), b.accounting.Attempts...)
+	}
+	next.Add(result, e != nil)
+	b.accounting = next
+	b.report("validating")
 	return result, e
+}
+
+func (b *trackedBackend) report(phase string) {
+	reason := "usage_not_reported"
+	if b.accounting != nil {
+		list := b.prices
+		if list == nil {
+			list = pricing.Active()
+		}
+		_, reason = list.AccountingCost(b.accounting)
+	}
+	safe := b.accounting.Clone()
+	if !b.redacted {
+		safe.ClearStrings()
+		reason = "metadata_pending_redaction"
+	}
+	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason})
 }
 
 type headAssembler struct {

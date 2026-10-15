@@ -117,7 +117,10 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByText(/Estimated cost:/)).toBeVisible();
+  await expect(page.getByText(/Budget planning amount:/)).toBeVisible();
+  await expect(
+    page.getByText(/Assumes 2,000,000 charged tokens and 40 backend calls/),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Confirm estimate and generate" }).click();
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(progress).toBeVisible();
@@ -135,9 +138,24 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await page.getByText("Saved review usage · claude-sonnet-4-5", { exact: true }).click();
+  await expect(page.getByText(/Total processed tokens 1,000/)).toBeVisible();
   await page.getByRole("link", { name: "Jobs", exact: true }).click();
   await expect(page.getByText(/completed/)).toBeVisible();
-  await expect(page.getByText(/Calls 1 · Tokens 100/)).toBeVisible();
+  await expect(page.getByText(/Calls 1 · Repairs 0/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /Provider-reported usage: Input 60 · Output 40 · Cache reads 900 · Cache creation 0/,
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/Total processed tokens 1,000/)).toBeVisible();
+  await expect(page.getByText(/Charged-token budget counter 100/)).toBeVisible();
+  await expect(page.getByText(/provider did not report its pricing speed/)).toBeVisible();
+  await page.screenshot({ path: "test-results/usage-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/usage-narrow.png", animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();

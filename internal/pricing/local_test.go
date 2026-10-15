@@ -30,3 +30,31 @@ func TestOutcomeCostKeepsMissingAndAmbiguousUsageUnknown(t *testing.T) {
 		t.Fatal("disjoint usage not preserved", cost, want)
 	}
 }
+
+func TestAccountingPricesModelsIndependentlyAndKeepsUnknownReason(t *testing.T) {
+	list := Active()
+	a := &agent.Accounting{}
+	for _, model := range []string{"claude-sonnet-4-5", "gpt-5-mini"} {
+		a.Add(agent.Result{Model: model, Calls: 1, Usage: agent.Usage{Input: 100, Output: 20, CacheRead: 900, Speed: new("standard"), MinPrompt: new(int64(1000)), MaxPrompt: new(int64(1000))}}, false)
+	}
+	cost, reason := list.AccountingCost(a)
+	expected := 0.0
+	for _, attempt := range a.Attempts {
+		c := list.OutcomeCost(attempt.Model, agent.Outcome{Usage: attempt.Usage})
+		if c == nil {
+			t.Fatal("fixture model unpriced", attempt.Model)
+		}
+		expected += *c
+	}
+	if cost == nil || *cost != expected || reason != "" {
+		t.Fatal(cost, reason, expected)
+	}
+	a.Attempts[1].Usage.Speed = nil
+	if cost, reason = list.AccountingCost(a); cost != nil || reason != "speed_not_reported" {
+		t.Fatal(cost, reason)
+	}
+	a.Usage.Unreported = true
+	if cost, reason = list.AccountingCost(a); cost != nil || reason != "usage_incomplete" {
+		t.Fatal(cost, reason)
+	}
+}

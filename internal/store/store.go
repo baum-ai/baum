@@ -19,6 +19,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 var ErrNotFound = errors.New("no stored review version; run baum generate first")
@@ -45,24 +47,27 @@ func (k Key) documentRepository() string {
 // Metadata records reproducible input identities and the generation that
 // produced a version. Policy is the digest of the applied base REVIEW.md, null when absent.
 type Metadata struct {
-	Version         int           `json:"version"`
-	Head            string        `json:"head"`
-	Base            string        `json:"base"`
-	MergeBase       string        `json:"merge_base"`
-	BundleDigest    string        `json:"bundle_digest"`
-	Backend         string        `json:"backend"`
-	BackendVersion  string        `json:"backend_version"`
-	Model           string        `json:"model"`
-	Schema          string        `json:"schema"`
-	SchemaRevision  string        `json:"schema_revision"`
-	PromptVersion   string        `json:"prompt_version"`
-	PromptDigest    string        `json:"prompt_digest"`
-	Policy          *string       `json:"policy"`
-	GeneratedAt     string        `json:"generated_at"`
-	Elapsed         time.Duration `json:"elapsed_ns"`
-	Calls           int           `json:"calls"`
-	Tokens          int           `json:"tokens"`
-	RecordedCostUSD *float64      `json:"recorded_cost_usd"`
+	PriceVersion    string            `json:"price_version,omitempty"`
+	Accounting      *agent.Accounting `json:"accounting,omitempty"`
+	CostReason      string            `json:"cost_reason,omitempty"`
+	Version         int               `json:"version"`
+	Head            string            `json:"head"`
+	Base            string            `json:"base"`
+	MergeBase       string            `json:"merge_base"`
+	BundleDigest    string            `json:"bundle_digest"`
+	Backend         string            `json:"backend"`
+	BackendVersion  string            `json:"backend_version"`
+	Model           string            `json:"model"`
+	Schema          string            `json:"schema"`
+	SchemaRevision  string            `json:"schema_revision"`
+	PromptVersion   string            `json:"prompt_version"`
+	PromptDigest    string            `json:"prompt_digest"`
+	Policy          *string           `json:"policy"`
+	GeneratedAt     string            `json:"generated_at"`
+	Elapsed         time.Duration     `json:"elapsed_ns"`
+	Calls           int               `json:"calls"`
+	Tokens          int               `json:"tokens"`
+	RecordedCostUSD *float64          `json:"recorded_cost_usd"`
 }
 
 type Version struct {

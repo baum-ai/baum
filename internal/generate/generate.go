@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
@@ -89,6 +90,7 @@ type Assembler interface {
 
 // Options are the inputs of one run.
 type Options struct {
+	PriceList *pricing.List
 	Assembler Assembler
 	// Request names the pull request and the limits. Run sets its Checkout and
 	// Attachments writers.
@@ -352,7 +354,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if err := json.Unmarshal(completed, &stored); err != nil {
 		return result, err
 	}
-	result.Metadata = store.Metadata{Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
+	result.Metadata = store.Metadata{Accounting: outcome.Accounting, Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
 		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}

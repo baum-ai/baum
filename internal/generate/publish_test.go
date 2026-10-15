@@ -2,11 +2,13 @@ package generate_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -26,7 +28,7 @@ func TestPublishCancellationDuringRepairKeepsStoreEmptyAndCleansTrees(t *testing
 	if e != nil {
 		t.Fatal(e)
 	}
-	key := store.Key{Repository: "example/project", Number: 1}
+	key := store.Key{Repository: "acme/demo", Number: 7}
 	_, e = generate.Publish(ctx, s, key, f.options(t), nil)
 	if generate.CategoryOf(e) != generate.CategoryInterrupted {
 		t.Fatal(e)
@@ -39,4 +41,39 @@ func TestPublishCancellationDuringRepairKeepsStoreEmptyAndCleansTrees(t *testing
 		t.Fatal("missing interrupted run", snapshot, e)
 	}
 	f.requireClean(t)
+}
+
+func TestPublishKeepsRetryUsageAndOldRecordsUnknown(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = func(_ context.Context, r agent.Request, n int) (agent.Result, error) {
+		doc, err := generatetest.Document(r.Directory, nil)
+		if n == 0 {
+			doc = []byte(`{}`)
+		}
+		return agent.Result{Document: doc, Model: "reported-model", Calls: 1, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, CacheRead: 100}}, err
+	}
+	s, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: "acme/demo", Number: 7}
+	result, err := generate.Publish(context.Background(), s, key, f.options(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.Latest(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := saved.Metadata.Accounting
+	if a == nil || len(a.Attempts) != 2 || a.Usage.CacheRead != 200 || a.ChargedTokens != 20 || result.Metadata.CostReason != "speed_not_reported" {
+		t.Fatalf("lost repaired usage: %+v %+v", saved.Metadata, a)
+	}
+	var old store.Metadata
+	if err = json.Unmarshal([]byte(`{"tokens":123,"model":"old"}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Accounting != nil {
+		t.Fatal("invented old usage")
+	}
 }

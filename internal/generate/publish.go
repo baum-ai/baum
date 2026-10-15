@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
@@ -75,8 +76,19 @@ func Publish(ctx context.Context, versions *store.Store, key store.Key, o Option
 	if ctx.Err() != nil {
 		return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
 	}
+	list := o.PriceList
+	if list == nil {
+		list = pricing.Active()
+	}
+	result.Metadata.PriceVersion = list.Version()
+	result.Metadata.RecordedCostUSD, result.Metadata.CostReason = list.AccountingCost(result.Metadata.Accounting)
 	if cost != nil {
 		result.Metadata.RecordedCostUSD = cost(result)
+		if result.Metadata.RecordedCostUSD != nil {
+			result.Metadata.CostReason = ""
+		} else if result.Metadata.CostReason == "" {
+			result.Metadata.CostReason = "cost_not_calculated"
+		}
 	}
 	if err = versions.Put(ctx, key, previous, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)

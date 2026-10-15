@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/generate"
 )
 
@@ -30,6 +31,8 @@ type Prepared struct {
 	HeadSHA                       string   `json:"head_sha"`
 	Backend                       string   `json:"backend"`
 	Model                         string   `json:"model"`
+	MaxTokens                     int      `json:"max_tokens,omitempty"`
+	MaxCalls                      int      `json:"max_calls,omitempty"`
 	EstimateUSD                   *float64 `json:"estimate_usd"`
 	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
 	BlockedReason                 string   `json:"blocked_reason,omitempty"`
@@ -42,7 +45,9 @@ type Estimate struct {
 	ExpiresAt    time.Time  `json:"expires_at"`
 }
 type Job struct {
-	ID string `json:"id"`
+	Accounting *agent.Accounting `json:"accounting,omitempty"`
+	CostReason string            `json:"cost_reason,omitempty"`
+	ID         string            `json:"id"`
 	Prepared
 	State         string    `json:"state"`
 	Phase         string    `json:"phase"`
@@ -55,6 +60,8 @@ type Job struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 type Progress struct {
+	Accounting             *agent.Accounting
+	CostReason             string
 	Phase                  string
 	Calls, Tokens, Repairs int
 }
@@ -128,6 +135,10 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	for i := range q.jobs {
 		if q.jobs[i].State == "running" {
+			if q.jobs[i].Accounting != nil {
+				q.jobs[i].Accounting.Usage.Unreported = true
+				q.jobs[i].CostReason = "usage_incomplete"
+			}
 			q.jobs[i].State = "interrupted"
 			q.jobs[i].Reason = "interrupted"
 			q.jobs[i].Phase = "finished"
@@ -170,6 +181,9 @@ func (q *Queue) List() []Job {
 	defer q.mu.Unlock()
 	out := make([]Job, len(q.jobs))
 	copy(out, q.jobs)
+	for i := range out {
+		out[i].Accounting = out[i].Accounting.Clone()
+	}
 	return out
 }
 func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estimate, error) {
@@ -325,7 +339,9 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 			if cancel := q.cancels[j.ID]; cancel != nil {
 				cancel()
 			}
-			return *j, nil
+			result := *j
+			result.Accounting = result.Accounting.Clone()
+			return result, nil
 		}
 		if j.State == "queued" {
 			old := *j
@@ -339,7 +355,9 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 			copy := *j
 			notification = &copy
 		}
-		return *j, nil
+		result := *j
+		result.Accounting = result.Accounting.Clone()
+		return result, nil
 	}
 	return Job{}, os.ErrNotExist
 }
@@ -389,14 +407,27 @@ func (q *Queue) worker() {
 				q.jobs[i].Calls = p.Calls
 				q.jobs[i].Tokens = p.Tokens
 				q.jobs[i].Repairs = p.Repairs
+				q.jobs[i].Accounting = p.Accounting.Clone()
+				q.jobs[i].CostReason = p.CostReason
 				q.jobs[i].UpdatedAt = time.Now().UTC()
+				// Save every reported usage update before publishing it. A crash
+				// may lose in-flight provider usage, never the reports we received.
+				if e := q.save(); e != nil {
+					cancel()
+					q.mu.Unlock()
+					return
+				}
 				current := q.jobs[i]
+				current.Accounting = current.Accounting.Clone()
 				q.mu.Unlock()
 				q.notify(current)
 			})
 			q.mu.Lock()
 			current := &q.jobs[i]
 			current.ActualCostUSD = cost
+			if cost == nil && current.CostReason == "" {
+				current.CostReason = "usage_not_reported"
+			}
 			current.Phase = "finished"
 			current.UpdatedAt = time.Now().UTC()
 			current.State = "completed"
@@ -428,6 +459,7 @@ func (q *Queue) worker() {
 }
 func (q *Queue) notify(j Job) {
 	if q.changed != nil {
+		j.Accounting = j.Accounting.Clone()
 		q.changed(j)
 	}
 }

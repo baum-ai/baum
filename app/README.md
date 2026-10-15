@@ -55,3 +55,21 @@ Before the browser suite build its Linux test helper in `oss-test`:
 The suite verifies bootstrap, filtering, shared PR viewing, narrow layout,
 estimation, generation/progress and repository settings. Unit tests cover
 first-run/authorization, each review state, unknown costs, selection and filters.
+
+Generation usage is retained as provider-reported input, output, cache-read and
+cache-creation buckets, with available TTL, speed, prompt range and model-call
+reports. Jobs save each update before publishing progress, including failed and
+cancelled attempts. Provider-controlled model and speed strings appear only
+after secret masking; progress retains numeric buckets while masking runs.
+The charged-token budget counter excludes cache reads;
+total processed tokens includes them. Missing older accounting remains unknown,
+and interrupted providers show reported subtotals rather than exact totals.
+Saved review usage follows the version selected in history. Unknown actual
+costs show a reason; configured model identity is distinguished from a provider
+report. Each attempt is priced independently when its model and pricing inputs
+are known.
+
+The confirmation amount is budget planning, not a PR-sized prediction. It shows
+the configured charged-token and backend-call limits and assumes one
+budget-sized cache read per call at the highest listed rates. Cached reads and
+provider overshoot can exceed those assumptions, so this is not a dollar cap.

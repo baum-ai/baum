@@ -654,3 +654,28 @@ explicitly stale. Only minimized heads/state/title/check metadata is added to
 the private discovery cache; raw PR bodies, signed image URLs and session text
 are not cached there. No background task queues generation or calls a model,
 regardless of legacy automatic-generation preferences. Paid work is on demand.
+
+### Local generation accounting
+
+New review provenance (`/api/versions` and index metadata) and durable jobs
+include additive `accounting`: aggregate provider usage and individual model
+reports across retries and repairs. The existing `tokens` field remains the
+charged-token budget counter (input, output and cache creation); cache reads
+are billed too and appear separately. `accounting.usage` retains the agent's
+existing Usage wire names (`Input`, `Output`, `CacheRead`, `CacheCreate`,
+`CacheCreate1h`, `Speed`, `MinPrompt`, `MaxPrompt`, `Unreported`). A missing
+accounting object is an older unknown record. `Unreported` means the displayed
+buckets can be partial, never an exact zero. Old records are not backfilled.
+Available Claude per-call model reports are preserved; unattributable run-total
+excess remains model-unknown. Codex turn reports accumulate rather than replacing
+previous turns, and its configured model is marked `model_source: configured`
+when the CLI does not report actual model identity. Interrupted streams retain
+reported subtotals. Each job saves accounting updates before notifying clients;
+a restart marks an unfinished run's accounting incomplete.
+
+Costs are computed per model report, never by applying the final repair's model
+to every token. Missing usage, actual model, speed, cache TTL or applicable rates
+leave cost null with `cost_reason`. This is API-equivalent pricing from the
+recorded price list, not a subscription invoice. Budget confirmation uses a
+planning amount based on configured `max_tokens` and `max_calls`, not the PR's
+size. The UI shows those assumptions; it is not a predicted bill or dollar cap.

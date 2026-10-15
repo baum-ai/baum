@@ -45,6 +45,37 @@ export type Entry = {
   failure_reason?: string;
   store_error?: string;
 };
+export type Usage = {
+  Input: number;
+  Output: number;
+  CacheRead: number;
+  CacheCreate: number;
+  CacheCreate1h: number | null;
+  Speed: string | null;
+  MinPrompt: number | null;
+  MaxPrompt: number | null;
+  Unreported: boolean;
+};
+export type Accounting = {
+  usage: Usage;
+  charged_tokens: number;
+  attempts: {
+    model: string;
+    model_source?: string;
+    usage: Usage;
+    calls: number;
+    charged_tokens: number;
+    failed: boolean;
+  }[];
+};
+export type Provenance = {
+  tokens?: number;
+  version: number;
+  model: string;
+  accounting?: Accounting;
+  recorded_cost_usd: number | null;
+  cost_reason?: string;
+};
 export type Job = {
   id: string;
   clone: string;
@@ -56,6 +87,8 @@ export type Job = {
   tokens: number;
   repairs: number;
   actual_cost_usd: number | null;
+  accounting?: Accounting;
+  cost_reason?: string;
   reason?: string;
 };
 export type Estimate = {
@@ -70,6 +103,8 @@ export type Estimate = {
     backend: string;
     model: string;
     estimate_usd: number | null;
+    max_tokens: number;
+    max_calls: number;
     requires_isolation_confirmation: boolean;
     blocked_reason?: string;
   }[];

@@ -1321,3 +1321,13 @@ head/state/title/check observations share the private credential-partitioned
 cache and augment the index, including historical PRs. A newer discovery result
 wins over older observations. Authenticated `/api/background` and index events
 report refresh health without filesystem paths, credentials or remote bodies.
+
+Local generation stores additive `agent.Accounting` in immutable version
+metadata and the durable queue. Accounting retains disjoint provider token
+buckets and available per-call model identity, speed, TTL and prompt range.
+Retries and repairs append reports; partial or absent reports stay unknown.
+Queue progress is saved before SSE publication and snapshots detach mutable
+accounting. Existing version records are never backfilled. Pricing sums
+individually attributable model reports; missing pricing dimensions leave a
+nullable cost and a fixed reason. The local SPA renders both job accounting
+and selected-version provenance without changing the review document schema.

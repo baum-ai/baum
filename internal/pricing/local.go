@@ -84,6 +84,10 @@ func (l *List) Estimate(model string, maxTokens, maxCalls int) *float64 {
 // OutcomeCost keeps unknown or ambiguous usage unknown. Agent usage is already
 // disjoint, including Codex: it must not apply Codex's raw-session subtraction.
 func (l *List) OutcomeCost(model string, outcome agent.Outcome) *float64 {
+	if outcome.Accounting != nil {
+		cost, _ := l.AccountingCost(outcome.Accounting)
+		return cost
+	}
 	u := outcome.Usage
 	if u.Unreported || u.IsZero() || u.Speed == nil || (u.CacheCreate > 0 && u.CacheCreate1h == nil) {
 		return nil
@@ -102,4 +106,40 @@ func (l *List) OutcomeCost(model string, outcome agent.Outcome) *float64 {
 		return nil
 	}
 	return &value
+}
+
+// AccountingCost prices attempts separately so a repair using a different model
+// cannot reprice the whole run at its final model's rate.
+func (l *List) AccountingCost(a *agent.Accounting) (*float64, string) {
+	if a == nil || len(a.Attempts) == 0 {
+		return nil, "usage_not_reported"
+	}
+	if a.Usage.Unreported {
+		return nil, "usage_incomplete"
+	}
+	sum := 0.0
+	for _, attempt := range a.Attempts {
+		if attempt.ModelSource == "configured" {
+			return nil, "actual_model_not_reported"
+		}
+		u := attempt.Usage
+		if u.Unreported || u.IsZero() {
+			return nil, "usage_not_reported"
+		}
+		if attempt.Model == "" {
+			return nil, "model_not_reported"
+		}
+		if u.Speed == nil {
+			return nil, "speed_not_reported"
+		}
+		if u.CacheCreate > 0 && u.CacheCreate1h == nil {
+			return nil, "cache_ttl_not_reported"
+		}
+		cost := l.OutcomeCost(attempt.Model, agent.Outcome{Usage: u})
+		if cost == nil {
+			return nil, "model_or_prompt_rates_unknown"
+		}
+		sum += *cost
+	}
+	return &sum, ""
 }

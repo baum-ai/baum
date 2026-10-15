@@ -1,3 +1,4 @@
+import { UsageDetails } from "./usage";
 import { Component, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
@@ -8,7 +9,15 @@ import { AttachmentUrlProvider } from "@baum/viewer/host";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
-import { request, selector, documentRequest, type Entry, type Job, isActiveJob, cost } from "./api";
+import {
+  request,
+  selector,
+  documentRequest,
+  type Entry,
+  type Job,
+  isActiveJob,
+  type Provenance,
+} from "./api";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -84,6 +93,7 @@ export function LocalReview({
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
   const [sessions, setSessions] = useState<SessionsLoad>({ state: "loading" });
@@ -115,8 +125,9 @@ export function LocalReview({
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
       });
-    request<{ version: number }[]>(`/api/versions?${latestQuery}`, undefined, "GET", abort.signal)
+    request<Provenance[]>(`/api/versions?${latestQuery}`, undefined, "GET", abort.signal)
       .then((rows) => {
+        setProvenance(rows);
         setVersions(rows.map((row) => row.version));
         setHistoryFailed(false);
       })
@@ -217,6 +228,24 @@ export function LocalReview({
           }
           notices={
             <>
+              {viewedDocument
+                ? (() => {
+                    const saved = provenance.find(
+                      (p) => p.version === viewedDocument.review.version,
+                    );
+                    return saved ? (
+                      <details className="mb-3 local-panel">
+                        <summary>Saved review usage · {saved.model}</summary>
+                        <UsageDetails
+                          accounting={saved.accounting}
+                          charged={saved.accounting?.charged_tokens ?? saved.tokens}
+                          amount={saved.recorded_cost_usd}
+                          reason={saved.cost_reason}
+                        />
+                      </details>
+                    ) : null;
+                  })()
+                : null}
               {job && (job.state !== "completed" || !doc) ? (
                 <ReviewJob key={job.id} job={job} changed={changed} />
               ) : null}
@@ -288,9 +317,14 @@ function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> })
         {active ? ` · ${job.phase}` : ""}
       </p>
       <p className="text-xs text-(--text-tertiary)">
-        Calls {job.calls} · Tokens {job.tokens} · Repairs {job.repairs} · Recorded cost{" "}
-        {cost(job.actual_cost_usd)}
+        Calls {job.calls} · Repairs {job.repairs}
       </p>
+      <UsageDetails
+        accounting={job.accounting}
+        charged={job.tokens}
+        amount={job.actual_cost_usd}
+        reason={job.cost_reason}
+      />
       {job.reason ? <p>{job.reason}</p> : null}
       {error ? <Alert>{error}</Alert> : null}
       {active ? (

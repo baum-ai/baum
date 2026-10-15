@@ -65,6 +65,8 @@ type Result struct {
 	Document                   []byte
 	Model                      string
 	Calls, Tokens              int
+	UsageAttempts              []UsageAttempt
+	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
 }

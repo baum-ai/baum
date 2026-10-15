@@ -222,3 +222,33 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnUsageAccumulatesAndSurvivesFailures(t *testing.T) {
+	for _, test := range []struct {
+		name, ending string
+		partial      bool
+		tokens       int64
+	}{
+		{"completed", `echo '{"type":"turn.completed","usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2}}'`, false, 14},
+		{"failed with report", `echo '{"type":"turn.failed","usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2},"error":{"message":"failed"}}'`, false, 14},
+		{"failed without report", `echo '{"type":"turn.failed","error":{"message":"failed"}}'`, true, 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "codex")
+			body := `#!/bin/sh
+cat >/dev/null
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}'
+` + test.ending + "\n"
+			if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := (&Backend{Binary: script, Model: "configured-model", Profile: Container}).Run(context.Background(), request(t.TempDir()))
+			if got.Calls != 2 || got.Usage.Input+got.Usage.Output != test.tokens || got.Usage.Unreported != test.partial || got.Model != "configured-model" {
+				t.Fatalf("lost turn accounting: %+v", got)
+			}
+		})
+	}
+}

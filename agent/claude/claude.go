@@ -159,7 +159,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		return merged
 	}
 	type modelCall struct {
-		usage usage
+		usage           usage
+		model           string
+		streamed, final bool
 		// counted: the call had a snapshot or a message_delta. A call whose
 		// stream dies after message_start is retried under a new ID, so
 		// counting it would charge one turn twice against MaxCalls; its
@@ -298,7 +300,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 						Offset, Limit int
 					}
 				}
-				Usage usage
+				StopReason string `json:"stop_reason"`
+				Usage      usage
 			} `json:"message"`
 			Event struct {
 				Type    string
@@ -324,20 +327,28 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				streaming = event.Event.Message.ID
 				if streaming != "" {
 					observe(streaming, event.Event.Message.Usage, false)
+					calls[streaming].streamed = true
 				}
 				// A call cut off before its first snapshot still names its model.
 				if event.Event.Message.Model != "" {
 					result.Model = event.Event.Message.Model
+					if call := calls[streaming]; call != nil {
+						call.model = event.Event.Message.Model
+					}
 				}
 			case "message_delta":
 				record(agent.Event{Kind: "response", Status: event.Event.Delta.StopReason})
 				if streaming != "" {
 					observe(streaming, event.Event.Usage, true)
+					if event.Event.Delta.StopReason != "" {
+						calls[streaming].final = true
+					}
 				}
 			case "message_stop":
 				// A call may send several message_delta events, each
 				// cumulative; after the last its usage is final.
 				if streaming != "" {
+					calls[streaming].final = true
 					logCall(streaming)
 				}
 				streaming = ""
@@ -396,6 +407,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			}
 			observe(event.Message.ID, event.Message.Usage, true)
 			result.Model = event.Message.Model
+			calls[event.Message.ID].model = event.Message.Model
+			if event.Message.StopReason != "" {
+				calls[event.Message.ID].final = true
+			}
 		}
 		if event.Type == "result" {
 			u := event.Usage
@@ -439,6 +454,38 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	if err != nil {
 		_ = cmd.Cancel()
 		_, _ = io.Copy(io.Discard, stdout)
+	}
+	// Preserve the per-call reports before the backend's aggregate loses
+	// model identity. A run-total excess cannot be assigned to a model.
+	var assigned agent.Usage
+	for _, id := range callOrder {
+		call := calls[id]
+		u := call.usage
+		usage := agent.Usage{Input: int64(u.Input), Output: int64(u.Output), CacheRead: int64(u.CacheRead), CacheCreate: int64(u.CacheCreate)}
+		if h := u.Cache1h(); h != nil {
+			usage.CacheCreate1h = pointerTo(int64(*h))
+		}
+		if u.Speed == speedStandard || u.Speed == speedFast {
+			usage.Speed = pointerTo(string(u.Speed))
+		}
+		prompt := int64(u.Input + u.CacheRead + u.CacheCreate)
+		if prompt > 0 {
+			usage.MinPrompt, usage.MaxPrompt = pointerTo(prompt), pointerTo(prompt)
+		}
+		complete := call.final || (!call.streamed && completed)
+		if !complete || usage.IsZero() {
+			usage.Unreported = true
+			result.Usage.Unreported = true
+		}
+		assigned.Add(usage)
+		result.UsageAttempts = append(result.UsageAttempts, agent.UsageAttempt{Model: call.model, ModelSource: "provider_reported", Usage: usage, Calls: 1, ChargedTokens: agent.ChargedTokens(u.Input, u.Output, u.CacheCreate), Failed: !complete})
+	}
+	residual := agent.Usage{Input: max(0, result.Usage.Input-assigned.Input), Output: max(0, result.Usage.Output-assigned.Output), CacheRead: max(0, result.Usage.CacheRead-assigned.CacheRead), CacheCreate: max(0, result.Usage.CacheCreate-assigned.CacheCreate)}
+	if !residual.IsZero() {
+		result.UsageAttempts = append(result.UsageAttempts, agent.UsageAttempt{Usage: residual, ChargedTokens: int(residual.Input + residual.Output + residual.CacheCreate), Failed: !completed})
+	}
+	if !completed {
+		result.Usage.Unreported = true
 	}
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {

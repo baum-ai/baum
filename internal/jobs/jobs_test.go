@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 type fakeExecutor struct {
@@ -26,7 +28,9 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
-	progress(Progress{Phase: "repairing", Calls: 2, Tokens: 10, Repairs: 1})
+	a := &agent.Accounting{}
+	a.Add(agent.Result{Model: "reported-model", Calls: 2, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, CacheRead: 100}}, false)
+	progress(Progress{Phase: "repairing", Calls: 2, Tokens: 10, Repairs: 1, Accounting: a, CostReason: "speed_not_reported"})
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -318,4 +322,53 @@ func privateDir(t *testing.T) string {
 		t.Fatal(e)
 	}
 	return dir
+}
+
+func TestUsageProgressIsDurableAndDetached(t *testing.T) {
+	q, f := newQueue(t)
+	e := estimate(t, q, "single", Item{"clone", 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	deadline := time.Now().Add(time.Second)
+	for q.List()[0].Accounting == nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := q.List()[0]
+	if got.Accounting == nil {
+		t.Fatal("missing usage")
+	}
+	got.Accounting.Usage.Input = 999
+	if q.List()[0].Accounting.Usage.Input != 6 {
+		t.Fatal("List leaked mutable accounting")
+	}
+	raw, err := os.ReadFile(q.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted []Job
+	if err = json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted[0].Accounting.Usage.CacheRead != 100 {
+		t.Fatal("running usage not saved", string(raw))
+	}
+	if _, err = q.Cancel(jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	terminal := waitState(t, q, jobs[0].ID, "cancelled")
+	if terminal.Accounting.Usage.CacheRead != 100 || terminal.CostReason != "speed_not_reported" {
+		t.Fatal("lost cancelled usage", terminal)
+	}
+	q.Close()
+	reopened, err := Open(q.path, f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.List()[0].Accounting.Usage.Input != 6 {
+		t.Fatal("lost usage after restart")
+	}
 }

@@ -1,3 +1,5 @@
+import { formatCount } from "@baum/viewer/components/format";
+import { UsageDetails } from "./usage";
 import {
   useCallback,
   useEffect,
@@ -462,8 +464,9 @@ function Confirmation({
       </h2>
       {error ? <Alert>{error}</Alert> : null}
       <p>
-        Estimated cost: <strong>{cost(estimate.estimate_usd)}</strong>. This is an estimate, not a
-        spending limit.
+        Budget planning amount: <strong>{cost(estimate.estimate_usd)}</strong>. This uses configured
+        budgets, not the size of this pull request, and is not a spending limit or a prediction of
+        its cost.
       </p>
       <p className="text-xs">
         Prices: {estimate.price_version}. Expires{" "}
@@ -474,6 +477,11 @@ function Confirmation({
           <li key={`${item.clone}:${item.pr}`}>
             #{item.pr}: {item.backend} / {item.model || "No model configured"} —{" "}
             {cost(item.estimate_usd)}
+            <p>
+              Assumes {formatCount(item.max_tokens)} charged tokens and {item.max_calls} backend
+              calls, with one budget-sized cache read per call at the highest listed rates. Cache
+              reads can exceed this assumption.
+            </p>
             {item.blocked_reason ? (
               <p role="alert">
                 Excluded: {item.blocked_reason}.{" "}
@@ -529,9 +537,14 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
             </strong>{" "}
             — {job.state} · {job.phase}
             <p>
-              Calls {job.calls} · Tokens {job.tokens} · Repairs {job.repairs} · Recorded cost{" "}
-              {cost(job.actual_cost_usd)}
+              Calls {job.calls} · Repairs {job.repairs}
             </p>
+            <UsageDetails
+              accounting={job.accounting}
+              charged={job.tokens}
+              amount={job.actual_cost_usd}
+              reason={job.cost_reason}
+            />
             {job.reason ? <p role="status">{job.reason}</p> : null}
             {job.state === "queued" || job.state === "running" ? (
               <Button
