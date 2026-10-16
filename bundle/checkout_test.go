@@ -286,6 +286,26 @@ func TestWriteArchiveOmitsBinaryFiles(t *testing.T) {
 	}
 }
 
+// A compared file the diff holds as text is kept even when its exported bytes
+// hold a NUL, as a working-tree-encoding of UTF-16 produces; the same bytes
+// outside the diff are omitted as binary.
+func TestWriteArchiveKeepsComparedTextWithNULs(t *testing.T) {
+	utf16 := "h\x00i\x00\n\x00"
+	export := fakeExport{
+		head:      map[string]string{"notes.txt": utf16, "other.txt": utf16},
+		mergeBase: map[string]string{"notes.txt": "h\x00\n\x00"},
+	}
+	hunks := []Hunk{{Path: "notes.txt", Patch: "-h\n+hi\n"}}
+	config := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1024, MaxTotalFiles: 10}
+	omissions, files := writeAndReadArchive(t, export, hunks, config)
+	if files["head/notes.txt"] != utf16 || files["merge-base/notes.txt"] != "h\x00\n\x00" {
+		t.Fatalf("compared text file missing: %q", files)
+	}
+	if want := []CheckoutOmission{{Path: "other.txt", Reason: OmittedBinaryReason}}; !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+}
+
 // Over the byte or file budget, the export keeps the compared paths at both
 // trees, fills the rest of the budget with other head files, and omits what
 // does not fit instead of failing; the archive unpacks under the same caps.

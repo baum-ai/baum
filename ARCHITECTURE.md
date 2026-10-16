@@ -215,8 +215,9 @@ backoff, `sources` and the mapping onto the bundle.
   `generator.truncated` note.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
   metadata. Files over the size limit, binary files (a NUL byte in the first
-  8000 bytes, as git decides) and submodule contents are omitted with a
-  reason; their hunks stay in the index and must still be placed. The
+  8000 bytes, as git decides; a compared file the diff holds as text is kept,
+  since the export applies working-tree-encoding) and submodule contents are
+  omitted with a reason; their hunks stay in the index and must still be placed. The
   compared paths are exported first, at the head and then at the merge base,
   and the rest of the head tree fills what the total byte and file budgets
   leave: a file that does not fit is omitted (`omitted_budget`) instead of

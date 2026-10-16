@@ -198,10 +198,25 @@ const binarySniffBytes = 8000
 // that does not fit is omitted with OmittedBudgetReason instead of failing the
 // export, so the archive always stays within MaxTotalBytes and MaxTotalFiles.
 // Binary files are omitted with OmittedBinaryReason.
+//
+// A compared path the diff holds as text is never treated as binary: the
+// archive applies working-tree-encoding, so a UTF-16 text file arrives with
+// NUL bytes although git diffs its canonical content as text.
 func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport, head, mergeBase string, hunks []Hunk, output io.Writer) (omissions []CheckoutOmission, err error) {
 	submodules, err := submodulePaths(ctx, pinned, head)
 	if err != nil {
 		return nil, err
+	}
+	diffBinary, diffText := map[string]bool{}, map[string]bool{}
+	for _, hunk := range hunks {
+		kind := diffText
+		if hunk.Textless && hunk.TextlessReason == OmittedBinaryReason {
+			kind = diffBinary
+		}
+		kind[hunk.Path] = true
+		if hunk.OldPath != "" {
+			kind[hunk.OldPath] = true
+		}
 	}
 	omitted := map[string]string{}
 	for _, path := range submodules {
@@ -273,7 +288,7 @@ func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport,
 			if _, err := io.ReadFull(reader, start); err != nil {
 				return err
 			}
-			if bytes.IndexByte(start, 0) >= 0 {
+			if (!diffText[path] || diffBinary[path]) && bytes.IndexByte(start, 0) >= 0 {
 				omit(path, OmittedBinaryReason)
 				continue
 			}
