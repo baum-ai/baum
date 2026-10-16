@@ -34,6 +34,18 @@ type Prepared struct {
 	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
 	BlockedReason                 string   `json:"blocked_reason,omitempty"`
 }
+
+// sameConfirmedInputs reports whether two confirmations authorize the same
+// run: clone, head, backend, model, budgets and caps, isolation, price list
+// version and estimate. Only then is a resubmission idempotent.
+func (p Prepared) sameConfirmedInputs(o Prepared) bool {
+	if (p.EstimateUSD == nil) != (o.EstimateUSD == nil) || (p.EstimateUSD != nil && *p.EstimateUSD != *o.EstimateUSD) {
+		return false
+	}
+	p.EstimateUSD, o.EstimateUSD = nil, nil
+	return p == o
+}
+
 type Estimate struct {
 	ID           string     `json:"id"`
 	Items        []Prepared `json:"items"`
@@ -282,7 +294,7 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 				q.jobs = before
 				return nil, errors.New("a job is already running for this pull request")
 			}
-			if j.HeadSHA == p.HeadSHA {
+			if j.Prepared.sameConfirmedInputs(p) {
 				out = append(out, *j)
 				continue
 			}
