@@ -227,3 +227,128 @@ func TestUnpackCheckoutKeepsScratchFilesystemErrors(t *testing.T) {
 		t.Fatalf("err = %v, want a host filesystem error, not ErrInvalidArchive", err)
 	}
 }
+
+// writeAndReadArchive writes export's checkout with config and returns the
+// omissions and the archive's regular files by name.
+func writeAndReadArchive(t *testing.T, export fakeExport, hunks []Hunk, config CheckoutConfig) ([]CheckoutOmission, map[string]string) {
+	t.Helper()
+	var archive bytes.Buffer
+	omissions, err := NewCheckoutBuilder(config).WriteArchive(context.Background(), export, "head", "base", hunks, &archive)
+	if err != nil {
+		t.Fatalf("WriteArchive: %v", err)
+	}
+	files := map[string]string{}
+	reader := tar.NewReader(&archive)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag == tar.TypeReg {
+			content, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files[header.Name] = string(content)
+		}
+	}
+	return omissions, files
+}
+
+// A file git would call binary, a NUL byte in its first 8000 bytes, is left
+// out with the reason a binary hunk has; a NUL after that does not count.
+func TestWriteArchiveOmitsBinaryFiles(t *testing.T) {
+	late := strings.Repeat("a", binarySniffBytes) + "\x00"
+	export := fakeExport{
+		head:      map[string]string{"logo.png": "\x89PNG\r\n\x1a\n\x00\x00", "notes.txt": "text\n", "late.txt": late, "empty": ""},
+		mergeBase: map[string]string{"logo.png": "\x89PNG\x00"},
+	}
+	config := CheckoutConfig{MaxFileBytes: 1 << 20, MaxTotalBytes: 1 << 20, MaxTotalFiles: 10}
+	omissions, files := writeAndReadArchive(t, export, []Hunk{{Path: "logo.png", Textless: true, TextlessReason: "binary"}}, config)
+	if want := []CheckoutOmission{{Path: "logo.png", Reason: OmittedBinaryReason}}; !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+	for name, want := range map[string]string{"head/notes.txt": "text\n", "head/late.txt": late, "head/empty": ""} {
+		if got, ok := files[name]; !ok || got != want {
+			t.Fatalf("%s = %q (present %v), want %q", name, got, ok, want)
+		}
+	}
+	if _, ok := files["head/logo.png"]; ok {
+		t.Fatal("binary head file was written")
+	}
+	if _, ok := files["merge-base/logo.png"]; ok {
+		t.Fatal("binary merge-base file was written")
+	}
+}
+
+// Over the byte or file budget, the export keeps the compared paths at both
+// trees, fills the rest of the budget with other head files, and omits what
+// does not fit instead of failing; the archive unpacks under the same caps.
+func TestWriteArchiveKeepsComparedPathsWithinTheBudget(t *testing.T) {
+	head := map[string]string{"z/changed.go": "package z // head\n", "a.txt": "aaaa\n", "b.txt": "bbbb\n", "c.txt": "cccc\n"}
+	mergeBase := map[string]string{"z/changed.go": "package z // base\n"}
+	hunks := []Hunk{{Path: "z/changed.go"}}
+	compared := int64(len(head["z/changed.go"]) + len(mergeBase["z/changed.go"]))
+	for name, config := range map[string]CheckoutConfig{
+		// Room for the compared files and one five-byte file.
+		"bytes": {MaxFileBytes: 1024, MaxTotalBytes: compared + 5, MaxTotalFiles: 100},
+		"files": {MaxFileBytes: 1024, MaxTotalBytes: 1 << 20, MaxTotalFiles: 3},
+	} {
+		t.Run(name, func(t *testing.T) {
+			omissions, files := writeAndReadArchive(t, fakeExport{head: head, mergeBase: mergeBase}, hunks, config)
+			if files["head/z/changed.go"] != head["z/changed.go"] || files["merge-base/z/changed.go"] != mergeBase["z/changed.go"] {
+				t.Fatalf("compared path missing: %v", files)
+			}
+			// The head tree's archive order puts a.txt first.
+			if files["head/a.txt"] != "aaaa\n" || len(files) != 3 {
+				t.Fatalf("files = %v, want the compared paths and a.txt", files)
+			}
+			want := []CheckoutOmission{{Path: "b.txt", Reason: OmittedBudgetReason}, {Path: "c.txt", Reason: OmittedBudgetReason}}
+			if !slices.Equal(omissions, want) {
+				t.Fatalf("omissions = %+v, want %+v", omissions, want)
+			}
+			var archive bytes.Buffer
+			compressed := gzip.NewWriter(&archive)
+			if _, err := NewCheckoutBuilder(config).WriteArchive(context.Background(), fakeExport{head: head, mergeBase: mergeBase}, "head", "base", hunks, compressed); err != nil {
+				t.Fatal(err)
+			}
+			if err := compressed.Close(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "checkout.tar.gz")
+			if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			t.Cleanup(func() {
+				_ = filepath.WalkDir(dir, func(name string, _ os.DirEntry, _ error) error { return os.Chmod(name, 0o700) })
+			})
+			if err := UnpackCheckout(context.Background(), path, dir, config); err != nil {
+				t.Fatalf("UnpackCheckout: %v", err)
+			}
+		})
+	}
+}
+
+// When the compared files alone exceed the budget, the ones that fit are kept
+// and the rest are omitted, which makes their hunks textless.
+func TestWriteArchiveOmitsComparedPathsThatDoNotFit(t *testing.T) {
+	head := map[string]string{"a.go": "package a\n", "b.go": "package b\n"}
+	hunks := []Hunk{{ID: "a", Path: "a.go", Patch: "+a"}, {ID: "b", Path: "b.go", Patch: "+b"}}
+	config := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: int64(len(head["a.go"])), MaxTotalFiles: 10}
+	omissions, files := writeAndReadArchive(t, fakeExport{head: head, mergeBase: map[string]string{}}, hunks, config)
+	if len(files) != 1 || files["head/a.go"] != head["a.go"] {
+		t.Fatalf("files = %v, want only head/a.go", files)
+	}
+	if want := []CheckoutOmission{{Path: "b.go", Reason: OmittedBudgetReason}}; !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+	b := &Bundle{Diff: hunks}
+	ApplyCheckoutOmissions(b, omissions)
+	if !b.Diff[1].Textless || b.Diff[1].TextlessReason != OmittedBudgetReason || b.Diff[0].Textless {
+		t.Fatalf("hunks = %+v, want only b.go textless", b.Diff)
+	}
+}

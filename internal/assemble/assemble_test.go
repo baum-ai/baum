@@ -184,10 +184,14 @@ func TestFixtureBundle(t *testing.T) {
 	})
 	t.Run("checkout archive holds both trees", func(t *testing.T) {
 		names := tarNames(t, r.checkout.Bytes(), true)
-		for _, want := range []string{"head/src/list.go", "head/docs/guide.md", "merge-base/docs/old-guide.md", "merge-base/assets/logo.bin"} {
+		for _, want := range []string{"head/src/list.go", "head/docs/guide.md", "merge-base/docs/old-guide.md"} {
 			if !contains(names, want) {
 				t.Errorf("checkout lacks %s: %v", want, names)
 			}
+		}
+		// Binary files are left out of the checkout; their hunks were already textless.
+		if contains(names, "merge-base/assets/logo.bin") {
+			t.Errorf("checkout holds the binary merge-base/assets/logo.bin: %v", names)
 		}
 	})
 	t.Run("digest is the SHA-256 of the JSON", func(t *testing.T) {
