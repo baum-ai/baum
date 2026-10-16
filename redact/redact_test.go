@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -272,6 +273,81 @@ func TestIdentitiesRedactsEmailAndDefangsMention(t *testing.T) {
 	if got, changed := Identities("nothing to see"); got != "nothing to see" || changed {
 		t.Fatalf("Identities changed clean text: %q, %v", got, changed)
 	}
+}
+
+func TestIdentitiesDefangsMentionInEmphasis(t *testing.T) {
+	got, changed := Identities("_@octocat_ approved")
+	if want := "_octocat_ approved"; got != want || !changed {
+		t.Fatalf("Identities = %q, %v; want %q, true", got, changed, want)
+	}
+}
+
+func TestEncodedAndInternationalisedAddressesAreMasked(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ in, addr string }{
+		{"https://x.test/u?email=ada%40example.com&x=1", "ada%40example.com"},
+		{"https://x.test/u?email=ada%40EXAMPLE.com", "ada%40EXAMPLE.com"},
+		{"ada@exämple.com", "ada@exämple.com"},
+		{"ädä@example.com", "ädä@example.com"},
+		{"ada@example.рф", "ada@example.рф"},
+	} {
+		got, summary, err := e.Redact(c.in)
+		if err != nil || strings.Contains(got, "ada") || strings.Contains(got, "ädä") || summary.ByRule[EmailRuleID] != 1 {
+			t.Errorf("Redact(%q) = %q, %+v, %v", c.in, got, summary, err)
+		}
+		found, err := e.FindContext(context.Background(), c.in)
+		if err != nil || len(found) == 0 || c.in[found[0].Start:found[0].End] != c.addr || c.in[found[len(found)-1].Start:found[len(found)-1].End] != c.addr {
+			t.Errorf("FindContext(%q) = %+v, %v", c.in, found, err)
+		}
+		cleaned, changed := Identities(c.in)
+		if !changed || strings.Contains(cleaned, "ada") || strings.Contains(cleaned, "ädä") {
+			t.Errorf("Identities(%q) = %q", c.in, cleaned)
+		}
+	}
+}
+
+func TestIdentitiesKeepsTextWhereAWordFollowsTheDomain(t *testing.T) {
+	for _, in := range []string{"ada@example.com_x", "name@example.com2"} {
+		if got, changed := Identities(in); got != in || changed {
+			t.Errorf("Identities(%q) = %q, %v; want it unchanged", in, got, changed)
+		}
+	}
+	if got, _ := Identities("ada@example.com, ada@example.com."); got != "[redacted], [redacted]." {
+		t.Errorf("Identities = %q", got)
+	}
+}
+
+func TestEncodedEmailScanIsLinear(t *testing.T) {
+	e := engine(t)
+	for _, in := range []string{
+		strings.Repeat("a%40", 200000),
+		strings.Repeat("a%40a.", 100000),
+		strings.Repeat("%40", 300000),
+	} {
+		start := time.Now()
+		if _, _, err := e.Redact(in); err != nil {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("Redact of %d bytes took %v", len(in), elapsed)
+		}
+	}
+	if got := maskedFor(t, "x"+strings.Repeat("a%40", 3)+"b.com"); got != 1 {
+		t.Errorf("found %d addresses, want 1", got)
+	}
+}
+
+func maskedFor(t *testing.T, in string) int {
+	t.Helper()
+	out := []byte(in)
+	n, err := maskEmails(context.Background(), in, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func TestRedactContextCancelledDuringAddressPass(t *testing.T) {
