@@ -13,6 +13,7 @@ import (
 type fakeExecutor struct {
 	mu         sync.Mutex
 	head       string
+	digest     string
 	restricted bool
 	price      *float64
 	started    chan Prepared
@@ -22,7 +23,7 @@ type fakeExecutor struct {
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return Prepared{Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: "claude", Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
+	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: "claude", Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
@@ -122,6 +123,43 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 		t.Fatal("concurrency limit exceeded")
 	default:
 	}
+}
+func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {
+	q, f := newQueue(t)
+	busy := estimate(t, q, "single", Item{"clone", 1})
+	if _, e := q.Submit(context.Background(), busy.ID, true, false); e != nil {
+		t.Fatal(e)
+	}
+	<-f.started
+	first := estimate(t, q, "single", Item{"clone", 2})
+	queued, e := q.Submit(context.Background(), first.ID, true, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	again := estimate(t, q, "single", Item{"clone", 2})
+	same, e := q.Submit(context.Background(), again.ID, true, false)
+	if e != nil || same[0].ID != queued[0].ID {
+		t.Fatal("identical confirmation not idempotent", same, e)
+	}
+	f.mu.Lock()
+	f.digest = "larger-budget"
+	f.mu.Unlock()
+	changed := estimate(t, q, "single", Item{"clone", 2})
+	replacement, e := q.Submit(context.Background(), changed.ID, true, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if replacement[0].ID == queued[0].ID || replacement[0].ConfigDigest != "larger-budget" || replacement[0].State != "queued" {
+		t.Fatal("changed inputs returned the stale queued job", replacement)
+	}
+	if old := waitState(t, q, queued[0].ID, "cancelled"); old.Reason != "superseded" {
+		t.Fatal(old)
+	}
+	close(f.release)
+	if next := <-f.started; next.PR != 2 || next.ConfigDigest != "larger-budget" {
+		t.Fatal("replacement did not run with the confirmed inputs", next)
+	}
+	waitState(t, q, replacement[0].ID, "completed")
 }
 func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 	q, f := newQueue(t)

@@ -510,8 +510,9 @@ The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
 `~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
 restarting marks unfinished running jobs interrupted and resumes queued jobs.
 Only one queued or running job exists per repository/PR across registered clones.
-A newly confirmed head replaces queued work; running work must finish or be
-cancelled first. Cancelling propagates to the backend process group and removes
+Confirming the same inputs again returns the queued job. Any other confirmed
+input (head, backend, model, budgets, caps or price list version) replaces
+queued work; running work must finish or be cancelled first. Cancelling propagates to the backend process group and removes
 its temporary checkout and archives. Failed, cancelled and interrupted attempts
 never publish a partial version.
 
