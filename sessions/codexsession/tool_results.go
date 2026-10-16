@@ -241,7 +241,7 @@ func (b *builder) finalizeTools() {
 						captured += "\n" + end.Stdout + "\n" + end.AggregatedOutput
 					}
 				}
-				if len(gitevidence.CommitSHAs(captured)) > 0 {
+				if len(gitevidence.CommitSHAs(captured, gitevidence.TrustsOnelineLog(evidence.command))) > 0 {
 					state.committed = true
 				}
 			}

@@ -80,14 +80,34 @@ func TestRateLimitTransportClassifiesLimits(t *testing.T) {
 	}
 }
 
-func TestRateLimitResumeAtPrefersTheLaterSignal(t *testing.T) {
+func TestRateLimitResumeAt(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	header := http.Header{"Retry-After": {"60"}, "X-Ratelimit-Reset": {strconv.FormatInt(now.Add(10*time.Second).Unix(), 10)}}
-	if got := rateLimitResumeAt(header, now); !got.Equal(now.Add(time.Minute)) {
-		t.Errorf("resume = %v, want Retry-After's %v", got, now.Add(time.Minute))
-	}
-	if got := rateLimitResumeAt(http.Header{}, now); !got.IsZero() {
-		t.Errorf("resume without headers = %v, want zero", got)
+	reset := func(d time.Duration) string { return strconv.FormatInt(now.Add(d).Unix(), 10) }
+	for _, tc := range []struct {
+		name   string
+		header http.Header
+		want   time.Time
+	}{
+		{name: "exhausted quota prefers the later signal", header: http.Header{
+			"Retry-After": {"60"}, "X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {reset(10 * time.Second)},
+		}, want: now.Add(time.Minute)},
+		{name: "exhausted quota waits for the reset", header: http.Header{
+			"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {reset(50 * time.Minute)},
+		}, want: now.Add(50 * time.Minute)},
+		{name: "secondary limit ignores the primary reset", header: http.Header{
+			"Retry-After": {"60"}, "X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Reset": {reset(50 * time.Minute)},
+		}, want: now.Add(time.Minute)},
+		{name: "secondary limit naming nothing waits a minute", header: http.Header{
+			"X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Reset": {reset(50 * time.Minute)},
+		}, want: now.Add(time.Minute)},
+		{name: "no headers waits a minute", header: http.Header{}, want: now.Add(time.Minute)},
+		{name: "exhausted quota naming nothing", header: http.Header{"X-Ratelimit-Remaining": {"0"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rateLimitResumeAt(tc.header, now); !got.Equal(tc.want) {
+				t.Errorf("resume = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
