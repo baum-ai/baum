@@ -266,7 +266,9 @@ func TestWriteArchiveOmitsBinaryFiles(t *testing.T) {
 		head:      map[string]string{"logo.png": "\x89PNG\r\n\x1a\n\x00\x00", "notes.txt": "text\n", "late.txt": late, "empty": ""},
 		mergeBase: map[string]string{"logo.png": "\x89PNG\x00"},
 	}
-	config := CheckoutConfig{MaxFileBytes: 1 << 20, MaxTotalBytes: 1 << 20, MaxTotalFiles: 10}
+	// Exactly room for the three text files: binary files take no budget.
+	textBytes := int64(len(export.head["notes.txt"]) + len(late))
+	config := CheckoutConfig{MaxFileBytes: 1 << 20, MaxTotalBytes: textBytes, MaxTotalFiles: 3}
 	omissions, files := writeAndReadArchive(t, export, []Hunk{{Path: "logo.png", Textless: true, TextlessReason: "binary"}}, config)
 	if want := []CheckoutOmission{{Path: "logo.png", Reason: OmittedBinaryReason}}; !slices.Equal(omissions, want) {
 		t.Fatalf("omissions = %+v, want %+v", omissions, want)

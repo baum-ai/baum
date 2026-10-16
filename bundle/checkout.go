@@ -44,7 +44,8 @@ type PinnedExport interface {
 }
 
 // Checkout omission reasons. OmittedBinaryReason is the reason diff.go gives
-// a binary hunk, so omitting the file leaves such a hunk as it was.
+// a binary hunk, so omitting a file git also diffs as binary leaves its hunk
+// as it was.
 const (
 	OmittedSizeReason      = "omitted_size"
 	OmittedSubmoduleReason = "omitted_submodule"
@@ -152,14 +153,30 @@ func parseGitmodulesPaths(content []byte) []string {
 	return paths
 }
 
-// ApplyCheckoutOmissions marks every diff hunk of an omitted file textless
-// and appends one generator.truncated note per omission reason with the
-// number of files it omitted.
+// ApplyCheckoutOmissions marks every diff hunk of an omitted file, at either
+// of its paths, textless and appends one generator.truncated note per
+// omission reason with the number of files it omitted. A hunk whose old and
+// new paths were both omitted takes the reason of the later path.
 func ApplyCheckoutOmissions(b *Bundle, omissions []CheckoutOmission) {
 	counts := map[string]int{}
+	byPath := make(map[string]string, len(omissions))
 	for _, omission := range omissions {
-		setOmitted(b, omission.Path, omission.Reason)
+		byPath[omission.Path] = omission.Reason
 		counts[omission.Reason]++
+	}
+	for i := range b.Diff {
+		hunk := &b.Diff[i]
+		reason := ""
+		for _, path := range []string{min(hunk.Path, hunk.OldPath), max(hunk.Path, hunk.OldPath)} {
+			if path != "" && byPath[path] != "" {
+				reason = byPath[path]
+			}
+		}
+		if reason != "" {
+			hunk.Patch = ""
+			hunk.Textless = true
+			hunk.TextlessReason = reason
+		}
 	}
 	reasons := make([]string, 0, len(counts))
 	for reason := range counts {
@@ -168,17 +185,6 @@ func ApplyCheckoutOmissions(b *Bundle, omissions []CheckoutOmission) {
 	sort.Strings(reasons)
 	for _, reason := range reasons {
 		b.Truncated = append(b.Truncated, fmt.Sprintf("checkout omitted %d file(s): %s", counts[reason], reason))
-	}
-}
-
-// setOmitted marks matching diff hunks textless with the checkout omission reason.
-func setOmitted(b *Bundle, path, reason string) {
-	for i := range b.Diff {
-		if b.Diff[i].Path == path || b.Diff[i].OldPath == path {
-			b.Diff[i].Patch = ""
-			b.Diff[i].Textless = true
-			b.Diff[i].TextlessReason = reason
-		}
 	}
 }
 
