@@ -119,6 +119,11 @@ func TestAConfigThatDoesNotLoadSaysItsTokenWasNotRead(t *testing.T) {
 	c := find(t, report, "github-token-github.com")
 	wantStatus(t, c, StatusWarning)
 	wantContains(t, "detail", c.Detail, "config file did not load", "github_token was not read")
+	cfgCheck := find(t, report, "config")
+	wantContains(t, "config fix", cfgCheck.Fix, "default settings")
+	if strings.Contains(cfgCheck.Fix, "use its settings") {
+		t.Errorf("config fix = %q", cfgCheck.Fix)
+	}
 	if strings.Contains(c.Fix, "add github_token") {
 		t.Errorf("fix tells the user to add a github_token that is already there: %q", c.Fix)
 	}
@@ -383,14 +388,22 @@ func TestGitKeepsDeveloperDirButNoSecrets(t *testing.T) {
 func TestAValidFileIsReadWhenAnEnvironmentVariableBreaksTheLoad(t *testing.T) {
 	m := newMachine(t)
 	m.git()
+	m.codex("0.162.1")
 	m.writeConfig("github_token = '" + plantedFileToken + "'\n")
 	t.Setenv("BAUM_BACKEND", "gpt")
+	t.Setenv("BAUM_MODEL", "claude-sonnet-4-5")
 	report := run(t, Options{})
 
 	cfg := find(t, report, "config")
 	wantStatus(t, cfg, StatusProblem)
 	wantContains(t, "config detail", cfg.Detail, "unknown backend", "gpt")
-	wantContains(t, "config fix", cfg.Fix, "BAUM_BACKEND")
+	wantContains(t, "config fix", cfg.Fix, "BAUM_BACKEND", "the file itself parses", "use its settings")
+	if strings.Contains(cfg.Fix, "default settings") {
+		t.Errorf("fix says defaults are used although the file was read: %q", cfg.Fix)
+	}
+	// BAUM_MODEL applies as config.Load would have applied it.
+	wantContains(t, "auto", find(t, report, "backend-auto").Detail, "picks codex",
+		`the model "claude-sonnet-4-5" was meant for claude; codex uses its own default model`)
 
 	// The file parses, so its token counts and nothing claims it was unread.
 	token := find(t, report, "github-token-github.com")
@@ -404,5 +417,56 @@ func TestAValidFileIsReadWhenAnEnvironmentVariableBreaksTheLoad(t *testing.T) {
 	token = find(t, run(t, Options{}), "github-token-github.com")
 	if token.Source != "environment variable GITHUB_TOKEN" {
 		t.Errorf("source = %q", token.Source)
+	}
+}
+
+func TestAnUnknownBackendNameInTheFileGetsADirectFix(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	cfgPath := m.writeConfig("backend = 'bogus'\n")
+	report := run(t, Options{})
+	c := find(t, report, "backend-configured")
+	wantStatus(t, c, StatusProblem)
+	wantContains(t, "fix", c.Fix, "unknown backend bogus", `set backend = "auto", "claude" or "codex"`, cfgPath)
+	if strings.Contains(c.Fix, "check above") || strings.Contains(c.Detail, "cannot run") {
+		t.Errorf("an unknown name was treated as a backend that failed a check: %+v", c)
+	}
+	wantStatus(t, find(t, report, "config"), StatusProblem)
+}
+
+func TestNoHomeMeansNoConfigFileIsRead(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	stray := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stray, "config.toml"), []byte("backend = 'codex'\ngithub_token = '"+plantedFileToken+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(stray); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	_ = m
+
+	report := run(t, Options{})
+	cfg := find(t, report, "config")
+	wantStatus(t, cfg, StatusProblem)
+	wantContains(t, "fix", cfg.Fix, "HOME", "XDG_CONFIG_HOME")
+	if cfg.Path != "" {
+		t.Errorf("path = %q, want none", cfg.Path)
+	}
+	for _, c := range report.Checks {
+		if c.ID == "backend-configured" {
+			t.Errorf("the stray file's backend was applied: %+v", c)
+		}
+	}
+	token := find(t, report, "github-token-github.com")
+	if token.Source == "config file" {
+		t.Errorf("the stray file's token was used: %+v", token)
 	}
 }

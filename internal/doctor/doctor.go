@@ -150,6 +150,9 @@ type runner struct {
 	// parsed, so its settings, github_token included, were not used.
 	cfgFileErr error
 	cfgPath    string
+	// cfgPathKnown is false when the config directory cannot be found, so no
+	// file was looked at.
+	cfgPathKnown bool
 }
 
 func (r *runner) defaults() {
@@ -208,20 +211,30 @@ func listClones(ctx context.Context, path string) ([]repos.Clone, error) {
 func (r *runner) add(c Check) { r.checks = append(r.checks, c) }
 
 func (r *runner) run() {
-	r.cfgPath, _ = config.Path()
-	if r.cfgPath == "" {
+	var pathErr error
+	r.cfgPath, pathErr = config.Path()
+	r.cfgPathKnown = pathErr == nil
+	if !r.cfgPathKnown {
+		// Fix texts name a file; never read one from the working directory.
 		r.cfgPath = "config.toml"
 	}
 	cfg, cfgErr := config.Load(config.Overrides{})
 	if cfgErr != nil {
 		// The commands would stop here. Report with what can still be read: the
-		// file when it parses on its own (the failure was a BAUM_* variable),
-		// else the defaults, with the token variables the commands would have
-		// read, which take precedence over the file's token.
-		var fileErr error
-		if cfg, _, fileErr = config.ReadFile(r.cfgPath); fileErr != nil {
+		// file when it parses on its own (the failure was a BAUM_BACKEND value or
+		// the file's backend name), else the defaults; then BAUM_MODEL and the
+		// token variables as the commands would have read them, which take
+		// precedence over the file's.
+		fileErr := pathErr
+		if r.cfgPathKnown {
+			cfg, _, fileErr = config.ReadFile(r.cfgPath)
+		}
+		if fileErr != nil {
 			cfg = config.Default()
 			r.cfgFileErr = fileErr
+		}
+		if v := r.opts.Getenv(config.EnvModel); v != "" {
+			cfg.Model = v
 		}
 		for _, name := range []string{config.EnvGHToken, config.EnvGitHubToken} {
 			if v := r.opts.Getenv(name); v != "" {
@@ -485,6 +498,17 @@ func (r *runner) selection(checked checkedBackends) {
 	if r.cfg.Backend == config.BackendAuto {
 		return
 	}
+	if !r.cfg.Backend.Valid() {
+		// Only a file can hold this: the environment and flags are checked on load.
+		name := string(r.cfg.Backend)
+		if len(name) > 64 {
+			name = name[:64] + "..."
+		}
+		r.add(Check{ID: "backend-configured", Label: "backend: " + name, Status: StatusProblem,
+			Detail: fmt.Sprintf("the configured backend %q is not a known backend", name),
+			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\" or \"codex\" in %s", name, r.cfgPath)})
+		return
+	}
 	configured := Check{ID: "backend-configured", Label: "backend: " + string(r.cfg.Backend)}
 	selected, err = generate.Select(r.ctx, r.cfg.Backend, r.cfg.Model, replayed, nil)
 	if err != nil {
@@ -506,10 +530,19 @@ func (r *runner) selection(checked checkedBackends) {
 // clones. It never creates a file or a directory.
 func (r *runner) locations(cfgErr error) []repos.Clone {
 	cfg := Check{ID: "config", Label: "config file", Path: r.cfgPath, Status: StatusInfo}
+	if !r.cfgPathKnown {
+		cfg.Path = ""
+	}
 	switch _, statErr := os.Stat(r.cfgPath); {
-	case cfgErr != nil:
+	case cfgErr != nil && !r.cfgPathKnown:
+		cfg.Status, cfg.Detail = StatusProblem, "the configuration does not load: "+cfgErr.Error()
+		cfg.Fix = "set HOME or XDG_CONFIG_HOME so baum can find its config directory; the other checks use default settings, and no config file is read"
+	case cfgErr != nil && r.cfgFileErr != nil:
 		cfg.Status, cfg.Detail = StatusProblem, "the configuration does not load: "+cfgErr.Error()
 		cfg.Fix = fmt.Sprintf("correct the setting named above in %s (or the BAUM_BACKEND environment variable), or remove it; the other checks use default settings", r.cfgPath)
+	case cfgErr != nil:
+		cfg.Status, cfg.Detail = StatusProblem, "the configuration does not load: "+cfgErr.Error()
+		cfg.Fix = fmt.Sprintf("correct the BAUM_BACKEND environment variable, or the backend value in %s; the file itself parses, so the other checks use its settings", r.cfgPath)
 	case statErr == nil:
 		cfg.Detail = "read from this file; flags and BAUM_* variables override it"
 	default:
