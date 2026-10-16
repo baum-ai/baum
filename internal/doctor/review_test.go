@@ -470,3 +470,20 @@ func TestNoHomeMeansNoConfigFileIsRead(t *testing.T) {
 		t.Errorf("the stray file's token was used: %+v", token)
 	}
 }
+
+func TestFileBackendIsNormalisedWhenOnlyTheEnvironmentBreaksTheLoad(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	m.claude("2.1.7")
+	m.writeConfig("backend = 'Claude'\n")
+	t.Setenv("BAUM_BACKEND", "gpt")
+	report := run(t, Options{})
+	cfg := find(t, report, "config")
+	wantStatus(t, cfg, StatusProblem)
+	wantContains(t, "config", cfg.Detail+cfg.Fix, "BAUM_BACKEND")
+	configured := find(t, report, "backend-configured")
+	if configured.Label != "backend: claude" || strings.Contains(configured.Detail+configured.Fix, "not a known backend") {
+		t.Errorf("%+v", configured)
+	}
+	wantStatus(t, configured, StatusOK)
+}

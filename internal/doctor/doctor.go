@@ -232,6 +232,9 @@ func (r *runner) run() {
 		if fileErr != nil {
 			cfg = config.Default()
 			r.cfgFileErr = fileErr
+		} else if b, err := config.ParseBackend(string(cfg.Backend)); err == nil {
+			// Load accepts any case, so only a BAUM_BACKEND failure may remain.
+			cfg.Backend = b
 		}
 		if v := r.opts.Getenv(config.EnvModel); v != "" {
 			cfg.Model = v
