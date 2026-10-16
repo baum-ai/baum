@@ -158,25 +158,62 @@ func TestHostsFileHelper(t *testing.T) {
 	fmt.Printf("source=%s token=%s\n", source, token)
 }
 
-// TestParseErrorNamesThePositionNotTheText: go-toml's own message quotes the
-// line, which here is an unquoted token.
-func TestParseErrorNamesThePositionNotTheText(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("backend = 'auto'\ngithub_token = ghp_PLANTEDunquoted0000\n"), 0o600); err != nil {
-		t.Fatal(err)
+// TestParseErrorsNamePositionAndKeyNotValues: go-toml's own message quotes
+// the line, which here may be an unquoted token.
+func TestParseErrorsNamePositionAndKeyNotValues(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+		never      []string
+	}{
+		{"unquoted token", "backend = 'auto'\ngithub_token = ghp_PLANTEDunquoted0000\n",
+			[]string{"invalid TOML syntax", "line 2", "column", "fix the syntax"},
+			[]string{"ghp", "PLANTED", "unquoted", "github_token", "wrong type"}},
+		{"text for an integer", "[budgets]\nmax_calls = \"forty\"\n",
+			[]string{"wrong type or value for budgets.max_calls", "line 2", "column 13", "type int"},
+			[]string{"forty", "fix the syntax"}},
+		{"integer for a backend", "backend = 3\n",
+			[]string{"wrong type or value for backend", "line 1", "config.Backend"},
+			[]string{"fix the syntax"}},
+		{"integer for a path", "[backend_paths]\nclaude = 5\n",
+			[]string{"wrong type or value for backend_paths.claude", "line 2", "cannot decode TOML integer"},
+			[]string{"fix the syntax"}},
+		{"bad duration", "[budgets]\npass_timeout = \"10x\"\n",
+			[]string{"wrong type or value for budgets.pass_timeout", "line 2", "invalid duration", `"10m"`},
+			[]string{"10x", "fix the syntax"}},
+		{"wrong type for the token", "github_token = [\"ghp_PLANTEDarray0000\"]\n",
+			[]string{"wrong type or value for github_token", "line 1"},
+			[]string{"ghp", "PLANTED", "array", "string"}},
+		{"duplicate key", "backend = 'a'\nbackend = 'b'\n",
+			[]string{"wrong type or value for backend", "line 2", "already defined"},
+			[]string{"fix the syntax"}},
+		{"unterminated table", "[budgets\n",
+			[]string{"invalid TOML syntax", "line 1"},
+			[]string{"wrong type"}},
 	}
-	_, _, err := ReadFile(path)
-	if err == nil {
-		t.Fatal("ReadFile accepted an unquoted value")
-	}
-	for _, want := range []string{path, "line 2", "column"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %q", err, want)
-		}
-	}
-	for _, leak := range []string{"ghp", "PLANTED", "unquoted", "github_token"} {
-		if strings.Contains(err.Error(), leak) {
-			t.Errorf("error %q holds %q from the file", err, leak)
-		}
+	// The directory is named after this test, not the case, so a case's own
+	// name cannot match a leak check through the path.
+	dir := t.TempDir()
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(dir, fmt.Sprintf("case%d.toml", i))
+			if err := os.WriteFile(path, []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := ReadFile(path)
+			if err == nil {
+				t.Fatal("ReadFile accepted the file")
+			}
+			for _, want := range append(tt.want, path) {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+			for _, leak := range tt.never {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("error %q holds %q", err, leak)
+				}
+			}
+		})
 	}
 }

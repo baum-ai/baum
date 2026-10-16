@@ -69,7 +69,8 @@ list described above, skipped with `--offline`; nothing else leaves the machine.
 It creates no files of its own: it opens the registry read-only (SQLite
 `mode=ro`, so no journal, table or file mode changes) and only when it exists,
 and does not create a review store. A config file that does not parse is shown
-by line and column and never by text. `gh auth token` keeps the environment gh needs to find
+by position, and by key for a wrong type or value, and never by its text. Asking
+gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
 its own configuration, as `baum generate` does.
 
 It never prints a token or an API key, or a prefix, length or hash of one. For a

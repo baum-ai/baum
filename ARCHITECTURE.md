@@ -1227,7 +1227,7 @@ reruns a failed claude or codex check, and bounds every subprocess with a
 timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
-column, never the text. A host that `github.IsGitHubHost` refuses is a problem
+column, and the key for a type or value error, never the text. A host that `github.IsGitHubHost` refuses is a problem
 without a token lookup. It does not import `uiserver`, which may
 serve the report: the instance directory is passed in.
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -344,5 +346,63 @@ wait`)
 	}
 	if alive() {
 		t.Errorf("the child %s outlived its tool", pid)
+	}
+}
+
+func TestAKeyringThatWaitsForAPromptGetsATailoredFix(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	c := find(t, run(t, Options{GitHubToken: func(context.Context, config.Config, string) (string, string, error) {
+		return "", "", fmt.Errorf("asking gh for the token of github.com: %w", context.DeadlineExceeded)
+	}}), "github-token-github.com")
+	wantStatus(t, c, StatusProblem)
+	wantContains(t, "detail", c.Detail, "timed out after 30s")
+	wantContains(t, "fix", c.Fix, "unlock", "allow", "run `gh auth token` once", "GITHUB_TOKEN")
+	if tokenTimeout != 30*time.Second {
+		t.Errorf("the keyring step is bounded at %v, want 30s", tokenTimeout)
+	}
+}
+
+func TestGitKeepsDeveloperDirButNoSecrets(t *testing.T) {
+	m := newMachine(t)
+	file := filepath.Join(t.TempDir(), "git.env")
+	m.install("git", recordEnv(file, "git version 2.43.0"))
+	t.Setenv("DEVELOPER_DIR", "/Applications/Fixture.app/Contents/Developer")
+	t.Setenv("GITHUB_TOKEN", plantedEnvToken)
+	run(t, Options{})
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, "git's environment", string(data), "DEVELOPER_DIR=/Applications/Fixture.app/Contents/Developer")
+	if strings.Contains(string(data), plantedEnvToken) {
+		t.Error("git received the token")
+	}
+}
+
+func TestAValidFileIsReadWhenAnEnvironmentVariableBreaksTheLoad(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	m.writeConfig("github_token = '" + plantedFileToken + "'\n")
+	t.Setenv("BAUM_BACKEND", "gpt")
+	report := run(t, Options{})
+
+	cfg := find(t, report, "config")
+	wantStatus(t, cfg, StatusProblem)
+	wantContains(t, "config detail", cfg.Detail, "unknown backend", "gpt")
+	wantContains(t, "config fix", cfg.Fix, "BAUM_BACKEND")
+
+	// The file parses, so its token counts and nothing claims it was unread.
+	token := find(t, report, "github-token-github.com")
+	wantStatus(t, token, StatusOK)
+	if token.Source != "config file" || strings.Contains(token.Detail, "did not load") || strings.Contains(token.Detail, "not read") {
+		t.Errorf("%+v", token)
+	}
+
+	// An environment token still takes precedence over the file's.
+	t.Setenv("GITHUB_TOKEN", plantedEnvToken)
+	token = find(t, run(t, Options{}), "github-token-github.com")
+	if token.Source != "environment variable GITHUB_TOKEN" {
+		t.Errorf("source = %q", token.Source)
 	}
 }

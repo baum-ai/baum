@@ -136,8 +136,9 @@ Its one network request is the signed price list; `--offline` skips it.
 file that does not load is reported as a problem and the rest of the report
 uses default settings. Doctor exits 0 when no check is a problem, warnings
 allowed, 6 when one is, and 130 when interrupted. A config file that does not
-parse is reported by line and column only, never its text, in case a value is a
-token.
+parse is reported by line and column (a syntax error), or by key, line and
+column (a wrong type or value), never by the value, in case it is a token. If
+only a `BAUM_*` variable breaks the load, doctor still reads the file.
 
 A missing or failing backend is a warning. The `backend: auto` check is the
 problem when neither `claude` nor `codex` is usable. A backend is a problem

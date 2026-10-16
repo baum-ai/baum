@@ -114,7 +114,7 @@ type Options struct {
 const (
 	versionTimeout = 10 * time.Second
 	backendTimeout = 90 * time.Second // codex: version, then two sandbox runs
-	tokenTimeout   = 10 * time.Second
+	tokenTimeout   = 30 * time.Second // the keyring may wait for the user to unlock it
 	priceTimeout   = 15 * time.Second
 	registryTime   = 30 * time.Second
 )
@@ -141,12 +141,15 @@ func Run(ctx context.Context, opts Options) Report {
 }
 
 type runner struct {
-	ctx     context.Context
-	opts    Options
-	checks  []Check
-	cfg     config.Config
-	cfgErr  error
-	cfgPath string
+	ctx    context.Context
+	opts   Options
+	checks []Check
+	cfg    config.Config
+	cfgErr error
+	// cfgFileErr is set when the config file itself could not be read or
+	// parsed, so its settings, github_token included, were not used.
+	cfgFileErr error
+	cfgPath    string
 }
 
 func (r *runner) defaults() {
@@ -211,9 +214,15 @@ func (r *runner) run() {
 	}
 	cfg, cfgErr := config.Load(config.Overrides{})
 	if cfgErr != nil {
-		// Report with the defaults, and the token variables the commands would
-		// have read had the file loaded.
-		cfg = config.Default()
+		// The commands would stop here. Report with what can still be read: the
+		// file when it parses on its own (the failure was a BAUM_* variable),
+		// else the defaults, with the token variables the commands would have
+		// read, which take precedence over the file's token.
+		var fileErr error
+		if cfg, _, fileErr = config.ReadFile(r.cfgPath); fileErr != nil {
+			cfg = config.Default()
+			r.cfgFileErr = fileErr
+		}
 		for _, name := range []string{config.EnvGHToken, config.EnvGitHubToken} {
 			if v := r.opts.Getenv(name); v != "" {
 				cfg.GitHubToken, cfg.GitHubTokenSource = v, name
@@ -273,7 +282,9 @@ func (r *runner) git() {
 		return
 	}
 	c.Path = path
-	version, out, err := r.version(agent.LocalEnvironment(os.Environ()), path)
+	// DEVELOPER_DIR picks the toolchain behind macOS's /usr/bin/git shim, which
+	// gitlocal runs with it, so the version reported is the one baum uses.
+	version, out, err := r.version(agent.LocalEnvironment(os.Environ(), "DEVELOPER_DIR"), path)
 	switch {
 	case err != nil:
 		c.Status, c.Detail = StatusProblem, fmt.Sprintf("running %s --version failed: %v", path, err)
@@ -599,7 +610,7 @@ func (r *runner) tokens(clones []repos.Clone) {
 		_, source, err := r.opts.GitHubToken(ctx, r.cfg, host)
 		cancel()
 		unread := ""
-		if r.cfgErr != nil && host == config.GitHubHost {
+		if r.cfgFileErr != nil && host == config.GitHubHost {
 			unread = ". The config file did not load, so its github_token was not read"
 		}
 		switch {
@@ -619,6 +630,9 @@ func (r *runner) tokens(clones []repos.Clone) {
 				c.Status = StatusProblem
 				c.Detail += ", and a registered clone belongs to it"
 			}
+		case errors.Is(err, context.DeadlineExceeded):
+			c.Status, c.Detail = StatusProblem, fmt.Sprintf("asking gh for the token of %s timed out after %s", host, tokenTimeout)
+			c.Fix = "the keyring may be waiting for an unlock or \"allow\" prompt: run `gh auth token` once to answer it, or set GITHUB_TOKEN"
 		default:
 			c.Status, c.Detail = StatusProblem, "looking up the token failed: "+err.Error()
 			c.Fix = "run `gh auth status` to see why gh cannot read its token, or set GITHUB_TOKEN"

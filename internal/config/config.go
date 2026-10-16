@@ -269,15 +269,34 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 	return cfg, true, nil
 }
 
-// parseError reports where a file failed to parse and never what it held:
-// go-toml's own message quotes the offending line, which may be a token.
+// parseError reports a failure to read the file by position and key, never by
+// the text it held: go-toml's String quotes source lines and its syntax errors
+// name a character, and a line may hold a token. A syntax error has no key; a
+// type or value error names the key, and the expected type where the message
+// carries no value. github_token's error never says more than its key.
 func parseError(path string, err error) error {
 	var decodeErr *toml.DecodeError
-	if errors.As(err, &decodeErr) {
-		line, column := decodeErr.Position()
-		return fmt.Errorf("parsing %s: invalid TOML at line %d, column %d; fix the syntax there (values are not shown, in case one is a token)", path, line, column)
+	if !errors.As(err, &decodeErr) {
+		return fmt.Errorf("parsing %s: invalid TOML; values are not shown, in case one is a token", path)
 	}
-	return fmt.Errorf("parsing %s: invalid TOML; values are not shown, in case one is a token", path)
+	line, column := decodeErr.Position()
+	key := decodeErr.Key()
+	if len(key) == 0 {
+		return fmt.Errorf("parsing %s: invalid TOML syntax at line %d, column %d; fix the syntax there (values are not shown, in case one is a token)", path, line, column)
+	}
+	name := strings.Join(key, ".")
+	message := fmt.Errorf("parsing %s: wrong type or value for %s at line %d, column %d", path, name, line, column)
+	if key[len(key)-1] == "github_token" {
+		return message
+	}
+	switch reason := strings.TrimPrefix(decodeErr.Error(), "toml: "); {
+	case strings.HasPrefix(reason, "cannot decode TOML "), strings.HasSuffix(reason, "is already defined"):
+		// Type mismatches and duplicates name types and keys, not values.
+		return fmt.Errorf("%w: %s", message, reason)
+	case name == "budgets.pass_timeout" || name == "budgets.run_timeout":
+		return fmt.Errorf(`%w: invalid duration; write it like "10m"`, message)
+	}
+	return fmt.Errorf("%w: invalid value", message)
 }
 
 // Save writes cfg to path, creating the directory 0700 and the file 0600 so a
