@@ -18,7 +18,6 @@ import {
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
-import { formatRelative } from "./format";
 import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
 import { cn } from "./classnames";
@@ -59,27 +58,7 @@ export function ReviewSummary({
   return (
     <>
       <div className="w-full flex-none">
-        {/* The heading stays the one word, so it is the heading's name; the
-            freshness sits on the line under it. */}
-        <CardHeader
-          size="pane"
-          title="Summary"
-          detail={
-            <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
-              <span className="inline-flex items-center gap-1.5">
-                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-(--status-positive)" />
-                Updated{" "}
-                {formatRelative(
-                  document.review.evidence_refreshed_at || document.review.generated_at,
-                )}
-              </span>
-              <span>
-                · Review v{document.review.version} · generated{" "}
-                {formatRelative(document.review.generated_at)}
-              </span>
-            </span>
-          }
-        />
+        <CardHeader size="pane" title="Summary" />
       </div>
       <div className="min-h-0 flex-1 xl:overflow-y-auto">
         <div className="min-w-0 space-y-8">

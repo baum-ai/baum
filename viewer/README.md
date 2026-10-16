@@ -125,7 +125,8 @@ older documents. Refreshing the current document can show latest-head checks
 while generation runs; earlier-head runs remain indexed for source anchors but
 do not count toward the displayed CI state. Historical versions stay frozen.
 
-The Summary's Key changes are links with line counts, without expandable
+The Summary header omits the duplicate update time, review version and generation
+time line. Its Key changes are links with line counts, without expandable
 behavior details. Its Risks section appears only for active high or critical
 risks. Risk links open the complete Changes section and highlight the risk in
 context; the rail has no separate Critical risks group. Older risk-overview
