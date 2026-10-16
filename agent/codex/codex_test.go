@@ -252,3 +252,34 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}'
 		})
 	}
 }
+
+// More turns than the call budget stop the process at the first excess turn,
+// keeping the usage of the turns that finished.
+func TestCodexStopsWhenCallBudgetIsExceeded(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "codex")
+	body := `#!/bin/sh
+cat >/dev/null
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+sleep 60
+`
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	req := request(t.TempDir())
+	req.MaxCalls = 2
+	start := time.Now()
+	got, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), req)
+	if err == nil || err.Error() != agent.GenerationBudgetExceededReason("model calls") {
+		t.Fatalf("call budget: %v", err)
+	}
+	if time.Since(start) > 30*time.Second {
+		t.Fatal("process was not stopped")
+	}
+	if got.Calls != 3 || got.Usage.Input+got.Usage.Output != 14 {
+		t.Fatalf("usage up to the stop: %+v", got)
+	}
+}

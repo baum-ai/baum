@@ -258,6 +258,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
 			err = errors.New(agent.ReasonProviderUnavailable)
 		}
+		if err == nil && result.Calls > request.MaxCalls {
+			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
+		}
 		if err != nil || result.Tokens > request.MaxTokens {
 			if err == nil {
 				err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
