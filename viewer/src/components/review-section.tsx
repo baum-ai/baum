@@ -1,5 +1,7 @@
 import pluralize from "pluralize";
 import type { ReactNode } from "react";
+import { useUrlState, ViewerLink } from "../navigation";
+import { withSelection } from "../review-selection";
 
 import {
   type EntityContentGroup,
@@ -11,6 +13,7 @@ import {
   type Anchor,
   type Block,
   type Evidence,
+  decisionGroups,
   evidenceTone,
   findingStateTone,
   humanize,
@@ -30,22 +33,19 @@ import {
 } from "../review-document";
 import { cn } from "./classnames";
 import { HunkEvidence } from "./hunk-evidence";
-import { Markdown } from "./markdown";
+import { InlineMarkdown, Markdown } from "./markdown";
 import { CheckIcon, ExternalLinkIcon, RiskIcon } from "./icons";
 import {
   AnchorChips,
   CommitLink,
-  DecisionByBadge,
   DecisionContext,
   Item,
   ItemMeta,
   JumpLink,
   Lines,
-  None,
   Part,
   PROSE,
   ReviewScoreBadge,
-  RiskCategoryTag,
   TierBadge,
 } from "./review-parts";
 import { ReviewImages } from "./review-images";
@@ -92,41 +92,59 @@ export function ReviewSection({
   const behaviorStatesStep = section.blocks.some((block) => block.kind === "behavior");
   const tiles = showTiles ? <SectionTiles document={document} section={section} /> : null;
 
-  const attentionRiskIds = new Set(section.attention?.refs ?? []);
+  const attention = section.attention && {
+    ...section.attention,
+    refs: section.attention.refs.filter((ref) => {
+      const risk = section.risks.find((item) => item.id === ref);
+      return !risk || risk.tier === "critical" || risk.tier === "high";
+    }),
+  };
+  const showAttention =
+    attention && (section.attention!.refs.length === 0 || attention.refs.length > 0);
+  const attentionRiskIds = new Set(attention?.refs ?? []);
   const attentionRisks = section.risks.filter((risk) => attentionRiskIds.has(risk.id));
   const otherRisks = section.risks.filter((risk) => !attentionRiskIds.has(risk.id));
-  const renderRisk = (risk: Section["risks"][number], position: number) => (
-    <Item key={risk.id} id={itemId(risk.id)} className="flex gap-3">
-      <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
-        {position + 1}
-      </span>
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <TierBadge tier={risk.tier} />
-          <RiskCategoryTag category={risk.category} />
-          {riskLifecycleLabel(risk, document.review, section.derived.state) && (
-            <Badge size="compact" tone={riskLifecycleTone(risk, section.derived.state)}>
-              {riskLifecycleLabel(risk, document.review, section.derived.state)}
-            </Badge>
-          )}
+  const renderRisk = (risk: Section["risks"][number], position: number, inAttention = false) => {
+    const Container = inAttention ? "li" : Item;
+    return (
+      <Container key={risk.id} id={itemId(risk.id)} className="flex gap-3">
+        {!inAttention && (
+          <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
+            {position + 1}
+          </span>
+        )}
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <TierBadge tier={risk.tier} />
+            {riskLifecycleLabel(risk, document.review, section.derived.state) &&
+              (inAttention ? (
+                <span className="text-xs text-(--text-tertiary)">
+                  {riskLifecycleLabel(risk, document.review, section.derived.state)}
+                </span>
+              ) : (
+                <Badge size="compact" tone={riskLifecycleTone(risk, section.derived.state)}>
+                  {riskLifecycleLabel(risk, document.review, section.derived.state)}
+                </Badge>
+              ))}
+          </div>
+          <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
+          {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
+          <HunkEvidence
+            document={document}
+            anchors={risk.anchors}
+            diffClassName={inAttention ? undefined : "-ml-8 sm:ml-0"}
+            historicalVersion={riskEvidenceReviewVersion(
+              risk,
+              derived.state,
+              document.review.version,
+              activeVersions,
+            )}
+            loadVersion={loadVersion}
+          />
         </div>
-        <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
-        {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
-        <HunkEvidence
-          document={document}
-          anchors={risk.anchors}
-          diffClassName="-ml-8 sm:ml-0"
-          historicalVersion={riskEvidenceReviewVersion(
-            risk,
-            derived.state,
-            document.review.version,
-            activeVersions,
-          )}
-          loadVersion={loadVersion}
-        />
-      </div>
-    </Item>
-  );
+      </Container>
+    );
+  };
 
   return (
     <>
@@ -175,12 +193,12 @@ export function ReviewSection({
           <AnchorChips document={document} anchors={withoutHunks(section.summary.anchors)} />
         </div>
 
-        {section.attention && (
+        {showAttention && (
           <AttentionCallout
-            attention={section.attention}
+            attention={attention}
             section={section}
             onJump={(ref) => scrollToItem(itemId(ref))}
-            risks={attentionRisks.map(renderRisk)}
+            risks={attentionRisks.map((risk, position) => renderRisk(risk, position, true))}
           />
         )}
 
@@ -198,13 +216,11 @@ export function ReviewSection({
           />
         ))}
 
-        {(otherRisks.length > 0 || attentionRisks.length === 0) && (
-          <Part label={attentionRisks.length > 0 ? "Other risks" : "Risks"}>
-            {otherRisks.length === 0 ? (
-              <None>No risks were identified in this section.</None>
-            ) : (
-              <ol className="space-y-2">{otherRisks.map(renderRisk)}</ol>
-            )}
+        {otherRisks.length > 0 && (
+          <Part label="Risks">
+            <ol className="space-y-2">
+              {otherRisks.map((risk, position) => renderRisk(risk, position))}
+            </ol>
           </Part>
         )}
 
@@ -325,10 +341,8 @@ function resolveRef(section: Section, ref: string): AttentionRef {
   return { ref, kind: "Reference", text: ref, listed: false };
 }
 
-/** The one thing to inspect in a section. It wears the same neutral card as
- *  the rest of the review so it does not shout over the page; the warning mark
- *  carries its urgency, the sentence leads in primary text, and each item it
- *  points at carries its full risk card or a jump to where it is listed. */
+/** One flat callout: a single risk supplies its own explanation instead of
+ *  repeating the attention summary, with evidence directly below it. */
 function AttentionCallout({
   attention,
   section,
@@ -346,9 +360,9 @@ function AttentionCallout({
   return (
     <section
       aria-label="Attention"
-      className="min-w-0 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card)"
+      className="min-w-0 border-l-2 border-(--status-caution) py-1 pl-4"
     >
-      <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-4 py-2">
+      <div className="mb-2 flex items-center gap-2">
         <span aria-hidden className="flex text-(--status-critical)">
           <RiskIcon size={14} />
         </span>
@@ -356,12 +370,12 @@ function AttentionCallout({
           Attention
         </h3>
       </div>
-      <Markdown className="max-w-[62rem] px-4 py-3 text-base font-medium leading-[1.5] text-(--text-primary)">
-        {attention.text}
-      </Markdown>
-      {risks.length > 0 && (
-        <ol className="space-y-2 border-t border-(--border-subtle) p-4">{risks}</ol>
+      {(risks.length !== 1 || refs.length > 0) && (
+        <Markdown className="mb-2 max-w-[62rem] text-base leading-normal text-(--text-primary)">
+          {attention.text}
+        </Markdown>
       )}
+      {risks.length > 0 && <ol className="space-y-3">{risks}</ol>}
       {refs.length > 0 && (
         <ul
           aria-label="What to look at"
@@ -370,7 +384,7 @@ function AttentionCallout({
           {refs.map((item, index) => (
             <li
               key={`${index}:${item.ref}`}
-              className="flex items-start gap-3 px-4 py-2 text-base leading-[1.45]"
+              className="flex items-start gap-3 py-2 text-base leading-[1.45]"
             >
               <span className="w-16 flex-none pt-0.5 text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
                 {item.kind}
@@ -630,18 +644,65 @@ function BlockView({
       const decisions = block as Extract<Block, { kind: "decisions" }>;
       return (
         <Part label="Key decisions">
-          <ul className="space-y-1.5">
-            {decisions.items.map((decision) => (
-              <Item key={decision.id} id={itemId(decision.id)} className="space-y-1.5">
-                <Markdown className="text-(--text-primary)">{decision.text}</Markdown>
-                <DecisionContext decision={decision} />
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <DecisionByBadge decision={decision} />
-                  <AnchorChips document={document} anchors={decision.anchors} />
-                </div>
-              </Item>
+          <div className="space-y-4">
+            {decisionGroups(decisions.items).map((group) => (
+              <div key={group.label}>
+                <p className="mb-2 text-base font-semibold text-(--text-secondary)">
+                  {group.label} · {group.items.length}
+                </p>
+                <ul className="divide-y divide-(--border-subtle)">
+                  {group.items.map((decision) => (
+                    <li
+                      key={decision.id}
+                      id={itemId(decision.id)}
+                      className="rounded-(--radius-sm) py-3 first:pt-0 last:pb-0"
+                    >
+                      <DecisionDisclosure
+                        single={decisions.items.length === 1}
+                        title={
+                          <InlineMarkdown>{decision.title?.trim() || decision.text}</InlineMarkdown>
+                        }
+                      >
+                        <div className="mt-2 space-y-1">
+                          {decision.title?.trim() && (
+                            <Markdown className="max-w-[90ch] text-base text-(--text-secondary)">
+                              {decision.text}
+                            </Markdown>
+                          )}
+                          {decision.rationale && (
+                            <p className="max-w-[90ch] text-xs leading-normal text-(--text-tertiary)">
+                              {decision.rationale}
+                            </p>
+                          )}
+                          <DecisionContext
+                            decision={{ evidence: decision.evidence }}
+                            quoteAside={
+                              decision.evidence &&
+                              (() => {
+                                const prompt = decision.anchors.find(
+                                  (anchor) => anchor.type === "prompt",
+                                );
+                                return prompt?.type === "prompt" &&
+                                  document.index.sessions.some(
+                                    (session) =>
+                                      session.id === prompt.session && !session.restricted,
+                                  ) ? (
+                                  <DecisionSessionLink
+                                    session={prompt.session}
+                                    turn={prompt.index}
+                                  />
+                                ) : null;
+                              })()
+                            }
+                          />
+                        </div>
+                      </DecisionDisclosure>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         </Part>
       );
     }
@@ -786,6 +847,46 @@ function BlockView({
         </Part>
       );
   }
+}
+
+function DecisionDisclosure({
+  single,
+  title,
+  children,
+}: {
+  single: boolean;
+  title: ReactNode;
+  children: ReactNode;
+}) {
+  if (single)
+    return (
+      <div>
+        <h4 className="text-base font-medium leading-snug text-(--text-primary)">{title}</h4>
+        {children}
+      </div>
+    );
+  return (
+    <details>
+      <summary className="cursor-pointer text-base text-(--text-secondary) hover:text-(--text-primary)">
+        {title}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+function DecisionSessionLink({ session, turn }: { session: string; turn: number }) {
+  const { search } = useUrlState();
+  const next = withSelection(search, { kind: "session", id: session });
+  next.set("turn", String(turn));
+  return (
+    <ViewerLink
+      href={`?${next}`}
+      className="inline-block text-xs text-(--text-link) hover:text-(--text-link-hover) hover:underline"
+    >
+      View in session →
+    </ViewerLink>
+  );
 }
 
 /** An identifier or path that may wrap: a break is offered after each `.`,

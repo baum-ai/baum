@@ -825,7 +825,7 @@ describe("review history labels", () => {
         { version: 2, previous_version: 1 },
         "unchanged",
       ),
-    ).toBe("From v1");
+    ).toBe("Since v1");
     expect(
       riskLifecycleLabel(
         {
@@ -862,7 +862,7 @@ describe("review history labels", () => {
     expect(riskLifecycleLabel(risk("legacy", "low"), review, "stale")).toBe("Obsolete");
     expect(riskLifecycleTone(mitigated, "stale")).toBe("neutral");
     expect(riskLifecycleTone(mitigated, "changed")).toBe("positive");
-    expect(riskLifecycleLabel(active, review, "changed")).toBe("From v1");
+    expect(riskLifecycleLabel(active, review, "changed")).toBe("Since v1");
   });
 
   it("leaves new off the first review, where everything is new", () => {
@@ -1579,6 +1579,16 @@ describe("sectionsInReviewOrder", () => {
     expect(
       ids([ordered("a", 2), ordered("b", 4), ordered("c", 2), ordered("d", 5), ordered("e", 4)]),
     ).toEqual(["d", "b", "e", "a", "c"]);
+  });
+
+  it("prioritizes attention within the same score while preserving score order", () => {
+    const attention = {
+      ...ordered("attention", 4),
+      attention: { text: "Check recovery", refs: [] },
+    };
+    expect(
+      ids([ordered("plain", 4), ordered("highest", 5), attention, ordered("also-plain", 4)]),
+    ).toEqual(["highest", "attention", "plain", "also-plain"]);
   });
 
   it("puts the mechanical section, unscored and obsolete sections last, in that order", () => {

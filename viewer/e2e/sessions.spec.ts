@@ -101,7 +101,7 @@ test("a linked session opens its redacted transcript, asked for only then", asyn
   await expect(card).toContainText("Add a retry budget to the worker");
   await expect(card).toContainText("Now cover it with tests");
   await expect(card).toContainText("The budget is wired.");
-  await expect(card).toContainText("~/src/taskline");
+  await expect(card).not.toContainText("~/src/taskline");
   expect(transcriptRequests).toEqual([`/api/sessions/${sessionId}`]);
 
   await page.getByRole("button", { name: "Agent activity for prompt 1" }).click();

@@ -2,7 +2,7 @@ import pluralize from "pluralize";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { estimatedTokenDetail, join, type TranscriptSession } from "../transcript";
-import { HarnessName, ModelName } from "./brand-logo";
+import { HarnessName } from "./brand-logo";
 import { Stat } from "./stat";
 import { cn, FOCUS_RING } from "./classnames";
 import { CARD_LABEL } from "./editorial";
@@ -15,10 +15,10 @@ import {
   formatShare,
   formatUSD,
 } from "./format";
-import { ChevronDownIcon } from "./icons";
+import { BranchIcon, ChevronDownIcon } from "./icons";
 import { Empty } from "./states";
 import { SessionTranscript, type TranscriptHostProps } from "./transcript";
-import { Badge, type BadgeTone, Card, Spinner } from "./ui";
+import { Badge, type BadgeTone, Spinner } from "./ui";
 
 /** A linked session as a card: its header, its totals, and its prompts as a
  *  conversation (`SessionTranscript`). The view model is plain data in
@@ -32,23 +32,8 @@ const OUTCOME_TONES: Record<string, BadgeTone> = {
   unknown: "neutral",
 };
 
-/** The rule down a session card's left edge: the outcome badge's colour,
- *  drawn where a reader scanning a stack of cards will see it first. A session
- *  matched to commits is committed whatever its recorded outcome says. */
-function outcomeRule(session: TranscriptSession): string {
-  if (session.commit_count > 0 || session.outcome === "committed")
-    return "border-l-(--status-positive)";
-  if (session.outcome === "interrupted") return "border-l-(--status-caution)";
-  return "border-l-(--border-strong)";
-}
-
-/** A card that answers the pointer: it lifts a pixel and takes a shadow, the
- *  one place in a flat page where depth says "this opens". */
 /** A model named by its id, when the host names none. */
 const modelId = (model: string) => model;
-
-const LIFT =
-  "border-l-2 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:shadow-(--shadow-raised) motion-reduce:transition-none motion-reduce:hover:translate-y-0";
 
 /** `meta` is a strip below the header, always visible. The header is a button,
  *  so anything the reader can click — a commit or pull request link — has to
@@ -115,11 +100,7 @@ export function SessionCard({
 
   if (session.restricted) {
     return (
-      <Card
-        size="flush"
-        className="border-l-2 border-l-(--border-strong)"
-        data-session-id={session.run_id}
-      >
+      <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
         <div className="flex items-center gap-3 px-5 py-3.5">
           <span className={cn(CARD_LABEL, "flex-none")}>Session</span>
           <span className="min-w-0 flex-1 text-base text-(--text-secondary)">
@@ -130,16 +111,17 @@ export function SessionCard({
         <p className="border-t border-(--border-subtle) px-5 py-4 text-base text-(--text-tertiary)">
           {restrictedNote}
         </p>
-      </Card>
+      </section>
     );
   }
 
   const toggle = () => setOpen((value) => !value);
 
   return (
-    <Card size="flush" className={cn(LIFT, outcomeRule(session))} data-session-id={session.run_id}>
+    <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
       <button
         type="button"
+        aria-label={`Session: ${session.title || "Coding session"}`}
         aria-expanded={open}
         onClick={toggle}
         className={cn(
@@ -154,13 +136,36 @@ export function SessionCard({
             !open && "-rotate-90",
           )}
         />
-        <span className={cn(CARD_LABEL, "flex-none")}>Session</span>
-        <span className="min-w-0 flex-1 truncate text-base text-(--text-secondary)">
-          {session.title ? `${session.title} · ` : ""}
-          <HarnessName vendor={session.source} className="align-middle" /> ·{" "}
-          {session.started_at ? `${formatDate(session.started_at)} · ` : ""}
-          {formatDuration(duration)} · {pluralize("prompt", session.turn_count, true)}
-          {session.user_email ? ` · ${session.user_email}` : ""}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-base font-medium text-(--text-primary)">
+            {session.title || "Coding session"}
+          </span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-(--text-tertiary)">
+            <HarnessName vendor={session.source} size={12} />
+            {full.models.length > 0 ? (
+              <span
+                className="text-(--text-secondary)"
+                title={full.models.map(modelLabel).join(", ")}
+              >
+                {full.models.map(modelLabel).join(" · ")}
+              </span>
+            ) : null}
+            {session.git_branch ? (
+              <Badge
+                size="compact"
+                title={`Branch: ${session.git_branch}`}
+                className="min-w-0 max-w-60 gap-1"
+              >
+                <BranchIcon size={12} className="flex-none" />
+                <span className="truncate">{session.git_branch}</span>
+              </Badge>
+            ) : null}
+            <span>
+              {session.started_at ? `${formatDate(session.started_at)} · ` : ""}
+              {formatDuration(duration)} · {pluralize("prompt", session.turn_count, true)}
+            </span>
+            {session.user_email ? <span>{session.user_email}</span> : null}
+          </span>
         </span>
         <span className="flex flex-none items-center gap-2">
           {!session.has_inner_trace ? (
@@ -214,7 +219,7 @@ export function SessionCard({
             </p>
           ) : (
             <>
-              <SessionTotals session={full} modelLabel={modelLabel} formatCost={formatCost} />
+              <SessionTotals session={full} formatCost={formatCost} />
               {full.has_inner_trace ? (
                 // A report's prompts show at once; their replies follow
                 // with the session.
@@ -245,86 +250,92 @@ export function SessionCard({
           )}
         </div>
       ) : null}
-    </Card>
+    </section>
   );
 }
 
 function SessionTotals({
   session,
-  modelLabel,
   formatCost,
 }: {
   session: TranscriptSession;
-  modelLabel: (model: string) => string;
   formatCost: TranscriptHostProps["formatCost"];
 }) {
   const totals = session.totals;
   return (
-    <dl className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-base">
-      <Stat label="Commits" value={formatCount(session.commit_count)} />
-      {session.models.length > 0 ? (
+    <div className="@container mb-5 space-y-3 border-b border-(--border-subtle) pb-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base @lg:grid-cols-4">
         <Stat
-          label="Models"
+          label={formatCost ? "Tokens · Cost" : "Tokens"}
           value={
-            <span className="inline-flex flex-wrap gap-x-3 gap-y-1">
-              {session.models.map((model) => (
-                <ModelName key={model} model={model} label={modelLabel(model)} />
-              ))}
+            <span className="flex flex-wrap items-baseline gap-x-2">
+              <span>{formatCompact(session.tokens)}</span>
+              {formatCost ? (
+                <span className="text-(--text-secondary)">
+                  {formatCost(session.cost_usd, session.cost_is_floor) ?? formatUSD(null)}
+                </span>
+              ) : null}
             </span>
           }
-        />
-      ) : null}
-      <Stat
-        label="Tokens"
-        value={formatCompact(session.tokens)}
-        detail={
-          join([
-            estimatedTokenDetail(session.tokens, session.estimated_tokens),
-            session.tokens > 0 && !session.cost_per_prompt && "reported at session level",
-          ]) ?? undefined
-        }
-      />
-      {/* A host without prices shows no Cost at all, rather than an empty one. */}
-      {formatCost ? (
-        <Stat
-          label="Cost"
-          value={formatCost(session.cost_usd, session.cost_is_floor) ?? formatUSD(null)}
           detail={
-            session.cost_usd == null && session.tokens > 0
-              ? "no price for some of this usage"
-              : session.cost_is_floor
-                ? "lower bound · some usage has no price"
-                : !session.cost_per_prompt
-                  ? "reported per session"
-                  : undefined
+            join([
+              estimatedTokenDetail(session.tokens, session.estimated_tokens),
+              session.tokens > 0 && !session.cost_per_prompt && "reported at session level",
+              formatCost &&
+                (session.cost_usd == null && session.tokens > 0
+                  ? "no price for some of this usage"
+                  : session.cost_is_floor
+                    ? "lower bound · some usage has no price"
+                    : null),
+            ]) ?? undefined
           }
         />
-      ) : null}
-      {session.git_branch ? <Stat label="Branch" value={session.git_branch} /> : null}
-      {totals ? (
-        <>
-          <Stat label="Files read" value={formatCount(totals.files_read)} />
-          <Stat label="Files edited" value={formatCount(totals.files_edited)} />
-          <Stat
-            label="Lines"
-            value={`+${formatCount(totals.added_lines)} / −${formatCount(totals.removed_lines)}`}
-          />
-          <Stat label="Tool calls" value={formatCount(totals.tool_calls)} />
-          {totals.failed_calls > 0 ? (
-            <Stat label="Failed calls" value={formatCount(totals.failed_calls)} />
-          ) : null}
-        </>
-      ) : null}
-      {session.unattributed && session.unattributed.tool_calls + session.unattributed.reads > 0 ? (
-        <Stat
-          label="Not tied to a prompt"
-          value={formatCount(session.unattributed.tool_calls + session.unattributed.reads)}
-          detail="counted in the session, under no prompt"
-        />
-      ) : null}
-      {session.working_dir ? (
-        <Stat label="Working dir" value={session.working_dir} truncate />
-      ) : null}
-    </dl>
+        {totals ? (
+          <>
+            <Stat
+              label="Files"
+              value={
+                <span className="flex flex-wrap gap-x-3">
+                  <span>
+                    {formatCount(totals.files_read)}{" "}
+                    <span className="text-xs text-(--text-tertiary)">read</span>
+                  </span>
+                  <span>
+                    {formatCount(totals.files_edited)}{" "}
+                    <span className="text-xs text-(--text-tertiary)">edited</span>
+                  </span>
+                </span>
+              }
+            />
+            <Stat
+              label="Lines"
+              value={
+                <span className="flex flex-wrap gap-x-2">
+                  <span className="text-(--status-positive)">
+                    +{formatCount(totals.added_lines)}
+                  </span>
+                  <span className="text-(--status-critical)">
+                    −{formatCount(totals.removed_lines)}
+                  </span>
+                </span>
+              }
+            />
+            <Stat
+              label="Tool calls"
+              value={
+                <span className="flex flex-wrap items-baseline gap-x-3">
+                  <span>{formatCount(totals.tool_calls)}</span>
+                  {totals.failed_calls > 0 ? (
+                    <span className="text-xs text-(--status-critical)">
+                      {formatCount(totals.failed_calls)} failed
+                    </span>
+                  ) : null}
+                </span>
+              }
+            />
+          </>
+        ) : null}
+      </dl>
+    </div>
   );
 }

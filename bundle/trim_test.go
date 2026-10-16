@@ -610,6 +610,7 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 			RootSessionID: "s1",
 			Title:         "Fix the outage using token " + plantedSecret,
 			Decisions: decisionsOf(SessionDecision{
+				Title:   "Rotate " + plantedSecret,
 				Summary: "Rotate " + plantedSecret, Who: "human", Category: "behavior", Trigger: "failure", Turns: []int{1},
 				Rationale: "Leaked " + plantedSecret, RejectedAlternative: "Keep " + plantedSecret,
 				Evidence: "rotate " + plantedSecret + " now", EvidenceTurn: 1, Files: []string{"config/" + plantedSecret + ".toml"},
@@ -630,6 +631,7 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 	}
 	decision := (*bundle.Sessions[0].Decisions)[0]
 	for name, text := range map[string]string{
+		"title":   decision.Title,
 		"summary": decision.Summary, "rationale": decision.Rationale, "rejected alternative": decision.RejectedAlternative,
 		"evidence": decision.Evidence, "file": decision.Files[0],
 	} {

@@ -62,13 +62,18 @@ A host connects it through props and context:
 
 `ReviewViewer` (`@baum/viewer/components/review-viewer`) renders a whole
 review: the head, a single version row combining the menu, generation status and evidence age, with comparison, the rail (Summary,
-Changes and Critical risks, folding as the reader goes), the pane for the
+Changes, with warning icons on sections containing high or critical risks), the pane for the
 selection, and a side pane with the document's Details and Activity. It keeps
 the selection and the version being read in the URL through
 `UrlStateProvider`, and remembers the side pane's tab, fold and width, and
 the rail's width, in `localStorage`. Both the rail and the side pane resize
 from the border they share with the pane, by pointer or keyboard; the rail
 starts at 264px.
+
+Changes hides obsolete sections by default, in both the rail and the overview.
+A small “View obsolete changes” control reveals them with muted gray styling;
+they do not count toward read progress. Opening an obsolete section by a direct
+link reveals the obsolete rows so the selected section stays visible in the rail.
 
 Below `xl` (1280px) the panes stack, and the rail becomes a sheet from the
 bottom of the window. A bar sticks over the pane in its place: it names
@@ -96,7 +101,7 @@ left out rather than shown empty or failed:
 
 | Prop | What it adds |
 | --- | --- |
-| `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
+| `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "Since v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
 | `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
@@ -109,20 +114,55 @@ left out rather than shown empty or failed:
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
-| `activityMembers` | a stack's member reviews for the Activity tab, for the document it describes: each with its number and a tag (such as a link to its page), whether some are still loading, and a note (such as which could not be read). Under the checks the tab then gathers the members' open review threads, each tagged with its member, their exchange figures summed with no full exchange, their sessions once each, and their decisions tagged with their member; an open thread in any member flags the tab |
+| `activityMembers` | a stack's member reviews for the Activity tab, for the document it describes: each with its number and a tag (such as a link to its page), whether some are still loading, and a note (such as which could not be read). Under the checks the tab then gathers the members' open review threads, each tagged with its member, their exchange figures summed with no full exchange, their sessions once each, and their decisions tagged with their member (optional `decisions` keeps them pinned to the stack snapshot when member evidence is live); an open thread in any member flags the tab |
 | `hideActivity` | leaves out the side pane's Activity tab, and the Checks part moves to the head of Details; a reader whose last tab was Activity sees Details |
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 
-Decisions show who took them: a section's Key decisions and the Activity
-tab's list badge each one Human or Agent, and an agent decision carrying
-`approved_by_human` reads "Agent · approved" with a tick, so the approval is
-in words rather than colour alone. The Activity tab lists the agent's own
-calls first, then those made or approved by a person, an approved agent
-decision among the latter. A decision that carries them also
-shows what prompted it and why ("Prompted by review: …") and the session's
-own words as a quote; both are plain text from the session, never Markdown.
+The Summary's Key changes are links with line counts, without expandable
+behavior details. Its Risks section appears only for active high or critical
+risks. Risk links open the complete Changes section and highlight the risk in
+context; the rail has no separate Critical risks group. Older risk-overview
+links open Changes. Changes are ordered by review score, with attention items
+first when scores tie. The Changes count excludes obsolete sections, which are
+hidden by default and can be revealed with “View obsolete changes.”
+
+Attention uses a flat callout with evidence directly below its risks. For a
+single referenced risk, its explanation replaces the overlapping attention
+summary. Category labels are omitted and lifecycle labels use quiet text
+(“Since v1”). Attention includes referenced high and critical risks only.
+Medium and low risks appear in Risks after Key decisions even when attention
+references them; a callout referencing only lower-tier risks is omitted.
+
+The Author pane groups models under their harness, in small text without a
+second icon. Only the first model is shown, followed by the number of additional
+models; hovering reveals all model names.
+
+Key decisions omit source chips (filenames and prompt numbers).
+Multiple decisions are collapsed to their short titles by default, with full
+text as a fallback for older reviews. A single decision is expanded without
+a toggle. Opening one reveals regular-weight decision
+text and a quieter rationale below. Session quotes appear directly below the explanation;
+rejected alternatives are omitted.
+The Activity panel places decisions above linked sessions, whose cards use compact
+spacing and a single muted title/branch line. It uses each decision's short `title` when available. Choosing
+one opens its Changes section, expands the decision and briefly highlights it.
+The URL's `decision` parameter preserves that destination when arriving from
+another page or reloading. Older documents
+fall back to `text`. Stack decisions use the same compact rows, with a quiet
+member number and a link to that member's exact review version, section and
+decision, where the decision expands and highlights on arrival.
+Repeated decisions with identical text, source sessions and attribution appear
+once in a stack, linking to the first member where they are referenced.
+Quotes with a readable session source have a quiet “View in session” link below
+the quote, in the link color, leading to the cited turn. Decision and session jumps center their target in 400 ms. The visible target
+highlights for 2 seconds, fading without a persistent border; background
+refreshes do not cancel the highlight. A section with no risks omits its Risks group.
+Key decisions and the Activity panel share two groups, without attribution
+pills: decisions made or approved by a person first, then the agent's own calls.
+Empty groups are omitted. An approved agent decision belongs with the person's
+choices. The rationale and quoted session words are plain text, never Markdown.
 
 The document's own sessions are listed in the Activity tab; the Sessions
 group and its pane need the host's `sessions` slot.
@@ -149,16 +189,23 @@ transcript.
 ### Session transcripts
 
 `SessionCard` (`@baum/viewer/components/session-card`) draws one session, the
-same card in the hosted app and in `baum view`: a header with the agent,
+same borderless session container in the hosted app and in `baum view`:
+a header with the agent,
 title, date, duration, prompt count and outcome (or linked commits), the
-session's figures (models, tokens, cost when the host has prices, files,
-lines, tool calls, working directory), then the session as a conversation
+session's main figures in four responsive groups: tokens with cost when the
+host has prices, files read with edited, colored additions and deletions, and
+tool calls with failures. The title leads the header, with the
+harness, model names, branch pill, date and duration below. Commits appear only
+in the header pill; working directory and unattributed activity notes are omitted.
+Then the session appears as a conversation
 (`SessionTranscript`, `@baum/viewer/components/transcript`, built from the
 `components/chat.tsx` pieces below): each prompt as a bubble on the right, the
 agent's text replies on the left, and a quiet line of what the turn caused
-with an **Agent activity** toggle. Opened, the activity replaces the turn's
-replies: model usage, then the agent's messages in time order with each run
-of tool calls between them folded into one row, each call with its input
+with an **Agent activity** toggle. Opened, the activity appears below the toggle in a marked region, keeping
+existing replies and their height unchanged so the toggle stays in place; a prompt with no
+visible activity says so explicitly. The region shows: model usage, then the agent's messages in time order with each run
+of tool calls between them expanded by default and collapsible as one group.
+Activity summaries align left; each call shows its input
 (and output, when the host has it). A reply that is a preview is swapped for
 its whole message once the activity has arrived.
 
@@ -271,10 +318,9 @@ html:has([data-review-page]) {
 The section sheet and its scrim sit at `--z-sheet` (40), over the sticky
 bars (`--z-sticky`, 30).
 
-Section attention callouts contain the full cards for their referenced risks,
-including evidence and lifecycle badges. Those risks appear only there; remaining
-risks follow under **Other risks**. Without risks in attention the section keeps
-its **Risks** heading, and when every risk is in attention no lower list is shown.
+Section attention callouts show high and critical risks with evidence and lifecycle
+badges, without repeating their explanation in a nested card. Medium and low risks
+appear under **Risks** below **Key decisions**. Empty risk sections are omitted.
 
 ## Syntax highlighting
 

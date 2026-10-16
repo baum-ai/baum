@@ -225,6 +225,7 @@ type Prompt struct {
 // the choice was made, and Evidence a verbatim quote from EvidenceTurn
 // showing it; each is empty when not extracted.
 type SessionDecision struct {
+	Title               string   `json:"title,omitempty"`
 	Summary             string   `json:"summary"`
 	Who                 string   `json:"who"`
 	Category            string   `json:"category"`

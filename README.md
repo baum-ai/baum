@@ -389,6 +389,10 @@ fetches it); a test validates the
 example document next to it. The hosted baum service reads the same file, and
 baum supports every field it defines.
 
+Decisions may carry a short `title` for compact lists alongside their full
+`text`. New model-authored decisions include one; older documents remain valid
+without it.
+
 ## Packages
 
 The Go packages other tools may import sit at public paths; only the CLI's

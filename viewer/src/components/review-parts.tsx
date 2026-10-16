@@ -342,8 +342,10 @@ const TRIGGER_LABEL: Record<NonNullable<Decision["trigger"]>, string> = {
  *  Markdown. Renders nothing for a decision that carries neither. */
 export function DecisionContext({
   decision,
+  quoteAside,
 }: {
   decision: Pick<Decision, "trigger" | "rationale" | "evidence" | "rejected">;
+  quoteAside?: ReactNode;
 }) {
   const trigger = decision.trigger ? TRIGGER_LABEL[decision.trigger] : undefined;
   if (!trigger && !decision.rationale && !decision.evidence && !decision.rejected) return null;
@@ -370,9 +372,10 @@ export function DecisionContext({
       )}
       {decision.evidence && (
         <blockquote className="border-l-2 border-(--border-subtle) pl-2 text-(--text-tertiary)">
-          “{decision.evidence}”
+          {decision.evidence}
         </blockquote>
       )}
+      {decision.evidence && quoteAside && <div className="pt-0.5">{quoteAside}</div>}
     </div>
   );
 }
@@ -450,16 +453,19 @@ export function Item({
   id,
   children,
   className,
+  compact = false,
 }: {
   id?: string;
   children: ReactNode;
   className?: string;
+  compact?: boolean;
 }) {
   return (
     <li
       id={id}
       className={cn(
-        "rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card) px-3 py-2.5 text-base scroll-mt-4 target:border-(--border-focus)",
+        "rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card) px-3 text-base scroll-mt-4 target:border-(--border-focus)",
+        compact ? "py-2" : "py-2.5",
         className,
       )}
     >

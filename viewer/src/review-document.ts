@@ -110,6 +110,7 @@ export type BehaviorStep = { id: string; text: string; anchors: Anchor[]; eviden
 
 export type Decision = {
   id: string;
+  title?: string;
   by: "human" | "agent";
   text: string;
   rejected?: string;
@@ -126,6 +127,21 @@ export type Decision = {
 };
 
 export type DecisionTrigger = "request" | "review" | "failure" | "finding" | "initiative";
+
+export function decisionGroups<T extends Pick<Decision, "by" | "approved_by_human">>(
+  items: readonly T[],
+) {
+  return [
+    {
+      label: "Made or approved by a person",
+      items: items.filter((item) => item.by === "human" || item.approved_by_human),
+    },
+    {
+      label: "Agent's own calls",
+      items: items.filter((item) => item.by === "agent" && !item.approved_by_human),
+    },
+  ].filter((group) => group.items.length > 0);
+}
 
 export type Group = {
   id: string;
@@ -616,7 +632,7 @@ export function riskLifecycleLabel(
   if (risk.state === "mitigated") {
     return risk.mitigated_version ? `Mitigated in v${risk.mitigated_version}` : "Mitigated";
   }
-  if (risk.introduced_version !== review.version) return `From v${risk.introduced_version}`;
+  if (risk.introduced_version !== review.version) return `Since v${risk.introduced_version}`;
   return review.previous_version == null ? null : "New";
 }
 
@@ -720,11 +736,14 @@ export const RISK_SCORE_MEANING: Record<RiskScoreLevel, string> = {
  *  sections without a score and obsolete ones. The score is read off the
  *  document, never recalculated, so a document generated before section
  *  scores existed keeps the review's own order. */
-export function sectionsInReviewOrder<T extends Pick<Section, "kind" | "derived">>(
-  sections: T[],
-): T[] {
+export function sectionsInReviewOrder<
+  T extends Pick<Section, "kind" | "derived"> & Partial<Pick<Section, "attention">>,
+>(sections: T[]): T[] {
   if (!sectionsAreScored(sections)) return sections;
-  return sections.toSorted((a, b) => reviewRank(a) - reviewRank(b));
+  return sections.toSorted(
+    (a, b) =>
+      reviewRank(a) - reviewRank(b) || Number(Boolean(b.attention)) - Number(Boolean(a.attention)),
+  );
 }
 
 /** 0 for a score of 5 down to 4 for a score of 1, then the tail groups. */

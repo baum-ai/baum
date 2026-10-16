@@ -19,9 +19,9 @@ import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
 import { formatRelative } from "./format";
-import { ChevronDownIcon, SectionIcon } from "./icons";
+import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
-import { cn, FOCUS_RING } from "./classnames";
+import { cn } from "./classnames";
 import { Badge, CardHeader, SegmentedControl } from "./ui";
 
 /** The document-level view: what the pull request does, why, and where the
@@ -34,7 +34,6 @@ export type SummaryDestination = "changes" | "risks" | "files" | "sessions" | "t
 export function ReviewSummary({
   document,
   onSelectSection,
-  onNavigate,
 }: {
   document: ReviewDocument;
   onSelectSection: (id: string) => void;
@@ -146,7 +145,7 @@ export function ReviewSummary({
             {behaviour.length > 0 && (
               <KeyChanges changes={behaviour} onSelectSection={onSelectSection} />
             )}
-            {(triage.lead.length > 0 || triage.rest.length > 0) && (
+            {triage.lead.length > 0 && (
               <Part
                 label="Risks"
                 aside={
@@ -156,11 +155,6 @@ export function ReviewSummary({
                         ? `${pluralize("risk", triage.lead.length, true)} to read first`
                         : "None to read first"}
                     </span>
-                    {onNavigate && (
-                      <JumpLink className="text-xs" onClick={() => onNavigate("risks")}>
-                        View all risks →
-                      </JumpLink>
-                    )}
                   </>
                 }
               >
@@ -406,13 +400,8 @@ function KeyChanges({
       }
     >
       <ul className="divide-y divide-(--border-subtle)">
-        {shown.map((change, index) => (
-          <KeyChangeRow
-            key={change.section}
-            change={change}
-            defaultOpen={index === 0}
-            onSelectSection={onSelectSection}
-          />
+        {shown.map((change) => (
+          <KeyChangeRow key={change.section} change={change} onSelectSection={onSelectSection} />
         ))}
       </ul>
     </Part>
@@ -421,18 +410,12 @@ function KeyChanges({
 
 function KeyChangeRow({
   change,
-  defaultOpen,
   onSelectSection,
 }: {
   change: BehaviourSection;
-  defaultOpen: boolean;
   onSelectSection: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   return (
-    // The open row takes no fill: the expanded list beneath it marks it, and
-    // the summary stays plain white. Every key change is a changed section, so
-    // its state would only repeat itself on each row.
     <li>
       <div className="flex items-center gap-2.5 py-2">
         <SectionIcon size={14} className="flex-none text-(--action-accent)" />
@@ -449,43 +432,6 @@ function KeyChangeRow({
         <span className="flex-none text-base">
           <Lines additions={change.additions} deletions={change.deletions} />
         </span>
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={`${open ? "Collapse" : "Expand"} ${change.title}`}
-          onClick={() => setOpen((value) => !value)}
-          className={cn(
-            "flex h-6 w-6 flex-none cursor-pointer items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) transition-colors duration-150 hover:bg-(--surface-hover) hover:text-(--text-primary)",
-            FOCUS_RING,
-          )}
-        >
-          <ChevronDownIcon
-            size={14}
-            className={cn("transition-transform duration-200", !open && "-rotate-90")}
-          />
-        </button>
-      </div>
-      {/* Folded rather than unmounted, so a search or a screen reader still
-          finds every step the document states. */}
-      <div hidden={!open} className="space-y-2 pb-3 pl-6">
-        <ul className="space-y-1">
-          {change.steps.map((step) => (
-            <li key={step.id} className="flex gap-2.5">
-              <span
-                aria-hidden
-                className="mt-[0.5rem] h-1 w-1 flex-none rounded-full bg-(--text-tertiary)"
-              />
-              <Markdown className="min-w-0 flex-1 text-base text-(--text-primary)">
-                {step.text}
-              </Markdown>
-            </li>
-          ))}
-        </ul>
-        {change.more > 0 && (
-          <p className="text-base text-(--text-tertiary)">
-            {pluralize("further behaviour change", change.more, true)} in this section
-          </p>
-        )}
       </div>
     </li>
   );

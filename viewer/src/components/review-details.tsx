@@ -1,8 +1,12 @@
 import pluralize from "pluralize";
 import type { ReactNode } from "react";
+import { ViewerLink } from "../navigation";
+import { harnessBrand, modelBrand } from "../brands";
+import { withSelection } from "../review-selection";
 
 import {
   humanize,
+  decisionGroups,
   implementsGroups,
   type IndexedSession,
   type ReviewDocument,
@@ -12,27 +16,14 @@ import {
   TIER_COLOR,
 } from "../review-document";
 import { HarnessName, ModelName } from "./brand-logo";
-import { cn } from "./classnames";
+import { cn, FOCUS_RING } from "./classnames";
 import { EM_DASH, formatDate, formatDuration } from "./format";
-import { ChevronDownIcon } from "./icons";
 import { InlineMarkdown } from "./markdown";
 import { ChecksPart } from "./review-checks";
 import { ReviewExchange, StackReviewExchange } from "./review-exchange";
-import {
-  AnchorChips,
-  DecisionByBadge,
-  DecisionContext,
-  Facts,
-  Item,
-  JumpLink,
-  Lines,
-  None,
-  Part,
-  TierDot,
-} from "./review-parts";
+import { AnchorChips, Facts, Item, JumpLink, Lines, None, Part, TierDot } from "./review-parts";
 import { Skeleton } from "./states";
 import { Badge } from "./ui";
-import { useScrollingFlag } from "./use-scrolling-flag";
 
 /** The pull request's standing facts, for the conversation pane's Details
  *  tab: who wrote it and with what, what it says it implements, and how big
@@ -73,6 +64,7 @@ export function ReviewDetails({
                   <ObservedLine
                     vendors={summary.authorship.observed_vendors}
                     models={summary.authorship.observed_models ?? []}
+                    sessions={document.index.sessions}
                   />
                 ),
             },
@@ -174,6 +166,10 @@ export type ActivityMember = {
   document: ReviewDocument;
   /** Names the member beside what came from it, such as a link to its page. */
   tag: ReactNode;
+  /** The member's review page, used for links to individual decisions. */
+  href?: string;
+  /** Decisions from the member version covered by the stack, when evidence is live. */
+  decisions?: SectionDecision[];
 };
 
 /** The member reviews a stack's Activity tab gathers, as far as they are
@@ -204,7 +200,7 @@ export function ReviewActivity({
   /** A stack's member reviews: each part then gathers theirs rather than
    *  reading the document's own. */
   members?: ActivityMembers;
-  onSelectSection: (id: string) => void;
+  onSelectSection: (id: string, decision?: string) => void;
   /** Opens one linked session in the Sessions pane. The document's session
    *  ids are the pull request's run ids, so the rail can name the same one. */
   onSelectSession?: (id: string) => void;
@@ -225,7 +221,10 @@ export function ReviewActivity({
   const decisions: ListedDecision[] = reviewDecisions(document).map((decision) => ({
     ...decision,
     key: `${decision.section}-${decision.id}`,
-    section: { title: decision.sectionTitle, select: () => onSelectSection(decision.section) },
+    section: {
+      title: decision.sectionTitle,
+      select: () => onSelectSection(decision.section, decision.id),
+    },
   }));
   return (
     <div className="space-y-7">
@@ -233,14 +232,14 @@ export function ReviewActivity({
 
       <ReviewExchange document={document} onSelectSection={onSelectSection} />
 
+      <Decisions decisions={decisions} />
+
       <LinkedSessions
         sessions={document.index.sessions}
         empty="No coding session is linked to this pull request."
         onSelectSession={onSelectSession}
         onViewSessions={onViewSessions}
       />
-
-      <Decisions decisions={decisions} />
     </div>
   );
 }
@@ -267,14 +266,33 @@ function StackActivity({
       if (!listed || (listed.restricted && !session.restricted)) sessions.set(session.id, session);
     }
   }
-  const decisions: ListedDecision[] = members.flatMap((member) =>
-    reviewDecisions(member.document).map((decision) => ({
+  const listed: ListedDecision[] = members.flatMap((member) =>
+    (member.decisions ?? reviewDecisions(member.document)).map((decision) => ({
       ...decision,
       key: `${member.number}:${decision.section}-${decision.id}`,
       section: undefined,
-      member: member.tag,
+      memberNumber: member.number,
+      href: member.href ? memberDecisionHref(member, decision) : undefined,
     })),
   );
+  const unique = new Map<string, ListedDecision>();
+  for (const decision of listed) {
+    const sourceSessions = [
+      ...new Set(
+        decision.anchors.flatMap((anchor) => (anchor.type === "prompt" ? [anchor.session] : [])),
+      ),
+    ].toSorted();
+    const identity = sourceSessions.length
+      ? JSON.stringify([
+          decision.text.trim(),
+          sourceSessions,
+          decision.by,
+          !!decision.approved_by_human,
+        ])
+      : decision.key;
+    if (!unique.has(identity)) unique.set(identity, decision);
+  }
+  const decisions = [...unique.values()];
   return (
     <div className="space-y-7">
       {checks}
@@ -285,14 +303,14 @@ function StackActivity({
         <>
           <StackReviewExchange members={members} />
 
+          <Decisions decisions={decisions} />
+
           <LinkedSessions
             sessions={[...sessions.values()]}
             empty="No coding session is linked to these pull requests."
             onSelectSession={onSelectSession}
             onViewSessions={onViewSessions}
           />
-
-          <Decisions decisions={decisions} />
         </>
       )}
     </div>
@@ -347,73 +365,95 @@ function LinkedSessions({
 type ListedDecision = Omit<SectionDecision, "section"> & {
   key: string;
   section?: { title: string; select: () => void };
-  member?: ReactNode;
+  memberNumber?: number;
+  href?: string;
 };
+
+function memberDecisionHref(member: ActivityMember, decision: SectionDecision): string {
+  const url = new URL(member.href!, "https://viewer.invalid");
+  url.search = withSelection(url.searchParams, {
+    kind: "section",
+    id: decision.section,
+    decision: decision.id,
+  }).toString();
+  url.searchParams.set("review", String(member.document.review.version));
+  return url.origin === "https://viewer.invalid"
+    ? `${url.pathname}${url.search}${url.hash}`
+    : url.href;
+}
 
 function Decisions({ decisions }: { decisions: ListedDecision[] }) {
   if (decisions.length === 0) return null;
   return (
     <Part label="Decisions">
-      {/* The tab is theirs, so the decisions are listed rather than folded
-          behind a count — but as titles, the calls the agent made on its own
-          first: those are what a reviewer has to check. Why, what was turned
-          down and the session's words open per row. */}
+      {/* Decisions made or approved by a person lead the list. */}
       <div className="space-y-3">
-        <DecisionGroup
-          label="Agent's own calls"
-          decisions={decisions.filter((item) => item.by === "agent" && !item.approved_by_human)}
-        />
-        <DecisionGroup
-          label="Made or approved by a person"
-          decisions={decisions.filter((item) => item.by === "human" || item.approved_by_human)}
-        />
+        {decisionGroups(decisions).map((group) => (
+          <DecisionGroup key={group.label} label={group.label} decisions={group.items} />
+        ))}
       </div>
     </Part>
   );
 }
 
-/** One group of decisions, each a title that opens onto what prompted it, the
- *  alternative turned down, the session's words and its section. */
+/** The same compact decision rows in a PR and a stack; only the destination differs. */
 function DecisionGroup({ label, decisions }: { label: string; decisions: ListedDecision[] }) {
   if (decisions.length === 0) return null;
   return (
     <div>
-      <p className="mb-1 text-xs text-(--text-tertiary)">
+      <p className="mb-1 text-base font-semibold text-(--text-secondary)">
         {label} · {decisions.length}
       </p>
       <ul className="divide-y divide-(--border-subtle)">
         {decisions.map((decision) => (
-          <li key={decision.key} className="py-1.5 text-base">
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-start gap-1.5 [&::-webkit-details-marker]:hidden">
-                <ChevronDownIcon
-                  size={12}
-                  aria-hidden
-                  className="mt-1.5 flex-none -rotate-90 text-(--text-tertiary) transition-transform group-open:rotate-0"
-                />
-                {/* A title in a disclosure: links read as text and blocks
-                    unwrap, so the summary holds no block or control. */}
-                <InlineMarkdown className="line-clamp-2 min-w-0 flex-1 text-(--text-primary) group-open:line-clamp-none">
-                  {decision.text}
-                </InlineMarkdown>
-              </summary>
-              <div className="mt-1.5 space-y-1.5 pl-[18px]">
-                <DecisionContext decision={decision} />
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <DecisionByBadge decision={decision} />
-                  {decision.member}
-                  {decision.section && (
-                    <JumpLink className="text-xs" onClick={decision.section.select}>
-                      {decision.section.title} →
-                    </JumpLink>
-                  )}
-                </div>
-              </div>
-            </details>
-          </li>
+          <DecisionRow key={decision.key} decision={decision} />
         ))}
       </ul>
     </div>
+  );
+}
+
+function DecisionRow({ decision }: { decision: ListedDecision }) {
+  const className = cn(
+    "flex w-full items-start gap-2 rounded-sm text-left hover:text-(--text-link) hover:no-underline",
+    FOCUS_RING,
+  );
+  const content = (
+    <>
+      <InlineMarkdown className="min-w-0 flex-1">
+        {decision.title?.trim() || decision.text}
+      </InlineMarkdown>
+      <span className="flex flex-none items-baseline gap-1 text-(--text-tertiary)">
+        {decision.memberNumber && <span className="text-xs">#{decision.memberNumber}</span>}
+        {(decision.href || decision.section) && <span aria-hidden>→</span>}
+      </span>
+    </>
+  );
+  return (
+    <li className="flex items-start gap-1 py-1.5 text-base">
+      <div className="min-w-0 flex-1">
+        {decision.href ? (
+          <ViewerLink
+            href={decision.href}
+            className={className}
+            title={`Open decision in PR #${decision.memberNumber}`}
+          >
+            {content}
+          </ViewerLink>
+        ) : decision.section ? (
+          <button
+            type="button"
+            onClick={decision.section.select}
+            className={cn(className, "cursor-pointer")}
+            title={`Open in ${decision.section.title}`}
+          >
+            {content}
+          </button>
+        ) : (
+          <div className="flex items-start gap-2">{content}</div>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -432,25 +472,57 @@ function Figures({ items }: { items: { label: string; value: ReactNode }[] }) {
   );
 }
 
-/** Each harness and model by name and mark, on one line. The pane is narrow,
- *  and a list that wraps there stacks one name per row; a line longer than the
- *  column scrolls sideways instead, its bar showing only while it moves. */
-function ObservedLine({ vendors, models }: { vendors: string[]; models: string[] }) {
-  const onScroll = useScrollingFlag();
+function modelLine(items: string[]) {
+  return items.length > 0 ? (
+    <span className="block truncate text-xs text-(--text-tertiary)" title={items.join(", ")}>
+      {items[0]}
+      {items.length > 1 ? ` + ${items.length - 1}` : ""}
+    </span>
+  ) : null;
+}
+
+/** Session metadata associates models with the harness that actually used them. */
+function ObservedLine({
+  vendors,
+  models,
+  sessions,
+}: {
+  vendors: string[];
+  models: string[];
+  sessions: IndexedSession[];
+}) {
+  const groups = vendors.map((vendor) => ({
+    vendor,
+    models: [
+      ...new Set(
+        sessions
+          .filter((session) => session.vendor === vendor)
+          .flatMap((session) => session.models ?? []),
+      ),
+    ].filter((model) => models.includes(model)),
+  }));
+  if (groups.length === 1 && groups[0]!.models.length === 0) groups[0]!.models = models;
+  // Stack summaries may carry model names without indexed sessions. Associate
+  // those only when the model family identifies one unambiguous harness.
+  for (const model of models) {
+    if (groups.some((group) => group.models.includes(model))) continue;
+    const brand = modelBrand(model);
+    const matching = groups.filter((group) => brand && harnessBrand(group.vendor) === brand);
+    if (matching.length === 1) matching[0]!.models.push(model);
+  }
+  const assigned = new Set(groups.flatMap((group) => group.models));
+  const unassigned = models.filter((model) => !assigned.has(model));
   return (
-    <span
-      onScroll={onScroll}
-      // Unlike a chart legend, nothing beside this line needs its height
-      // matched, so the track is taken only when the line overflows.
-      style={{ overflowX: "auto" }}
-      className="scroll-on-demand flex min-w-0 items-center gap-x-2.5 whitespace-nowrap"
-    >
-      {vendors.map((vendor) => (
-        <HarnessName key={vendor} vendor={vendor} className="flex-none" />
+    <span className="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-1.5">
+      {groups.map((group) => (
+        <span key={group.vendor} className="flex min-w-0 max-w-full flex-col">
+          <HarnessName vendor={group.vendor} />
+          <span className={cn("block", harnessBrand(group.vendor) && "pl-5")}>
+            {modelLine(group.models)}
+          </span>
+        </span>
       ))}
-      {models.map((model) => (
-        <ModelName key={model} model={model} className="flex-none text-(--text-secondary)" />
-      ))}
+      {modelLine(unassigned)}
     </span>
   );
 }
@@ -468,7 +540,7 @@ export function SessionItem({
 }) {
   if (session.restricted) {
     return (
-      <Item className="flex flex-wrap items-center gap-2">
+      <Item compact className="flex flex-wrap items-center gap-2">
         <HarnessName vendor={session.vendor} className="font-medium" />
         <Badge size="compact">Details restricted</Badge>
         <span className="w-full text-base text-(--text-tertiary)">
@@ -489,8 +561,9 @@ export function SessionItem({
   const [firstModel, ...otherModels] = session.models ?? [];
   return (
     <Item
+      compact
       className={cn(
-        "space-y-1.5",
+        "space-y-0.5",
         onOpen && "relative cursor-pointer transition-colors hover:bg-(--surface-hover)",
       )}
     >
@@ -526,10 +599,13 @@ export function SessionItem({
           width happened to break it. */}
       <p className="text-xs text-(--text-tertiary)">{meta.join(" · ")}</p>
       {(session.title || session.git_branch) && (
-        <p className="text-base text-(--text-primary)">
+        <p
+          className="truncate text-xs text-(--text-secondary)"
+          title={[session.title, session.git_branch].filter(Boolean).join(" · ")}
+        >
           {session.title}
           {session.title && session.git_branch ? " · " : ""}
-          {session.git_branch && <code className="font-mono text-base">{session.git_branch}</code>}
+          {session.git_branch && <code className="font-mono">{session.git_branch}</code>}
         </p>
       )}
     </Item>
