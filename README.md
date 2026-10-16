@@ -526,8 +526,9 @@ The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
 `~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
 restarting marks unfinished running jobs interrupted and resumes queued jobs.
 Only one queued or running job exists per repository/PR across registered clones.
-A newly confirmed head replaces queued work; running work must finish or be
-cancelled first. Cancelling propagates to the backend process group and removes
+Confirming the same inputs again returns the queued job. Any other confirmed
+input (head, backend, model, budgets, caps or price list version) replaces
+queued work; running work must finish or be cancelled first. Cancelling propagates to the backend process group and removes
 its temporary checkout and archives. Failed, cancelled and interrupted attempts
 never publish a partial version.
 
@@ -538,7 +539,11 @@ budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
 is required; unknown backend default models have no invented estimate.
 Estimates use the signed published full price list, falling back to the embedded
-release baseline if download or verification fails. The estimate uses the
+release baseline if download or verification fails. A downloaded list that
+becomes active is stored with its signature beside the queue, in
+`prices.signed.json`; on restart it is verified again and reinstalled before
+queued jobs resume. A queued job confirmed against a newer list than the active
+one downloads the signed list once more before its input check. The estimate uses the
 highest listed charged-token rates and reserves one budget-sized cache read per
 call. It is a planning estimate, not a hard dollar ceiling: cached reads are
 outside the charged-token budget and provider usage can overshoot a call limit.

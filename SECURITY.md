@@ -265,7 +265,8 @@ excluded from batch generation. Cancellation reaches the existing backend
 process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
-entries become interrupted before work resumes. A second `baum ui` invocation
+entries become interrupted before work resumes. The stored copy of a downloaded
+price list is trusted only after its signature verifies again on load. A second `baum ui` invocation
 cannot open a second queue because it reuses the existing instance first.
 
 The server's bootstrap page exchanges the fragment token and clears it from
