@@ -16,7 +16,7 @@ type Versions interface {
 	BeginRun(context.Context, store.Key, time.Time) (int64, error)
 	HeartbeatRun(context.Context, int64, time.Time) error
 	FinishRun(context.Context, int64, string) error
-	Put(context.Context, store.Key, int, store.Version) error
+	Put(context.Context, store.Key, store.Version, store.Version) error
 }
 
 // Publish runs the same validation/repair pipeline for CLI and queued jobs and
