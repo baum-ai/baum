@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func version(k Key, n int) Version {
@@ -35,19 +36,19 @@ func TestVersionsAreAtomicImmutableAndRepositoryScoped(t *testing.T) {
 	if _, err := s.Latest(ctx, key); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
-	if err := s.Put(ctx, key, 0, first); err != nil {
+	if err := s.Put(ctx, key, Version{}, first); err != nil {
 		t.Fatal(err)
 	}
 	second := version(key, 2)
 	second.Metadata.Head = "new revision"
-	if err := s.Put(ctx, key, 1, second); err != nil {
+	if err := s.Put(ctx, key, first, second); err != nil {
 		t.Fatal(err)
 	}
 	for _, other := range []Key{{"two/repo", 7}, {"enterprise.test/one/repo", 7}, {"one/repo", 8}} {
 		if _, err := s.Latest(ctx, other); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("crossed key: %v", err)
 		}
-		if err := s.Put(ctx, other, 0, version(other, 1)); err != nil {
+		if err := s.Put(ctx, other, Version{}, version(other, 1)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,7 +60,7 @@ func TestVersionsAreAtomicImmutableAndRepositoryScoped(t *testing.T) {
 	if err != nil || len(all) != 2 || all[0].Version != 2 || all[1].Version != 1 {
 		t.Fatalf("versions: %+v %v", all, err)
 	}
-	if err := s.Put(ctx, key, 0, first); !errors.Is(err, ErrConflict) {
+	if err := s.Put(ctx, key, Version{}, first); !errors.Is(err, ErrConflict) {
 		t.Fatalf("overwrite: %v", err)
 	}
 	if _, err := s.Get(ctx, key, 9); !errors.Is(err, ErrNotFound) {
@@ -67,12 +68,12 @@ func TestVersionsAreAtomicImmutableAndRepositoryScoped(t *testing.T) {
 	}
 	bad := version(key, 3)
 	bad.Document = []byte(`{}`)
-	if err := s.Put(ctx, key, 2, bad); err == nil {
+	if err := s.Put(ctx, key, second, bad); err == nil {
 		t.Fatal("accepted mismatched document")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := s.Put(ctx, key, 2, version(key, 3)); err == nil {
+	if err := s.Put(ctx, key, second, version(key, 3)); err == nil {
 		t.Fatal("published after cancellation")
 	}
 	latest, err := s.Latest(context.Background(), key)
@@ -84,7 +85,7 @@ func TestConcurrentGenerationComparesHistoryUnderWriterLock(t *testing.T) {
 	s := opened(t)
 	key := Key{"owner/repo", 7}
 	ctx := context.Background()
-	if err := s.Put(ctx, key, 0, version(key, 1)); err != nil {
+	if err := s.Put(ctx, key, Version{}, version(key, 1)); err != nil {
 		t.Fatal(err)
 	}
 	const count = 8
@@ -92,7 +93,7 @@ func TestConcurrentGenerationComparesHistoryUnderWriterLock(t *testing.T) {
 	results := make(chan error, count)
 	var wg sync.WaitGroup
 	for range count {
-		wg.Go(func() { <-start; results <- s.Put(ctx, key, 1, version(key, 2)) })
+		wg.Go(func() { <-start; results <- s.Put(ctx, key, version(key, 1), version(key, 2)) })
 	}
 	close(start)
 	wg.Wait()
@@ -134,7 +135,7 @@ func TestReadOnlyCloneFallbackIsStableAndReadsDoNotCreate(t *testing.T) {
 		t.Fatal("did not use fallback")
 	}
 	key := Key{"owner/repo", 7}
-	if err := s.Put(context.Background(), key, 0, version(key, 1)); err != nil {
+	if err := s.Put(context.Background(), key, Version{}, version(key, 1)); err != nil {
 		t.Fatal(err)
 	}
 	// Becoming writable must not lose the fallback's history.
@@ -170,7 +171,7 @@ func TestReadOnlyExistingStoreNeverHidesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := Key{"owner/repo", 7}
-	if err := s.Put(context.Background(), key, 0, version(key, 1)); err != nil {
+	if err := s.Put(context.Background(), key, Version{}, version(key, 1)); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Chmod(s.path(), 0o400)
@@ -205,7 +206,7 @@ func TestExplicitStoreNeverFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := Key{"owner/repo", 7}
-	if err := s.Put(context.Background(), key, 0, version(key, 1)); err != nil {
+	if err := s.Put(context.Background(), key, Version{}, version(key, 1)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -216,7 +217,7 @@ func TestEnterpriseDocumentsUseOwnerNameButHistoriesKeepTheirHost(t *testing.T) 
 	keys := []Key{{"ghe.one.test/Acme/Widgets", 7}, {"ghe.two.test/acme/widgets", 7}, {"acme/widgets", 7}}
 	for i, key := range keys {
 		v := Version{Metadata: Metadata{Version: 1, Head: fmt.Sprintf("head-%d", i)}, Document: []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1}}`)}
-		if err := s.Put(ctx, key, 0, v); err != nil {
+		if err := s.Put(ctx, key, Version{}, v); err != nil {
 			t.Fatalf("store %s: %v", key.Repository, err)
 		}
 	}
@@ -226,7 +227,7 @@ func TestEnterpriseDocumentsUseOwnerNameButHistoriesKeepTheirHost(t *testing.T) 
 			t.Fatalf("crossed host identity for %s: %+v %v", key.Repository, got.Metadata, err)
 		}
 		wrong := Version{Metadata: Metadata{Version: 2}, Document: []byte(`{"review":{"repository":"other/widgets","pull_request":7,"version":2}}`)}
-		if err := s.Put(ctx, key, 1, wrong); err == nil {
+		if err := s.Put(ctx, key, got, wrong); err == nil {
 			t.Fatalf("accepted another repository for %s", key.Repository)
 		}
 	}
@@ -237,10 +238,10 @@ func TestRefreshFencesConcurrentWritersAndPreservesHistory(t *testing.T) {
 	s := opened(t)
 	key := Key{"owner/repo", 7}
 	first, second := version(key, 1), version(key, 2)
-	if err := s.Put(ctx, key, 0, first); err != nil {
+	if err := s.Put(ctx, key, Version{}, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put(ctx, key, 1, second); err != nil {
+	if err := s.Put(ctx, key, first, second); err != nil {
 		t.Fatal(err)
 	}
 	changed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":2},"refreshed":true}`)
@@ -261,7 +262,7 @@ func TestRefreshFencesConcurrentWritersAndPreservesHistory(t *testing.T) {
 	if err != nil || string(old.Document) != string(first.Document) {
 		t.Fatalf("history changed: %+v %v", old, err)
 	}
-	if err := s.Put(ctx, key, 2, version(key, 3)); err != nil {
+	if err := s.Put(ctx, key, got, version(key, 3)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RefreshCurrent(ctx, key, got, second.Document); !errors.Is(err, ErrConflict) {
@@ -274,7 +275,7 @@ func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
 	ctx := context.Background()
 	key := Key{"owner/repo", 7}
 	saved := version(key, 1)
-	if err := s.Put(ctx, key, 0, saved); err != nil {
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
 		t.Fatal(err)
 	}
 	const count = 8
@@ -301,5 +302,91 @@ func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Fatalf("published %d concurrent refreshes", successes)
+	}
+}
+
+func TestGenerationFencesOnExactRefreshedDocument(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	if err := s.Put(ctx, key, Version{}, version(key, 1)); err != nil {
+		t.Fatal(err)
+	}
+	// Generation reads version 1, then a refresh replaces it with newer evidence.
+	read, err := s.Latest(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)
+	if err := s.RefreshCurrent(ctx, key, read, refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, key, read, version(key, 2)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("generation assembled before the refresh became latest: %v", err)
+	}
+	latest, err := s.Latest(ctx, key)
+	if err != nil || latest.Metadata.Version != 1 || string(latest.Document) != string(refreshed) {
+		t.Fatalf("refreshed evidence lost: %+v %v", latest, err)
+	}
+	if err := s.Put(ctx, key, latest, version(key, 2)); err != nil {
+		t.Fatalf("generation from the refreshed document rejected: %v", err)
+	}
+}
+
+func TestRefreshDefersToUnexpiredGenerationRun(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	saved := version(key, 1)
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)
+	run, err := s.BeginRun(ctx, key, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshCurrent(ctx, key, saved, refreshed); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "generation is in progress") {
+		t.Fatalf("refresh replaced the document a generation is building on: %v", err)
+	}
+	// Other pull requests are not blocked.
+	other := Key{"owner/repo", 8}
+	if err := s.Put(ctx, other, Version{}, version(other, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshCurrent(ctx, other, version(other, 1), []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1},"checks":"newer"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, run, "backend"); err != nil {
+		t.Fatal(err)
+	}
+	// A crashed generation stops blocking once its lease expires.
+	if _, err := s.BeginRun(ctx, key, time.Now().Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := s.RefreshCurrent(ctx, key, saved, refreshed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRefreshCreatesRunsTableInOlderStore(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	saved := version(key, 1)
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.database(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE runs`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if err := s.RefreshCurrent(ctx, key, saved, []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)); err != nil {
+		t.Fatal(err)
 	}
 }

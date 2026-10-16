@@ -51,7 +51,7 @@ func TestStatusesIsolationAndHistory(t *testing.T) {
 		t.Helper()
 		doc := map[string]any{"review": map[string]any{"repository": repository, "pull_request": n, "version": 1, "pr_state": state}, "summary": map[string]any{"risk_score": map[string]any{"score": 17}}}
 		raw, _ := json.Marshal(doc)
-		err := stores[repository].Put(ctx, store.Key{Repository: repository, Number: n}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: head, Backend: "claude", Model: "model", GeneratedAt: "2026-10-15T12:00:00Z"}, Document: raw})
+		err := stores[repository].Put(ctx, store.Key{Repository: repository, Number: n}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1, Head: head, Backend: "claude", Model: "model", GeneratedAt: "2026-10-15T12:00:00Z"}, Document: raw})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,11 +199,14 @@ func BenchmarkBuildManyRepositories(b *testing.B) {
 		prs := []discovery.PullRequest{}
 		for pr := 1; pr <= 10; pr++ {
 			prs = append(prs, discovery.PullRequest{Repository: name, Number: pr, HeadSHA: "head", State: "OPEN"})
+			var previous store.Version
 			for version := 1; version <= 5; version++ {
 				document := []byte(fmt.Sprintf(`{"review":{"repository":%q,"pull_request":%d,"version":%d},"padding":%q}`, name, pr, version, strings.Repeat("x", 32<<10)))
-				if err = versions.Put(ctx, store.Key{Repository: name, Number: pr}, version-1, store.Version{Metadata: store.Metadata{Version: version, Head: "head"}, Document: document}); err != nil {
+				next := store.Version{Metadata: store.Metadata{Version: version, Head: "head"}, Document: document}
+				if err = versions.Put(ctx, store.Key{Repository: name, Number: pr}, previous, next); err != nil {
 					b.Fatal(err)
 				}
+				previous = next
 			}
 		}
 		discovered[name] = discovery.Snapshot{PullRequests: prs}
@@ -227,7 +230,7 @@ func TestCorruptStoreDoesNotHideOtherRepositoryHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = versions.Put(ctx, store.Key{Repository: "a/good", Number: 7}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "head"}, Document: []byte(`{"review":{"repository":"a/good","pull_request":7,"version":1,"pr_state":"closed"}}`)}); err != nil {
+	if err = versions.Put(ctx, store.Key{Repository: "a/good", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1, Head: "head"}, Document: []byte(`{"review":{"repository":"a/good","pull_request":7,"version":1,"pr_state":"closed"}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	corrupt, err := store.Open(bad, "", true)
@@ -256,7 +259,7 @@ func TestFreshMetadataOverridesDiscoveryAndRetainsHistoricalPRs(t *testing.T) {
 	}
 	for _, n := range []int{1, 9} {
 		doc, _ := json.Marshal(map[string]any{"review": map[string]any{"repository": "acme/a", "pull_request": n, "version": 1, "pr_state": "open"}})
-		if err := versions.Put(ctx, store.Key{Repository: "acme/a", Number: n}, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "old"}, Document: doc}); err != nil {
+		if err := versions.Put(ctx, store.Key{Repository: "acme/a", Number: n}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1, Head: "old"}, Document: doc}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -29,7 +29,7 @@ func TestSnapshotRunLifecycleAndVersions(t *testing.T) {
 	cost := 0.12
 	v.Metadata.RecordedCostUSD = &cost
 	v.Document = []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1,"pr_state":"merged"},"summary":{"title":"Saved title","risk_score":{"score":42}}}`)
-	if err = s.Put(ctx, k, 0, v); err != nil {
+	if err = s.Put(ctx, k, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
 	rows, err = s.Snapshot(ctx)
@@ -73,7 +73,7 @@ func TestSnapshotLegacyAndExpiredAttempt(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	k := Key{"a/b", 1}
-	if err := s.Put(ctx, k, 0, version(k, 1)); err != nil {
+	if err := s.Put(ctx, k, Version{}, version(k, 1)); err != nil {
 		t.Fatal(err)
 	}
 	db, err := s.database(true)
@@ -118,11 +118,13 @@ func TestSnapshotConcurrentPublication(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		var previous Version
 		for n := 1; n <= 40; n++ {
-			if err := s.Put(ctx, k, n-1, version(k, n)); err != nil {
+			if err := s.Put(ctx, k, previous, version(k, n)); err != nil {
 				t.Error(err)
 				return
 			}
+			previous = version(k, n)
 		}
 	}()
 	for i := 0; i < 40; i++ {
@@ -145,12 +147,14 @@ func BenchmarkSnapshot(b *testing.B) {
 	ctx := context.Background()
 	for pr := 1; pr <= 100; pr++ {
 		k := Key{"a/b", pr}
+		var previous Version
 		for n := 1; n <= 10; n++ {
 			v := version(k, n)
 			v.Document = append(v.Document[:len(v.Document)-1], []byte(`,"padding":"`+strings.Repeat("x", 32<<10)+`"}`)...)
-			if err = s.Put(ctx, k, n-1, v); err != nil {
+			if err = s.Put(ctx, k, previous, v); err != nil {
 				b.Fatal(err)
 			}
+			previous = v
 		}
 	}
 	b.ResetTimer()
