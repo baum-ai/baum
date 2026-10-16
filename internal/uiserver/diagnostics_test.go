@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +78,12 @@ func TestDiagnosticsRequiresAuthenticationAndGET(t *testing.T) {
 		if w.Code == 200 || runs.Load() != 0 {
 			t.Fatalf("%s got %d, runs %d", method, w.Code, runs.Load())
 		}
+		// Past the server's Origin and content-type checks, the route itself
+		// refuses the method.
+		w = request(t, s, method, "/api/diagnostics", "", s.Origin(), "application/json", "Bearer "+s.launch, "{}")
+		if w.Code != http.StatusMethodNotAllowed || runs.Load() != 0 {
+			t.Fatalf("%s with a valid Origin got %d, runs %d", method, w.Code, runs.Load())
+		}
 	}
 }
 
@@ -127,29 +135,40 @@ func TestDiagnosticsConcurrentRequestsShareOneRun(t *testing.T) {
 
 func TestDiagnosticsDisconnectDoesNotCancelSharedRun(t *testing.T) {
 	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	waiting := make(chan struct{}, 2)
+	var entries atomic.Int32
 	var cancelled atomic.Bool
-	s := diagnosticsServer(t, LocalAPI{Diagnostics: func(ctx context.Context) doctor.Report {
+	api := LocalAPI{Diagnostics: func(ctx context.Context) doctor.Report {
+		entries.Add(1)
+		started <- struct{}{}
 		select {
 		case <-release:
 		case <-ctx.Done():
 			cancelled.Store(true)
 		}
 		return sampleReport()
-	}})
+	}}
+	api.diagnosticsWaiting = func() { waiting <- struct{}{} }
+	s := diagnosticsServer(t, api)
 	gone, hangUp := context.WithCancel(context.Background())
 	first := httptest.NewRequest("GET", s.Origin()+"/api/diagnostics", nil).WithContext(gone)
 	first.Header.Set("Authorization", "Bearer "+s.launch)
 	firstDone := make(chan struct{})
 	go func() { defer close(firstDone); s.Handler().ServeHTTP(httptest.NewRecorder(), first) }()
-	time.Sleep(100 * time.Millisecond)
+	<-started
+	<-waiting
 	second := make(chan int, 1)
 	go func() { second <- request(t, s, "GET", "/api/diagnostics", "", "", "", "Bearer "+s.launch, "").Code }()
-	time.Sleep(100 * time.Millisecond)
+	<-waiting // the second request has joined the run in flight
 	hangUp()
 	<-firstDone
+	if cancelled.Load() {
+		t.Fatal("the first client's disconnect cancelled the shared run")
+	}
 	close(release)
-	if code := <-second; code != 200 || cancelled.Load() {
-		t.Fatalf("second waiter got %d, run cancelled %v", code, cancelled.Load())
+	if code := <-second; code != 200 || cancelled.Load() || entries.Load() != 1 {
+		t.Fatalf("second waiter got %d, run cancelled %v, provider entered %d times", code, cancelled.Load(), entries.Load())
 	}
 }
 
@@ -167,19 +186,45 @@ func TestDiagnosticsTimeoutIsEnforced(t *testing.T) {
 }
 
 func TestDiagnosticsResponseHasNoPlantedSecrets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
 	const token, key = "ghp_PLANTEDFAKETOKEN0000000000000000", "sk-ant-PLANTEDFAKEKEY00000000000"
-	t.Setenv("GITHUB_TOKEN", token)
-	t.Setenv("GH_TOKEN", token)
+	home, bin := t.TempDir(), t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\n--version) echo 'gh version 2.50.0 (2026-01-01)';;\nauth) echo " + token + ";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("PATH", bin)
+	for _, name := range []string{"GH_PATH", "GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
+		t.Setenv(name, "")
+	}
 	t.Setenv("ANTHROPIC_API_KEY", key)
-	s := diagnosticsServer(t, LocalAPI{Diagnostics: func(ctx context.Context) doctor.Report {
-		return doctor.Run(ctx, doctor.Options{
-			LookPath: func(string) (string, error) { return "", context.Canceled },
-			Run:      func(context.Context, []string, string, ...string) (string, error) { return "", context.Canceled },
-		})
-	}})
+	s := diagnosticsServer(t, LocalAPI{Diagnostics: func(ctx context.Context) doctor.Report { return doctor.Run(ctx, doctor.Options{}) }})
 	w := request(t, s, "GET", "/api/diagnostics", "", "", "", "Bearer "+s.launch, "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"checks"`) {
+	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+	var body struct {
+		Report doctor.Report `json:"report"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var tokenCheck *doctor.Check
+	for i, c := range body.Report.Checks {
+		if strings.HasPrefix(c.ID, "github-token") {
+			tokenCheck = &body.Report.Checks[i]
+		}
+	}
+	if tokenCheck == nil || tokenCheck.Status != doctor.StatusOK || !strings.Contains(tokenCheck.Source, "gh") {
+		t.Fatalf("token check %+v in %s", tokenCheck, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "PLANTED") {
 		t.Fatalf("secret in response: %s", w.Body.String())

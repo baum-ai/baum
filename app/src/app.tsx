@@ -611,7 +611,7 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
           key={clone.id}
         >
           <h2 className="text-lg">{clone.repository}</h2>
-          <p className="break-all">
+          <p className="[overflow-wrap:anywhere]">
             {clone.path} — {clone.available ? "Available" : "Unavailable; history retained"}
           </p>
           <RepositorySettings

@@ -28,7 +28,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
       <dt className="shrink-0 text-(--text-tertiary)">{label}</dt>
-      <dd className="m-0 min-w-0 break-all">{value}</dd>
+      <dd className="m-0 min-w-0 [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );
 }

@@ -612,6 +612,15 @@ Authenticated endpoints include `/api/repos` and repository settings,
 Document, version, image and linkage endpoints require `?clone=<registry id>&pr=N`
 with optional `&version=N` (default latest); paths cannot select arbitrary
 files or unregistered clones. Settings and diagnostics never return tokens.
+`baum ui --concurrency N` controls concurrent generation (default 1, maximum 16).
+The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
+`~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
+restarting marks unfinished running jobs interrupted and resumes queued jobs.
+Only one queued or running job exists per repository/PR across registered clones.
+A newly confirmed head replaces queued work; running work must finish or be
+cancelled first. Cancelling propagates to the backend process group and removes
+its temporary checkout and archives. Failed, cancelled and interrupted attempts
+never publish a partial version.
 
 The "Repositories & settings" page ends with a Diagnostics section: the same
 report as `baum doctor`, each check with its status (OK, Warning, Problem or
@@ -634,15 +643,6 @@ fetch (the page shows what the startup refresh produced) and with no tokens or
 keys in it. Concurrent requests share one run, which a disconnecting client does
 not cancel, and a run is cut off after 45 seconds with `504`. The endpoint
 accepts `GET` only.
-`baum ui --concurrency N` controls concurrent generation (default 1, maximum 16).
-The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
-`~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
-restarting marks unfinished running jobs interrupted and resumes queued jobs.
-Only one queued or running job exists per repository/PR across registered clones.
-A newly confirmed head replaces queued work; running work must finish or be
-cancelled first. Cancelling propagates to the backend process group and removes
-its temporary checkout and archives. Failed, cancelled and interrupted attempts
-never publish a partial version.
 
 `POST /api/jobs/estimate` accepts `{items:[{clone,pr}],mode:"single"|"batch"}`.
 An estimate expires after five minutes. `POST /api/jobs` requires its

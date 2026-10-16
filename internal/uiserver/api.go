@@ -33,6 +33,10 @@ type LocalAPI struct {
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
+
+	// diagnosticsWaiting is a test hook, called once a request is waiting on
+	// the shared run.
+	diagnosticsWaiting func()
 }
 
 const defaultDiagnosticsTimeout = 45 * time.Second
@@ -84,6 +88,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps    map[string]int `json:"caps"`
 		}{a.Config.Backend, a.Config.Model, a.Config.Budgets, a.Config.Caps})
 	})
+	// Runs are shared only while one is in flight; a later request runs the
+	// checks again. That is deliberate: the endpoint is local, authenticated
+	// and user-triggered, so there is no cache.
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
@@ -106,6 +113,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 					return nil, errDiagnosticsTimeout
 				}
 			})
+			if a.diagnosticsWaiting != nil {
+				a.diagnosticsWaiting()
+			}
 			select {
 			case <-r.Context().Done():
 				return
