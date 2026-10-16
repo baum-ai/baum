@@ -417,7 +417,9 @@ page's own origin:
   the document's own version, turns a null patch, an unknown path or a body that
   is not an answer into no patch (the excerpt keeps its link to GitHub), and
   forgets a request that failed or got a server error, so opening the excerpt
-  again retries.
+  again retries. The summary shows excerpt and file counts immediately; line
+  additions/deletions appear only when every cited excerpt is available, so
+  missing patch data never appears as zero changes.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to
