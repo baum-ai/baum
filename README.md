@@ -133,10 +133,11 @@ at the same canonical paths makes it available again. Re-add a moved clone at it
 new path and remove its old record explicitly.
 
 Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
-`--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
+`--daily-cap <USD>`, `--clear-daily-cap`, `--backend <name>` and `--model <name>` to edit repository
 settings; omitted flags preserve existing settings. A cap must be finite and
 nonnegative; zero allows no automatic spending, and an unset cap has no
-repository override. Empty `--backend=` or `--model=` resets that override to
+repository override. `--clear-daily-cap` removes the override so the repository
+inherits again; it cannot be combined with `--daily-cap`. Empty `--backend=` or `--model=` resets that override to
 inherit the resolved global configuration. These settings are stored for the
 future job runner; this command does not schedule or generate reviews.
 
@@ -536,6 +537,11 @@ unreadable store reports `unknown`; filesystem errors are reported without
 exposing their paths. Rows carry version count, the latest version's generation
 time, backend/model, risk assessment and recorded USD cost. Cost is null when
 none was recorded, including current CLI backends, rather than an invented zero.
+
+Clones with distinct common directories keep independent histories, so each store
+gets its own row with its `clone_id`; a discovered PR with no saved review in a
+store gets a `no_review` row for that store even when another store has one.
+Linked worktrees share a store and therefore one row.
 
 Once the repository and store are resolved, terminal generation records its run
 separately from successful versions. Failures use only the fixed categories

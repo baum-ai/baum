@@ -92,7 +92,6 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 	}
 	// Distinct stores of one repository can hold independent histories; expose a
 	// row per store, with clone_id, rather than arbitrarily choosing a winner.
-	covered := map[store.Key]bool{}
 	seenStore := map[string]bool{}
 	open := s.OpenStore
 	if open == nil {
@@ -108,6 +107,9 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			out.Problems = append(out.Problems, Problem{clone.ID, "clone_unavailable"})
 			stale[identity] = true
 		}
+		// Coverage is per store: a review in one clone must not hide the missing
+		// review in another clone's independent history.
+		covered := map[store.Key]bool{}
 		reader, err := open(clone.CommonDir)
 		var summaries []store.Summary
 		if err == nil {
@@ -120,7 +122,6 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			out.Problems = append(out.Problems, Problem{clone.ID, "store_unreadable"})
 			for key, pr := range discovered {
 				if key.Repository == identity {
-					covered[key] = true
 					out.Entries = append(out.Entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "unknown", Stale: stale[identity], StoreError: "store_unreadable"})
 				}
 			}
@@ -159,10 +160,10 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			}
 			out.Entries = append(out.Entries, entry)
 		}
-	}
-	for key, pr := range discovered {
-		if !covered[key] {
-			out.Entries = append(out.Entries, Entry{PullRequest: pr, Status: "no_review", Stale: stale[key.Repository]})
+		for key, pr := range discovered {
+			if key.Repository == identity && !covered[key] {
+				out.Entries = append(out.Entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", Stale: stale[identity]})
+			}
 		}
 	}
 	sort.Slice(out.Entries, func(i, j int) bool {
