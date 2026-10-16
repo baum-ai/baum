@@ -1213,6 +1213,9 @@ handler behind that middleware. The existing document viewer does not mount it.
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
 HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+Cookies are host-scoped across ports, so the browser application, its API and
+its cookie live under a secret `/s/<namespace>/` path returned by the exchange;
+the server strips that prefix before routing to providers and to `Options.App`.
 Its public bootstrap contains no local data or capability; all API providers
 run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
@@ -1282,9 +1285,12 @@ a different priced model. Unknown actual usage remains null.
 
 ### Local application presentation
 
-`app/` builds into the committed `internal/localapp/dist` embed. `uiserver`
-serves its public static shell behind the existing bound-Host check; all data,
-auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
+`app/` builds into the committed `internal/localapp/dist` embed.
+`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+are served only under the authenticated `/s/<namespace>/` path; the public
+bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
+API, SSE and asset URLs relative to that path and routes with query strings on
+it. All data, auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
 supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
 PR page, sourcing documents, immutable versions, patches, sessions and commits
 from registered local clones. The renderer stays in `viewer/`; the app owns

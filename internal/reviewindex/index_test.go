@@ -131,6 +131,58 @@ func TestUnreadableStoreAndWorktreeDeduplication(t *testing.T) {
 	}
 }
 
+type fakeReader []store.Summary
+
+func (f fakeReader) Snapshot(context.Context) ([]store.Summary, error) { return f, nil }
+
+func rowsByClone(entries []Entry) map[string]Entry {
+	out := map[string]Entry{}
+	for _, e := range entries {
+		out[e.CloneID] = e
+	}
+	return out
+}
+
+func TestIndependentClonesGetOwnNoReviewRows(t *testing.T) {
+	pr := discovery.PullRequest{Number: 7, HeadSHA: "head", State: "OPEN"}
+	disc := source{"a/b": {PullRequests: []discovery.PullRequest{pr}}}
+	clones := registry{
+		{ID: "A", Repository: "a/b", CommonDir: "dirA", Available: true},
+		{ID: "B", Repository: "a/b", CommonDir: "dirB", Available: true},
+	}
+	reviewed := fakeReader{{Key: store.Key{Repository: "a/b", Number: 7}, VersionCount: 1, Latest: &store.Metadata{Version: 1, Head: "head"}}}
+	open := func(readers map[string]Reader) func(string) (Reader, error) {
+		return func(dir string) (Reader, error) { return readers[dir], nil }
+	}
+	t.Run("reviewed in one", func(t *testing.T) {
+		s := &Service{Registry: clones, Discovery: disc, OpenStore: open(map[string]Reader{"dirA": reviewed, "dirB": fakeReader{}})}
+		got, err := s.Build(context.Background())
+		rows := rowsByClone(got.Entries)
+		if err != nil || len(got.Entries) != 2 || rows["A"].Status != "current" || rows["B"].Status != "no_review" {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+	t.Run("both empty", func(t *testing.T) {
+		s := &Service{Registry: clones, Discovery: disc, OpenStore: open(map[string]Reader{"dirA": fakeReader{}, "dirB": fakeReader{}})}
+		got, err := s.Build(context.Background())
+		rows := rowsByClone(got.Entries)
+		if err != nil || len(got.Entries) != 2 || rows["A"].Status != "no_review" || rows["B"].Status != "no_review" {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+	t.Run("linked worktrees share a store", func(t *testing.T) {
+		shared := registry{
+			{ID: "A", Repository: "a/b", CommonDir: "dirA", Available: true},
+			{ID: "A-wt", Repository: "a/b", CommonDir: "dirA", Available: true},
+		}
+		s := &Service{Registry: shared, Discovery: disc, OpenStore: open(map[string]Reader{"dirA": fakeReader{}})}
+		got, err := s.Build(context.Background())
+		if err != nil || len(got.Entries) != 1 || got.Entries[0].CloneID != "A" || got.Entries[0].Status != "no_review" {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+}
+
 func BenchmarkBuildManyRepositories(b *testing.B) {
 	root := b.TempDir()
 	clones := registry{}

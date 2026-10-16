@@ -11,6 +11,7 @@ import (
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -53,7 +54,7 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	defer stop()
 	handler := api.Handler()
 	defer handler.Close()
-	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: handler})
+	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: handler, App: localapp.Handler()})
 	if err != nil {
 		return err
 	}
