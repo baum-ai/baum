@@ -1279,5 +1279,8 @@ into the independent OSS module; its signature, tier and normalization tests are
 retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
+An installed download is stored with its signature in the job state directory.
+`baum ui` re-verifies and installs it before opening the queue, so recovered
+jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
 a different priced model. Unknown actual usage remains null.

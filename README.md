@@ -523,7 +523,11 @@ budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
 is required; unknown backend default models have no invented estimate.
 Estimates use the signed published full price list, falling back to the embedded
-release baseline if download or verification fails. The estimate uses the
+release baseline if download or verification fails. A downloaded list that
+becomes active is stored with its signature beside the queue, in
+`prices.signed.json`; on restart it is verified again and reinstalled before
+queued jobs resume. A queued job confirmed against a newer list than the active
+one downloads the signed list once more before its input check. The estimate uses the
 highest listed charged-token rates and reserves one budget-sized cache read per
 call. It is a planning estimate, not a hard dollar ceiling: cached reads are
 outside the charged-token budget and provider usage can overshoot a call limit.
