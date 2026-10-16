@@ -16,6 +16,7 @@ import {
   type ReviewDocument,
   RISK_SCORE_MEANING,
   reviewThreadStatus,
+  reviewGeneration,
   riskCategory,
   riskLabel,
   type Section,
@@ -911,19 +912,19 @@ function ReviewWorkspace<F extends ReviewFile>({
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <div className="flex min-h-0 flex-1 flex-col gap-3">
-        {/* On a phone the head leaves out its version line, and the review's
-          age sits beside the version menu instead; a review with no earlier
-          version has no menu, so its number stands in for it. */}
+        {/* Version selection, generation status and evidence age share one row.
+          A review without history shows its version without a menu. */}
         {document && (versions.length > 0 || historyView.selection || header?.beside) ? (
           <HistoryToolbar
             currentVersion={document.review.version}
+            currentLabel={`Review v${document.review.version} · ${reviewGeneration(document, header?.generation).state === "current" ? "Current" : "Latest"}`}
             versions={versions}
             view={historyView}
             status={
               <ReviewFreshness
                 document={document}
                 generation={header?.generation}
-                className="sm:hidden"
+                facts={header?.heading ? undefined : header?.pullRequest}
               />
             }
           >
@@ -939,9 +940,18 @@ function ReviewWorkspace<F extends ReviewFile>({
             ) : null}
           </HistoryToolbar>
         ) : document ? (
-          <div className="flex items-center gap-3 text-base text-(--text-tertiary) sm:hidden">
-            Review v{document.review.version}
-            <ReviewFreshness document={document} generation={header?.generation} />
+          <div className="flex items-center gap-3 text-base text-(--text-tertiary)">
+            <span>
+              Review v{document.review.version}
+              {reviewGeneration(document, header?.generation).state === "current"
+                ? " · Current"
+                : ""}
+            </span>
+            <ReviewFreshness
+              document={document}
+              generation={header?.generation}
+              facts={header?.heading ? undefined : header?.pullRequest}
+            />
           </div>
         ) : header?.beside ? (
           <div className="min-w-0">{header.beside}</div>

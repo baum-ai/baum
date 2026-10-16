@@ -20,17 +20,7 @@ import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
 import { formatRelative } from "./format";
 import { ChevronDownIcon, SectionIcon } from "./icons";
-import {
-  ChangeKindTag,
-  Item,
-  ItemMeta,
-  JumpLink,
-  Lines,
-  None,
-  Part,
-  PROSE,
-  RiskTags,
-} from "./review-parts";
+import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
 import { cn, FOCUS_RING } from "./classnames";
 import { Badge, CardHeader, SegmentedControl } from "./ui";
 
@@ -102,9 +92,6 @@ export function ReviewSummary({
             </StatusLine>
           )}
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <ChangeKindTag kind={summary.change_kind} />
-            </div>
             <Markdown className={PROSE}>{summary.text}</Markdown>
             {summary.breaking_change && (
               <StatusBlock tone="critical" label="Breaking change">

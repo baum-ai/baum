@@ -168,12 +168,29 @@ export function RiskTags({
   );
 }
 
-/** What kind of change this is — feature, fix, refactor — as the first thing
- *  the summary says. Deliberately not a `Badge`: those tones are the reserved
- *  status scale, and a change kind is a category, not a state. */
+const CHANGE_KIND_COLOURS: Record<string, string> = {
+  feature: "bg-(--data-1)/15 text-(--text-primary)",
+  bugfix: "bg-(--data-3)/15 text-(--text-primary)",
+  refactor: "bg-(--data-4)/15 text-(--text-primary)",
+  dependency: "bg-(--data-5)/15 text-(--text-primary)",
+  cherry_pick: "bg-(--data-4)/15 text-(--text-primary)",
+  upstream_sync: "bg-(--data-6)/15 text-(--text-primary)",
+  docs: "bg-(--data-6)/15 text-(--text-primary)",
+  ci: "bg-(--data-3)/15 text-(--text-primary)",
+  translation: "bg-(--data-6)/15 text-(--text-primary)",
+  release: "bg-(--data-2)/15 text-(--text-primary)",
+  export: "bg-(--data-7)/15 text-(--text-primary)",
+};
+
+/** The change category beside the title, quieter than review status. */
 export function ChangeKindTag({ kind }: { kind: string }) {
   return (
-    <span className="inline-flex items-center rounded-(--radius-sm) border border-(--accent-200) bg-(--accent-50) px-2 py-1 text-xs font-semibold tracking-[0.16em] uppercase text-(--accent-700)">
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs whitespace-nowrap",
+        CHANGE_KIND_COLOURS[kind] ?? "bg-(--surface-wash) text-(--text-secondary)",
+      )}
+    >
       {humanize(kind)}
     </span>
   );

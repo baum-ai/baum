@@ -61,7 +61,7 @@ A host connects it through props and context:
 ## The review page
 
 `ReviewViewer` (`@baum/viewer/components/review-viewer`) renders a whole
-review: the head, the version menu with comparison, the rail (Summary,
+review: the head, a single version row combining the menu, generation status and evidence age, with comparison, the rail (Summary,
 Changes and Critical risks, folding as the reader goes), the pane for the
 selection, and a side pane with the document's Details and Activity. It keeps
 the selection and the version being read in the URL through
@@ -99,7 +99,7 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "From v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
