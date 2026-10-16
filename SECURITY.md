@@ -52,6 +52,25 @@ fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
 
+## What `baum doctor` runs and prints
+
+`baum doctor` diagnoses the machine and starts no model. It runs
+`<tool> --version` for `git`, `gh`, `claude`, `codex` and `cursor-agent`, each
+with a timeout and the tool's path from `backend_paths`, `GH_PATH` or `PATH`;
+the same checks `baum generate` runs for `claude` and `codex`, which include
+codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
+temporary directory it removes); and, only when no token comes from the
+environment, the config file or `gh`'s own files, `gh auth token
+--secure-storage --hostname <host>`. Its one network contact is the signed price
+list described above, skipped with `--offline`; nothing else leaves the machine.
+It creates no files: it reads the registry and the stores only when they exist.
+
+It never prints a token or an API key, or a prefix, length or hash of one. For a
+GitHub token it prints only where it was found (an environment variable's name,
+the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
+whether it is set. It does print paths, tool versions and the `PATH` entries,
+so look at a report before pasting it into a public issue.
+
 ## What `baum view` shows
 
 `baum view` listens only on `127.0.0.1` and never contacts a server. Besides

@@ -4,8 +4,10 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -85,5 +87,59 @@ func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
 	got := reports[len(reports)-1]
 	if got.Accounting == nil || got.Accounting.Usage.CacheRead != 90 || got.Accounting.Usage.Input != 6 || got.Accounting.Usage.Speed != nil || got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil || got.CostReason != "metadata_pending_redaction" {
 		t.Fatalf("unsafe or lossy progress: %+v", got)
+	}
+}
+
+// TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH gives the runner a
+// config naming a claude that is not there while a working claude is on PATH.
+func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake claude is a shell script")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, e := cmd.CombinedOutput(); e != nil {
+			t.Fatal(string(out), e)
+		}
+	}
+	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = registry.Close() }()
+	clone, e := registry.Add(ctx, dir, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	bin := t.TempDir()
+	if e := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"2.1.7 (Claude Code)\"\n"), 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitPath, e := exec.LookPath("git")
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	cfg := config.Default()
+	cfg.Backend = config.BackendClaude
+	cfg.Model = "claude-sonnet-4-5"
+	local := &Local{Registry: registry, Config: cfg, Client: client}
+	if _, _, e := local.Prepare(ctx, Item{clone.ID, 1}); e != nil {
+		t.Fatalf("claude on PATH: %v", e)
+	}
+	local.Config.BackendPaths = map[config.Backend]string{config.BackendClaude: filepath.Join(t.TempDir(), "missing-claude")}
+	_, _, e = local.Prepare(ctx, Item{clone.ID, 1})
+	if e == nil || !strings.Contains(e.Error(), "backend_paths.claude") {
+		t.Fatalf("err = %v, want one naming backend_paths.claude", e)
 	}
 }

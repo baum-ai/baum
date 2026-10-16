@@ -20,8 +20,9 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// generateBackends builds the local backends; tests replace it with stubs.
-var generateBackends = generate.DefaultBackends
+// generateBackends builds the local backends from the configuration; tests
+// replace it with stubs.
+var generateBackends = generate.DefaultBackendsFor
 
 // maxProviderAttempts and maxRepairAttempts are the hosted service's defaults.
 const (
@@ -196,7 +197,7 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		return input(fmt.Errorf("open version store: %w", err))
 	}
 	key := store.Key{Repository: target.Repository.String(), Number: target.Number}
-	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
+	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(cfg), stderr)
 	if err != nil {
 		// Preflight failures are attempts too: keep the terminal's existing failure
 		// status visible even though the shared publication pipeline has not begun.

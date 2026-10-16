@@ -61,7 +61,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
-store) stays under `internal/`.
+store, the `doctor` diagnostics) stays under `internal/`.
 
 ## `bundle`
 
@@ -1201,9 +1201,39 @@ document's own session metadata.
 
 Estimated cost comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
-with a public key embedded in the binary, caches it under the XDG cache
-directory, and falls back to a snapshot embedded at release when the list
-cannot be fetched or verified.
+with a public key embedded in the binary and falls back to a snapshot embedded
+at release when the list cannot be fetched or verified. Nothing is cached on
+disk: a fetched list replaces the embedded one for the life of the process, and
+`pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
+version, when it was fetched and why the last refresh failed.
+
+## Diagnostics
+
+`internal/doctor` builds the report behind `baum doctor`: `Run(ctx, Options)`
+returns an ordered list of checks, each with an `id`, `label`, `status` (`ok`,
+`warning`, `problem` or `info`) and `detail`, and, where they apply, `path`,
+`version`, `source` and `fix`, plus the worst status overall. It reuses the
+code that makes the decisions instead of guessing at them: the real backends'
+`Check` (built by `generate.DefaultBackendsFor`, run once and replayed into
+`generate.Select` to say what `auto` picks and why), `gitlocal`'s git version
+rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
+and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
+`uiserver`. Every outside dependency (environment, `PATH` lookup, command
+runner, backends, token lookup, price refresh and registry) is an `Options`
+field, so tests use fake executables and stubs. It creates nothing, bounds
+every subprocess with a timeout, and treats a configuration that does not load
+as a problem rather than aborting. It does not import `uiserver`, which may
+serve the report: the instance directory is passed in.
+
+`config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
+and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
+explicit executable of a backend. `generate.DefaultBackendsFor(cfg)` passes it
+to the backend as its `Binary`, which is looked up by `exec.LookPath` as given,
+so an absolute path replaces the `PATH` search; a path that cannot be run fails
+the backend's `Check` with `generate.ExplicitPathError` naming
+`backend_paths.<name>`, without trying `PATH`. `baum generate` and the job
+runner both build their backends from the resolved configuration, and
+per-repository settings do not override the paths.
 
 ## Explicit local repository registry
 

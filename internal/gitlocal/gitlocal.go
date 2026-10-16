@@ -145,6 +145,9 @@ type Repo struct {
 	ops     sync.WaitGroup
 }
 
+// MinGitVersion is the oldest git this package supports, as shown to users.
+const MinGitVersion = "2.29"
+
 // minGitMajor and minGitMinor are the oldest git this package supports:
 // fetch --no-write-fetch-head and --no-auto-maintenance arrived in 2.29.
 const (
@@ -161,10 +164,12 @@ func checkGitVersion(ctx context.Context, dir string, timeout time.Duration) err
 	if err != nil {
 		return fmt.Errorf("running git: %w", err)
 	}
-	return supportedGitVersion(string(out))
+	return SupportedGitVersion(string(out))
 }
 
-func supportedGitVersion(version string) error {
+// SupportedGitVersion fails when the output of "git version" names a git older
+// than this package supports. An unrecognised string is let through.
+func SupportedGitVersion(version string) error {
 	m := gitVersionPattern.FindStringSubmatch(strings.TrimSpace(version))
 	if m == nil {
 		return nil

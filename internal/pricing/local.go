@@ -10,14 +10,77 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 )
 
+// Source says where the active price list came from. There is no on-disk
+// cache: the list is the one compiled in or the last one Refresh fetched in
+// this process.
+type Source struct {
+	// Origin is "embedded" or "fetched".
+	Origin  string
+	Version string
+	// FetchedAt is when Refresh installed the active list; zero for the
+	// embedded list.
+	FetchedAt time.Time
+	// RefreshError is why the last Refresh failed; empty after a success or
+	// before any attempt.
+	RefreshError string
+}
+
+// Origins of the active price list.
+const (
+	OriginEmbedded = "embedded"
+	OriginFetched  = "fetched"
+)
+
+var refreshState struct {
+	mu        sync.Mutex
+	list      *List
+	fetchedAt time.Time
+	err       string
+}
+
+// CurrentSource describes the active price list and the last Refresh. It is
+// safe to call while Refresh runs.
+func CurrentSource() Source {
+	active := Active()
+	source := Source{Origin: OriginEmbedded, Version: active.Version()}
+	if active != Embedded() {
+		source.Origin = OriginFetched
+	}
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	if refreshState.list != nil && refreshState.list == active {
+		source.FetchedAt = refreshState.fetchedAt
+	}
+	source.RefreshError = refreshState.err
+	return source
+}
+
+// noteRefresh records the outcome of one Refresh: the list it installed, if
+// any, and its error.
+func noteRefresh(installed *List, err error) {
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	if err != nil {
+		refreshState.err = err.Error()
+		return
+	}
+	refreshState.err = ""
+	if installed != nil {
+		refreshState.list, refreshState.fetchedAt = installed, time.Now()
+	}
+}
+
 // Refresh downloads only public signed data, without credentials or redirects.
 // A failure leaves the compiled or previously verified list active.
-func Refresh(ctx context.Context) error {
+func Refresh(ctx context.Context) (err error) {
+	var installed *List
+	defer func() { noteRefresh(installed, err) }()
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
 	get := func(url string) ([]byte, error) {
 		r, e := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -53,7 +116,10 @@ func Refresh(ctx context.Context) error {
 	if !list.Full() {
 		return errors.New("full price list required")
 	}
-	Install(Newest(Active(), list))
+	if Newest(Active(), list) == list {
+		Install(list)
+		installed = list
+	}
 	return nil
 }
 

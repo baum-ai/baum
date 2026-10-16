@@ -12,6 +12,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
@@ -27,7 +28,7 @@ func generateEnv(t *testing.T) (*generatetest.Backend, []string) {
 	t.Setenv("TMPDIR", tmp)
 	stub := &generatetest.Backend{Version: "9.9.9"}
 	old := generateBackends
-	generateBackends = func() generate.Backends {
+	generateBackends = func(config.Config) generate.Backends {
 		return generate.Backends{
 			Claude: func(string) generate.CheckedBackend { return stub },
 			Codex:  func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "codex"} },
