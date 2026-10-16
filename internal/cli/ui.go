@@ -10,6 +10,7 @@ import (
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -50,7 +51,8 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
 	var queue *jobs.Queue
 	jobHandler := &deferredJobs{}
-	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: jobHandler, Background: worker.Handler(), Changed: changed}
+	api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: jobHandler, Background: worker.Handler(), Changed: changed,
+		Diagnostics: uiDiagnostics}
 	ctx, stop := viewContext()
 	defer stop()
 	handler := api.Handler()
@@ -98,6 +100,12 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	}()
 	defer func() { cancelWatch(); <-watchDone }()
 	return instance.Server.Serve(ctx)
+}
+
+// uiDiagnostics is the report "baum ui" serves. It never fetches the price
+// list: the page shows what the startup refresh produced.
+func uiDiagnostics(ctx context.Context) doctor.Report {
+	return doctor.Run(ctx, doctorOptions(false))
 }
 
 // Deferred until this process owns the per-user instance lock.

@@ -612,6 +612,28 @@ Authenticated endpoints include `/api/repos` and repository settings,
 Document, version, image and linkage endpoints require `?clone=<registry id>&pr=N`
 with optional `&version=N` (default latest); paths cannot select arbitrary
 files or unregistered clones. Settings and diagnostics never return tokens.
+
+The "Repositories & settings" page ends with a Diagnostics section: the same
+report as `baum doctor`, each check with its status (OK, Warning, Problem or
+Info, as text), detail, path, version, source and fix, problems first, and a
+"Check again" button that runs it again and is disabled while a run is in
+flight. It exists for a `baum ui` started without a shell `PATH` (for example
+from Finder), where a missing tool or token is the likeliest failure.
+`GET /api/diagnostics` returns the capability flags and the report:
+
+```json
+{"local": true, "generation_runner": true, "discovery": true, "index": true,
+ "report": {"status": "problem", "checks": [
+   {"id": "gh", "label": "GitHub CLI", "status": "problem", "detail": "…",
+    "fix": "…"}]}}
+```
+
+`report` has the shape of `baum doctor --json` and is `null` when the server
+has no diagnostics provider. `baum ui` runs the report without the price-list
+fetch (the page shows what the startup refresh produced) and with no tokens or
+keys in it. Concurrent requests share one run, which a disconnecting client does
+not cancel, and a run is cut off after 45 seconds with `504`. The endpoint
+accepts `GET` only.
 `baum ui --concurrency N` controls concurrent generation (default 1, maximum 16).
 The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
 `~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;

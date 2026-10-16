@@ -273,6 +273,9 @@ OS locking prevents concurrent owners and releases locks after process exit.
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
+`GET /api/diagnostics` serves the `baum doctor` report behind the same
+authentication, Origin and Host checks, runs the same bounded commands as
+`baum doctor` but never the price-list fetch, and is limited to `GET`.
 Stored image APIs return only document-listed, content-checked PNG, JPEG, GIF
 or WebP copies. They reject SVG/HTML and never follow document URLs. Images
 carry nosniff and a sandboxed, deny-all content security policy. Local successful
