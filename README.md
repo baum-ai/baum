@@ -15,8 +15,8 @@ Everything runs locally:
 - pull request metadata, checks and conversation come from GitHub with your
   own token;
 - the review itself is written by the model backend you configure: the
-  Anthropic API, or the `claude`, `codex` or `cursor-agent` CLI already on
-  your `PATH`.
+  `claude` or `codex` CLI already on your `PATH`. Backends for the Anthropic
+  API and the `cursor-agent` CLI are planned but not available yet.
 
 ## Status
 
@@ -398,8 +398,9 @@ stays unknown unless the protection is readable. The repository is
 `--repo` or the one `origin` names, and the pull request `--pr` or the one
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
-`backend = "auto"` picks the first of `claude`, `codex` and `cursor-agent`
-found on `PATH`, and falls back to `anthropic` when `ANTHROPIC_API_KEY` is set.
+`backend = "auto"` picks `claude`, then `codex`, as described under
+[`baum generate`](#baum-generate). `anthropic` and `cursor-agent` are accepted
+names but not available in this version.
 
 baum sends no telemetry and talks to no server other than GitHub, the
 model provider you configure and `static.usebaum.com`, from which it

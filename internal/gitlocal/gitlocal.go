@@ -679,19 +679,32 @@ func canonicalComparisonPatchHashesReader(source io.Reader) ([]string, error) {
 	lineStart := true
 	skipLine := false
 	inHeader := false
+	// git writes a type change (file to symlink or gitlink) as a deletion
+	// block and a creation block under the same header, which raw diff
+	// reports as one file, so the repeated header continues the digest.
+	var previousHeader []byte
+	previousDeleted := false
 	for {
 		fragment, err := reader.ReadSlice('\n')
 		if len(fragment) == 0 && errors.Is(err, io.EOF) {
 			break
 		}
 		if lineStart && bytes.HasPrefix(fragment, []byte("diff --git ")) {
-			if digest != nil {
-				hashes = append(hashes, hex.EncodeToString(digest.Sum(nil)))
+			continuation := digest != nil && previousDeleted && bytes.Equal(fragment, previousHeader)
+			if !continuation {
+				if digest != nil {
+					hashes = append(hashes, hex.EncodeToString(digest.Sum(nil)))
+				}
+				digest = sha256.New()
 			}
-			digest = sha256.New()
+			previousHeader = append(previousHeader[:0], fragment...)
+			previousDeleted = false
 			skipLine = true
 			inHeader = true
 		} else if lineStart {
+			if inHeader && bytes.HasPrefix(fragment, []byte("deleted file mode ")) {
+				previousDeleted = true
+			}
 			hunkHeader := bytes.HasPrefix(fragment, []byte("@@ "))
 			skipLine = hunkHeader || (inHeader && (bytes.HasPrefix(fragment, []byte("index ")) ||
 				bytes.HasPrefix(fragment, []byte("--- ")) || bytes.HasPrefix(fragment, []byte("+++ "))))

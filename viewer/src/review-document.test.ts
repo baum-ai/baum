@@ -247,6 +247,12 @@ describe("resolveAnchor", () => {
     });
   });
 
+  it("names an external link without a label by its URL", () => {
+    expect(resolve({ type: "external_url", url: "https://example.com/x" }).label).toBe(
+      "https://example.com/x",
+    );
+  });
+
   it("keeps a supplied GitHub diff anchor on this pull request as it is", () => {
     const doc = structuredClone(document);
     const anchor = `#diff-${sha256Hex("pkg/a.go")}R12`;

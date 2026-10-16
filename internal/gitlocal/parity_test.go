@@ -108,6 +108,7 @@ func newParityFixture(t *testing.T) fixture {
 	write(t, dir, "bin.dat", "before\x00\x01\x02", 0o644)
 	write(t, dir, "del.txt", lines("del", 3), 0o644)
 	write(t, dir, "z_last.txt", lines("last", 8), 0o644)
+	write(t, dir, "typed.txt", "regular file\n", 0o644)
 	git(t, dir, "add", "-A")
 	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",sub")
 	git(t, dir, "commit", "-q", "-m", "base")
@@ -124,8 +125,12 @@ func newParityFixture(t *testing.T) fixture {
 	write(t, dir, "ünïcode.txt", "new\n", 0o644)
 	git(t, dir, "add", "-A")
 	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("2", 40)+",sub")
+	link := git(t, dir, "hash-object", "-w", "ünïcode.txt")
+	git(t, dir, "update-index", "--add", "--cacheinfo", "120000,"+link+",typed.txt")
 	git(t, dir, "commit", "-q", "-m", "head")
 	head := git(t, dir, "rev-parse", "HEAD")
+	// The symlink exists only in the index, so reset the working file to it.
+	git(t, dir, "reset", "-q", "--hard")
 	git(t, dir, "checkout", "-q", "main")
 	return fixture{dir: dir, base: base, head: head}
 }
