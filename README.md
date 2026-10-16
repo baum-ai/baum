@@ -128,10 +128,11 @@ at the same canonical paths makes it available again. Re-add a moved clone at it
 new path and remove its old record explicitly.
 
 Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
-`--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
+`--daily-cap <USD>`, `--clear-daily-cap`, `--backend <name>` and `--model <name>` to edit repository
 settings; omitted flags preserve existing settings. A cap must be finite and
 nonnegative; zero allows no automatic spending, and an unset cap has no
-repository override. Empty `--backend=` or `--model=` resets that override to
+repository override. `--clear-daily-cap` removes the override so the repository
+inherits again; it cannot be combined with `--daily-cap`. Empty `--backend=` or `--model=` resets that override to
 inherit the resolved global configuration. These settings are stored for the
 future job runner; this command does not schedule or generate reviews.
 
