@@ -423,8 +423,8 @@ func TestFetchBacksOffRateLimitsAndUnavailability(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(waits) != 4 || waits[0] <= 25*time.Second || waits[0] > 30*time.Second ||
-		waits[1] != 20*time.Second || waits[2] != 40*time.Second || waits[3] != 8*time.Second {
-		t.Errorf("waits = %v, want Retry-After's 30s, then doubling backoff", waits)
+		waits[1] <= 55*time.Second || waits[1] > time.Minute || waits[2] <= 55*time.Second || waits[2] > time.Minute || waits[3] != 8*time.Second {
+		t.Errorf("waits = %v, want Retry-After's 30s, then a minute for each limit naming no time, then backoff", waits)
 	}
 	if fake.callCount("PullRequestReviews") != 5 || !evidence.Sources[SourceReviews] {
 		t.Errorf("reviews read %d times, sources = %v", fake.callCount("PullRequestReviews"), evidence.Sources)
@@ -567,7 +567,7 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
-func TestRateLimitedErrorHasNoResumeTimeGitHubDidNotGive(t *testing.T) {
+func TestRateLimitedErrorDefaultsTheResumeTimeGitHubDidNotGive(t *testing.T) {
 	routes := fixtureRoutes(t)
 	routes["PullRequest"] = func(gqlRequest, int) fakeResponse {
 		return fakeResponse{status: http.StatusTooManyRequests, body: map[string]any{"message": "slow down"}}
@@ -576,11 +576,11 @@ func TestRateLimitedErrorHasNoResumeTimeGitHubDidNotGive(t *testing.T) {
 	var waits []time.Duration
 	_, err := fake.client(&waits).Fetch(context.Background(), acme, 7, FetchOptions{})
 	var limited *RateLimitedError
-	if !errors.As(err, &limited) || !limited.ResumeAt.IsZero() || !strings.Contains(limited.Error(), "try again later") {
-		t.Fatalf("err = %v, want a rate limit without a resume time", err)
+	if !errors.As(err, &limited) || limited.ResumeAt.IsZero() || !strings.Contains(limited.Error(), "try again after") {
+		t.Fatalf("err = %v, want a rate limit resuming after the secondary-limit default", err)
 	}
 	if len(waits) != 4 || fake.callCount("PullRequest") != 5 {
-		t.Errorf("waits = %v after %d calls; want four backoffs and five calls", waits, fake.callCount("PullRequest"))
+		t.Errorf("waits = %v after %d calls; want four waits and five calls", waits, fake.callCount("PullRequest"))
 	}
 }
 
