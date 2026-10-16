@@ -59,22 +59,24 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (disc
 	// present or a local session store cannot be read. Never discard it because
 	// the document refresh failed; surface the latter separately to the host.
 	observation := observe(capture.evidence)
-	if observation.HeadSHA != saved.Metadata.Head {
+	moved := observation.HeadSHA != saved.Metadata.Head
+	if moved {
 		observation.Checks = "unknown"
 	}
 	if err != nil {
 		return observation, err
 	}
-	if err := versions.RefreshCurrent(ctx, key, saved, document); err != nil {
-		return observation, err
-	}
-	if observation.HeadSHA != saved.Metadata.Head {
-		current, fetchErr := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
-		if fetchErr != nil {
-			observation.Checks = "unknown"
-			return observation, fetchErr
+	// Every fallible network read happens before publication, so a failed
+	// refresh (including a rate-limited one the worker retries) never commits.
+	if moved {
+		current, err := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
+		if err != nil {
+			return observation, err
 		}
 		observation = observe(current)
+	}
+	if err := versions.RefreshCurrent(ctx, key, saved, document); err != nil {
+		return observation, err
 	}
 	return observation, nil
 }

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/github"
@@ -32,7 +33,20 @@ func (s *source) Fetch(_ context.Context, _ github.Repository, _ int, opts githu
 	}
 	return s.evidence, nil
 }
-func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.T) {
+
+type fixture struct {
+	versions *store.Store
+	key      store.Key
+	clone    repos.Clone
+	saved    store.Version
+	head     string
+	doc      map[string]any
+}
+
+// savedReview stores version 1 of a review whose reviewed head is the fixture
+// repository's only commit.
+func savedReview(t *testing.T) fixture {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -73,9 +87,16 @@ func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.
 	if err := versions.Put(ctx, key, 0, saved); err != nil {
 		t.Fatal(err)
 	}
+	return fixture{versions: versions, key: key, clone: repos.Clone{Repository: key.Repository, Path: dir, CommonDir: common}, saved: saved, head: head, doc: doc}
+}
+
+func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.T) {
+	ctx := context.Background()
+	f := savedReview(t)
+	versions, key, saved, head, doc, clone := f.versions, f.key, f.saved, f.head, f.doc, f.clone
+	png, attachmentID := saved.Attachments[0].Bytes, saved.Attachments[0].ID
 	remote := &source{evidence: github.Evidence{Repository: key.Repository, PullRequest: bundle.PullRequest{Number: 212, State: "closed", MergedSHA: head, HeadSHA: head, BaseSHA: head}, Checks: []bundle.Check{{ID: "chk_9001", Kind: "check_run", Name: "Tests", Status: "completed", Conclusion: "failure"}}, Sources: bundle.Sources{"checks": true, "review_threads": true}}}
 	local := Local{Client: remote}
-	clone := repos.Clone{Repository: key.Repository, Path: dir, CommonDir: common}
 	observation, err := local.Refresh(ctx, clone, 212)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +148,57 @@ func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.
 		t.Fatal("older version mutated")
 	}
 }
+
+// movedSource reports a head newer than the saved review and serves the
+// separate current-head metadata read from current/currentErr.
+type movedSource struct {
+	reviewed   github.Evidence
+	current    github.Evidence
+	currentErr error
+}
+
+func (s *movedSource) Fetch(_ context.Context, _ github.Repository, _ int, opts github.FetchOptions) (github.Evidence, error) {
+	if opts.MetadataOnly {
+		return s.current, s.currentErr
+	}
+	return s.reviewed, nil
+}
+
+func TestLocalRefreshLeavesDocumentWhenCurrentHeadFetchFails(t *testing.T) {
+	ctx := context.Background()
+	f := savedReview(t)
+	pr := bundle.PullRequest{Number: 212, State: "open", HeadSHA: "moved", BaseSHA: f.head}
+	remote := &movedSource{
+		reviewed:   github.Evidence{Repository: f.key.Repository, PullRequest: pr, Checks: []bundle.Check{{ID: "chk_1", Kind: "check_run", Name: "Old head", Status: "completed", Conclusion: "failure"}}, Sources: bundle.Sources{"checks": true, "review_threads": true}},
+		currentErr: &github.RateLimitedError{ResumeAt: time.Now().Add(time.Hour)},
+	}
+	local := Local{Client: remote}
+	observation, err := local.Refresh(ctx, f.clone, 212)
+	var limited *github.RateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("current-head fetch failure not reported: %v", err)
+	}
+	if observation.HeadSHA != "moved" || observation.Checks != "unknown" {
+		t.Fatalf("saved-head checks reported for the new head: %+v", observation)
+	}
+	unchanged, err := f.versions.Latest(ctx, f.key)
+	if err != nil || !bytes.Equal(unchanged.Document, f.saved.Document) {
+		t.Fatal("failed refresh replaced the saved document", err)
+	}
+
+	// The worker retries the same target; once the read succeeds it publishes.
+	remote.currentErr = nil
+	remote.current = github.Evidence{PullRequest: pr, Checks: []bundle.Check{{ID: "chk_2", Kind: "check_run", Name: "New head", Status: "completed", Conclusion: "success"}}, Sources: bundle.Sources{"checks": true}}
+	observation, err = local.Refresh(ctx, f.clone, 212)
+	if err != nil || observation.HeadSHA != "moved" || observation.Checks != "success" {
+		t.Fatalf("observation=%+v err=%v", observation, err)
+	}
+	refreshed, err := f.versions.Latest(ctx, f.key)
+	if err != nil || bytes.Equal(refreshed.Document, f.saved.Document) || refreshed.Metadata.Version != 1 {
+		t.Fatal("successful refresh did not replace the latest document", err)
+	}
+}
+
 func TestLocalNoReviewMetadataNeverCreatesStore(t *testing.T) {
 	common := t.TempDir()
 	remote := &source{evidence: github.Evidence{PullRequest: bundle.PullRequest{Number: 7, State: "open", HeadSHA: "new"}}}

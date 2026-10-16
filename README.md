@@ -643,7 +643,9 @@ For saved reviews it reuses model-free `refresh`: checks for the reviewed revisi
 threads, bot reports, local session links and derived evidence are recomputed,
 while authored content, generation provenance, attachments and older versions
 stay unchanged. Current-head checks are read separately after a head moves, so
-checks from the saved revision never masquerade as checks on the new head.
+checks from the saved revision never masquerade as checks on the new head. That
+read happens before the refreshed document is published: if it fails, or any
+other read does, the saved document stays unchanged and the PR is retried.
 Concurrent generation/refresh uses the store's compare-and-swap publication;
 a race is retried on a later pass instead of overwriting newer work.
 
