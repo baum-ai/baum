@@ -492,8 +492,9 @@ namespace is a separate random secret: browsers send cookies to every port on
 other loopback services cannot guess. In the browser, the application and its
 API live only under `/s/<namespace>/`: `/s/<namespace>/api/...` and
 `/s/<namespace>/api/events` reach the endpoints below, and other `GET` paths
-there serve the application's files. A browser application should resolve
-API URLs relative to its namespace (`api/repos` from `/s/<namespace>/`, or
+there serve the embedded application's files (`/s/<namespace>/` is its page;
+it navigates with query strings on that path). The application resolves API
+URLs relative to its namespace (`api/repos` from `/s/<namespace>/`, taken from
 the first two segments of `location.pathname`). The cookie authorizes nothing
 outside the namespace, and an unknown namespace is 404.
 

@@ -18,6 +18,8 @@ import {
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import {
+  appBase,
+  appURL,
   request,
   reviewJob,
   isActiveJob,
@@ -37,7 +39,7 @@ function useLocation() {
   const update = useCallback<UrlState["update"]>((patch) => {
     const next = patch(new URLSearchParams(current.current));
     current.current = next;
-    history.pushState(null, "", `/?${next}`);
+    history.pushState(null, "", appURL(`?${next}`));
     setSearch(next);
   }, []);
   useEffect(() => {
@@ -63,7 +65,7 @@ function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
           !e.metaKey &&
           !e.ctrlKey &&
           !e.shiftKey &&
-          href.startsWith("/")
+          href.startsWith(appBase())
         ) {
           e.preventDefault();
           history.pushState(null, "", href);
@@ -82,18 +84,19 @@ export function App() {
   const url = useLocation();
   useEffect(() => {
     let active = true;
-    const token = new URLSearchParams(location.hash.slice(1)).get("token");
-    history.replaceState(null, "", location.pathname + location.search);
-    (async () => {
-      if (token) await request("/api/auth/exchange", { token });
-      await request("/api/health");
-      if (active) setAuth("ready");
-    })().catch((error) => {
-      if (active) {
-        setAuth("failed");
-        setAuthError(errorText(error));
-      }
-    });
+    // The server's bootstrap page already exchanged the launch capability;
+    // the app only confirms that its namespaced session is authorized.
+    request("api/health").then(
+      () => {
+        if (active) setAuth("ready");
+      },
+      (error) => {
+        if (active) {
+          setAuth("failed");
+          setAuthError(errorText(error));
+        }
+      },
+    );
     return () => {
       active = false;
     };
@@ -142,10 +145,10 @@ function Workspace({ url }: { url: UrlState }) {
     const sequence = ++lastReload.current;
     try {
       const [repos, index, jobList, discovery] = await Promise.all([
-        request<Clone[]>("/api/repos"),
-        request<Snapshot>("/api/index?history=1"),
-        request<{ jobs?: Job[] }>("/api/jobs"),
-        request<typeof rates>("/api/prs"),
+        request<Clone[]>("api/repos"),
+        request<Snapshot>("api/index?history=1"),
+        request<{ jobs?: Job[] }>("api/jobs"),
+        request<typeof rates>("api/prs"),
       ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
@@ -162,7 +165,7 @@ function Workspace({ url }: { url: UrlState }) {
   }, []);
   useEffect(() => {
     void reload();
-    const source = new EventSource("/api/events");
+    const source = new EventSource(appURL("api/events"));
     const refresh = () => void reload();
     source.addEventListener("open", refresh);
     source.addEventListener("index", refresh);
@@ -206,7 +209,7 @@ function Workspace({ url }: { url: UrlState }) {
     setEstimating(true);
     try {
       setEstimate(
-        await request<Estimate>("/api/jobs/estimate", {
+        await request<Estimate>("api/jobs/estimate", {
           items: entries.map((e) => ({ clone: cloneFor(e), pr: e.pull_request.number })),
           mode,
         }),
@@ -223,7 +226,7 @@ function Workspace({ url }: { url: UrlState }) {
       for (const clone of clones.filter(
         (c, i, list) => list.findIndex((r) => r.repository === c.repository) === i,
       ))
-        await request("/api/prs/refresh", { clone: clone.id });
+        await request("api/prs/refresh", { clone: clone.id });
       await reload();
     } catch (e) {
       setError(errorText(e));
@@ -235,9 +238,9 @@ function Workspace({ url }: { url: UrlState }) {
       <header className="local-chrome">
         <LogoMark className="h-7 w-7" />
         <strong>baum local</strong>
-        <LocalLink href="/">Inbox</LocalLink>
-        <LocalLink href="/?page=jobs">Jobs</LocalLink>
-        <LocalLink href="/?page=settings">Repositories & settings</LocalLink>
+        <LocalLink href={appURL()}>Inbox</LocalLink>
+        <LocalLink href={appURL("?page=jobs")}>Jobs</LocalLink>
+        <LocalLink href={appURL("?page=settings")}>Repositories & settings</LocalLink>
         <span className="text-xs text-(--text-tertiary)">On this machine</span>
       </header>
       <main className="local-main">
@@ -401,7 +404,7 @@ function Workspace({ url }: { url: UrlState }) {
             close={() => setEstimate(null)}
             confirm={async () => {
               try {
-                await request("/api/jobs", {
+                await request("api/jobs", {
                   estimate_id: estimate.id,
                   confirm_estimate: true,
                   confirm_isolation: isolation,
@@ -523,7 +526,7 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
               <Button
                 variant="secondary"
                 onClick={() => {
-                  void request(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+                  void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
                     .then(changed)
                     .catch((e) => setError(errorText(e)));
                 }}
@@ -561,7 +564,7 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
         className="flex flex-wrap gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          void action(() => request("/api/repos", { path })).then(() => setPath(""));
+          void action(() => request("api/repos", { path })).then(() => setPath(""));
         }}
       >
         <label>
@@ -590,12 +593,12 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
             key={JSON.stringify(clone.settings)}
             clone={clone}
             save={(settings) =>
-              action(() => request(`/api/repos/${clone.id}/settings`, settings, "PUT"))
+              action(() => request(`api/repos/${clone.id}/settings`, settings, "PUT"))
             }
           />
           <Button
             variant="secondary"
-            onClick={() => void action(() => request(`/api/repos/${clone.id}`, {}, "DELETE"))}
+            onClick={() => void action(() => request(`api/repos/${clone.id}`, {}, "DELETE"))}
           >
             Remove registration
           </Button>
