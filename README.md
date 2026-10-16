@@ -482,14 +482,28 @@ requested. The initial page currently confirms API readiness; the inbox SPA
 is a separate interface over these endpoints.
 
 The URL carries a random capability in its fragment, which the bootstrap
-removes from browser history before exchanging it for an HttpOnly,
-SameSite=Strict session cookie. The capability remains valid for the lifetime
-of this instance so subsequent invocations and a desktop host can authorize a
-new browser. It is kept only in the private per-user instance file and printed
-launch URL. API clients may use `Authorization: Bearer <capability>` instead of
-a cookie. All mutations, including token exchange, require the exact local
-`Origin` and `Content-Type: application/json`; no CORS access is enabled.
-Only the exact bound `127.0.0.1:port` Host is accepted.
+removes from browser history before exchanging it at
+`POST /api/auth/exchange` (`{"token":"<capability>"}`). The response is
+`{"path":"/s/<namespace>/"}` and an HttpOnly, SameSite=Strict session cookie
+scoped to that path; the bootstrap then replaces itself with that path. The
+namespace is a separate random secret: browsers send cookies to every port on
+`127.0.0.1`, so the cookie only travels to URLs under the namespace, which
+other loopback services cannot guess. In the browser, the application and its
+API live only under `/s/<namespace>/`: `/s/<namespace>/api/...` and
+`/s/<namespace>/api/events` reach the endpoints below, and other `GET` paths
+there serve the application's files. A browser application should resolve
+API URLs relative to its namespace (`api/repos` from `/s/<namespace>/`, or
+the first two segments of `location.pathname`). The cookie authorizes nothing
+outside the namespace, and an unknown namespace is 404.
+
+The capability remains valid for the lifetime of this instance so subsequent
+invocations and a desktop host can authorize a new browser. It is kept only in
+the private per-user instance file and printed launch URL; the namespace is
+never printed or stored. API clients may send `Authorization: Bearer
+<capability>` to the unprefixed `/api/...` paths instead. All mutations,
+including token exchange, require the exact local `Origin` and
+`Content-Type: application/json`; no CORS access is enabled. Only the exact
+bound `127.0.0.1:port` Host is accepted.
 
 The instance lock and 0600 capability file live under
 `$XDG_RUNTIME_DIR/baum`, or `$XDG_STATE_HOME/baum` (default
