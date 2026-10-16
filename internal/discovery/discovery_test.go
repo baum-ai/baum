@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -129,7 +130,8 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	// Windows has no POSIX permission bits; Stat reports 0666/0777 there.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("cache mode %v", info.Mode())
 	}
 	before := len(f.requests)
