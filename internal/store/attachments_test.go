@@ -32,7 +32,7 @@ func TestVersionAttachmentAtomicityAndIsolation(t *testing.T) {
 	ctx := context.Background()
 	key := Key{"owner/repo", 7}
 	first := imageVersion(t, key, 1)
-	if err := s.Put(ctx, key, 0, first); err != nil {
+	if err := s.Put(ctx, key, Version{}, first); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Attachment(ctx, key, 0, imageID)
@@ -40,7 +40,7 @@ func TestVersionAttachmentAtomicityAndIsolation(t *testing.T) {
 		t.Fatal(got, err)
 	}
 	second := version(key, 2)
-	if err = s.Put(ctx, key, 1, second); err != nil {
+	if err = s.Put(ctx, key, first, second); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Attachment(ctx, key, 0, imageID); !errors.Is(err, ErrNotFound) {
@@ -55,7 +55,7 @@ func TestVersionAttachmentAtomicityAndIsolation(t *testing.T) {
 		}
 	}
 	// The winning immutable version cannot acquire a loser's attachments.
-	if err = s.Put(ctx, key, 1, imageVersion(t, key, 2)); !errors.Is(err, ErrConflict) {
+	if err = s.Put(ctx, key, first, imageVersion(t, key, 2)); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	if _, err = s.Attachment(ctx, key, 2, imageID); !errors.Is(err, ErrNotFound) {
@@ -72,7 +72,7 @@ func TestAttachmentsRejectUnlistedUnsafeAndDuplicateWithoutVersion(t *testing.T)
 	}, func(v *Version) { v.Attachments = append(v.Attachments, v.Attachments[0]) }, func(v *Version) { v.Attachments[0].ID = "../secret" }, func(v *Version) { v.Attachments[0].Bytes = make([]byte, MaxAttachmentBytes+1) }} {
 		v := imageVersion(t, key, 1)
 		mutate(&v)
-		if err := s.Put(ctx, key, 0, v); err == nil {
+		if err := s.Put(ctx, key, Version{}, v); err == nil {
 			t.Fatal("unsafe attachment accepted")
 		}
 		if _, err := s.Latest(ctx, key); !errors.Is(err, ErrNotFound) {
@@ -86,7 +86,7 @@ func TestOldVersionHasNoAttachmentsTable(t *testing.T) {
 	key := Key{"owner/repo", 7}
 	v := imageVersion(t, key, 1)
 	v.Attachments = nil
-	if err := s.Put(ctx, key, 0, v); err != nil {
+	if err := s.Put(ctx, key, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Attachment(ctx, key, 1, imageID); !errors.Is(err, ErrNotFound) {

@@ -16,7 +16,7 @@ import {
 } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { cost, rowKey, type Entry } from "./api";
+import { appURL, cost, rowKey, type Entry } from "./api";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
 /** Discovery flags describe these groups; none infer approval or merge readiness. */
@@ -287,7 +287,7 @@ function InboxRow({
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
           <Link
-            href={`/?clone=${encodeURIComponent(clone)}&pr=${pr.number}`}
+            href={appURL(`?clone=${encodeURIComponent(clone)}&pr=${pr.number}`)}
             title={pr.title}
             className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
           >

@@ -14,14 +14,16 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
-	ctx := context.Background()
+
+func registeredClone(t *testing.T) (*repos.Registry, repos.Clone) {
+	t.Helper()
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)
@@ -34,30 +36,38 @@ func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer func() { _ = registry.Close() }()
-	clone, e := registry.Add(ctx, dir, nil)
+	t.Cleanup(func() { _ = registry.Close() })
+	clone, e := registry.Add(context.Background(), dir, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
+	return registry, clone
+}
+func localRunner(registry *repos.Registry, headRepository, permission string, status int) *Local {
+	cfg := config.Default()
+	cfg.Backend = config.BackendClaude
+	cfg.Model = "claude-sonnet-4-5"
+	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"user":{"login":"author"}}`
+		code := 200
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			code = status
+			body = `{"permission":"` + permission + `"}`
+		}
+		return &http.Response{StatusCode: code, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	return &Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return &generatetest.Backend{Version: "9.9.9"} }}}
+}
+func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
 	for _, test := range []struct {
 		name, headRepository, permission string
 		status                           int
 		restricted                       bool
 	}{{"writer", "owner/repo", "write", 200, false}, {"fork writer", "other/repo", "write", 200, true}, {"reader", "owner/repo", "read", 200, true}, {"unknown permission", "owner/repo", "", 403, true}} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := config.Default()
-			cfg.Backend = config.BackendClaude
-			cfg.Model = "claude-sonnet-4-5"
-			client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-				body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + test.headRepository + `"}},"user":{"login":"author"}}`
-				status := 200
-				if strings.HasSuffix(r.URL.Path, "/permission") {
-					status = test.status
-					body = `{"permission":"` + test.permission + `"}`
-				}
-				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
-			})})
-			local := &Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return &generatetest.Backend{Version: "9.9.9"} }}}
+			local := localRunner(registry, test.headRepository, test.permission, test.status)
 			p, version, e := local.Prepare(ctx, Item{clone.ID, 1})
 			if e != nil {
 				t.Fatal(e)
@@ -85,5 +95,47 @@ func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
 	got := reports[len(reports)-1]
 	if got.Accounting == nil || got.Accounting.Usage.CacheRead != 90 || got.Accounting.Usage.Input != 6 || got.Accounting.Usage.Speed != nil || got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil || got.CostReason != "metadata_pending_redaction" {
 		t.Fatalf("unsafe or lossy progress: %+v", got)
+	}
+}
+
+func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(func() { pricing.Install(pricing.Embedded()) })
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	document, e := pricing.ParseDocument(pricing.EmbeddedDocument())
+	if e != nil {
+		t.Fatal(e)
+	}
+	document.Version = "2999-01-01"
+	newer := pricing.NewList(document)
+	pricing.Install(newer)
+	confirmed, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	if e != nil || confirmed.PriceVersion != "2999-01-01" {
+		t.Fatal(confirmed, e)
+	}
+
+	// After a restart the compiled list is active until the signed list returns.
+	pricing.Install(pricing.Embedded())
+	if e = local.confirmed(ctx, confirmed); e == nil {
+		t.Fatal("job ran against a price list it was not confirmed with")
+	}
+	refreshes := 0
+	local.RefreshPrices = func(context.Context) error {
+		refreshes++
+		pricing.Install(newer)
+		return nil
+	}
+	if e = local.confirmed(ctx, confirmed); e != nil || refreshes != 1 {
+		t.Fatalf("recovered job failed instead of reinstalling its list: %v (refreshes %d)", e, refreshes)
+	}
+	if e = local.confirmed(ctx, confirmed); e != nil || refreshes != 1 {
+		t.Fatal("refreshed although the confirmed list is active", e, refreshes)
+	}
+
+	stale := confirmed
+	stale.PriceVersion = pricing.Embedded().Version()
+	if e = local.confirmed(ctx, stale); e == nil || refreshes != 1 {
+		t.Fatal("job confirmed against an older list ran or refreshed", e)
 	}
 }

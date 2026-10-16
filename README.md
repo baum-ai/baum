@@ -136,10 +136,11 @@ at the same canonical paths makes it available again. Re-add a moved clone at it
 new path and remove its old record explicitly.
 
 Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
-`--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
+`--daily-cap <USD>`, `--clear-daily-cap`, `--backend <name>` and `--model <name>` to edit repository
 settings; omitted flags preserve existing settings. A cap must be finite and
 nonnegative; zero allows no automatic spending, and an unset cap has no
-repository override. Empty `--backend=` or `--model=` resets that override to
+repository override. `--clear-daily-cap` removes the override so the repository
+inherits again; it cannot be combined with `--daily-cap`. Empty `--backend=` or `--model=` resets that override to
 inherit the resolved global configuration. Automatic/cap settings are retained for compatibility only: the local app
 never schedules paid generation, even when automatic is true. Backend and model
 overrides apply to explicitly requested generation.
@@ -174,8 +175,10 @@ and cannot verify evidence after the pull request moves to a newer head.
 Missing or unsupported evidence is downgraded. Failures leave the document
 unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
-retry against the latest document. Refresh updates the store, not JSON files
-previously exported with `generate -o`.
+retry against the latest document. While a generation of the pull request is
+running, refresh fails with a conflict rather than change the document that
+generation builds on; retry once it finishes. Refresh updates the store, not
+JSON files previously exported with `generate -o`.
 
 ### baum generate
 
@@ -229,7 +232,10 @@ generation remain immutable; the latest version can refresh its evidence.
 A second generation supplies the previous document to the shared history logic,
 which retains section IDs, stale sections and risk introductions/mitigations.
 Concurrent runs may both generate from the same version; only one publishes,
-and the other fails with a conflict asking you to generate again. Generation
+and the other fails with a conflict asking you to generate again. Publication
+also compares the exact document generation started from, so a version whose
+evidence a refresh replaced in the meantime is a conflict too, never a
+newer version that drops the refreshed evidence. Generation
 failures and cancellation before publication publish no version. A later stdout
 or export failure leaves the successfully generated version stored. An existing store is always preferred,
 even if read-only; a write then fails rather than silently hiding its history.
@@ -513,14 +519,29 @@ requested. The embedded local application opens its multi-repository inbox,
 with the shared PR review page, history, generation jobs and repository settings.
 
 The URL carries a random capability in its fragment, which the bootstrap
-removes from browser history before exchanging it for an HttpOnly,
-SameSite=Strict session cookie. The capability remains valid for the lifetime
-of this instance so subsequent invocations and a desktop host can authorize a
-new browser. It is kept only in the private per-user instance file and printed
-launch URL. API clients may use `Authorization: Bearer <capability>` instead of
-a cookie. All mutations, including token exchange, require the exact local
-`Origin` and `Content-Type: application/json`; no CORS access is enabled.
-Only the exact bound `127.0.0.1:port` Host is accepted.
+removes from browser history before exchanging it at
+`POST /api/auth/exchange` (`{"token":"<capability>"}`). The response is
+`{"path":"/s/<namespace>/"}` and an HttpOnly, SameSite=Strict session cookie
+scoped to that path; the bootstrap then replaces itself with that path. The
+namespace is a separate random secret: browsers send cookies to every port on
+`127.0.0.1`, so the cookie only travels to URLs under the namespace, which
+other loopback services cannot guess. In the browser, the application and its
+API live only under `/s/<namespace>/`: `/s/<namespace>/api/...` and
+`/s/<namespace>/api/events` reach the endpoints below, and other `GET` paths
+there serve the embedded application's files (`/s/<namespace>/` is its page;
+it navigates with query strings on that path). The application resolves API
+URLs relative to its namespace (`api/repos` from `/s/<namespace>/`, taken from
+the first two segments of `location.pathname`). The cookie authorizes nothing
+outside the namespace, and an unknown namespace is 404.
+
+The capability remains valid for the lifetime of this instance so subsequent
+invocations and a desktop host can authorize a new browser. It is kept only in
+the private per-user instance file and printed launch URL; the namespace is
+never printed or stored. API clients may send `Authorization: Bearer
+<capability>` to the unprefixed `/api/...` paths instead. All mutations,
+including token exchange, require the exact local `Origin` and
+`Content-Type: application/json`; no CORS access is enabled. Only the exact
+bound `127.0.0.1:port` Host is accepted.
 
 The instance lock and 0600 capability file live under
 `$XDG_RUNTIME_DIR/baum`, or `$XDG_STATE_HOME/baum` (default
@@ -541,8 +562,9 @@ The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
 `~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
 restarting marks unfinished running jobs interrupted and resumes queued jobs.
 Only one queued or running job exists per repository/PR across registered clones.
-A newly confirmed head replaces queued work; running work must finish or be
-cancelled first. Cancelling propagates to the backend process group and removes
+Confirming the same inputs again returns the queued job. Any other confirmed
+input (head, backend, model, budgets, caps or price list version) replaces
+queued work; running work must finish or be cancelled first. Cancelling propagates to the backend process group and removes
 its temporary checkout and archives. Failed, cancelled and interrupted attempts
 never publish a partial version.
 
@@ -553,7 +575,11 @@ budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
 is required; unknown backend default models have no invented estimate.
 Estimates use the signed published full price list, falling back to the embedded
-release baseline if download or verification fails. The estimate uses the
+release baseline if download or verification fails. A downloaded list that
+becomes active is stored with its signature beside the queue, in
+`prices.signed.json`; on restart it is verified again and reinstalled before
+queued jobs resume. A queued job confirmed against a newer list than the active
+one downloads the signed list once more before its input check. The estimate uses the
 highest listed charged-token rates and reserves one budget-sized cache read per
 call. It is a planning estimate, not a hard dollar ceiling: cached reads are
 outside the charged-token budget and provider usage can overshoot a call limit.
@@ -601,6 +627,11 @@ exposing their paths. Rows carry version count, the latest version's generation
 time, backend/model, risk assessment and recorded USD cost. Cost is null when
 none was recorded, including current CLI backends, rather than an invented zero.
 
+Clones with distinct common directories keep independent histories, so each store
+gets its own row with its `clone_id`; a discovered PR with no saved review in a
+store gets a `no_review` row for that store even when another store has one.
+Linked worktrees share a store and therefore one row.
+
 Once the repository and store are resolved, terminal generation records its run
 separately from successful versions. Failures use only the fixed categories
 `input`, `backend`, `budget`, `validation`, `interrupted`, and `internal`; failed
@@ -643,9 +674,13 @@ For saved reviews it reuses model-free `refresh`: checks for the reviewed revisi
 threads, bot reports, local session links and derived evidence are recomputed,
 while authored content, generation provenance, attachments and older versions
 stay unchanged. Current-head checks are read separately after a head moves, so
-checks from the saved revision never masquerade as checks on the new head.
+checks from the saved revision never masquerade as checks on the new head. That
+read happens before the refreshed document is published: if it fails, or any
+other read does, the saved document stays unchanged and the PR is retried.
 Concurrent generation/refresh uses the store's compare-and-swap publication;
-a race is retried on a later pass instead of overwriting newer work.
+a race is retried on a later pass instead of overwriting newer work, and is
+not reported as a failure. A PR whose generation is running is not refreshed
+until it finishes, so background work never makes paid generation conflict.
 
 `GET /api/background` exposes per-repository success, fixed failure category and
 next retry; authenticated index events update the app. Discovery rate information

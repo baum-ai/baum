@@ -232,7 +232,11 @@ providers, GitHub, or the coding-agent tools whose sessions baum reads.
 local data; every API requires the random private launch capability or an
 HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
 browser receives the capability in a URL fragment, removes it from history,
-and sends it in the same-origin JSON exchange body. All mutations require the
+and sends it in the same-origin JSON exchange body. Browsers send cookies to
+every port of a host, so the cookie is scoped to a second random secret path,
+`/s/<namespace>/`, returned only by the exchange; another service on a
+loopback port never receives it, and the cookie authorizes nothing outside
+that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication. No route enables CORS. The capability is valid only while the
 instance runs; keep the printed URL and its mode-0600 instance file private.
@@ -261,12 +265,14 @@ excluded from batch generation. Cancellation reaches the existing backend
 process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
-entries become interrupted before work resumes. A second `baum ui` invocation
+entries become interrupted before work resumes. The stored copy of a downloaded
+price list is trusted only after its signature verifies again on load. A second `baum ui` invocation
 cannot open a second queue because it reuses the existing instance first.
 
-The embedded local application exchanges the fragment token before fetching
-repository data and clears it from history. Every application request is
-same-origin; the app has no hosted baum API dependency. Review content uses the
+The server's bootstrap page exchanges the fragment token and clears it from
+history before the embedded local application loads; the application's files
+are served only under the authenticated namespace, and every application
+request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
 same sanitizers and safe rendering components as the hosted PR page and `baum
 view`. Stored document rendering failures remain within the PR pane. The app
 never supplies approvals, merge actions or discussion mutation controls.

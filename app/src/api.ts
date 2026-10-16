@@ -110,13 +110,26 @@ export type Estimate = {
   }[];
 };
 export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason: string }[] };
+/** The server serves the app only under its session namespace,
+ * `/s/<namespace>/`: the first two segments of the page's path. The session
+ * cookie is scoped to that path and nothing outside it accepts the cookie, so
+ * every API, event stream and in-app URL is built from this base. */
+export function appBase(pathname = location.pathname): string {
+  return /^\/s\/[^/]+\//.exec(pathname)?.[0] ?? "/";
+}
+/** A URL under the namespace; `path` is relative to it, as `api/repos` or
+ * `?page=jobs`. The app routes with query strings on the base itself. */
+export function appURL(path = ""): string {
+  return appBase() + path;
+}
+/** Requests `path`, relative to the namespace, as `api/repos`. */
 export async function request<T>(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(appURL(path), {
     method,
     signal,
     cache: "no-store",
@@ -140,7 +153,7 @@ export function selector(clone: string, pr: number, version?: number) {
 }
 export function documentRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(
-    `/api/document?${selector(clone, pr, version)}`,
+    `api/document?${selector(clone, pr, version)}`,
     undefined,
     "GET",
     signal,

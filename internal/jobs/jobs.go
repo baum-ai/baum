@@ -37,6 +37,18 @@ type Prepared struct {
 	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
 	BlockedReason                 string   `json:"blocked_reason,omitempty"`
 }
+
+// sameConfirmedInputs reports whether two confirmations authorize the same
+// run: clone, head, backend, model, budgets and caps, isolation, price list
+// version and estimate. Only then is a resubmission idempotent.
+func (p Prepared) sameConfirmedInputs(o Prepared) bool {
+	if (p.EstimateUSD == nil) != (o.EstimateUSD == nil) || (p.EstimateUSD != nil && *p.EstimateUSD != *o.EstimateUSD) {
+		return false
+	}
+	p.EstimateUSD, o.EstimateUSD = nil, nil
+	return p == o
+}
+
 type Estimate struct {
 	ID           string     `json:"id"`
 	Items        []Prepared `json:"items"`
@@ -90,20 +102,30 @@ func id() string {
 	}
 	return hex.EncodeToString(b[:])
 }
+
+// Directory is the persistent state directory holding the default journal:
+// $XDG_STATE_HOME/baum, or ~/.local/state/baum.
+func Directory() (string, error) {
+	root := os.Getenv("XDG_STATE_HOME")
+	if !filepath.IsAbs(root) {
+		home, e := os.UserHomeDir()
+		if e != nil {
+			return "", e
+		}
+		root = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(root, "baum"), nil
+}
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
 	if executor == nil || concurrency < 1 || concurrency > 16 {
 		return nil, errors.New("invalid runner configuration")
 	}
 	if path == "" {
-		root := os.Getenv("XDG_STATE_HOME")
-		if !filepath.IsAbs(root) {
-			home, e := os.UserHomeDir()
-			if e != nil {
-				return nil, e
-			}
-			root = filepath.Join(home, ".local", "state")
+		dir, e := Directory()
+		if e != nil {
+			return nil, e
 		}
-		path = filepath.Join(root, "baum", "jobs.json")
+		path = filepath.Join(dir, "jobs.json")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -296,7 +318,7 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 				q.jobs = before
 				return nil, errors.New("a job is already running for this pull request")
 			}
-			if j.HeadSHA == p.HeadSHA {
+			if j.Prepared.sameConfirmedInputs(p) {
 				out = append(out, *j)
 				continue
 			}
