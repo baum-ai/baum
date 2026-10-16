@@ -1257,6 +1257,8 @@ summaries in one transaction, plus separate latest-started run records. It does
 not move document bodies or maintain a second database. CLI generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
+Once `Store.Put` commits a version, generation succeeds: failing to record the
+run's outcome afterwards is only a warning, and the lease later expires.
 
 ### Local pull request discovery
 
