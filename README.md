@@ -484,6 +484,11 @@ exposing their paths. Rows carry version count, the latest version's generation
 time, backend/model, risk assessment and recorded USD cost. Cost is null when
 none was recorded, including current CLI backends, rather than an invented zero.
 
+Clones with distinct common directories keep independent histories, so each store
+gets its own row with its `clone_id`; a discovered PR with no saved review in a
+store gets a `no_review` row for that store even when another store has one.
+Linked worktrees share a store and therefore one row.
+
 Once the repository and store are resolved, terminal generation records its run
 separately from successful versions. Failures use only the fixed categories
 `input`, `backend`, `budget`, `validation`, `interrupted`, and `internal`; failed
