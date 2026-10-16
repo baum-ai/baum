@@ -3,6 +3,10 @@ package pricing
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -62,6 +66,39 @@ func TestRefreshRecordsItsFailure(t *testing.T) {
 	}
 	got := CurrentSource()
 	if got.RefreshError == "" || got.Origin != OriginEmbedded {
+		t.Errorf("source = %+v", got)
+	}
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestRefreshAndCurrentSourceRunConcurrently is for -race: a refresh that
+// records its failure while others read the source.
+func TestRefreshAndCurrentSourceRunConcurrently(t *testing.T) {
+	resetSource(t)
+	unavailable := roundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+	})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := refresh(context.Background(), unavailable); err == nil {
+				t.Error("refresh succeeded against a 503")
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				_ = CurrentSource()
+			}
+		}()
+	}
+	wg.Wait()
+	if got := CurrentSource(); got.RefreshError != "pricing download unavailable" || got.Origin != OriginEmbedded {
 		t.Errorf("source = %+v", got)
 	}
 }

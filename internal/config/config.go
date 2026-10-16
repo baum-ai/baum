@@ -255,7 +255,7 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 		return Config{}, false, fmt.Errorf("reading config: %w", err)
 	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, false, fmt.Errorf("parsing %s: %w", path, err)
+		return Config{}, false, parseError(path, err)
 	}
 	if cfg.Backend == "" {
 		cfg.Backend = BackendAuto
@@ -267,6 +267,17 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 		cfg.GitHubTokenSource = SourceConfigFile
 	}
 	return cfg, true, nil
+}
+
+// parseError reports where a file failed to parse and never what it held:
+// go-toml's own message quotes the offending line, which may be a token.
+func parseError(path string, err error) error {
+	var decodeErr *toml.DecodeError
+	if errors.As(err, &decodeErr) {
+		line, column := decodeErr.Position()
+		return fmt.Errorf("parsing %s: invalid TOML at line %d, column %d; fix the syntax there (values are not shown, in case one is a token)", path, line, column)
+	}
+	return fmt.Errorf("parsing %s: invalid TOML; values are not shown, in case one is a token", path)
 }
 
 // Save writes cfg to path, creating the directory 0700 and the file 0600 so a

@@ -112,28 +112,37 @@ for every warning and problem:
 - where the GitHub token comes from for github.com and for the host of every
   registered clone: the environment (`GITHUB_TOKEN`, `GH_TOKEN`), the config
   file, the GitHub CLI's environment variable or `hosts.yml`, or its keyring
-  (`gh auth token`). The token itself, or any part of it, is never printed;
+  (`gh auth token`). The token itself, or any part of it, is never printed. A
+  host baum would not talk to (not github.com, a `*.ghe.com` tenant, a host in
+  gh's `hosts.yml` or `GH_HOST`) is a problem, with the fix;
 - whether `ANTHROPIC_API_KEY` is set (nothing uses it in this version);
-- where the price list comes from: embedded, or fetched. baum keeps no price
-  list on disk, so a fetched list lasts only for the process that fetched it;
+- the price list: `baum generate` and the other commands use the embedded
+  list, and `baum ui` fetches the signed list when it starts. baum keeps no
+  price list on disk. Doctor's own fetch only shows whether fetching works and
+  which version is published;
 - the config file, repository registry, job queue, discovery cache, `baum ui`
   instance directory and each registered clone's review store, and the `PATH`
-  entries. Doctor creates none of them.
+  entries. Doctor creates none of them and opens the registry read-only.
 
-It runs `--version` on each tool, the same checks `baum generate` runs for
-`claude` and `codex` (including codex's read-only sandbox check) and, when no
-token is configured, `gh auth token`. Its one network request is the signed
-price list; `--offline` skips it. `--json` prints the report as one object,
-`{"status", "checks": [{"id", "label", "status", "detail", "path", "version",
+It runs `--version` on `git`, `gh` and `cursor-agent`, the same checks
+`baum generate` runs for `claude` and `codex` (including codex's read-only
+sandbox check) and, when no token is configured, `gh auth token`. The tools get
+the same filtered environment their backends give them, never your provider
+keys or tokens, and a tool that hangs is stopped with its child processes.
+Its one network request is the signed price list; `--offline` skips it.
+`--json` prints the report as one object, `{"status", "checks": [{"id", "label", "status", "detail", "path", "version",
 "source", "fix"}]}`, where `status` is `ok`, `warning`, `problem` or `info`
 (`path`, `version`, `source` and `fix` are present when they apply). A config
 file that does not load is reported as a problem and the rest of the report
 uses default settings. Doctor exits 0 when no check is a problem, warnings
-allowed, and 6 otherwise.
+allowed, 6 when one is, and 130 when interrupted. A config file that does not
+parse is reported by line and column only, never its text, in case a value is a
+token.
 
-A missing backend is a warning while another one works, and a problem when it
-is the configured backend, when `auto` finds none, or when `backend_paths`
-names a file that cannot be run.
+A missing or failing backend is a warning. The `backend: auto` check is the
+problem when neither `claude` nor `codex` is usable. A backend is a problem
+itself when it is the configured backend (`backend` in the config file or
+`BAUM_BACKEND`), or when `backend_paths` names a file that cannot be run.
 
 ### Pull request discovery
 

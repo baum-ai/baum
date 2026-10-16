@@ -1,11 +1,12 @@
 // Package doctor reports why baum can or cannot find its tools, backend and
 // GitHub token, with a fix for each problem.
 //
-// It runs "<tool> --version" for git, gh, claude, codex and cursor-agent,
-// the same checks "baum generate" runs for claude and codex (including
-// codex's read-only sandbox preflight), "gh auth token" when no token is
-// configured, and at most one network request, for the signed price list. It
-// never prints a token or an API key, only where one was found.
+// It runs "<tool> --version" for git, gh and cursor-agent, the same checks
+// "baum generate" runs for claude and codex (including codex's read-only
+// sandbox preflight), "gh auth token" when no token is configured, and at most
+// one network request, for the signed price list. The tools run with the
+// environment their backends give them, never the whole of ours. It never
+// prints a token or an API key, only where one was found.
 package doctor
 
 import (
@@ -21,12 +22,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/proc"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 )
@@ -84,8 +88,9 @@ type Options struct {
 
 	Getenv   func(string) string
 	LookPath func(string) (string, error)
-	// Run runs path with args and returns its combined output, under ctx.
-	Run func(ctx context.Context, path string, args ...string) (string, error)
+	// Run runs path with args in exactly env and returns its combined output,
+	// under ctx. The report decides env per tool and never passes our own.
+	Run func(ctx context.Context, env []string, path string, args ...string) (string, error)
 	// Backends builds the backends to check; nil builds the real ones from
 	// the configuration, as "baum generate" does.
 	Backends func(config.Config) generate.Backends
@@ -96,8 +101,8 @@ type Options struct {
 	RefreshPrices func(ctx context.Context) error
 	// PriceSource describes the active list; nil uses pricing.CurrentSource.
 	PriceSource func() pricing.Source
-	// Registry lists the registered clones of the registry file at path. It
-	// is called only when that file exists, because opening one creates it.
+	// Registry lists the registered clones of the registry file at path,
+	// which exists. The default opens it read-only.
 	Registry func(ctx context.Context, path string) ([]repos.Clone, error)
 	// InstanceDir is the directory of the per-user "baum ui" instance and its
 	// capability files; nil omits that check. The caller supplies it because
@@ -109,12 +114,16 @@ type Options struct {
 const (
 	versionTimeout = 10 * time.Second
 	backendTimeout = 90 * time.Second // codex: version, then two sandbox runs
-	tokenTimeout   = 30 * time.Second
+	tokenTimeout   = 10 * time.Second
 	priceTimeout   = 15 * time.Second
 	registryTime   = 30 * time.Second
 )
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
+
+// olderPattern reads the installed version from a backend's "X is older than Y"
+// failure.
+var olderPattern = regexp.MustCompile(`\b(\d+\.\d+\.\d+) is older than`)
 
 // Run builds the report. It never fails: a problem it meets becomes a check.
 func Run(ctx context.Context, opts Options) Report {
@@ -136,6 +145,7 @@ type runner struct {
 	opts    Options
 	checks  []Check
 	cfg     config.Config
+	cfgErr  error
 	cfgPath string
 }
 
@@ -169,8 +179,12 @@ func (r *runner) defaults() {
 	}
 }
 
-func runCommand(ctx context.Context, path string, args ...string) (string, error) {
+func runCommand(ctx context.Context, env []string, path string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Env = append([]string{}, env...)
+	// A timeout kills the whole process group, so a tool's own children do not
+	// outlive it, and WaitDelay stops one that holds the pipe from stalling.
+	proc.Configure(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()
 	if len(out) > 4096 {
@@ -180,7 +194,7 @@ func runCommand(ctx context.Context, path string, args ...string) (string, error
 }
 
 func listClones(ctx context.Context, path string) ([]repos.Clone, error) {
-	registry, err := repos.Open(path)
+	registry, err := repos.OpenReadOnly(path)
 	if err != nil {
 		return nil, err
 	}
@@ -197,9 +211,16 @@ func (r *runner) run() {
 	}
 	cfg, cfgErr := config.Load(config.Overrides{})
 	if cfgErr != nil {
+		// Report with the defaults, and the token variables the commands would
+		// have read had the file loaded.
 		cfg = config.Default()
+		for _, name := range []string{config.EnvGHToken, config.EnvGitHubToken} {
+			if v := r.opts.Getenv(name); v != "" {
+				cfg.GitHubToken, cfg.GitHubTokenSource = v, name
+			}
+		}
 	}
-	r.cfg = cfg
+	r.cfg, r.cfgErr = cfg, cfgErr
 
 	r.git()
 	r.gh()
@@ -213,9 +234,8 @@ func (r *runner) run() {
 	r.environment()
 }
 
-// tool resolves an executable and its version. explicit is a configured
-// absolute path, which replaces the PATH lookup. found is false when there is
-// no usable executable; c then holds the failure's wording in Detail.
+// tool resolves the executable name: explicit, a configured absolute path,
+// replaces the PATH lookup. source says where it came from, also on failure.
 func (r *runner) tool(name, explicit string) (path, source string, err error) {
 	if explicit != "" {
 		if err := generate.CheckExplicitPath(config.Backend(name), explicit); err != nil {
@@ -230,10 +250,12 @@ func (r *runner) tool(name, explicit string) (path, source string, err error) {
 	return path, "PATH", nil
 }
 
-func (r *runner) version(ctx context.Context, path string, args ...string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+// version runs path --version in env and returns the first version in its
+// output, and the output.
+func (r *runner) version(env []string, path string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(r.ctx, versionTimeout)
 	defer cancel()
-	out, err := r.opts.Run(ctx, path, args...)
+	out, err := r.opts.Run(ctx, env, path, "--version")
 	if err != nil {
 		return "", out, err
 	}
@@ -251,7 +273,7 @@ func (r *runner) git() {
 		return
 	}
 	c.Path = path
-	version, out, err := r.version(r.ctx, path, "--version")
+	version, out, err := r.version(agent.LocalEnvironment(os.Environ()), path)
 	switch {
 	case err != nil:
 		c.Status, c.Detail = StatusProblem, fmt.Sprintf("running %s --version failed: %v", path, err)
@@ -290,7 +312,7 @@ func (r *runner) gh() {
 		}
 	}
 	c.Path = path
-	version, _, err := r.version(r.ctx, path, "--version")
+	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
 	if err != nil {
 		c.Status, c.Detail = StatusWarning, fmt.Sprintf("running %s --version failed: %v", path, err)
 		c.Fix = fmt.Sprintf("run `%s --version` yourself to see why it fails, or reinstall gh", path)
@@ -362,16 +384,18 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 		c.Fix = fmt.Sprintf("install %s and sign in, or set backend_paths.%s to its absolute path in %s (apps started without a shell's PATH need this)", tool, name, r.cfgPath)
 	default:
 		c.Status, c.Detail = severity, err.Error()
-		c.Fix = checkFix(name, tool, path, err)
-		if v, _, verr := r.version(r.ctx, path, "--version"); verr == nil {
-			c.Version = v
+		c.Fix = checkFix(tool, path, err)
+		// The tool is not run again: its version is in the message when the check
+		// got far enough to read it.
+		if m := olderPattern.FindStringSubmatch(err.Error()); m != nil {
+			c.Version = m[1]
 		}
 	}
 	r.add(c)
 	return checkResult{version, err}
 }
 
-func checkFix(name config.Backend, tool, path string, err error) string {
+func checkFix(tool, path string, err error) string {
 	switch msg := err.Error(); {
 	case strings.Contains(msg, "older than"):
 		return "upgrade " + tool + " to the version named above or newer"
@@ -398,7 +422,7 @@ func (r *runner) cursorAgent() {
 		return
 	}
 	c.Path = path
-	version, _, err := r.version(r.ctx, path, "--version")
+	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
 	c.Version = version
 	c.Status = StatusInfo
 	c.Detail = "found, but the cursor-agent backend is not available in this version of baum"
@@ -454,7 +478,12 @@ func (r *runner) selection(checked checkedBackends) {
 	selected, err = generate.Select(r.ctx, r.cfg.Backend, r.cfg.Model, replayed, nil)
 	if err != nil {
 		configured.Status, configured.Detail = StatusProblem, fmt.Sprintf("the configured backend %s cannot run: %v", r.cfg.Backend, err)
-		configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		switch r.cfg.Backend {
+		case config.BackendAnthropic, config.BackendCursorAgent:
+			configured.Fix = fmt.Sprintf("the %s backend is not available in this version; set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		default:
+			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		}
 	} else {
 		configured.Status, configured.Version = StatusOK, selected.Version
 		configured.Detail = fmt.Sprintf("the configured backend %s is usable (auto is not used)", selected.Backend.Name())
@@ -493,7 +522,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 			cancel()
 			if listErr != nil {
 				c.Status, c.Detail = StatusWarning, "cannot read the registry: "+listErr.Error()
-				c.Fix = "check that " + registryPath + " is readable and not locked by another baum process"
+				c.Fix = "check that " + registryPath + " is a baum registry that you can read and that no other process holds locked; `baum repos list` shows the same error"
 			} else {
 				c.Detail = fmt.Sprintf("%d registered %s", len(clones), plural(len(clones), "clone", "clones"))
 			}
@@ -559,17 +588,31 @@ func (r *runner) tokens(clones []repos.Clone) {
 	}
 	for _, host := range hosts {
 		c := Check{ID: "github-token-" + host, Label: "GitHub token: " + host}
+		if !github.IsGitHubHost(host) {
+			c.Status = StatusProblem
+			c.Detail = fmt.Sprintf("baum will not read %s: it is not github.com, a *.ghe.com tenant, a host in gh's hosts.yml or the host GH_HOST names, so a token is never looked up or sent for it", host)
+			c.Fix = fmt.Sprintf("set GH_HOST=%s or run `gh auth login --hostname %s`", host, host)
+			r.add(c)
+			continue
+		}
 		ctx, cancel := context.WithTimeout(r.ctx, tokenTimeout)
 		_, source, err := r.opts.GitHubToken(ctx, r.cfg, host)
 		cancel()
+		unread := ""
+		if r.cfgErr != nil && host == config.GitHubHost {
+			unread = ". The config file did not load, so its github_token was not read"
+		}
 		switch {
 		case err == nil:
 			c.Status, c.Source = StatusOK, source
-			c.Detail = "a token is available for " + host
+			c.Detail = "a token is available for " + host + unread
 		case errors.Is(err, config.ErrNoGitHubToken):
 			_, fix, _ := strings.Cut(err.Error(), ": ")
 			c.Status, c.Fix = StatusWarning, fix
-			c.Detail = "no token was found for " + host
+			c.Detail = "no token was found for " + host + unread
+			if unread != "" {
+				c.Fix = "fix the config file as the config check says (its github_token is read once it loads), or set GITHUB_TOKEN, or run `gh auth login`"
+			}
 			if host == config.GitHubHost {
 				c.Detail += "; public repositories work without one, within GitHub's low unauthenticated rate limit"
 			} else {
@@ -603,7 +646,7 @@ func (r *runner) prices() {
 	}
 	source := r.opts.PriceSource()
 	c := Check{ID: "prices", Label: "price list", Version: source.Version, Source: source.Origin}
-	const noCache = "baum keeps no price list on disk; each process starts with the embedded list"
+	const scope = "baum generate and the other commands use the embedded list (version %s); baum ui fetches the signed list when it starts. baum keeps no price list on disk. This check only shows whether fetching works and which version is published"
 	when := ""
 	if !source.FetchedAt.IsZero() {
 		when = ", fetched " + source.FetchedAt.UTC().Format(time.RFC3339)
@@ -615,17 +658,17 @@ func (r *runner) prices() {
 			reason = fetchErr.Error()
 		}
 		c.Status = StatusWarning
-		c.Detail = fmt.Sprintf("refreshing the signed price list failed: %s. The %s list (version %s) is used", reason, source.Origin, source.Version)
+		c.Detail = fmt.Sprintf("fetching the signed price list failed: %s. The %s list (version %s) stays in use. ", reason, source.Origin, source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
 		c.Fix = "check your network connection and run baum doctor again; until then costs use the " + source.Origin + " list"
 	case source.Origin == pricing.OriginFetched:
 		c.Status = StatusOK
-		c.Detail = "using the signed list fetched from the published location" + when + ". " + noCache
+		c.Detail = fmt.Sprintf("fetching works: the published list is version %s%s. ", source.Version, when) + fmt.Sprintf(scope, pricing.Embedded().Version())
 	case r.opts.FetchPrices:
 		c.Status = StatusOK
-		c.Detail = "the signed list was fetched and is no newer than the embedded list, which stays in use. " + noCache
+		c.Detail = "fetching works: the published list is no newer than the embedded one. " + fmt.Sprintf(scope, pricing.Embedded().Version())
 	default:
 		c.Status = StatusInfo
-		c.Detail = "using the embedded list; run without --offline to fetch the signed list. " + noCache
+		c.Detail = "not fetched (--offline); the embedded list is in use here. " + fmt.Sprintf(scope, pricing.Embedded().Version())
 	}
 	r.add(c)
 }

@@ -157,3 +157,26 @@ func TestHostsFileHelper(t *testing.T) {
 	}
 	fmt.Printf("source=%s token=%s\n", source, token)
 }
+
+// TestParseErrorNamesThePositionNotTheText: go-toml's own message quotes the
+// line, which here is an unquoted token.
+func TestParseErrorNamesThePositionNotTheText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("backend = 'auto'\ngithub_token = ghp_PLANTEDunquoted0000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile accepted an unquoted value")
+	}
+	for _, want := range []string{path, "line 2", "column"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	for _, leak := range []string{"ghp", "PLANTED", "unquoted", "github_token"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("error %q holds %q from the file", err, leak)
+		}
+	}
+}

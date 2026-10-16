@@ -55,15 +55,22 @@ author write permissions remain unknown, rather than granting automatic work.
 ## What `baum doctor` runs and prints
 
 `baum doctor` diagnoses the machine and starts no model. It runs
-`<tool> --version` for `git`, `gh`, `claude`, `codex` and `cursor-agent`, each
-with a timeout and the tool's path from `backend_paths`, `GH_PATH` or `PATH`;
+`<tool> --version` for `git`, `gh` and `cursor-agent`, each with a timeout, in
+a process group that is killed whole when the timeout passes, and with the
+filtered environment of the local backends, which drops provider keys and
+GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
+path comes from `backend_paths`, `GH_PATH` or `PATH`;
 the same checks `baum generate` runs for `claude` and `codex`, which include
 codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
 temporary directory it removes); and, only when no token comes from the
 environment, the config file or `gh`'s own files, `gh auth token
 --secure-storage --hostname <host>`. Its one network contact is the signed price
 list described above, skipped with `--offline`; nothing else leaves the machine.
-It creates no files: it reads the registry and the stores only when they exist.
+It creates no files of its own: it opens the registry read-only (SQLite
+`mode=ro`, so no journal, table or file mode changes) and only when it exists,
+and does not create a review store. A config file that does not parse is shown
+by line and column and never by text. `gh auth token` keeps the environment gh needs to find
+its own configuration, as `baum generate` does.
 
 It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,

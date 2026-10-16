@@ -21,9 +21,10 @@ type CheckedBackend interface {
 	Check(ctx context.Context) (version string, err error)
 }
 
-// Backends builds the local backends. DefaultBackends is the only production
-// implementation: the user's installed CLIs under their own login, in the
-// profiles meant for a person's machine. Tests substitute fakes.
+// Backends builds the local backends. DefaultBackends and DefaultBackendsFor
+// are the only production implementations: the user's installed CLIs under
+// their own login, in the profiles meant for a person's machine. Tests
+// substitute fakes.
 type Backends struct {
 	Claude func(model string) CheckedBackend
 	Codex  func(model string) CheckedBackend

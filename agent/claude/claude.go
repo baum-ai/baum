@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/agent/internal/proc"
+	"github.com/baum-ai/baum/internal/proc"
 )
 
 // maxOutputTokens bounds one model response. A large review submitted through

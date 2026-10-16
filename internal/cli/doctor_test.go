@@ -138,3 +138,17 @@ func TestDoctorRejectsArguments(t *testing.T) {
 		t.Error("doctor accepted an argument")
 	}
 }
+
+func TestDoctorInterruptedExitsWithTheInterruptedCode(t *testing.T) {
+	doctorMachine(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := newDoctorCommand()
+	cmd.SetArgs([]string{"--offline"})
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	err := cmd.ExecuteContext(ctx)
+	if err == nil || ExitCode(err) != ExitInterrupted {
+		t.Fatalf("err = %v, exit %d, want %d", err, ExitCode(err), ExitInterrupted)
+	}
+}

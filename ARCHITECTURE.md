@@ -1220,9 +1220,15 @@ rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
 and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
 `uiserver`. Every outside dependency (environment, `PATH` lookup, command
 runner, backends, token lookup, price refresh and registry) is an `Options`
-field, so tests use fake executables and stubs. It creates nothing, bounds
-every subprocess with a timeout, and treats a configuration that does not load
-as a problem rather than aborting. It does not import `uiserver`, which may
+field, so tests use fake executables and stubs. It creates nothing (the
+registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
+`cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
+reruns a failed claude or codex check, and bounds every subprocess with a
+timeout and, through `internal/proc`, a process group killed with it (the
+package moved from `agent/internal/proc` so both can use it). A configuration
+that does not load is a problem, not an abort; its parse errors name a line and
+column, never the text. A host that `github.IsGitHubHost` refuses is a problem
+without a token lookup. It does not import `uiserver`, which may
 serve the report: the instance directory is passed in.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`

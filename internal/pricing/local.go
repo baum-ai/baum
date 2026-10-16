@@ -78,10 +78,13 @@ func noteRefresh(installed *List, err error) {
 
 // Refresh downloads only public signed data, without credentials or redirects.
 // A failure leaves the compiled or previously verified list active.
-func Refresh(ctx context.Context) (err error) {
+func Refresh(ctx context.Context) error { return refresh(ctx, nil) }
+
+// refresh is Refresh over transport; nil is the default transport.
+func refresh(ctx context.Context, transport http.RoundTripper) (err error) {
 	var installed *List
 	defer func() { noteRefresh(installed, err) }()
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
 	get := func(url string) ([]byte, error) {
 		r, e := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if e != nil {

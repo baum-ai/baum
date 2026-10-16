@@ -39,10 +39,12 @@ list comes from; and where the config file, repository registry, job queue,
 discovery cache and review stores live. Every problem and warning has a fix
 line, for example setting backend_paths.claude in the config file.
 
-It runs --version on each tool, the same checks "baum generate" runs for claude
-and codex (including codex's read-only sandbox check) and, when no token is
-configured, "gh auth token". It creates no files. Its one network request is
-the signed price list; --offline skips it.
+It runs --version on git, gh and cursor-agent, the same checks "baum generate"
+runs for claude and codex (including codex's read-only sandbox check, which
+makes and removes a temporary directory) and, when no token is configured,
+"gh auth token". It creates no files of its own and opens the registry
+read-only. Its one network request is the signed price list; --offline skips
+it.
 
 Exit codes: 0 no problems (warnings allowed); 6 at least one problem.`,
 		Args: cobra.NoArgs,
@@ -59,6 +61,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	ctx, stop := bundleContext(cmd.Context())
 	defer stop()
 	report := doctor.Run(ctx, doctorOptions(!offline))
+	if ctx.Err() != nil {
+		return interruptedError()
+	}
 	if err := writeDoctor(cmd, report, asJSON); err != nil {
 		return err
 	}

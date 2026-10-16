@@ -546,12 +546,14 @@ func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 			return cfg.ResolveGitHubTokenSource(context.Background(), host)
 		},
 	})
-	if strings.Join(asked, ",") != "github.com,ghe.example.com" {
+	// An unknown host is never asked for a token: baum would refuse it anyway.
+	if strings.Join(asked, ",") != "github.com" {
 		t.Errorf("asked for %v", asked)
 	}
 	ent := find(t, report, "github-token-ghe.example.com")
 	wantStatus(t, ent, StatusProblem)
-	wantContains(t, "fix", ent.Fix, "GH_ENTERPRISE_TOKEN", "gh auth login --hostname ghe.example.com")
+	wantContains(t, "detail", ent.Detail, "GH_HOST", "hosts.yml")
+	wantContains(t, "fix", ent.Fix, "set GH_HOST=ghe.example.com or run `gh auth login --hostname ghe.example.com`")
 
 	wantStatus(t, find(t, report, "store-a"), StatusInfo)
 	gone := find(t, report, "store-c")
@@ -571,6 +573,7 @@ func TestEnterpriseTokenFromTheEnvironmentIsFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GH_ENTERPRISE_TOKEN", plantedGHToken)
+	t.Setenv("GH_HOST", "ghe.example.com") // a host baum will talk to
 	report := run(t, Options{Registry: func(context.Context, string) ([]repos.Clone, error) {
 		return []repos.Clone{{ID: "b", Repository: "ghe.example.com/acme/ent"}}, nil
 	}})
@@ -651,7 +654,7 @@ func TestPriceList(t *testing.T) {
 		if c.Source != "embedded" || c.Version != "2026-01-01" {
 			t.Errorf("%+v", c)
 		}
-		wantContains(t, "detail", c.Detail, "embedded", "no price list on disk")
+		wantContains(t, "detail", c.Detail, "embedded", "keeps no price list on disk")
 	})
 	t.Run("fetched", func(t *testing.T) {
 		newMachine(t)
