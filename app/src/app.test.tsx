@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
-import { cost, filtered, type Entry } from "./api";
+import { appBase, cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -31,17 +31,22 @@ let root: Root;
 let node: HTMLDivElement;
 let fail = false;
 let entries: Entry[] = [];
+let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  history.replaceState(null, "", "/");
+  history.replaceState(null, "", "/s/test-ns/");
   fail = false;
   entries = [];
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
+  streams = [];
   vi.stubGlobal(
     "EventSource",
     class {
+      constructor(url: string) {
+        streams.push(url);
+      }
       addEventListener() {}
       close() {}
     },
@@ -49,15 +54,17 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string) => {
-      if (fail) return new Response("unauthorized", { status: 401 });
+      // As on the server, the session authorizes nothing outside its namespace.
+      if (fail || !path.startsWith("/s/test-ns/"))
+        return new Response("unauthorized", { status: 401 });
       return Response.json(
-        path.includes("/api/index")
+        path.includes("/s/test-ns/api/index")
           ? { entries, problems: [] }
-          : path === "/api/repos"
+          : path === "/s/test-ns/api/repos"
             ? []
-            : path === "/api/prs"
+            : path === "/s/test-ns/api/prs"
               ? []
-              : path === "/api/jobs"
+              : path === "/s/test-ns/api/jobs"
                 ? { jobs: [] }
                 : {},
       );
@@ -73,6 +80,38 @@ it("shows first-run registration rather than a blank inbox", async () => {
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Register a local clone");
   expect(node.textContent).toContain("Repositories & settings");
+});
+it("keeps API, event and navigation URLs under the session namespace", async () => {
+  entries = [entry(1)];
+  await act(async () => root.render(<App />));
+  expect(appBase("/s/abc_-123/")).toBe("/s/abc_-123/");
+  expect(appBase("/s/abc/?page=jobs")).toBe("/s/abc/");
+  expect(appBase("/")).toBe("/");
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).not.toHaveLength(0);
+  for (const [url] of vi.mocked(fetch).mock.calls) expect(url).toMatch(/^\/s\/test-ns\/api\//);
+  expect(streams).toEqual(["/s/test-ns/api/events"]);
+  const hrefs = Array.from(node.querySelectorAll("a"))
+    .map((a) => a.getAttribute("href")!)
+    .filter((href) => !href.startsWith("https:"));
+  expect(hrefs).toContain("/s/test-ns/?page=jobs");
+  for (const href of hrefs) expect(href.startsWith("/s/test-ns/")).toBe(true);
+  const jobs = Array.from(node.querySelectorAll("a")).find((a) => a.textContent === "Jobs")!;
+  await act(async () => jobs.click());
+  expect(location.pathname).toBe("/s/test-ns/");
+  expect(location.search).toBe("?page=jobs");
+  expect(node.textContent).toContain("No generation jobs yet.");
+  await act(async () => {
+    Array.from(node.querySelectorAll("a"))
+      .find((a) => a.textContent === "Inbox")!
+      .click();
+  });
+  await act(async () => {
+    const select = node.querySelector<HTMLSelectElement>("select")!;
+    select.value = "mine";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(location.pathname).toBe("/s/test-ns/");
+  expect(location.search).toBe("?filter=mine");
 });
 it("shows actionable launch authorization failure", async () => {
   fail = true;
@@ -117,7 +156,7 @@ it("shows an unpriced model exclusion and keeps generation disabled", async () =
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, ...args: unknown[]) =>
-      path === "/api/jobs/estimate"
+      path === "/s/test-ns/api/jobs/estimate"
         ? Response.json({
             id: "quote",
             estimate_usd: null,
@@ -229,7 +268,7 @@ it("shows failed background refresh without hiding cached reviews", async () => 
   entries = [entry(1)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/api/background"
+    String(args[0]) === "/s/test-ns/api/background"
       ? Promise.resolve(
           Response.json([
             {

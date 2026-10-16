@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
@@ -173,7 +174,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		document, e := generatetest.Document(r.Directory, nil)
 		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}, e
 	}}
-	server, err := New(Options{})
+	server, err := New(Options{App: localapp.Handler()})
 	if err != nil {
 		t.Fatal(err)
 	}
