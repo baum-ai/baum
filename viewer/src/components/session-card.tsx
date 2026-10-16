@@ -121,7 +121,6 @@ export function SessionCard({
     <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
       <button
         type="button"
-        aria-label={`Session: ${session.title || "Coding session"}`}
         aria-expanded={open}
         onClick={toggle}
         className={cn(
@@ -136,6 +135,7 @@ export function SessionCard({
             !open && "-rotate-90",
           )}
         />
+        <span className="sr-only">Session: </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-base font-medium text-(--text-primary)">
             {session.title || "Coding session"}

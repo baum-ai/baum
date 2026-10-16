@@ -169,7 +169,7 @@ export type ActivityMember = {
   /** The member's review page, used for links to individual decisions. */
   href?: string;
   /** Decisions from the member version covered by the stack, when evidence is live. */
-  decisions?: SectionDecision[];
+  decisions?: { version: number; items: SectionDecision[] };
 };
 
 /** The member reviews a stack's Activity tab gathers, as far as they are
@@ -267,7 +267,7 @@ function StackActivity({
     }
   }
   const listed: ListedDecision[] = members.flatMap((member) =>
-    (member.decisions ?? reviewDecisions(member.document)).map((decision) => ({
+    (member.decisions?.items ?? reviewDecisions(member.document)).map((decision) => ({
       ...decision,
       key: `${member.number}:${decision.section}-${decision.id}`,
       section: undefined,
@@ -376,7 +376,10 @@ function memberDecisionHref(member: ActivityMember, decision: SectionDecision): 
     id: decision.section,
     decision: decision.id,
   }).toString();
-  url.searchParams.set("review", String(member.document.review.version));
+  url.searchParams.set(
+    "review",
+    String(member.decisions?.version ?? member.document.review.version),
+  );
   return url.origin === "https://viewer.invalid"
     ? `${url.pathname}${url.search}${url.hash}`
     : url.href;

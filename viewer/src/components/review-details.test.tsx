@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { reviewDocumentFor } from "../../test/review-document";
 import { reviewDecisions, type Block, type ReviewDocument } from "../review-document";
-import { ReviewActivity, ReviewDetails } from "./review-details";
+import { type ActivityMember, ReviewActivity, ReviewDetails } from "./review-details";
 
 function fixture() {
   return structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
@@ -109,7 +109,7 @@ describe("review activity", () => {
 });
 
 describe("a stack's review activity", () => {
-  const member = (number: number) => {
+  const member = (number: number): ActivityMember => {
     const document = fixture();
     document.review.pull_request = number;
     // One thread open and one resolved in each member.
@@ -191,6 +191,8 @@ describe("a stack's review activity", () => {
   it("uses compact decision links to the exact member version, section and decision", () => {
     const one = member(51);
     const decision = reviewDecisions(one.document)[0]!;
+    one.decisions = { version: one.document.review.version, items: [decision] };
+    one.document.review.version += 1;
     const html = render([one]);
     const decisions = html.slice(html.indexOf('aria-label="Decisions"'));
     expect(decisions).not.toContain("<details");
@@ -202,7 +204,7 @@ describe("a stack's review activity", () => {
     expect(url.pathname).toBe("/pull/51");
     expect(url.searchParams.get("section")).toBe(decision.section);
     expect(url.searchParams.get("decision")).toBe(decision.id);
-    expect(url.searchParams.get("review")).toBe(String(one.document.review.version));
+    expect(url.searchParams.get("review")).toBe(String(one.decisions.version));
   });
 
   it("puts people's decisions before agent-only decisions across stack members", () => {

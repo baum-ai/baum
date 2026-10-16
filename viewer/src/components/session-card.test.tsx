@@ -160,6 +160,23 @@ afterEach(() => {
 });
 
 describe("SessionCard", () => {
+  it("keeps identifying metadata in the session toggle's accessible text", () => {
+    render(createElement(SessionCard, { session: session({ title: "" }), defaultOpen: false }));
+    const header = document.querySelector<HTMLButtonElement>("[data-session-id] > button")!;
+    expect(header.hasAttribute("aria-label")).toBe(false);
+    for (const text of [
+      "Coding session",
+      "Claude Code",
+      "claude-opus",
+      "feature/retry",
+      "30m",
+      "2 prompts",
+      "1 commit",
+    ]) {
+      expect(header.textContent).toContain(text);
+    }
+  });
+
   it("shows a restricted card with no usage, and the host's reason", () => {
     const restricted = session({
       restricted: true,
