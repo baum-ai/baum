@@ -67,7 +67,7 @@ describe("JSON review tiles", () => {
       section.indexOf('aria-label="Review tiles"'),
     );
     expect(section.indexOf('aria-label="Review tiles"')).toBeLessThan(
-      section.indexOf('aria-label="Other risks"'),
+      section.indexOf('aria-label="Risks"'),
     );
     const missing = { ...tile, data: {} };
     expect(validReviewTile(missing, doc)).toBe(false);
@@ -181,7 +181,7 @@ describe("JSON review tiles", () => {
       />,
     );
     expect(after).toContain(doc.sections[0]!.summary.text);
-    expect(after).toContain("Other risks");
+    expect(after).toContain("Risks");
     expect(after).not.toContain('aria-label="Evidence"');
   });
 
@@ -506,10 +506,11 @@ describe("JSON review tiles", () => {
     expect(html).not.toContain("Loses access:");
   });
 
-  it("shows the attention box as a neutral card listing what each reference points at", () => {
+  it("shows high risks in a flat attention callout with unknown references", () => {
     const doc = document();
     const section = doc.sections.find((item) => item.risks.length > 0)!;
     const risk = section.risks[0]!;
+    risk.tier = "high";
     risk.text = "Two writers can take the locks in opposite orders";
     section.attention = { text: "Check the lock order.", refs: [risk.id, "rsk_missing"] };
     const html = renderToStaticMarkup(

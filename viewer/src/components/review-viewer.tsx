@@ -1,3 +1,4 @@
+import { centerJump, flashJump } from "./jump-focus";
 import pluralize from "pluralize";
 import {
   type CSSProperties,
@@ -17,8 +18,6 @@ import {
   RISK_SCORE_MEANING,
   reviewThreadStatus,
   reviewGeneration,
-  riskCategory,
-  riskLabel,
   type Section,
   sectionBadgeState,
   sectionsInReviewOrder,
@@ -27,14 +26,13 @@ import {
 } from "../review-document";
 import type { Selection } from "../review-selection";
 import { reviewVersionChanges } from "../review-versions";
-import { riskKey } from "../row-keys";
 import { useConversationCollapsed } from "../use-conversation-collapsed";
 import { type ConversationTab, useConversationTab } from "../use-conversation-tab";
 import { RAIL_LIMITS, useConversationWidth, useRailWidth } from "../use-conversation-width";
 import { useReviewSelection } from "../use-review-selection";
 import { useHistoryView } from "../use-review-version";
 import { useSectionHistory } from "../use-section-history";
-import { cn } from "./classnames";
+import { cn, FOCUS_RING } from "./classnames";
 import { ReviewFilesProvider } from "./code-file-link";
 import { HunkPatchProvider, type HunkPatchSource } from "./hunk-evidence";
 import {
@@ -52,7 +50,7 @@ import {
 } from "./icons";
 import { PaneDivider } from "./pane-divider";
 import { type ActivityMembers, ReviewActivity, ReviewDetails } from "./review-details";
-import { ChangesOverview, RisksOverview } from "./review-groups";
+import { ChangesOverview } from "./review-groups";
 import {
   REVIEW_BAR_PX,
   REVIEW_GUTTER,
@@ -62,8 +60,7 @@ import {
 } from "./review-header";
 import { HistoryToolbar, ReviewHistory } from "./review-history";
 import { ReviewNavigator, ReviewPaneFoot, type ReviewStep } from "./review-navigator";
-import { ReviewScoreBadge, TierDot } from "./review-parts";
-import { ReviewRisk } from "./review-risk";
+import { ReviewScoreBadge } from "./review-parts";
 import { ReviewSection } from "./review-section";
 import { ReviewSummary, type SummaryDestination } from "./review-summary";
 import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
@@ -524,6 +521,22 @@ function ReviewWorkspace<F extends ReviewFile>({
   // An obsolete section counts as absent from the current version, so it
   // takes no part in the rail's progress and offers no box to tick.
   const currentSections = sections.filter((section) => !section.stale);
+  const obsoleteCount = sections.length - currentSections.length;
+  const [showObsolete, setShowObsolete] = useState(false);
+  const selectedObsolete = sections.some(
+    (section) =>
+      section.stale &&
+      ((selection.kind === "section" && selection.id === section.id) ||
+        (selection.kind === "risk" && selection.section === section.id)),
+  );
+  useEffect(() => {
+    if (selectedObsolete) setShowObsolete(true);
+  }, [selectedObsolete]);
+  const visibleSections = sections.filter((section) => !section.stale || showObsolete);
+  const toggleObsolete = () => {
+    if (showObsolete && selectedObsolete) setSelection({ kind: "changes" });
+    setShowObsolete((shown) => !shown);
+  };
   // Critical and high risk: the same set, in the same order, the summary page
   // leads with. The lower tiers stay there rather than being restated here.
   const triage = navigationDocument ? triageRisks(navigationDocument) : null;
@@ -547,9 +560,44 @@ function ReviewWorkspace<F extends ReviewFile>({
   useEffect(() => {
     versionsShown.current?.(shownKey ? shownKey.split(",").map(Number) : []);
   }, [shownKey]);
-  const selectSection = (id: string) => setSelection({ kind: "section", id });
-  const selectRisk = (risk: TriageRisk) =>
-    setSelection({ kind: "risk", section: risk.section, id: risk.id });
+  const [decisionFocus, setDecisionFocus] = useState<{ section: string; id: string } | null>(null);
+  const highlightedDecision = useRef<{ key: string; click: typeof decisionFocus } | null>(null);
+  const selectSection = (id: string, decision?: string) => {
+    setDecisionFocus(decision ? { section: id, id: decision } : null);
+    setSelection({ kind: "section", id, ...(decision ? { decision } : {}) });
+  };
+  const selectedDecision = selection.kind === "section" ? selection.decision : undefined;
+  const selectedDecisionSection = selection.kind === "section" ? selection.id : undefined;
+  useEffect(() => {
+    if (!selectedDecision || !selectedDecisionSection) {
+      highlightedDecision.current = null;
+      return;
+    }
+    if (!navigationDocument) return;
+    const key = `${selectedDecisionSection}:${selectedDecision}`;
+    if (
+      highlightedDecision.current?.key === key &&
+      highlightedDecision.current.click === decisionFocus
+    )
+      return;
+    let cancelScroll: (() => void) | undefined;
+    const frame = requestAnimationFrame(() => {
+      const target = [...(reviewPane.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find(
+        (element) => element.id.endsWith(`${selectedDecisionSection}-${selectedDecision}`),
+      );
+      if (!target) return;
+      highlightedDecision.current = { key, click: decisionFocus };
+      const disclosure = target.querySelector("details");
+      if (disclosure) disclosure.open = true;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      cancelScroll = centerJump(target, reduced);
+      flashJump(target, reduced);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelScroll?.();
+    };
+  }, [decisionFocus, selectedDecision, selectedDecisionSection, navigationDocument]);
   /** Opens one file in the Files pane, which otherwise lists every file
    *  folded, at a line when one is given. */
   const openFile = (id: string, line: FileLineFocus = null) => {
@@ -613,39 +661,44 @@ function ReviewWorkspace<F extends ReviewFile>({
       : undefined;
   };
   const selectedRisk = riskNamed(navigationDocument) ?? riskNamed(historicalDocument);
+  const riskFocusKey = selectedRisk ? `${selectedRisk.section}-${selectedRisk.id}` : null;
+  useEffect(() => {
+    if (!riskFocusKey) return;
+    let cancelScroll: (() => void) | undefined;
+    const frame = requestAnimationFrame(() => {
+      const target = [...(reviewPane.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find(
+        (element) => element.id.endsWith(riskFocusKey),
+      );
+      if (!target) return;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      cancelScroll = centerJump(target, reduced);
+      flashJump(target, reduced);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelScroll?.();
+    };
+  }, [riskFocusKey]);
+
   const sectionAside =
     !historyView.selection && viewedId && renderSectionAside ? renderSectionAside(viewedId) : null;
   const sectionRead = (id: string) => checks?.sectionRead(id) ?? false;
-  const riskRead = (risk: TriageRisk) => checks?.riskRead(risk) ?? false;
   const sectionCheck = (id: string, label: string) =>
     historyView.selection || !checks ? null : checks.renderSection({ id, label });
-  const riskCheck = (risk: TriageRisk) =>
-    historyView.selection || !checks ? null : checks.renderRisk(risk);
   const changesRead = currentSections.filter((section) => sectionRead(section.id)).length;
-  const risksRead = risks.filter(riskRead).length;
   const tracked = Boolean(checks) && !historyView.selection;
-  // A review with nothing critical or high has no group to offer, once the
-  // document says so. While it loads the row stays, since most reviews have
-  // risks and a row that appears late would push the rows below it down. The
-  // group stays while its pane is open (a `?pane=risks` link opens it
-  // regardless), so the pane never shows without its row.
-  const showRisksRow = !navigationDocument || risks.length > 0 || selection.kind === "risks";
   const paneLabel =
-    selection.kind === "changes"
+    selection.kind === "changes" || selection.kind === "risks"
       ? "Changes"
-      : selection.kind === "risks"
-        ? "Critical risks"
-        : selection.kind === "sessions" || selection.kind === "session"
-          ? "Sessions"
-          : selectedCommit
-            ? `Commit: ${selectedCommit.label}`
-            : selection.kind === "commits" || selection.kind === "commit"
-              ? "Commits"
-              : selectedRisk
-                ? `Risk: ${riskCategory(selectedRisk)}`
-                : filesSelected
-                  ? "Files changed"
-                  : (selected?.label ?? "Summary");
+      : selection.kind === "sessions" || selection.kind === "session"
+        ? "Sessions"
+        : selectedCommit
+          ? `Commit: ${selectedCommit.label}`
+          : selection.kind === "commits" || selection.kind === "commit"
+            ? "Commits"
+            : filesSelected
+              ? "Files changed"
+              : (selected?.label ?? "Summary");
   // What the pane's arrival is keyed on: the place, not the data behind it.
   const selectionKey = JSON.stringify(selection);
   // Every file shares one pane, which scrolls its own cards into view.
@@ -732,7 +785,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   }, [sheet]);
   // Reading order, for the navigator's previous and next: the Summary, then
   // each section as the rail lists it. A risk is read inside its section, and
-  // the Changes and Critical risks overviews sit between the Summary and the
+  // the Changes overview sits between the Summary and the
   // first section; the other groups are places to look things up, not steps.
   const steps: (ReviewStep & { key: string })[] = [
     {
@@ -740,7 +793,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       label: conversation ? "Summary / General" : "Summary",
       go: () => setSelection({ kind: "summary" }),
     },
-    ...sections.map((section) => ({
+    ...visibleSections.map((section) => ({
       key: section.id,
       label: section.label,
       go: () => selectSection(section.id),
@@ -768,7 +821,9 @@ function ReviewWorkspace<F extends ReviewFile>({
             : selection.kind === "commits" || selection.kind === "commit"
               ? CommitIcon
               : SummaryIcon;
-  const sectionIndex = viewedId ? sections.findIndex((section) => section.id === viewedId) : -1;
+  const sectionIndex = viewedId
+    ? visibleSections.findIndex((section) => section.id === viewedId)
+    : -1;
   const findFile = useCallback(
     (path: string) =>
       fileList?.find((candidate) => candidate.path === path || candidate.old_path === path),
@@ -982,7 +1037,9 @@ function ReviewWorkspace<F extends ReviewFile>({
             ref={navigator}
             label={paneLabel}
             icon={navigatorIcon}
-            position={sectionIndex >= 0 ? `${sectionIndex + 1} of ${sections.length}` : undefined}
+            position={
+              sectionIndex >= 0 ? `${sectionIndex + 1} of ${visibleSections.length}` : undefined
+            }
             check={selected && !selected.stale ? sectionCheck(selected.id, selected.label) : null}
             previous={previousStep}
             next={nextStep}
@@ -1041,6 +1098,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 tint="accent"
                 expanded={open.changes}
                 active={selection.kind === "changes"}
+                count={currentSections.length}
                 // The count is about the rows in front of the reader, whatever
                 // supplied them: without a document those are the sections the
                 // host knows, and reading one of those is progress through the
@@ -1057,14 +1115,17 @@ function ReviewWorkspace<F extends ReviewFile>({
               />
               {open.changes && (
                 <SideNavNest id="review-changes">
-                  {sections.length === 0 ? (
-                    <RailNote>No sections yet.</RailNote>
+                  {visibleSections.length === 0 ? (
+                    <RailNote>
+                      {obsoleteCount > 0 ? "No current changes." : "No sections yet."}
+                    </RailNote>
                   ) : (
-                    sections.map((section) => (
+                    visibleSections.map((section) => (
                       <div
                         key={section.id}
                         className={cn(
                           "flex min-w-0 items-center gap-1 rounded-(--radius-sm) transition-colors duration-300",
+                          section.stale && "opacity-60 grayscale",
                           !section.stale &&
                             sectionRead(section.id) &&
                             "bg-(--status-positive-bg)/60",
@@ -1079,7 +1140,10 @@ function ReviewWorkspace<F extends ReviewFile>({
                             label={section.label}
                             wrap
                             depth={1}
-                            active={selection.kind === "section" && viewedId === section.id}
+                            active={
+                              (selection.kind === "section" || selection.kind === "risk") &&
+                              viewedId === section.id
+                            }
                             controls="review-section"
                             description={
                               section.score === undefined
@@ -1088,6 +1152,16 @@ function ReviewWorkspace<F extends ReviewFile>({
                             }
                             aside={
                               <>
+                                {risks.some((risk) => risk.section === section.id) && (
+                                  <span
+                                    role="img"
+                                    aria-label="High or critical risks"
+                                    title="High or critical risks"
+                                    className="mr-2 flex-none text-(--status-critical)"
+                                  >
+                                    <RiskIcon size={14} />
+                                  </span>
+                                )}
                                 {section.score !== undefined && (
                                   <ReviewScoreBadge score={section.score} size="compact" />
                                 )}
@@ -1111,72 +1185,22 @@ function ReviewWorkspace<F extends ReviewFile>({
                       </div>
                     ))
                   )}
-                </SideNavNest>
-              )}
-
-              {showRisksRow && (
-                <>
-                  <SideNavDisclosure
-                    label="Critical risks"
-                    icon={RiskIcon}
-                    tint="critical"
-                    expanded={open.risks}
-                    active={selection.kind === "risks"}
-                    progress={
-                      tracked && risks.length > 0 ? `${risksRead} of ${risks.length}` : undefined
-                    }
-                    read={tracked ? { done: risksRead, total: risks.length } : undefined}
-                    list="review-risks"
-                    controls="review-section"
-                    onSelect={(expanded) => selectGroup("risks", expanded)}
-                  />
-                  {open.risks && (
-                    <SideNavNest id="review-risks">
-                      {risks.length === 0 ? (
-                        <RailNote>
-                          {document ? "No critical or high risk." : "No risks yet."}
-                        </RailNote>
-                      ) : (
-                        risks.map((risk) => (
-                          <div
-                            key={riskKey(risk.section, risk.id)}
-                            className={cn(
-                              "flex min-w-0 items-center gap-1 rounded-(--radius-sm) transition-colors duration-300",
-                              riskRead(risk) && "bg-(--status-positive-bg)/60",
-                            )}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <SideNavButton
-                                label={riskLabel(risk)}
-                                icon={RiskIcon}
-                                tint="critical"
-                                depth={1}
-                                active={
-                                  selection.kind === "risk" &&
-                                  selection.section === risk.section &&
-                                  selection.id === risk.id
-                                }
-                                controls="review-section"
-                                aside={
-                                  <>
-                                    {changes?.risks.has(riskKey(risk.section, risk.id)) && (
-                                      <Badge size="compact" tone="info">
-                                        New
-                                      </Badge>
-                                    )}
-                                    <TierDot tier={risk.tier} />
-                                  </>
-                                }
-                                onSelect={() => selectRisk(risk)}
-                              />
-                            </div>
-                            {riskCheck(risk)}
-                          </div>
-                        ))
+                  {obsoleteCount > 0 && (
+                    <button
+                      type="button"
+                      aria-expanded={showObsolete}
+                      onClick={toggleObsolete}
+                      className={cn(
+                        "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+                        FOCUS_RING,
                       )}
-                    </SideNavNest>
+                    >
+                      {showObsolete
+                        ? "Hide obsolete changes"
+                        : `View obsolete changes (${obsoleteCount})`}
+                    </button>
                   )}
-                </>
+                </SideNavNest>
               )}
 
               {filesSlot ? (
@@ -1536,10 +1560,12 @@ function ReviewWorkspace<F extends ReviewFile>({
   /** What the pane shows for the current selection in one snapshot of the
    *  review, current or historical. */
   function renderPane(snapshot: ReviewDocument, historical: boolean) {
-    if (selection.kind === "changes")
+    if (selection.kind === "changes" || selection.kind === "risks")
       return (
         <ChangesOverview
           document={snapshot}
+          showObsolete={showObsolete}
+          onToggleObsolete={toggleObsolete}
           onSelectSection={selectSection}
           renderLabels={
             renderSectionLabels ? (section) => renderSectionLabels(section, snapshot) : undefined
@@ -1549,15 +1575,6 @@ function ReviewWorkspace<F extends ReviewFile>({
               ? null
               : sectionCheck(section.id, section.title)
           }
-        />
-      );
-    if (selection.kind === "risks")
-      return (
-        <RisksOverview
-          risks={triageRisks(snapshot).lead}
-          onSelectRisk={selectRisk}
-          onSelectSection={selectSection}
-          renderCheck={historical ? () => null : riskCheck}
         />
       );
     if (selection.kind !== "section" && selection.kind !== "risk") {
@@ -1575,33 +1592,6 @@ function ReviewWorkspace<F extends ReviewFile>({
         <p className="text-base text-(--text-secondary)">
           This section did not exist in review v{snapshot.review.version}.
         </p>
-      );
-    }
-    if (selection.kind === "risk") {
-      const risk = section.risks.find((item) => item.id === selection.id);
-      if (!risk) {
-        return (
-          <p className="text-base text-(--text-secondary)">
-            This risk is not present in review v{snapshot.review.version}.
-          </p>
-        );
-      }
-      return (
-        <HunkPatchProvider source={comparing ? null : hunkPatches}>
-          <ReviewRisk
-            document={snapshot}
-            risk={{
-              ...risk,
-              section: section.id,
-              sectionTitle: section.title,
-              sectionState: sectionBadgeState(section.derived.state, snapshot.review),
-            }}
-            onSelectSection={selectSection}
-            loadVersion={loadVersion}
-            activeVersions={sectionHistory?.active.get(section.id)}
-            showTiles={showTiles}
-          />
-        </HunkPatchProvider>
       );
     }
     return (
