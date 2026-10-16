@@ -1,5 +1,10 @@
 // Package uiserver hosts the authenticated local application. Providers own
 // their routes; every provider runs inside the same Host, auth and CSRF checks.
+//
+// Browsers reach the application only under a secret path namespace,
+// /s/<namespace>/, and the session cookie is scoped to that path. Cookies are
+// shared by every port on 127.0.0.1, so a host-wide cookie would also reach
+// other loopback services; a path they cannot guess keeps it from them.
 package uiserver
 
 import (
@@ -23,17 +28,24 @@ import (
 type Options struct {
 	// API serves application routes after authentication and CSRF validation.
 	API http.Handler
+	// App serves the browser application's files (GET and HEAD outside /api/)
+	// under the session namespace, after authentication, with the namespace
+	// prefix stripped. Nil serves a minimal status page.
+	App http.Handler
 }
 
 type Server struct {
-	opts                    Options
-	listener                net.Listener
-	origin, launch, session string
-	mu                      sync.Mutex
-	sequence                uint64
-	events                  []event
-	subscribers             map[chan struct{}]struct{}
-	done                    chan struct{}
+	opts     Options
+	listener net.Listener
+	// launch is the private launch capability, session the cookie value and
+	// namespace the secret segment of /s/<namespace>/. All three are random and
+	// independent, and none may be logged.
+	origin, launch, session, namespace string
+	mu                                 sync.Mutex
+	sequence                           uint64
+	events                             []event
+	subscribers                        map[chan struct{}]struct{}
+	done                               chan struct{}
 }
 type event struct {
 	ID   uint64
@@ -57,7 +69,11 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{opts: opts, launch: launch, session: session, subscribers: map[chan struct{}]struct{}{}, done: make(chan struct{})}, nil
+	namespace, err := secret()
+	if err != nil {
+		return nil, err
+	}
+	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, done: make(chan struct{})}, nil
 }
 func (s *Server) Listen(port int) (string, error) {
 	if port < 0 || port > 65535 {
@@ -105,12 +121,38 @@ func (s *Server) Serve(ctx context.Context) error {
 func same(a, b string) bool {
 	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
-func (s *Server) authorized(r *http.Request) bool {
-	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") && same(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.launch) {
-		return true
+
+const sessionCookie = "baum_ui"
+
+func (s *Server) bearer(r *http.Request) bool {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && same(token, s.launch)
+}
+func (s *Server) cookie(r *http.Request) bool {
+	// Another loopback service can set a cookie of the same name on a broader
+	// path; any matching value authorizes, so it cannot shadow the session.
+	for _, c := range r.CookiesNamed(sessionCookie) {
+		if same(c.Value, s.session) {
+			return true
+		}
 	}
-	c, err := r.Cookie("baum_ui")
-	return err == nil && same(c.Value, s.session)
+	return false
+}
+
+// appPath is the secret namespace the browser application lives under.
+func (s *Server) appPath() string { return "/s/" + s.namespace + "/" }
+
+// scoped strips a correct /s/<namespace> prefix from path.
+func (s *Server) scoped(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/s/")
+	if !ok {
+		return "", false
+	}
+	namespace, rest, ok := strings.Cut(rest, "/")
+	if !ok || !same(namespace, s.namespace) {
+		return "", false
+	}
+	return "/" + rest, true
 }
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -155,15 +197,33 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "baum_ui", Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
-			w.WriteHeader(http.StatusNoContent)
+			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: s.session, Path: s.appPath(), HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			writeJSON(w, map[string]string{"path": s.appPath()})
 			return
 		}
-		if !s.authorized(r) {
+		path, inApp := s.scoped(r.URL.Path)
+		switch {
+		case inApp:
+			if !s.cookie(r) && !s.bearer(r) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		case strings.HasPrefix(r.URL.Path, "/s/"):
+			http.NotFound(w, r)
+			return
+		case strings.HasPrefix(r.URL.Path, "/api/") && s.bearer(r):
+			// Browsers never send the launch capability ambiently, so API
+			// clients holding it need no namespace. Cookies are ignored here.
+			path = r.URL.Path
+		default:
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		switch r.URL.Path {
+		r = r.Clone(r.Context())
+		// Providers never see the namespace, so they cannot echo or log it.
+		r.URL.Path, r.URL.RawPath = path, ""
+		r.RequestURI = r.URL.RequestURI()
+		switch path {
 		case "/api/health":
 			if r.Method == "GET" || r.Method == "HEAD" {
 				writeJSON(w, map[string]string{"status": "ok"})
@@ -175,12 +235,42 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 		}
-		if s.opts.API == nil {
+		if strings.HasPrefix(path, "/api/") {
+			if s.opts.API == nil {
+				http.NotFound(w, r)
+				return
+			}
+			s.opts.API.ServeHTTP(w, r)
+			return
+		}
+		if !inApp || (r.Method != "GET" && r.Method != "HEAD") {
 			http.NotFound(w, r)
 			return
 		}
-		s.opts.API.ServeHTTP(w, r)
+		if s.opts.App != nil {
+			s.opts.App.ServeHTTP(w, r)
+			return
+		}
+		s.defaultApp(w, r)
 	})
+}
+
+// defaultApp is the status page served when no application is installed.
+func (s *Server) defaultApp(w http.ResponseWriter, r *http.Request) {
+	var body, kind string
+	switch r.URL.Path {
+	case "/":
+		body, kind = appHTML, "text/html; charset=utf-8"
+	case "/app.js":
+		body, kind = appJS, "text/javascript; charset=utf-8"
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", kind)
+	if r.Method != "HEAD" {
+		_, _ = io.WriteString(w, body)
+	}
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -275,4 +365,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 }
 
 const bootstrapHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="/launch.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`
-const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(token){const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');}const response=await fetch('/api/repos');if(!response.ok)throw Error('Open the URL printed by baum ui to authorize this browser.');const repos=await response.json();status.textContent='Local API ready. '+repos.length+' registered clone(s).';}catch(error){status.textContent=error.message;}})();`
+
+// The bootstrap exchanges the fragment capability, then replaces itself with
+// the application at the namespace path the exchange returns.
+const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(!token)throw Error('Open the URL printed by baum ui to authorize this browser.');const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');const {path}=await response.json();if(typeof path!=='string'||!path.startsWith('/s/'))throw Error('Launch authorization failed.');location.replace(path);}catch(error){status.textContent=error.message;}})();`
+
+// The default application page resolves API paths relative to its namespace.
+const appHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="app.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`
+const appJS = `(async()=>{const status=document.getElementById('status');try{const response=await fetch('api/repos');if(!response.ok)throw Error('Open the URL printed by baum ui to authorize this browser.');const repos=await response.json();status.textContent='Local API ready. '+repos.length+' registered clone(s).';}catch(error){status.textContent=error.message;}})();`
