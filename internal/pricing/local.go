@@ -6,19 +6,82 @@ package pricing
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 )
 
+// persistedName holds the newest installed published list beside the job
+// journal, with its signature, so queued jobs confirmed against it can resume.
+const persistedName = "prices.signed.json"
+
+type persisted struct {
+	List      []byte `json:"list"`
+	Signature []byte `json:"signature"`
+}
+
+// LoadPersisted installs the list a previous Refresh stored in dir if its
+// signature still verifies and it is newer than the active list. A missing
+// file is not an error; any other failure leaves the active list unchanged.
+func LoadPersisted(dir string) error { return loadPersisted(dir, PublishedKey()) }
+
+func loadPersisted(dir string, key ed25519.PublicKey) error {
+	file, e := os.Open(filepath.Join(dir, persistedName))
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	defer func() { _ = file.Close() }()
+	raw, e := io.ReadAll(io.LimitReader(file, 4<<20+1))
+	if e != nil {
+		return e
+	}
+	if len(raw) > 4<<20 {
+		return errors.New("persisted price list too large")
+	}
+	var stored persisted
+	if e = json.Unmarshal(raw, &stored); e != nil {
+		return e
+	}
+	list, e := verified(stored.List, stored.Signature, key)
+	if e != nil {
+		return e
+	}
+	Install(Newest(Active(), list))
+	return nil
+}
+
+func verified(raw, signature []byte, key ed25519.PublicKey) (*List, error) {
+	list, e := ParsePublished(raw, signature, key)
+	if e != nil {
+		return nil, e
+	}
+	if !list.Full() {
+		return nil, errors.New("full price list required")
+	}
+	return list, nil
+}
+
 // Refresh downloads only public signed data, without credentials or redirects.
-// A failure leaves the compiled or previously verified list active.
-func Refresh(ctx context.Context) error {
+// A failure leaves the compiled or previously verified list active. When dir is
+// not empty, a downloaded list that becomes active is stored there for
+// LoadPersisted.
+func Refresh(ctx context.Context, dir string) error {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
+	return refresh(ctx, client, PublishedURL, PublishedKey(), dir)
+}
+
+func refresh(ctx context.Context, client *http.Client, published string, key ed25519.PublicKey, dir string) error {
 	get := func(url string) ([]byte, error) {
 		r, e := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if e != nil {
@@ -38,23 +101,55 @@ func Refresh(ctx context.Context) error {
 		}
 		return raw, e
 	}
-	raw, e := get(PublishedURL)
+	raw, e := get(published)
 	if e != nil {
 		return e
 	}
-	signature, e := get(PublishedURL + ".sig")
+	signature, e := get(published + ".sig")
 	if e != nil {
 		return e
 	}
-	list, e := ParsePublished(raw, signature, PublishedKey())
+	list, e := verified(raw, signature, key)
 	if e != nil {
 		return e
 	}
-	if !list.Full() {
-		return errors.New("full price list required")
+	installed := Newest(Active(), list)
+	Install(installed)
+	if dir == "" || installed != list {
+		return nil
 	}
-	Install(Newest(Active(), list))
-	return nil
+	encoded, e := json.Marshal(persisted{List: raw, Signature: signature})
+	if e != nil {
+		return e
+	}
+	return writePrivate(filepath.Join(dir, persistedName), encoded)
+}
+
+func writePrivate(path string, data []byte) (err error) {
+	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".baum-prices-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(file.Name())
+		}
+	}()
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 // Estimate is a planning estimate from configured charged-token and call
