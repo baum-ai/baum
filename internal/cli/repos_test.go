@@ -49,6 +49,23 @@ func TestReposCLI(t *testing.T) {
 	if len(list) != 1 || !list[0].Settings.Automatic || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 2.5 || list[0].Settings.Model == nil {
 		t.Fatalf("settings lost %s", raw)
 	}
+	if _, e = run("repos", "add", p, "--daily-cap=1", "--clear-daily-cap"); e == nil {
+		t.Fatal("conflicting cap flags accepted")
+	}
+	if _, e = run("repos", "add", p, "--clear-daily-cap"); e != nil {
+		t.Fatal(e)
+	}
+	raw, e = run("repos", "list", "--json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	list = nil
+	if e = json.Unmarshal([]byte(raw), &list); e != nil {
+		t.Fatal(e)
+	}
+	if len(list) != 1 || list[0].Settings.DailyCap != nil || !list[0].Settings.Automatic {
+		t.Fatalf("cap not cleared or other settings lost %s", raw)
+	}
 	if _, e = run("repos", "add", p, "--backend=", "--model="); e != nil {
 		t.Fatal(e)
 	}
