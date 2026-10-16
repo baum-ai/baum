@@ -318,7 +318,12 @@ export function HunkEvidence({
           Historical evidence from review v{historicalVersion}
         </p>
       ) : null}
-      <CodeDiff files={files} bare className={diffClassName} />
+      <CodeDiff
+        files={files}
+        bare
+        highlight={openKey === disclosureKey}
+        className={diffClassName}
+      />
       {unavailable.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-base text-(--text-tertiary)">
           {unavailable.map(({ anchor, hunk, patch }) => (
