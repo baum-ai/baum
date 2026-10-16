@@ -379,6 +379,8 @@ export type ReviewDocument = {
     pull_request: number;
     pr_state: PullRequestState;
     head: string;
+    /** Latest synchronized CI head; reviewed content keeps `head`. */
+    checks_head?: string;
     base: string;
     merge_base: string;
     merged_commit: string | null;
@@ -868,7 +870,7 @@ export type CheckStatus = {
   blocking: boolean;
 };
 
-/** Whether the head under review is green.
+/** Whether the latest indexed CI head is green.
  *
  *  Only checks on that head count. A refresh may leave runs from an earlier
  *  revision in the index, and one of those must not paint this one red — nor,
@@ -879,7 +881,9 @@ export type CheckStatus = {
  *  never coming. A head whose checks all skipped is inconclusive rather than
  *  passing, because nothing on it actually succeeded. */
 export function checkStatus(document: ReviewDocument): CheckStatus {
-  const checks = document.index.checks.filter((check) => check.head === document.review.head);
+  const checks = document.index.checks.filter(
+    (check) => check.head === (document.review.checks_head ?? document.review.head),
+  );
   // A failing check's link is kept only when it points into this pull
   // request's repository, so the summary never opens someone else's run.
   const failed = checks

@@ -499,6 +499,27 @@ describe("checkStatus", () => {
     },
   });
 
+  it("uses the refreshed checks head while a newer review is generating", () => {
+    const next = "e".repeat(40);
+    const refreshed = withChecks([["success", true]]);
+    refreshed.review = { ...refreshed.review, checks_head: next };
+    expect(checkStatus(refreshed)).toMatchObject({ state: "none", total: 0 });
+    refreshed.index.checks.push({
+      ...refreshed.index.checks[0]!,
+      id: "live",
+      head: next,
+      conclusion: "pending",
+    });
+    expect(checkStatus(refreshed)).toMatchObject({
+      state: "pending",
+      pending: 1,
+      passed: 0,
+      total: 1,
+    });
+    refreshed.index.checks[1]!.conclusion = "success";
+    expect(checkStatus(refreshed)).toMatchObject({ state: "passing", passed: 1, total: 1 });
+  });
+
   it("is green only when every check settled successfully", () => {
     expect(
       checkStatus(

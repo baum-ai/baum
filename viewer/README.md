@@ -120,6 +120,11 @@ left out rather than shown empty or failed:
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 
+CI uses the optional `review.checks_head`, falling back to `review.head` for
+older documents. Refreshing the current document can show latest-head checks
+while generation runs; earlier-head runs remain indexed for source anchors but
+do not count toward the displayed CI state. Historical versions stay frozen.
+
 The Summary's Key changes are links with line counts, without expandable
 behavior details. Its Risks section appears only for active high or critical
 risks. Risk links open the complete Changes section and highlight the risk in

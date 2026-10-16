@@ -112,8 +112,10 @@ type Hunk struct {
 
 // Check is one check run or commit status for the head.
 type Check struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	// HeadSHA identifies checks retained from a different revision during refresh.
+	HeadSHA string `json:"head_sha,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
 	// Kind is "check_run" or "status".
 	Kind       string `json:"kind"`
 	Conclusion string `json:"conclusion,omitempty"`

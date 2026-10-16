@@ -105,8 +105,9 @@ pull request; `--repo` and `--store` select the same repository and history as
 `generate` and `view`.
 
 The review is current only when both its saved head and base match GitHub;
-otherwise it becomes outdated. Checks are loaded for the saved reviewed head,
-and cannot verify evidence after the pull request moves to a newer head.
+otherwise it becomes outdated. Checks refresh for the latest GitHub head even
+while a replacement review is generating. The saved reviewed head and its check
+anchors remain unchanged; newer-head checks cannot verify older review evidence.
 Missing or unsupported evidence is downgraded. Failures leave the document
 unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
