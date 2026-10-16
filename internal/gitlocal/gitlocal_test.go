@@ -203,6 +203,31 @@ func effective(f bundle.FileChange) string {
 	return f.OldPath
 }
 
+func TestCompareTypeChange(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	write(t, dir, "a", "content\n", 0o644)
+	base := commit(t, dir, "base")
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	git(t, dir, "rm", "-q", "a")
+	// Recorded in the index directly: creating symlinks needs privileges on Windows.
+	write(t, dir, "target.tmp", "elsewhere", 0o644)
+	link := git(t, dir, "hash-object", "-w", "target.tmp")
+	if err := os.Remove(filepath.Join(dir, "target.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "update-index", "--add", "--cacheinfo", "120000,"+link+",a")
+	git(t, dir, "commit", "-q", "-m", "file to symlink")
+	head := git(t, dir, "rev-parse", "HEAD")
+	got, err := open(t, dir, Options{}).Compare(context.Background(), base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Files) != 1 || got.Files[0].Status != "type_changed" || len(got.Files[0].PatchHash) != 64 {
+		t.Fatalf("files = %+v", got.Files)
+	}
+}
+
 func TestCompareOutputLimitFallsBackToObjectHash(t *testing.T) {
 	f := newFixture(t)
 	full, err := open(t, f.dir, Options{}).Compare(context.Background(), f.base, f.head)

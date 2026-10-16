@@ -4,8 +4,8 @@
 
 baum is local-first, but generating a review requires a model. When you
 run `baum generate`, the following is sent to the **model provider you
-configure** (the Anthropic API, or the `claude`, `codex` or `cursor-agent` CLI,
-each of which talks to its own provider under your own account):
+configure** (the `claude` or `codex` CLI, each of which talks to its own
+provider under your own account):
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -100,7 +100,7 @@ checkpoint you have not fetched is not fetched for it.
 
 ## Agent isolation
 
-The `claude`, `codex` and `cursor-agent` backends run on your machine under
+The `claude` and `codex` backends run on your machine under
 your user account, each in its own read-only mode, inside a temporary
 checkout of the pull request. baum adds no container or sandbox of its own,
 so isolation is only as strong as that tool's read-only mode. Repository

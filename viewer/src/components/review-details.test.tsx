@@ -19,6 +19,20 @@ describe("review details", () => {
   });
 });
 
+describe("review details without optional model lists", () => {
+  it("renders a session without models and observed sessions without observed_models", () => {
+    const document = fixture();
+    const session = document.index.sessions.find((candidate) => !candidate.restricted)!;
+    delete session.models;
+    document.summary.authorship.observed_sessions = 1;
+    delete document.summary.authorship.observed_models;
+    expect(() => renderToStaticMarkup(<ReviewDetails document={document} />)).not.toThrow();
+    expect(() =>
+      renderToStaticMarkup(<ReviewActivity document={document} onSelectSection={() => {}} />),
+    ).not.toThrow();
+  });
+});
+
 describe("review activity", () => {
   it("leads with the checks, then the review exchange", () => {
     const html = renderToStaticMarkup(
