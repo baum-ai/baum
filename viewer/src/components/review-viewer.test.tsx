@@ -108,6 +108,10 @@ describe("ReviewViewer without host slots", () => {
       "#212 Add retry budgets and a dead-letter queue",
     );
     expect(container.textContent).toContain("Review v3 · Current");
+    expect(container.querySelector("header")?.textContent).not.toContain("Review v3");
+    const category = container.querySelector("h1")?.nextElementSibling;
+    expect(category?.textContent).toBe("Feature");
+    expect(container.querySelector("#review-section")?.textContent).not.toContain("Feature");
     // The Summary opens by default and leads with the review's own summary.
     expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe("Summary");
     expect(container.querySelector("#review-section")?.textContent).toContain(
@@ -272,7 +276,7 @@ describe("ReviewViewer with an earlier version", () => {
       </Host>,
     );
     expect(container.querySelector('[aria-label="Review version"]')?.textContent).toContain(
-      "Current · v3",
+      "Review v3 · Current",
     );
     expect(shown).toHaveBeenLastCalledWith([3]);
 

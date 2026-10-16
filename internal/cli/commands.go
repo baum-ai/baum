@@ -77,13 +77,3 @@ or --pr for the latest local version; --version selects an earlier version.
 	cmd.Flags().String("bundle", "", "generation bundle to check the document against")
 	return cmd
 }
-
-func newRefreshCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "refresh",
-		Short: "Update checks, threads and session evidence in a generated document without a model call",
-		RunE:  notImplemented,
-	}
-	cmd.Flags().Int("pr", 0, "pull request number")
-	return cmd
-}
