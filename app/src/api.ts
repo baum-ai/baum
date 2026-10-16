@@ -109,6 +109,29 @@ export type Estimate = {
     blocked_reason?: string;
   }[];
 };
+export type DiagnosticStatus = "ok" | "warning" | "problem" | "info";
+export type DiagnosticCheck = {
+  id: string;
+  label: string;
+  status: DiagnosticStatus;
+  detail: string;
+  path?: string;
+  version?: string;
+  source?: string;
+  fix?: string;
+};
+/** The same report as `baum doctor --json`. */
+export type DiagnosticReport = {
+  status: "ok" | "warning" | "problem";
+  checks: DiagnosticCheck[];
+};
+export type Diagnostics = {
+  local: boolean;
+  generation_runner: boolean;
+  discovery: boolean;
+  index: boolean;
+  report: DiagnosticReport | null;
+};
 export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason: string }[] };
 export async function request<T>(
   path: string,

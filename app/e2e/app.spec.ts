@@ -183,6 +183,27 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(settings.getByRole("textbox", { name: "Model override" })).toHaveValue(
     "claude-sonnet-4-5",
   );
+  const diagnostics = page.getByRole("region", { name: "Diagnostics", exact: true });
+  await expect(diagnostics.getByText(/Overall: Problem/)).toBeVisible();
+  const problem = diagnostics.getByRole("listitem").filter({ hasText: "GitHub token" });
+  await expect(problem.getByText("Problem", { exact: true })).toBeVisible();
+  await expect(problem.getByText(/Run gh auth login, or set github_token/)).toBeVisible();
+  await expect(
+    diagnostics.getByRole("listitem").filter({ hasText: "GitHub CLI" }).getByText("Warning"),
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByRole("listitem").filter({ hasText: "git is available" }).getByText("OK"),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/diagnostics-wide.png", animations: "disabled" });
+  const again = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/diagnostics");
+  await diagnostics.getByRole("button", { name: "Check again" }).click();
+  await again;
+  await expect(diagnostics.getByRole("button", { name: "Check again" })).toBeEnabled();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(problem.getByText(/for-narrow-layouts/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await diagnostics.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/diagnostics-narrow.png", animations: "disabled" });
   expect(errors).toEqual([]);
   expect(foreign).toEqual([]);
 });
