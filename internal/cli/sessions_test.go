@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
@@ -26,6 +27,11 @@ func writeFile(t *testing.T, path, content string) {
 // it whose prompt carries an e-mail address, and empty Codex and Cursor stores.
 func sessionsFixture(t *testing.T) (repo string, storeFlags []string) {
 	t.Helper()
+	return sessionsFixtureOnBranch(t, "feature/x")
+}
+
+func sessionsFixtureOnBranch(t *testing.T, branch string) (repo string, storeFlags []string) {
+	t.Helper()
 	base := t.TempDir()
 	repo = filepath.Join(base, "demo")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
@@ -34,8 +40,8 @@ func sessionsFixture(t *testing.T) (repo string, storeFlags []string) {
 	claudeDir := filepath.Join(base, "claude")
 	const id = "aaaaaaaa-0000-4000-8000-000000000001"
 	writeFile(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(repo), id+".jsonl"),
-		fmt.Sprintf(`{"parentUuid":null,"isSidechain":false,"cwd":%[1]q,"gitBranch":"feature/x","type":"user","uuid":"u-1","sessionId":%[2]q,"timestamp":"2026-07-01T10:00:00.000Z","promptId":"p-1","message":{"role":"user","content":"ask ada.lovelace@example.com about the parser"}}
-`, repo, id))
+		fmt.Sprintf(`{"parentUuid":null,"isSidechain":false,"cwd":%[1]q,"gitBranch":%[3]q,"type":"user","uuid":"u-1","sessionId":%[2]q,"timestamp":"2026-07-01T10:00:00.000Z","promptId":"p-1","message":{"role":"user","content":"ask ada.lovelace@example.com about the parser"}}
+`, repo, id, branch))
 	return repo, []string{
 		"--claude-dir", claudeDir,
 		"--codex-dir", filepath.Join(base, "codex", "sessions"),
@@ -122,5 +128,25 @@ func TestParseSince(t *testing.T) {
 	}
 	if _, err := parseSince("soon", now); err == nil {
 		t.Error("garbage accepted")
+	}
+}
+
+func TestSessionsRedactsBranch(t *testing.T) {
+	repo, flags := sessionsFixtureOnBranch(t, "fix/ada.lovelace@example.com")
+	for _, args := range [][]string{{"sessions", repo}, {"sessions", "--json", repo}} {
+		stdout, stderr, err := run(t, append(args, flags...)...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stderr)
+		}
+		if strings.Contains(stdout, "ada.lovelace") || strings.Contains(stdout, "example.com") {
+			t.Errorf("%v leaked the branch address:\n%s", args, stdout)
+		}
+	}
+}
+
+func TestTruncateKeepsValidUTF8(t *testing.T) {
+	got := truncate(strings.Repeat("é", 40), 10)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncate = %q", got)
 	}
 }

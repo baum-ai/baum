@@ -380,10 +380,10 @@ stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
-| `anthropic` | the Anthropic API directly, with read-only file tools over the checkout |
+| `anthropic` | planned: the Anthropic API directly, with read-only file tools over the checkout |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
-| `cursor-agent` | `cursor-agent` confined to the checkout |
+| `cursor-agent` | planned: `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
