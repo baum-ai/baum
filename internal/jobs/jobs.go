@@ -318,7 +318,7 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 				q.jobs = before
 				return nil, errors.New("a job is already running for this pull request")
 			}
-			if j.Prepared.sameConfirmedInputs(p) {
+			if j.sameConfirmedInputs(p) {
 				out = append(out, *j)
 				continue
 			}
