@@ -221,3 +221,52 @@ describe("review section tier", () => {
     expect(header("high", "new")).toContain("3 · Shared behavior or compatibility");
   });
 });
+
+function attentionPage(refs: string[] | null, onlyAttentionRisk = false) {
+  const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+  const section = document.sections[0]!;
+  section.attention = refs === null ? null : { text: "Inspect these changes", refs };
+  if (onlyAttentionRisk) section.risks = section.risks.slice(0, 1);
+  const html = renderToStaticMarkup(
+    <ReviewSection
+      document={document}
+      section={section}
+      onSelectSection={() => {}}
+      idPrefix="old-"
+    />,
+  );
+  return new DOMParser().parseFromString(html, "text/html");
+}
+
+describe("attention risks", () => {
+  it("moves full risk cards and their evidence into attention without duplicating ids", () => {
+    const found = attentionPage(["rsk_1", "rsk_1"]);
+    const attention = found.querySelector('section[aria-label="Attention"]')!;
+    const risk = attention.querySelector('[id$="-rsk_1"]')!;
+    expect(risk).not.toBeNull();
+    expect(risk.id).toMatch(/^old-/);
+    expect(risk.textContent).toContain("Repository names");
+    expect(risk.textContent).toContain("Permissions");
+    expect(risk.querySelector("details")).not.toBeNull();
+    expect(found.querySelectorAll('[id$="-rsk_1"]')).toHaveLength(1);
+    const other = found.querySelector('section[aria-label="Other risks"]')!;
+    expect(other.querySelector('[id$="-rsk_old"]')).not.toBeNull();
+    expect(other.textContent).not.toContain("Repository names");
+  });
+
+  it("omits the bottom risk section when all risks are in attention", () => {
+    const found = attentionPage(["rsk_1"], true);
+    expect(found.querySelector('section[aria-label="Attention"] [id$="-rsk_1"]')).not.toBeNull();
+    expect(found.querySelector('section[aria-label="Other risks"]')).toBeNull();
+    expect(found.querySelector('section[aria-label="Risks"]')).toBeNull();
+  });
+
+  it.each([null, [], ["missing-reference"]])(
+    "keeps Risks when attention contains no risks: %s",
+    (refs) => {
+      const found = attentionPage(refs);
+      expect(found.querySelector('section[aria-label="Risks"] [id$="-rsk_1"]')).not.toBeNull();
+      expect(found.querySelector('section[aria-label="Other risks"]')).toBeNull();
+    },
+  );
+});

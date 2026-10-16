@@ -224,3 +224,24 @@ test("description images draw nothing, as the page has no source for attachments
   expect(attachmentRequests).toEqual([]);
   expect(foreignRequests).toEqual([]);
 });
+
+test("attention contains full risk evidence and leaves only other risks below", async ({
+  page,
+}) => {
+  const doc = sampleDocument();
+  const target = section(doc, "sec_retry");
+  const first = target.risks[0]!;
+  target.attention = { text: "Inspect this risk first", refs: [first.id] };
+  target.risks.push({ ...first, id: "rsk_other", text: "Another risk to inspect" });
+  await serveDocument(page, doc);
+  await page.goto(retry);
+  const pane = page.locator("#review-section");
+  const attention = pane.getByRole("region", { name: "Attention", exact: true });
+  await expect(attention).toContainText(first.text);
+  await expect(attention.locator(`[id$="-${first.id}"]`)).toHaveCount(1);
+  await expect(attention.getByText("View ↓", { exact: true })).toHaveCount(0);
+  const other = pane.getByRole("region", { name: "Other risks", exact: true });
+  await expect(other).toContainText("Another risk to inspect");
+  await expect(other).not.toContainText(first.text);
+  await expect(pane.locator(`[id$="-${first.id}"]`)).toHaveCount(1);
+});
