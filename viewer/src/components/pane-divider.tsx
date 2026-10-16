@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 
 import { clampWidth, CONVERSATION_LIMITS, type PaneLimits } from "../use-conversation-width";
 import { cn, FOCUS_RING } from "./classnames";
@@ -18,6 +18,7 @@ import { cn, FOCUS_RING } from "./classnames";
 export function PaneDivider({
   width,
   onWidth,
+  onPreview,
   onFit,
   reviewRef,
   paneRef,
@@ -29,6 +30,11 @@ export function PaneDivider({
   width: number;
   /** A width the reader chose. Remembered. */
   onWidth: (width: number) => void;
+  /** Shows a width while the pointer drags, without choosing it: the caller
+   *  sets it where the layout reads it, so nothing re-renders per move.
+   *  `onWidth` then gets the last one, once, when the drag ends. Without it,
+   *  every move is chosen. */
+  onPreview?: (width: number) => void;
   /** The chosen width brought inside what the row can give. Not remembered,
    *  so a window too narrow to show the reader's split does not erase it.
    *  Only one pane may fit itself to the row: two each giving the review pane
@@ -45,6 +51,24 @@ export function PaneDivider({
   className?: string;
 }) {
   const [dragging, setDragging] = useState(false);
+  // The last width previewed by the drag in progress.
+  const previewed = useRef<number | null>(null);
+  // Set when a drag ends, so the next render puts the grid's variable back in
+  // step with the width the state settled on, which may be none of the widths
+  // the drag showed (the chosen width can clamp to the one it started from, and
+  // React then writes nothing).
+  const resync = useRef(false);
+  const finish = (commit: boolean) => {
+    if (commit && previewed.current !== null) onWidth(previewed.current);
+    previewed.current = null;
+    resync.current = true;
+    setDragging(false);
+  };
+  useEffect(() => {
+    if (!resync.current || dragging) return;
+    resync.current = false;
+    onPreview?.(width);
+  });
   // Undefined rather than zero when either pane has not been laid out yet: a
   // zero would clamp the width to the minimum on the way past, and a reader
   // would find their split reset by a measurement taken too early.
@@ -96,14 +120,20 @@ export function PaneDivider({
         if (!dragging) return;
         const box = paneRef.current?.getBoundingClientRect();
         if (!box) return;
-        onWidth(clamp(side === "after" ? box.right - event.clientX : event.clientX - box.left));
+        const next = clamp(side === "after" ? box.right - event.clientX : event.clientX - box.left);
+        if (!onPreview) return onWidth(next);
+        previewed.current = next;
+        onPreview(next);
       }}
       onPointerUp={(event) => {
         event.currentTarget.releasePointerCapture(event.pointerId);
-        setDragging(false);
+        finish(true);
       }}
-      onPointerCancel={() => setDragging(false)}
-      onLostPointerCapture={() => setDragging(false)}
+      onPointerCancel={() => finish(false)}
+      // Capture lost without a pointerup: what the drag showed is chosen.
+      onLostPointerCapture={() => {
+        if (dragging) finish(true);
+      }}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 64 : 16;
         if (event.key === grow) {
