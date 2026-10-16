@@ -307,5 +307,8 @@
     "review_threads": true,
     "reviews": true,
     "sessions": true
-  }
+  },
+  "truncated": [
+    "checkout omitted 1 file(s): binary"
+  ]
 }
