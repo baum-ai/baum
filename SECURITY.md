@@ -232,7 +232,11 @@ providers, GitHub, or the coding-agent tools whose sessions baum reads.
 local data; every API requires the random private launch capability or an
 HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
 browser receives the capability in a URL fragment, removes it from history,
-and sends it in the same-origin JSON exchange body. All mutations require the
+and sends it in the same-origin JSON exchange body. Browsers send cookies to
+every port of a host, so the cookie is scoped to a second random secret path,
+`/s/<namespace>/`, returned only by the exchange; another service on a
+loopback port never receives it, and the cookie authorizes nothing outside
+that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication. No route enables CORS. The capability is valid only while the
 instance runs; keep the printed URL and its mode-0600 instance file private.
