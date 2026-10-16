@@ -174,8 +174,10 @@ and cannot verify evidence after the pull request moves to a newer head.
 Missing or unsupported evidence is downgraded. Failures leave the document
 unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
-retry against the latest document. Refresh updates the store, not JSON files
-previously exported with `generate -o`.
+retry against the latest document. While a generation of the pull request is
+running, refresh fails with a conflict rather than change the document that
+generation builds on; retry once it finishes. Refresh updates the store, not
+JSON files previously exported with `generate -o`.
 
 ### baum generate
 
@@ -229,7 +231,10 @@ generation remain immutable; the latest version can refresh its evidence.
 A second generation supplies the previous document to the shared history logic,
 which retains section IDs, stale sections and risk introductions/mitigations.
 Concurrent runs may both generate from the same version; only one publishes,
-and the other fails with a conflict asking you to generate again. Generation
+and the other fails with a conflict asking you to generate again. Publication
+also compares the exact document generation started from, so a version whose
+evidence a refresh replaced in the meantime is a conflict too, never a
+newer version that drops the refreshed evidence. Generation
 failures and cancellation before publication publish no version. A later stdout
 or export failure leaves the successfully generated version stored. An existing store is always preferred,
 even if read-only; a write then fails rather than silently hiding its history.
@@ -647,7 +652,9 @@ checks from the saved revision never masquerade as checks on the new head. That
 read happens before the refreshed document is published: if it fails, or any
 other read does, the saved document stays unchanged and the PR is retried.
 Concurrent generation/refresh uses the store's compare-and-swap publication;
-a race is retried on a later pass instead of overwriting newer work.
+a race is retried on a later pass instead of overwriting newer work, and is
+not reported as a failure. A PR whose generation is running is not refreshed
+until it finishes, so background work never makes paid generation conflict.
 
 `GET /api/background` exposes per-repository success, fixed failure category and
 next retry; authenticated index events update the app. Discovery rate information

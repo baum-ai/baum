@@ -18,14 +18,14 @@ func Publish(ctx context.Context, versions *store.Store, key store.Key, o Option
 			_ = WriteDiagnostics(o.DiagnosticsOut, err, result.Outcome)
 		}
 	}()
+	// Publication is fenced on this exact document: a refresh that replaces it
+	// during generation makes the generated version a conflict, not latest.
 	latest, err := versions.Latest(ctx, key)
-	previous := 0
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return result, err
 	}
 	if err == nil {
-		previous = latest.Metadata.Version
-		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, previous)
+		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, latest.Metadata.Version)
 		if err != nil {
 			return result, err
 		}
@@ -78,7 +78,7 @@ func Publish(ctx context.Context, versions *store.Store, key store.Key, o Option
 	if cost != nil {
 		result.Metadata.RecordedCostUSD = cost(result)
 	}
-	if err = versions.Put(ctx, key, previous, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
+	if err = versions.Put(ctx, key, latest, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true

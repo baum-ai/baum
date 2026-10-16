@@ -3,6 +3,7 @@ package background
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/store"
 )
 
 type registry []repos.Clone
@@ -63,6 +65,18 @@ func TestPeriodicDiscoverySavedHistoryAndDedup(t *testing.T) {
 	s.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/api/background", nil))
 	if !strings.Contains(response.Body.String(), "last_success") || strings.Contains(response.Body.String(), "one") {
 		t.Fatal(response.Body.String())
+	}
+}
+func TestRefreshConflictIsRetriedWithoutFailure(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		return discovery.Observation{Number: n, HeadSHA: "new"}, fmt.Errorf("%w; a generation is in progress", store.ErrConflict)
+	}}
+	s.Sync(context.Background())
+	state := s.state("acme/app")
+	if state.Error != "" || len(state.Problems) != 0 || state.Failures != 0 || state.NextRefresh != now.Add(time.Minute) || len(d.observations) != 1 {
+		t.Fatalf("conflict treated as failure: %+v", state)
 	}
 }
 func TestOfflineBackoffAndRecovery(t *testing.T) {

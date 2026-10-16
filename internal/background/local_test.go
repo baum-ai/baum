@@ -84,7 +84,7 @@ func savedReview(t *testing.T) fixture {
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 	attachmentID := "att_e7b5a4d8274ca858a94cbc586c93c37a"
 	saved.Attachments = []store.Attachment{{ID: attachmentID, ContentType: "image/png", Bytes: png}}
-	if err := versions.Put(ctx, key, 0, saved); err != nil {
+	if err := versions.Put(ctx, key, store.Version{}, saved); err != nil {
 		t.Fatal(err)
 	}
 	return fixture{versions: versions, key: key, clone: repos.Clone{Repository: key.Repository, Path: dir, CommonDir: common}, saved: saved, head: head, doc: doc}
@@ -131,7 +131,7 @@ func TestLocalRefreshPreservesVersionsAndRejectsConcurrentGeneration(t *testing.
 	second.Metadata.Version = 2
 	remote.before = func() {
 		remote.before = nil
-		if err := versions.Put(ctx, key, 1, second); err != nil {
+		if err := versions.Put(ctx, key, latest, second); err != nil {
 			t.Fatal(err)
 		}
 	}
