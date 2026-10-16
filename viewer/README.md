@@ -271,6 +271,11 @@ html:has([data-review-page]) {
 The section sheet and its scrim sit at `--z-sheet` (40), over the sticky
 bars (`--z-sticky`, 30).
 
+Section attention callouts contain the full cards for their referenced risks,
+including evidence and lifecycle badges. Those risks appear only there; remaining
+risks follow under **Other risks**. Without risks in attention the section keeps
+its **Risks** heading, and when every risk is in attention no lower list is shown.
+
 ## Syntax highlighting
 
 `CodeDiff` colours the code in a file's hunks by the language of its path

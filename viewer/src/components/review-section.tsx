@@ -92,6 +92,42 @@ export function ReviewSection({
   const behaviorStatesStep = section.blocks.some((block) => block.kind === "behavior");
   const tiles = showTiles ? <SectionTiles document={document} section={section} /> : null;
 
+  const attentionRiskIds = new Set(section.attention?.refs ?? []);
+  const attentionRisks = section.risks.filter((risk) => attentionRiskIds.has(risk.id));
+  const otherRisks = section.risks.filter((risk) => !attentionRiskIds.has(risk.id));
+  const renderRisk = (risk: Section["risks"][number], position: number) => (
+    <Item key={risk.id} id={itemId(risk.id)} className="flex gap-3">
+      <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
+        {position + 1}
+      </span>
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <TierBadge tier={risk.tier} />
+          <RiskCategoryTag category={risk.category} />
+          {riskLifecycleLabel(risk, document.review, section.derived.state) && (
+            <Badge size="compact" tone={riskLifecycleTone(risk, section.derived.state)}>
+              {riskLifecycleLabel(risk, document.review, section.derived.state)}
+            </Badge>
+          )}
+        </div>
+        <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
+        {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
+        <HunkEvidence
+          document={document}
+          anchors={risk.anchors}
+          diffClassName="-ml-8 sm:ml-0"
+          historicalVersion={riskEvidenceReviewVersion(
+            risk,
+            derived.state,
+            document.review.version,
+            activeVersions,
+          )}
+          loadVersion={loadVersion}
+        />
+      </div>
+    </Item>
+  );
+
   return (
     <>
       {/* The pills sit above the title rather than beside it, so a long title
@@ -144,6 +180,7 @@ export function ReviewSection({
             attention={section.attention}
             section={section}
             onJump={(ref) => scrollToItem(itemId(ref))}
+            risks={attentionRisks.map(renderRisk)}
           />
         )}
 
@@ -161,46 +198,15 @@ export function ReviewSection({
           />
         ))}
 
-        <Part label="Risks">
-          {section.risks.length === 0 ? (
-            <None>No risks were identified in this section.</None>
-          ) : (
-            <ol className="space-y-2">
-              {section.risks.map((risk, position) => (
-                <Item key={risk.id} id={itemId(risk.id)} className="flex gap-3">
-                  <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
-                    {position + 1}
-                  </span>
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <TierBadge tier={risk.tier} />
-                      <RiskCategoryTag category={risk.category} />
-                      {riskLifecycleLabel(risk, document.review, section.derived.state) && (
-                        <Badge size="compact" tone={riskLifecycleTone(risk, section.derived.state)}>
-                          {riskLifecycleLabel(risk, document.review, section.derived.state)}
-                        </Badge>
-                      )}
-                    </div>
-                    <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
-                    {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
-                    <HunkEvidence
-                      document={document}
-                      anchors={risk.anchors}
-                      diffClassName="-ml-8 sm:ml-0"
-                      historicalVersion={riskEvidenceReviewVersion(
-                        risk,
-                        derived.state,
-                        document.review.version,
-                        activeVersions,
-                      )}
-                      loadVersion={loadVersion}
-                    />
-                  </div>
-                </Item>
-              ))}
-            </ol>
-          )}
-        </Part>
+        {(otherRisks.length > 0 || attentionRisks.length === 0) && (
+          <Part label={attentionRisks.length > 0 ? "Other risks" : "Risks"}>
+            {otherRisks.length === 0 ? (
+              <None>No risks were identified in this section.</None>
+            ) : (
+              <ol className="space-y-2">{otherRisks.map(renderRisk)}</ol>
+            )}
+          </Part>
+        )}
 
         {findings.length > 0 && (
           <Part label="Agent findings">
@@ -322,21 +328,25 @@ function resolveRef(section: Section, ref: string): AttentionRef {
 /** The one thing to inspect in a section. It wears the same neutral card as
  *  the rest of the review so it does not shout over the page; the warning mark
  *  carries its urgency, the sentence leads in primary text, and each item it
- *  points at is one line with its own chip and a jump to where it is listed. */
+ *  points at carries its full risk card or a jump to where it is listed. */
 function AttentionCallout({
   attention,
   section,
   onJump,
+  risks,
 }: {
   attention: NonNullable<Section["attention"]>;
   section: Section;
   onJump: (ref: string) => void;
+  risks: ReactNode[];
 }) {
-  const refs = attention.refs.map((ref) => resolveRef(section, ref));
+  const refs = attention.refs
+    .filter((ref) => !section.risks.some((risk) => risk.id === ref))
+    .map((ref) => resolveRef(section, ref));
   return (
     <section
       aria-label="Attention"
-      className="overflow-hidden rounded-(--radius-md) border border-(--border-default) bg-(--surface-card)"
+      className="min-w-0 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card)"
     >
       <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-4 py-2">
         <span aria-hidden className="flex text-(--status-critical)">
@@ -349,6 +359,9 @@ function AttentionCallout({
       <Markdown className="max-w-[62rem] px-4 py-3 text-base font-medium leading-[1.5] text-(--text-primary)">
         {attention.text}
       </Markdown>
+      {risks.length > 0 && (
+        <ol className="space-y-2 border-t border-(--border-subtle) p-4">{risks}</ol>
+      )}
       {refs.length > 0 && (
         <ul
           aria-label="What to look at"

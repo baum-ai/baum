@@ -67,7 +67,7 @@ describe("JSON review tiles", () => {
       section.indexOf('aria-label="Review tiles"'),
     );
     expect(section.indexOf('aria-label="Review tiles"')).toBeLessThan(
-      section.indexOf('aria-label="Risks"'),
+      section.indexOf('aria-label="Other risks"'),
     );
     const missing = { ...tile, data: {} };
     expect(validReviewTile(missing, doc)).toBe(false);
@@ -181,7 +181,7 @@ describe("JSON review tiles", () => {
       />,
     );
     expect(after).toContain(doc.sections[0]!.summary.text);
-    expect(after).toContain("Risks");
+    expect(after).toContain("Other risks");
     expect(after).not.toContain('aria-label="Evidence"');
   });
 
@@ -517,13 +517,13 @@ describe("JSON review tiles", () => {
     );
     const box = html.slice(
       html.indexOf('aria-label="Attention"'),
-      html.indexOf("</section>", html.indexOf('aria-label="Attention"')),
+      html.indexOf('aria-label="Behavior"'),
     );
     expect(box).toContain("Check the lock order.");
     expect(box).toContain(risk.text);
     expect(box).not.toContain("status-critical-bg");
-    // One jump for the risk; the reference that names nothing is text, not a link.
-    expect(box.match(/View ↓/g)).toHaveLength(1);
+    // Risks render in place; the reference that names nothing stays text.
+    expect(box).not.toContain("View ↓");
     expect(box).toContain("rsk_missing");
   });
 
