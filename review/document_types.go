@@ -19,15 +19,20 @@ func SectionTitle(title string, position int) string {
 }
 
 // labelBlankSectionTitles applies SectionTitle to a stored document, so it
-// still validates when it is refreshed or carried into the next version.
-func labelBlankSectionTitles(document map[string]any) {
+// still validates when it is refreshed or carried into the next version, and
+// reports whether it labelled any section.
+func labelBlankSectionTitles(document map[string]any) bool {
+	labelled := false
 	sections, _ := document["sections"].([]any)
 	for i, raw := range sections {
 		if section, ok := raw.(map[string]any); ok {
 			title, _ := section["title"].(string)
-			section["title"] = SectionTitle(title, i)
+			if labelledTitle := SectionTitle(title, i); labelledTitle != section["title"] {
+				section["title"], labelled = labelledTitle, true
+			}
 		}
 	}
+	return labelled
 }
 
 // These types model the document fields used by generation and refresh.
@@ -489,11 +494,10 @@ func documentTime(value *time.Time) optionalJSON[*string] {
 }
 
 func (v *DocumentValidator) decodeFullDocument(data []byte) (*reviewDocument, error) {
-	value, err := decodeObject(data, "stored review")
+	value, data, err := decodeStored(data, "stored review")
 	if err != nil {
 		return nil, err
 	}
-	labelBlankSectionTitles(value)
 	if err := v.full.Validate(value); err != nil {
 		return nil, err
 	}

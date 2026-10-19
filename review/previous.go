@@ -6,8 +6,14 @@ import (
 	"github.com/baum-ai/baum/bundle"
 )
 
-// PreviousVersionOf carries a stored document into the next bundle without derived fields.
+// PreviousVersionOf carries a stored document into the next bundle without
+// derived fields, after the stored-document rules (normalizeStored), so the
+// next version keeps identifiers the current schema accepts.
 func PreviousVersionOf(document []byte, version int) (*bundle.PreviousVersion, error) {
+	_, document, err := decodeStored(document, "stored review")
+	if err != nil {
+		return nil, err
+	}
 	var stored struct {
 		Sections []json.RawMessage `json:"sections"`
 		Index    struct {
