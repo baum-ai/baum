@@ -395,11 +395,7 @@ func isSqlcOutputPath(lowerPath, base string) bool {
 	if dir != "sqlc/" && !strings.HasSuffix(dir, "/sqlc/") {
 		return false
 	}
-	switch base {
-	case "querier.go", "db.go", "models.go", "batch.go", "copyfrom.go":
-		return true
-	}
-	return false
+	return strings.HasSuffix(base, ".go")
 }
 
 func isTestPath(lowerPath, base string) bool {
