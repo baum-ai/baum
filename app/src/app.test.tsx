@@ -116,7 +116,7 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
 it("shows actionable launch authorization failure", async () => {
   fail = true;
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Open the baum desktop app");
+  expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate selected");
 });
 it("renders review states and unknown costs without inventing zero", async () => {

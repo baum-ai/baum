@@ -76,8 +76,7 @@ export function DiagnosticsSection() {
         </Button>
       </div>
       <p className="text-xs">
-        The same report as <code>baum internal doctor</code>: which tools and credentials baum found
-        on this machine, never their values.
+        Which tools and credentials baum found on this machine, never their values.
       </p>
       {error ? (
         <Alert>

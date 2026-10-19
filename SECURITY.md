@@ -408,7 +408,7 @@ environment is therefore not used. Your home, XDG and temporary directories
 come only from the starting environment, never from the shell, because they
 decide which state directory, lock and job journal the daemon uses. The SSH
 agent socket is the starting environment's, else the shell's; it is used only
-to fetch a missing pull request commit from your clone's remote, as `baum
+to fetch a missing pull request commit from your clone's remote, as `baum internal
 generate` would, never given to an agent backend, and dropped when it no longer
 exists. The daemon's fetches never prompt: git's terminal prompts and SSH's
 askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout, so
@@ -469,6 +469,6 @@ The server's bootstrap page exchanges the fragment token and clears it from
 history before the embedded local application loads; the application's files
 are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
-same sanitizers and safe rendering components as the hosted PR page and `baum
+same sanitizers and safe rendering components as the hosted PR page and `baum internal
 view`. Stored document rendering failures remain within the PR pane. The app
 never supplies approvals, merge actions or discussion mutation controls.

@@ -1533,12 +1533,11 @@ and selected-version provenance without changing the review document schema.
 
 `internal/daemon` runs one long-lived local server per user, shared by the
 desktop app and coding-agent hooks; the `baum` command line is how both reach
-it. It owns the authenticated app server above and everything that used to run
-inside the former `ui` command: registry, discovery, review index,
-background refresh, diagnostics and the generation queue, and the automatic
-generation scheduler. There is one server implementation, and no command opens
-it in a browser: the desktop app reads the launch URL from the daemon's
-`credential.json`.
+it. It owns the authenticated app server above, and runs the registry,
+discovery, review index, background refresh, diagnostics, the generation queue
+and the automatic generation scheduler. There is one server implementation and
+no command opens it in a browser: the desktop app reads the launch URL from the
+daemon's `credential.json`.
 
 The top-level `baum --help` lists only what users run: `hooks`, `daemon` and
 the hosted service commands. The engine commands (`generate`, `bundle`, `view`,

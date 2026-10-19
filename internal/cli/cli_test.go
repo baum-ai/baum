@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -90,7 +91,7 @@ func TestInternalHelpListsEngineCommands(t *testing.T) {
 func TestInternalCommandsDispatch(t *testing.T) {
 	for name, flag := range map[string]string{
 		"generate": "--backend", "bundle": "--pr", "view": "--sample", "validate": "--bundle",
-		"refresh": "--pr", "sessions": "--json", "repos": "--help", "doctor": "--offline",
+		"refresh": "--pr", "sessions": "--json", "repos": "add", "doctor": "--offline",
 	} {
 		stdout, _, err := run(t, "internal", name, "--help")
 		if err != nil || !strings.Contains(stdout, flag) {
@@ -100,22 +101,27 @@ func TestInternalCommandsDispatch(t *testing.T) {
 			t.Errorf("top-level %s still answers", name)
 		}
 	}
+	if stdout, _, err := run(t, "internal", "repos", "add", "--help"); err != nil || !strings.Contains(stdout, "--automatic") {
+		t.Errorf("internal repos add --help: %v\n%s", err, stdout)
+	}
 	if _, _, err := run(t, "ui"); err == nil {
 		t.Error("top-level ui still answers")
 	}
 }
 
-// The browser launcher command was removed with no alias; nothing may send
-// users to it.
-func TestNoReferenceToRemovedUICommand(t *testing.T) {
+// The commands that moved under "baum internal", and the removed browser
+// launcher, have no top-level spelling any more; nothing may send users to one.
+func TestNoReferenceToMovedCommandSpellings(t *testing.T) {
 	root := filepath.Join("..", "..")
-	banned := []byte("baum" + " ui")
+	banned := regexp.MustCompile(`baum\s+(ui|generate|bundle|view|validate|refresh|repos|sessions|doctor)\b`)
+	skipped := map[string]bool{"dist": true, "node_modules": true, "playwright-report": true, "test-results": true, "coverage": true}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); name == "node_modules" || name == "dist" || name == ".git" {
+			name := d.Name()
+			if skipped[name] || (strings.HasPrefix(name, ".") && name != ".github" && path != root) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -129,8 +135,8 @@ func TestNoReferenceToRemovedUICommand(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if bytes.Contains(data, banned) {
-			t.Errorf("%s refers to the removed %s command", path, banned)
+		if m := banned.Find(data); m != nil {
+			t.Errorf("%s refers to the old spelling %q", path, m)
 		}
 		return nil
 	})
