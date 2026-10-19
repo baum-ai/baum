@@ -141,16 +141,16 @@ func baumPrefix(spec Spec, event string) string {
 		spec.Slug, event)
 }
 
-// LegacyName is the CLI's name before the product was renamed to baum, spelled
+// legacyName is the CLI's name before the product was renamed to baum, spelled
 // in parts so the published sources do not carry it.
-const LegacyName = "recount" + "able"
+const legacyName = "recount" + "able"
 
 // legacyPrefix is the dispatcher prefix written before the product was renamed
 // to baum. Repositories set up then still commit it, so it is kept only to
 // recognise and replace those hooks; nothing generates or runs it.
 func legacyPrefix(spec Spec, event string) string {
 	return fmt.Sprintf(`sh -c 'if command -v %[3]s >/dev/null 2>&1 && %[3]s hooks agent --check %[1]s %[2]s >/dev/null 2>&1; then exec %[3]s hooks agent %[1]s %[2]s; fi; `,
-		spec.Slug, event, LegacyName)
+		spec.Slug, event, legacyName)
 }
 
 // entireBody renders the command `entire enable` writes for one agent event,
