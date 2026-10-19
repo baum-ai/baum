@@ -321,12 +321,32 @@ func checkDurationNode(p *unstable.Parser, path string, prefix []string, kv *uns
 		}
 		return nil
 	}
-	name := strings.Join(key, ".")
-	if value.Kind == unstable.String || !slices.Contains(durationKeys, name) {
+	name, ok := durationKey(key)
+	if value.Kind == unstable.String || !ok {
 		return nil
 	}
 	shape := p.Shape(value.Raw)
 	return fmt.Errorf(`parsing %s: wrong type or value for %s at line %d, column %d: a duration is a string; write it like "10m"`, path, name, shape.Start.Line, shape.Start.Column)
+}
+
+// durationKey returns the durationKeys name that key decodes into. go-toml
+// matches keys to fields without regard to case, so the parts are compared the
+// same way; a quoted key containing a dot is one part and matches nothing.
+func durationKey(key []string) (string, bool) {
+next:
+	for _, name := range durationKeys {
+		parts := strings.Split(name, ".")
+		if len(parts) != len(key) {
+			continue
+		}
+		for i, part := range parts {
+			if !strings.EqualFold(part, key[i]) {
+				continue next
+			}
+		}
+		return name, true
+	}
+	return "", false
 }
 
 // parseError reports a failure to read the file by position and key, never by

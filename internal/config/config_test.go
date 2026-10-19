@@ -352,6 +352,9 @@ func TestDurationFieldsOnlyTakeStrings(t *testing.T) {
 		{"inline table integer", "budgets = { run_timeout = 10 }\n", nil, 0, []string{"budgets.run_timeout at line 1, column", hint}},
 		{"dotted key integer", "budgets.pass_timeout = 10\n", nil, 0, []string{"budgets.pass_timeout at line 1, column", hint}},
 		{"run float", "[budgets]\nrun_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		// go-toml matches keys to fields without regard to case.
+		{"upper-case key integer", "[Budgets]\nRUN_TIMEOUT = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"upper-case key string", "[BUDGETS]\nPass_Timeout = \"4m\"\n", func(b Budgets) Duration { return b.PassTimeout }, 4 * time.Minute, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
