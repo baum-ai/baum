@@ -312,7 +312,8 @@ func keyParts(it unstable.Iterator) []string {
 func checkDurationNode(p *unstable.Parser, path string, prefix []string, kv *unstable.Node) error {
 	key := append(slices.Clone(prefix), keyParts(kv.Key())...)
 	value := kv.Value()
-	if value.Kind == unstable.InlineTable {
+	name, ok := durationKey(key)
+	if value.Kind == unstable.InlineTable && !ok {
 		children := value.Children()
 		for children.Next() {
 			if err := checkDurationNode(p, path, key, children.Node()); err != nil {
@@ -321,7 +322,6 @@ func checkDurationNode(p *unstable.Parser, path string, prefix []string, kv *uns
 		}
 		return nil
 	}
-	name, ok := durationKey(key)
 	if value.Kind == unstable.String || !ok {
 		return nil
 	}

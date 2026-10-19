@@ -348,6 +348,7 @@ func TestDurationFieldsOnlyTakeStrings(t *testing.T) {
 		{"pass integer", "[budgets]\npass_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
 		{"pass float", "[budgets]\npass_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
 		{"run string", "[budgets]\nrun_timeout = \"3m\"\n", func(b Budgets) Duration { return b.RunTimeout }, 3 * time.Minute, nil},
+		{"run inline table", "[budgets]\nrun_timeout = { value = 10 }\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
 		{"run integer", "[budgets]\nrun_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
 		{"inline table integer", "budgets = { run_timeout = 10 }\n", nil, 0, []string{"budgets.run_timeout at line 1, column", hint}},
 		{"dotted key integer", "budgets.pass_timeout = 10\n", nil, 0, []string{"budgets.pass_timeout at line 1, column", hint}},
