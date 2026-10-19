@@ -189,7 +189,7 @@ func (c *Client) Ensure(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	defer func() { _ = start.release() }()
+	defer func() { _ = start.Release() }()
 	for attempt := 0; attempt < 3; attempt++ {
 		status, err = c.Hello(ctx)
 		if err == nil {

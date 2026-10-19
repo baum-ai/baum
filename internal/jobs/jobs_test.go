@@ -279,6 +279,27 @@ func (s *stuckExecutor) Execute(context.Context, Prepared, func(Progress)) (*flo
 	<-s.release
 	return nil, nil
 }
+func TestOneProcessOwnsTheJournal(t *testing.T) {
+	path := filepath.Join(privateDir(t), "jobs.json")
+	price := 1.0
+	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := Open(path, &fakeExecutor{price: &price}, 1, nil); err == nil {
+		second.Close()
+		t.Fatal("a second queue opened the same journal")
+	}
+	if !first.Idle() {
+		t.Fatal("empty queue not idle")
+	}
+	first.Close()
+	again, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal("journal still locked after Close:", err)
+	}
+	again.Close()
+}
 func TestQueuePersistenceFailureDoesNotStartSpend(t *testing.T) {
 	q, f := newQueue(t)
 	e := estimate(t, q, "single", Item{"clone", 1})

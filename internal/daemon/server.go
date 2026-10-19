@@ -107,7 +107,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = lock.release() }()
+	defer func() { _ = lock.Release() }()
 	// Holding the lock proves an earlier daemon's files are stale.
 	for _, stale := range []string{paths.CredentialFile(), paths.statusFile(), paths.Socket} {
 		if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {

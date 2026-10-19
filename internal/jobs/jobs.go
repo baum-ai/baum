@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/generate"
 )
 
@@ -93,6 +94,9 @@ type Queue struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	changed   func(Job)
+	// lock keeps every other process from opening this journal.
+	lock        *filelock.Lock
+	releaseOnce sync.Once
 }
 
 func id() string {
@@ -149,8 +153,23 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			return nil, errors.New("job state directory must be private (0700)")
 		}
 	}
+	// One process owns a journal: two queues on one file would run confirmed
+	// jobs twice and overwrite each other's records.
+	lock, err := filelock.TryLock(context.Background(), path+".lock")
+	if errors.Is(err, filelock.ErrLocked) {
+		return nil, errors.New("another baum process is running this job queue")
+	}
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed}
+	q := &Queue{path: path, executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = lock.Release()
+		}
+	}()
 	raw, e := os.ReadFile(path)
 	if e == nil {
 		if len(raw) > 32<<20 {
@@ -186,6 +205,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		go q.worker()
 	}
 	q.signal()
+	opened = true
 	return q, nil
 }
 func (q *Queue) save() error {
@@ -218,10 +238,26 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 	go func() { q.wg.Wait(); close(done) }()
 	select {
 	case <-done:
+		// Workers have saved their last records; another process may open
+		// the journal now. A worker still running at the deadline keeps the
+		// lock until this process exits.
+		q.releaseOnce.Do(func() { _ = q.lock.Release() })
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// Idle reports whether no job is queued or running.
+func (q *Queue) Idle() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, j := range q.jobs {
+		if j.State == "queued" || j.State == "running" {
+			return false
+		}
+	}
+	return true
 }
 func (q *Queue) List() []Job {
 	q.mu.Lock()

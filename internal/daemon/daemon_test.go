@@ -265,7 +265,7 @@ func TestEnsureReportsDaemonThatHoldsTheLockButDoesNotAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = lock.release() }()
+	defer func() { _ = lock.Release() }()
 	if err = writePrivate(paths.statusFile(), Status{PID: 4242}); err != nil {
 		t.Fatal(err)
 	}
