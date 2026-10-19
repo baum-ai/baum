@@ -1476,6 +1476,10 @@ without duplicating review documents. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+A confirmation covers the estimate, isolation for a fork or an author without
+known write access, and, for a subscription-billed backend, that its cost is
+unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
+server, never trusted from the browser.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 The runner has no subprocess invocation of baum itself. Only the existing
@@ -1490,7 +1494,11 @@ An installed download is stored with its signature in the job state directory.
 `baum ui` re-verifies and installs it before opening the queue, so recovered
 jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
-a different priced model. Unknown actual usage remains null.
+a different priced model, and an item whose model has no price is blocked. The
+one exception is a backend billed outside the list (cursor-agent): its item has
+a nil estimate with an `estimate_reason`, the total is unknown, and
+`Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
+acknowledgement. Unknown actual usage remains null.
 
 ### Local application presentation
 
