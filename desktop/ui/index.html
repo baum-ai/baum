@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>baum</title>
+    <link rel="stylesheet" href="screen.css" />
+    <script src="screen.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <section id="connecting">
+        <div class="spinner" aria-hidden="true"></div>
+        <h1>Starting baum…</h1>
+        <p>Connecting to the baum daemon on this computer.</p>
+      </section>
+      <section id="failed" hidden>
+        <h1>baum is not running</h1>
+        <p id="message"></p>
+        <button id="reconnect" type="button">Start baum again</button>
+        <details id="details" hidden>
+          <summary>Recent daemon log</summary>
+          <pre id="log"></pre>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>

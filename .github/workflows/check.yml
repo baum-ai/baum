@@ -274,3 +274,66 @@ jobs:
 
       - name: Verify the archives
         run: bash scripts/release-verify.sh
+
+  desktop:
+    # The Tauri shell in desktop/, natively on the platforms it ships for
+    # first. Its tests use stand-in baum binaries, but every build needs the
+    # bundled one, so it is built first.
+    name: Desktop app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install WebKitGTK and GTK development packages
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev libssl-dev
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.99.1
+
+      - name: Cache Cargo registry and build output
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            desktop/target
+          key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock') }}
+          restore-keys: desktop-${{ runner.os }}-
+
+      - name: Build the bundled baum binary
+        working-directory: .
+        run: sh desktop/scripts/sidecar.sh
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked

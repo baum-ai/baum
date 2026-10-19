@@ -1438,3 +1438,12 @@ accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports; missing pricing dimensions leave a
 nullable cost and a fixed reason. The local SPA renders both job accounting
 and selected-version provenance without changing the review document schema.
+
+## Desktop app
+
+`desktop/` is a Tauri v2 shell, a Rust crate outside the Go module's
+packages. It bundles the release `baum` binary and depends on it only through
+`baum daemon ensure --json` and the daemon's private credential file.
+Everything that knows where the daemon lives stays in Go. The shell owns the
+window, its navigation policy and the reconnect screen; the daemon serves
+`app/` to it like any loopback client. See [`desktop/README.md`](desktop/README.md).

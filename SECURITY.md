@@ -306,3 +306,19 @@ request resolves under it. Every application request is same-origin; the app has
 same sanitizers and safe rendering components as the hosted PR page and `baum
 view`. Stored document rendering failures remain within the PR pane. The app
 never supplies approvals, merge actions or discussion mutation controls.
+
+## Desktop app
+
+The desktop app (`desktop/`) is a window onto your `baum daemon` and adds no
+API of its own. It runs the bundled `baum daemon ensure`, then reads the
+daemon's launch URL from a credential file in the daemon's state directory.
+It accepts the file only when it is private to you and names a
+`127.0.0.1` launch URL for that daemon, and it never logs that URL.
+
+The window loads only its bundled connecting screen and the attached daemon's
+loopback origin. Links to other web hosts open in your default browser; other
+loopback servers, other schemes and new windows are refused. The daemon's
+pages get no Tauri capability, so they cannot call the app's commands or any
+plugin. The bundled screen may only read the connection state and ask to
+reconnect. The app makes no network requests other than loopback requests
+to the daemon. Quitting it leaves the daemon running.

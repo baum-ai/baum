@@ -1,0 +1,29 @@
+[package]
+name = "baum-desktop"
+version = "0.0.0"
+description = "The baum desktop app"
+license = "MIT"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[[bin]]
+name = "baum-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.12.4", features = [] }
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-single-instance = "2.5.4"
+url = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
