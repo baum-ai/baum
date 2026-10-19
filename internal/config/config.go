@@ -21,6 +21,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/cli/safeexec"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // Environment variables read by Load.
@@ -254,6 +255,9 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 	if err != nil {
 		return Config{}, false, fmt.Errorf("reading config: %w", err)
 	}
+	if err := checkDurationTypes(path, data); err != nil {
+		return Config{}, false, err
+	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, false, parseError(path, err)
 	}
@@ -267,6 +271,82 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 		cfg.GitHubTokenSource = SourceConfigFile
 	}
 	return cfg, true, nil
+}
+
+// durationKeys are the dotted names of every Duration field in the file.
+var durationKeys = []string{"budgets.pass_timeout", "budgets.run_timeout"}
+
+// checkDurationTypes rejects a Duration key written as anything but a string.
+// go-toml decodes an integer into a Duration as raw nanoseconds, so
+// run_timeout = 10 would mean ten nanoseconds and fail the run's budget at
+// once; the decoder cannot tell it from "10ns". Syntax errors are left to
+// toml.Unmarshal.
+func checkDurationTypes(path string, data []byte) error {
+	var p unstable.Parser
+	p.Reset(data)
+	var table []string
+	for p.NextExpression() {
+		expr := p.Expression()
+		switch expr.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			table = keyParts(expr.Key())
+		case unstable.KeyValue:
+			if err := checkDurationNode(&p, path, table, expr); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func keyParts(it unstable.Iterator) []string {
+	var parts []string
+	for it.Next() {
+		parts = append(parts, string(it.Node().Data))
+	}
+	return parts
+}
+
+// checkDurationNode checks one key-value under prefix, recursing into inline
+// tables.
+func checkDurationNode(p *unstable.Parser, path string, prefix []string, kv *unstable.Node) error {
+	key := append(slices.Clone(prefix), keyParts(kv.Key())...)
+	value := kv.Value()
+	name, ok := durationKey(key)
+	if value.Kind == unstable.InlineTable && !ok {
+		children := value.Children()
+		for children.Next() {
+			if err := checkDurationNode(p, path, key, children.Node()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if value.Kind == unstable.String || !ok {
+		return nil
+	}
+	shape := p.Shape(value.Raw)
+	return fmt.Errorf(`parsing %s: wrong type or value for %s at line %d, column %d: a duration is a string; write it like "10m"`, path, name, shape.Start.Line, shape.Start.Column)
+}
+
+// durationKey returns the durationKeys name that key decodes into. go-toml
+// matches keys to fields without regard to case, so the parts are compared the
+// same way; a quoted key containing a dot is one part and matches nothing.
+func durationKey(key []string) (string, bool) {
+next:
+	for _, name := range durationKeys {
+		parts := strings.Split(name, ".")
+		if len(parts) != len(key) {
+			continue
+		}
+		for i, part := range parts {
+			if !strings.EqualFold(part, key[i]) {
+				continue next
+			}
+		}
+		return name, true
+	}
+	return "", false
 }
 
 // parseError reports a failure to read the file by position and key, never by
