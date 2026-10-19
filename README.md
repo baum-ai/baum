@@ -15,10 +15,11 @@ Everything runs locally:
 - pull request metadata, checks and conversation come from GitHub with your
   own token;
 - the review itself is written by a coding-agent CLI already installed on your
-  machine, `claude` or `codex`, found on your `PATH` or at the path you set
-  with `backend_paths` in the config file, or by the Anthropic API directly
-  with your `ANTHROPIC_API_KEY`. A backend for the `cursor-agent` CLI is
-  planned but not available yet.
+  machine, `claude`, `codex` or `cursor-agent`, found on your `PATH` or at the
+  path you set with `backend_paths` in the config file, or by the Anthropic API
+  directly with your `ANTHROPIC_API_KEY`. `cursor-agent` cannot be held to
+  read-only as reliably as the others; see
+  [SECURITY.md](SECURITY.md#the-cursor-agent-backend).
 
 ## Status
 
@@ -111,7 +112,9 @@ for every warning and problem:
   `codex` and `cursor-agent`, and whether each came from `backend_paths` in the
   config file, `GH_PATH` or `PATH`;
 - which backend `--backend auto` would pick and why, including why `claude`
-  (and `codex`) were skipped, and the configured backend when it is not `auto`;
+  (and `codex` and `cursor-agent`) were skipped, and the configured backend
+  when it is not `auto`. A missing `cursor-agent` is information, not a
+  warning, unless it is the configured backend;
 - where the GitHub token comes from for github.com and for the host of every
   registered clone: the environment (`GITHUB_TOKEN`, `GH_TOKEN`), the config
   file, the GitHub CLI's environment variable or `hosts.yml`, or its keyring
@@ -130,10 +133,10 @@ for every warning and problem:
   instance directory and each registered clone's review store, and the `PATH`
   entries. Doctor creates none of them and opens the registry read-only.
 
-It runs `--version` on `git`, `gh` and `cursor-agent`, the same checks
-`baum generate` runs for `claude`, `codex` (including codex's read-only
-sandbox check) and `anthropic` (the key is set) and, when no token is
-configured, `gh auth token`. The tools get
+It runs `--version` on `git` and `gh`, the same checks `baum generate` runs
+for `claude`, `codex` (including codex's read-only sandbox check),
+`cursor-agent` (its `--help` and `--version`) and `anthropic` (the key is set)
+and, when no token is configured, `gh auth token`. The tools get
 the same filtered environment their backends give them, never your provider
 keys or tokens, and a tool that hangs is stopped with its child processes.
 Its one network request is the signed price list; `--offline` skips it.
@@ -266,16 +269,30 @@ baum sends it no credential of its own.
 `--backend auto` (the default, or `backend` in the config file) uses `claude`
 when it is installed and passes its checks (a recent enough version), else `codex`
 (recent enough, and its read-only sandbox starts on this machine), else
+`cursor-agent` (the Cursor Agent CLI, with the options baum needs), else
 `anthropic` when `ANTHROPIC_API_KEY` is set.
-`claude` and `codex` are found at their `backend_paths` entry when the config file has one, else
+`claude`, `codex` and `cursor-agent` are found at their `backend_paths` entry when the config file has one, else
 on `PATH`; see [Configuration](#configuration). `baum doctor` shows what `auto`
 picks and why.
-`--backend claude`, `--backend codex` and `--backend anthropic` use exactly that one. `--model` names
+`--backend claude`, `--backend codex`, `--backend cursor-agent` and `--backend anthropic` use exactly that one. `--model` names
 a model of one backend, so with `auto` it applies to `claude` only: when `auto`
-falls back to `codex` or `anthropic`, that backend uses its own default model, and stderr says why
-the earlier ones were skipped. The `cursor-agent` backend is named by the
-config but is not available in this version: asking for it fails, and `auto`
-skips it.
+falls back to `codex`, `cursor-agent` or `anthropic`, that backend uses its own default model, and stderr says why
+the earlier ones were skipped.
+
+The `cursor-agent` backend runs the Cursor Agent CLI under your own Cursor
+login (`cursor-agent login`; `CURSOR_API_KEY` is not passed to it), so it is
+billed through your Cursor plan and its recorded cost is unknown. It is found
+as `cursor-agent`, or as `agent` when that is the Cursor Agent, and is used
+only when its `--help` lists every option baum passes; otherwise it asks you to
+run `cursor-agent update`. It runs in Cursor's read-only ask mode with Cursor's
+sandbox enabled, in the run directory only, and fails rather than run where
+the sandbox cannot start. The CLI has no structured output, so the output
+schema is appended to the prompt and whatever the model answers goes through
+the validator and its repairs like any other backend's. A run that starts any
+tool other than reading, listing and searching files is stopped and counts as
+a failed attempt. Cursor's read-only guarantees are weaker than Claude Code's
+or Codex's: read [SECURITY.md](SECURITY.md#the-cursor-agent-backend) before
+using it on pull requests you do not trust.
 
 The `anthropic` backend calls the Anthropic Messages API
 (`https://api.anthropic.com`) with the key from `ANTHROPIC_API_KEY`, which is
@@ -469,7 +486,7 @@ baum reads `$XDG_CONFIG_HOME/baum/config.toml`, which defaults to
 mode 0600 when written.
 
 ```toml
-backend = "auto"          # auto | claude | codex | anthropic (cursor-agent is accepted but not available yet)
+backend = "auto"          # auto | claude | codex | cursor-agent | anthropic
 model = ""                # backend default when empty
 github_token = ""         # optional; see the precedence below
 
@@ -515,7 +532,7 @@ environment variables are:
 | --- | --- |
 | `GITHUB_TOKEN`, `GH_TOKEN` | github.com token, also used for `*.ghe.com` tenants as the GitHub CLI uses it; when neither is set and the file has none, the GitHub CLI's token is used |
 | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it and only ever sent to an Enterprise host the GitHub CLI knows (logged in with `gh auth login`, or named by `GH_HOST`) |
-| `ANTHROPIC_API_KEY` | key for the `anthropic` backend, read from the environment only and never written to the config file; never passed to the `claude` and `codex` CLIs |
+| `ANTHROPIC_API_KEY` | key for the `anthropic` backend, read from the environment only and never written to the config file; never passed to the `claude`, `codex` and `cursor-agent` CLIs |
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
@@ -534,8 +551,8 @@ stays unknown unless the protection is readable. The repository is
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
 `backend = "auto"` picks `claude` when it is installed and passes its checks,
-else `codex` when it does, else `anthropic` when `ANTHROPIC_API_KEY` is set.
-`cursor-agent` is not available in this version, so `auto` never picks it.
+else `codex` when it does, else `cursor-agent` when it does, else `anthropic`
+when `ANTHROPIC_API_KEY` is set.
 
 `[backend_paths]` names a backend's executable by absolute path, for `claude`,
 `codex` and `cursor-agent`. A named path is used instead of the `PATH` lookup,
