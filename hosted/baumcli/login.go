@@ -36,7 +36,7 @@ this device an API token, stored in your user config directory.`,
 			if err != nil {
 				return err
 			}
-			client := &apiclient.Client{BaseURL: resolveServerURL(server, creds)}
+			client := &apiclient.Client{BaseURL: resolveServerURL(server, creds), UserAgent: userAgent()}
 
 			start, err := client.StartDeviceAuthorization(cmd.Context(), name)
 			if err != nil {

@@ -115,3 +115,8 @@ func version() string {
 	}
 	return "devel"
 }
+
+// userAgent names this client in requests to the server.
+func userAgent() string {
+	return "baum/" + version()
+}

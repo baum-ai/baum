@@ -34,7 +34,7 @@ func newLogoutCommand(stdout, stderr io.Writer) *cobra.Command {
 				}
 				return nil
 			}
-			client := &apiclient.Client{BaseURL: serverURL, Token: creds.Token}
+			client := &apiclient.Client{BaseURL: serverURL, Token: creds.Token, UserAgent: userAgent()}
 			// Revocation is best-effort: the local credentials are removed
 			// regardless, and an unreachable server should not trap the user
 			// in a logged-in state.

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -71,6 +72,8 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	// UserAgent, when set, names the client and its version in requests.
+	UserAgent string
 }
 
 // DeviceAuthorizationStart mirrors the POST /auth/device response.
@@ -195,15 +198,7 @@ func (c *Client) UploadRepositoryTraces(ctx context.Context, repositoryID string
 	req.Header.Set("Content-Type", "application/gzip")
 	req.Header.Set("Content-Disposition", `attachment; filename="baum-traces.tar.gz"`)
 	req.ContentLength = size
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = defaultHTTPClient
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
@@ -240,15 +235,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = defaultHTTPClient
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
@@ -264,6 +251,33 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("decoding response: %w", err)
 	}
 	return nil
+}
+
+// send adds the credential and the protocol handshake to req and runs it. A
+// server that names a protocol range this client is outside of answers with
+// an IncompatibleServerError, whatever the response was, because nothing else
+// in it can be trusted to mean what this client expects.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	req.Header.Set(ProtocolHeader, strconv.Itoa(Protocol))
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = defaultHTTPClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkProtocol(resp, c.BaseURL); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
 }
 
 // apiError maps an error response to a sentinel where one exists, and to a

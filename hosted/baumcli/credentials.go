@@ -167,6 +167,7 @@ func authenticatedClient(serverFlag string) (*apiclient.Client, credentials, err
 	return &apiclient.Client{
 		BaseURL:   serverURL,
 		Token:     token,
+		UserAgent: userAgent(),
 	}, creds, nil
 }
 
