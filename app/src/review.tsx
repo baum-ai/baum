@@ -17,6 +17,7 @@ import {
   type Entry,
   type Job,
   isActiveJob,
+  automaticLabel,
   type Provenance,
 } from "./api";
 function Transcript({ id, query }: { id: string; query: string }) {
@@ -319,6 +320,9 @@ function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> })
         <strong>{title}</strong>
         {active ? ` · ${job.phase}` : ""}
       </p>
+      {automaticLabel(job) ? (
+        <p className="text-xs font-semibold text-(--text-secondary)">{automaticLabel(job)}</p>
+      ) : null}
       <p className="text-xs text-(--text-tertiary)">
         Calls {job.calls} · Repairs {job.repairs}
       </p>

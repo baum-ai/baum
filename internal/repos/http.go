@@ -1,6 +1,7 @@
 package repos
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -75,6 +76,22 @@ func (r *Registry) Handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /api/repos/{id}/settings", func(w http.ResponseWriter, req *http.Request) {
+		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
+		raw, err := io.ReadAll(req.Body)
+		var fields map[string]json.RawMessage
+		if err != nil || json.Unmarshal(raw, &fields) != nil {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		// The whole settings object is replaced, so removing the cap or the
+		// automatic choice must be explicit: null, never a missing field.
+		for _, name := range []string{"automatic", "daily_cap"} {
+			if _, ok := fields[name]; !ok {
+				http.Error(w, name+" is required (null for the default)", http.StatusBadRequest)
+				return
+			}
+		}
+		req.Body = io.NopCloser(bytes.NewReader(raw))
 		var s Settings
 		if !decode(w, req, &s) {
 			return

@@ -46,7 +46,7 @@ func TestReposCLI(t *testing.T) {
 	if e = json.Unmarshal([]byte(raw), &list); e != nil {
 		t.Fatal(e)
 	}
-	if len(list) != 1 || !list[0].Settings.Automatic || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 2.5 || list[0].Settings.Model == nil {
+	if len(list) != 1 || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 2.5 || list[0].Settings.Model == nil {
 		t.Fatalf("settings lost %s", raw)
 	}
 	if _, e = run("repos", "add", p, "--daily-cap=1", "--clear-daily-cap"); e == nil {
@@ -63,11 +63,35 @@ func TestReposCLI(t *testing.T) {
 	if e = json.Unmarshal([]byte(raw), &list); e != nil {
 		t.Fatal(e)
 	}
-	if len(list) != 1 || list[0].Settings.DailyCap != nil || !list[0].Settings.Automatic {
+	if len(list) != 1 || list[0].Settings.DailyCap != nil || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) {
 		t.Fatalf("cap not cleared or other settings lost %s", raw)
 	}
 	if _, e = run("repos", "add", p, "--backend=", "--model="); e != nil {
 		t.Fatal(e)
+	}
+	automatic := func() *bool {
+		t.Helper()
+		raw, e := run("repos", "list", "--json")
+		var list []repos.Clone
+		if e != nil || json.Unmarshal([]byte(raw), &list) != nil || len(list) != 1 {
+			t.Fatalf("%s %v", raw, e)
+		}
+		return list[0].Settings.Automatic
+	}
+	if _, e = run("repos", "add", p, "--automatic=false"); e != nil {
+		t.Fatal(e)
+	}
+	if v := automatic(); v == nil || *v {
+		t.Fatalf("explicit off not stored: %v", v)
+	}
+	if _, e = run("repos", "add", p, "--automatic", "--clear-automatic"); e == nil {
+		t.Fatal("conflicting automatic flags accepted")
+	}
+	if _, e = run("repos", "add", p, "--clear-automatic"); e != nil {
+		t.Fatal(e)
+	}
+	if v := automatic(); v != nil {
+		t.Fatalf("automatic not cleared: %v", *v)
 	}
 	if _, e = run("repos", "remove", filepath.Clean(p)); e != nil {
 		t.Fatal(e)

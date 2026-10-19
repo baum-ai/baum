@@ -1322,10 +1322,10 @@ code that makes the decisions instead of guessing at them: the real backends'
 `Check` (built by `generate.DefaultBackendsFor`, run once and replayed into
 `generate.Select` to say what `auto` picks and why), `gitlocal`'s git version
 rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
-and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
-`uiserver`. Every outside dependency (environment, `PATH` lookup, command
-runner, backends, token lookup, price refresh and registry) is an `Options`
-field, so tests use fake executables and stubs. It creates nothing (the
+and the default-path helpers of `config`, `repos`, `jobs` and `discovery`.
+Every outside dependency (environment, `PATH` lookup, command
+runner, backends, token lookup, price refresh, registry and daemon) is an
+`Options` field, so tests use fake executables and stubs. It creates nothing (the
 registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
 `cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
 reruns a failed claude or codex check, and bounds every subprocess with a
@@ -1333,8 +1333,10 @@ timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
 column, and the key for a type or value error, never the text. A host that `github.IsGitHubHost` refuses is a problem
-without a token lookup. It does not import `uiserver`, which may
-serve the report: the instance directory is passed in.
+without a token lookup. It does not import `daemon`, which serves the
+report: the command line passes `Options.Daemon`, which asks the daemon over
+its control socket (never starting it or creating its state directory) for
+its version, process id and uptime, and whether this baum would replace it.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
 and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
@@ -1357,6 +1359,22 @@ Transactions serialize registration and settings edits across processes; a list
 reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
+A repository's `automatic` setting is `null` (follow the global preference) or
+an explicit `true`/`false`. The global preference is a master switch
+(`Settings.AutomaticEnabled`): off disables every repository, `true` included;
+on, only an explicit `false` disables one. The `preferences` table holds the
+global preferences as one JSON row: `automatic` (true until changed) and
+`cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
+`null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
+transaction, turning the `automatic: false` every earlier registration stored
+into `null`, and keeping a stored `true` (only `baum repos add --automatic`
+could set it). `OpenReadOnly` reads an unmigrated file the same way without
+writing it. An older baum that registers a repository after the migration
+still stores `automatic: false`, which now reads as an explicit off: that
+repository stays off until changed in the app, which fails safe.
+`PUT /api/repos/{id}/settings` replaces the whole object and requires the
+`automatic` and `daily_cap` fields, so removing either is an explicit `null`.
+
 `internal/cli` and the reusable `Registry.Handler` use the same service. The
 handler exposes registry operations only; `internal/uiserver` owns listening,
 instance lifecycle, authentication and host/origin validation and mounts the
@@ -1374,11 +1392,9 @@ run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
 Document selectors resolve registered clone IDs, never request-provided paths.
 The server makes no baum-server requests. Discovery and index are separate
-providers; the generation runner is mounted only after acquiring the single-instance lock.
-
-A private SQLite write lock keeps one process per user, with an authenticated
-health probe before another invocation trusts the private capability file.
-Cleanup removes that file before releasing the lock. SSE has a bounded
+providers. The server is hosted only by the daemon (see "Local daemon"),
+which builds every provider, the generation runner included, once it owns
+the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index.
 
@@ -1421,7 +1437,14 @@ snapshots; it never treats missing PRs in an open-only snapshot as closed.
 ### Persistent generation jobs
 
 `internal/jobs` serializes queue mutations in a private atomic JSON journal,
-without duplicating review documents. Workers use the same `generate.Publish`
+without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
+until its workers stop, so two processes never run one queue; it waits up to
+10 s for a predecessor whose shutdown timed out and that is exiting.
+`Queue.Drain` refuses new jobs and reports true only when none is queued or
+running, under the mutex `Submit` checks, so a restart never cuts a confirmed
+job short: one confirmed during it gets `503` with `Retry-After` and is
+estimated and confirmed again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
@@ -1430,13 +1453,31 @@ preflight I/O happens outside the queue mutex so cancellation stays responsive.
 The runner has no subprocess invocation of baum itself. Only the existing
 read-only agent backends run child processes, cancelled through their context.
 
+`Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
+generation") queues a job nobody confirmed. It prepares the item like an
+estimate, so the job has the same budgets, price list, recheck before running
+and isolation as a confirmed one, and refuses for good
+(`NotAutomaticError`) what a person would have to confirm: a fork or an author
+without known write access, a blocked (unpriced) model, and cursor-agent or
+another unestimated backend without the acknowledgement. Under the queue mutex
+it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
+queued or running job (it never joins or supersedes one), `ErrDuplicate` when
+any job, manual or automatic, already exists for that head (except a single
+automatic job a daemon stop or restart interrupted, which `Interrupted` lists
+and which may run once more; failed and cancelled jobs are final), and
+`ErrDailyCap` when the repository's automatic jobs created that day (actual
+cost when reported, else the estimate; a job cancelled before calling a model
+counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
+`automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
+`retry`).
+
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
 retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
-`baum ui` re-verifies and installs it before opening the queue, so recovered
+The daemon re-verifies and installs it before opening the queue, so recovered
 jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
 a different priced model. Unknown actual usage remains null.
@@ -1444,7 +1485,8 @@ a different priced model. Unknown actual usage remains null.
 ### Local application presentation
 
 `app/` builds into the committed `internal/localapp/dist` embed.
-`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+`localapp.Handler` is the daemon's `App.Assets`, mounted as `uiserver`'s
+`Options.App`, so the application's files
 are served only under the authenticated `/s/<namespace>/` path; the public
 bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
 API, SSE and asset URLs relative to that path and routes with query strings on
@@ -1457,9 +1499,12 @@ viewer build/freshness scripts include both embedded applications.
 
 ### Free background synchronization
 
-`internal/background` runs one cancellable worker after the local instance lock
-is acquired. It has registry/discovery/metadata capabilities only; the generation
-queue and model backends are not dependencies. It polls immediately without
+`internal/background` runs one cancellable worker in the daemon, once it owns
+its lock. It has registry/discovery/metadata capabilities only; the generation
+queue and model backends are not dependencies, and it never enqueues
+generation. `Service.Discovered` receives each snapshot a poll returned without
+error; the daemon passes them to the automatic scheduler, which alone decides
+about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
 Per-repository target cursors and repository rotation prevent a small renewed
@@ -1483,3 +1528,266 @@ accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports; missing pricing dimensions leave a
 nullable cost and a fixed reason. The local SPA renders both job accounting
 and selected-version provenance without changing the review document schema.
+
+## Local daemon
+
+`internal/daemon` runs one long-lived local server per user, shared by the
+desktop app and coding-agent hooks; the `baum` command line is how both reach
+it. It owns the authenticated app server above and everything that used to run
+inside `baum ui`: registry, discovery, review index, background refresh,
+diagnostics and the generation queue, and the automatic generation scheduler. `baum ui` only ensures the daemon and
+opens its launch URL, so there is one server implementation.
+
+### Lifecycle
+
+`daemon.Run` takes an SQLite write lock (`daemon.lock.sqlite`) in the private
+state directory and holds it for its whole life. The operating system releases
+it however the process exits, so a lock is never stale; the new owner deletes
+the socket, credential and status files a crashed daemon left. A second
+`Run` returns `ErrRunning` at once when the holder answers and is not
+stopping; otherwise (it is starting, or stopping and giving its jobs up to
+the 20 s shutdown timeout) it waits up to 35 s for the lock. Once it owns the lock it runs `Options.Prepare` (the command line
+resolves the login shell environment there), builds the application with
+`Options.Start`, listens on loopback, writes the credential and the status
+file, and listens on the control socket last, so a daemon that answers on
+the socket serves the app.
+
+Locks are `internal/filelock`: an existing lock file is opened only through
+SQLite, never with a plain descriptor, because on Unix closing any descriptor
+of a file drops every POSIX lock the process holds on it. Code inside the
+daemon reports on it through `daemon.Self` rather than probing its own lock or
+socket.
+
+`Client.Ensure` (`baum daemon ensure`) says hello on the socket. A daemon of
+this version or newer is kept. One speaking an older protocol is stopped at
+once (its running jobs are interrupted) and replaced. One with the same
+protocol but an older version (an older release by semver; a development
+build is older than any release, and two development builds are left alone)
+is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
+baum>}`: an idle daemon stops at once and the client starts its own version;
+a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
+that executable detached on the same port and stops, so no confirmed run is
+interrupted. Of racing clients the newest version is the one it restarts
+as, and a client tells its user about the deferred restart only when it
+first schedules it. A daemon speaking a newer protocol is an
+`IncompatibleError` naming both versions.
+When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
+the holder starts `baum daemon run --detached` and waits until it answers,
+and every other caller finds it running once it gets the lock, so concurrent
+calls start exactly one daemon. A daemon that holds the lock but never
+answers is reported with its process id from `daemon.json`, not killed.
+
+A detached daemon runs in its own session (Unix `setsid`; Windows
+`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, breaking away from the
+caller's job object when the job allows it), in the home directory, with no
+standard input and its standard output and error in `daemon.out` (the
+previous start's in `daemon.out.1`). It outlives every client.
+
+`baum daemon stop` (and the version restart) sends `stop`; while a daemon
+holds the lock but does not answer yet (it is starting), the client keeps
+asking until it does. The daemon answers,
+marks itself stopping (hello reports it, so `ensure` waits for it to exit
+rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
+cancel running jobs, which are recorded as interrupted (a backend that does
+not return in time leaves its job running in the journal, and the next start
+records it as interrupted), stops background work and the app server, removes
+its files and releases the lock. The client waits until the lock is free.
+SIGINT and SIGTERM stop it the same way.
+
+### Environment
+
+Whatever started it (an agent hook with the agent's environment, the desktop
+app with a bare launcher `PATH`, a terminal), the daemon replaces its
+environment before building anything. `internal/shellenv` runs `$SHELL` (else
+the user database's shell) as `-i -l -c` (csh: `-i -c`) in a new session with
+no terminal and a 10 s timeout after which its process group is killed. The
+shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
+`LANG`, `LC_*`, `TZ`, the XDG directories, `SSH_AUTH_SOCK`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`), a default `PATH`
+and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
+which prints the environment as JSON between two copies of a random marker,
+so whatever startup files print is ignored; once it has, whatever is left of
+the shell's process group is killed. `shellenv.Merge` then keeps only:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
+the XDG directories, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
+`WAYLAND_DISPLAY`, proxy and CA variables, `GITHUB_TOKEN`, `GH_TOKEN`,
+`GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
+`GH_PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `BAUM_*`
+and, on Windows, the system variables programs need. `SSH_AUTH_SOCK` comes
+from the starting process when it has one (launchd's agent for an app started
+from Finder) and from the login shell otherwise, so the daemon can fetch a
+pull request commit missing from a clone with an SSH remote. A socket goes
+stale when its session ends: before each fetch `shellenv.Agent` checks that it
+still exists, and only when a socket it had has gone stale asks the login
+shell again (one shared run, remembered when the shell has none, retried a
+minute after a failure) or drops it; it is asked only for SSH remotes. The
+daemon installs a `gitlocal.Background`, so its fetches never wait for an
+answer: `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS_REQUIRE=never`, the fetch
+timeout, and `ssh -o BatchMode=yes` when no ssh command is configured; a
+configured `GIT_SSH_COMMAND`, `core.sshCommand` or `GIT_SSH` (plink, a
+wrapper) runs as written. A missing key or unknown host is a git error. The backends never receive the agent or any `GIT_` variable. The
+locations, `HOME`, the XDG
+directories, `TMPDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, only ever
+come from the starting process and stay unset when it lacks them: the daemon
+resolved its lock and socket from them before reading the shell, and a state
+directory only the shell named would let a second daemon share its job
+journal. Every other kept variable comes from a resolved shell environment,
+so a token only the agent's environment had is dropped. When the shell is
+slow, fails or prints nothing,
+the kept variables come from the inherited environment. Windows has no login
+shell and always uses the inherited one. The log records the shell, the
+outcome and the kept variable names, never values. `backend_paths` remains the
+way to name a backend executable explicitly.
+
+### Automatic generation
+
+`internal/automatic.Scheduler`, built by `localApplication` and run beside
+background refresh, turns pull request changes into jobs on the same queue as
+confirmed runs. It has no backend or GitHub client of its own: discovery feeds
+it and `Queue.SubmitAutomatic` decides each job.
+
+- **Enabled** per repository: the global preference (on by default) is a
+  master switch, which the desktop tray's pause turns off; while it is on, a
+  repository is enabled unless its `automatic` is `false`. Disabling a
+  repository (or the switch), or unregistering it,
+  forgets its state.
+- **Turning off.** `Scheduler.Gate`, installed with
+  `Queue.SetAutomaticGate`, reads the current preferences and repository
+  settings from the registry. The queue asks it under its mutex when an
+  automatic job is submitted and again before the worker starts one, so a pass
+  that read the settings before an off cannot queue after it, and a queued job
+  never starts once its scope is off. Until the gate is installed (right after
+  `jobs.Open`) workers leave queued automatic jobs alone, so a journaled job
+  cannot start on restart before the settings are checked.
+  `Queue.CancelDisallowedAutomatic` cancels
+  queued automatic jobs the gate refuses, with its reason (`automatic_off`,
+  `repository_automatic_off`, `repository_removed`,
+  `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
+  runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
+  running.
+- **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
+  first snapshot `Observe` gets that was fetched at or after that time records
+  each open PR's head, whether the user's review is requested, whether team
+  membership was readable and whether it is a draft, and queues nothing: PRs
+  open at first launch, registration or re-enabling are not caught up. An older
+  (cached) snapshot is not a baseline; the next poll's is.
+- **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
+  new PR included), whose review request turned on (not merely because team
+  membership became readable), or that was marked ready for review, gets a
+  pending head if it is eligible: the user's review is requested or the user
+  authored it, it is not a draft, it is not from a fork, and its author has
+  known write access. Drafts get no automatic review, so pushes to a draft
+  wait for "ready for review"; manual generation of a draft still works. A PR
+  that closes, moves to another head while ineligible, or stops being eligible
+  loses its pending head.
+- **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
+  a daemon stop or restart cut short that are the only job for their head; if
+  the PR is still open at that head and eligible, the head is pending again
+  with trigger `retry`, once (`retried` records it). The retry goes through
+  the same pass, so Drain, the cap and the switches apply. Failed and
+  cancelled runs are never retried; the next push triggers as usual. A run
+  interrupted before a repository's baseline (turned off, then on again) is not
+  retried: the baseline marks its heads as already retried.
+- **State.** `automatic.json` in the job state directory (0700) holds each
+  enabled repository's PRs (recorded head, request and draft flags,
+  eligibility, pending head and trigger, last head handled, retried head),
+  its pause and its notice. It is rewritten
+  atomically on every change, so a restart neither forgets pending heads nor
+  treats recorded ones as new; an unreadable file starts over with new
+  baselines.
+- **Passes** run at start, every 30 s, when a snapshot leaves pending work,
+  when settings change and when a job finishes. A pass submits due pending
+  heads in order unless the daemon is stopping or has a restart pending
+  (`daemon.Self`), so the queue can drain. A head whose latest saved review
+  already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
+  head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
+  pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
+  head); `ErrDailyCap` pauses the repository until local midnight with the
+  `daily_cap` notice, or until its cap is raised above or cleared from the
+  amount that caused the pause; a `NotAllowedError` (turned off meanwhile)
+  leaves the head for the next pass, which forgets it if the repository stays
+  off; a `NotAutomaticError` (a draft, a fork, an unpriced model, cursor-agent
+  not acknowledged) drops it with its reason as the notice; other errors retry
+  with backoff, five times.
+- **Spending.** No default cap. Each job keeps the configured run budgets, and
+  `daily_cap` is enforced per repository and calendar day. cursor-agent runs
+  automatically only after `cursor_agent_acknowledged`, checked by
+  `SubmitAutomatic` from the stored preference, never from a request.
+- **Interfaces.** `GET /api/automatic` returns the preferences and each
+  repository's effective state, cap, today's automatic spend, pause, notice
+  and pending count; `PUT /api/automatic` changes the preferences. A changed
+  pause or notice, and every repository's status after a `PUT`, is published
+  as an `automatic` SSE event for other app windows and the desktop app's
+  notifications. `Trigger(ctx, repository)` polls discovery for one
+  repository (within discovery's own poll deadline and rate budget) and passes
+  the snapshot to `Observe`. Agent hook events (a session ending, a push) are
+  to use it rather than a separate path; no hook calls it yet.
+
+### Transports and control protocol
+
+The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
+`--port`), unchanged: launch-token exchange, the cookie scoped to the secret
+`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+the credential file instead of being printed by a foreground process.
+
+The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
+`$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
+directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
+under the system temporary directory. That is where a daemon listens; clients
+dial the `socket` the running daemon recorded in `daemon.json` in the state
+directory, so one with a different `XDG_RUNTIME_DIR` (ssh, su, a sandbox)
+still reaches it. Windows 10 1803 and later have
+`AF_UNIX` sockets, so Windows uses the same socket in the state directory,
+protected by that directory's current-user DACL, instead of a named pipe
+(which would need a new dependency for overlapped I/O). Each request is one
+JSON line, `{"protocol":1,"method":"hello","client":"<version>"}`, answered by
+one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
+"message":…}}`; a connection may carry several, and lines are limited to
+64 KiB. `hello` and `stop` work in every protocol version, so any client can
+identify and replace any daemon. `ping` and every method registered in
+`Options.Methods` require the client's protocol to equal the daemon's, and
+answer `protocol_mismatch` with the daemon's status otherwise. Increment
+`daemon.Protocol` for any incompatible change. Hook ingestion
+will add methods through `Options.Methods`; a hook event that should look for
+new heads will call the automatic scheduler's `Trigger` (see "Automatic
+generation"). Remote attach would be another transport beside
+these two; none exists.
+
+### Desktop app interface
+
+The desktop app talks to the daemon only through the bundled `baum` binary
+and two files:
+
+1. `baum daemon ensure --json` starts the daemon if needed (replacing an older
+   one), waits until it serves, and prints one JSON line on stdout:
+   `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
+   `stopping` appears only while it shuts down, and `restart_pending` when an
+   older daemon was kept because it is running jobs and will restart as this
+   version once they finish (see Lifecycle). On failure it exits non-zero
+   with the reason on stderr. `--port` and `--concurrency` apply only when it
+   starts the daemon.
+2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
+   `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
+   Loading it runs the bootstrap page, which exchanges the fragment for the
+   session cookie. The token stays valid for any number of exchanges for the
+   daemon's whole life, so the app can be relaunched against one daemon; a new
+   daemon writes a new token atomically, and the old one then gets 401 (or no
+   answer, if the port changed). The token also works as
+   `Authorization: Bearer` on `/api/` routes.
+3. `<state>/daemon.log` is the daemon's log (it rotates at 1 MiB, keeping
+   `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
+   wrote before its log opened, or a crash.
+4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
+   ("Quit and stop background reviews"). `baum daemon status [--json]` prints
+   the same status, or exits non-zero when none runs.
+
+`<state>` is `$XDG_STATE_HOME/baum/daemon`, by default
+`~/.local/state/baum/daemon` on every platform, and is reported in `state`.
+
+### Diagnostics
+
+`baum doctor` reports the daemon (`daemon` check): its state directory, and
+when it runs its version, process id, uptime, protocol and socket; a warning
+when it is older than the doctor's baum, speaks a newer protocol, or holds the
+lock without answering.

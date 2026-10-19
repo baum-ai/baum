@@ -1,4 +1,4 @@
-package uiserver
+package privatefs
 
 import (
 	"errors"
@@ -18,13 +18,13 @@ func userSID() (*windows.SID, error) {
 
 // Unix mode bits do not enforce privacy on Windows. Protect the directory's
 // DACL and inherit only the current user's full-control ACE into new files.
-func protectDirectory(path string) error {
+func ProtectDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
-		return errors.New("ui instance path must be a directory")
+		return errors.New("path must be a directory")
 	}
 	sid, err := userSID()
 	if err != nil {
@@ -39,7 +39,7 @@ func protectDirectory(path string) error {
 		return err
 	}
 	if !owner.Equals(sid) {
-		return errors.New("ui instance directory must belong to the current user")
+		return errors.New("directory must belong to the current user")
 	}
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + sid.String() + ")")
 	if err != nil {
@@ -51,7 +51,7 @@ func protectDirectory(path string) error {
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
-func privateFile(path string, info os.FileInfo) bool {
+func PrivateFile(path string, info os.FileInfo) bool {
 	if !info.Mode().IsRegular() {
 		return false
 	}

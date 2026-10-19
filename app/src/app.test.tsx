@@ -354,6 +354,230 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().disabled).toBe(false);
 });
+const demoClone = {
+  id: "clone",
+  path: "/work/demo",
+  repository: "acme/demo",
+  available: true,
+  settings: { automatic: null, daily_cap: 5, backend: null, model: null },
+};
+const automaticOverview = {
+  enabled: true,
+  cursor_agent_acknowledged: false,
+  repositories: [
+    {
+      repository: "acme/demo",
+      enabled: true,
+      daily_cap: 5,
+      spent_today: 5,
+      spent_known: true,
+      paused_until: "2026-10-20T00:00:00+02:00",
+      notice: "daily_cap",
+      pending: 1,
+    },
+  ],
+};
+/** Serves api/repos and api/automatic, and records PUT bodies. */
+function stubAutomatic(clone: object = demoClone, overview: object = automaticOverview) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const puts: { path: string; body: unknown }[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    const init = args[1] as RequestInit | undefined;
+    if (init?.method === "PUT") {
+      puts.push({ path, body: JSON.parse(String(init.body)) });
+      return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
+    }
+    if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
+    if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
+    return original(...args);
+  });
+  return puts;
+}
+it("sets automatic reviews globally and per repository and shows a daily cap pause", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Automatic reviews");
+  expect(text).toContain("acme/demo: Automatic generation is paused");
+  expect(text).toContain("Spent automatically today: $5.00 of $5.00. 1 waiting to start.");
+  const global = node.querySelector<HTMLInputElement>(
+    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
+  )!;
+  expect(global.checked).toBe(true);
+  await act(async () => global.click());
+  expect(puts).toContainEqual({ path: "/s/test-ns/api/automatic", body: { enabled: false } });
+  const acknowledge = node.querySelectorAll<HTMLInputElement>(
+    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
+  )[1]!;
+  await act(async () => acknowledge.click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/automatic",
+    body: { cursor_agent_acknowledged: true },
+  });
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const mode = region.querySelector<HTMLSelectElement>("select")!;
+  expect(mode.value).toBe("default");
+  expect(mode.options[0]!.textContent).toBe("Global setting (on)");
+  await act(async () => {
+    mode.value = "off";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const cap = region.querySelector<HTMLInputElement>('input[type="number"]')!;
+  expect(cap.value).toBe("5");
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: false, daily_cap: 5, backend: null, model: null },
+  });
+});
+function typeInto(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+it("never saves an invalid daily cap as no cap; removing it is explicit", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const cap = () => region.querySelector<HTMLInputElement>('input[type="number"]')!;
+  const save = () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click();
+  for (const value of ["", "-1", "1e999", "abc"]) {
+    await act(async () => typeInto(cap(), value));
+    await act(async () => save());
+    expect(region.textContent).toContain(
+      "Enter a daily cap of 0 or more in USD, or choose No daily cap.",
+    );
+  }
+  expect(puts.filter((p) => p.path.endsWith("/settings"))).toEqual([]);
+  await act(async () => typeInto(cap(), "2.5"));
+  await act(async () => save());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: 2.5, backend: null, model: null },
+  });
+  const noCap = Array.from(region.querySelectorAll("label"))
+    .find((l) => l.textContent === "No daily cap")!
+    .querySelector("input")!;
+  await act(async () => noCap.click());
+  expect(cap().disabled).toBe(true);
+  await act(async () => save());
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: null, backend: null, model: null },
+  });
+});
+it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  // The server omits daily_cap when there is none.
+  const puts = stubAutomatic({
+    ...demoClone,
+    settings: { automatic: null, backend: null, model: null },
+  });
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/automatic"
+      ? Promise.resolve(new Response("{}", { status: 500 }))
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: null, backend: null, model: null },
+  });
+});
+it("shows a repository set to On as paused while the global switch is off", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(
+    { ...demoClone, settings: { ...demoClone.settings, automatic: true } },
+    {
+      enabled: false,
+      cursor_agent_acknowledged: false,
+      repositories: [
+        {
+          repository: "acme/demo",
+          enabled: false,
+          daily_cap: 5,
+          spent_today: 0,
+          spent_known: true,
+          pending: 0,
+        },
+      ],
+    },
+  );
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const mode = region.querySelector<HTMLSelectElement>("select")!;
+  expect(mode.value).toBe("on");
+  expect(mode.selectedOptions[0]!.textContent).toBe(
+    "On for this repository (paused by the global switch)",
+  );
+  expect(region.textContent).toContain(
+    "Automatic reviews are paused by the global switch, although this repository is set to On.",
+  );
+});
+it("marks automatically started jobs in the jobs list", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const job = (id: string, automatic: boolean, trigger?: string) => ({
+    id,
+    clone: "clone",
+    repository: "acme/demo",
+    pr: 1,
+    state: "queued",
+    phase: "queued",
+    calls: 0,
+    tokens: 0,
+    repairs: 0,
+    actual_cost_usd: null,
+    automatic,
+    trigger,
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/jobs"
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              job("a", true, "new_head"),
+              job("b", true, "review_requested"),
+              job("d", true, "ready_for_review"),
+              job("e", true, "retry"),
+              job("c", false),
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Started automatically because new commits were pushed");
+  expect(text).toContain("Started automatically because your review was requested");
+  expect(text).toContain(
+    "Started automatically because the pull request was marked ready for review",
+  );
+  expect(text).toContain(
+    "Started automatically again: the daemon stopped during the previous automatic run",
+  );
+  expect(text.match(/Started automatically/g)).toHaveLength(4);
+});
 it("shows a diagnostics error with a retry that recovers", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   let ok = false;

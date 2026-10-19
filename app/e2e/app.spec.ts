@@ -1,5 +1,23 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+
+// The fixture runs the real daemon, which publishes its launch URL in a private
+// credential file once it serves; the desktop app reads the same file.
+async function launchURL(): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      const path = join(process.env.BAUM_APP_STATE_DIR ?? "", "credential.json");
+      const { url } = JSON.parse(await readFile(path, "utf8"));
+      if (typeof url === "string") return url;
+    } catch {
+      // Not written yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("the daemon did not publish its credential");
+}
+
 test("local inbox, reused PR viewer, versions, generation and settings", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -28,9 +46,20 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     if (!r.url().startsWith("http://127.0.0.1:4167")) foreign.push(r.url());
     else local.push(new URL(r.url()).pathname);
   });
-  await page.goto((await readFile("e2e/launch-url", "utf8")).trim());
+  const launch = await launchURL();
+  await page.goto(launch);
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
+  // The app is relaunched against a long-lived daemon: the same credential
+  // authorizes another browser session.
+  const relaunched = await page.context().browser()?.newPage();
+  if (relaunched) {
+    await relaunched.goto(launch);
+    await expect(
+      relaunched.getByRole("heading", { name: "Pull requests", exact: true }),
+    ).toBeVisible();
+    await relaunched.close();
+  }
   // The bootstrap replaces itself with the secret session namespace; the app,
   // its assets, API and event stream all live under it.
   const base = new URL(page.url()).pathname;
@@ -191,10 +220,19 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("link", { name: "Repositories & settings" }).click();
   const settings = page.getByRole("region", { name: "Repository acme/demo", exact: true });
   await expect(
-    settings.getByText(/Model generation runs only when you request and confirm it/),
+    settings.getByText(/Model generation runs when you request and confirm it, or automatically/),
   ).toBeVisible();
-  await expect(settings.getByRole("checkbox", { name: /automatic generation/ })).toHaveCount(0);
-  await expect(settings.getByRole("spinbutton", { name: /Daily automatic cap/ })).toHaveCount(0);
+  // Automatic reviews are on by default: the repository follows the global
+  // setting and has no daily cap.
+  await expect(settings.getByRole("combobox", { name: /Automatic reviews/ })).toHaveValue(
+    "default",
+  );
+  await expect(settings.getByRole("spinbutton", { name: /Daily automatic cap/ })).toHaveValue("");
+  await expect(
+    page
+      .getByRole("region", { name: "Automatic reviews", exact: true })
+      .getByRole("checkbox", { name: /Generate reviews automatically/ }),
+  ).toBeChecked();
   await settings.getByRole("textbox", { name: "Model override" }).fill("claude-sonnet-4-5");
   await settings.getByRole("button", { name: "Save repository settings" }).click();
   await expect(settings.getByRole("textbox", { name: "Model override" })).toHaveValue(
@@ -228,4 +266,49 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
       (path) => !["/", "/launch.js", "/api/auth/exchange"].includes(path) && !path.startsWith(base),
     ),
   ).toEqual([]);
+});
+
+// The daemon generates a review by itself when a pull request the user wrote
+// gets a new head after automatic generation was enabled, and says so on the
+// PR page and in the jobs list. Turning it off is a setting the server keeps.
+test("automatic review of a new head, shown as started automatically", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(await launchURL());
+  const pr = page.getByRole("link", { name: /An automatically reviewed change/ });
+  await expect(pr).toBeVisible();
+  await pr.click();
+  await expect(page.getByText("No generated review yet.", { exact: true })).toBeVisible();
+  // The fixture's discovery reports PR 10's new head once this marker exists.
+  await writeFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "push-10"), "");
+  const progress = page.getByRole("region", { name: "Review generation", exact: true });
+  await expect(
+    progress.getByText("Started automatically because new commits were pushed", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await page.screenshot({ path: "test-results/automatic-review.png", animations: "disabled" });
+  await expect(
+    page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
+  ).toBeVisible({ timeout: 30000 });
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  const jobs = page.getByRole("region", { name: "Generation jobs", exact: true });
+  await expect(
+    jobs.getByText("Started automatically because new commits were pushed", { exact: true }),
+  ).toHaveCount(1);
+  await page.getByRole("link", { name: "Repositories & settings" }).click();
+  const automatic = page.getByRole("region", { name: "Automatic reviews", exact: true });
+  const toggle = automatic.getByRole("checkbox", { name: /Generate reviews automatically/ });
+  // The checkbox shows the saved preference, so it changes once the server answers.
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await page.reload();
+  await expect(toggle).not.toBeChecked();
+  await expect(
+    page
+      .getByRole("region", { name: "Repository acme/demo", exact: true })
+      .getByText("Automatic reviews are paused by the global switch."),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/automatic-settings.png", animations: "disabled" });
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  expect(errors).toEqual([]);
 });

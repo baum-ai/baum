@@ -98,17 +98,35 @@ type Options struct {
 	// own resolver.
 	GitHubToken func(ctx context.Context, cfg config.Config, host string) (token, source string, err error)
 	// RefreshPrices fetches the signed list; nil uses pricing.Refresh without
-	// storing it, since a diagnostic run must not change baum ui's state.
+	// storing it, since a diagnostic run must not change the daemon's state.
 	RefreshPrices func(ctx context.Context) error
 	// PriceSource describes the active list; nil uses pricing.CurrentSource.
 	PriceSource func() pricing.Source
 	// Registry lists the registered clones of the registry file at path,
 	// which exists. The default opens it read-only.
 	Registry func(ctx context.Context, path string) ([]repos.Clone, error)
-	// InstanceDir is the directory of the per-user "baum ui" instance and its
-	// capability files; nil omits that check. The caller supplies it because
-	// the UI server may itself serve this report.
-	InstanceDir func() (string, error)
+	// Daemon describes the per-user baum daemon; nil omits that check. The
+	// caller supplies it because the daemon itself serves this report.
+	Daemon func(ctx context.Context) Daemon
+}
+
+// Daemon is what the report says about the per-user daemon. It never holds
+// the daemon's credential.
+type Daemon struct {
+	Running  bool
+	Version  string
+	Protocol int
+	PID      int
+	Uptime   time.Duration
+	// State is the daemon's state directory (logs, credential) and Socket its
+	// control socket.
+	State, Socket string
+	// Older is set when this baum would replace the daemon; Incompatible when
+	// it speaks a newer protocol than this baum.
+	Older, Incompatible bool
+	// Err is why the daemon could not be asked, when it holds its lock but
+	// does not answer.
+	Err error
 }
 
 // Timeouts bound every subprocess and network request the report makes.
@@ -578,10 +596,10 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 		r.add(c)
 	}
 
-	r.location("jobs", "job queue", jobs.DefaultPath, "created when baum ui runs its first job")
-	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when baum ui first looks for pull requests")
-	if r.opts.InstanceDir != nil {
-		r.location("instance", "baum ui instance directory", r.opts.InstanceDir, "created when baum ui starts")
+	r.location("jobs", "job queue", jobs.DefaultPath, "created when the baum daemon runs its first job")
+	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when the baum daemon first looks for pull requests")
+	if r.opts.Daemon != nil {
+		r.daemon()
 	}
 
 	for _, clone := range clones {
@@ -606,6 +624,33 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 		r.add(c)
 	}
 	return clones
+}
+
+// daemon reports where the daemon lives and whether it runs. It only asks
+// the daemon over its socket; it starts nothing.
+func (r *runner) daemon() {
+	ctx, cancel := context.WithTimeout(r.ctx, versionTimeout)
+	defer cancel()
+	d := r.opts.Daemon(ctx)
+	c := Check{ID: "daemon", Label: "baum daemon", Status: StatusInfo, Path: d.State, Version: d.Version}
+	switch {
+	case d.Err != nil:
+		c.Status, c.Detail = StatusWarning, d.Err.Error()
+		c.Fix = "stop it with `baum daemon stop`, or end the process it names; its logs are in " + d.State
+	case !d.Running:
+		c.Detail = "not running; the desktop app and agent hooks start it (`baum daemon ensure`)"
+	case d.Incompatible:
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("running as process %d for %s, but it speaks control protocol %d, newer than this baum", d.PID, d.Uptime, d.Protocol)
+		c.Fix = "upgrade baum, or stop the daemon with `baum daemon stop`"
+	case d.Older:
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("running as process %d for %s, older than this baum", d.PID, d.Uptime)
+		c.Fix = "run `baum daemon ensure` to replace it with this version"
+	default:
+		c.Detail = fmt.Sprintf("running as process %d for %s, control protocol %d; socket %s", d.PID, d.Uptime, d.Protocol, d.Socket)
+	}
+	r.add(c)
 }
 
 func (r *runner) location(id, label string, resolve func() (string, error), created string) {
@@ -697,7 +742,7 @@ func (r *runner) prices() {
 	}
 	source := r.opts.PriceSource()
 	c := Check{ID: "prices", Label: "price list", Version: source.Version, Source: source.Origin}
-	const scope = "baum generate and the other commands use the embedded list (version %s); baum ui fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
+	const scope = "baum generate and the other commands use the embedded list (version %s); the baum daemon fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
 	when := ""
 	if !source.FetchedAt.IsZero() {
 		when = ", fetched " + source.FetchedAt.UTC().Format(time.RFC3339)
@@ -716,10 +761,10 @@ func (r *runner) prices() {
 		c.Detail = fmt.Sprintf("fetching works: the published list is version %s%s. ", source.Version, when) + fmt.Sprintf(scope, pricing.Embedded().Version())
 	case source.Origin == pricing.OriginCached:
 		c.Status = StatusOK
-		c.Detail = fmt.Sprintf("the signed list version %s that baum ui stored earlier is in use; the published list is no newer. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+		c.Detail = fmt.Sprintf("the signed list version %s that the baum daemon stored earlier is in use; the published list is no newer. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
 		if !r.opts.FetchPrices {
 			c.Status = StatusInfo
-			c.Detail = fmt.Sprintf("not fetched (--offline); the signed list version %s that baum ui stored earlier is in use. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+			c.Detail = fmt.Sprintf("not fetched (--offline); the signed list version %s that the baum daemon stored earlier is in use. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
 		}
 	case r.opts.FetchPrices:
 		c.Status = StatusOK
