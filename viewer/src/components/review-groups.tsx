@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import pluralize from "pluralize";
 
 import {
@@ -15,6 +15,7 @@ import { riskKey } from "../row-keys";
 import { Item, ItemMeta, JumpLink, Lines, None, ReviewScoreBadge, RiskTags } from "./review-parts";
 import { Markdown } from "./markdown";
 import { Badge, CardHeader } from "./ui";
+import { cn, FOCUS_RING } from "./classnames";
 
 /** The two group panes behind the rail's Changes and Risks rows: everything
  *  the group holds in one place, so a reader can see how much is left before
@@ -39,6 +40,8 @@ export function ChangesOverview({
   onSelectSection,
   renderCheck,
   renderLabels,
+  showObsolete,
+  onToggleObsolete,
 }: {
   document: ReviewDocument;
   onSelectSection: (id: string) => void;
@@ -47,8 +50,18 @@ export function ChangesOverview({
   /** A host's labels for each row, after its badges. Above the row's
    *  overlay, so a link in them is its own destination. */
   renderLabels?: (section: Section) => ReactNode;
+  showObsolete?: boolean;
+  onToggleObsolete?: () => void;
 }) {
   const { stats } = document;
+  const [localObsolete, setLocalObsolete] = useState(false);
+  const obsoleteShown = showObsolete ?? localObsolete;
+  const obsoleteCount = document.sections.filter(
+    (section) => section.derived.state === "stale",
+  ).length;
+  const visible = sectionsInReviewOrder(document.sections).filter(
+    (section) => obsoleteShown || section.derived.state !== "stale",
+  );
   const scored = sectionsAreScored(document.sections);
   return (
     <>
@@ -57,7 +70,7 @@ export function ChangesOverview({
         title="Changes"
         detail={
           <>
-            {pluralize("section", document.sections.length, true)}
+            {pluralize("section", visible.length, true)}
             {` · ${pluralize("file", stats.files, true)} · `}
             <Lines additions={stats.additions} deletions={stats.deletions} />
             {scored && " · most important to review first"}
@@ -65,18 +78,25 @@ export function ChangesOverview({
         }
       />
       <div className="min-h-0 flex-1 xl:overflow-y-auto">
-        {document.sections.length === 0 ? (
-          <None>This review has no sections.</None>
+        {visible.length === 0 ? (
+          <None>
+            {document.sections.length === 0
+              ? "This review has no sections."
+              : "No current changes."}
+          </None>
         ) : (
           <ul className="space-y-1.5">
-            {sectionsInReviewOrder(document.sections).map((section) => {
+            {visible.map((section) => {
               const check = renderCheck?.(section);
               const labels = renderLabels?.(section);
               const badgeState = sectionBadgeState(section.derived.state, document.review);
               return (
                 <Item
                   key={section.id}
-                  className="relative flex items-start gap-2.5 hover:border-(--border-strong) hover:bg-(--surface-hover)"
+                  className={cn(
+                    "relative flex items-start gap-2.5 hover:border-(--border-strong) hover:bg-(--surface-hover)",
+                    section.derived.state === "stale" && "opacity-60 grayscale",
+                  )}
                 >
                   {/* Above the title's overlay, so the box is still a box. */}
                   {check ? <span className="relative z-10 flex-none">{check}</span> : null}
@@ -138,6 +158,19 @@ export function ChangesOverview({
               );
             })}
           </ul>
+        )}
+        {obsoleteCount > 0 && (
+          <button
+            type="button"
+            aria-expanded={obsoleteShown}
+            onClick={onToggleObsolete ?? (() => setLocalObsolete((shown) => !shown))}
+            className={cn(
+              "mt-3 cursor-pointer rounded-sm py-1 text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+              FOCUS_RING,
+            )}
+          >
+            {obsoleteShown ? "Hide obsolete changes" : `View obsolete changes (${obsoleteCount})`}
+          </button>
         )}
       </div>
     </>
