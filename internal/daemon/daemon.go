@@ -12,8 +12,10 @@
 //   - app: the authenticated loopback HTTP server of internal/uiserver, whose
 //     credential the app reads from a private file in the state directory.
 //
-// The daemon never contacts a baum server. What it runs in the background is
-// whatever the application started with Options.Start does.
+// The daemon itself never contacts a baum server. What it runs in the
+// background is whatever the application started with Options.Start does
+// (the command line's forwards hook events to the hosted service only for a
+// user logged in to it).
 package daemon
 
 import (

@@ -282,6 +282,52 @@ func (c *Client) Ensure(ctx context.Context) (Status, error) {
 	return Status{}, errors.New("the baum daemon kept stopping while it was being started; retry")
 }
 
+// StartDetached starts a daemon without waiting for it to serve, for callers
+// that must not wait, such as hooks; Ensure waits. It starts none while a
+// daemon holds the daemon lock (one is starting, stopping or not answering)
+// or another client is starting one, and reports whether it started one. It
+// holds the start lock until the new daemon holds the daemon lock or ctx
+// ends, so callers racing it do not start a second one.
+func (c *Client) StartDetached(ctx context.Context) (bool, error) {
+	if locked, err := c.locked(ctx); err != nil || locked {
+		return false, err
+	}
+	if err := privatefs.MkdirAll(c.Paths.State); err != nil {
+		return false, err
+	}
+	start, err := tryLock(ctx, c.Paths.startFile())
+	if errors.Is(err, errLocked) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = start.Release() }()
+	if locked, err := c.locked(ctx); err != nil || locked {
+		return false, err
+	}
+	spawn := c.Spawn
+	if spawn == nil {
+		spawn = SpawnSelf
+	}
+	exited, err := spawn(c.Paths, c.Start)
+	if err != nil {
+		return false, fmt.Errorf("start the baum daemon: %w", err)
+	}
+	for {
+		if locked, err := c.locked(ctx); err != nil || locked {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return true, nil
+		case <-exited:
+			return true, nil
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // decide keeps a compatible daemon (done), replaces an older one (not done,
 // after stopping it) or refuses a newer protocol (done, with an error).
 func (c *Client) decide(ctx context.Context, status Status) (Status, bool, error) {

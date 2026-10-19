@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
+	"testing"
 
 	"github.com/baum-ai/baum/internal/privatefs"
 )
@@ -13,6 +15,11 @@ import (
 // (Windows), with no standard input and its output in OutputFile. The daemon
 // resolves its own environment, so the caller's is passed unchanged.
 func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
+	// A test binary started as "daemon run" would run its tests again,
+	// each of which might start another; tests start daemons through Spawn.
+	if testing.Testing() {
+		return nil, errors.New("a test binary does not start itself as the baum daemon")
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
