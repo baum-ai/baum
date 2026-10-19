@@ -91,7 +91,7 @@ func TestMissingResponseCountsAndIsRetried(t *testing.T) {
 	backend.headerTimeout = 100 * time.Millisecond
 	req := request(runDir(t))
 	req.MaxCalls = 1
-	if _, err := backend.Run(context.Background(), req); err == nil || err.Error() != "generation budget exceeded: model calls" || len(s.requests()) != 1 {
+	if _, err := backend.Run(context.Background(), req); err == nil || !strings.HasPrefix(err.Error(), "generation budget exceeded: model calls") || len(s.requests()) != 1 {
 		t.Fatalf("err %v after %d requests", err, len(s.requests()))
 	}
 }

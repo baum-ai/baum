@@ -298,18 +298,23 @@ func fileError(err error) string {
 	return "it is outside the run directory or not readable"
 }
 
+// walkLimit is maxWalkEntries; tests lower it.
+var walkLimit = maxWalkEntries
+
 // walk visits the regular files under base, in lexical order, never following
-// a symbolic link. visit returns false to stop.
-func (t *toolbox) walk(ctx context.Context, base string, visit func(rel string) bool) error {
+// a symbolic link. visit returns false to stop. limited reports a walk that
+// stopped at walkLimit entries, so what it found is incomplete.
+func (t *toolbox) walk(ctx context.Context, base string, visit func(rel string) bool) (limited bool, err error) {
 	visited := 0
-	return fs.WalkDir(t.root.FS(), base, func(name string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(t.root.FS(), base, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if name == base {
 				return err
 			}
 			return nil
 		}
-		if visited++; visited > maxWalkEntries {
+		if visited++; visited > walkLimit {
+			limited = true
 			return fs.SkipAll
 		}
 		if ctx.Err() != nil {
@@ -320,6 +325,13 @@ func (t *toolbox) walk(ctx context.Context, base string, visit func(rel string) 
 		}
 		return nil
 	})
+	return limited, err
+}
+
+// walkLimitNote says that a search stopped at the traversal limit, so its
+// results, or their absence, are not the whole story.
+func walkLimitNote() string {
+	return fmt.Sprintf("the search stopped after visiting %d entries, so the results are incomplete; narrow the path or the pattern", walkLimit)
 }
 
 func (t *toolbox) base(name string) (string, *toolCall) {
@@ -357,7 +369,7 @@ func (t *toolbox) glob(ctx context.Context, pattern, dir string) toolCall {
 func (t *toolbox) globIn(ctx context.Context, pattern, base string) toolCall {
 	var matches []string
 	more := false
-	err := t.walk(ctx, base, func(name string) bool {
+	limited, err := t.walk(ctx, base, func(name string) bool {
 		within := name
 		if base != "." {
 			within = strings.TrimPrefix(name, base+"/")
@@ -375,6 +387,9 @@ func (t *toolbox) globIn(ctx context.Context, pattern, base string) toolCall {
 		return failed("error", "the search failed")
 	}
 	if len(matches) == 0 {
+		if limited {
+			return text("no files matched, but " + walkLimitNote() + "\n")
+		}
 		return text("no files match")
 	}
 	out := strings.Join(matches, "\n") + "\n"
@@ -384,6 +399,8 @@ func (t *toolbox) globIn(ctx context.Context, pattern, base string) toolCall {
 	}
 	if more {
 		out += "[more files match; narrow the pattern or the path]\n"
+	} else if limited {
+		out += "[" + walkLimitNote() + "]\n"
 	}
 	return text(out)
 }
@@ -417,7 +434,7 @@ func (t *toolbox) grepIn(ctx context.Context, expression *regexp.Regexp, base, f
 	var out strings.Builder
 	matches := 0
 	more := false
-	walkErr := t.walk(ctx, base, func(name string) bool {
+	limited, walkErr := t.walk(ctx, base, func(name string) bool {
 		if filter != "" {
 			subject := path.Base(name)
 			if strings.Contains(filter, "/") {
@@ -468,10 +485,15 @@ func (t *toolbox) grepIn(ctx context.Context, expression *regexp.Regexp, base, f
 		return failed("error", "the search failed")
 	}
 	if matches == 0 {
+		if limited {
+			return text("no matches, but " + walkLimitNote() + "\n")
+		}
 		return text("no matches")
 	}
 	if more {
 		out.WriteString("[more matches; narrow the pattern, the path or the glob]\n")
+	} else if limited {
+		out.WriteString("[" + walkLimitNote() + "]\n")
 	}
 	return text(out.String())
 }

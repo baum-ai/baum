@@ -200,6 +200,10 @@ func (b *Backend) send(ctx context.Context, endpoint agent.Endpoint, body []byte
 			raw, _ = io.ReadAll(io.LimitReader(response.Body, 1<<20))
 			_ = response.Body.Close()
 			retryAfter = parseRetryAfter(response.Header)
+			// Every request the API answered is a call against the budget,
+			// refused ones included; an error status bills no tokens, so the
+			// usage stays known.
+			result.Calls++
 		}
 		watchdog.Stop()
 		cancel()
@@ -233,6 +237,11 @@ func (b *Backend) send(ctx context.Context, endpoint agent.Endpoint, body []byte
 		}
 		if attempt == maxRetries {
 			return nil, last
+		}
+		if result.Calls >= maxCalls {
+			// No call is left to retry with: the budget, not the provider,
+			// ends the run, and the last failure says why it was spent.
+			return nil, fmt.Errorf("%s (the last call failed: %s)", agent.GenerationBudgetExceededReason("model calls"), last.Error())
 		}
 		wait := b.wait(attempt, retryAfter)
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < wait {
