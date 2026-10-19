@@ -316,6 +316,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		s.save()
 		return
 	}
+	before, _ := json.Marshal(rs)
 	open := map[int]bool{}
 	pending := false
 	for _, pr := range snapshot.PullRequests {
@@ -347,7 +348,10 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			delete(rs.PRs, number)
 		}
 	}
-	s.save()
+	// Snapshots usually repeat; write the file only when something changed.
+	if after, _ := json.Marshal(rs); changed || string(after) != string(before) {
+		s.save()
+	}
 	if pending {
 		s.Wake()
 	}

@@ -79,6 +79,7 @@ func TestRefreshConflictIsRetriedWithoutFailure(t *testing.T) {
 		t.Fatalf("conflict treated as failure: %+v", state)
 	}
 }
+
 // Successful discovery snapshots go to Discovered (the daemon's automatic
 // scheduler); failed polls do not, so a stale inbox never looks like news.
 func TestDiscoveredReceivesOnlySuccessfulSnapshots(t *testing.T) {

@@ -335,7 +335,7 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 
 // localApplication builds what the daemon serves: the registry, discovery,
 // review index, background refresh, diagnostics, the generation queue and
-// the automatic generation scheduler. Hook events (ENG-1321) reach the
+// the automatic generation scheduler. Agent hook events reach the
 // scheduler through Scheduler.Trigger.
 func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
