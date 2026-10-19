@@ -1314,6 +1314,16 @@ Transactions serialize registration and settings edits across processes; a list
 reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
+A repository's `automatic` setting is `null` (follow the global preference) or
+an explicit `true`/`false` that wins over it. The `preferences` table holds the
+global preferences as one JSON row: `automatic` (true until changed) and
+`cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
+`null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
+transaction, turning the `automatic: false` every earlier registration stored
+into `null`, and keeping a stored `true` (only `baum repos add --automatic`
+could set it). `OpenReadOnly` reads an unmigrated file the same way without
+writing it.
+
 `internal/cli` and the reusable `Registry.Handler` use the same service. The
 handler exposes registry operations only; `internal/uiserver` owns listening,
 instance lifecycle, authentication and host/origin validation and mounts the
@@ -1392,6 +1402,21 @@ preflight I/O happens outside the queue mutex so cancellation stays responsive.
 The runner has no subprocess invocation of baum itself. Only the existing
 read-only agent backends run child processes, cancelled through their context.
 
+`Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
+generation") queues a job nobody confirmed. It prepares the item like an
+estimate, so the job has the same budgets, price list, recheck before running
+and isolation as a confirmed one, and refuses for good
+(`NotAutomaticError`) what a person would have to confirm: a fork or an author
+without known write access, a blocked (unpriced) model, and cursor-agent or
+another unestimated backend without the acknowledgement. Under the queue mutex
+it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
+queued or running job (it never joins or supersedes one), `ErrDuplicate` when
+any job, manual or automatic, already exists for that head, and `ErrDailyCap`
+when the repository's automatic jobs created that day (actual cost when
+reported, else the estimate; a job cancelled before calling a model counts
+zero) plus this estimate would exceed its `daily_cap`. Jobs record
+`automatic` and `trigger` (`new_head`, `review_requested`).
+
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
 retained. Keep these copied core files synchronized with the platform package.
@@ -1422,7 +1447,10 @@ viewer build/freshness scripts include both embedded applications.
 
 `internal/background` runs one cancellable worker in the daemon, once it owns
 its lock. It has registry/discovery/metadata capabilities only; the generation
-queue and model backends are not dependencies. It polls immediately without
+queue and model backends are not dependencies, and it never enqueues
+generation. `Service.Discovered` receives each snapshot a poll returned without
+error; the daemon passes them to the automatic scheduler, which alone decides
+about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
 Per-repository target cursors and repository rotation prevent a small renewed
@@ -1453,7 +1481,7 @@ and selected-version provenance without changing the review document schema.
 desktop app and coding-agent hooks; the `baum` command line is how both reach
 it. It owns the authenticated app server above and everything that used to run
 inside `baum ui`: registry, discovery, review index, background refresh,
-diagnostics and the generation queue. `baum ui` only ensures the daemon and
+diagnostics and the generation queue, and the automatic generation scheduler. `baum ui` only ensures the daemon and
 opens its launch URL, so there is one server implementation.
 
 ### Lifecycle
@@ -1558,6 +1586,56 @@ shell and always uses the inherited one. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
 way to name a backend executable explicitly.
 
+### Automatic generation
+
+`internal/automatic.Scheduler`, built by `localApplication` and run beside
+background refresh, turns pull request changes into jobs on the same queue as
+confirmed runs. It has no backend or GitHub client of its own: discovery feeds
+it and `Queue.SubmitAutomatic` decides each job.
+
+- **Enabled** per repository: its explicit `automatic` setting, else the global
+  preference (on by default). Disabling a repository, or unregistering it,
+  forgets its state; nothing in flight is cancelled.
+- **Baseline.** `Observe` gets every successful discovery snapshot. The first
+  one for an enabled repository records each open PR's head, whether the
+  user's review is requested, and whether team membership was readable, and
+  queues nothing: PRs open at first launch, registration or re-enabling are
+  not caught up.
+- **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
+  new PR included), or whose review request turned on (not merely because team
+  membership became readable), gets a pending head if it is eligible: the
+  user's review is requested or the user authored it, it is not from a fork,
+  and its author has known write access. A PR that closes, moves to another
+  head while ineligible, or stops being eligible loses its pending head.
+- **State.** `automatic.json` in the job state directory (0700) holds each
+  enabled repository's PRs (recorded head, request flags, pending head and
+  trigger, last head handled), its pause and its notice. It is rewritten
+  atomically on every change, so a restart neither forgets pending heads nor
+  treats recorded ones as new; an unreadable file starts over with new
+  baselines.
+- **Passes** run at start, every 30 s, when a snapshot leaves pending work,
+  when settings change and when a job finishes. A pass submits due pending
+  heads in order unless the daemon is stopping or has a restart pending
+  (`daemon.Self`), so the queue can drain. A head whose latest saved review
+  already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
+  head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
+  pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
+  head); `ErrDailyCap` pauses the repository until local midnight with the
+  `daily_cap` notice; a `NotAutomaticError` drops it with its reason as the
+  notice; other errors retry with backoff, five times.
+- **Spending.** No default cap. Each job keeps the configured run budgets, and
+  `daily_cap` is enforced per repository and calendar day. cursor-agent runs
+  automatically only after `cursor_agent_acknowledged`, checked by
+  `SubmitAutomatic` from the stored preference, never from a request.
+- **Interfaces.** `GET /api/automatic` returns the preferences and each
+  repository's effective state, cap, today's automatic spend, pause, notice
+  and pending count; `PUT /api/automatic` changes the preferences. A changed
+  pause or notice is published as an `automatic` SSE event for the app and the
+  desktop app's notifications. `Trigger(ctx, repository)` polls discovery for
+  one repository (within discovery's own poll deadline and rate budget) and
+  passes the snapshot to `Observe`: hook events (an agent
+  session ending, a push) use it rather than a separate path.
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
@@ -1583,9 +1661,9 @@ identify and replace any daemon. `ping` and every method registered in
 `Options.Methods` require the client's protocol to equal the daemon's, and
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
 `daemon.Protocol` for any incompatible change. Hook ingestion
-will add methods through `Options.Methods`; automatic generation
-belongs in the application built by `localApplication` in
-`internal/cli/daemon.go`. Remote attach would be another transport beside
+will add methods through `Options.Methods`; a hook event that should look for
+new heads calls the automatic scheduler's `Trigger` (see "Automatic
+generation"). Remote attach would be another transport beside
 these two; none exists.
 
 ### Desktop app interface

@@ -228,8 +228,11 @@ container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 identities and generation preferences in a 0600 SQLite database beside the XDG
 config file. Remote URLs and their credentials are never persisted or returned.
 Registration and availability checks read local git metadata only; they do not
-resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
-preferences default off and registration does not start any background work.
+resolve tokens, clone, fetch or contact GitHub/model providers. Registration
+starts nothing by itself, but automatic generation is on by default: once the
+daemon has seen a registered repository's open pull requests, later new heads
+and review requests can start paid runs (see "The baum daemon"). The registry
+also holds the global preferences that control this.
 
 The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, remove records
@@ -271,11 +274,30 @@ What it runs while it is up:
   and the latest saved review's checks, conversation and head, with
   conditional requests and backoff (see "What baum sends where");
 - once when it starts, the signed price list download;
-- generation jobs, and only those you confirmed in the app with their price
-  estimate. They are the only thing that spends money: each runs the
-  configured `claude` or `codex` backend under your account, within the
-  confirmed budgets, as `baum generate` does. Nothing is generated
-  automatically.
+- generation jobs, the only thing that spends money: each runs the configured
+  backend under your account, within the configured budgets, as
+  `baum generate` does. Some you confirmed in the app with their price
+  estimate; the others it starts by itself, unattended (below).
+
+Automatic generation is on by default and runs without anyone watching. It
+starts a job when a pull request in a registered repository that you authored,
+or whose review is requested from you or one of your teams, gets a new head or
+a new review request after automatic generation was enabled for that
+repository; pull requests already open then are left alone. It never starts
+one for a pull request from a fork or by an author without known write access:
+those run the agent on someone else's content and always need your
+confirmation in the app. Each automatic job is prepared exactly like a
+confirmed one (same backend, model, budgets, price list and recheck of the head
+before any model call), and a model without a known price is never run
+automatically. What it can spend: up to the configured per-run budget for each
+new head, with no daily limit unless you set a repository's daily cap, which
+pauses that repository's automatic generation until the next day once reached.
+cursor-agent, which baum cannot estimate or cap, runs automatically only after
+you acknowledge that in the app. Turn it off globally or per repository in
+Repositories & settings, which stops new jobs without cancelling running ones.
+The daemon keeps doing this after the app window closes, and the desktop app
+can quit without stopping it; only "Quit and stop background reviews" (or
+`baum daemon stop`) stops it.
 
 It never contacts a baum server. To stop it, quit the desktop app with "stop
 background reviews" or run `baum daemon stop`: running jobs are cancelled and

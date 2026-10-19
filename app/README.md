@@ -52,10 +52,24 @@ updates the page through SSE. Repository settings share backend and model overri
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
-rate-limited and failed refreshes are visible and retried with backoff. Model
-calls only run after an explicit generation request and spend confirmation.
-Legacy automatic/cap settings are retained for compatibility but never schedule
-paid work and have no controls in this app.
+rate-limited and failed refreshes are visible and retried with backoff.
+
+Automatic reviews are on by default. Repositories & settings has the global
+"Generate reviews automatically" switch and the one-time "Allow automatic
+reviews with cursor-agent" acknowledgement (`GET`/`PUT api/automatic`, kept by
+the daemon, which enforces both). Each repository chooses "Global setting",
+"On" or "Off" (`automatic`: `null`, `true`, `false`) and an optional daily
+automatic cap in USD (empty is no cap, 0 permits no automatic spending), and
+shows today's automatic spend, how many triggered pull requests wait to start
+and the latest notice: a daily-cap pause until the next day (also a banner on
+every page), cursor-agent not acknowledged, an unpriced model, or GitHub
+unavailable. The jobs list and the PR page mark an automatic job "Started
+automatically because new commits were pushed" (or "because your review was
+requested"); it is cancelled like any other. `automatic` SSE events (a pause,
+its end, a notice) reload the page and are what the desktop app can notify on.
+The daemon keeps generating after the app closes, until "Quit and stop
+background reviews" or `baum daemon stop`. Every other model call runs only
+after an explicit generation request and spend confirmation.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 `pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes committed assets
@@ -74,9 +88,14 @@ Before the browser suite build its Linux test helper in `oss-test`:
 The suite verifies bootstrap into the namespace (every app request stays under
 it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
 viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. Unit tests cover
+generation/progress and repository settings. The fixture also runs the
+automatic generation scheduler, fed a discovery snapshot every quarter second;
+a second test writes `push-10` in the state directory to give PR 10 a new head
+and follows the automatic review it starts on the PR page and in the jobs list,
+then turns the global switch off and on. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters.
+unknown costs, selection and filters, automatic settings and pause notices,
+and the automatic job labels.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
