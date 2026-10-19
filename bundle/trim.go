@@ -11,8 +11,7 @@ import (
 )
 
 // Caps are the configured count and byte ceilings applied to a bundle.
-// ApplyCaps, CapPatches, CapAttachments and Fit read the comment, session,
-// patch, image and byte limits. MaxPromptsPerSession and
+// ApplyCaps and Fit read the comment, session, patch, image and byte limits. MaxPromptsPerSession and
 // MaxCommandEventsPerSession are applied by the source that collects
 // sessions, and DiffLimits gives the limits diff assembly reads.
 type Caps struct {
@@ -44,10 +43,10 @@ func (c Caps) DiffLimits() DiffLimits {
 	return DiffLimits{MaxFiles: c.MaxDiffFiles, MaxPatchBytes: c.MaxDiffPatchBytes, MaxHunkLines: c.MaxHunkPatchLines}
 }
 
-// CapAttachments bounds each attachment's alt text and heading to
-// MaxImageAltBytes and notes how many attachments it shortened. It runs after
-// redaction, so a cut cannot leave part of a secret unmasked.
-func CapAttachments(bundle *Bundle, caps Caps) {
+// capAttachments bounds each attachment's alt text and heading to
+// MaxImageAltBytes and notes how many attachments it shortened. Fit runs it,
+// after redaction, so a cut cannot leave part of a secret unmasked.
+func capAttachments(bundle *Bundle, caps Caps) {
 	limit := caps.MaxImageAltBytes
 	if limit <= 0 {
 		return
@@ -74,7 +73,7 @@ func CapAttachments(bundle *Bundle, caps Caps) {
 // start; comments to the newest N plus every review verdict. It does not cap
 // prompts or command events: the source that collects sessions already
 // selected them (MaxPromptsPerSession, MaxCommandEventsPerSession). Nor does
-// it cap patch lines: CapPatches does, after redaction.
+// it cap patch lines or alt text: Fit does, after redaction.
 func ApplyCaps(bundle *Bundle, caps Caps) {
 	var notes []string
 
@@ -101,11 +100,11 @@ func ApplyCaps(bundle *Bundle, caps Caps) {
 	bundle.Truncated = append(bundle.Truncated, notes...)
 }
 
-// CapPatches bounds each hunk's patch to its leading MaxHunkPatchLines lines
-// and notes how many hunks it shortened. It runs after redaction, which reads
-// the margin diff parsing keeps past the cap (DiffLimits.MaxHunkLines), so a
-// secret the cut runs through is masked whole.
-func CapPatches(bundle *Bundle, caps Caps) {
+// capPatches bounds each hunk's patch to its leading MaxHunkPatchLines lines
+// and notes how many hunks it shortened. Fit runs it, after redaction, which
+// reads the margin diff parsing keeps past the cap (DiffLimits.MaxHunkLines),
+// so a secret the cut runs through is masked whole.
+func capPatches(bundle *Bundle, caps Caps) {
 	limit := caps.MaxHunkPatchLines
 	if limit <= 0 {
 		return
@@ -201,7 +200,15 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // rather than PR evidence, and because a fixed content cap would otherwise
 // make a MaxBytes configured below it permanently unsatisfiable. The attachments part counts as content but no
 // stage cuts it: the files it lists reach the agent whole (the description-image rules).
+//
+// Fit runs after Redact. It first cuts each hunk's patch to MaxHunkPatchLines
+// and each attachment's alt text and heading to MaxImageAltBytes, so those
+// cuts always follow redaction: a patch reaches Redact with the margin diff
+// parsing keeps past the line cap, and a secret the cap runs through is
+// masked whole.
 func Fit(bundle *Bundle, caps Caps) error {
+	capPatches(bundle, caps)
+	capAttachments(bundle, caps)
 	if err := fitContent(bundle, caps); err != nil {
 		return err
 	}

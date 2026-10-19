@@ -41,8 +41,8 @@ type DiffLimits struct {
 	MaxFiles int
 	// MaxPatchBytes bounds the patch bytes read across every file.
 	MaxPatchBytes int64
-	// MaxHunkLines is the per-hunk line cap CapPatches applies, with its
-	// note, after redaction. Parsing keeps each hunk's leading MaxHunkLines
+	// MaxHunkLines is the per-hunk line cap Fit applies, with its note,
+	// after redaction. Parsing keeps each hunk's leading MaxHunkLines
 	// lines and up to redactionMargin bytes past them: the cap and its note
 	// behave as on the full text, redaction reads a secret the cap runs
 	// through whole, and a long hunk is never held whole.
@@ -51,8 +51,13 @@ type DiffLimits struct {
 
 // redactionMargin is how many bytes of a hunk past its line cap parsing
 // keeps for redaction to read. A secret that starts before the cut ends
-// within it: no redaction rule reads further past where a secret starts
-// (the private-key rules read 16 KiB).
+// within it: no redaction rule reads further past where a secret starts.
+//
+// It is measured, not derived: goredact does not export its rules'
+// lookahead. In goredact v0.2.0 the longest is 16384 bytes, for the
+// pem-private-key and putty-private-key rules (jwt and
+// supabase-service-role-key read 8192). Re-measure it on every goredact
+// upgrade: TestRedactionMarginCoversTheEngine fails until it is.
 const redactionMargin = 16 << 10
 
 // buildDiffIndex is BuildDiffIndex that also returns one truncation note

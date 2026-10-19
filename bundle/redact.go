@@ -10,7 +10,7 @@ import (
 
 // Redact masks secrets and e-mail addresses in every bundle string field,
 // after reference extraction (which runs against the unredacted bundle) and
-// before the hunk line cap (CapPatches) and the byte-fit pass. Each field, a
+// before the byte-fit pass and the hunk line cap it starts with. Each field, a
 // whole patch included, is redacted as one text, so a secret spanning lines
 // is found, and keeps its length and lines. A patch still holds the margin
 // diff parsing keeps past the line cap, so a secret the cap runs through is

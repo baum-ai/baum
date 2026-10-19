@@ -927,7 +927,9 @@ func TestApplyCapsCutsExactlyAtTheBoundary(t *testing.T) {
 	if bundle.Diff[0].Patch != "l1\nl2\nl3" {
 		t.Errorf("ApplyCaps cut patch lines before redaction: %q", bundle.Diff[0].Patch)
 	}
-	CapPatches(bundle, caps)
+	if err := Fit(bundle, caps); err != nil {
+		t.Fatal(err)
+	}
 	if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" {
 		t.Errorf("expected only the high-confidence session kept, got %+v", bundle.Sessions)
 	}
@@ -947,14 +949,14 @@ func TestCapAttachmentsShortensAltAndHeadingAndNotes(t *testing.T) {
 		{ID: "a", Alt: strings.Repeat("x", 50), Heading: "short"},
 		{ID: "b", Alt: "ok"},
 	}}
-	CapAttachments(bundle, Caps{MaxImageAltBytes: 10})
+	capAttachments(bundle, Caps{MaxImageAltBytes: 10})
 	if len(bundle.Attachments[0].Alt) != 10 || bundle.Attachments[0].Heading != "short" || bundle.Attachments[1].Alt != "ok" {
 		t.Fatalf("attachments = %+v", bundle.Attachments)
 	}
 	if len(bundle.Truncated) != 1 || !strings.Contains(bundle.Truncated[0], "for 1 description image(s)") {
 		t.Fatalf("truncated = %v", bundle.Truncated)
 	}
-	CapAttachments(bundle, Caps{})
+	capAttachments(bundle, Caps{})
 	if len(bundle.Truncated) != 1 {
 		t.Fatal("a zero limit must not cap or note")
 	}

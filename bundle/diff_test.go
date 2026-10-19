@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -431,13 +433,12 @@ func TestParsingKeepsAMarginPastTheHunkCap(t *testing.T) {
 
 // A secret the hunk line cap runs through is masked in the kept lines
 // exactly as when the whole patch is redacted: parsing keeps a margin past
-// the cap, Redact reads it and CapPatches cuts after.
+// the cap, Redact reads it and Fit cuts after.
 func TestRedactionReadsPastTheHunkLineCap(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
 	const limit = 20
 	forms := map[string][]string{
 		"pem":           syntheticKeyLines(),
@@ -459,24 +460,7 @@ func TestRedactionReadsPastTheHunkLineCap(t *testing.T) {
 				for i := range 20 {
 					fmt.Fprintf(&patch, "%sline after %d\n", marker, i)
 				}
-				comparison := Comparison{Files: []FileChange{{NewPath: "key.pem", Status: "modified"}}}
-				hunks, _, err := BuildDiffIndexWithin(comparison, fetcher(patchOf("key.pem", []byte(patch.String()))), RoleForPath, DiffLimits{MaxHunkLines: limit})
-				if err != nil {
-					t.Fatal(err)
-				}
-				b := &Bundle{Diff: hunks}
-				ApplyCaps(b, Caps{MaxHunkPatchLines: limit})
-				if err := Redact(ctx, b, redactor); err != nil {
-					t.Fatal(err)
-				}
-				CapPatches(b, Caps{MaxHunkPatchLines: limit})
-
-				whole := &Bundle{Diff: []Hunk{{Patch: strings.TrimRight(patch.String(), "\n")}}}
-				if err := Redact(ctx, whole, redactor); err != nil {
-					t.Fatal(err)
-				}
-				want, _ := capPatchLines(whole.Diff[0].Patch, limit)
-				got := b.Diff[0].Patch
+				got, want, notes := cutAfterRedaction(t, redactor, patch.String(), limit)
 				where := fmt.Sprintf("%s %q from line %d", name, marker, start)
 				if got != want {
 					t.Fatalf("%s: capped redaction differs from the whole patch's:\n%s\nwant\n%s", where, got, want)
@@ -489,11 +473,104 @@ func TestRedactionReadsPastTheHunkLineCap(t *testing.T) {
 				if strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, "ENCRYPTED") {
 					t.Fatalf("%s: the kept part of the key block is not masked:\n%s", where, got)
 				}
-				if n := strings.Count(got, "\n") + 1; n != limit || len(b.Truncated) != 1 {
-					t.Fatalf("%s: kept %d lines, notes %q", where, n, b.Truncated)
+				if n := strings.Count(got, "\n") + 1; n != limit || len(notes) != 1 {
+					t.Fatalf("%s: kept %d lines, notes %q", where, n, notes)
 				}
 			}
 		}
+	}
+}
+
+// cutAfterRedaction runs patch, one file's diff, through the assembly order
+// (diff index within the line cap, ApplyCaps, Redact, Fit) and returns the
+// kept patch and notes, with want: the whole patch redacted, then capped.
+func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int) (got, want string, notes []string) {
+	t.Helper()
+	ctx := context.Background()
+	comparison := Comparison{Files: []FileChange{{NewPath: "key.pem", Status: "modified"}}}
+	caps := Caps{MaxHunkPatchLines: limit}
+	hunks, _, err := BuildDiffIndexWithin(comparison, fetcher(patchOf("key.pem", []byte(patch))), RoleForPath, caps.DiffLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Bundle{Diff: hunks}
+	ApplyCaps(b, caps)
+	if err := Redact(ctx, b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if err := Fit(b, caps); err != nil {
+		t.Fatal(err)
+	}
+	whole := &Bundle{Diff: []Hunk{{Patch: strings.TrimRight(patch, "\n")}}}
+	if err := Redact(ctx, whole, redactor); err != nil {
+		t.Fatal(err)
+	}
+	want, _ = capPatchLines(whole.Diff[0].Patch, limit)
+	return b.Diff[0].Patch, want, b.Truncated
+}
+
+// keyBody returns n distinct 64-byte base64 lines of key material.
+func keyBody(n int) []string {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = strings.Repeat(fmt.Sprintf("Qz7%04dKp", i)+"Xb9", 6)[:64]
+	}
+	return lines
+}
+
+// A key whose BEGIN line is the last line the cap keeps, with a body that
+// ends just inside the margin or runs far past it, is masked as in the
+// whole patch.
+func TestRedactionMarginAtItsBoundary(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = 5
+	label := "RSA " + "PRIVATE KEY"
+	// A body line is 66 bytes in the patch, with its marker and newline.
+	for _, n := range []int{(redactionMargin - 200) / 66, 2 * redactionMargin / 66} {
+		patch := "@@ -1,9 +1,9 @@\n+a\n+b\n+c\n+-----BEGIN " + label + "-----\n" +
+			prefixLines("+", strings.Join(keyBody(n), "\n")) + "\n+-----END " + label + "-----\n+after\n"
+		got, want, _ := cutAfterRedaction(t, redactor, patch, limit)
+		if got != want {
+			t.Fatalf("%d body lines: capped redaction differs from the whole patch's:\n%s\nwant\n%s", n, got, want)
+		}
+		if strings.Contains(got, label) || strings.Count(got, "\n")+1 != limit {
+			t.Fatalf("%d body lines: the BEGIN line is not masked or not kept:\n%s", n, got)
+		}
+	}
+}
+
+// The margin must cover the furthest the engine reads past where a secret
+// starts. The PEM rule, which has the longest lookahead in the goredact
+// version measured, masks a key with no END marker up to the end of its
+// window, so that span bounds the window. Any goredact upgrade must
+// re-measure redactionMargin against its rules' lookaheads (see its
+// comment), then update the version pinned here.
+func TestRedactionMarginCoversTheEngine(t *testing.T) {
+	gomod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gomod), "github.com/baum-ai/goredact v0.2.0\n") {
+		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
+	}
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := "-----BEGIN RSA " + "PRIVATE KEY-----\n"
+	text := begin + strings.Join(keyBody(4*redactionMargin/65), "\n")
+	spans, err := redactor.Find(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) == 0 || spans[0].Start != 0 {
+		t.Fatalf("the unterminated key is not found: %+v", spans)
+	}
+	if past := spans[0].End - len(begin); past > redactionMargin || past < redactionMargin/2 {
+		t.Fatalf("the key is masked %d bytes past its BEGIN line; the margin is %d", past, redactionMargin)
 	}
 }
 
