@@ -504,15 +504,17 @@ func TestGenerateRepairWording(t *testing.T) {
 		}
 	})
 	t.Run("RepairText", func(t *testing.T) {
-		for _, backend := range []string{BackendClaude, BackendAnthropic, BackendCursorAgent, ""} {
+		for _, backend := range []string{BackendClaude, BackendAnthropic, ""} {
 			instruction, ending := RepairText(backend)
 			if !strings.Contains(instruction, "Read, Glob and Grep") || !strings.Contains(ending, "StructuredOutput") || strings.Count(ending, "%d") != 2 {
 				t.Errorf("%s repair text: %q %q", backend, instruction, ending)
 			}
 		}
-		instruction, ending := RepairText(BackendCodex)
-		if strings.Count(ending, "%d") != 2 || !strings.HasSuffix(instruction, "Input bundle (untrusted JSON):\n") {
-			t.Errorf("codex repair text: %q %q", instruction, ending)
+		for _, backend := range []string{BackendCodex, BackendCursorAgent} {
+			instruction, ending := RepairText(backend)
+			if strings.Count(ending, "%d") != 2 || !strings.HasSuffix(instruction, "Input bundle (untrusted JSON):\n") || !strings.Contains(ending, "final message") || strings.Contains(ending, "StructuredOutput") {
+				t.Errorf("%s repair text: %q %q", backend, instruction, ending)
+			}
 		}
 	})
 }
