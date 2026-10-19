@@ -207,7 +207,22 @@ func (q *Queue) signal() {
 	default:
 	}
 }
-func (q *Queue) Close() { q.cancel(); q.wg.Wait() }
+func (q *Queue) Close() { _ = q.Shutdown(context.Background()) }
+
+// Shutdown cancels running jobs, which are recorded as interrupted, and waits
+// for the workers until ctx ends. A job whose backend has not returned by then
+// stays running in the journal, and the next Open records it as interrupted.
+func (q *Queue) Shutdown(ctx context.Context) error {
+	q.cancel()
+	done := make(chan struct{})
+	go func() { q.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 func (q *Queue) List() []Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()

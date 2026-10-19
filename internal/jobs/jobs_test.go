@@ -227,6 +227,58 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 		t.Fatal("restart not persisted", e)
 	}
 }
+func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
+	q, f := newQueue(t)
+	e := estimate(t, q, "single", Item{"clone", 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	waitState(t, q, jobs[0].ID, "running")
+	if err = q.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(q.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []Job
+	if err = json.Unmarshal(raw, &saved); err != nil || saved[0].State != "interrupted" || saved[0].Reason != "interrupted" {
+		t.Fatalf("journal %s, %v", raw, err)
+	}
+}
+func TestShutdownStopsWaitingAtDeadline(t *testing.T) {
+	stuck := &stuckExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), stuck, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { close(stuck.release); q.Close() })
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if _, err = q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	<-stuck.started
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err = q.Shutdown(ctx); err == nil {
+		t.Fatal("shutdown waited for a backend that ignores cancellation")
+	}
+}
+
+// stuckExecutor ignores cancellation until released.
+type stuckExecutor struct{ started, release chan struct{} }
+
+func (s *stuckExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
+	price := 1.0
+	return Prepared{Item: item, Repository: "org/repo", HeadSHA: "head", Backend: "claude", Model: "m", EstimateUSD: &price}, "v", nil
+}
+func (s *stuckExecutor) Execute(context.Context, Prepared, func(Progress)) (*float64, error) {
+	close(s.started)
+	<-s.release
+	return nil, nil
+}
 func TestQueuePersistenceFailureDoesNotStartSpend(t *testing.T) {
 	q, f := newQueue(t)
 	e := estimate(t, q, "single", Item{"clone", 1})
