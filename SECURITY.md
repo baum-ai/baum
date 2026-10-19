@@ -68,7 +68,8 @@ environment, the config file or `gh`'s own files, `gh auth token
 list described above, skipped with `--offline`; nothing else leaves the machine.
 It creates no files of its own: it opens the registry read-only (SQLite
 `mode=ro`, so no journal, table or file mode changes) and only when it exists,
-and does not create a review store. A config file that does not parse is shown
+and does not create a review store. It asks a running baum daemon for its
+version, process id and uptime over the daemon's socket, and never starts one. A config file that does not parse is shown
 by position, and by key for a wrong type or value, and never by its text. Asking
 gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
 its own configuration, as `baum generate` does.
@@ -98,7 +99,8 @@ address, which stops other websites in your browser from reading it, but any
 other user or process on the same machine can request the port while it runs
 and read everything it serves, transcripts included, even without permission
 to read your `~/.claude` or other session stores. Do not run `baum view` on a
-shared machine. `baum ui` adds the separate authenticated boundary described below.
+shared machine. The baum daemon, which serves the local application, adds the
+separate authenticated boundary described below.
 
 ## Reading your clone without downloading anything
 
@@ -229,7 +231,7 @@ Registration and availability checks read local git metadata only; they do not
 resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
 preferences default off and registration does not start any background work.
 
-The registry HTTP handler is mounted by `baum ui` behind its authenticated
+The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, remove records
 and change settings. `baum view` exposes none of these routes.
 
@@ -253,9 +255,62 @@ exposed while triggering the issue, treat it as compromised and rotate it.
 This policy covers the baum repository. It does not cover the model
 providers, GitHub, or the coding-agent tools whose sessions baum reads.
 
+## The baum daemon
+
+The local application (the desktop app, or `baum ui` in a browser) is served
+by the baum daemon, one process per user that keeps running in the background
+after whatever started it exits. The desktop app and agent hooks start it with
+`baum daemon ensure`; `baum ui` does too.
+
+What it runs while it is up:
+
+- the local application's server on `127.0.0.1` (described below) and a
+  control socket only your user can open;
+- every minute or so, free GitHub reads with your token for registered clones:
+  open pull requests, the authenticated user and teams, author permissions,
+  and the latest saved review's checks, conversation and head, with
+  conditional requests and backoff (see "What baum sends where");
+- once when it starts, the signed price list download;
+- generation jobs, and only those you confirmed in the app with their price
+  estimate. They are the only thing that spends money: each runs the
+  configured `claude` or `codex` backend under your account, within the
+  confirmed budgets, as `baum generate` does. Nothing is generated
+  automatically.
+
+It never contacts a baum server. To stop it, quit the desktop app with "stop
+background reviews" or run `baum daemon stop`: running jobs are cancelled and
+recorded as interrupted (after at most 20 seconds), and nothing runs until
+something starts it again. `baum daemon status` and `baum doctor` show whether
+it runs, its version, process id and uptime.
+
+Its state directory, `$XDG_STATE_HOME/baum/daemon` (default
+`~/.local/state/baum/daemon`), is mode 0700 and holds the lock, `daemon.json`
+(version, process id, start time, app address), the app credential and the
+logs, which are rotated at 1 MiB with two older files kept. The logs hold
+events, addresses and paths, never tokens, credentials or environment values.
+
+The control socket, `$XDG_RUNTIME_DIR/baum/daemon.sock` or `daemon.sock` in
+the state directory, is mode 0600 in a 0700 directory, so other users cannot
+connect; Windows uses the same `AF_UNIX` socket, protected by the state
+directory's current-user DACL. Any process running as you can connect, ask
+for the daemon's status and stop it. The socket accepts no other requests yet.
+
+The daemon does not use the environment of whatever started it. It runs your
+login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
+with only session variables and reads the environment your startup files set,
+then keeps only `PATH`, your home and XDG directories, locale, proxy and
+certificate settings, `SSH_AUTH_SOCK`, the desktop session bus and display,
+GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
+`GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
+environment is therefore not used. If the shell is slow or fails, the same
+variables come from the starting environment instead. Startup files can check
+`BAUM_RESOLVING_ENVIRONMENT=1` to skip slow work. The backends then filter this
+environment further, as described under "Agent isolation".
+
 ## Authenticated local application
 
-`baum ui` accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
+The daemon's application server accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
 local data; every API requires the random private launch capability or an
 HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
 browser receives the capability in a URL fragment, removes it from history,
@@ -265,14 +320,17 @@ every port of a host, so the cookie is scoped to a second random secret path,
 loopback port never receives it, and the cookie authorizes nothing outside
 that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
-authentication. No route enables CORS. The capability is valid only while the
-instance runs; keep the printed URL and its mode-0600 instance file private.
-Processes running as your user can read that file and access the API.
+authentication. No route enables CORS. The capability is the daemon's app
+credential: it is written to `credential.json` (mode 0600) in the daemon's
+state directory, where the desktop app reads it, stays valid for repeated
+exchanges while that daemon runs, and is replaced when a new daemon starts.
+Keep the URL `baum ui` prints and that file private. Processes running as your
+user can read that file and access the API.
 
-The per-user instance directory must be mode 0700 on Unix; Windows uses a protected current-user DACL. A second invocation verifies
-the existing instance using its capability before opening it, without sending
-that capability to a redirect, proxy, non-loopback host or baum server. SQLite
-OS locking prevents concurrent owners and releases locks after process exit.
+The state directory must be mode 0700 and owned by you on Unix; Windows uses a
+protected current-user DACL. Clients never send the capability anywhere: they
+read it from the file and open it on the loopback address it names. SQLite OS
+locking keeps one daemon per user and releases the lock after process exit.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum view`; file patches are
@@ -296,8 +354,9 @@ process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. The stored copy of a downloaded
-price list is trusted only after its signature verifies again on load. A second `baum ui` invocation
-cannot open a second queue because it reuses the existing instance first.
+price list is trusted only after its signature verifies again on load. Only
+the daemon that owns the per-user lock opens the queue, so there is never a
+second one.
 
 The server's bootstrap page exchanges the fragment token and clears it from
 history before the embedded local application loads; the application's files

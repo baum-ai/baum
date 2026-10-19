@@ -1277,10 +1277,10 @@ code that makes the decisions instead of guessing at them: the real backends'
 `Check` (built by `generate.DefaultBackendsFor`, run once and replayed into
 `generate.Select` to say what `auto` picks and why), `gitlocal`'s git version
 rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
-and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
-`uiserver`. Every outside dependency (environment, `PATH` lookup, command
-runner, backends, token lookup, price refresh and registry) is an `Options`
-field, so tests use fake executables and stubs. It creates nothing (the
+and the default-path helpers of `config`, `repos`, `jobs` and `discovery`.
+Every outside dependency (environment, `PATH` lookup, command
+runner, backends, token lookup, price refresh, registry and daemon) is an
+`Options` field, so tests use fake executables and stubs. It creates nothing (the
 registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
 `cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
 reruns a failed claude or codex check, and bounds every subprocess with a
@@ -1288,8 +1288,10 @@ timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
 column, and the key for a type or value error, never the text. A host that `github.IsGitHubHost` refuses is a problem
-without a token lookup. It does not import `uiserver`, which may
-serve the report: the instance directory is passed in.
+without a token lookup. It does not import `daemon`, which serves the
+report: the command line passes `Options.Daemon`, which asks the daemon over
+its control socket (never starting it or creating its state directory) for
+its version, process id and uptime, and whether this baum would replace it.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
 and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
@@ -1329,11 +1331,9 @@ run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
 Document selectors resolve registered clone IDs, never request-provided paths.
 The server makes no baum-server requests. Discovery and index are separate
-providers; the generation runner is mounted only after acquiring the single-instance lock.
-
-A private SQLite write lock keeps one process per user, with an authenticated
-health probe before another invocation trusts the private capability file.
-Cleanup removes that file before releasing the lock. SSE has a bounded
+providers. The server is hosted only by the daemon (see "Local daemon"),
+which builds every provider, the generation runner included, once it owns
+the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index.
 
@@ -1391,7 +1391,7 @@ retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
-`baum ui` re-verifies and installs it before opening the queue, so recovered
+The daemon re-verifies and installs it before opening the queue, so recovered
 jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
 a different priced model. Unknown actual usage remains null.
@@ -1399,7 +1399,8 @@ a different priced model. Unknown actual usage remains null.
 ### Local application presentation
 
 `app/` builds into the committed `internal/localapp/dist` embed.
-`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+`localapp.Handler` is the daemon's `App.Assets`, mounted as `uiserver`'s
+`Options.App`, so the application's files
 are served only under the authenticated `/s/<namespace>/` path; the public
 bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
 API, SSE and asset URLs relative to that path and routes with query strings on
@@ -1412,8 +1413,8 @@ viewer build/freshness scripts include both embedded applications.
 
 ### Free background synchronization
 
-`internal/background` runs one cancellable worker after the local instance lock
-is acquired. It has registry/discovery/metadata capabilities only; the generation
+`internal/background` runs one cancellable worker in the daemon, once it owns
+its lock. It has registry/discovery/metadata capabilities only; the generation
 queue and model backends are not dependencies. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
@@ -1438,3 +1439,142 @@ accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports; missing pricing dimensions leave a
 nullable cost and a fixed reason. The local SPA renders both job accounting
 and selected-version provenance without changing the review document schema.
+
+## Local daemon
+
+`internal/daemon` runs one long-lived local server per user, shared by the
+desktop app and coding-agent hooks; the `baum` command line is how both reach
+it. It owns the authenticated app server above and everything that used to run
+inside `baum ui`: registry, discovery, review index, background refresh,
+diagnostics and the generation queue. `baum ui` only ensures the daemon and
+opens its launch URL, so there is one server implementation.
+
+### Lifecycle
+
+`daemon.Run` takes an SQLite write lock (`daemon.lock.sqlite`) in the private
+state directory and holds it for its whole life. The operating system releases
+it however the process exits, so a lock is never stale; the new owner deletes
+the socket, credential and status files a crashed daemon left. A second
+`Run` waits briefly (a stopping daemon is releasing the lock), then returns
+`ErrRunning`. Once it owns the lock it runs `Options.Prepare` (the command line
+resolves the login shell environment there), builds the application with
+`Options.Start`, listens on loopback, writes the credential and the status
+file, and listens on the control socket last, so a daemon that answers on
+the socket serves the app.
+
+`Client.Ensure` (`baum daemon ensure`) says hello on the socket. A daemon of
+this version or newer is kept. An older one (lower protocol, or an older
+release by semver; a development build is replaced by any release, and two
+development builds are left alone) is asked to stop and replaced. A daemon
+speaking a newer protocol is an `IncompatibleError` naming both versions.
+When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
+the holder starts `baum daemon run --detached` and waits until it answers,
+and every other caller finds it running once it gets the lock, so concurrent
+calls start exactly one daemon. A daemon that holds the lock but never
+answers is reported with its process id from `daemon.json`, not killed.
+
+A detached daemon runs in its own session (Unix `setsid`; Windows
+`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, breaking away from the
+caller's job object when the job allows it), in the home directory, with no
+standard input and its standard output and error in `daemon.out` (the
+previous start's in `daemon.out.1`). It outlives every client.
+
+`baum daemon stop` (and the version restart) sends `stop`. The daemon answers,
+marks itself stopping (hello reports it, so `ensure` waits for it to exit
+rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
+cancel running jobs, which are recorded as interrupted (a backend that does
+not return in time leaves its job running in the journal, and the next start
+records it as interrupted), stops background work and the app server, removes
+its files and releases the lock. The client waits until the lock is free.
+SIGINT and SIGTERM stop it the same way.
+
+### Environment
+
+Whatever started it (an agent hook with the agent's environment, the desktop
+app with a bare launcher `PATH`, a terminal), the daemon replaces its
+environment before building anything. `internal/shellenv` runs `$SHELL` (else
+the user database's shell) as `-i -l -c` (csh: `-i -c`) in a new session with
+no terminal and a 10 s timeout after which its process group is killed. The
+shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
+`LANG`, `LC_*`, `TZ`, the XDG directories, `SSH_AUTH_SOCK`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`), a default `PATH`
+and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
+which prints the environment as JSON between two copies of a random marker,
+so whatever startup files print is ignored. `shellenv.Merge` then keeps only:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
+the XDG directories, `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
+`WAYLAND_DISPLAY`, proxy and CA variables, `GITHUB_TOKEN`, `GH_TOKEN`,
+`GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
+`GH_PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `BAUM_*`
+and, on Windows, the system variables programs need. With a resolved shell
+environment every kept variable comes from it, so a token only the agent's
+environment had is dropped; only `HOME`, the XDG directories, `USERPROFILE`,
+`APPDATA` and `LOCALAPPDATA` keep the starting client's value, because clients
+find the daemon through them. When the shell is slow, fails or prints nothing,
+the kept variables come from the inherited environment. Windows has no login
+shell and always uses the inherited one. The log records the shell, the
+outcome and the kept variable names, never values. `backend_paths` remains the
+way to name a backend executable explicitly.
+
+### Transports and control protocol
+
+The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
+`--port`), unchanged: launch-token exchange, the cookie scoped to the secret
+`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+the credential file instead of being printed by a foreground process.
+
+The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
+`$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
+directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
+under the system temporary directory. Windows 10 1803 and later have
+`AF_UNIX` sockets, so Windows uses the same socket in the state directory,
+protected by that directory's current-user DACL, instead of a named pipe
+(which would need a new dependency for overlapped I/O). Each request is one
+JSON line, `{"protocol":1,"method":"hello","client":"<version>"}`, answered by
+one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
+"message":…}}`; a connection may carry several, and lines are limited to
+64 KiB. `hello` and `stop` work in every protocol version, so any client can
+identify and replace any daemon. `ping` and every method registered in
+`Options.Methods` require the client's protocol to equal the daemon's, and
+answer `protocol_mismatch` with the daemon's status otherwise. Increment
+`daemon.Protocol` for any incompatible change. Hook ingestion (ENG-1318)
+adds methods through `Options.Methods`; automatic generation (ENG-1313)
+belongs in the application built by `localApplication` in
+`internal/cli/daemon.go`. Remote attach would be another transport beside
+these two; none exists.
+
+### Desktop app interface
+
+The desktop app talks to the daemon only through the bundled `baum` binary
+and two files:
+
+1. `baum daemon ensure --json` starts the daemon if needed (replacing an older
+   one), waits until it serves, and prints one JSON line on stdout:
+   `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/ada/.local/state/baum/daemon"}`.
+   `stopping` appears only while it shuts down. On failure it exits non-zero
+   with the reason on stderr. `--port` and `--concurrency` apply only when it
+   starts the daemon.
+2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
+   `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
+   Loading it runs the bootstrap page, which exchanges the fragment for the
+   session cookie. The token stays valid for any number of exchanges for the
+   daemon's whole life, so the app can be relaunched against one daemon; a new
+   daemon writes a new token atomically, and the old one then gets 401 (or no
+   answer, if the port changed). The token also works as
+   `Authorization: Bearer` on `/api/` routes.
+3. `<state>/daemon.log` is the daemon's log (it rotates at 1 MiB, keeping
+   `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
+   wrote before its log opened, or a crash.
+4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
+   ("Quit and stop background reviews"). `baum daemon status [--json]` prints
+   the same status, or exits non-zero when none runs.
+
+`<state>` is `$XDG_STATE_HOME/baum/daemon`, by default
+`~/.local/state/baum/daemon` on every platform, and is reported in `state`.
+
+### Diagnostics
+
+`baum doctor` reports the daemon (`daemon` check): its state directory, and
+when it runs its version, process id, uptime, protocol and socket; a warning
+when it is older than the doctor's baum, speaks a newer protocol, or holds the
+lock without answering.
