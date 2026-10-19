@@ -108,7 +108,7 @@ cat > prompt.txt
 	t.Setenv("CURSOR_API_KEY", "key_cursor_secret")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
 	t.Setenv("GITHUB_TOKEN", "ghp_secret")
-	t.Setenv("CURSOR_CONFIG_DIR", "/home/me/.cursor-config")
+	t.Setenv("CURSOR_CONFIG_DIR", "/cursor-config")
 
 	backend := &Backend{}
 	result, err := backend.Run(context.Background(), request(dir))
@@ -155,7 +155,7 @@ cat > prompt.txt
 			t.Errorf("the child environment holds %s", secret)
 		}
 	}
-	for _, kept := range []string{"CURSOR_CONFIG_DIR=/home/me/.cursor-config", "NO_OPEN_BROWSER=1"} {
+	for _, kept := range []string{"CURSOR_CONFIG_DIR=/cursor-config", "NO_OPEN_BROWSER=1"} {
 		if !strings.Contains(string(env), kept) {
 			t.Errorf("the child environment lacks %s", kept)
 		}
