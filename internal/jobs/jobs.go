@@ -17,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/pricing"
 )
 
 type Item struct {
@@ -239,7 +240,7 @@ func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estima
 		if mode == "batch" && p.RequiresIsolationConfirmation {
 			p.BlockedReason = "isolation_confirmation_required"
 		}
-		if p.BlockedReason == "unknown_model_price" {
+		if p.BlockedReason == "unknown_model_price" || p.BlockedReason == pricing.ReasonBilledByCursor {
 			known = false
 		}
 		if p.BlockedReason == "" {

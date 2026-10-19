@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -57,7 +58,12 @@ func TestCursorAgentBackendGeneratesARepairedRedactedDocument(t *testing.T) {
 		// The repair is valid, with a secret in free text.
 		generatetest.FakeCursorPass{SectionSummary: "The change reads " + assembletest.PlantedSecret + " from the settings."})
 	options.DiagnosticsOut = filepath.Join(t.TempDir(), "diagnostics.json")
-	result, err := generate.Run(context.Background(), options)
+	versions, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
+	result, err := generate.Publish(context.Background(), versions, key, options, nil)
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, f.progress.String())
 	}
@@ -128,6 +134,9 @@ func TestCursorAgentBackendGeneratesARepairedRedactedDocument(t *testing.T) {
 	// provider model ID nor the speed: the cost stays unknown.
 	if cost, reason := pricing.Embedded().AccountingCost(a); cost != nil || reason == "" {
 		t.Errorf("cost = %v (%s), want unknown", cost, reason)
+	}
+	if result.Metadata.RecordedCostUSD != nil || result.Metadata.CostReason != pricing.ReasonBilledByCursor {
+		t.Errorf("recorded cost = %v (%s), want unknown, billed by Cursor", result.Metadata.RecordedCostUSD, result.Metadata.CostReason)
 	}
 
 	diagnostics, err := os.ReadFile(options.DiagnosticsOut)

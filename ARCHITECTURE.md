@@ -487,7 +487,12 @@ reads and writes), checked against `MaxTokens` when it arrives; a result
 without it marks the usage `Unreported`. `Result.Model` is the configured model
 (`configured`) or the display name the CLI's init event reports
 (`cli_reported`); neither is a provider model ID and no speed or cache TTL is
-reported, so the recorded cost stays unknown. A failed process is classified
+reported. Cursor bills the run through the user's subscription, so
+`pricing.List.BackendEstimate`, `BackendOutcomeCost` and
+`BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
+this backend whatever its model is called: the recorded cost is unknown, and a
+`baum ui` job is excluded with that reason instead of being estimated at API
+rates. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
 `authentication_error`).
 

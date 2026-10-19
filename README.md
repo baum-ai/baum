@@ -283,8 +283,9 @@ the earlier ones were skipped.
 
 The `cursor-agent` backend runs the Cursor Agent CLI under your own Cursor
 login (`cursor-agent login`; `CURSOR_API_KEY` is not passed to it), so it is
-billed through your Cursor plan: baum shows no estimate for it and records its
-cost as unknown. It is found
+billed through your Cursor plan: baum never prices it at API rates, records its
+cost as unknown (`billed_by_cursor_subscription`), and `baum ui`, which queues
+only jobs it can estimate, excludes it for that reason. It is found
 as `cursor-agent`, or as `agent` when that is the Cursor Agent, and is used
 only when its `--help` lists every option baum passes; otherwise it asks you to
 run `cursor-agent update`. It runs in Cursor's read-only ask mode with Cursor's

@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -106,9 +107,13 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}
+	// A backend billed by its own subscription has no estimate, rather than
+	// one at API rates; like an unpriced model, it is not queued from here.
+	var unpriced string
+	p.EstimateUSD, unpriced = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
 	if p.EstimateUSD == nil {
-		p.BlockedReason = "unknown_model_price"
+		p.BlockedReason = cmp.Or(unpriced, "unknown_model_price")
 	}
 	return p, list.Version(), nil
 }
@@ -180,12 +185,14 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			backend.repairs = pass
 		}
 		backend.report("validating")
-	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 { return list.OutcomeCost(r.Outcome.Model, r.Outcome) })
+	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 {
+		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
+	})
 	backend.repairs = result.Outcome.ValidationRepairs
 	backend.accounting = result.Outcome.Accounting.Clone()
 	backend.redacted = true
 	backend.report("publishing")
-	return list.OutcomeCost(result.Outcome.Model, result.Outcome), e
+	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
 }
 
 type trackedBackend struct {
@@ -220,7 +227,7 @@ func (b *trackedBackend) report(phase string) {
 		if list == nil {
 			list = pricing.Active()
 		}
-		_, reason = list.AccountingCost(b.accounting)
+		_, reason = list.BackendAccountingCost(b.Backend.Name(), b.accounting)
 	}
 	safe := b.accounting.Clone()
 	if !b.redacted {
