@@ -62,6 +62,11 @@ type Job struct {
 	CostReason string            `json:"cost_reason,omitempty"`
 	ID         string            `json:"id"`
 	Prepared
+	// Automatic marks a job the daemon's scheduler queued without a person
+	// confirming it; Trigger says why (TriggerNewHead or
+	// TriggerReviewRequested).
+	Automatic     bool      `json:"automatic,omitempty"`
+	Trigger       string    `json:"trigger,omitempty"`
 	State         string    `json:"state"`
 	Phase         string    `json:"phase"`
 	Calls         int       `json:"calls"`
