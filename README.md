@@ -223,9 +223,9 @@ sessions recorded on this machine, as `baum sessions` does, but only those last
 written within two days of the pull request's first commit, and links them to
 those commits the way the hosted service does: a commit can link to several
 sessions when each edited part of it, and a weak guess is dropped once the
-commit has a confident link. A commit whose `Entire-Checkpoint` trailer names
-a checkpoint the clone's checkpoint branch holds is linked to the sessions that
-checkpoint recorded first; the matcher then looks only for the files those
+commit has a confident link. A commit whose `Entire-Checkpoint` trailers name
+checkpoints the clone's checkpoint branch holds is linked to the sessions those
+checkpoints recorded first; the matcher then looks only for the files those
 sessions did not edit.
 Only sessions linked to at least one commit are shown, and all their text is
 redacted like `baum sessions` output. It never fetches, not even in a partial
