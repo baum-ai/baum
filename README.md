@@ -112,8 +112,8 @@ for every warning and problem:
   `codex` and `cursor-agent`, and whether each came from `backend_paths` in the
   config file, `GH_PATH` or `PATH`;
 - which backend `--backend auto` would pick and why, including why `claude`
-  (and `codex` and `cursor-agent`) were skipped, and the configured backend
-  when it is not `auto`. A missing `cursor-agent` is information, not a
+  (and `codex`) were skipped, and the configured backend when it is not
+  `auto`; `auto` never picks `cursor-agent`. A missing `cursor-agent` is information, not a
   warning, unless it is the configured backend;
 - where the GitHub token comes from for github.com and for the host of every
   registered clone: the environment (`GITHUB_TOKEN`, `GH_TOKEN`), the config
@@ -269,19 +269,22 @@ baum sends it no credential of its own.
 `--backend auto` (the default, or `backend` in the config file) uses `claude`
 when it is installed and passes its checks (a recent enough version), else `codex`
 (recent enough, and its read-only sandbox starts on this machine), else
-`cursor-agent` (the Cursor Agent CLI, with the options baum needs), else
-`anthropic` when `ANTHROPIC_API_KEY` is set.
+`anthropic` when `ANTHROPIC_API_KEY` is set. `auto` never picks
+`cursor-agent`, even when it is the only backend installed, because Cursor
+cannot be held to read-only as reliably as the others; it runs only when you
+name it.
 `claude`, `codex` and `cursor-agent` are found at their `backend_paths` entry when the config file has one, else
 on `PATH`; see [Configuration](#configuration). `baum doctor` shows what `auto`
 picks and why.
 `--backend claude`, `--backend codex`, `--backend cursor-agent` and `--backend anthropic` use exactly that one. `--model` names
 a model of one backend, so with `auto` it applies to `claude` only: when `auto`
-falls back to `codex`, `cursor-agent` or `anthropic`, that backend uses its own default model, and stderr says why
+falls back to `codex` or `anthropic`, that backend uses its own default model, and stderr says why
 the earlier ones were skipped.
 
 The `cursor-agent` backend runs the Cursor Agent CLI under your own Cursor
 login (`cursor-agent login`; `CURSOR_API_KEY` is not passed to it), so it is
-billed through your Cursor plan and its recorded cost is unknown. It is found
+billed through your Cursor plan: baum shows no estimate for it and records its
+cost as unknown. It is found
 as `cursor-agent`, or as `agent` when that is the Cursor Agent, and is used
 only when its `--help` lists every option baum passes; otherwise it asks you to
 run `cursor-agent update`. It runs in Cursor's read-only ask mode with Cursor's
@@ -565,8 +568,8 @@ stays unknown unless the protection is readable. The repository is
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
 `backend = "auto"` picks `claude` when it is installed and passes its checks,
-else `codex` when it does, else `cursor-agent` when it does, else `anthropic`
-when `ANTHROPIC_API_KEY` is set.
+else `codex` when it does, else `anthropic` when `ANTHROPIC_API_KEY` is set.
+It never picks `cursor-agent`; set `backend = "cursor-agent"` to use it.
 
 `[backend_paths]` names a backend's executable by absolute path, for `claude`,
 `codex` and `cursor-agent`. A named path is used instead of the `PATH` lookup,

@@ -507,10 +507,10 @@ func (r *runner) selection(checked checkedBackends) {
 	reasons := strings.TrimSpace(skipped.String())
 	if err != nil {
 		c.Status, c.Detail = StatusProblem, "auto finds no usable backend: "+err.Error()
-		c.Fix = fmt.Sprintf("install Claude Code, Codex or the Cursor Agent CLI, or set backend_paths.claude, backend_paths.codex or backend_paths.cursor-agent to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude, codex and cursor-agent checks above", r.cfgPath)
+		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above. auto never picks cursor-agent: set backend = \"cursor-agent\" to use it", r.cfgPath)
 	} else {
 		c.Status, c.Version = StatusOK, selected.Version
-		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex, cursor-agent and anthropic (with ANTHROPIC_API_KEY set) that passes its checks", selected.Backend.Name())
+		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex and anthropic (with ANTHROPIC_API_KEY set) that passes its checks; it never picks cursor-agent, which cannot be held to read-only as reliably and runs only when configured", selected.Backend.Name())
 		if reasons != "" {
 			c.Detail += "\n" + reasons
 		}

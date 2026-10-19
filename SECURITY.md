@@ -232,7 +232,9 @@ restriction the CLI offers, and stops a run that strays, but several of
 Cursor's own features stay on and its read-only mode is enforced by Cursor,
 not by baum. Use it only on pull requests you are prepared to have an agent
 read, and possibly act on, under your account. Choose `claude`, `codex` or
-`anthropic` where that matters; `auto` tries `claude` and `codex` first.
+`anthropic` where that matters. For the same reason `auto` never picks
+`cursor-agent`: it runs only when you set `backend = "cursor-agent"` or pass
+`--backend cursor-agent`.
 
 What baum does (checked against the help of cursor-agent 2026.10.16-e3cb207;
 the CLI's behaviour behind the flags was read from that release, not tested

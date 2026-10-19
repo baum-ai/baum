@@ -57,20 +57,20 @@ version store is written under the shared git directory, or the fallback or
 override selected by --store.
 
 --backend auto uses claude when it is installed and passes its checks, else
-codex, else cursor-agent, else the Anthropic API when ANTHROPIC_API_KEY is set.
-The agent runs in a private temporary directory that holds the bundle and the
-pull request's head and merge-base files, with its tools restricted to
-reading, and is removed afterwards; the anthropic backend's tools read only
-that directory. cursor-agent runs in Cursor's read-only ask mode with its
-sandbox enabled, but Cursor cannot be confined as tightly as the others: see
-SECURITY.md.
+codex, else the Anthropic API when ANTHROPIC_API_KEY is set. The agent runs in
+a private temporary directory that holds the bundle and the pull request's
+head and merge-base files, with its tools restricted to reading, and is
+removed afterwards; the anthropic backend's tools read only that directory.
+cursor-agent runs only when named (--backend cursor-agent): it uses Cursor's
+read-only ask mode with its sandbox enabled, but Cursor cannot be confined as
+tightly as the others, so auto never picks it; see SECURITY.md.
 
 Progress goes to stderr; stdout holds only the document. Budgets come from the
 config file: run_timeout (the whole run), pass_timeout (each model call),
 max_calls and max_tokens. --model names a model of one backend, so with
---backend auto it applies to claude only; if auto falls back to codex,
-cursor-agent or anthropic, that backend uses its own default model and stderr
-says why the earlier ones were skipped. The anthropic backend's default model
+--backend auto it applies to claude only; if auto falls back to codex or
+anthropic, that backend uses its own default model and stderr says why the
+earlier ones were skipped. The anthropic backend's default model
 is claude-opus-5-5.
 
 --diagnostics writes how the run ended and its redacted outcome, also when it

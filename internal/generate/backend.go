@@ -126,10 +126,11 @@ type Selected struct {
 
 // Select resolves the requested backend, checking that it can run.
 //
-// auto tries, in order, claude, codex, cursor-agent and anthropic, each when it
-// passes its checks (anthropic's is that ANTHROPIC_API_KEY is set), and fails
-// naming every reason when none does. A backend named explicitly fails with its
-// own check's reason.
+// auto tries, in order, claude, codex and anthropic, each when it passes its
+// checks (anthropic's is that ANTHROPIC_API_KEY is set), and fails naming every
+// reason when none does. It never picks cursor-agent, which cannot be held to
+// read-only as reliably as the others: that backend runs only when named. A
+// backend named explicitly fails with its own check's reason.
 //
 // A model names a model of one backend, so with auto it applies to the first
 // choice, claude, only: a backend auto falls back to runs with its own
@@ -200,8 +201,9 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 }
 
 // AutoOrder is the order in which auto tries the backends. The model a run
-// names applies to the first only.
-var AutoOrder = []config.Backend{config.BackendClaude, config.BackendCodex, config.BackendCursorAgent, config.BackendAnthropic}
+// names applies to the first only. cursor-agent is left out on purpose: it
+// must be chosen explicitly (see SECURITY.md, "The cursor-agent backend").
+var AutoOrder = []config.Backend{config.BackendClaude, config.BackendCodex, config.BackendAnthropic}
 
 // builder returns the constructor of a backend, nil when it has none.
 func (b Backends) builder(name config.Backend) func(string) CheckedBackend {

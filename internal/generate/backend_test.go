@@ -74,10 +74,11 @@ func TestExplicitBackendsAndTheUnavailableOnes(t *testing.T) {
 	}
 }
 
-// TestAutoOrder is the documented order: claude, codex, cursor-agent, then the
-// Anthropic API.
+// TestAutoOrder is the documented order: claude, codex, then the Anthropic
+// API. cursor-agent is never picked by auto, even when it is the only usable
+// backend.
 func TestAutoOrder(t *testing.T) {
-	if fmt.Sprint(generate.AutoOrder) != "[claude codex cursor-agent anthropic]" {
+	if fmt.Sprint(generate.AutoOrder) != "[claude codex anthropic]" {
 		t.Fatalf("AutoOrder = %v", generate.AutoOrder)
 	}
 	failing := &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
@@ -86,13 +87,20 @@ func TestAutoOrder(t *testing.T) {
 	backends.Anthropic = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "anthropic"} }
 	var skipped bytes.Buffer
 	selected, err := generate.Select(context.Background(), config.BackendAuto, "opus", backends, &skipped)
-	if err != nil || selected.Backend.Name() != "cursor-agent" || selected.Model != "" {
+	if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel {
 		t.Fatalf("%+v %v", selected, err)
 	}
-	for _, want := range []string{"claude skipped: not installed", "codex skipped: sandbox cannot start", "cursor-agent uses its own default model"} {
+	for _, want := range []string{"claude skipped: not installed", "codex skipped: sandbox cannot start", "anthropic uses its own default model"} {
 		if !strings.Contains(skipped.String(), want) {
 			t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
 		}
+	}
+	if strings.Contains(skipped.String(), "cursor-agent") {
+		t.Errorf("auto tried cursor-agent:\n%s", skipped.String())
+	}
+	backends.Anthropic = nil
+	if _, err := generate.Select(context.Background(), config.BackendAuto, "", backends, nil); err == nil || strings.Contains(err.Error(), "cursor-agent") {
+		t.Fatalf("auto with only cursor-agent usable: %v", err)
 	}
 }
 
@@ -135,7 +143,7 @@ func TestAnthropicBackend(t *testing.T) {
 		if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel {
 			t.Fatalf("%+v %v", selected, err)
 		}
-		for _, want := range []string{"claude skipped: finding Claude Code", "codex skipped: finding Codex", "cursor-agent skipped: finding cursor-agent", `the model "opus" was meant for claude; anthropic uses its own default model`} {
+		for _, want := range []string{"claude skipped: finding Claude Code", "codex skipped: finding Codex", `the model "opus" was meant for claude; anthropic uses its own default model`} {
 			if !strings.Contains(skipped.String(), want) {
 				t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
 			}
@@ -144,10 +152,10 @@ func TestAnthropicBackend(t *testing.T) {
 			t.Error("the skipped output prints the key")
 		}
 	})
-	t.Run("auto without a key names all four", func(t *testing.T) {
+	t.Run("auto without a key names all three", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackendsFor(config.Config{}), nil)
-		for _, want := range []string{"claude: finding Claude Code", "codex: finding Codex", "cursor-agent: finding cursor-agent", "anthropic: ANTHROPIC_API_KEY is not set"} {
+		for _, want := range []string{"claude: finding Claude Code", "codex: finding Codex", "anthropic: ANTHROPIC_API_KEY is not set"} {
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("err %v lacks %q", err, want)
 			}

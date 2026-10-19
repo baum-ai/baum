@@ -508,7 +508,7 @@ func TestCursorAgent(t *testing.T) {
 		wantStatus(t, c, StatusInfo)
 		wantContains(t, "detail", c.Detail, "needed only for the cursor-agent backend")
 	})
-	t.Run("installed, and picked by auto after claude and codex", func(t *testing.T) {
+	t.Run("installed, but never picked by auto", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
 		path := m.cursorAgent()
@@ -520,8 +520,8 @@ func TestCursorAgent(t *testing.T) {
 			t.Errorf("%+v", c)
 		}
 		auto := find(t, report, "backend-auto")
-		wantStatus(t, auto, StatusOK)
-		wantContains(t, "auto", auto.Detail, "auto picks cursor-agent", "claude skipped", "codex skipped")
+		wantStatus(t, auto, StatusProblem)
+		wantContains(t, "auto fix", auto.Fix, "auto never picks cursor-agent", `backend = "cursor-agent"`)
 	})
 	t.Run("installed as agent", func(t *testing.T) {
 		m := newMachine(t)

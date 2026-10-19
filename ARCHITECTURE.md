@@ -1214,7 +1214,8 @@ repository/PR version, and passes `review.PreviousVersionOf` into
 run, it selects and checks the backend before assembling (`claude.Backend.Check`,
 `codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
 only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
-cursor-agent, then anthropic), assembles with `Request.Checkout` and `Attachments`
+anthropic, and never cursor-agent, which runs only when named because it cannot
+be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
