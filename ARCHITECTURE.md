@@ -209,12 +209,16 @@ backoff, `sources` and the mapping onto the bundle.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
-  A previous section's code excerpt lines are redacted as one text too.
+  The per-hunk line cap cuts after redaction: parsing keeps 16 KiB past
+  the cap, so a key the cut runs through is masked whole, as it would be in
+  the full patch. A previous section's code excerpt lines are redacted as
+  one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
-  `generator.truncated` note.
+  `generator.truncated` note. When whole sessions are dropped, one note gives
+  the total number omitted; its bytes count against the size limit.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
   metadata. Files over the size limit, binary files (a NUL byte in the first
   8000 bytes, as git decides; a compared file the diff holds as text is kept,
@@ -1263,7 +1267,8 @@ over the same `bundle` functions with the sources above behind small
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, the diff index, commit
 changes, sessions, references, attachments, `REVIEW.md` at the base commit,
-the checkout export, then caps, redaction, byte trimming and the digest. Sessions
+the checkout export, then caps, redaction, the per-hunk line cap, byte
+trimming and the digest. Sessions
 follow the comparison because they need its merge base. Command targets are
 first checked by `locallink` and then, as the hosted builder does, by
 `bundle.KeepKnownCommandTargets` against the diff's paths, so a target a

@@ -3,7 +3,7 @@ package uiserver
 import (
 	"errors"
 	"os"
-	"regexp"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -67,11 +67,23 @@ func privateFile(path string, info os.FileInfo) bool {
 	if err != nil || !owner.Equals(sid) {
 		return false
 	}
-	// Query the DACL separately so the SDDL contains exactly one allowed ACE;
-	// inherited ACE flags may differ between the lock and renamed temp file.
-	descriptor, err = windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
+	return privateDACL(descriptor, sid)
+}
+
+func privateDACL(descriptor *windows.SECURITY_DESCRIPTOR, sid *windows.SID) bool {
+	acl, _, err := descriptor.DACL()
+	if err != nil || acl == nil || acl.AceCount != 1 {
 		return false
 	}
-	return regexp.MustCompile(`^D:[A-Z]*\(A;[A-Z]*;FA;;;` + regexp.QuoteMeta(sid.String()) + `\)$`).MatchString(descriptor.String())
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(acl, 0, &ace); err != nil {
+		return false
+	}
+	// Inspect the ACL itself: SDDL can abbreviate well-known SIDs and include
+	// other security descriptor sections, even when only the DACL was requested.
+	const fileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
+	return ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE &&
+		ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 &&
+		ace.Mask == fileAllAccess &&
+		(*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(sid)
 }

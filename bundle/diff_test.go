@@ -1,10 +1,13 @@
 package bundle
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -319,6 +322,22 @@ func TestRoleForPath(t *testing.T) {
 		{"ui/src/components/Foo.test.tsx", RoleTest},
 		{"db/migrations/000035_add_evidence.up.sql", RoleMigration},
 		{"internal/db/sqlc/reviews.sql.go", RoleGenerated},
+		{"service/internal/db/sqlc/queries/foo.sql", RoleCode},
+		{"service/internal/db/sqlc/queries/foo.sql.go", RoleGenerated},
+		{"service/internal/db/sqlc/schema.sql", RoleCode},
+		{"service/internal/db/sqlc/querier.go", RoleGenerated},
+		{"service/internal/db/sqlc/db.go", RoleGenerated},
+		{"service/internal/db/sqlc/models.go", RoleGenerated},
+		{"service/internal/db/sqlc/batch.go", RoleGenerated},
+		{"service/internal/db/sqlc/copyfrom.go", RoleGenerated},
+		{"sqlc/querier.go", RoleGenerated},
+		{"sqlc/custom_models.go", RoleGenerated},
+		{"sqlc/queries_gen.go", RoleGenerated},
+		{"sqlc/custom_query.go", RoleGenerated},
+		{"Service/Internal/DB/SQLC/Models.go", RoleGenerated},
+		{"service/internal/db/sqlc/queries/db.go", RoleCode},
+		{"internal/app/models.go", RoleCode},
+		{"internal/app/db.go", RoleCode},
 		{"go.sum", RoleGenerated},
 		{"docs/architecture.md", RoleDocs},
 		{"README.md", RoleDocs},
@@ -374,12 +393,13 @@ func TestDiffLimitsFailNamingTheCheckoutBudget(t *testing.T) {
 	}
 }
 
-// Parsing keeps one line past the hunk cap, so the later cap and its note
-// behave as on the full text, while IDs and counts still cover every line.
-func TestParsingKeepsOneLinePastTheHunkCap(t *testing.T) {
+// Parsing keeps a bounded margin past the hunk cap, so redaction reads what
+// the cap runs through and the later cap and its note behave as on the full
+// text, while IDs and counts still cover every line.
+func TestParsingKeepsAMarginPastTheHunkCap(t *testing.T) {
 	var patch strings.Builder
-	patch.WriteString("@@ -1,500 +1,500 @@\n")
-	for i := range 500 {
+	patch.WriteString("@@ -1,5000 +1,5000 @@\n")
+	for i := range 5000 {
 		fmt.Fprintf(&patch, "-old %d\n+new %d\n", i, i)
 	}
 	comparison := Comparison{Files: []FileChange{{NewPath: "a.go", Status: "modified"}}}
@@ -394,22 +414,189 @@ func TestParsingKeepsOneLinePastTheHunkCap(t *testing.T) {
 	if len(full) != 1 || len(capped) != 1 {
 		t.Fatalf("hunks: %d %d", len(full), len(capped))
 	}
-	if got := strings.Count(capped[0].Patch, "\n") + 1; got != 4 {
-		t.Fatalf("kept %d lines, want 4", got)
+	kept := capped[0].Patch
+	head, _ := capPatchLines(kept, 3)
+	if !strings.HasPrefix(full[0].Patch, kept) || len(kept) <= len(head)+redactionMargin-16 || len(kept) > len(head)+1+redactionMargin {
+		t.Fatalf("kept %d bytes, %d of them past the cap; want a prefix of the patch with a %d-byte margin", len(kept), len(kept)-len(head), redactionMargin)
 	}
 	fullCut, _ := capPatchLines(full[0].Patch, 3)
 	cappedCut, cut := capPatchLines(capped[0].Patch, 3)
 	if !cut || fullCut != cappedCut {
 		t.Fatalf("cap differs: %q vs %q", fullCut, cappedCut)
 	}
-	if capped[0].ID != full[0].ID || capped[0].Additions != 500 || capped[0].Deletions != 500 || capped[0].LineCount != full[0].LineCount {
+	if capped[0].ID != full[0].ID || capped[0].Additions != 5000 || capped[0].Deletions != 5000 || capped[0].LineCount != full[0].LineCount {
 		t.Fatalf("capped hunk lost its identity or counts: %+v", capped[0])
 	}
-	changed := strings.TrimPrefix(patch.String(), "@@ -1,500 +1,500 @@\n")
+	changed := strings.TrimPrefix(patch.String(), "@@ -1,5000 +1,5000 @@\n")
 	digest := sha256.Sum256([]byte("a.go\x00" + changed))
 	if want := "h_" + hex.EncodeToString(digest[:6]); full[0].ID != want {
 		t.Fatalf("hunk ID %s, want %s", full[0].ID, want)
 	}
+
+	// One long line past the cap is cut to the margin; the cap still cuts.
+	long := "@@ -1,2 +1,3 @@\n+a\n+" + strings.Repeat("x", 3*redactionMargin) + "\n+b\n"
+	capped, _, err = BuildDiffIndexWithin(comparison, fetcher(patchOf("a.go", []byte(long))), RoleForPath, DiffLimits{MaxHunkLines: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "@@ -1,2 +1,3 @@\n+a\n+" + strings.Repeat("x", redactionMargin-1); capped[0].Patch != want || capped[0].Additions != 3 {
+		t.Fatalf("long line kept as %d bytes, want %d", len(capped[0].Patch), len(want))
+	}
+	if cut, ok := capPatchLines(capped[0].Patch, 2); !ok || cut != "@@ -1,2 +1,3 @@\n+a" {
+		t.Fatalf("cap = %q, %t", cut, ok)
+	}
+}
+
+// A secret the hunk line cap runs through is masked in the kept lines
+// exactly as when the whole patch is redacted: parsing keeps a margin past
+// the cap, Redact reads it and Fit cuts after.
+func TestRedactionReadsPastTheHunkLineCap(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = 20
+	forms := map[string][]string{
+		"pem":           syntheticKeyLines(),
+		"encrypted pem": syntheticEncryptedKeyLines(),
+	}
+	for name, key := range forms {
+		for _, marker := range []string{"+", " ", "-"} {
+			// start is the key's first line in the hunk, the "@@" line being
+			// line 1: from the whole key kept to only its header.
+			for start := limit - len(key); start <= limit; start++ {
+				var patch strings.Builder
+				patch.WriteString("@@ -1,60 +1,60 @@\n")
+				for i := 2; i < start; i++ {
+					fmt.Fprintf(&patch, "%sline %d\n", marker, i)
+				}
+				for _, line := range key {
+					patch.WriteString(marker + line + "\n")
+				}
+				for i := range 20 {
+					fmt.Fprintf(&patch, "%sline after %d\n", marker, i)
+				}
+				got, want, notes := cutAfterRedaction(t, redactor, patch.String(), limit)
+				where := fmt.Sprintf("%s %q from line %d", name, marker, start)
+				if got != want {
+					t.Fatalf("%s: capped redaction differs from the whole patch's:\n%s\nwant\n%s", where, got, want)
+				}
+				for _, line := range key {
+					if strings.Contains(got, line) && strings.ContainsAny(line, "abcdefghijklmnopqrstuvwxyz0123456789") {
+						t.Fatalf("%s keeps key line %q", where, line)
+					}
+				}
+				if strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, "ENCRYPTED") {
+					t.Fatalf("%s: the kept part of the key block is not masked:\n%s", where, got)
+				}
+				if n := strings.Count(got, "\n") + 1; n != limit || len(notes) != 1 {
+					t.Fatalf("%s: kept %d lines, notes %q", where, n, notes)
+				}
+			}
+		}
+	}
+}
+
+// cutAfterRedaction runs patch, one file's diff, through the assembly order
+// (diff index within the line cap, ApplyCaps, Redact, Fit) and returns the
+// kept patch and notes, with want: the whole patch redacted, then capped.
+func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int) (got, want string, notes []string) {
+	t.Helper()
+	ctx := context.Background()
+	comparison := Comparison{Files: []FileChange{{NewPath: "key.pem", Status: "modified"}}}
+	caps := Caps{MaxHunkPatchLines: limit}
+	hunks, _, err := BuildDiffIndexWithin(comparison, fetcher(patchOf("key.pem", []byte(patch))), RoleForPath, caps.DiffLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Bundle{Diff: hunks}
+	ApplyCaps(b, caps)
+	if err := Redact(ctx, b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if err := Fit(b, caps); err != nil {
+		t.Fatal(err)
+	}
+	whole := &Bundle{Diff: []Hunk{{Patch: strings.TrimRight(patch, "\n")}}}
+	if err := Redact(ctx, whole, redactor); err != nil {
+		t.Fatal(err)
+	}
+	want, _ = capPatchLines(whole.Diff[0].Patch, limit)
+	return b.Diff[0].Patch, want, b.Truncated
+}
+
+// keyBody returns n distinct 64-byte base64 lines of key material.
+func keyBody(n int) []string {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = strings.Repeat(fmt.Sprintf("Qz7%04dKp", i)+"Xb9", 6)[:64]
+	}
+	return lines
+}
+
+// A key whose BEGIN line is the last line the cap keeps, with a body that
+// ends just inside the margin or runs far past it, is masked as in the
+// whole patch.
+func TestRedactionMarginAtItsBoundary(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = 5
+	label := "RSA " + "PRIVATE KEY"
+	// A body line is 66 bytes in the patch, with its marker and newline.
+	for _, n := range []int{(redactionMargin - 200) / 66, 2 * redactionMargin / 66} {
+		patch := "@@ -1,9 +1,9 @@\n+a\n+b\n+c\n+-----BEGIN " + label + "-----\n" +
+			prefixLines("+", strings.Join(keyBody(n), "\n")) + "\n+-----END " + label + "-----\n+after\n"
+		got, want, _ := cutAfterRedaction(t, redactor, patch, limit)
+		if got != want {
+			t.Fatalf("%d body lines: capped redaction differs from the whole patch's:\n%s\nwant\n%s", n, got, want)
+		}
+		if strings.Contains(got, label) || strings.Count(got, "\n")+1 != limit {
+			t.Fatalf("%d body lines: the BEGIN line is not masked or not kept:\n%s", n, got)
+		}
+	}
+}
+
+// The margin must cover the furthest the engine reads past where a secret
+// starts. The PEM rule, which has the longest lookahead in the goredact
+// version measured, masks a key with no END marker up to the end of its
+// window, so that span bounds the window. Any goredact upgrade must
+// re-measure redactionMargin against its rules' lookaheads (see its
+// comment), then update the version pinned here.
+func TestRedactionMarginCoversTheEngine(t *testing.T) {
+	gomod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gomod), "github.com/baum-ai/goredact v0.2.0\n") {
+		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
+	}
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := "-----BEGIN RSA " + "PRIVATE KEY-----\n"
+	text := begin + strings.Join(keyBody(4*redactionMargin/65), "\n")
+	spans, err := redactor.Find(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) == 0 || spans[0].Start != 0 {
+		t.Fatalf("the unterminated key is not found: %+v", spans)
+	}
+	if past := spans[0].End - len(begin); past > redactionMargin || past < redactionMargin/2 {
+		t.Fatalf("the key is masked %d bytes past its BEGIN line; the margin is %d", past, redactionMargin)
+	}
+}
+
+// syntheticEncryptedKeyLines is syntheticKeyLines with the encapsulated
+// headers of an encrypted PEM key, which hold no long base64 run of their
+// own.
+func syntheticEncryptedKeyLines() []string {
+	key := syntheticKeyLines()
+	headers := []string{"Proc-Type: 4,ENCRYPTED", "DEK-Info: AES-128-CBC," + strings.Repeat("A1B2", 8), ""}
+	return append(append([]string{key[0]}, headers...), key[1:]...)
 }
 
 func TestTextlessHunkIDHashesThePathAlone(t *testing.T) {

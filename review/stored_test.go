@@ -158,8 +158,15 @@ func TestStoredLongIdentifiersAreShortenedConsistently(t *testing.T) {
 		t.Fatal(err)
 	}
 	long, want := preBoundDocument(t)
-	if err := validator.full.Validate(decodedJSON(t, long)); err == nil || !strings.Contains(err.Error(), "maxLength") {
-		t.Fatalf("the current schema should reject the stored document as it is: %v", err)
+	// The schema rejects the stored document and accepts it with only its
+	// long identifiers shortened, so the identifiers are what it rejects. The
+	// error text cannot show that: the validator reports whichever property
+	// it reaches first in map order, and a oneOf failure omits its causes.
+	if err := validator.full.Validate(decodedJSON(t, long)); err == nil {
+		t.Fatal("the current schema accepts the stored document as it is")
+	}
+	if err := validator.full.Validate(decodedJSON(t, want)); err != nil {
+		t.Fatalf("the current schema rejects the document with shortened identifiers: %v", err)
 	}
 	normalized, err := ShortenStoredIdentifiers(long)
 	if err != nil {

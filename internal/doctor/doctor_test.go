@@ -813,7 +813,11 @@ func TestLocations(t *testing.T) {
 	if got := find(t, report, "jobs").Path; got != filepath.Join(home, "state", "baum", "jobs.json") {
 		t.Errorf("jobs path = %q", got)
 	}
-	if got := find(t, report, "discovery").Path; got != filepath.Join(home, "cache", "baum", "discovery") {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := find(t, report, "discovery").Path; got != filepath.Join(cacheDir, "baum", "discovery") {
 		t.Errorf("discovery path = %q", got)
 	}
 	if got := find(t, report, "registry").Path; got != filepath.Join(m.config, "baum", "repos.sqlite") {
