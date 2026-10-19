@@ -528,3 +528,19 @@ func TestBorrowStopsWhenContextEnds(t *testing.T) {
 		t.Fatalf("borrow with every finder busy and ctx ended: %v", err)
 	}
 }
+
+func TestMaskedDottedURLCredentialsAreNoFindings(t *testing.T) {
+	e := engine(t)
+	original := "postgres://svc:" + "nQ7wL4mX8pZ1sT6bK3jH0cV5" + "@db.internal/app"
+	masked, first, err := e.Redact(original)
+	if err != nil || first.Findings == 0 {
+		t.Fatalf("first: %v, %v", first, err)
+	}
+	again, second, err := e.Redact(masked)
+	if err != nil || again != masked || second.Findings != 0 {
+		t.Fatalf("second: %q, %v, %v", again, second, err)
+	}
+	if spans, err := e.FindContext(context.Background(), masked); err != nil || len(spans) != 0 {
+		t.Fatalf("find: %v, %v", spans, err)
+	}
+}

@@ -195,6 +195,9 @@ func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 	src := []byte(text)
 	found := 0
 	err := eachEmail(ctx, src, func(start, end int) {
+		if alreadyMasked(text[start:end]) {
+			return
+		}
 		if bytes.Equal(out[start:end], src[start:end]) {
 			found++
 		}
@@ -304,6 +307,7 @@ type foundSpan struct {
 // again.
 var echoRules = map[string]bool{
 	"url-credentials":            true,
+	EmailRuleID:                  true,
 	"authorization-bearer":       true,
 	"command-line-password-flag": true,
 }
@@ -438,7 +442,11 @@ func (e *Engine) FindContext(ctx context.Context, text string) ([]Span, error) {
 	for i, f := range found {
 		spans[i] = Span{Start: f.start, End: f.end, Email: f.rule == EmailRuleID}
 	}
-	err = eachEmail(ctx, []byte(text), func(start, end int) { spans = append(spans, Span{Start: start, End: end, Email: true}) })
+	err = eachEmail(ctx, []byte(text), func(start, end int) {
+		if !alreadyMasked(text[start:end]) {
+			spans = append(spans, Span{Start: start, End: end, Email: true})
+		}
+	})
 	if err != nil {
 		return nil, fmt.Errorf("redact: %w", err)
 	}
