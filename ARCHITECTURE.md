@@ -284,10 +284,41 @@ Given the previous version, `review` keeps sections stable:
 - a risk the model omits becomes `mitigated`, and a risk that returns keeps
   its `introduced_version`. A repair cannot drop a risk.
 
+### Stored documents
+
+The schema tightens in place, keeping its `$id`, so a document stored before
+a change can fail the schema it is read with now. Every reader of a stored
+document (`Refresh`, `ValidateStored`, `PreviousVersionOf`) first applies the
+stored-document rules in `stored.go`, which rewrite only what the current
+schema rejects, deterministically and idempotently, keeping references
+consistent; a document that passes is unchanged. `Refresh` stores the
+rewrite. A stored document the rules cannot repair fails `Refresh` with a
+`StoredDocumentError`, so a host can tell it from a failure of the refresh
+itself. A rule for another in-place change, such as a tile shape the schema no
+longer accepts, belongs with them.
+
+- A blank section title is labelled by its position (`SectionTitle`).
+- Identifiers, identifier references and risk categories have been bounded
+  at 128 characters (`MaxIdentifierLength`) since schema revision
+  2026-10-07.1. `ShortenIdentifier` rewrites a longer one as its first 115
+  characters without trailing underscores, an underscore and the first 12
+  hexadecimal digits of the SHA-256 of the whole identifier: it keeps the
+  prefix and pattern, two identifiers sharing their first characters stay
+  distinct, and a shortened one is unchanged. The rule applies wherever the
+  schema closes a value with an identifier pattern, then to every other string
+  that equals an identifier it shortened (a summary attention reference, which
+  the schema leaves open), never to a longer string, such as prose, that
+mentions one. Generation still
+  rejects an identifier over the bound. `ShortenStoredIdentifiers` applies
+  this rule alone to an encoded document, for a host that serves stored
+  documents and keys records of its own (read marks, approvals) by their
+  identifiers; such a host compares a stored key through `ShortenIdentifier`.
+
 ### Refresh and redaction
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
-document without a model call; both the platform and `baum refresh` use it. It
+document without a model call, after the stored-document rules; both the
+platform and `baum refresh` use it. It
 rebuilds the session index from the bundle and carries over, for each readable session the
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
@@ -1195,7 +1226,8 @@ attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
 `Request`, for `baum generate`; `baum bundle` discards both. The checkout is
 exported either way, since a file the checkout budget omits makes its hunks
 textless. `baum validate`  checks a stored document with
-`review.DocumentValidator.ValidateStored`, against its bundle when one is given,
+`review.DocumentValidator.ValidateStored`, after the stored-document rules,
+against its bundle when one is given,
 and `baum refresh` uses `internal/refresh` to fetch current GitHub metadata
 with checks pinned to the saved head, re-link local sessions against the saved
 merge-base/head range and redact bounded evidence before calling

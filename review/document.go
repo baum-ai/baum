@@ -314,14 +314,16 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 
 // ValidateStored checks a stored baum.review/1 document against the full
 // schema and the document's semantic rules, and returns every finding, or nil
-// when it is valid. Images are checked against the document's own index. The
-// rules that need the generation bundle run only when bundle is non-nil.
+// when it is valid. It checks the document as every reader sees it, after the
+// stored-document rules (normalizeStored), so an identifier stored before
+// identifiers were bounded is not a finding. Images are checked against the
+// document's own index. The rules that need the generation bundle run only
+// when bundle is non-nil.
 func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {
-	value, err := decodeObject(document, "document")
+	value, document, err := decodeStored(document, "document")
 	if err != nil {
 		return []string{err.Error()}
 	}
-	labelBlankSectionTitles(value)
 	if err := v.full.Validate(value); err != nil {
 		return []string{conciseSchemaError(err)}
 	}

@@ -11,10 +11,13 @@ import (
 
 // Refresh changes evidence and derived summaries in place, preserving the
 // reviewed revision, authored prose, section order and generation provenance.
+// It reads the stored document after the stored-document rules
+// (normalizeStored), so the refreshed document carries their rewrite; a
+// stored document that still fails the schema is a *StoredDocumentError.
 func (v *DocumentValidator) Refresh(document []byte, b *bundlepkg.Bundle, now time.Time) ([]byte, error) {
 	doc, err := v.decodeFullDocument(document)
 	if err != nil {
-		return nil, err
+		return nil, &StoredDocumentError{Err: err}
 	}
 	review, index := &doc.Review, &doc.Index
 	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)

@@ -83,7 +83,8 @@ baum view review.json --no-open --port 4173
 
 # Check a stored document against the schema and its own rules. Findings
 # print to stderr, one per line, and the exit status is non-zero when there
-# are any.
+# are any. A document stored before identifiers were bounded at 128
+# characters is checked with them shortened, as refresh rewrites them.
 baum validate review.json
 
 # Also check it against the bundle it was generated from: hunk line ranges,
@@ -173,8 +174,10 @@ The review is current only when both its saved head and base match GitHub;
 otherwise it becomes outdated. Checks refresh for the latest GitHub head even
 while a replacement review is generating. The saved reviewed head and its check
 anchors remain unchanged; newer-head checks cannot verify older review evidence.
-Missing or unsupported evidence is downgraded. Failures leave the document
-unchanged and exit non-zero; they never implicitly generate or record a failed
+Missing or unsupported evidence is downgraded. An identifier over 128
+characters, from a review saved before identifiers were bounded, is shortened
+to its first characters and a hash, with every reference to it. Failures
+leave the document unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
 retry against the latest document. Refresh updates the store, not JSON files
 previously exported with `generate -o`.
