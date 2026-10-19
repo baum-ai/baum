@@ -196,7 +196,7 @@ func TestCursorAgentBackendFailures(t *testing.T) {
 	for name, tc := range map[string]struct{ stderr, status, want string }{
 		"missing option":      {"error: unknown option '--mode'", "unsupported_option", "cursor-agent update"},
 		"sandbox unavailable": {"Error: Sandbox mode is enabled but not available on this system.", "sandbox_unavailable", "only with its sandbox enabled"},
-		"not signed in":       {"Error: Authentication required. Please run 'agent login' first.", "authentication_error", "run cursor-agent login"},
+		"not signed in":       {"Error: Authentication required. Please run 'agent login' first.", "authentication_error", "run `cursor-agent login`"},
 	} {
 		t.Run(name+" is not retried", func(t *testing.T) {
 			f := newFixture(t)

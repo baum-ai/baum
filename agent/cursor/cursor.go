@@ -279,7 +279,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		return result, err
 	}
 	if waitErr != nil {
-		status, failure := runFailure(waitErr, stderr.String())
+		status, failure := runFailure(waitErr, stderr.String(), command(c.Binary, binary))
 		record(agent.Event{Kind: "error", Status: status})
 		return result, failure
 	}

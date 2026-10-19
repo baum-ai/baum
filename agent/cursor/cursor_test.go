@@ -397,7 +397,7 @@ func TestRunFailures(t *testing.T) {
 	for name, tc := range map[string]struct{ stderr, want, status string }{
 		"unknown option": {"error: unknown option '--mode'", "upgrade it with `cursor-agent update`", "unsupported_option"},
 		"sandbox":        {"Error: Sandbox mode is enabled but not available on this system. Sandbox requires kernel v6.2 or later.", "only with its sandbox enabled", "sandbox_unavailable"},
-		"login":          {"Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", "run cursor-agent login", "authentication_error"},
+		"login":          {"Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", "run `cursor-agent login`", "authentication_error"},
 		"other":          {"Error: something broke", "something broke", "error"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -485,6 +485,35 @@ func TestCheck(t *testing.T) {
 		fakeCLI(t, "cursor-agent", help, "exit 1")
 		if _, err := backend.Check(context.Background()); err != nil {
 			t.Fatalf("after installing: %v", err)
+		}
+	})
+}
+
+// The remediation commands name the executable baum resolved: agent when
+// that is the fallback, and a configured path as it is.
+func TestRemediationNamesTheResolvedExecutable(t *testing.T) {
+	older := strings.ReplaceAll(help, `"ask"`, `"agent"`)
+	login := "cat > /dev/null\necho 'Error: Authentication required.' >&2\nexit 1\n"
+	t.Run("agent fallback", func(t *testing.T) {
+		path := fakeCLI(t, "agent", older, "exit 1")
+		t.Setenv("PATH", filepath.Dir(path))
+		if _, err := (&Backend{}).Check(context.Background()); err == nil || !strings.Contains(err.Error(), "`agent update`") || strings.Contains(err.Error(), "cursor-agent update") {
+			t.Fatalf("err = %v", err)
+		}
+		path = fakeCLI(t, "agent", help, login)
+		t.Setenv("PATH", filepath.Dir(path)+string(os.PathListSeparator)+"/usr/bin:/bin")
+		if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "run `agent login`") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("configured path", func(t *testing.T) {
+		path := fakeCLI(t, "cursor-custom", older, "exit 1")
+		if _, err := (&Backend{Binary: path}).Check(context.Background()); err == nil || !strings.Contains(err.Error(), "`"+path+" update`") {
+			t.Fatalf("err = %v", err)
+		}
+		path = fakeCLI(t, "cursor-custom", help, login)
+		if _, err := (&Backend{Binary: path}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "run `"+path+" login`") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 }

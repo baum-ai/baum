@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -85,7 +86,7 @@ func (c *Backend) find(ctx context.Context) (path, version string, err error) {
 			return "", "", fmt.Errorf("%s does not say it is the %s (its --help does not name it); baum runs only the Cursor Agent CLI", path, identity)
 		}
 		if missing := missingOptions(help); len(missing) > 0 {
-			return "", "", fmt.Errorf("cursor-agent at %s does not list the options baum needs (%s); upgrade it with `cursor-agent update`", path, strings.Join(missing, ", "))
+			return "", "", fmt.Errorf("cursor-agent at %s does not list the options baum needs (%s); upgrade it with `%s update`", path, strings.Join(missing, ", "), command(c.Binary, path))
 		}
 		out, err := run(ctx, path, "--version")
 		if err != nil {
@@ -142,24 +143,37 @@ func reject(what, status string, err error) error {
 	return &rejection{text: what + ": " + strings.ReplaceAll(status, "_", " ") + ": " + err.Error(), rejected: &agent.RejectedError{Status: status, Err: err}}
 }
 
+// command is how a person runs the resolved executable for a remediation such
+// as "update" or "login": the name found on PATH (cursor-agent, or agent when
+// that is the Cursor Agent), or the configured path as it is.
+func command(binary, path string) string {
+	if binary != "" {
+		if strings.ContainsAny(path, " \t'\"") {
+			return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+		}
+		return path
+	}
+	return filepath.Base(path)
+}
+
 // runFailure explains a run that exited with an error, from its stderr, which
 // is the user's own and bounded, and classifies it into a fixed word for the
 // run's error event. A missing option, an unavailable sandbox and a missing
 // login fail every attempt the same way until the user acts, so they are an
 // rejection (an agent.RejectedError underneath), which the loop does not retry;
 // its Status is the same fixed word.
-func runFailure(waitErr error, stderr string) (status string, err error) {
+func runFailure(waitErr error, stderr, command string) (status string, err error) {
 	lower := strings.ToLower(stderr)
 	rejected := func(status string, err error) (string, error) {
 		return status, reject("cursor-agent cannot run", status, err)
 	}
 	switch {
 	case strings.Contains(lower, "unknown option") || strings.Contains(lower, "unknown argument") || strings.Contains(lower, "invalid argument"):
-		return rejected("unsupported_option", fmt.Errorf("cursor-agent does not accept the options baum needs (%s); upgrade it with `cursor-agent update`", firstLine(stderr)))
+		return rejected("unsupported_option", fmt.Errorf("cursor-agent does not accept the options baum needs (%s); upgrade it with `%s update`", firstLine(stderr), command))
 	case strings.Contains(lower, "sandbox mode is enabled but not available"):
 		return rejected("sandbox_unavailable", fmt.Errorf("cursor-agent could not start its sandbox on this machine (%s); baum runs cursor-agent only with its sandbox enabled", firstLine(stderr)))
 	case strings.Contains(lower, "not authenticated") || strings.Contains(lower, "not logged in") || strings.Contains(lower, "login required") || strings.Contains(lower, "authentication required"):
-		return rejected("authentication_error", fmt.Errorf("cursor-agent is not signed in (%s); run cursor-agent login", firstLine(stderr)))
+		return rejected("authentication_error", fmt.Errorf("cursor-agent is not signed in (%s); run `%s login`", firstLine(stderr), command))
 	}
 	status = agent.ErrorStatus(stderr)
 	if line := firstLine(stderr); line != "" {

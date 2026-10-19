@@ -453,7 +453,8 @@ func checkFix(name config.Backend, tool, path string, err error) string {
 	if name == config.BackendCursorAgent {
 		switch msg := err.Error(); {
 		case strings.Contains(msg, "does not list the options"):
-			return "upgrade the Cursor Agent CLI with `" + path + " update`"
+			// The detail names the update command of the executable it resolved.
+			return "upgrade the Cursor Agent CLI with the update command named above"
 		case strings.Contains(msg, "does not say it is"):
 			return "point backend_paths.cursor-agent at the Cursor Agent CLI, or remove it to search PATH"
 		}
