@@ -26,11 +26,16 @@ may start it, and it outlives the app: quitting the app leaves it running.
    capability for a session cookie, as it does in a browser. The capability is
    never shown or logged.
 5. While attached, the app checks the daemon's `/api/health` every 5 seconds.
-   After three failures in a row, the window returns to the connecting screen.
-   That screen shows the last lines of `daemon.log` and `daemon.out` from the
-   state directory and a button to start the daemon again. The app never
-   restarts the daemon on its own, so a crashing daemon cannot restart in a
-   loop.
+   - If the daemon rejects the credential, a newer daemon has replaced it, and
+     the app attaches to that one, once.
+   - After three failures in a row, the window returns to the connecting
+     screen. That screen shows the last lines of `daemon.log` and `daemon.out`
+     from the state directory, and a button to start the daemon again.
+   - While that screen shows, the app watches the credential file. When
+     another client starts a new daemon (hooks run `baum daemon ensure` on
+     every event), the app attaches to it.
+   - The app never restarts the daemon on its own, so a crashing daemon
+     cannot restart in a loop.
 
 A second launch focuses the existing window instead of opening another one.
 

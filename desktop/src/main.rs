@@ -165,16 +165,36 @@ fn watch(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch, 
             eprintln!("baum desktop: the baum daemon was replaced; attaching to the new one");
             return connect(app, Attach::Replacement);
         }
-        let message = if replaced {
-            "The new baum daemon did not accept the app's credential."
-        } else {
-            "The baum daemon stopped responding."
-        };
+        if replaced {
+            let failure = daemon::Failure {
+                message: "The new baum daemon did not accept the app's credential.".into(),
+                details: daemon::log_tail(&launch.status.state, LOG_LINES),
+            };
+            return fail(app, state, attempt, failure);
+        }
         let failure = daemon::Failure {
-            message: message.into(),
+            message: "The baum daemon stopped responding.".into(),
             details: daemon::log_tail(&launch.status.state, LOG_LINES),
         };
-        return fail(app, state, attempt, failure);
+        fail(app, state, attempt, failure);
+        return await_replacement(app, state, attempt, launch);
+    }
+}
+
+/// While the error screen shows a daemon that stopped, waits for another
+/// client (a coding-agent hook runs `baum daemon ensure` on every event) to
+/// start a new one, and attaches to it. The app itself starts nothing; the
+/// wait ends when the user restarts the daemon from the screen.
+fn await_replacement(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch) {
+    loop {
+        thread::sleep(HEALTH_INTERVAL);
+        if state.lock().attempt != attempt {
+            return;
+        }
+        if replaced_elsewhere(launch) {
+            eprintln!("baum desktop: a new baum daemon started; attaching to it");
+            return connect(app, Attach::Replacement);
+        }
     }
 }
 
