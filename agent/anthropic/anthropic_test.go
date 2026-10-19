@@ -615,6 +615,7 @@ func TestTheAPIKeyNeverAppears(t *testing.T) {
 		"529 echoing the key":      {status(529, echo), status(529, echo), status(529, echo), status(529, echo), status(529, echo)},
 		"malformed with the key":   {raw(`{"type":"message","model":"` + testKey + `","content":[],"stop_reason":"x"}`)},
 		"stop reason with the key": {reply(testKey, smallUsage, `{"type":"text","text":"x"}`)},
+		"tool call naming the key": {reply("tool_use", smallUsage, toolUse(testKey, testKey, `{}`)), status(400, `{}`)},
 	}
 	for name, steps := range cases {
 		t.Run(name, func(t *testing.T) {

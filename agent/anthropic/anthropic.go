@@ -152,8 +152,10 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	started := time.Now()
 	record := func(event agent.Event) {
 		event.ElapsedMS = time.Since(started).Milliseconds()
-		event.ID = event.ID[:min(len(event.ID), 128)]
-		event.Tool = event.Tool[:min(len(event.Tool), 64)]
+		// IDs and tool names come from the response; the key stays out of
+		// them too.
+		event.ID = boundedText(scrub(event.ID, endpoint.Key), 128)
+		event.Tool = boundedText(scrub(event.Tool, endpoint.Key), 64)
 		if len(result.Events) == maxEvents {
 			if event.Kind != "finished" {
 				return
