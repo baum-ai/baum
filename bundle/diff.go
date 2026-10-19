@@ -376,12 +376,26 @@ func isGeneratedPath(lowerPath, base string) bool {
 		strings.HasSuffix(lowerPath, ".pb.go"),
 		strings.HasSuffix(lowerPath, "_generated.go"),
 		strings.HasSuffix(lowerPath, ".generated.ts"),
-		strings.Contains(lowerPath, "/sqlc/"),
-		strings.Contains(lowerPath, "/generated/"):
+		strings.Contains(lowerPath, "/generated/"),
+		isSqlcOutputPath(lowerPath, base):
 		return true
 	}
 	switch base {
 	case "go.sum", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock":
+		return true
+	}
+	return false
+}
+
+// isSqlcOutputPath reports sqlc's generated Go files inside an sqlc directory.
+// Hand-written query and schema sources there (queries/*.sql) stay code, and
+// db.go or models.go elsewhere are not sqlc output.
+func isSqlcOutputPath(lowerPath, base string) bool {
+	if !strings.Contains(lowerPath, "/sqlc/") && !strings.HasPrefix(lowerPath, "sqlc/") {
+		return false
+	}
+	switch base {
+	case "querier.go", "db.go", "models.go", "batch.go", "copyfrom.go":
 		return true
 	}
 	return false
