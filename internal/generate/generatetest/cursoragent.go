@@ -61,6 +61,9 @@ type FakeCursorPass struct {
 	Tool string `json:"tool,omitempty"`
 	// NoUsage leaves the usage out of the result.
 	NoUsage bool `json:"no_usage,omitempty"`
+	// Stderr, when set, is printed to stderr instead of any output, and the
+	// run exits with status 1.
+	Stderr string `json:"stderr,omitempty"`
 }
 
 // FakeCursorRun is what the fake recorded of one run.
@@ -159,6 +162,10 @@ func fakeCursorAgent(configPath string, args []string, stdin io.Reader, stdout, 
 	_, _ = file.Write(append(record, '\n'))
 	_ = file.Close()
 	pass := config.Passes[min(n, len(config.Passes)-1)]
+	if pass.Stderr != "" {
+		_, _ = fmt.Fprintln(stderr, pass.Stderr)
+		return 1
+	}
 
 	text := pass.Text
 	if text == "" {

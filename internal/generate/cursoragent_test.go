@@ -167,6 +167,27 @@ func TestCursorAgentBackendFailures(t *testing.T) {
 		}
 		f.requireClean(t)
 	})
+	// A failure that every attempt would repeat is attempted once, though the
+	// budget allows three, and its own message reaches the user.
+	for name, tc := range map[string]struct{ stderr, status, want string }{
+		"missing option":      {"error: unknown option '--mode'", "unsupported_option", "cursor-agent update"},
+		"sandbox unavailable": {"Error: Sandbox mode is enabled but not available on this system.", "sandbox_unavailable", "only with its sandbox enabled"},
+		"not signed in":       {"Error: Authentication required. Please run 'agent login' first.", "authentication_error", "run cursor-agent login"},
+	} {
+		t.Run(name+" is not retried", func(t *testing.T) {
+			f := newFixture(t)
+			f.repo.Dirty(t)
+			options, runs := cursorAgentOptions(t, f, generatetest.FakeCursorPass{Stderr: tc.stderr})
+			options.Budgets.MaxProviderAttempts = 3
+			_, err := generate.Run(context.Background(), options)
+			if err == nil || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), agent.ProviderRejectedReason(tc.status)) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v\n%s", err, f.progress.String())
+			}
+			if len(runs()) != 1 {
+				t.Errorf("attempted %d times, want once", len(runs()))
+			}
+		})
+	}
 	t.Run("output that is not JSON is repaired within the budget, then rejected", func(t *testing.T) {
 		f := newFixture(t)
 		f.repo.Dirty(t)

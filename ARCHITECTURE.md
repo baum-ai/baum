@@ -494,7 +494,8 @@ this backend whatever its model is called: the recorded cost is unknown, and a
 `baum ui` job is excluded with that reason instead of being estimated at API
 rates. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
-`authentication_error`).
+`authentication_error`); each is an `agent.RejectedError`, so the loop does not
+retry it: every attempt would fail the same way until the user acts.
 
 `agent/anthropic` is not a CLI: baum runs the model call loop itself, over
 `net/http` rather than the official SDK (one endpoint, retries that must count

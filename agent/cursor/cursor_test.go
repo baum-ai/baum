@@ -310,9 +310,10 @@ func TestRunFailures(t *testing.T) {
 			if status := agent.LastErrorStatus(result.Events); status != tc.status {
 				t.Errorf("error status = %q, want %q", status, tc.status)
 			}
-			// Only a missing login is a rejection the loop does not retry.
+			// The failures a retry cannot change are rejections the loop does
+			// not retry; an unrecognised one may be transient.
 			var rejected *agent.RejectedError
-			if errors.As(err, &rejected) != (tc.status == "authentication_error") {
+			if errors.As(err, &rejected) != (tc.status != "error") || (rejected != nil && rejected.Status != tc.status) {
 				t.Errorf("rejected = %v for %s", rejected != nil, tc.status)
 			}
 		})
