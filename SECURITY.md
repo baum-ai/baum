@@ -45,7 +45,39 @@ repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
 verified, baum uses a copy embedded at release. Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
-anywhere else.
+anywhere else. Local inbox discovery also reads GitHub's REST API using that
+same token and derived host, without redirects or extra scopes. Its private
+0600 cache contains minimal inbox metadata and ETags, partitioned by a credential
+fingerprint and repository. Tokens, PR bodies and signed image URLs are never
+put in that cache. Cached and offline results are marked stale; unreadable
+author write permissions remain unknown, rather than granting automatic work.
+
+## What `baum doctor` runs and prints
+
+`baum doctor` diagnoses the machine and starts no model. It runs
+`<tool> --version` for `git`, `gh` and `cursor-agent`, each with a timeout, in
+a process group that is killed whole when the timeout passes, and with the
+filtered environment of the local backends, which drops provider keys and
+GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
+path comes from `backend_paths`, `GH_PATH` or `PATH`;
+the same checks `baum generate` runs for `claude` and `codex`, which include
+codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
+temporary directory it removes); and, only when no token comes from the
+environment, the config file or `gh`'s own files, `gh auth token
+--secure-storage --hostname <host>`. Its one network contact is the signed price
+list described above, skipped with `--offline`; nothing else leaves the machine.
+It creates no files of its own: it opens the registry read-only (SQLite
+`mode=ro`, so no journal, table or file mode changes) and only when it exists,
+and does not create a review store. A config file that does not parse is shown
+by position, and by key for a wrong type or value, and never by its text. Asking
+gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
+its own configuration, as `baum generate` does.
+
+It never prints a token or an API key, or a prefix, length or hash of one. For a
+GitHub token it prints only where it was found (an environment variable's name,
+the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
+whether it is set. It does print paths, tool versions and the `PATH` entries,
+so look at a report before pasting it into a public issue.
 
 ## What `baum view` shows
 
@@ -66,7 +98,7 @@ address, which stops other websites in your browser from reading it, but any
 other user or process on the same machine can request the port while it runs
 and read everything it serves, transcripts included, even without permission
 to read your `~/.claude` or other session stores. Do not run `baum view` on a
-shared machine. `baum ui` will add token authentication.
+shared machine. `baum ui` adds the separate authenticated boundary described below.
 
 ## Reading your clone without downloading anything
 
@@ -188,6 +220,19 @@ The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 
+## Local repository registry
+
+`baum repos` stores clone paths, git common directories, normalized GitHub
+identities and generation preferences in a 0600 SQLite database beside the XDG
+config file. Remote URLs and their credentials are never persisted or returned.
+Registration and availability checks read local git metadata only; they do not
+resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
+preferences default off and registration does not start any background work.
+
+The registry HTTP handler is mounted by `baum ui` behind its authenticated
+Host/Origin boundary: its write routes can register local paths, remove records
+and change settings. `baum view` exposes none of these routes.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or
@@ -207,3 +252,57 @@ exposed while triggering the issue, treat it as compromised and rotate it.
 
 This policy covers the baum repository. It does not cover the model
 providers, GitHub, or the coding-agent tools whose sessions baum reads.
+
+## Authenticated local application
+
+`baum ui` accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
+local data; every API requires the random private launch capability or an
+HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
+browser receives the capability in a URL fragment, removes it from history,
+and sends it in the same-origin JSON exchange body. Browsers send cookies to
+every port of a host, so the cookie is scoped to a second random secret path,
+`/s/<namespace>/`, returned only by the exchange; another service on a
+loopback port never receives it, and the cookie authorizes nothing outside
+that path. All mutations require the
+exact local Origin and JSON content type, including requests using Bearer
+authentication. No route enables CORS. The capability is valid only while the
+instance runs; keep the printed URL and its mode-0600 instance file private.
+Processes running as your user can read that file and access the API.
+
+The per-user instance directory must be mode 0700 on Unix; Windows uses a protected current-user DACL. A second invocation verifies
+the existing instance using its capability before opening it, without sending
+that capability to a redirect, proxy, non-loopback host or baum server. SQLite
+OS locking prevents concurrent owners and releases locks after process exit.
+
+Document selectors must name a registered clone. Linked transcripts use the
+same redaction and linked-session allowlist as `baum view`; file patches are
+restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
+`GET /api/diagnostics` serves the `baum doctor` report behind the same
+authentication, Origin and Host checks, runs the same bounded commands as
+`baum doctor` but never the price-list fetch, and is limited to `GET`.
+Stored image APIs return only document-listed, content-checked PNG, JPEG, GIF
+or WebP copies. They reject SVG/HTML and never follow document URLs. Images
+carry nosniff and a sandboxed, deny-all content security policy. Local successful
+versions retain their captured images atomically alongside the document;
+removing a registry entry does not delete that history.
+
+The authenticated job API derives repository, head, fork and author permissions
+from registered clones and fresh GitHub evidence. A five-minute estimate is
+bound to the head, selected model/backend, budgets and price list version;
+confirmation cannot authorize changed inputs. Forks, non-writers and unknown
+permissions require a separate single-PR isolation acknowledgement and are
+excluded from batch generation. Cancellation reaches the existing backend
+process-group cleanup. Job history contains fixed failure reasons and bounded
+usage metadata, never arbitrary provider errors, prompts or rejected documents.
+The private journal persists queued/running/terminal states; crashed running
+entries become interrupted before work resumes. The stored copy of a downloaded
+price list is trusted only after its signature verifies again on load. A second `baum ui` invocation
+cannot open a second queue because it reuses the existing instance first.
+
+The server's bootstrap page exchanges the fragment token and clears it from
+history before the embedded local application loads; the application's files
+are served only under the authenticated namespace, and every application
+request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
+same sanitizers and safe rendering components as the hosted PR page and `baum
+view`. Stored document rendering failures remain within the PR pane. The app
+never supplies approvals, merge actions or discussion mutation controls.

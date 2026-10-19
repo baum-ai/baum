@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -37,7 +37,7 @@ jobs:
   viewer-dist:
     # The tag must carry the viewer bundle its sources build to.
     name: Viewer bundle is fresh
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -63,8 +63,6 @@ jobs:
   release:
     name: Release
     needs: [test, viewer-dist]
-    # Stays on a GitHub-hosted runner: it holds contents: write. The test jobs
-    # above hold no credentials and run on Blacksmith.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

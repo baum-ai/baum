@@ -203,6 +203,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	s.mux.HandleFunc("GET /api/commits", s.handleCommits)
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleTranscript)
 	s.mux.HandleFunc("GET /api/patch", s.handlePatch)
 	s.mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
@@ -483,4 +484,12 @@ func (h *hub) broadcast() {
 		default:
 		}
 	}
+}
+
+// Close cancels computations when a host serves Mux without Listen/Serve.
+// Call it only after requests using that mux have finished.
+func (s *Server) Close() {
+	s.lifeCancel()
+	s.stop.Do(func() { close(s.done) })
+	s.finishSessions()
 }

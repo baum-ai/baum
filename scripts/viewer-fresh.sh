@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 sh scripts/viewer-build.sh
 
-changed=$(git status --porcelain --untracked-files=all -- internal/viewer/dist viewer/src/precompiled)
+changed=$(git status --porcelain --untracked-files=all -- internal/viewer/dist internal/localapp/dist viewer/src/precompiled)
 if [ -n "$changed" ]; then
   echo "the committed viewer bundle is stale; run 'just viewer-build' and commit the result:" >&2
   echo "$changed" >&2

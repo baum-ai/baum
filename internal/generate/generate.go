@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
@@ -89,6 +90,7 @@ type Assembler interface {
 
 // Options are the inputs of one run.
 type Options struct {
+	PriceList *pricing.List
 	Assembler Assembler
 	// Request names the pull request and the limits. Run sets its Checkout and
 	// Attachments writers.
@@ -109,6 +111,8 @@ type Options struct {
 	// Progress receives one line per step; nil discards them. The document is
 	// never written to it.
 	Progress io.Writer
+	// OnValidation receives fixed validation milestones, without model text.
+	OnValidation func(pass int, valid bool)
 	// KeepRunDir keeps the run directory and reports its path on Progress.
 	KeepRunDir bool
 	// BundleOut, when not empty, receives the exact bundle the model was given.
@@ -123,6 +127,7 @@ type Options struct {
 
 // Result is a finished run.
 type Result struct {
+	Attachments []store.Attachment
 	// Document is the finished, strictly valid document. Nil on any failure.
 	Document []byte
 	Metadata store.Metadata
@@ -258,6 +263,10 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			return result, fail(CategoryInput, fmt.Errorf("unpacking the description images: %w", err))
 		}
 	}
+	captured, err := capturedAttachments(attachmentsPath, b.Attachments)
+	if err != nil {
+		return result, fail(CategoryInput, err)
+	}
 	// A path the checkout holds may stay in the returned document as it is.
 	checkout := checkoutPaths(runDir, limits.Checkout.MaxTotalFiles)
 
@@ -280,7 +289,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	generator := agent.Generator{
 		Backend: backend, Prompts: prompts, Validator: validator, Redactor: redactor,
-		Logger: slog.New(progressHandler{w: o.Progress}),
+		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
 	}
 	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets,
@@ -345,10 +354,11 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if err := json.Unmarshal(completed, &stored); err != nil {
 		return result, err
 	}
-	result.Metadata = store.Metadata{Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
+	result.Metadata = store.Metadata{Accounting: outcome.Accounting, Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
 		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
+	result.Attachments = captured
 	result.Document = completed
 	return result, nil
 }
@@ -493,16 +503,27 @@ func WriteFileAtomic(path string, data []byte) (err error) {
 // progressHandler prints the loop's milestones as lines for a person. It
 // prints counts and fixed words only: never a finding, a model's text or a
 // path, so what it writes needs no masking.
-type progressHandler struct{ w io.Writer }
+type progressHandler struct {
+	w         io.Writer
+	validated func(int, bool)
+}
 
-func (h progressHandler) Enabled(context.Context, slog.Level) bool { return h.w != nil }
+func (h progressHandler) Enabled(context.Context, slog.Level) bool {
+	return h.w != nil || h.validated != nil
+}
 
 func (h progressHandler) Handle(_ context.Context, record slog.Record) error {
+	if h.w == nil {
+		h.w = io.Discard
+	}
 	attrs := map[string]slog.Value{}
 	record.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value; return true })
 	switch record.Message {
 	case "review document validated":
 		pass := attrs["pass"].Int64()
+		if h.validated != nil {
+			h.validated(int(pass), attrs["valid"].Bool())
+		}
 		if attrs["valid"].Bool() {
 			_, _ = fmt.Fprintf(h.w, "pass %d: the document is valid\n", pass)
 		} else {

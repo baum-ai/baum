@@ -86,7 +86,9 @@
     "./use-review-selection": "./src/use-review-selection.ts",
     "./use-review-version": "./src/use-review-version.ts",
     "./use-section-history": "./src/use-section-history.ts",
-    "./viewer.css": "./src/viewer.css"
+    "./viewer.css": "./src/viewer.css",
+    "./local-sessions": "./app/local-sessions.ts",
+    "./local-transcript": "./app/local-transcript.ts"
   },
   "scripts": {
     "generate": "node scripts/generate-review-types.mjs",

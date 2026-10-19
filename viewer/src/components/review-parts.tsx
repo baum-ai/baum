@@ -275,11 +275,15 @@ export function Part({
 }) {
   return (
     <section aria-label={label} className={cn("min-w-0", className)}>
-      <div className="mb-3 flex items-center justify-between gap-3 border-b border-(--border-subtle) pb-1.5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-(--border-subtle) pb-1.5">
         <Heading className="text-base font-semibold tracking-[0.08em] text-(--text-primary) uppercase">
           {label}
         </Heading>
-        {aside ? <div className="flex flex-none items-center gap-2">{aside}</div> : null}
+        {aside ? (
+          <div className="relative flex max-w-full min-w-0 items-center gap-2 overflow-x-auto">
+            {aside}
+          </div>
+        ) : null}
       </div>
       {children}
     </section>

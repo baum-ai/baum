@@ -61,7 +61,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
-store) stays under `internal/`.
+store, the `doctor` diagnostics) stays under `internal/`.
 
 ## `bundle`
 
@@ -96,7 +96,8 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` is the GraphQL client `baum bundle` reads GitHub with. It reads hosts, repositories, remote URLs, SSH host
+`internal/github` is the GraphQL client `baum bundle` reads GitHub with, and
+the bounded read-only REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
 aliases and tokens as the GitHub CLI does, through its library go-gh
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
 themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
@@ -130,11 +131,12 @@ backoff, `sources` and the mapping onto the bundle.
   be unlocked. go-gh's own order puts `GH_TOKEN` before `GITHUB_TOKEN`;
   baum keeps its documented order and uses go-gh only for the GitHub CLI's
   part.
-- **Requests.** The token goes only to the host's GraphQL endpoint, the
-  client follows no redirect at all (GitHub's GraphQL endpoint never sends
-  one), and requests carry `User-Agent: baum` and no other header of the
-  client's own. Nothing is cached and nothing is logged; `GH_DEBUG` has no
-  effect. Responses reach the mapping exactly as GitHub sent them.
+- **Requests.** The token goes only to the host's derived API endpoint, the
+  client follows no redirect at all, and requests identify `User-Agent: baum`.
+  REST discovery also sends the JSON accept header, a pinned API version and
+  conditional ETags. Bundle requests are not cached and nothing is logged;
+  `GH_DEBUG` has no effect. Discovery caches only its minimal inbox response fields, as described
+  below. Responses reach the mapping exactly as GitHub sent them.
 - The pull request is `--pr` on the repository `--repo` names
   (`owner/name` on github.com, or `host/owner/name`) or, by default, the one
   the clone's `origin` remote names (https, ssh and scp-like URLs, read with
@@ -282,10 +284,41 @@ Given the previous version, `review` keeps sections stable:
 - a risk the model omits becomes `mitigated`, and a risk that returns keeps
   its `introduced_version`. A repair cannot drop a risk.
 
+### Stored documents
+
+The schema tightens in place, keeping its `$id`, so a document stored before
+a change can fail the schema it is read with now. Every reader of a stored
+document (`Refresh`, `ValidateStored`, `PreviousVersionOf`) first applies the
+stored-document rules in `stored.go`, which rewrite only what the current
+schema rejects, deterministically and idempotently, keeping references
+consistent; a document that passes is unchanged. `Refresh` stores the
+rewrite. A stored document the rules cannot repair fails `Refresh` with a
+`StoredDocumentError`, so a host can tell it from a failure of the refresh
+itself. A rule for another in-place change, such as a tile shape the schema no
+longer accepts, belongs with them.
+
+- A blank section title is labelled by its position (`SectionTitle`).
+- Identifiers, identifier references and risk categories have been bounded
+  at 128 characters (`MaxIdentifierLength`) since schema revision
+  2026-10-07.1. `ShortenIdentifier` rewrites a longer one as its first 115
+  characters without trailing underscores, an underscore and the first 12
+  hexadecimal digits of the SHA-256 of the whole identifier: it keeps the
+  prefix and pattern, two identifiers sharing their first characters stay
+  distinct, and a shortened one is unchanged. The rule applies wherever the
+  schema closes a value with an identifier pattern, then to every other string
+  that equals an identifier it shortened (a summary attention reference, which
+  the schema leaves open), never to a longer string, such as prose, that
+mentions one. Generation still
+  rejects an identifier over the bound. `ShortenStoredIdentifiers` applies
+  this rule alone to an encoded document, for a host that serves stored
+  documents and keys records of its own (read marks, approvals) by their
+  identifiers; such a host compares a stored key through `ShortenIdentifier`.
+
 ### Refresh and redaction
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
-document without a model call; both the platform and `baum refresh` use it. It
+document without a model call, after the stored-document rules; both the
+platform and `baum refresh` use it. It
 rebuilds the session index from the bundle and carries over, for each readable session the
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
@@ -1076,7 +1109,7 @@ cut sets `truncated`. The body is built once per session and answer and kept
 with it.
 
 The server exposes `Mux` and `Use` so a host with its own routes or
-authentication, such as a later `baum ui`, extends it without changing these
+authentication extends it without changing these
 rules; its handlers sit behind the host check and the headers. Cancelling the
 context ends the event streams and shuts the server down.
 
@@ -1103,8 +1136,9 @@ context ends the event streams and shuts the server down.
 `baum generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
 repository/PR version, and passes `review.PreviousVersionOf` into
-`assemble.Request.Previous`. It selects and
-checks the backend first (`claude.Backend.Check`, `codex.Backend.Check`; `auto`
+`assemble.Request.Previous`. After resolving the pull request and recording its
+run, it selects and checks the backend before assembling (`claude.Backend.Check`,
+`codex.Backend.Check`; `auto`
 tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
@@ -1141,11 +1175,14 @@ Repository names, including GitHub host, and pull request numbers key rows.
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement
 fenced by both its version number and exact previous bytes, preserving
-metadata and every replaced version. Concurrent refreshes and generations
-cannot overwrite a document prepared against older evidence. `Put` publishes
-metadata and document in one transaction only if the expected previous version
-is still latest, so concurrent runs cannot assign a different predecessor to
-a completed document. A losing run reports a conflict; generation failure or
+metadata and every replaced version. Concurrent refreshes cannot overwrite a
+document prepared against older evidence, and a refresh never replaces a newer
+version. A running generation does not block refresh: live facts refresh
+independently, as in the hosted service. `Put` publishes metadata and document
+in one transaction only if the previous version the caller read is still
+latest, so concurrent runs cannot assign a different predecessor to a completed
+document. A refresh of that previous version in the meantime does not reject
+the generation; the next refresh updates the new version's live facts. A losing run reports a conflict; generation failure or
 cancellation before publication writes no version. Export errors after
 publication leave the successfully generated version available. Metadata records full revision IDs,
 bundle digest, backend and installed version, actual model, schema revision,
@@ -1196,7 +1233,8 @@ attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
 `Request`, for `baum generate`; `baum bundle` discards both. The checkout is
 exported either way, since a file the checkout budget omits makes its hunks
 textless. `baum validate`  checks a stored document with
-`review.DocumentValidator.ValidateStored`, against its bundle when one is given,
+`review.DocumentValidator.ValidateStored`, after the stored-document rules,
+against its bundle when one is given,
 and `baum refresh` uses `internal/refresh` to fetch current GitHub metadata
 with checks pinned to the saved head, re-link local sessions against the saved
 merge-base/head range and redact bounded evidence before calling
@@ -1210,6 +1248,180 @@ document's own session metadata.
 
 Estimated cost comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
-with a public key embedded in the binary, caches it under the XDG cache
-directory, and falls back to a snapshot embedded at release when the list
-cannot be fetched or verified.
+with a public key embedded in the binary and falls back to a snapshot embedded
+at release when the list cannot be fetched or verified. Nothing is cached on
+disk: a fetched list replaces the embedded one for the life of the process, and
+`pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
+version, when it was fetched and why the last refresh failed.
+
+## Diagnostics
+
+`internal/doctor` builds the report behind `baum doctor`: `Run(ctx, Options)`
+returns an ordered list of checks, each with an `id`, `label`, `status` (`ok`,
+`warning`, `problem` or `info`) and `detail`, and, where they apply, `path`,
+`version`, `source` and `fix`, plus the worst status overall. It reuses the
+code that makes the decisions instead of guessing at them: the real backends'
+`Check` (built by `generate.DefaultBackendsFor`, run once and replayed into
+`generate.Select` to say what `auto` picks and why), `gitlocal`'s git version
+rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
+and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
+`uiserver`. Every outside dependency (environment, `PATH` lookup, command
+runner, backends, token lookup, price refresh and registry) is an `Options`
+field, so tests use fake executables and stubs. It creates nothing (the
+registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
+`cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
+reruns a failed claude or codex check, and bounds every subprocess with a
+timeout and, through `internal/proc`, a process group killed with it (the
+package moved from `agent/internal/proc` so both can use it). A configuration
+that does not load is a problem, not an abort; its parse errors name a line and
+column, and the key for a type or value error, never the text. A host that `github.IsGitHubHost` refuses is a problem
+without a token lookup. It does not import `uiserver`, which may
+serve the report: the instance directory is passed in.
+
+`config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
+and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
+explicit executable of a backend. `generate.DefaultBackendsFor(cfg)` passes it
+to the backend as its `Binary`, which is looked up by `exec.LookPath` as given,
+so an absolute path replaces the `PATH` search; a path that cannot be run fails
+the backend's `Check` with `generate.ExplicitPathError` naming
+`backend_paths.<name>`, without trying `PATH`. `baum generate` and the job
+runner both build their backends from the resolved configuration, and
+per-repository settings do not override the paths.
+
+## Explicit local repository registry
+
+`internal/repos` owns the private SQLite database beside `config.Path()` and
+reuses `gitlocal` and `github.RepositoryFromRemote` for offline clone discovery.
+The `clones` table keys canonical working-tree roots separately from the shared
+common git directory and normalized repository identity (host-qualified for Enterprise). The
+`repositories` table holds settings shared by all clones of that identity.
+Transactions serialize registration and settings edits across processes; a list
+reprobes paths and reports changed/missing clones unavailable without rewriting
+them. No clone-on-demand or generation runner is involved.
+
+`internal/cli` and the reusable `Registry.Handler` use the same service. The
+handler exposes registry operations only; `internal/uiserver` owns listening,
+instance lifecycle, authentication and host/origin validation and mounts the
+handler behind that middleware. The existing document viewer does not mount it.
+
+## Authenticated local application host
+
+`internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
+HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+Cookies are host-scoped across ports, so the browser application, its API and
+its cookie live under a secret `/s/<namespace>/` path returned by the exchange;
+the server strips that prefix before routing to providers and to `Options.App`.
+Its public bootstrap contains no local data or capability; all API providers
+run behind the same middleware. `LocalAPI` composes the registry, read-only
+version store and existing `viewserver` linkage/transcript/patch handlers.
+Document selectors resolve registered clone IDs, never request-provided paths.
+The server makes no baum-server requests. Discovery and index are separate
+providers; the generation runner is mounted only after acquiring the single-instance lock.
+
+A private SQLite write lock keeps one process per user, with an authenticated
+health probe before another invocation trusts the private capability file.
+Cleanup removes that file before releasing the lock. SSE has a bounded
+in-memory event log; reconnect replays notifications or asks for an index reset.
+It does not persist a second review index.
+
+Version image copies use an additive `attachments` table keyed by repository,
+PR, immutable version and attachment ID, committed atomically by `Store.Put`.
+`generate` returns copies from the original, hash-checked assembly archive,
+not agent-visible files. Reads expose only raster images listed in that
+version's document. Existing stores without the table remain readable.
+`internal/reviewindex` rebuilds an in-memory projection of discovery and registered
+version stores. `store.Snapshot` reads latest metadata, count and small document
+summaries in one transaction, plus separate latest-started run records. It does
+not move document bodies or maintain a second database. CLI generation publishes
+lease-based run status independently of immutable successful version history;
+expired leases are read as interrupted without mutating stores during indexing.
+Once `Store.Put` commits a version, generation succeeds: failing to record the
+run's outcome afterwards is only a warning, and the lease later expires.
+
+### Local pull request discovery
+
+`internal/discovery` reads all open PR pages, the authenticated user, the user's
+teams and per-author repository permissions through `internal/github.REST`.
+It uses numeric pagination, never an API-provided URL, and refuses redirects.
+Missing team scope and unreadable permissions are explicit unknown evidence;
+a fork or unknown author permission must not become an automatic-generation
+authorization. This service has no generation or GitHub mutation capability.
+
+`Service.Cached` resolves the local credential and reads disk without network
+access, always marking the snapshot stale. `Service.Poll` serializes polls,
+honors its next deadline, issues ETag conditional requests for every page and
+backs off for unchanged data, GitHub's polling interval and rate reset. It
+returns rate budget/reset rather than sleeping through an exhausted budget.
+Host-and-credential budget files share exhaustion and secondary retry deadlines
+across repositories and service restarts, before any new request is sent.
+A required request failure preserves the last complete inbox as stale; optional
+team or permission failures keep their fields unknown. Snapshots and minimal
+conditional response bodies are atomically replaced in private cache files,
+partitioned by host/credential fingerprint/repository. The index consumes these
+snapshots; it never treats missing PRs in an open-only snapshot as closed.
+
+### Persistent generation jobs
+
+`internal/jobs` serializes queue mutations in a private atomic JSON journal,
+without duplicating review documents. Workers use the same `generate.Publish`
+entry point as the terminal: previous-version lookup, run lease, generation and
+strict validation, then atomic version publication. Running journal entries are
+interrupted on restart; queued entries retain their confirmed input fingerprint.
+Fresh GitHub REST evidence authorizes the head and isolation warning; all
+preflight I/O happens outside the queue mutex so cancellation stays responsive.
+The runner has no subprocess invocation of baum itself. Only the existing
+read-only agent backends run child processes, cancelled through their context.
+
+`internal/pricing` ports the platform's pure pricing implementation and baseline
+into the independent OSS module; its signature, tier and normalization tests are
+retained. Keep these copied core files synchronized with the platform package.
+A bounded HTTPS downloader refuses redirects, verifies the existing release
+signing key, rejects flattened lists and installs only newer full-format lists.
+An installed download is stored with its signature in the job state directory.
+`baum ui` re-verifies and installs it before opening the queue, so recovered
+jobs see the list they were confirmed against; an unverifiable file is ignored.
+Estimates and job confirmation never infer the default model or replace it with
+a different priced model. Unknown actual usage remains null.
+
+### Local application presentation
+
+`app/` builds into the committed `internal/localapp/dist` embed.
+`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+are served only under the authenticated `/s/<namespace>/` path; the public
+bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
+API, SSE and asset URLs relative to that path and routes with query strings on
+it. All data, auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
+supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
+PR page, sourcing documents, immutable versions, patches, sessions and commits
+from registered local clones. The renderer stays in `viewer/`; the app owns
+only local inbox, jobs, confirmation and settings presentation. The common
+viewer build/freshness scripts include both embedded applications.
+
+### Free background synchronization
+
+`internal/background` runs one cancellable worker after the local instance lock
+is acquired. It has registry/discovery/metadata capabilities only; the generation
+queue and model backends are not dependencies. It polls immediately without
+blocking HTTP startup, then schedules discovery and latest-review evidence with
+conditional-cache deadlines, bounded requests, error backoff and host rate resets.
+Per-repository target cursors and repository rotation prevent a small renewed
+GitHub budget from perpetually serving only the first PRs. Linked worktrees are
+deduplicated by common git directory. No-review PRs fetch only a header and checks;
+saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+
+Discovery's live freshness map uses its own short mutex; cached readers never
+wait behind a network poll. Disk-only startup remains stale. Minimized current
+head/state/title/check observations share the private credential-partitioned
+cache and augment the index, including historical PRs. A newer discovery result
+wins over older observations. Authenticated `/api/background` and index events
+report refresh health without filesystem paths, credentials or remote bodies.
+
+Local generation stores additive `agent.Accounting` in immutable version
+metadata and the durable queue. Accounting retains disjoint provider token
+buckets and available per-call model identity, speed, TTL and prompt range.
+Retries and repairs append reports; partial or absent reports stay unknown.
+Queue progress is saved before SSE publication and snapshots detach mutable
+accounting. Existing version records are never backfilled. Pricing sums
+individually attributable model reports; missing pricing dimensions leave a
+nullable cost and a fixed reason. The local SPA renders both job accounting
+and selected-version provenance without changing the review document schema.

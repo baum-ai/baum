@@ -114,9 +114,9 @@ export function ReviewImages({
   if (!attachmentUrl || shown.length === 0) return null;
 
   const source = (id: string) => {
-    const url = attachmentUrl(id);
+    const url = attachmentUrl(id, document);
     const attempt = attempts.get(id);
-    return attempt ? `${url}?attempt=${attempt}` : url;
+    return attempt ? retryImageURL(url, attempt) : url;
   };
   const retry = (id: string, key: string) => {
     focusNext.current = `view:${key}`;
@@ -266,4 +266,15 @@ export function ReviewImages({
       </dialog>
     </Part>
   );
+}
+
+function retryImageURL(url: string, attempt: number): string {
+  const fragmentAt = url.indexOf("#");
+  const fragment = fragmentAt < 0 ? "" : url.slice(fragmentAt);
+  const target = fragmentAt < 0 ? url : url.slice(0, fragmentAt);
+  const queryAt = target.indexOf("?");
+  const path = queryAt < 0 ? target : target.slice(0, queryAt);
+  const query = new URLSearchParams(queryAt < 0 ? "" : target.slice(queryAt + 1));
+  query.set("attempt", String(attempt));
+  return `${path}?${query}${fragment}`;
 }

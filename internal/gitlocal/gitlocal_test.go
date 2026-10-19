@@ -839,7 +839,7 @@ func TestSupportedGitVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			if err := supportedGitVersion(tt.version); (err == nil) != tt.ok {
+			if err := SupportedGitVersion(tt.version); (err == nil) != tt.ok {
 				t.Fatalf("err = %v, want ok %v", err, tt.ok)
 			}
 		})
@@ -882,5 +882,14 @@ func TestCloseWaitsForWholeOperation(t *testing.T) {
 	}
 	if err := <-closed; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMinGitVersionMatchesTheCheck(t *testing.T) {
+	if err := SupportedGitVersion("git version " + MinGitVersion + ".0"); err != nil {
+		t.Errorf("MinGitVersion %s is refused: %v", MinGitVersion, err)
+	}
+	if err := SupportedGitVersion("git version 2.28.9"); err == nil {
+		t.Error("2.28 is accepted although MinGitVersion is " + MinGitVersion)
 	}
 }

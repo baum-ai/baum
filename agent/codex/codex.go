@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/agent/internal/proc"
+	"github.com/baum-ai/baum/internal/proc"
 )
 
 // Profile selects the sandbox, environment and credentials the Codex process gets.
@@ -67,6 +67,15 @@ type Backend struct {
 func (*Backend) Name() string { return agent.BackendCodex }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+	result.Model = c.Model
+	result.ModelSource = "configured"
+	pendingTurns := 0
+	reportedTurns := 0
+	defer func() {
+		if pendingTurns > 0 || reportedTurns == 0 {
+			result.Usage.Unreported = true
+		}
+	}()
 	if c.Profile != Local && c.Profile != Container {
 		return result, fmt.Errorf("codex: unknown profile %d", int(c.Profile))
 	}
@@ -179,7 +188,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			Error struct {
 				Message string `json:"message"`
 			} `json:"error"`
-			Usage struct {
+			Usage *struct {
 				Input       int `json:"input_tokens"`
 				CachedInput int `json:"cached_input_tokens"`
 				CacheWrite  int `json:"cache_write_input_tokens"`
@@ -193,9 +202,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		case "error":
 			lastError = event.Message
 		case "turn.started":
-			// Codex exposes one turn total, not the number of model cycles
-			// inside it. Count each invocation so retries and repairs are bounded.
-			result.Calls = 1
+			// Codex exposes turn totals, not the model cycles inside each turn.
+			// Count every started turn; never overwrite an earlier turn.
+			result.Calls++
+			pendingTurns++
 		case "item.completed":
 			if event.Item.Type == "agent_message" {
 				document = []byte(strings.TrimSpace(event.Item.Text))
@@ -207,18 +217,36 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			completed = true
 			// Unlike Anthropic's, Codex input_tokens includes cached reads and
 			// cache writes, so uncached input already charges cache creation.
-			result.Tokens = max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
+			if pendingTurns > 0 {
+				pendingTurns--
+			}
+			if event.Usage == nil {
+				result.Usage.Unreported = true
+				break
+			}
+			reportedTurns++
+			result.Tokens += max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
 			// agent.Usage keeps Anthropic's disjoint buckets, so the cached and
 			// cache-write tokens come out of Codex's input total.
-			result.Usage = agent.Usage{
+			result.Usage.Add(agent.Usage{
 				Input:       int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)),
 				Output:      int64(event.Usage.Output),
 				CacheRead:   int64(event.Usage.CachedInput),
 				CacheCreate: int64(event.Usage.CacheWrite),
-			}
+			})
 			result.Events = append(result.Events, agent.Event{Kind: "model_usage", Input: event.Usage.Input, Output: event.Usage.Output,
 				CacheRead: event.Usage.CachedInput, CacheCreate: event.Usage.CacheWrite})
 		case "turn.failed":
+			if event.Usage != nil {
+				if pendingTurns > 0 {
+					pendingTurns--
+				}
+				reportedTurns++
+				result.Tokens += max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
+				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite)})
+			} else {
+				result.Usage.Unreported = true
+			}
 			// Codex also emits "error" events for connection retries it
 			// recovers from; failures it cannot recover from end the turn
 			// or exit nonzero. The message may quote the run, so only its
@@ -229,6 +257,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			}
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
 			err = errors.New(agent.ReasonProviderUnavailable)
+		}
+		if err == nil && result.Calls > request.MaxCalls {
+			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
 		if err != nil || result.Tokens > request.MaxTokens {
 			if err == nil {

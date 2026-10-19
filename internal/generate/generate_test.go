@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -87,6 +88,9 @@ func TestValidFirstPassIsCompleteStrictAndClean(t *testing.T) {
 	result, err := generate.Run(context.Background(), f.options(t))
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, f.progress.String())
+	}
+	if len(result.Attachments) != 1 || !bytes.Equal(result.Attachments[0].Bytes, assembletest.PNG) {
+		t.Fatalf("captured images unavailable after run cleanup: %+v", result.Attachments)
 	}
 	var document struct {
 		Review struct {
@@ -542,6 +546,31 @@ func TestInputFailuresAreTheInputCategory(t *testing.T) {
 	}
 	if len(f.backend.Requests) != 0 {
 		t.Error("the backend ran without a bundle")
+	}
+	f.requireClean(t)
+}
+
+func TestActualImageStorageLimitsFailBeforeModelSpend(t *testing.T) {
+	f := newFixture(t)
+	options := f.options(t)
+	options.Request.Limits.MaxImageBytes = store.MaxAttachmentBytes + 1
+	options.Assembler.(*assemble.Assembler).Images = func(context.Context, string, int64) ([]byte, error) {
+		return append(append([]byte(nil), assembletest.PNG...), make([]byte, store.MaxAttachmentBytes+1-len(assembletest.PNG))...), nil
+	}
+	_, err := generate.Run(context.Background(), options)
+	if generate.CategoryOf(err) != generate.CategoryInput || len(f.backend.Requests) != 0 {
+		t.Fatalf("error %v backend calls %d", err, len(f.backend.Requests))
+	}
+	f.requireClean(t)
+}
+func TestLargerConfiguredImageCapsAllowSmallActualImages(t *testing.T) {
+	f := newFixture(t)
+	options := f.options(t)
+	options.Request.Limits.MaxImageBytes = store.MaxAttachmentBytes + 1
+	options.Request.Limits.MaxImages = store.MaxAttachments + 1
+	result, err := generate.Run(context.Background(), options)
+	if err != nil || len(result.Attachments) != 1 {
+		t.Fatalf("high configured cap rejected supported actual images: %v", err)
 	}
 	f.requireClean(t)
 }

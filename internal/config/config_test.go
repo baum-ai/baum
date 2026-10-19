@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -223,9 +225,9 @@ func TestResolveGitHubTokenKeepsBaumSourcesForGitHubCom(t *testing.T) {
 	restore := ghToken
 	t.Cleanup(func() { ghToken = restore })
 	var asked []string
-	ghToken = func(_ context.Context, host string) (string, error) {
+	ghToken = func(_ context.Context, host string) (string, string, error) {
 		asked = append(asked, host)
-		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], nil
+		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], "stand-in", nil
 	}
 	ctx := context.Background()
 
@@ -333,40 +335,80 @@ func TestGHKeyringLookupStopsWhenCancelled(t *testing.T) {
 	}
 }
 
-func TestDetect(t *testing.T) {
-	onPath := func(names ...string) func(string) (string, error) {
-		return func(name string) (string, error) {
-			for _, n := range names {
-				if n == name {
-					return "/usr/bin/" + name, nil
+func TestDurationFieldsOnlyTakeStrings(t *testing.T) {
+	const hint = `write it like "10m"`
+	cases := []struct {
+		name    string
+		toml    string
+		field   func(Budgets) Duration
+		want    time.Duration
+		wantErr []string
+	}{
+		{"pass string", "[budgets]\npass_timeout = \"3m\"\n", func(b Budgets) Duration { return b.PassTimeout }, 3 * time.Minute, nil},
+		{"pass integer", "[budgets]\npass_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
+		{"pass float", "[budgets]\npass_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
+		{"run string", "[budgets]\nrun_timeout = \"3m\"\n", func(b Budgets) Duration { return b.RunTimeout }, 3 * time.Minute, nil},
+		{"run inline table", "[budgets]\nrun_timeout = { value = 10 }\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"run integer", "[budgets]\nrun_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"inline table integer", "budgets = { run_timeout = 10 }\n", nil, 0, []string{"budgets.run_timeout at line 1, column", hint}},
+		{"dotted key integer", "budgets.pass_timeout = 10\n", nil, 0, []string{"budgets.pass_timeout at line 1, column", hint}},
+		{"run float", "[budgets]\nrun_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		// go-toml matches keys to fields without regard to case.
+		{"upper-case key integer", "[Budgets]\nRUN_TIMEOUT = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"upper-case key string", "[BUDGETS]\nPass_Timeout = \"4m\"\n", func(b Budgets) Duration { return b.PassTimeout }, 4 * time.Minute, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := ReadFile(path)
+			t.Logf("err=%v pass=%v run=%v", err, time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.RunTimeout))
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := time.Duration(tc.field(cfg.Budgets)); got != tc.want {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, s := range tc.wantErr {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("error %q lacks %q", err, s)
 				}
 			}
-			return "", errors.New("not found")
+		})
+	}
+}
+
+func TestDurationKeysCoverEveryDurationField(t *testing.T) {
+	var found []string
+	var walk func(prefix string, typ reflect.Type)
+	walk = func(prefix string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			name := strings.Split(field.Tag.Get("toml"), ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			switch {
+			case field.Type == reflect.TypeOf(Duration(0)):
+				found = append(found, prefix+name)
+			case field.Type.Kind() == reflect.Struct:
+				walk(prefix+name+".", field.Type)
+			}
 		}
 	}
-	tests := []struct {
-		name    string
-		cfg     Config
-		path    []string
-		want    Backend
-		wantErr error
-	}{
-		{name: "explicit backend wins", cfg: Config{Backend: BackendCodex}, path: []string{"claude"}, want: BackendCodex},
-		{name: "claude first", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent", "codex", "claude"}, want: BackendClaude},
-		{name: "codex before cursor-agent", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent", "codex"}, want: BackendCodex},
-		{name: "cursor-agent alone", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent"}, want: BackendCursorAgent},
-		{name: "api key fallback", cfg: Config{Backend: BackendAuto, AnthropicAPIKey: "sk"}, want: BackendAnthropic},
-		{name: "nothing available", cfg: Config{Backend: BackendAuto}, wantErr: ErrNoBackend},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.cfg.detect(onPath(tt.path...))
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("err = %v, want %v", err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Errorf("backend = %q, want %q", got, tt.want)
-			}
-		})
+	walk("", reflect.TypeOf(Config{}))
+	slices.Sort(found)
+	want := slices.Clone(durationKeys)
+	slices.Sort(want)
+	if !slices.Equal(found, want) {
+		t.Errorf("Duration fields %v, durationKeys %v", found, want)
 	}
 }

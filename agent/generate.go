@@ -203,6 +203,10 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		outcome.Tokens += result.Tokens
 		outcome.Model = result.Model
 		outcome.Usage.Add(result.Usage)
+		if outcome.Accounting == nil {
+			outcome.Accounting = &Accounting{}
+		}
+		outcome.Accounting.Add(result, err != nil)
 		outcome.StructuredOutputRejections += result.StructuredOutputRejections
 		outcome.Diagnostics = append(outcome.Diagnostics, result.Events[:min(len(result.Events), MaxDiagnostics-len(outcome.Diagnostics))]...)
 		if outcome.Calls > budgets.MaxCalls {

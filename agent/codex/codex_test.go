@@ -222,3 +222,64 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnUsageAccumulatesAndSurvivesFailures(t *testing.T) {
+	for _, test := range []struct {
+		name, ending string
+		partial      bool
+		tokens       int64
+	}{
+		{"completed", `echo '{"type":"turn.completed","usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2}}'`, false, 14},
+		{"failed with report", `echo '{"type":"turn.failed","usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2},"error":{"message":"failed"}}'`, false, 14},
+		{"failed without report", `echo '{"type":"turn.failed","error":{"message":"failed"}}'`, true, 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "codex")
+			body := `#!/bin/sh
+cat >/dev/null
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}'
+` + test.ending + "\n"
+			if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := (&Backend{Binary: script, Model: "configured-model", Profile: Container}).Run(context.Background(), request(t.TempDir()))
+			if got.Calls != 2 || got.Usage.Input+got.Usage.Output != test.tokens || got.Usage.Unreported != test.partial || got.Model != "configured-model" {
+				t.Fatalf("lost turn accounting: %+v", got)
+			}
+		})
+	}
+}
+
+// More turns than the call budget stop the process at the first excess turn,
+// keeping the usage of the turns that finished.
+func TestCodexStopsWhenCallBudgetIsExceeded(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "codex")
+	body := `#!/bin/sh
+cat >/dev/null
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":1}}'
+echo '{"type":"turn.started"}'
+sleep 60
+`
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	req := request(t.TempDir())
+	req.MaxCalls = 2
+	start := time.Now()
+	got, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), req)
+	if err == nil || err.Error() != agent.GenerationBudgetExceededReason("model calls") {
+		t.Fatalf("call budget: %v", err)
+	}
+	if time.Since(start) > 30*time.Second {
+		t.Fatal("process was not stopped")
+	}
+	if got.Calls != 3 || got.Usage.Input+got.Usage.Output != 14 {
+		t.Fatalf("usage up to the stop: %+v", got)
+	}
+}

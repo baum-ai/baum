@@ -8,3 +8,6 @@ cd "$(dirname "$0")/.."
 pnpm --dir viewer install --frozen-lockfile
 pnpm --dir viewer generate:validators
 pnpm --dir viewer build:app
+
+pnpm --dir app install --frozen-lockfile
+pnpm --dir app build

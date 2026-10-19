@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/agent/internal/proc"
+	"github.com/baum-ai/baum/internal/proc"
 )
 
 // minimumVersion is the oldest Codex the Local profile runs. It is the release

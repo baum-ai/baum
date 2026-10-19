@@ -1,0 +1,169 @@
+@import "tailwindcss";
+@import "../../viewer/src/viewer.css";
+@source "../../viewer/src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.local-chrome {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface-card);
+}
+.local-main {
+  padding: 1.5rem;
+  max-width: 1600px;
+  margin: auto;
+  min-width: 0;
+}
+.local-panel {
+  padding: 1rem;
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+}
+.local-field {
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  max-width: 100%;
+}
+/* The local inbox follows the hosted Focus rows with local evidence columns. */
+.local-inbox {
+  min-width: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+}
+.inbox-columns {
+  display: grid;
+  grid-template-columns: 1rem 2.5rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: center;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  min-width: 0;
+}
+.inbox-columns-head {
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border-default);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.inbox-title-heading {
+  grid-column: 2 / -1;
+}
+.inbox-bucket {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.inbox-row {
+  row-gap: 0.3rem;
+  padding-top: 0.8rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.inbox-row:last-child {
+  border-bottom: 0;
+}
+.inbox-row:hover {
+  background: var(--surface-hover);
+}
+.inbox-row > input,
+.inbox-risk {
+  align-self: start;
+  margin-top: 0.15rem;
+}
+.inbox-pr-title {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.inbox-meta {
+  overflow-wrap: anywhere;
+  margin-top: 0.2rem;
+  line-height: 1.5;
+}
+.inbox-review {
+  grid-column: 3;
+  min-width: 0;
+}
+.inbox-generation {
+  display: none;
+  grid-column: 3;
+  overflow-wrap: anywhere;
+}
+.inbox-model {
+  display: none;
+}
+.inbox-cost {
+  display: none;
+  grid-column: 3;
+}
+@media (width >= 48rem) {
+  .inbox-columns {
+    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 9rem 10rem 5rem;
+  }
+  .inbox-title-heading,
+  .inbox-review,
+  .inbox-generation,
+  .inbox-cost {
+    grid-column: auto;
+  }
+  .inbox-row {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+  .inbox-row > input,
+  .inbox-risk {
+    align-self: center;
+    margin-top: 0;
+  }
+  .inbox-pr-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .inbox-meta {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .inbox-model {
+    display: block;
+    margin-top: 0.2rem;
+  }
+  .inbox-generation,
+  .inbox-cost {
+    display: block;
+  }
+}
+dialog {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  padding: 1.5rem;
+  max-width: calc(100vw - 2rem);
+  width: 36rem;
+}
+dialog::backdrop {
+  background: #0008;
+}
+@media (width >= 64rem) {
+  html:has([data-review-page]) {
+    scroll-padding-top: calc(48px + 0.5rem);
+  }
+}
+
+.local-main:has([data-review-page]) {
+  padding: 0;
+  max-width: none;
+}

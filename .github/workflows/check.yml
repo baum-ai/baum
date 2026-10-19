@@ -23,11 +23,11 @@ jobs:
       matrix:
         include:
           - os: linux
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-24.04
           - os: macos
-            runner: blacksmith-6vcpu-macos-latest
+            runner: macos-latest
           - os: windows
-            runner: blacksmith-2vcpu-windows-2025
+            runner: windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     defaults:
@@ -68,7 +68,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -89,7 +89,7 @@ jobs:
     # Kept separate from the Go job so a schema bump that breaks the example
     # document is named as such in the checks list.
     name: Schema validates example
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -106,7 +106,7 @@ jobs:
 
   viewer:
     name: Viewer
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -147,6 +147,24 @@ jobs:
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         run: pnpm test:e2e
 
+      - name: Set up Go for the local app server fixture
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check and build local application
+        working-directory: app
+        run: pnpm install --frozen-lockfile && pnpm check && pnpm build
+
+      - name: Build local server browser fixture
+        working-directory: .
+        run: CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture
+
+      - name: Local application browser tests
+        working-directory: app
+        run: pnpm test:e2e
+
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -162,7 +180,7 @@ jobs:
     # install needs no Node.js. Fails when it, or the precompiled tile
     # validators, differ from a fresh build of the viewer sources.
     name: Viewer bundle is fresh
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -192,11 +210,11 @@ jobs:
       matrix:
         include:
           - os: linux
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-24.04
           - os: macos
-            runner: blacksmith-6vcpu-macos-latest
+            runner: macos-latest
           - os: windows
-            runner: blacksmith-2vcpu-windows-2025
+            runner: windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     defaults:
@@ -220,7 +238,7 @@ jobs:
     # is caught on the pull request, not on the tag.
     name: Release snapshot
     needs: viewer-dist
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout

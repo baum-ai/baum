@@ -39,7 +39,8 @@ func redactionFixture(t *testing.T) (*bundle.Redactor, *bundle.Bundle) {
 func TestRedactOutputMasksEverythingReturned(t *testing.T) {
 	redactor, b := redactionFixture(t)
 	outcome := Outcome{
-		Model: "model " + leakedProviderKey, Findings: "quotes " + leakedProviderKey,
+		Accounting: &Accounting{Usage: Usage{Input: 17, Speed: new(leakedProviderKey)}, Attempts: []UsageAttempt{{Model: leakedProviderKey, ModelSource: leakedProviderKey, Usage: Usage{CacheRead: 29, Speed: new(leakedProviderKey)}}}},
+		Model:      "model " + leakedProviderKey, Findings: "quotes " + leakedProviderKey,
 		RejectedDocument: leakingDocument(t),
 		Diagnostics:      []Event{{Kind: "tool_use", Path: leakedDatabaseURL, Tool: strings.Repeat("é", 200)}},
 	}
@@ -53,7 +54,11 @@ func TestRedactOutputMasksEverythingReturned(t *testing.T) {
 	}
 	for name, text := range map[string]string{
 		"document": string(redacted), "rejected document": string(outcome.RejectedDocument), "findings": outcome.Findings, "model": outcome.Model,
-		"diagnostic path": outcome.Diagnostics[0].Path,
+		"diagnostic path":         outcome.Diagnostics[0].Path,
+		"accounting model":        outcome.Accounting.Attempts[0].Model,
+		"accounting model source": outcome.Accounting.Attempts[0].ModelSource,
+		"accounting speed":        *outcome.Accounting.Usage.Speed,
+		"accounting call speed":   *outcome.Accounting.Attempts[0].Usage.Speed,
 	} {
 		if strings.Contains(text, leakedProviderKey) || strings.Contains(text, "Sup3rS3cretPassw0rd") {
 			t.Errorf("%s keeps a secret: %s", name, text)
@@ -77,9 +82,12 @@ func TestRedactOutputDropsTheStringsWhenItFails(t *testing.T) {
 	redactor, b := redactionFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	outcome := Outcome{Findings: leakedProviderKey, Model: leakedProviderKey, RejectedDocument: leakingDocument(t), Diagnostics: []Event{{Kind: "tool_use", Path: leakedDatabaseURL}}}
+	outcome := Outcome{Accounting: &Accounting{Usage: Usage{Input: 17, Speed: new(leakedProviderKey)}, Attempts: []UsageAttempt{{Model: leakedProviderKey, ModelSource: leakedProviderKey, Usage: Usage{CacheRead: 29, Speed: new(leakedProviderKey)}}}}, Findings: leakedProviderKey, Model: leakedProviderKey, RejectedDocument: leakingDocument(t), Diagnostics: []Event{{Kind: "tool_use", Path: leakedDatabaseURL}}}
 	if _, _, err := RedactOutput(ctx, sharedValidator(t), redactor, leakingDocument(t), b, nil, &outcome); !errors.Is(err, context.Canceled) {
 		t.Fatalf("%v", err)
+	}
+	if outcome.Accounting.Usage.Input != 17 || outcome.Accounting.Attempts[0].Usage.CacheRead != 29 || outcome.Accounting.Attempts[0].Model != "" || outcome.Accounting.Attempts[0].ModelSource != "" || outcome.Accounting.Usage.Speed != nil || outcome.Accounting.Attempts[0].Usage.Speed != nil {
+		t.Fatal("accounting strings retained or numeric usage lost", outcome.Accounting)
 	}
 	if outcome.Findings != "" || outcome.Model != "" || outcome.RejectedDocument != nil || outcome.Diagnostics != nil {
 		t.Fatalf("an unmasked string was kept: %+v", outcome)

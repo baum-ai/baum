@@ -1,6 +1,8 @@
 // Package store keeps local review versions with immutable generation provenance.
-// A SQLite transaction publishes the document and metadata together, comparing the previous version
-// under the same write lock so concurrent generations cannot fork history.
+// A SQLite transaction publishes the document and metadata together, comparing
+// the previous version under the same write lock so concurrent generations
+// cannot fork history. A refresh replaces the latest document only while its
+// exact bytes are unchanged, so concurrent refreshes cannot lose each other.
 package store
 
 import (
@@ -19,6 +21,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 var ErrNotFound = errors.New("no stored review version; run baum generate first")
@@ -45,28 +49,33 @@ func (k Key) documentRepository() string {
 // Metadata records reproducible input identities and the generation that
 // produced a version. Policy is the digest of the applied base REVIEW.md, null when absent.
 type Metadata struct {
-	Version        int           `json:"version"`
-	Head           string        `json:"head"`
-	Base           string        `json:"base"`
-	MergeBase      string        `json:"merge_base"`
-	BundleDigest   string        `json:"bundle_digest"`
-	Backend        string        `json:"backend"`
-	BackendVersion string        `json:"backend_version"`
-	Model          string        `json:"model"`
-	Schema         string        `json:"schema"`
-	SchemaRevision string        `json:"schema_revision"`
-	PromptVersion  string        `json:"prompt_version"`
-	PromptDigest   string        `json:"prompt_digest"`
-	Policy         *string       `json:"policy"`
-	GeneratedAt    string        `json:"generated_at"`
-	Elapsed        time.Duration `json:"elapsed_ns"`
-	Calls          int           `json:"calls"`
-	Tokens         int           `json:"tokens"`
+	PriceVersion    string            `json:"price_version,omitempty"`
+	Accounting      *agent.Accounting `json:"accounting,omitempty"`
+	CostReason      string            `json:"cost_reason,omitempty"`
+	Version         int               `json:"version"`
+	Head            string            `json:"head"`
+	Base            string            `json:"base"`
+	MergeBase       string            `json:"merge_base"`
+	BundleDigest    string            `json:"bundle_digest"`
+	Backend         string            `json:"backend"`
+	BackendVersion  string            `json:"backend_version"`
+	Model           string            `json:"model"`
+	Schema          string            `json:"schema"`
+	SchemaRevision  string            `json:"schema_revision"`
+	PromptVersion   string            `json:"prompt_version"`
+	PromptDigest    string            `json:"prompt_digest"`
+	Policy          *string           `json:"policy"`
+	GeneratedAt     string            `json:"generated_at"`
+	Elapsed         time.Duration     `json:"elapsed_ns"`
+	Calls           int               `json:"calls"`
+	Tokens          int               `json:"tokens"`
+	RecordedCostUSD *float64          `json:"recorded_cost_usd"`
 }
 
 type Version struct {
-	Metadata Metadata        `json:"metadata"`
-	Document json.RawMessage `json:"document"`
+	Attachments []Attachment    `json:"-"`
+	Metadata    Metadata        `json:"metadata"`
+	Document    json.RawMessage `json:"document"`
 }
 type Store struct{ root string }
 
@@ -143,7 +152,7 @@ func openRoot(root string, write bool) (*Store, error) {
 		return nil, err
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version))`)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
 	return s, err
 }
 func (s *Store) path() string { return filepath.Join(s.root, "versions.sqlite") }
@@ -236,10 +245,14 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	return out, rows.Err()
 }
 
-// Put appends only when expected is still latest (zero means no history).
+// Put appends v only while previous is still the latest version; the zero
+// Version means no history. A refresh of previous during generation replaces
+// only its live facts in place, so it does not reject the generated version:
+// the next refresh brings the new version's live facts up to date.
 // A failed or cancelled transaction leaves every published version untouched.
-func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
-	if !k.valid() || expected < 0 || v.Metadata.Version != expected+1 || !json.Valid(v.Document) {
+func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) error {
+	expected := previous.Metadata.Version
+	if !k.valid() || expected < 0 || v.Metadata.Version != expected+1 || !json.Valid(v.Document) || (expected > 0) != (len(previous.Document) > 0) {
 		return errors.New("invalid stored version")
 	}
 	var doc struct {
@@ -254,6 +267,9 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 	}
 	if !strings.EqualFold(doc.Review.Repository, k.documentRepository()) || doc.Review.PullRequest != k.Number || doc.Review.Version != v.Metadata.Version {
 		return errors.New("document identity does not match stored version")
+	}
+	if err := validateAttachments(v); err != nil {
+		return err
 	}
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
@@ -282,11 +298,16 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 	if n != 1 {
 		return ErrConflict
 	}
+	if err := saveAttachments(ctx, tx, k, v); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 // RefreshCurrent replaces only the latest document, preserving its metadata.
-// Both the version and exact previous bytes fence concurrent generation and refresh.
+// Both the version and exact previous bytes fence concurrent generation and
+// refresh. A running generation does not block it: live facts refresh
+// independently, and the generated version still publishes over it.
 func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
 	if !k.valid() || previous.Metadata.Version <= 0 || !json.Valid(document) {
 		return errors.New("invalid refreshed version")

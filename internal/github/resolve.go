@@ -130,6 +130,9 @@ func remoteURL(remote string) (*url.URL, bool) {
 	return nil, false
 }
 
+// IsGitHubHost reports whether baum will talk to host: see gitHubHost.
+func IsGitHubHost(host string) bool { return gitHubHost(auth.NormalizeHostname(host)) }
+
 // gitHubHost reports a host gh treats as GitHub: github.com, a *.ghe.com
 // tenant, a host in gh's hosts.yml, or the one GH_HOST names. Only these are
 // ever sent a token.

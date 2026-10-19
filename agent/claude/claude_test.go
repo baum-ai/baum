@@ -172,10 +172,10 @@ func TestClaudeUsageTakesEachCallsFinalReport(t *testing.T) {
 		// Claude Code's total leaves out the call whose stream died; the
 		// stream sum is kept.
 		{name: "result smaller than the stream sum", events: join(first, aborted, retried, []string{resultEvent(`{"input_tokens":10,"cache_creation_input_tokens":5000,"cache_read_input_tokens":5000,"output_tokens":31093}`)}),
-			calls: 2, usage: agent.Usage{Input: 17, Output: 31094, CacheRead: 10000, CacheCreate: 5000}, logged: []string{"m1:30893", "m3:200", "m2:1"}},
+			calls: 2, usage: agent.Usage{Input: 17, Output: 31094, CacheRead: 10000, CacheCreate: 5000, Unreported: true}, logged: []string{"m1:30893", "m3:200", "m2:1"}},
 		// The aborted call is not a turn: the run stays within two calls.
 		{name: "aborted and retried call is counted once", events: join(first, aborted, retried, []string{resultEvent(`{}`)}), maxCalls: 2,
-			calls: 2, usage: agent.Usage{Input: 17, Output: 31094, CacheRead: 10000, CacheCreate: 5000}, logged: []string{"m1:30893", "m3:200", "m2:1"}},
+			calls: 2, usage: agent.Usage{Input: 17, Output: 31094, CacheRead: 10000, CacheCreate: 5000, Unreported: true}, logged: []string{"m1:30893", "m3:200", "m2:1"}},
 		// A run cut off before its result keeps each finished call's final
 		// usage and the latest report of the call in flight.
 		{name: "run ends without a result", events: join(first, second[:2]), wantErr: noDocument,
@@ -202,6 +202,7 @@ func TestClaudeUsageTakesEachCallsFinalReport(t *testing.T) {
 			// The per-call prompt range is checked apart (usage_test.go).
 			got := result.Usage
 			got.MinPrompt, got.MaxPrompt = nil, nil
+			tc.usage.Unreported = tc.usage.Unreported || tc.wantErr != ""
 			if result.Calls != tc.calls || got != tc.usage || result.Model != "fixture" {
 				t.Fatalf("got %d calls, usage %+v, model %q", result.Calls, result.Usage, result.Model)
 			}

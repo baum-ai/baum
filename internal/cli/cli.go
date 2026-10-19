@@ -21,16 +21,22 @@ var buildVersion string
 // named categories; everything else, a bad command or a failure of another
 // command, exits with ExitFailure.
 const (
-	ExitFailure     = 1
-	ExitInput       = 2
-	ExitBackend     = 3
-	ExitBudget      = 4
-	ExitValidation  = 5
+	ExitFailure    = 1
+	ExitInput      = 2
+	ExitBackend    = 3
+	ExitBudget     = 4
+	ExitValidation = 5
+	// ExitDiagnostics is "baum doctor" finding at least one problem.
+	ExitDiagnostics = 6
 	ExitInterrupted = 130
 )
 
 // ExitCode is the process exit code for the error Run returned; nil is 0.
 func ExitCode(err error) int {
+	var problems *problemsError
+	if errors.As(err, &problems) {
+		return ExitDiagnostics
+	}
 	switch generate.CategoryOf(err) {
 	case "":
 		if err == nil {
@@ -92,6 +98,9 @@ and serves an embedded viewer for it on localhost.`,
 		newValidateCommand(),
 		newRefreshCommand(),
 		newSessionsCommand(),
+		newReposCommand(),
+		newUICommand(),
+		newDoctorCommand(),
 	)
 	return cmd
 }

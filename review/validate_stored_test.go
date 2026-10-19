@@ -137,19 +137,29 @@ func TestValidateStoredRestrictedSession(t *testing.T) {
 }
 
 // Identifier patterns admit any lowercase text, so the schema also bounds
-// their length (see maskClosed in output_redaction.go).
-func TestValidateStoredBoundsIdentifierLength(t *testing.T) {
+// their length (see maskClosed in output_redaction.go). A stored document is
+// validated as readers see it, with an identifier stored before the bound
+// shortened (TestGenerationStillBoundsIdentifierLength covers generation).
+func TestValidateStoredShortensIdentifiersOverTheBound(t *testing.T) {
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, field := range []string{"id", "category"} {
 		prefix := ""
 		if field == "id" {
 			prefix = "rsk_"
 		}
-		for length, tooLong := range map[int]bool{128: false, 129: true} {
+		for _, length := range []int{128, 129} {
 			doc := storedExample(t)
-			firstSection(doc)["risks"].([]any)[0].(map[string]any)[field] = prefix + strings.Repeat("a", length-len(prefix))
-			findings := validateStored(t, doc, nil)
-			if got := strings.Contains(strings.Join(findings, "\n"), "maxLength"); got != tooLong {
-				t.Errorf("%s of %d bytes: findings %q, want a maxLength finding: %t", field, length, findings, tooLong)
+			// The second risk is one nothing references.
+			firstSection(doc)["risks"].([]any)[1].(map[string]any)[field] = prefix + strings.Repeat("a", length-len(prefix))
+			encoded, _ := json.Marshal(doc)
+			if err := validator.full.Validate(decodedJSON(t, encoded)); (err != nil) != (length > MaxIdentifierLength) {
+				t.Errorf("%s of %d bytes: schema error %v", field, length, err)
+			}
+			if findings := validateStored(t, doc, nil); findings != nil {
+				t.Errorf("%s of %d bytes: findings %q", field, length, findings)
 			}
 		}
 	}

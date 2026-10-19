@@ -12,6 +12,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
@@ -27,7 +28,7 @@ func generateEnv(t *testing.T) (*generatetest.Backend, []string) {
 	t.Setenv("TMPDIR", tmp)
 	stub := &generatetest.Backend{Version: "9.9.9"}
 	old := generateBackends
-	generateBackends = func() generate.Backends {
+	generateBackends = func(config.Config) generate.Backends {
 		return generate.Backends{
 			Claude: func(string) generate.CheckedBackend { return stub },
 			Codex:  func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "codex"} },
@@ -352,5 +353,55 @@ func TestGenerateEnterpriseDocumentStoresAndReopensWithHostKey(t *testing.T) {
 	}
 	if _, stderr, err := run(t, "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
 		t.Fatalf("reopen Enterprise review: %v\n%s", err, stderr)
+	}
+}
+
+func TestGeneratePublishesRunStateForConcurrentLocalReaders(t *testing.T) {
+	stub, sessions := generateEnv(t)
+	root := t.TempDir()
+	versions, err := store.Open("", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
+		snapshot, err := versions.Snapshot(context.Background())
+		if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "generating" || snapshot[0].VersionCount != 0 {
+			t.Fatalf("running snapshot=%+v err=%v", snapshot, err)
+		}
+		return agent.Result{}, errors.New("provider unavailable")
+	}
+	_, _, err = run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...)
+	if generate.CategoryOf(err) != generate.CategoryBackend {
+		t.Fatal(err)
+	}
+	snapshot, err := versions.Snapshot(context.Background())
+	if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "failed" || snapshot[0].Run.Reason != "backend" || snapshot[0].VersionCount != 0 {
+		t.Fatalf("failed snapshot=%+v err=%v", snapshot, err)
+	}
+	stub.RunFunc = nil
+	if _, stderr, err := run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...); err != nil {
+		t.Fatal(err, stderr)
+	}
+	snapshot, err = versions.Snapshot(context.Background())
+	if err != nil || len(snapshot) != 1 || snapshot[0].Run.State != "completed" || snapshot[0].VersionCount != 1 {
+		t.Fatalf("completed snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestGenerateRecordsBackendPreflightFailure(t *testing.T) {
+	stub, sessions := generateEnv(t)
+	stub.CheckErr = errors.New("backend not installed")
+	root := t.TempDir()
+	_, _, err := run(t, append([]string{"generate", "--pr", "7", "--backend", "claude", "--store", root}, sessions...)...)
+	if generate.CategoryOf(err) != generate.CategoryBackend {
+		t.Fatal(err)
+	}
+	versions, err := store.Open("", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := versions.Snapshot(context.Background())
+	if err != nil || len(snapshot) != 1 || snapshot[0].Run.Reason != "backend" || snapshot[0].VersionCount != 0 {
+		t.Fatal("backend preflight failure vanished from index", snapshot, err)
 	}
 }

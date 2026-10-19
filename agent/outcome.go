@@ -6,8 +6,9 @@ import "encoding/json"
 // loop did and what it spent. A host embeds it in its own outcome type; the
 // field names are the wire format of the hosted agent, so they must not change.
 type Outcome struct {
-	Model          string `json:"model,omitempty"`
-	SchemaRevision string `json:"schema_revision"`
+	Accounting     *Accounting `json:"accounting,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	SchemaRevision string      `json:"schema_revision"`
 	// Reason is why the run failed, one of the fixed reasons (ReasonValidationRejected
 	// and the budget and provider reasons). Empty means the run produced a
 	// valid document.

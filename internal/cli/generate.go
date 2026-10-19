@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,19 +11,18 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 )
 
-// generateBackends builds the local backends; tests replace it with stubs.
-var generateBackends = generate.DefaultBackends
+// generateBackends builds the local backends from the configuration; tests
+// replace it with stubs.
+var generateBackends = generate.DefaultBackendsFor
 
 // maxProviderAttempts and maxRepairAttempts are the hosted service's defaults.
 const (
@@ -121,7 +121,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
-func doGenerate(cmd *cobra.Command, started *bool) error {
+func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	flags := cmd.Flags()
 	number, _ := flags.GetInt("pr")
 	repoFlag, _ := flags.GetString("repo")
@@ -173,11 +173,6 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 	defer stop()
 	stderr := cmd.ErrOrStderr()
 
-	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(), stderr)
-	if err != nil {
-		return err
-	}
-
 	clone, err := gitlocal.Open(ctx, ".", gitlocal.Options{})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -202,19 +197,22 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		return input(fmt.Errorf("open version store: %w", err))
 	}
 	key := store.Key{Repository: target.Repository.String(), Number: target.Number}
-	latest, err := versions.Latest(ctx, key)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return input(err)
-	}
-	previousNumber := 0
-	var previous *bundle.PreviousVersion
-	if err == nil {
-		previousNumber = latest.Metadata.Version
-		previous, err = review.PreviousVersionOf(latest.Document, previousNumber)
-		if err != nil {
-			return input(fmt.Errorf("read previous version: %w", err))
+	selected, err := generate.Select(ctx, cfg.Backend, cfg.Model, generateBackends(cfg), stderr)
+	if err != nil {
+		// Preflight failures are attempts too: keep the terminal's existing failure
+		// status visible even though the shared publication pipeline has not begun.
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		reason := string(generate.CategoryOf(err))
+		if reason == "" {
+			reason = "internal"
 		}
+		if id, recordErr := versions.BeginRun(recordCtx, key, time.Now().Add(time.Minute)); recordErr == nil {
+			_ = versions.FinishRun(recordCtx, id, reason)
+		}
+		return err
 	}
+
 	assembler := &assemble.Assembler{
 		GitHub: client, Git: clone,
 		Sessions: assemble.LocalSessions{Dir: clone.Dir(), Stores: stores, Warn: stderr},
@@ -222,27 +220,17 @@ func doGenerate(cmd *cobra.Command, started *bool) error {
 		Warn:     stderr,
 	}
 	*started = true
-	result, err := generate.Run(ctx, generate.Options{
+	result, err := generate.Publish(ctx, versions, key, generate.Options{
 		Assembler: assembler,
-		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps), Previous: previous},
+		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps)},
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
 		Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}
 
-	if err := versions.Put(ctx, key, previousNumber, store.Version{Metadata: result.Metadata, Document: result.Document}); err != nil {
-		publishErr := fmt.Errorf("store generated version: %w", err)
-		if ctx.Err() != nil {
-			publishErr = interruptedError()
-		}
-		if diagnostics != "" {
-			_ = generate.WriteDiagnostics(diagnostics, publishErr, result.Outcome)
-		}
-		return publishErr
-	}
 	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
 	if storePath != "" {
 		hint += fmt.Sprintf(" --store %q", storePath)
