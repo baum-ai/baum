@@ -314,13 +314,13 @@ func TestUserHooksFollowEntiresEnabledSetting(t *testing.T) {
 		settings, local string
 		runs            bool
 	}{
-		"no enabled key":         {settings: `{}`, runs: true},
-		"enabled false":          {settings: `{"enabled": false}`},
-		"local turns it on":      {settings: `{"enabled": false}`, local: `{"enabled": true}`, runs: true},
-		"local turns it off":     {settings: `{"enabled": true}`, local: `{"enabled": false}`},
-		"local without the key":  {settings: `{"enabled": false}`, local: `{}`},
-		"only local settings":    {local: `{"enabled": true}`, runs: true},
-		"settings not JSON":      {settings: `{"enabled":`},
+		"no enabled key":          {settings: `{}`, runs: true},
+		"enabled false":           {settings: `{"enabled": false}`},
+		"local turns it on":       {settings: `{"enabled": false}`, local: `{"enabled": true}`, runs: true},
+		"local turns it off":      {settings: `{"enabled": true}`, local: `{"enabled": false}`},
+		"local without the key":   {settings: `{"enabled": false}`, local: `{}`},
+		"only local settings":     {local: `{"enabled": true}`, runs: true},
+		"settings not JSON":       {settings: `{"enabled":`},
 		"local settings not JSON": {settings: `{"enabled": true}`, local: `{`},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -46,9 +46,10 @@ sets up the current repository; with PATHs it sets up each checkout. With --all
 it finds checkouts from local agent session metadata and from Git checkouts up
 to three levels below the current directory, then asks once before changing
 anything. Every repository needs a GitHub origin. Setup installs and enables
-Entire for detected coding agents unless --skip-entire is set, and baum's
-user-wide Claude Code and Codex hooks (see baum hooks install --user) unless
---skip-user-hooks or --skip-entire is set.
+Entire for detected coding agents unless --skip-entire is set. For a hosted
+install or a logged-in user it also installs baum's user-wide Claude Code and
+Codex hooks (see baum hooks install --user) unless --skip-user-hooks or
+--skip-entire is set.
 
 --sync requests a server-side GitHub repository sync and --upload uploads
 locally recorded agent sessions. Both need credentials: run baum login first.`,

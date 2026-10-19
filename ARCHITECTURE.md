@@ -1157,9 +1157,11 @@ format and the protocol constants have one definition on both sides.
   `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
   edits them as text, touching only its own handlers). It calls
   `--check --user`, which adds two conditions to the rules above: the
-  repository has Entire enabled, and none of its own agent hook files already
-  runs Entire for the event, so an event is never reported twice. Where it
-  refuses, the hook does nothing.
+  repository has Entire enabled, and no other hook the agent runs (project,
+  user, managed or system settings; Codex project hooks only where Codex
+  trusts them) already runs Entire for the event, so an event is not reported
+  twice. Where it refuses, the hook does nothing. `baum setup` installs them
+  only for a hosted install or a logged-in user.
 - Compatibility. A client and a server of different releases agree on an API
   protocol number: requests name the client's, responses the range the server
   serves, and a client outside it stops with an error saying which side to
