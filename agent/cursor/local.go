@@ -136,7 +136,8 @@ func runFailure(waitErr error, stderr string) (status string, err error) {
 	case strings.Contains(lower, "sandbox mode is enabled but not available"):
 		return "sandbox_unavailable", fmt.Errorf("cursor-agent could not start its sandbox on this machine (%s); baum runs cursor-agent only with its sandbox enabled", firstLine(stderr))
 	case strings.Contains(lower, "not authenticated") || strings.Contains(lower, "not logged in") || strings.Contains(lower, "login required") || strings.Contains(lower, "authentication required"):
-		return "authentication_error", fmt.Errorf("cursor-agent is not signed in (%s); run cursor-agent login", firstLine(stderr))
+		// Signing in is the user's step: the loop does not retry it.
+		return "authentication_error", &agent.RejectedError{Status: "authentication_error", Err: fmt.Errorf("cursor-agent is not signed in (%s); run cursor-agent login", firstLine(stderr))}
 	}
 	status = agent.ErrorStatus(stderr)
 	if line := firstLine(stderr); line != "" {

@@ -310,6 +310,11 @@ func TestRunFailures(t *testing.T) {
 			if status := agent.LastErrorStatus(result.Events); status != tc.status {
 				t.Errorf("error status = %q, want %q", status, tc.status)
 			}
+			// Only a missing login is a rejection the loop does not retry.
+			var rejected *agent.RejectedError
+			if errors.As(err, &rejected) != (tc.status == "authentication_error") {
+				t.Errorf("rejected = %v for %s", rejected != nil, tc.status)
+			}
 		})
 	}
 	t.Run("endpoint", func(t *testing.T) {
