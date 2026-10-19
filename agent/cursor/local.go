@@ -125,16 +125,33 @@ func run(ctx context.Context, binary string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// rejection is a cursor-agent failure that every attempt would repeat. It
+// unwraps to an agent.RejectedError, so the loop does not retry it, but its
+// text names cursor-agent as the source: the RejectedError's own text blames
+// the model provider, which never saw these requests.
+type rejection struct {
+	text     string
+	rejected *agent.RejectedError
+}
+
+func (e *rejection) Error() string { return e.text }
+func (e *rejection) Unwrap() error { return e.rejected }
+
+// reject builds a rejection reading "<what>: <status in words>: <err>".
+func reject(what, status string, err error) error {
+	return &rejection{text: what + ": " + strings.ReplaceAll(status, "_", " ") + ": " + err.Error(), rejected: &agent.RejectedError{Status: status, Err: err}}
+}
+
 // runFailure explains a run that exited with an error, from its stderr, which
 // is the user's own and bounded, and classifies it into a fixed word for the
 // run's error event. A missing option, an unavailable sandbox and a missing
 // login fail every attempt the same way until the user acts, so they are an
-// agent.RejectedError, which the loop does not retry; its Status is the same
-// fixed word.
+// rejection (an agent.RejectedError underneath), which the loop does not retry;
+// its Status is the same fixed word.
 func runFailure(waitErr error, stderr string) (status string, err error) {
 	lower := strings.ToLower(stderr)
 	rejected := func(status string, err error) (string, error) {
-		return status, &agent.RejectedError{Status: status, Err: err}
+		return status, reject("cursor-agent cannot run", status, err)
 	}
 	switch {
 	case strings.Contains(lower, "unknown option") || strings.Contains(lower, "unknown argument") || strings.Contains(lower, "invalid argument"):

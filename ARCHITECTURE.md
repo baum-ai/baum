@@ -472,15 +472,20 @@ to compare; a missing one asks for `cursor-agent update`. A run is
 `AGENT_CLI_CREDENTIAL_STORE` (never `CURSOR_API_KEY`) and `NO_OPEN_BROWSER=1`.
 The prompt goes on stdin with the model schema appended under an "Output
 schema" heading, because the CLI has no structured output. The document is the
-final message (the last assistant text after the last tool call, else the
-result's text): one JSON object is kept, a fenced one or one with prose around
-it is unwrapped, and anything else goes to the validator as it is, so the loop
+final message (every assistant text after the last tool call, joined, since
+the CLI may split it; the result's text when that holds no JSON value): one
+JSON object is kept, a fenced one or one with prose around it is unwrapped, and anything else goes to the validator as it is, so the loop
 rejects and repairs it. Any tool call other than reading, listing and
 searching files and the to-do list (`readToolCall`, `grepToolCall`,
 `globToolCall`, `lsToolCall`, `semSearchToolCall`, `readLintsToolCall`,
 `readTodosToolCall`, `updateTodosToolCall`) stops the run with the
-`disallowed_tool` status; the stream reports a call as it starts, so this
-detects rather than prevents. Model calls are the distinct `model_call_id`s of
+`disallowed_tool` status, as does a line that may be a tool event but cannot
+be read as one (detection fails closed); the stream reports a call as it
+starts, so this detects rather than prevents. These failures, a missing option,
+an unavailable sandbox and a missing login are not retried: each unwraps to an
+`agent.RejectedError` for the loop, but its own text names cursor-agent
+("cursor-agent cannot run: ..." or "cursor-agent run stopped: ...") rather than
+the model provider. Model calls are the distinct `model_call_id`s of
 the stream plus the final answer, checked against `MaxCalls` as they appear.
 Usage is the result event's run total (`inputTokens` already excludes cache
 reads and writes), checked against `MaxTokens` when it arrives; a result
@@ -494,8 +499,8 @@ this backend whatever its model is called: the recorded cost is unknown, and a
 `baum ui` job is excluded with that reason instead of being estimated at API
 rates. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
-`authentication_error`); each is an `agent.RejectedError`, so the loop does not
-retry it: every attempt would fail the same way until the user acts.
+`authentication_error`); none is retried, as every attempt would fail the same
+way until the user acts.
 
 `agent/anthropic` is not a CLI: baum runs the model call loop itself, over
 `net/http` rather than the official SDK (one endpoint, retries that must count

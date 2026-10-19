@@ -54,7 +54,7 @@ func TestCursorAgentBackendGeneratesARepairedRedactedDocument(t *testing.T) {
 	options, runs := cursorAgentOptions(t, f,
 		// A fenced answer with a ref to an item the section does not have: the
 		// validator rejects it.
-		generatetest.FakeCursorPass{AttentionRefs: []string{"rsk_absent"}, Fence: true},
+		generatetest.FakeCursorPass{AttentionRefs: []string{"rsk_absent"}, Fence: true, Split: 3},
 		// The repair is valid, with a secret in free text.
 		generatetest.FakeCursorPass{SectionSummary: "The change reads " + assembletest.PlantedSecret + " from the settings."})
 	options.DiagnosticsOut = filepath.Join(t.TempDir(), "diagnostics.json")
@@ -87,6 +87,18 @@ func TestCursorAgentBackendGeneratesARepairedRedactedDocument(t *testing.T) {
 		}
 		if !slices.Contains(run.Args, "--mode") || !slices.Contains(run.Args, "ask") || !slices.Contains(run.Args, "--sandbox") || !slices.Contains(run.Args, "enabled") {
 			t.Errorf("run %d: args %v", i, run.Args)
+		}
+		// The pull request's own .cursor (hooks.json, cli.json, mcp.json),
+		// .claude and AGENTS.md stay inactive only because the checkout is
+		// unpacked under head/ and merge-base/, not at the workspace root
+		// --trust covers. A change to that layout must revisit SECURITY.md.
+		if !slices.Contains(run.Root, "head") || !slices.Contains(run.Root, "merge-base") {
+			t.Errorf("run %d: the checkout is not under head/ and merge-base/: root %v", i, run.Root)
+		}
+		for _, name := range run.Root {
+			if strings.HasPrefix(name, ".") || strings.EqualFold(name, "AGENTS.md") || strings.EqualFold(name, "CLAUDE.md") {
+				t.Errorf("run %d: the workspace root holds %s, which cursor-agent may load as configuration", i, name)
+			}
 		}
 		for _, entry := range run.Env {
 			if strings.Contains(entry, "must_not_pass") {
@@ -156,14 +168,14 @@ func TestCursorAgentBackendFailures(t *testing.T) {
 		f := newFixture(t)
 		f.repo.Dirty(t)
 		options, runs := cursorAgentOptions(t, f, generatetest.FakeCursorPass{Tool: "shellToolCall"})
+		// A pull request that steers the model into a tool gets no second try.
+		options.Budgets.MaxProviderAttempts = 3
 		_, err := generate.Run(context.Background(), options)
-		// The loop reports a failed attempt as the provider's; the progress
-		// says why.
-		if err == nil || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(f.progress.String(), "attempt 1 failed (disallowed_tool)") {
+		if err == nil || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "shellToolCall") || !strings.Contains(f.progress.String(), "attempt 1 failed (disallowed_tool)") {
 			t.Fatalf("err = %v\n%s", err, f.progress.String())
 		}
 		if len(runs()) != 1 {
-			t.Errorf("%d runs", len(runs()))
+			t.Errorf("attempted %d times, want once", len(runs()))
 		}
 		f.requireClean(t)
 	})
@@ -180,7 +192,7 @@ func TestCursorAgentBackendFailures(t *testing.T) {
 			options, runs := cursorAgentOptions(t, f, generatetest.FakeCursorPass{Stderr: tc.stderr})
 			options.Budgets.MaxProviderAttempts = 3
 			_, err := generate.Run(context.Background(), options)
-			if err == nil || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), agent.ProviderRejectedReason(tc.status)) || !strings.Contains(err.Error(), tc.want) {
+			if err == nil || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "cursor-agent cannot run") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v\n%s", err, f.progress.String())
 			}
 			if len(runs()) != 1 {

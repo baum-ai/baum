@@ -205,7 +205,13 @@ func TestRunReturnsMalformedOutputForTheValidator(t *testing.T) {
 			if tc.final != "" {
 				events = append(events, assistant(tc.final, ""))
 			}
-			events = append(events, `{"type":"result","subtype":"success","is_error":false,"result":"{\"from\":\"result\"}","session_id":"s"}`)
+			// The result repeats all the text the model wrote; with no final
+			// message it is all there is.
+			text := tc.final
+			if text == "" {
+				text = `{"from":"result"}`
+			}
+			events = append(events, `{"type":"result","subtype":"success","is_error":false,"result":`+quote("Reading the files."+text)+`,"session_id":"s"}`)
 			fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(events...))
 			result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
 			if err != nil || string(result.Document) != tc.want {
@@ -213,6 +219,26 @@ func TestRunReturnsMalformedOutputForTheValidator(t *testing.T) {
 			}
 		})
 	}
+	t.Run("split across events", func(t *testing.T) {
+		// Text before the last tool call is not part of the answer; the final
+		// turn's events are joined.
+		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, assistant("Let me look.", "mc-1"),
+			toolEvent("started", "readToolCall", "a", "mc-1"), toolEvent("completed", "readToolCall", "a", "mc-1"),
+			assistant(`{"summary":{"text":"one `, ""), assistant(`and two"},`, ""), assistant(`"sections":[]}`, ""),
+			`{"type":"result","subtype":"success","is_error":false,"result":"x","session_id":"s"}`))
+		result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+		if err != nil || string(result.Document) != `{"summary":{"text":"one and two"},"sections":[]}` || result.Calls != 2 {
+			t.Fatalf("document = %q, calls = %d, err = %v", result.Document, result.Calls, err)
+		}
+	})
+	t.Run("final message unreadable, result text holds the document", func(t *testing.T) {
+		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, assistant("Done, see above.", ""),
+			`{"type":"result","subtype":"success","is_error":false,"result":"{\"a\":1}","session_id":"s"}`))
+		result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+		if err != nil || string(result.Document) != `{"a":1}` {
+			t.Fatalf("document = %q, err = %v", result.Document, err)
+		}
+	})
 	t.Run("empty", func(t *testing.T) {
 		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, `{"type":"result","subtype":"success","is_error":false,"result":"  ","session_id":"s"}`))
 		if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "no review document") {
@@ -247,8 +273,40 @@ func TestRunStopsOnAToolThatDoesNotRead(t *testing.T) {
 			if status := agent.LastErrorStatus(result.Events); status != "disallowed_tool" {
 				t.Errorf("error status = %q", status)
 			}
+			var rejected *agent.RejectedError
+			if !errors.As(err, &rejected) || rejected.Status != "disallowed_tool" || strings.Contains(err.Error(), "model provider") {
+				t.Errorf("a stopped run must not be retried: %v", err)
+			}
 		})
 	}
+}
+
+// Detection fails closed: a tool event baum cannot read stops the run like a
+// disallowed tool.
+func TestRunStopsOnAToolEventItCannotRead(t *testing.T) {
+	for name, line := range map[string]string{
+		"tool_call of the wrong type":     `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":"shellToolCall","session_id":"s"}`,
+		"two tools in one call":           `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":{"readToolCall":{},"shellToolCall":{}},"session_id":"s"}`,
+		"tool call under another type":    `{"type":"tool_use","name":"shell","session_id":"s"}`,
+		"tool_call field on another type": `{"type":"assistant","tool_call":{"shellToolCall":{}},"session_id":"s"}`,
+		"a line that is not JSON":         `tool_call: shellToolCall`,
+		"a completed shell call":          toolEvent("completed", "shellToolCall", "x", "mc-1"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, line)+"sleep 30\n"+emit(assistant(`{}`, ""), resultEvent))
+			result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+			var rejected *agent.RejectedError
+			if !errors.As(err, &rejected) || rejected.Status != "disallowed_tool" || len(result.Document) != 0 {
+				t.Fatalf("err = %v, document = %q", err, result.Document)
+			}
+		})
+	}
+	t.Run("other unreadable output is not a tool event", func(t *testing.T) {
+		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, "Warning: something", `{"type":"thinking","subtype":`, assistant(`{}`, ""), resultEvent))
+		if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
 
 func TestRunBudgets(t *testing.T) {
@@ -311,10 +369,14 @@ func TestRunFailures(t *testing.T) {
 				t.Errorf("error status = %q, want %q", status, tc.status)
 			}
 			// The failures a retry cannot change are rejections the loop does
-			// not retry; an unrecognised one may be transient.
+			// not retry; an unrecognised one may be transient. They name
+			// cursor-agent, not the model provider, as the source.
 			var rejected *agent.RejectedError
 			if errors.As(err, &rejected) != (tc.status != "error") || (rejected != nil && rejected.Status != tc.status) {
 				t.Errorf("rejected = %v for %s", rejected != nil, tc.status)
+			}
+			if rejected != nil && (!strings.HasPrefix(err.Error(), "cursor-agent cannot run: ") || strings.Contains(err.Error(), "model provider")) {
+				t.Errorf("message = %q", err)
 			}
 		})
 	}

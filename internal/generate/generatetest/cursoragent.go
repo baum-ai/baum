@@ -64,6 +64,9 @@ type FakeCursorPass struct {
 	// Stderr, when set, is printed to stderr instead of any output, and the
 	// run exits with status 1.
 	Stderr string `json:"stderr,omitempty"`
+	// Split sends the final message as this many assistant events, as the CLI
+	// may.
+	Split int `json:"split,omitempty"`
 }
 
 // FakeCursorRun is what the fake recorded of one run.
@@ -72,6 +75,9 @@ type FakeCursorRun struct {
 	Env       []string `json:"env"`
 	Directory string   `json:"directory"`
 	Prompt    string   `json:"prompt"`
+	// Root names the entries of the workspace root, the directory --trust
+	// covers, when the run started.
+	Root []string `json:"root"`
 }
 
 type fakeCursorConfig struct {
@@ -153,7 +159,13 @@ func fakeCursorAgent(configPath string, args []string, stdin io.Reader, stdout, 
 	directory, _ := os.Getwd()
 	previous, _ := os.ReadFile(config.Record)
 	n := strings.Count(string(previous), "\n")
-	record, _ := json.Marshal(FakeCursorRun{Args: args, Env: os.Environ(), Directory: directory, Prompt: string(prompt)})
+	var root []string
+	if entries, err := os.ReadDir(directory); err == nil {
+		for _, entry := range entries {
+			root = append(root, entry.Name())
+		}
+	}
+	record, _ := json.Marshal(FakeCursorRun{Args: args, Env: os.Environ(), Directory: directory, Prompt: string(prompt), Root: root})
 	file, err := os.OpenFile(config.Record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
@@ -208,7 +220,11 @@ func fakeCursorAgent(configPath string, args []string, stdin io.Reader, stdout, 
 	emit(map[string]any{"type": "tool_call", "subtype": "started", "call_id": "call-1", "tool_call": call, "model_call_id": "mc-1", "session_id": session})
 	call[tool].(map[string]any)["result"] = map[string]any{"success": map[string]any{}}
 	emit(map[string]any{"type": "tool_call", "subtype": "completed", "call_id": "call-1", "tool_call": call, "model_call_id": "mc-1", "session_id": session})
-	emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": text}}}, "session_id": session})
+	parts, runes := max(pass.Split, 1), []rune(text)
+	for i := range parts {
+		part := string(runes[i*len(runes)/parts : (i+1)*len(runes)/parts])
+		emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": part}}}, "session_id": session})
+	}
 	result := map[string]any{"type": "result", "subtype": "success", "is_error": false, "duration_ms": 10, "duration_api_ms": 10, "result": "Reading the changed file." + text, "session_id": session}
 	if !pass.NoUsage {
 		result["usage"] = map[string]any{"inputTokens": 1000, "outputTokens": 300, "cacheReadTokens": 2000, "cacheWriteTokens": 200}

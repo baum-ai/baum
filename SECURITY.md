@@ -255,8 +255,11 @@ against a model):
   (`disallowed_tool`) as soon as the CLI reports any tool call other than
   reading, listing or searching files or updating its to-do list: shell
   commands, edits, deletes, MCP tools, web search and fetch, subagents, mode
-  switches and any tool baum does not know. The CLI reports a call as it
-  starts, so this limits what a stray call can do; it does not prevent it.
+  switches and any tool baum does not know. Detection fails closed: a line
+  that may be a tool event but cannot be read as one stops the run too. The
+  attempt is not retried, so a pull request that steers the model into such
+  a call gets no second try. The CLI reports a call as it starts, so this
+  limits what a stray call can do; it does not prevent it.
 - The process gets the same environment allowlist as the `claude` backend, plus
   `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` and `AGENT_CLI_CREDENTIAL_STORE` when
   you set them. `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN` and the other provider,
@@ -276,7 +279,11 @@ What remains for `cursor-agent`:
   and enterprise hooks (`~/.cursor/hooks.json`, `/etc/cursor/hooks.json` and
   the like) and the Claude Code user hooks Cursor also loads run during the
   review, as you. Rules, `AGENTS.md` files and skills in the checkout or your
-  home directory may be read as instructions. MCP servers you approved before
+  home directory may be read as instructions. The pull request's own
+  `.cursor/hooks.json`, `.cursor/cli.json` and `.cursor/mcp.json` (and its
+  `.claude` settings) are inactive only because baum unpacks the checkout
+  under `head/` and `merge-base/` in the run directory, not at its root, which
+  is the workspace `--trust` covers; a test fails if that layout changes. MCP servers you approved before
   may start, though calling one stops the run. If your Cursor CLI config sets
   the approval mode to run everything, or allow-lists commands, the CLI may
   run a command without asking; it runs in the sandbox, and baum stops the run

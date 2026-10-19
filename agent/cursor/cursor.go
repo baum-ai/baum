@@ -151,24 +151,43 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	// calls are the model calls the stream identifies. The final text of a run
 	// has no model call ID; it counts as one more call when the run completes.
 	calls := map[string]bool{}
-	var final []byte
-	finalIdentified := false
+	// final is the text of the final turn: every assistant event since the
+	// last tool call, which the CLI may split across several events.
+	var final strings.Builder
+	finalUnidentified := false
 	var resultText string
 	completed := false
+	// stopTool ends the run on a tool baum does not allow, or on a line that
+	// may be a tool event but cannot be read as one: detection fails closed.
+	// Neither is retried, since a pull request that steers the model into it
+	// would get another chance on every attempt.
+	stopTool := func(name, reason string) {
+		record(agent.Event{Kind: "error", Tool: name, Status: "disallowed_tool"})
+		err = reject("cursor-agent run stopped", "disallowed_tool", errors.New(reason))
+	}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 65536), maxLineBytes)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
-			// Only JSON events are read; anything else is not the run's output.
+		if len(line) == 0 {
 			continue
 		}
 		var event streamEvent
-		if json.Unmarshal(line, &event) != nil {
+		if line[0] != '{' || json.Unmarshal(line, &event) != nil {
+			// Not an event baum can read. Anything that may be a tool event
+			// stops the run; any other output is not the run's.
+			if bytes.Contains(bytes.ToLower(line), []byte("tool")) {
+				stopTool("", "cursor-agent printed a tool event baum cannot read; the run was stopped")
+				break
+			}
 			continue
 		}
 		if event.ModelCallID != "" {
 			calls[event.ModelCallID] = true
+		}
+		if event.Type != "tool_call" && (event.ToolCall != nil || strings.Contains(strings.ToLower(event.Type), "tool")) {
+			stopTool("", fmt.Sprintf("cursor-agent printed a %q event baum does not know as a tool call; the run was stopped", bounded(event.Type, 64)))
+			break
 		}
 		switch event.Type {
 		case "system":
@@ -176,23 +195,28 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				result.Model = event.Model
 			}
 		case "assistant":
-			var text strings.Builder
 			for _, content := range event.Message.Content {
 				if content.Type == "text" {
-					text.WriteString(content.Text)
+					final.WriteString(content.Text)
 				}
 			}
-			final, finalIdentified = []byte(text.String()), event.ModelCallID != ""
+			if event.ModelCallID == "" {
+				finalUnidentified = true
+			}
 		case "tool_call":
+			// Text before a tool call is not the final message.
+			final.Reset()
+			finalUnidentified = false
 			name, path := event.tool(request.Directory)
-			if event.Subtype == "started" {
+			switch event.Subtype {
+			case "started":
 				record(agent.Event{Kind: "tool_call", ID: event.CallID, Tool: name, Path: path})
-				if !allowedTools[name] {
-					record(agent.Event{Kind: "error", Tool: name, Status: "disallowed_tool"})
-					err = fmt.Errorf("cursor-agent started the %s tool, which baum does not allow in a review; the run was stopped", orUnknown(name))
-				}
-			} else if event.Subtype == "completed" {
+			case "completed":
 				record(agent.Event{Kind: "tool_result", ID: event.CallID, Tool: name, Status: event.toolStatus()})
+			}
+			// Every tool event is checked, whatever its subtype.
+			if !allowedTools[name] {
+				stopTool(name, fmt.Sprintf("cursor-agent started the %s tool, which baum does not allow in a review; the run was stopped", orUnknown(name)))
 			}
 		case "retry":
 			record(agent.Event{Kind: "retry", Status: event.Subtype})
@@ -217,7 +241,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			}
 		}
 		result.Calls = len(calls)
-		if completed && (len(calls) == 0 || (len(final) > 0 && !finalIdentified)) {
+		if completed && (len(calls) == 0 || (final.Len() > 0 && finalUnidentified)) {
 			result.Calls++
 		}
 		if err == nil && result.Calls > request.MaxCalls {
@@ -256,10 +280,15 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	if !completed {
 		return result, errors.New("cursor-agent ended without a result")
 	}
-	if len(bytes.TrimSpace(final)) == 0 {
-		final = []byte(resultText)
+	// The final turn's text is the answer; the result's text, which repeats
+	// everything the model wrote, is the fallback when that does not hold one
+	// JSON value.
+	document := extractDocument([]byte(final.String()))
+	if !json.Valid(document) {
+		if fallback := extractDocument([]byte(resultText)); json.Valid(fallback) || len(document) == 0 {
+			document = fallback
+		}
 	}
-	document := extractDocument(final)
 	if len(document) == 0 || bytes.Equal(document, []byte("null")) {
 		return result, errors.New("cursor-agent returned no review document")
 	}
