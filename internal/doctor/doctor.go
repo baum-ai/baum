@@ -3,8 +3,9 @@
 //
 // It runs "<tool> --version" for git, gh and cursor-agent, the same checks
 // "baum generate" runs for claude and codex (including codex's read-only
-// sandbox preflight), "gh auth token" when no token is configured, and at most
-// one network request, for the signed price list. The tools run with the
+// sandbox preflight) and for anthropic (that ANTHROPIC_API_KEY is set; the key
+// is not tried against the API), "gh auth token" when no token is configured,
+// and at most one network request, for the signed price list. The tools run with the
 // environment their backends give them, never the whole of ours. It never
 // prints a token or an API key, only where one was found.
 package doctor
@@ -245,6 +246,7 @@ func (r *runner) run() {
 				cfg.GitHubToken, cfg.GitHubTokenSource = v, name
 			}
 		}
+		cfg.AnthropicAPIKey = r.opts.Getenv(config.EnvAnthropicAPIKey)
 	}
 	r.cfg, r.cfgErr = cfg, cfgErr
 
@@ -362,11 +364,14 @@ type checkResult struct {
 	err     error
 }
 
-// checkedBackends holds the claude and codex results, which selection replays.
-type checkedBackends struct{ claude, codex checkResult }
+// checkedBackends holds the claude, codex and anthropic results, which
+// selection replays.
+type checkedBackends struct{ claude, codex, anthropic checkResult }
 
 // backends checks claude and codex with the checks "baum generate" runs, once
-// each; selection replays the results instead of running them again.
+// each, and anthropic's, which only looks for the key and is reported by the
+// key's own check; selection replays the results instead of running them
+// again.
 func (r *runner) backends() checkedBackends {
 	built := r.opts.Backends(r.cfg)
 	var result checkedBackends
@@ -379,6 +384,11 @@ func (r *runner) backends() checkedBackends {
 		result.codex = r.backend(config.BackendCodex, built.Codex(""))
 	} else {
 		result.codex.err = errors.New("no codex backend")
+	}
+	if built.Anthropic != nil {
+		result.anthropic.version, result.anthropic.err = built.Anthropic("").Check(r.ctx)
+	} else {
+		result.anthropic.err = errors.New("no anthropic backend")
 	}
 	return result
 }
@@ -482,6 +492,11 @@ func (r *runner) selection(checked checkedBackends) {
 			return replay{CheckedBackend: built.Codex(model), version: checked.codex.version, err: checked.codex.err}
 		}
 	}
+	if built.Anthropic != nil {
+		replayed.Anthropic = func(model string) generate.CheckedBackend {
+			return replay{CheckedBackend: built.Anthropic(model), version: checked.anthropic.version, err: checked.anthropic.err}
+		}
+	}
 
 	var skipped bytes.Buffer
 	selected, err := generate.Select(r.ctx, config.BackendAuto, r.cfg.Model, replayed, &skipped)
@@ -489,10 +504,10 @@ func (r *runner) selection(checked checkedBackends) {
 	reasons := strings.TrimSpace(skipped.String())
 	if err != nil {
 		c.Status, c.Detail = StatusProblem, "auto finds no usable backend: "+err.Error()
-		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s; see the claude and codex checks above", r.cfgPath)
+		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above", r.cfgPath)
 	} else {
 		c.Status, c.Version = StatusOK, selected.Version
-		c.Detail = fmt.Sprintf("auto picks %s, the first of claude and codex that is installed and passes its checks", selected.Backend.Name())
+		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex and anthropic (with ANTHROPIC_API_KEY set) that passes its checks", selected.Backend.Name())
 		if reasons != "" {
 			c.Detail += "\n" + reasons
 		}
@@ -510,7 +525,7 @@ func (r *runner) selection(checked checkedBackends) {
 		}
 		r.add(Check{ID: "backend-configured", Label: "backend: " + name, Status: StatusProblem,
 			Detail: fmt.Sprintf("the configured backend %q is not a known backend", name),
-			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\" or \"codex\" in %s", name, r.cfgPath)})
+			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s", name, r.cfgPath)})
 		return
 	}
 	configured := Check{ID: "backend-configured", Label: "backend: " + string(r.cfg.Backend)}
@@ -518,10 +533,12 @@ func (r *runner) selection(checked checkedBackends) {
 	if err != nil {
 		configured.Status, configured.Detail = StatusProblem, fmt.Sprintf("the configured backend %s cannot run: %v", r.cfg.Backend, err)
 		switch r.cfg.Backend {
-		case config.BackendAnthropic, config.BackendCursorAgent:
-			configured.Fix = fmt.Sprintf("the %s backend is not available in this version; set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		case config.BackendCursorAgent:
+			configured.Fix = fmt.Sprintf("the %s backend is not available in this version; set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		case config.BackendAnthropic:
+			configured.Fix = fmt.Sprintf("export ANTHROPIC_API_KEY with your Anthropic API key, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfgPath)
 		default:
-			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
 		}
 	} else {
 		configured.Status, configured.Version = StatusOK, selected.Version
@@ -679,11 +696,17 @@ func (r *runner) tokens(clones []repos.Clone) {
 }
 
 func (r *runner) anthropicKey() {
-	c := Check{ID: "anthropic-api-key", Label: "ANTHROPIC_API_KEY", Status: StatusInfo}
-	if r.opts.Getenv(config.EnvAnthropicAPIKey) != "" {
-		c.Detail = "set. The anthropic backend is not available in this version of baum, and the claude and codex backends do not receive the key"
-	} else {
-		c.Detail = "not set. The anthropic backend is not available in this version of baum, so nothing needs it"
+	c := Check{ID: "anthropic-api-key", Label: "ANTHROPIC_API_KEY (anthropic backend)", Status: StatusInfo}
+	switch {
+	case r.opts.Getenv(config.EnvAnthropicAPIKey) != "":
+		c.Status = StatusOK
+		c.Detail = "set, so the anthropic backend is available: it calls the Anthropic API with this key, which is not tried here. auto uses it only when neither claude nor codex can run, and the claude and codex backends do not receive the key"
+	case r.cfg.Backend == config.BackendAnthropic:
+		c.Status = StatusProblem
+		c.Detail = "not set, and the configured backend anthropic needs it"
+		c.Fix = "export ANTHROPIC_API_KEY with your Anthropic API key, or choose another backend"
+	default:
+		c.Detail = "not set, so the anthropic backend is not available and auto skips it"
 	}
 	r.add(c)
 }

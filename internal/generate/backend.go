@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/anthropic"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/config"
@@ -23,17 +25,18 @@ type CheckedBackend interface {
 
 // Backends builds the local backends. DefaultBackends and DefaultBackendsFor
 // are the only production implementations: the user's installed CLIs under
-// their own login, in the profiles meant for a person's machine. Tests
-// substitute fakes.
+// their own login, in the profiles meant for a person's machine, and the
+// Anthropic API under their own key. Tests substitute fakes.
 type Backends struct {
-	Claude func(model string) CheckedBackend
-	Codex  func(model string) CheckedBackend
+	Claude    func(model string) CheckedBackend
+	Codex     func(model string) CheckedBackend
+	Anthropic func(model string) CheckedBackend
 }
 
 // DefaultBackends builds Claude Code with the User profile and Codex with the
-// Local profile, which run in the user's environment, finding both on PATH.
-// The Isolated and Container profiles belong to hosted runs and are never
-// built here.
+// Local profile, which run in the user's environment, finding both on PATH,
+// and the Anthropic API with the key from ANTHROPIC_API_KEY. The Isolated and
+// Container profiles belong to hosted runs and are never built here.
 func DefaultBackends() Backends { return DefaultBackendsFor(config.Config{}) }
 
 // DefaultBackendsFor is DefaultBackends with the executables cfg names in
@@ -47,6 +50,9 @@ func DefaultBackendsFor(cfg config.Config) Backends {
 		},
 		Codex: func(model string) CheckedBackend {
 			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local}, config.BackendCodex, codexPath)
+		},
+		Anthropic: func(model string) CheckedBackend {
+			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model}
 		},
 	}
 }
@@ -113,17 +119,26 @@ type Selected struct {
 
 // Select resolves the requested backend, checking that it can run.
 //
-// auto picks claude when it is installed and passes its checks, else codex,
-// and fails naming both reasons when neither does. claude and codex fail with
-// their own check's reason. anthropic and cursor-agent are not implemented in
-// this version: auto skips them and naming one fails.
+// auto tries, in order, claude, codex and anthropic, each when it passes its
+// checks (anthropic's is that ANTHROPIC_API_KEY is set), and fails naming
+// every reason when none does. claude, codex and anthropic fail with their
+// own check's reason. cursor-agent is not implemented in this version: auto
+// skips it and naming it fails.
 //
 // A model names a model of one backend, so with auto it applies to the first
-// choice, claude, only: when auto falls back to codex, codex runs with its own
-// default model, and skipped says so. skipped also receives why claude was
-// skipped; nil discards both.
+// choice, claude, only: a backend auto falls back to runs with its own
+// default model, and skipped says so. skipped also receives why each earlier
+// choice was skipped; nil discards both. anthropic's default model is
+// resolved here (anthropic.DefaultModel), so Selected.Model names it and a
+// price estimate can use it.
 func Select(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
-	try := func(build func(string) CheckedBackend, model string) (Selected, error) {
+	try := func(name config.Backend, build func(string) CheckedBackend, model string) (Selected, error) {
+		if build == nil {
+			return Selected{}, fmt.Errorf("the %s backend is not built", name)
+		}
+		if name == config.BackendAnthropic && model == "" {
+			model = anthropic.DefaultModel
+		}
 		backend := build(model)
 		version, err := backend.Check(ctx)
 		if err != nil {
@@ -137,38 +152,60 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 		}
 		return Selected{}, &Error{Category: CategoryBackend, Err: err}
 	}
+	explicit := func(name config.Backend, build func(string) CheckedBackend) (Selected, error) {
+		selected, err := try(name, build, model)
+		if err != nil {
+			return fail(err)
+		}
+		return selected, nil
+	}
 	switch requested {
 	case config.BackendClaude:
-		selected, err := try(backends.Claude, model)
-		if err != nil {
-			return fail(err)
-		}
-		return selected, nil
+		return explicit(requested, backends.Claude)
 	case config.BackendCodex:
-		selected, err := try(backends.Codex, model)
-		if err != nil {
-			return fail(err)
-		}
-		return selected, nil
-	case config.BackendAnthropic, config.BackendCursorAgent:
-		return fail(fmt.Errorf("the %s backend is not available in this version of baum; use --backend claude, codex or auto", requested))
+		return explicit(requested, backends.Codex)
+	case config.BackendAnthropic:
+		return explicit(requested, backends.Anthropic)
+	case config.BackendCursorAgent:
+		return fail(fmt.Errorf("the %s backend is not available in this version of baum; use --backend claude, codex, anthropic or auto", requested))
 	case config.BackendAuto, "":
-		selected, claudeErr := try(backends.Claude, model)
-		if claudeErr == nil {
-			return selected, nil
-		}
-		if skipped != nil && ctx.Err() == nil {
-			_, _ = fmt.Fprintf(skipped, "claude skipped: %v\n", claudeErr)
-			if model != "" {
-				_, _ = fmt.Fprintf(skipped, "the model %q was meant for claude; codex uses its own default model\n", model)
+		var reasons []string
+		for i, choice := range AutoOrder {
+			chosen := ""
+			if i == 0 {
+				chosen = model
+			}
+			selected, err := try(choice, backends.builder(choice), chosen)
+			if err == nil {
+				if i > 0 && model != "" && skipped != nil {
+					_, _ = fmt.Fprintf(skipped, "the model %q was meant for %s; %s uses its own default model\n", model, AutoOrder[0], choice)
+				}
+				return selected, nil
+			}
+			reasons = append(reasons, fmt.Sprintf("%s: %v", choice, err))
+			if skipped != nil && ctx.Err() == nil && i+1 < len(AutoOrder) {
+				_, _ = fmt.Fprintf(skipped, "%s skipped: %v\n", choice, err)
 			}
 		}
-		selected, codexErr := try(backends.Codex, "")
-		if codexErr == nil {
-			return selected, nil
-		}
-		return fail(fmt.Errorf("no usable model backend: claude: %v; codex: %v", claudeErr, codexErr))
+		return fail(fmt.Errorf("no usable model backend: %s", strings.Join(reasons, "; ")))
 	default:
 		return fail(fmt.Errorf("unknown backend %q", requested))
 	}
+}
+
+// AutoOrder is the order in which auto tries the backends. The model a run
+// names applies to the first only.
+var AutoOrder = []config.Backend{config.BackendClaude, config.BackendCodex, config.BackendAnthropic}
+
+// builder returns the constructor of a backend, nil when it has none.
+func (b Backends) builder(name config.Backend) func(string) CheckedBackend {
+	switch name {
+	case config.BackendClaude:
+		return b.Claude
+	case config.BackendCodex:
+		return b.Codex
+	case config.BackendAnthropic:
+		return b.Anthropic
+	}
+	return nil
 }

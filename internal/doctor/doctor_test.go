@@ -351,10 +351,52 @@ func TestConfiguredBackendNotAvailableInThisVersion(t *testing.T) {
 	m := newMachine(t)
 	m.git()
 	m.claude("2.1.7")
-	t.Setenv("BAUM_BACKEND", "anthropic")
+	t.Setenv("BAUM_BACKEND", "cursor-agent")
 	c := find(t, run(t, Options{}), "backend-configured")
 	wantStatus(t, c, StatusProblem)
 	wantContains(t, "detail", c.Detail, "not available in this version")
+}
+
+func TestConfiguredAnthropicBackend(t *testing.T) {
+	t.Run("without a key", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		t.Setenv("BAUM_BACKEND", "anthropic")
+		report := run(t, Options{})
+		configured := find(t, report, "backend-configured")
+		wantStatus(t, configured, StatusProblem)
+		wantContains(t, "detail", configured.Detail, "ANTHROPIC_API_KEY is not set")
+		key := find(t, report, "anthropic-api-key")
+		wantStatus(t, key, StatusProblem)
+		wantContains(t, "key fix", key.Fix, "export ANTHROPIC_API_KEY")
+	})
+	t.Run("with a key", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		t.Setenv("BAUM_BACKEND", "anthropic")
+		t.Setenv("ANTHROPIC_API_KEY", plantedAnthropicAK)
+		report := run(t, Options{})
+		configured := find(t, report, "backend-configured")
+		wantStatus(t, configured, StatusOK)
+		wantContains(t, "detail", configured.Detail, "the configured backend anthropic is usable")
+		wantStatus(t, find(t, report, "anthropic-api-key"), StatusOK)
+	})
+}
+
+func TestAutoFallsBackToTheAnthropicAPIWhenTheKeyIsSet(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	t.Setenv("ANTHROPIC_API_KEY", plantedAnthropicAK)
+	t.Setenv("BAUM_MODEL", "claude-sonnet-4-5")
+	report := run(t, Options{})
+	auto := find(t, report, "backend-auto")
+	wantStatus(t, auto, StatusOK)
+	wantContains(t, "auto", auto.Detail, "picks anthropic", "claude skipped", "codex skipped",
+		`the model "claude-sonnet-4-5" was meant for claude; anthropic uses its own default model`)
+	if report.Status == StatusProblem {
+		t.Errorf("a usable anthropic backend left the report a problem: %v", report)
+	}
 }
 
 func TestConfiguredBackendThatRunsIsOK(t *testing.T) {
@@ -617,7 +659,7 @@ func TestNoSecretAppearsInTheReport(t *testing.T) {
 			}
 		}
 		wantStatus(t, find(t, report, "github-token-github.com"), StatusOK)
-		wantContains(t, "key", find(t, report, "anthropic-api-key").Detail, "set", "not available in this version", "do not receive")
+		wantContains(t, "key", find(t, report, "anthropic-api-key").Detail, "set", "anthropic backend is available", "do not receive")
 	}
 
 	// With no other source the keyring token is used, and still not shown.
@@ -636,7 +678,7 @@ func TestAnthropicAPIKeyNotSet(t *testing.T) {
 	newMachine(t)
 	c := find(t, run(t, Options{}), "anthropic-api-key")
 	wantStatus(t, c, StatusInfo)
-	wantContains(t, "detail", c.Detail, "not set")
+	wantContains(t, "detail", c.Detail, "not set", "auto skips it")
 }
 
 func TestPriceList(t *testing.T) {

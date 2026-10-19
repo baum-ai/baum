@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/agent/anthropic"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -55,12 +57,76 @@ func TestExplicitBackendsAndTheUnavailableOnes(t *testing.T) {
 	if _, err := generate.Select(context.Background(), config.BackendClaude, "", fakes(claude, codex), nil); err == nil || generate.CategoryOf(err) != generate.CategoryBackend {
 		t.Fatalf("claude explicit with a failing check should not fall back: %v", err)
 	}
-	for _, name := range []config.Backend{config.BackendAnthropic, config.BackendCursorAgent} {
-		_, err := generate.Select(context.Background(), name, "", fakes(claude, codex), nil)
-		if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "not available in this version") {
-			t.Errorf("%s: %v", name, err)
-		}
+	_, err := generate.Select(context.Background(), config.BackendCursorAgent, "", fakes(claude, codex), nil)
+	if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "not available in this version") {
+		t.Errorf("cursor-agent: %v", err)
 	}
+}
+
+func TestAnthropicBackend(t *testing.T) {
+	failing := &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
+	t.Run("explicit, with its default model resolved", func(t *testing.T) {
+		var built []string
+		backends := fakes(failing, failing)
+		backends.Anthropic = func(model string) generate.CheckedBackend {
+			built = append(built, model)
+			return &generatetest.Backend{BackendName: "anthropic"}
+		}
+		selected, err := generate.Select(context.Background(), config.BackendAnthropic, "", backends, nil)
+		if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel || built[0] != anthropic.DefaultModel {
+			t.Fatalf("%+v %v %v", selected, err, built)
+		}
+		if selected, err = generate.Select(context.Background(), config.BackendAnthropic, "claude-sonnet-5-5", backends, nil); err != nil || selected.Model != "claude-sonnet-5-5" {
+			t.Fatalf("named model: %+v %v", selected, err)
+		}
+	})
+	t.Run("without a key", func(t *testing.T) {
+		_, err := generate.Select(context.Background(), config.BackendAnthropic, "", generate.DefaultBackendsFor(config.Config{}), nil)
+		if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY is not set") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("with a key", func(t *testing.T) {
+		selected, err := generate.Select(context.Background(), config.BackendAnthropic, "", generate.DefaultBackendsFor(config.Config{AnthropicAPIKey: "sk-ant-test"}), nil)
+		if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel {
+			t.Fatalf("%+v %v", selected, err)
+		}
+		if strings.Contains(fmt.Sprintf("%+v", selected), "sk-ant-test") {
+			t.Error("the selection prints the key")
+		}
+	})
+	t.Run("auto falls back to it last, with its own default model", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		var skipped bytes.Buffer
+		selected, err := generate.Select(context.Background(), config.BackendAuto, "opus", generate.DefaultBackendsFor(config.Config{AnthropicAPIKey: "sk-ant-test"}), &skipped)
+		if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel {
+			t.Fatalf("%+v %v", selected, err)
+		}
+		for _, want := range []string{"claude skipped: finding Claude Code", "codex skipped: finding Codex", `the model "opus" was meant for claude; anthropic uses its own default model`} {
+			if !strings.Contains(skipped.String(), want) {
+				t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
+			}
+		}
+		if strings.Contains(skipped.String(), "sk-ant-test") {
+			t.Error("the skipped output prints the key")
+		}
+	})
+	t.Run("auto without a key names all three", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackendsFor(config.Config{}), nil)
+		for _, want := range []string{"claude: finding Claude Code", "codex: finding Codex", "anthropic: ANTHROPIC_API_KEY is not set"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("err %v lacks %q", err, want)
+			}
+		}
+	})
+	t.Run("auto prefers the CLIs", func(t *testing.T) {
+		backends := fakes(failing, &generatetest.Backend{BackendName: "codex"})
+		backends.Anthropic = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "anthropic"} }
+		if selected, err := generate.Select(context.Background(), config.BackendAuto, "", backends, nil); err != nil || selected.Backend.Name() != "codex" {
+			t.Fatalf("%+v %v", selected, err)
+		}
+	})
 }
 
 // fakeBinary puts a script named name on PATH, and nothing else.
