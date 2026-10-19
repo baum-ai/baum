@@ -281,16 +281,18 @@ What it runs while it is up:
 
 Automatic generation is on by default and runs without anyone watching. It
 starts a job when a pull request in a registered repository that you authored,
-or whose review is requested from you or one of your teams, gets a new head or
-a new review request after automatic generation was enabled for that
-repository; pull requests already open then are left alone. It never starts
+or whose review is requested from you or one of your teams, gets a new head, a
+new review request or is marked ready for review after automatic generation
+was enabled for that repository; pull requests already open then, and drafts,
+are left alone. It never starts
 one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
 confirmed one (same backend, model, budgets, price list and recheck of the head
 before any model call), and a model without a known price is never run
 automatically. What it can spend: up to the configured per-run budget for each
-new head, with no daily limit unless you set a repository's daily cap, which
+new head (twice when a daemon stop or restart interrupts the first run, which
+is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which
 pauses that repository's automatic generation until the next day once reached.
 cursor-agent, which baum cannot estimate or cap, runs automatically only after
 you acknowledge that in the app. Turning the global switch off (in Repositories

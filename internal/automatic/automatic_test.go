@@ -2,6 +2,7 @@ package automatic
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -55,6 +56,8 @@ type executor struct {
 	heads   map[int]string
 	backend string
 	block   chan struct{}
+	started chan struct{}
+	fail    error
 }
 
 func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
@@ -68,6 +71,9 @@ func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, st
 	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: "org/repo", HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
 }
 func (e *executor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
+	if e.started != nil {
+		e.started <- struct{}{}
+	}
 	if e.block != nil {
 		select {
 		case <-e.block:
@@ -75,7 +81,7 @@ func (e *executor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Pro
 			return nil, ctx.Err()
 		}
 	}
-	return nil, nil
+	return nil, e.fail
 }
 func (e *executor) setHead(pr int, head string) {
 	e.mu.Lock()
@@ -131,6 +137,7 @@ type pr struct {
 	requested bool
 	authored  bool
 	fork      bool
+	draft     bool
 	// write is the author's permission: "" write, "no" or "unknown".
 	write     string
 	teamKnown *bool
@@ -152,7 +159,7 @@ func (h *harness) observe(prs ...pr) {
 			team = *p.teamKnown
 		}
 		h.exec.setHead(p.number, p.head)
-		snapshot.PullRequests = append(snapshot.PullRequests, discovery.PullRequest{Repository: "org/repo", Number: p.number, HeadSHA: p.head, State: "OPEN", Fork: p.fork, AuthoredByMe: p.authored, ReviewRequestedFromMe: p.requested, AuthorHasWrite: write, TeamMembershipKnown: team})
+		snapshot.PullRequests = append(snapshot.PullRequests, discovery.PullRequest{Repository: "org/repo", Number: p.number, HeadSHA: p.head, State: "OPEN", Fork: p.fork, Draft: p.draft, AuthoredByMe: p.authored, ReviewRequestedFromMe: p.requested, AuthorHasWrite: write, TeamMembershipKnown: team})
 	}
 	h.scheduler.Observe(context.Background(), snapshot)
 }
@@ -450,4 +457,128 @@ func TestHandlerUpdatesPreferences(t *testing.T) {
 	if o.Enabled || !o.CursorAgentAcknowledged || o.Repositories[0].Enabled {
 		t.Fatalf("%+v", o)
 	}
+}
+
+// Drafts get no automatic review; marking one ready for review is a trigger
+// when the PR otherwise qualifies and its head has no review yet.
+func TestDraftsWaitUntilReadyForReview(t *testing.T) {
+	h := newHarness(t)
+	open := []pr{
+		{number: 1, head: "a1", authored: true, draft: true},
+		{number: 2, head: "b1", requested: true, draft: true, fork: true},
+		{number: 3, head: "c1", requested: true, draft: true},
+		{number: 4, head: "d1", draft: true},
+	}
+	h.observe(open...)
+	for i := range open {
+		open[i].head = open[i].head[:1] + "2"
+	}
+	h.observe(open...)
+	h.pass()
+	h.want()
+	h.reviewed[3] = "c2"
+	for i := range open {
+		open[i].draft = false
+	}
+	h.observe(open...)
+	h.pass()
+	h.want("org/repo#1@a2:ready_for_review")
+	h.waitIdle()
+	// Back to draft and a new push: nothing until it is ready again.
+	h.observe(pr{number: 1, head: "a3", authored: true, draft: true})
+	h.pass()
+	h.want("org/repo#1@a2:ready_for_review")
+	h.observe(pr{number: 1, head: "a3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:ready_for_review", "org/repo#1@a3:ready_for_review")
+}
+
+// stop records a running job as interrupted, as a daemon stop does, and
+// starts a new queue and scheduler on the same files.
+func (h *harness) stop() {
+	h.t.Helper()
+	h.queue.Close()
+	h.openQueue()
+	h.restart()
+}
+
+func TestInterruptedAutomaticRunIsRetriedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	snapshot := []pr{{number: 1, head: "a2", authored: true}}
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(snapshot...)
+	h.pass()
+	<-h.exec.started
+	h.stop()
+	h.observe(snapshot...)
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#1@a2:retry")
+	<-h.exec.started
+	// Interrupted again: not retried a second time, even after a restart.
+	h.stop()
+	h.observe(snapshot...)
+	h.pass()
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#1@a2:retry")
+	for _, j := range h.queue.List() {
+		if j.State != "interrupted" {
+			t.Fatalf("unexpected job %+v", j)
+		}
+	}
+	// The next push runs as usual.
+	close(h.exec.block)
+	h.observe(pr{number: 1, head: "a3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#1@a2:retry", "org/repo#1@a3:new_head")
+}
+
+func TestInterruptedRetryRespectsTheMasterSwitch(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.pass()
+	<-h.exec.started
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
+	h.stop()
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+}
+
+func TestFailedAndCancelledAutomaticRunsAreNotRetried(t *testing.T) {
+	h := newHarness(t)
+	h.exec.fail = errors.New("backend failed")
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.pass()
+	h.waitIdle()
+	h.exec.fail = nil
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	<-h.exec.started
+	for _, j := range h.queue.List() {
+		if j.PR == 2 {
+			if _, err := h.queue.Cancel(j.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	h.waitIdle()
+	states := map[int]string{}
+	for _, j := range h.queue.List() {
+		states[j.PR] = j.State
+	}
+	if states[1] != "failed" || states[2] != "cancelled" {
+		t.Fatalf("states %v", states)
+	}
+	h.stop()
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
 }

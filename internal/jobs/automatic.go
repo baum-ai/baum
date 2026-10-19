@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 const (
 	TriggerNewHead         = "new_head"
 	TriggerReviewRequested = "review_requested"
+	TriggerReadyForReview  = "ready_for_review"
+	// TriggerRetry re-runs an automatic job a daemon stop or restart
+	// interrupted, once.
+	TriggerRetry = "retry"
 )
 
 // Reasons SubmitAutomatic refuses an item for good: a person has to generate
@@ -26,7 +31,8 @@ var (
 	// ErrBusy: a job for the pull request is queued or running. Retry once it
 	// finishes; one PR never has two jobs at a time.
 	ErrBusy = errors.New("a job for this pull request is queued or running")
-	// ErrDuplicate: a job for this head already exists, in any state.
+	// ErrDuplicate: a job for this head already exists, in any state other
+	// than one automatic run a daemon stop or restart interrupted.
 	ErrDuplicate = errors.New("a job for this pull request head already exists")
 	// ErrHeadChanged: GitHub reports a different head than the one that
 	// triggered the job; the newer head triggers its own job.
@@ -68,8 +74,9 @@ type AutomaticRequest struct {
 // list, recheck and isolation as a confirmed one, and refuses whatever a
 // person would have to confirm: a fork or an author without known write
 // access, an unpriced model, and cursor-agent without the acknowledgement.
-// It never supersedes or joins another job of the PR and never runs a head
-// twice, and it is refused with ErrRestarting while the daemon drains.
+// It never supersedes or joins another job of the PR and runs a head once
+// (one interrupted automatic run is retried once), and it is refused with
+// ErrRestarting while the daemon drains.
 func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, error) {
 	// Refuse what the journal alone decides before asking GitHub.
 	if r.Repository != "" {
@@ -134,6 +141,8 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 	if q.ctx.Err() != nil {
 		return errors.New("job queue stopped")
 	}
+	sameHead := 0
+	retryable := false
 	for _, j := range q.jobs {
 		if !strings.EqualFold(j.Repository, repository) || j.PR != pr {
 			continue
@@ -142,10 +151,36 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 			return ErrBusy
 		}
 		if j.HeadSHA == head {
-			return ErrDuplicate
+			sameHead++
+			retryable = j.Automatic && j.State == "interrupted"
 		}
 	}
+	// A head runs once, except that one automatic run a daemon stop or
+	// restart interrupted is retried once.
+	if sameHead > 1 || (sameHead == 1 && !retryable) {
+		return ErrDuplicate
+	}
 	return nil
+}
+
+// Interrupted lists automatic jobs that a daemon stop or restart interrupted
+// and that may be retried once: the only job ever recorded for their head.
+func (q *Queue) Interrupted() []Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	count := map[string]int{}
+	key := func(j Job) string { return strings.ToLower(j.Repository) + "#" + strconv.Itoa(j.PR) + "@" + j.HeadSHA }
+	for _, j := range q.jobs {
+		count[key(j)]++
+	}
+	var out []Job
+	for _, j := range q.jobs {
+		if j.Automatic && j.State == "interrupted" && count[key(j)] == 1 {
+			j.Accounting = j.Accounting.Clone()
+			out = append(out, j)
+		}
+	}
+	return out
 }
 
 // AutomaticSpend sums the repository's automatic jobs created on the day

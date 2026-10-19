@@ -489,7 +489,13 @@ it("marks automatically started jobs in the jobs list", async () => {
     String(args[0]) === "/s/test-ns/api/jobs"
       ? Promise.resolve(
           Response.json({
-            jobs: [job("a", true, "new_head"), job("b", true, "review_requested"), job("c", false)],
+            jobs: [
+              job("a", true, "new_head"),
+              job("b", true, "review_requested"),
+              job("d", true, "ready_for_review"),
+              job("e", true, "retry"),
+              job("c", false),
+            ],
           }),
         )
       : original(...args),
@@ -498,7 +504,13 @@ it("marks automatically started jobs in the jobs list", async () => {
   const text = node.textContent ?? "";
   expect(text).toContain("Started automatically because new commits were pushed");
   expect(text).toContain("Started automatically because your review was requested");
-  expect(text.match(/Started automatically/g)).toHaveLength(2);
+  expect(text).toContain(
+    "Started automatically because the pull request was marked ready for review",
+  );
+  expect(text).toContain(
+    "Started automatically again: the daemon stopped during the previous automatic run",
+  );
+  expect(text.match(/Started automatically/g)).toHaveLength(4);
 });
 it("shows a diagnostics error with a retry that recovers", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");

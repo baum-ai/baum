@@ -1413,11 +1413,14 @@ without known write access, a blocked (unpriced) model, and cursor-agent or
 another unestimated backend without the acknowledgement. Under the queue mutex
 it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
 queued or running job (it never joins or supersedes one), `ErrDuplicate` when
-any job, manual or automatic, already exists for that head, and `ErrDailyCap`
-when the repository's automatic jobs created that day (actual cost when
-reported, else the estimate; a job cancelled before calling a model counts
-zero) plus this estimate would exceed its `daily_cap`. Jobs record
-`automatic` and `trigger` (`new_head`, `review_requested`).
+any job, manual or automatic, already exists for that head (except a single
+automatic job a daemon stop or restart interrupted, which `Interrupted` lists
+and which may run once more; failed and cancelled jobs are final), and
+`ErrDailyCap` when the repository's automatic jobs created that day (actual
+cost when reported, else the estimate; a job cancelled before calling a model
+counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
+`automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
+`retry`).
 
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
@@ -1606,14 +1609,24 @@ it and `Queue.SubmitAutomatic` decides each job.
   queues nothing: PRs open at first launch, registration or re-enabling are
   not caught up.
 - **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
-  new PR included), or whose review request turned on (not merely because team
-  membership became readable), gets a pending head if it is eligible: the
-  user's review is requested or the user authored it, it is not from a fork,
-  and its author has known write access. A PR that closes, moves to another
-  head while ineligible, or stops being eligible loses its pending head.
+  new PR included), whose review request turned on (not merely because team
+  membership became readable), or that was marked ready for review, gets a
+  pending head if it is eligible: the user's review is requested or the user
+  authored it, it is not a draft, it is not from a fork, and its author has
+  known write access. Drafts get no automatic review, so pushes to a draft
+  wait for "ready for review"; manual generation of a draft still works. A PR
+  that closes, moves to another head while ineligible, or stops being eligible
+  loses its pending head.
+- **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
+  a daemon stop or restart cut short that are the only job for their head; if
+  the PR is still open at that head and eligible, the head is pending again
+  with trigger `retry`, once (`retried` records it). The retry goes through
+  the same pass, so Drain, the cap and the switches apply. Failed and
+  cancelled runs are never retried; the next push triggers as usual.
 - **State.** `automatic.json` in the job state directory (0700) holds each
-  enabled repository's PRs (recorded head, request flags, pending head and
-  trigger, last head handled), its pause and its notice. It is rewritten
+  enabled repository's PRs (recorded head, request and draft flags,
+  eligibility, pending head and trigger, last head handled, retried head),
+  its pause and its notice. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new
   baselines.

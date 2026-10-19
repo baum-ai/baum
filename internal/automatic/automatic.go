@@ -46,6 +46,9 @@ type Registry interface {
 type Queue interface {
 	SubmitAutomatic(context.Context, jobs.AutomaticRequest) (jobs.Job, error)
 	AutomaticSpend(repository string, day time.Time) (float64, bool)
+	// Interrupted lists automatic jobs a daemon stop or restart cut short
+	// that may be retried once.
+	Interrupted() []jobs.Job
 }
 
 // Scheduler decides which pull requests get automatic jobs. Run it once in
@@ -119,6 +122,9 @@ type prState struct {
 	Head      string `json:"head"`
 	Requested bool   `json:"requested"`
 	TeamKnown bool   `json:"team_known"`
+	Draft     bool   `json:"draft,omitempty"`
+	// Eligible is whether the latest snapshot allowed an automatic job.
+	Eligible bool `json:"eligible,omitempty"`
 	// Pending is a head that needs an automatic job; Trigger says why.
 	Pending string `json:"pending,omitempty"`
 	Trigger string `json:"trigger,omitempty"`
@@ -126,6 +132,9 @@ type prState struct {
 	Done     string    `json:"done,omitempty"`
 	Attempts int       `json:"attempts,omitempty"`
 	RetryAt  time.Time `json:"retry_at,omitzero"`
+	// Retried is the head whose interrupted automatic run was already
+	// put back as pending, so it is retried at most once.
+	Retried string `json:"retried,omitempty"`
 }
 
 func (s *Scheduler) init() {
@@ -279,9 +288,10 @@ func (s *Scheduler) prune(v view) bool {
 }
 
 // eligible: the viewer's review is requested or the viewer wrote it, and it
-// is neither from a fork nor by an author without known write access.
+// is not a draft, not from a fork and not by an author without known write
+// access.
 func eligible(pr discovery.PullRequest) bool {
-	return !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && (pr.ReviewRequestedFromMe || pr.AuthoredByMe)
+	return !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && (pr.ReviewRequestedFromMe || pr.AuthoredByMe)
 }
 
 // Observe records a complete discovery snapshot. The first one after a
@@ -310,7 +320,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	if rs == nil {
 		rs = &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}}
 		for _, pr := range snapshot.PullRequests {
-			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown}
+			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr)}
 		}
 		state.Repositories[name] = rs
 		s.save()
@@ -330,13 +340,20 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		// A team request that only became visible because team membership
 		// became readable is not new.
 		newRequest := pr.ReviewRequestedFromMe && !previous.Requested && (previous.TeamKnown || !pr.TeamMembershipKnown)
-		previous.Head, previous.Requested, previous.TeamKnown = pr.HeadSHA, pr.ReviewRequestedFromMe, pr.TeamMembershipKnown
+		// Marking a draft ready for review counts as a trigger.
+		ready := previous.Head != "" && previous.Draft && !pr.Draft
+		previous.Head, previous.Requested, previous.TeamKnown, previous.Draft = pr.HeadSHA, pr.ReviewRequestedFromMe, pr.TeamMembershipKnown, pr.Draft
+		previous.Eligible = eligible(pr)
 		switch {
-		case (newHead || newRequest) && eligible(pr) && pr.HeadSHA != previous.Done:
+		case (newHead || newRequest || ready) && previous.Eligible && pr.HeadSHA != previous.Done:
 			previous.Pending, previous.Attempts, previous.RetryAt = pr.HeadSHA, 0, time.Time{}
-			previous.Trigger = jobs.TriggerNewHead
-			if !newHead {
+			switch {
+			case newHead:
+				previous.Trigger = jobs.TriggerNewHead
+			case newRequest:
 				previous.Trigger = jobs.TriggerReviewRequested
+			default:
+				previous.Trigger = jobs.TriggerReadyForReview
 			}
 		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr)):
 			previous.Pending, previous.Trigger = "", ""
@@ -377,9 +394,24 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	now := s.now()
 	var due []work
 	var notices []Status
+	interrupted := s.Queue.Interrupted()
 	s.mu.Lock()
 	state := s.load()
 	changed := s.prune(v)
+	// An automatic run a daemon stop or restart cut short is retried once,
+	// if its PR is still open, eligible and at that head.
+	for _, j := range interrupted {
+		rs := state.Repositories[strings.ToLower(j.Repository)]
+		if rs == nil {
+			continue
+		}
+		pr := rs.PRs[j.PR]
+		if pr == nil || pr.Head != j.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Retried == j.HeadSHA {
+			continue
+		}
+		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = j.HeadSHA, jobs.TriggerRetry, j.HeadSHA, 0, time.Time{}
+		changed = true
+	}
 	names := make([]string, 0, len(state.Repositories))
 	for name := range state.Repositories {
 		names = append(names, name)

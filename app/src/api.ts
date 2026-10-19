@@ -119,7 +119,11 @@ export function automaticLabel(job: Job): string | null {
       ? "your review was requested"
       : job.trigger === "new_head"
         ? "new commits were pushed"
-        : "";
+        : job.trigger === "ready_for_review"
+          ? "the pull request was marked ready for review"
+          : "";
+  if (job.trigger === "retry")
+    return "Started automatically again: the daemon stopped during the previous automatic run";
   return why ? `Started automatically because ${why}` : "Started automatically";
 }
 /** Plain-language text for a repository's automatic generation notice. */

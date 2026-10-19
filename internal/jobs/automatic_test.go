@@ -22,6 +22,7 @@ type autoExecutor struct {
 	prepared   int
 	started    chan Prepared
 	release    chan struct{}
+	fail       error
 }
 
 func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -42,7 +43,7 @@ func (f *autoExecutor) Execute(ctx context.Context, p Prepared, _ func(Progress)
 		return nil, ctx.Err()
 	case <-f.release:
 		cost := 1.5
-		return &cost, nil
+		return &cost, f.fail
 	}
 }
 
@@ -256,5 +257,85 @@ func TestAutomaticDailyCapCountsTodaysAutomaticJobs(t *testing.T) {
 	f.heads[3] = "c2"
 	if _, err = q.SubmitAutomatic(ctx, auto(3, "c2")); err != nil {
 		t.Fatalf("uncapped: %v", err)
+	}
+}
+
+// An automatic run a daemon stop interrupted may run its head once more;
+// a confirmed run, a failure and a cancellation never run it again.
+func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(privateDir(t), "jobs.json")
+	price := 2.0
+	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1", 4: "d1"}, price: &price, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
+	open := func() *Queue {
+		q, err := Open(path, f, 1, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(q.Close)
+		return q
+	}
+	q := open()
+	if _, err := q.SubmitAutomatic(ctx, auto(1, "a1")); err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	q.Close()
+	q = open()
+	interrupted := q.Interrupted()
+	if len(interrupted) != 1 || interrupted[0].PR != 1 || interrupted[0].State != "interrupted" {
+		t.Fatalf("interrupted %+v", interrupted)
+	}
+	r := auto(1, "a1")
+	r.Trigger = TriggerRetry
+	retry, err := q.SubmitAutomatic(ctx, r)
+	if err != nil || retry.Trigger != TriggerRetry {
+		t.Fatalf("retry %+v %v", retry, err)
+	}
+	<-f.started
+	q.Close()
+	q = open()
+	if got := q.Interrupted(); len(got) != 0 {
+		t.Fatalf("a retried head offered again %+v", got)
+	}
+	if _, err = q.SubmitAutomatic(ctx, r); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("second retry: %v", err)
+	}
+	// A confirmed run interrupted is not retried automatically.
+	e := estimate(t, q, "single", Item{"clone", 2})
+	if _, err = q.Submit(ctx, e.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	q.Close()
+	q = open()
+	if _, err = q.SubmitAutomatic(ctx, auto(2, "b1")); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("interrupted confirmed run: %v", err)
+	}
+	// Failed and cancelled automatic runs are final for their head.
+	f.fail = errors.New("backend failed")
+	failed, err := q.SubmitAutomatic(ctx, auto(3, "c1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	f.release <- struct{}{}
+	waitState(t, q, failed.ID, "failed")
+	cancelled, err := q.SubmitAutomatic(ctx, auto(4, "d1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	if _, err = q.Cancel(cancelled.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, q, cancelled.ID, "cancelled")
+	if got := q.Interrupted(); len(got) != 0 {
+		t.Fatalf("failed or cancelled offered for retry %+v", got)
+	}
+	for _, r := range []AutomaticRequest{auto(3, "c1"), auto(4, "d1")} {
+		if _, err = q.SubmitAutomatic(ctx, r); !errors.Is(err, ErrDuplicate) {
+			t.Fatalf("PR %d: %v", r.PR, err)
+		}
 	}
 }

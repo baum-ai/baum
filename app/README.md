@@ -69,7 +69,10 @@ and the latest notice: a daily-cap pause until the next day (also a banner on
 every page), cursor-agent not acknowledged, an unpriced model, or GitHub
 unavailable. The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
-requested"); it is cancelled like any other. `automatic` SSE events (a pause,
+requested", "because the pull request was marked ready for review", or
+"Started automatically again" for the one retry of a run a daemon stop or
+restart interrupted); it is cancelled like any other. Drafts get no automatic
+review, but Generate works on them as usual. `automatic` SSE events (a pause,
 its end, a notice) reload the page and are what the desktop app can notify on.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
