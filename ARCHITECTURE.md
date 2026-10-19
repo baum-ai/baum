@@ -495,7 +495,15 @@ minutes are retried four times, honouring `retry-after` (at most a minute) or
 backing off exponentially, and a wait that would outlast the context's
 deadline ends the call instead. Once a 200 response has started it is never
 retried: a stream that ends early, carries an error event or is silent for
-two minutes fails the call. Failures are an `*anthropic.Error` with a fixed
+ten minutes (the SDKs' read timeout; a healthy stream can be silent for
+minutes while the API buffers a tool input or the model thinks without
+displaying it) fails the call. Such a call is billed with unknown usage, so
+the run's cost becomes unknown, and the generate-and-repair loop then retries
+the whole run within `MaxProviderAttempts`, sending the conversation again.
+A tool input or block a `max_tokens` or `refusal` stop leaves incomplete is
+not malformed: the stop reason decides, so a truncated call is answered as not
+run and a refusal stays a refusal; an incomplete one under any other stop
+reason, or a stream line over 8 MiB, is `malformed_response`. Failures are an `*anthropic.Error` with a fixed
 `Category` (`authentication_error`, `rate_limit`, `provider_overloaded`,
 `provider_error`, `transport_error`, `invalid_request`, `malformed_response`,
 `refusal`, `context_window_exceeded`, `no_document`), which is also the status

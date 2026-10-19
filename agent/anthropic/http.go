@@ -136,12 +136,15 @@ func (u *apiUsage) usage() (agent.Usage, bool) {
 
 // Timeouts of one call, both within the run's own deadline: headers must
 // arrive within defaultHeaderTimeout of sending, and once the stream has
-// started, the gap between two reads must stay below defaultIdleTimeout. The
-// API sends ping events while the model works, so a longer silence is a dead
-// connection.
+// started, the gap between two reads must stay below defaultIdleTimeout. A
+// healthy stream can be silent for minutes (a tool input the API buffers,
+// thinking that is not displayed), so the idle limit is the SDKs' read
+// timeout of ten minutes: only a connection that is really dead trips it.
+// A call cut off mid-stream is billed with unknown usage, and the shared
+// loop retries the run.
 const (
 	defaultHeaderTimeout = 2 * time.Minute
-	defaultIdleTimeout   = 2 * time.Minute
+	defaultIdleTimeout   = 10 * time.Minute
 )
 
 // send makes one streamed model call. Before the API has answered, a rate

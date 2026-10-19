@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 // A stream that breaks once the API has answered is never sent again: the
@@ -30,8 +32,9 @@ func TestBrokenStreamsAreNotRetried(t *testing.T) {
 		{"delta for a block never opened", events(messageStart, `{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"x"}}`), CategoryMalformed, "not open"},
 		{"invalid tool input", events(messageStart, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"Read","input":{}}}`,
 			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_"}}`,
-			`{"type":"content_block_stop","index":0}`), CategoryMalformed, "not JSON"},
+			`{"type":"content_block_stop","index":0}`, `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`, `{"type":"message_stop"}`), CategoryMalformed, "not JSON"},
 		{"block still open at message_stop", events(messageStart, textStart, `{"type":"message_stop"}`), CategoryMalformed, "still open"},
+		{"a line over the limit", events(messageStart, strings.Repeat("x", maxDocumentBytes+1)), CategoryMalformed, "stream line is over"},
 		{"empty body", events(), CategoryMalformed, "carried no message"},
 		{"JSON instead of a stream", raw(`{"type":"message"}`), CategoryMalformed, "not an event stream"},
 	}
@@ -138,6 +141,53 @@ func TestStreamAssemblesTheMessage(t *testing.T) {
 	if got := string(m.Content[1]); got != `{"id":"t","input":{"file_path":"a.go"},"name":"Read","type":"tool_use"}` {
 		t.Errorf("tool_use = %s", got)
 	}
+}
+
+// A response cut off at its output limit, or declined mid-response, can leave
+// a tool call's input incomplete or its block open. The stop reason decides:
+// the truncated call is not run and the model is asked to go on, and a
+// refusal stays a refusal; neither is a malformed response.
+func TestCutShortStreamsFollowTheStopReason(t *testing.T) {
+	submitStart := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"StructuredOutput","input":{}}}`
+	partial := `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"schema\":\"baum.rev"}}`
+	maxTokens := `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":32000}}`
+	notRun := func(t *testing.T, r sent) {
+		results := r.results(t)
+		if len(results) != 2 || !results[0].IsError || !strings.Contains(results[0].text(), "not run") {
+			t.Errorf("results = %+v", results)
+		}
+		// The truncated call goes back with an empty input.
+		if !strings.Contains(string(r.body.Messages[1].Content[0]), `"input":{}`) {
+			t.Errorf("replayed block = %s", r.body.Messages[1].Content[0])
+		}
+	}
+	for name, cut := range map[string]step{
+		"block left open":             events(messageStart, submitStart, partial, maxTokens, `{"type":"message_stop"}`),
+		"block closed, input invalid": events(messageStart, submitStart, partial, `{"type":"content_block_stop","index":0}`, maxTokens, `{"type":"message_stop"}`),
+		"no message_stop":             events(messageStart, submitStart, partial, maxTokens),
+	} {
+		t.Run("max_tokens, "+name, func(t *testing.T) {
+			s := newStub(t, cut, then(notRun, reply("tool_use", smallUsage, submit("t2", validDocument))))
+			result, err := s.backend().Run(context.Background(), request(runDir(t)))
+			if err != nil || result.Calls != 2 || result.Usage.Unreported || result.Usage.Output != 32000+5 || string(result.Document) != validDocument {
+				t.Fatalf("err %v calls %d usage %+v", err, result.Calls, result.Usage)
+			}
+		})
+	}
+	t.Run("refusal with an open block", func(t *testing.T) {
+		s := newStub(t, events(messageStart, `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":3}}`, `{"type":"message_stop"}`))
+		result, err := s.backend().Run(context.Background(), request(runDir(t)))
+		var rejected *agent.RejectedError
+		var named *Error
+		if !errors.As(err, &rejected) || !errors.As(err, &named) || named.Category != CategoryRefusal {
+			t.Fatalf("err = %v", err)
+		}
+		if len(s.requests()) != 1 || result.Calls != 1 || result.Usage.Unreported {
+			t.Errorf("requests %d calls %d usage %+v", len(s.requests()), result.Calls, result.Usage)
+		}
+	})
 }
 
 func TestOversizedStream(t *testing.T) {

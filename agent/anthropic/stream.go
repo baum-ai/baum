@@ -41,6 +41,9 @@ type streamBlock struct {
 	input   *strings.Builder
 	stopped bool
 	encoded json.RawMessage
+	// incomplete marks a block closed by the stop reason rather than by its
+	// own content_block_stop, or whose streamed tool input is not JSON.
+	incomplete bool
 }
 
 func (b *streamBlock) appendString(field, text string) {
@@ -56,8 +59,10 @@ func (b *streamBlock) appendString(field, text string) {
 }
 
 // encode is the finished block: its start fields with the streamed text and
-// input in place.
-func (b *streamBlock) encode() (json.RawMessage, error) {
+// input in place. Tool input that is not JSON, as a response cut off at its
+// output limit leaves it, becomes {} and marks the block incomplete; whether
+// that is allowed is decided by the stop reason at the end of the message.
+func (b *streamBlock) encode() json.RawMessage {
 	for field, builder := range b.strings {
 		encoded, _ := json.Marshal(builder.String())
 		b.fields[field] = encoded
@@ -68,11 +73,38 @@ func (b *streamBlock) encode() (json.RawMessage, error) {
 			input = "{}"
 		}
 		if !json.Valid([]byte(input)) {
-			return nil, errors.New("a tool call's streamed input is not JSON")
+			input, b.incomplete = "{}", true
 		}
 		b.fields["input"] = json.RawMessage(input)
 	}
-	return json.Marshal(b.fields)
+	encoded, _ := json.Marshal(b.fields)
+	return encoded
+}
+
+// cutShort reports a stop reason with which the model may leave its last
+// block incomplete: the output limit, or safeguards declining mid-response.
+func cutShort(reason string) bool { return reason == "max_tokens" || reason == "refusal" }
+
+// finish completes the message from its blocks. A block left open or with
+// tool input that is not JSON is accepted only when the stop reason says the
+// response was cut short; the caller then handles that reason.
+func finish(out *streamed, blocks []*streamBlock) error {
+	cut := cutShort(out.message.StopReason)
+	out.message.Content = nil
+	for _, b := range blocks {
+		if !b.stopped {
+			if !cut {
+				return malformed("the message stopped with a content block still open")
+			}
+			b.stopped, b.encoded, b.incomplete = true, b.encode(), true
+		}
+		if b.incomplete && !cut {
+			return malformed("a tool call's streamed input is not JSON")
+		}
+		out.message.Content = append(out.message.Content, b.encoded)
+	}
+	out.complete = true
+	return nil
 }
 
 // readStream reads a stream into a message. It stops at message_stop, at an
@@ -105,12 +137,20 @@ func readStream(body io.Reader, out *streamed) error {
 		// fields are ignored.
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return malformed(fmt.Sprintf("a stream line is over %d bytes", maxDocumentBytes))
+		}
 		return err
 	}
 	if data.Len() > 0 {
 		if done, err := applyEvent([]byte(data.String()), out, &blocks); err != nil || done {
 			return err
 		}
+	}
+	// A stream that ends after message_delta named a cut-short stop reason
+	// has delivered its final usage; the missing message_stop changes nothing.
+	if out.started && cutShort(out.message.StopReason) {
+		return finish(out, blocks)
 	}
 	return errStreamEnded
 }
@@ -202,11 +242,7 @@ func applyEvent(data []byte, out *streamed, blocks *[]*streamBlock) (done bool, 
 		if err != nil {
 			return false, err
 		}
-		encoded, err := b.encode()
-		if err != nil {
-			return false, malformed(err.Error())
-		}
-		b.stopped, b.encoded = true, encoded
+		b.stopped, b.encoded = true, b.encode()
 	case "message_delta":
 		var delta struct {
 			StopReason string `json:"stop_reason"`
@@ -219,14 +255,7 @@ func applyEvent(data []byte, out *streamed, blocks *[]*streamBlock) (done bool, 
 		}
 		out.message.Usage = mergeUsage(out.message.Usage, event.Usage)
 	case "message_stop":
-		for _, b := range *blocks {
-			if !b.stopped {
-				return false, malformed("the message stopped with a content block still open")
-			}
-			out.message.Content = append(out.message.Content, b.encoded)
-		}
-		out.complete = true
-		return true, nil
+		return true, finish(out, *blocks)
 	}
 	// Event types this backend does not know are skipped, as the protocol
 	// allows new ones.

@@ -296,7 +296,9 @@ Responses are streamed. Before the API answers, a rate limit (429), an
 overload (529), a server error, a failed connection or no response within two
 minutes is retried up to four times, honouring `retry-after`, and the waits
 count against `run_timeout`. Once a response has started it is never sent
-again: a stream that breaks, or is silent for two minutes, fails the attempt.
+again: a stream that breaks, or is silent for ten minutes, fails the attempt,
+is billed with unknown usage, and the run is tried again from the start
+within its provider attempts.
 A rejected key (401 or 403), a refused request, a declined prompt or a
 conversation over the model's context window fails the run at once, without
 the loop's provider retries, as `the model provider rejected the request:
