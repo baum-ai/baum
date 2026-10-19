@@ -12,8 +12,10 @@
 // Customer repositories keep these command strings in tracked files, so they
 // are frozen once they land: change what a hook *does* in the binary, not in
 // the string that invokes it. The strings run baum only when `baum hooks agent
-// --check` succeeds, which it does only for a user who opted in to the hosted
-// service; everyone else runs Entire directly, as if baum were not installed.
+// --check` succeeds, which it does only where the hosted service was opted in
+// to: a login, a repository whose committed settings carry these strings, or a
+// set-up clone. Everyone else runs Entire directly, as if baum were not
+// installed.
 package agenthooks
 
 import (
@@ -355,6 +357,32 @@ func isJSONSpace(c byte) bool {
 // one hook command baum recognises. Presence of the file is not enough:
 // a repository's own `.cursor/hooks.json` is not a set-up agent.
 func ContainsOwnedCommand(contents []byte) bool {
+	return anyCommand(contents, func(command string) bool {
+		_, _, owned := OwnedCommand(command)
+		return owned
+	})
+}
+
+// ContainsDispatcher reports whether a settings file carries at least one
+// command that dispatches through baum, as the onboarding pull request and
+// `baum setup` write it. Entire's own command and the pre-rename dispatcher do
+// not count: neither runs baum.
+func ContainsDispatcher(contents []byte) bool {
+	return anyCommand(contents, func(command string) bool {
+		for _, spec := range specs {
+			for _, event := range spec.Events {
+				if strings.HasPrefix(command, baumPrefix(spec, event)) {
+					return true
+				}
+			}
+		}
+		return false
+	})
+}
+
+// anyCommand reports whether accept accepts any "command" string in a JSON
+// settings file. A string it cannot decode ends the scan with false.
+func anyCommand(contents []byte, accept func(string) bool) bool {
 	offset := 0
 	for offset < len(contents) {
 		match := commandField.FindIndex(contents[offset:])
@@ -370,7 +398,7 @@ func ContainsOwnedCommand(contents []byte) bool {
 		if err := json.Unmarshal(contents[start:end], &command); err != nil {
 			return false
 		}
-		if _, _, owned := OwnedCommand(command); owned {
+		if accept(command) {
 			return true
 		}
 		offset = end

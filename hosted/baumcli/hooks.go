@@ -1,6 +1,8 @@
 package baumcli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,9 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/baum-ai/baum/hosted/agenthooks"
 )
 
 var entireGitHookArgumentCounts = map[string]int{
@@ -139,18 +144,25 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-// errHostedHooksOff is the `--check` answer on a machine that has not opted
-// in to the hosted service. The dispatchers committed to repositories and
+// errHostedHooksOff is the `--check` answer where the user has not opted in
+// to the hosted service. The dispatchers committed to repositories and
 // installed as Git hooks run baum only when `--check` succeeds, and otherwise
 // run Entire directly, so an open-source user's hooks behave as if baum were
 // not installed.
-var errHostedHooksOff = errors.New("hosted hooks are off: run `baum login`, or `baum setup` in this clone")
+var errHostedHooksOff = errors.New("hosted hooks are off here: the repository's committed agent hooks do not dispatch through baum; run `baum login` or `baum setup` to opt in")
 
 // hostedHooksEnabled reports whether the hooks of the clone containing dir
-// should run through baum: the user is logged in (BAUM_TOKEN or stored
-// credentials, for any server), or this clone was set up for the hosted
-// service by `baum setup` or a hook bootstrap, which leave a marker in its Git
-// directory. It reads only local files and never contacts a server.
+// should run through baum. They do when the user is logged in (BAUM_TOKEN or
+// stored credentials, for any server); when this clone was set up by
+// `baum setup` or bootstrapped, which leaves a marker in its Git directory;
+// or when the repository is onboarded: an agent settings file committed at
+// HEAD carries baum's dispatcher, as the onboarding pull request and
+// `baum setup` write it. The last two only let the hooks install Entire and
+// the Git hook dispatchers and delegate to Entire; nothing a hook does
+// contacts a baum server, and every command that does still needs a login.
+// The repository is judged by its committed files, not by a hook having run,
+// so a hook configured outside the repository falls through to Entire in a
+// repository that was never onboarded. It reads only local state.
 func hostedHooksEnabled(ctx context.Context, dir string) error {
 	if os.Getenv(tokenEnvVar) != "" {
 		return nil
@@ -158,25 +170,69 @@ func hostedHooksEnabled(ctx context.Context, dir string) error {
 	if creds, ok, err := loadCredentials(); err == nil && ok && creds.Token != "" {
 		return nil
 	}
-	if hostedClone(ctx, dir) {
+	if hostedClone(ctx, dir) || onboardedRepository(ctx, dir) {
 		return nil
 	}
 	return errHostedHooksOff
 }
 
 // hostedClone reports whether the clone containing dir carries the marker of
-// a hosted `baum setup` or of a hook bootstrap.
+// a `baum setup` or of a hook bootstrap, in the worktree's own Git directory
+// or in the common one, so every linked worktree of a set-up clone counts.
 func hostedClone(ctx context.Context, dir string) bool {
-	marker, err := repositorySetupMarker(ctx, dir)
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	output, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	for _, path := range []string{marker, filepath.Join(filepath.Dir(marker), bootstrapMarkerName)} {
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-			return true
+	for _, gitDir := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		for _, name := range []string{setupMarkerName, bootstrapMarkerName} {
+			info, err := os.Stat(filepath.Join(gitDir, "baum", name))
+			if err == nil && info.Mode().IsRegular() {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// onboardedRepository reports whether an agent settings file committed at
+// HEAD in the repository containing dir carries baum's dispatcher. One git
+// process reads every settings file, missing ones included.
+func onboardedRepository(ctx context.Context, dir string) bool {
+	var request strings.Builder
+	for _, spec := range agenthooks.All() {
+		request.WriteString("HEAD:" + spec.SettingsFile + "\n")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "--batch")
+	cmd.Stdin = strings.NewReader(request.String())
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	reader := bufio.NewReader(bytes.NewReader(output))
+	for {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			return false
+		}
+		// <oid> <type> <size>, or <object> missing.
+		fields := strings.Fields(header)
+		if len(fields) != 3 {
+			continue
+		}
+		size, err := strconv.Atoi(fields[2])
+		if err != nil || size < 0 {
+			return false
+		}
+		contents := make([]byte, size+1)
+		if _, err := io.ReadFull(reader, contents); err != nil {
+			return false
+		}
+		if fields[1] == "blob" && agenthooks.ContainsDispatcher(contents[:size]) {
+			return true
+		}
+	}
 }
 
 func entireGitHookArgs(args []string) ([]string, bool) {

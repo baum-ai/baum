@@ -19,14 +19,30 @@ handshake, in [`apiclient`](../apiclient).
 - The hook dispatchers committed to customer repositories and installed as Git
   hooks run `baum hooks agent --check` (`baum hooks git --check`) and use baum
   only when it succeeds, falling through to Entire otherwise. `--check`
-  succeeds for a known agent event or Git hook only when the user opted in:
-  logged in (a stored token for any server, or `BAUM_TOKEN`), or this clone
-  carries the marker of a `baum setup` (`.git/baum/setup-complete`) or of a
-  hook bootstrap (`.git/baum/bootstrap-ok`). It reads only local files. So
-  for an open-source user who never logged in or set the clone up, the
-  committed hooks run Entire directly and baum does nothing, not even the
-  session-start bootstrap; a hosted user's clone set up before this rule keeps
-  working through its markers.
+  succeeds for a known agent event or Git hook only where the hosted service
+  was opted in to, by any of:
+  - a login: a stored token for any server, or `BAUM_TOKEN`;
+  - the repository is onboarded: an agent settings file committed at `HEAD`
+    (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`)
+    carries baum's dispatcher, as the onboarding pull request and `baum setup`
+    write it. Entire's own command or settings that are not committed do not
+    count, so a hook configured outside the repository still falls through in
+    a repository that was never onboarded;
+  - the clone carries the marker of a `baum setup` (`setup-complete`) or of a
+    hook bootstrap (`bootstrap-ok`) in `.git/baum`, of its worktree or of the
+    main one, so linked worktrees of a set-up clone count.
+- `--check` reads only local files. An onboarded repository or a marker lets
+  the hooks do only local work: the session-start bootstrap (installing the
+  pinned Entire and the Git hook dispatchers) and delegating to Entire. That
+  keeps the onboarding promise for a teammate who installed baum but never
+  logged in. Nothing a hook does contacts a baum server; uploads and every
+  other server request need a login in every case.
+- For an open-source user who never logged in, in a repository nobody
+  onboarded or set up, the hooks run Entire directly and baum does nothing,
+  not even the bootstrap.
+- `logout` removes the stored token but leaves the markers in `.git/baum`, so
+  a set-up clone's hooks keep running through baum; without a login they still
+  reach no baum server.
 
 ## Compatibility
 

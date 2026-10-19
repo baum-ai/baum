@@ -75,9 +75,19 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   checked against a SHA-256 built into the binary, and installs Entire's
   hooks and baum's in the repository.
 - Agent and Git hooks contact no baum server. The hook commands committed to
-  repositories run baum only for a user who opted in: logged in, or in a clone
-  set up with `baum setup`. Otherwise they run Entire directly, and baum does
-  nothing at all.
+  repositories run baum only for a logged-in user, in a repository whose
+  committed agent hook settings dispatch through baum (as the hosted service's
+  onboarding pull request and `baum setup` write them), or in a clone set up
+  with `baum setup`. There a hook may install the pinned Entire release from
+  GitHub and the clone's Git hook dispatchers, then hands the event to Entire.
+  Everywhere else the hooks run Entire directly, and baum does nothing at all.
+  Uploading, or anything else that contacts a baum server, needs `baum login`
+  in every case.
+- `baum logout` revokes and removes the stored token but leaves the markers
+  `baum setup` and the hook bootstrap write in a clone's `.git/baum`
+  directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep
+  running through baum for that local work; without a login they send
+  nothing to a baum server.
 
 ## What `baum doctor` runs and prints
 

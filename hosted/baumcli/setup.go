@@ -599,11 +599,19 @@ func markRepositorySetupComplete(ctx context.Context, root string) error {
 	return nil
 }
 
+// setupMarkerName is the file in the repository's .git/baum directory saying
+// setup configured its hooks.
+const setupMarkerName = "setup-complete"
+
+// repositorySetupMarker is the setup marker of the checkout containing root,
+// in that worktree's own Git directory: setup tracks each worktree apart. The
+// hook opt-in also reads the main worktree's marker from the common Git
+// directory, so linked worktrees of a set-up clone are opted in too.
 func repositorySetupMarker(ctx context.Context, root string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--path-format=absolute", "--git-dir")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", commandError(cmd, err)
 	}
-	return filepath.Join(filepath.Clean(string(bytes.TrimSpace(output))), "baum", "setup-complete"), nil
+	return filepath.Join(filepath.Clean(string(bytes.TrimSpace(output))), "baum", setupMarkerName), nil
 }
