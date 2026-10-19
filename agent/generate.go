@@ -238,7 +238,10 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		if request.Logger != nil {
 			request.Logger.ErrorContext(ctx, "review agent failed", "provider_attempt", attempt+1, "error", err, "status", LastErrorStatus(result.Events))
 		}
-		if strings.HasPrefix(err.Error(), GenerationBudgetExceededReason("")) {
+		// A spent budget and a refusal a retry cannot change end the run with
+		// their own reason.
+		var rejected *RejectedError
+		if strings.HasPrefix(err.Error(), GenerationBudgetExceededReason("")) || errors.As(err, &rejected) {
 			return result, err
 		}
 		if attempt+1 < budgets.MaxProviderAttempts {

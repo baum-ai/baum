@@ -210,14 +210,17 @@ func TestExplicitCodexPathPointingAtAMissingFile(t *testing.T) {
 }
 
 func TestConfiguredBackendThatIsNotAvailableHasADirectFix(t *testing.T) {
-	for _, backend := range []string{"anthropic", "cursor-agent"} {
+	for backend, wants := range map[string][]string{
+		"cursor-agent": {"not available in this version", `backend = "auto", "claude", "codex" or "anthropic"`, "config.toml"},
+		"anthropic":    {"export ANTHROPIC_API_KEY", `backend = "auto", "claude" or "codex"`, "config.toml"},
+	} {
 		t.Run(backend, func(t *testing.T) {
 			m := newMachine(t)
 			m.git()
 			t.Setenv("BAUM_BACKEND", backend)
 			c := find(t, run(t, Options{}), "backend-configured")
 			wantStatus(t, c, StatusProblem)
-			wantContains(t, "fix", c.Fix, "not available in this version", `backend = "auto", "claude" or "codex"`, "config.toml")
+			wantContains(t, "fix", c.Fix, wants...)
 			if strings.Contains(c.Fix, "check above") {
 				t.Errorf("fix points at a check that does not exist: %q", c.Fix)
 			}
@@ -436,7 +439,7 @@ func TestAnUnknownBackendNameInTheFileGetsADirectFix(t *testing.T) {
 	report := run(t, Options{})
 	c := find(t, report, "backend-configured")
 	wantStatus(t, c, StatusProblem)
-	wantContains(t, "fix", c.Fix, "unknown backend bogus", `set backend = "auto", "claude" or "codex"`, cfgPath)
+	wantContains(t, "fix", c.Fix, "unknown backend bogus", `set backend = "auto", "claude", "codex" or "anthropic"`, cfgPath)
 	if strings.Contains(c.Fix, "check above") || strings.Contains(c.Detail, "cannot run") {
 		t.Errorf("an unknown name was treated as a backend that failed a check: %+v", c)
 	}

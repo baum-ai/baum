@@ -209,7 +209,10 @@ backoff, `sources` and the mapping onto the bundle.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
-  A previous section's code excerpt lines are redacted as one text too.
+  The per-hunk line cap cuts after redaction: parsing keeps 16 KiB past
+  the cap, so a key the cut runs through is masked whole, as it would be in
+  the full patch. A previous section's code excerpt lines are redacted as
+  one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
@@ -347,9 +350,11 @@ address the redactor wrote, is no finding. A value longer than its schema's
 identifiers and categories) cannot be valid; a value whose schema sets no
 `maxLength`, such as a SHA, hunk ID or date-time, may be valid at any length,
 and one with more than 16 runs fits none of those patterns. Either is scanned
-whole and from its first 16 runs, then masked whole, and counts only if a
-secret was found in it, so the scan stays linear in the document's size and a
-harmless value never fails the run on its own.
+whole and from every run, past its first 16 runs a 256-byte window at a time,
+each distinct window of the value once and at most 256 KiB of such windows
+per value and 1 MiB per document, then masked whole, and counts only if a
+secret was found in it, so the scan stays linear in the document's size and
+a harmless value never fails the run on its own.
 
 Normalisation respells every identifier, category and tile-local name the
 model writes in lowercase with one underscore for each run of other
@@ -365,12 +370,21 @@ the respelling of each secret found and counted in an identifier, taken per
 finding and again widened to the words of that identifier it lies in, is a
 source when at most 128 bytes long, and every identifier whose respelling
 holds a source as whole words (from an underscore or its start to an
-underscore or its end) is masked whole and counted. A source exists only
+underscore or its end) is masked whole and counted. A rule may take a key
+together with its context: a URL's host or an address's domain
+(`KEY@db.example.com`), or a hyphenated tail (`sk-ant-…-prod-east`). So each
+part of such a finding before its last `@`, split at `:` and `/`, is a source
+too, which matches a password no rule detects alone without its host, and the
+finding's parts are scanned again: of the finding and of each key found in a
+part, the shortest prefix ending before a run of separators that a rule other
+than the e-mail rule still detects whole is a source. A source exists only
 once a finding has failed the run, so a harmless identifier is masked this
-way only in a run that fails already. Free text is neither
-scanned nor masked by `Identifiers`; `Document` masks it after `Prepare`. The
-order is `Identifiers`, `Prepare`, `Document` on what `Prepare` returned, with
-one redactor, then the `MaskedClosed` check. Text scattered across unrelated
+way only in a run that fails already. Free text is not scanned for secrets by
+`Identifiers`, and `Document` masks it after `Prepare`; but `Identifiers`
+masks the words of free text whose respelling is a source, such as the
+secret repeated upper-cased or respelled in prose, counted in `Masked` only.
+The order is `Identifiers`, `Prepare`, `Document` on what `Prepare`
+returned, with one redactor, then the `MaskedClosed` check. Text scattered across unrelated
 fields, a token wrapped mid-value, or a secret no rule detects on its own,
 such as a bare hex string, which reads as a SHA, is not caught. If redaction
 fails, the text is dropped rather than kept.
@@ -379,16 +393,20 @@ Known limits of the identifier pass:
 
 - A secret found only in free text is masked there, but an identifier that
   holds it in a spelling no rule detects is not matched to it.
-- A key the redactor finds as part of a larger span, a URL with credentials,
-  an e-mail address or a greedy hyphenated tail, is a source only as that
-  whole span, so another spelling of the key alone is not matched.
-- In an identifier over its bound, a key past the first 16 runs of
-  separators, behind an underscore, is masked with the rest of the value but
-  not found, so it is neither counted nor a source.
-- Free text that repeats an identifier's secret in another spelling is left
-  to `Document`, which finds it only if a rule detects that spelling.
+- Context is trimmed from a key only where a rule detects the key alone, or
+  where it is the host after a credential's `@`; a secret no rule detects
+  alone, found with a tail or a prefix (a keyword rule's value), is a source
+  only as found.
+- In a value over its bound, a secret past its first 16 runs of separators
+  that is longer than its 256-byte window, or lies past the value's or the
+  document's window budget, is masked with the rest of the value but not
+  found, so it is neither counted nor a source.
+- Sources, and the findings trimmed into more, are capped at 64 KiB each per
+  document; in a run with more, which fails already, other spellings of the
+  secrets left out may stay in the rejected document.
 - Matching is by whole words, so a key glued without a separator to letters
-  or digits in another identifier (`xakia…`) is not matched there.
+  or digits in another identifier or in free text (`xakia…`) is not matched
+  there.
 
 ### Tiles
 
@@ -421,7 +439,7 @@ stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
-| `anthropic` | planned: the Anthropic API directly, with read-only file tools over the checkout |
+| `anthropic` | the Anthropic Messages API directly, with read-only file tools over the run directory, submitting through a `StructuredOutput` tool (`agent/anthropic`) |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
 | `cursor-agent` | planned: `cursor-agent` confined to the checkout |
@@ -460,6 +478,59 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 `Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
+
+`agent/anthropic` is not a CLI: baum runs the model call loop itself, over
+`net/http` rather than the official SDK (one endpoint, retries that must count
+against the run's deadline, and no new dependency in this published module).
+Each call sends the system prompt, four tools in a fixed order (`Read`, `Glob`,
+`Grep`, and `StructuredOutput`, whose input schema is the request's schema),
+the prompt as the first user message with a cache breakpoint after it, and
+top-level automatic caching for the growing conversation, both with the
+5-minute TTL. Each call is streamed (server-sent events read with the
+standard library) and the message is assembled from its events; assistant
+turns, thinking blocks and their signatures included, are sent back with the
+content the stream delivered. The tools are confined to the run directory through an `os.Root`
+(absolute paths, `..` elements and escaping links are refused; listing and
+searching never follow a link) and bounded in file size, matches, images and
+output bytes; globs are matched by dynamic programming with at most eight
+`**` segments, so a pattern cannot make a walk run long. A `StructuredOutput` input that does not match the schema goes back to
+the model as a tool error and counts as a structured output rejection; a turn
+that ends without one is nudged twice before the run fails. The key and base
+URL come from the request's `Endpoint`, else the `Backend`'s own (the local
+host sets the key from `ANTHROPIC_API_KEY`). The default model is
+`claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+
+Every request sent is one call, charged before the next is made: a call the
+request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
+`max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
+per-call report in disjoint buckets (message_start's, updated by
+message_delta's cumulative counts), with the 1-hour share of cache writes
+(zero when unreported, since only the 5-minute TTL is requested), the speed
+(standard unless reported) and each call's prompt size, so `Accounting` prices
+it per call. A request that was sent without a complete, usable response marks
+the usage `Unreported`. Before any response, 429, 529, other 5xx and 408
+responses, failed connections and a response that does not start within two
+minutes are retried four times, honouring `retry-after` (at most a minute) or
+backing off exponentially, and a wait that would outlast the context's
+deadline ends the call instead. Once a 200 response has started it is never
+retried: a stream that ends early, carries an error event or is silent for
+ten minutes (the SDKs' read timeout; a healthy stream can be silent for
+minutes while the API buffers a tool input or the model thinks without
+displaying it) fails the call. Such a call is billed with unknown usage, so
+the run's cost becomes unknown, and the generate-and-repair loop then retries
+the whole run within `MaxProviderAttempts`, sending the conversation again.
+A tool input or block a `max_tokens` or `refusal` stop leaves incomplete is
+not malformed: the stop reason decides, so a truncated call is answered as not
+run and a refusal stays a refusal; an incomplete one under any other stop
+reason, or a stream line over 8 MiB, is `malformed_response`. Failures are an `*anthropic.Error` with a fixed
+`Category` (`authentication_error`, `rate_limit`, `provider_overloaded`,
+`provider_error`, `transport_error`, `invalid_request`, `malformed_response`,
+`refusal`, `context_window_exceeded`, `no_document`), which is also the status
+of the run's error event; a spent budget is the loop's budget reason. The
+first, `invalid_request`, `refusal` and `context_window_exceeded` come wrapped
+in an `agent.RejectedError`, which the generate-and-repair loop does not retry
+and whose text starts with `agent.ProviderRejectedReason(status)`. No error
+text, event or log line holds the key.
 
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
@@ -537,7 +608,9 @@ identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
 (instructions, tile guidance, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
-`1<<min(n,4)` seconds).
+`1<<min(n,4)` seconds), except a spent budget and an `agent.RejectedError` (a
+rejected key, a refused request, a declined prompt, a conversation over the
+context window), which end the run with their own reason.
 
 A stall watchdog bounds each attempt when the budgets set `StallTimeout` or
 `ToolTimeout` (zero disables each). Backends report to the request's
@@ -1157,13 +1230,14 @@ context ends the event streams and shuts the server down.
 repository/PR version, and passes `review.PreviousVersionOf` into
 `assemble.Request.Previous`. After resolving the pull request and recording its
 run, it selects and checks the backend before assembling (`claude.Backend.Check`,
-`codex.Backend.Check`; `auto`
-tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
+`codex.Backend.Check`, `anthropic.Backend.Check`, which only needs the key;
+`auto` tries `generate.AutoOrder`: claude, then codex, then anthropic), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
 bundle's own caps, and runs `agent.Generator` with the `claude.User` or
-`codex.Local` profile, never `Isolated` or `Container` (a test guards this). The
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this), or
+with `anthropic.Backend` and the key from `ANTHROPIC_API_KEY`. The
 wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
@@ -1233,7 +1307,8 @@ over the same `bundle` functions with the sources above behind small
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, the diff index, commit
 changes, sessions, references, attachments, `REVIEW.md` at the base commit,
-the checkout export, then caps, redaction, byte trimming and the digest. Sessions
+the checkout export, then caps, redaction, the per-hunk line cap, byte
+trimming and the digest. Sessions
 follow the comparison because they need its merge base. Command targets are
 first checked by `locallink` and then, as the hosted builder does, by
 `bundle.KeepKnownCommandTargets` against the diff's paths, so a target a
