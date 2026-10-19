@@ -180,16 +180,22 @@ var errHostedHooksOff = errors.New("hosted hooks are off here: run `baum login`,
 // repository falls through to Entire in a repository never onboarded. Only
 // local state is read.
 func hostedHooksEnabled(ctx context.Context, dir string) error {
-	if os.Getenv(tokenEnvVar) != "" {
-		return nil
-	}
-	if creds, ok, err := loadCredentials(); err == nil && ok && creds.Token != "" {
+	if loggedIn() {
 		return nil
 	}
 	if hostedClone(ctx, dir) || (hostedInstall() && onboardedRepository(ctx, dir)) {
 		return nil
 	}
 	return errHostedHooksOff
+}
+
+// loggedIn reports a login for any server: BAUM_TOKEN or a stored token.
+func loggedIn() bool {
+	if os.Getenv(tokenEnvVar) != "" {
+		return true
+	}
+	creds, ok, err := loadCredentials()
+	return err == nil && ok && creds.Token != ""
 }
 
 // hostedClone reports whether the clone containing dir carries the marker of

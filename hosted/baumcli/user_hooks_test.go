@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -155,6 +156,11 @@ func TestUserHooksDoNotReportAnEventTwice(t *testing.T) {
 			} else {
 				writeAgentSettings(t, world.repo, tc.file, settings)
 			}
+			if tc.spec.Slug == "codex" {
+				// Codex runs a project hook only in a trusted project, once the
+				// user trusted the hook.
+				trustCodex(t, world.repo, filepath.Join(world.repo, filepath.FromSlash(tc.file))+":stop:0:0")
+			}
 			dir := world.repo
 			if tc.subdir {
 				dir = filepath.Join(world.repo, "src", "pkg")
@@ -185,6 +191,168 @@ func TestUserHooksDoNotReportAnEventTwice(t *testing.T) {
 	}
 }
 
+// trustCodex writes the user's Codex configuration: project trusted, and
+// each hook key ("<file>:<event>:<group>:<handler>") trusted. An empty
+// project trusts none.
+func trustCodex(t *testing.T, project string, hooks ...string) {
+	t.Helper()
+	var config strings.Builder
+	if project != "" {
+		config.WriteString("[projects." + strconv.Quote(project) + "]\ntrust_level = \"trusted\"\n\n")
+	}
+	for _, key := range hooks {
+		config.WriteString("[hooks.state." + strconv.Quote(key) + "]\ntrusted_hash = \"sha256:test\"\n\n")
+	}
+	writeAgentSettings(t, os.Getenv("HOME"), ".codex/config.toml", config.String())
+}
+
+// expectUserHook runs the user-wide stop hook and checks whether it handed the
+// event to Entire through baum.
+func (w hookWorld) expectUserHook(t *testing.T, spec agenthooks.Spec, runs bool) {
+	t.Helper()
+	w.runUserDispatcher(t, w.repo, spec, "stop")
+	baum, entire := w.logs(t)
+	ran := len(baum) == 2 && baum[1] == "hooks agent "+spec.Slug+" stop"
+	if ran != runs || len(entire) != map[bool]int{true: 1, false: 0}[runs] {
+		t.Errorf("user-wide %s stop hook: baum calls = %q, entire calls = %q, want it to run: %v", spec.Slug, baum, entire, runs)
+	}
+}
+
+// Codex loads a project's hooks only in a trusted project and runs each only
+// once the user trusted it, so the user-wide hook yields to a project hook
+// only then; otherwise the event would reach nobody.
+func TestUserHooksYieldToCodexProjectHooksOnlyWhenCodexRunsThem(t *testing.T) {
+	codex, _ := agenthooks.Lookup("codex")
+	for name, tc := range map[string]struct {
+		project bool
+		hook    string
+		runs    bool
+	}{
+		"no Codex configuration":        {runs: true},
+		"project not trusted":           {hook: ".codex/hooks.json:stop:0:0", runs: true},
+		"hook not trusted":              {project: true, runs: true},
+		"another hook trusted":          {project: true, hook: ".codex/hooks.json:stop:0:1", runs: true},
+		"project and hook both trusted": {project: true, hook: ".codex/hooks.json:stop:0:0", runs: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			commitEntireSettings(t, world.repo)
+			t.Setenv(tokenEnvVar, "provisioned")
+			settings := strings.Replace(claudeSettings(t, agenthooks.Dispatcher(codex, "stop")), "SessionStart", "Stop", 1)
+			commitFile(t, world.repo, ".codex/hooks.json", settings)
+			project, hooks := "", []string{}
+			if tc.project {
+				project = world.repo
+			}
+			if tc.hook != "" {
+				hooks = append(hooks, filepath.Join(world.repo, tc.hook))
+			}
+			trustCodex(t, project, hooks...)
+			world.expectUserHook(t, codex, tc.runs)
+		})
+	}
+}
+
+// Hooks outside the repository that hand the event to Entire count too: the
+// user's own, managed policy and Codex's system configuration.
+func TestUserHooksYieldToEntireHooksOutsideTheRepository(t *testing.T) {
+	claude, _ := agenthooks.Lookup("claude-code")
+	codex, _ := agenthooks.Lookup("codex")
+	claudeStop := strings.Replace(claudeSettings(t, agenthooks.EntireCommand(claude, "stop")), "SessionStart", "Stop", 1)
+	codexStop := strings.Replace(claudeSettings(t, agenthooks.EntireCommand(codex, "stop")), "SessionStart", "Stop", 1)
+	codexInline := "[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = '''" + agenthooks.EntireCommand(codex, "stop") + "'''\n"
+	for name, tc := range map[string]struct {
+		spec       agenthooks.Spec
+		place      func(t *testing.T, home, managed, system string)
+		yieldsStop bool
+	}{
+		"~/.claude/settings.json": {spec: claude, place: func(t *testing.T, home, _, _ string) {
+			writeAgentSettings(t, home, ".claude/settings.json", claudeStop)
+		}},
+		"managed-settings.json": {spec: claude, place: func(t *testing.T, _, managed, _ string) {
+			writeAgentSettings(t, managed, "managed-settings.json", claudeStop)
+		}},
+		"managed-settings.d": {spec: claude, place: func(t *testing.T, _, managed, _ string) {
+			writeAgentSettings(t, managed, "managed-settings.d/50-entire.json", claudeStop)
+		}},
+		"~/.codex/config.toml inline hooks": {spec: codex, place: func(t *testing.T, home, _, _ string) {
+			writeAgentSettings(t, home, ".codex/config.toml", codexInline)
+		}},
+		"~/.codex/hooks.json": {spec: codex, place: func(t *testing.T, home, _, _ string) {
+			writeAgentSettings(t, home, ".codex/hooks.json", codexStop)
+		}},
+		"/etc/codex/requirements.toml": {spec: codex, place: func(t *testing.T, _, _, system string) {
+			writeAgentSettings(t, system, "requirements.toml", codexInline)
+		}},
+		"/etc/codex/hooks.json": {spec: codex, place: func(t *testing.T, _, _, system string) {
+			writeAgentSettings(t, system, "hooks.json", codexStop)
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			commitEntireSettings(t, world.repo)
+			t.Setenv(tokenEnvVar, "provisioned")
+			managed, system := t.TempDir(), t.TempDir()
+			t.Setenv(testClaudeManagedDirEnv, managed)
+			t.Setenv(testCodexSystemDirEnv, system)
+			tc.place(t, os.Getenv("HOME"), managed, system)
+			world.expectUserHook(t, tc.spec, false)
+			// Another event still arrives.
+			world.runUserDispatcher(t, world.repo, tc.spec, "session-end")
+			if _, entire := world.logs(t); len(entire) != 1 {
+				t.Errorf("session-end: entire calls = %q", entire)
+			}
+		})
+	}
+}
+
+// The gate reads Entire's settings as Entire does: "enabled": false turns it
+// off, the local file's key wins, and an unreadable file turns it off.
+func TestUserHooksFollowEntiresEnabledSetting(t *testing.T) {
+	claude, _ := agenthooks.Lookup("claude-code")
+	for name, tc := range map[string]struct {
+		settings, local string
+		runs            bool
+	}{
+		"no enabled key":         {settings: `{}`, runs: true},
+		"enabled false":          {settings: `{"enabled": false}`},
+		"local turns it on":      {settings: `{"enabled": false}`, local: `{"enabled": true}`, runs: true},
+		"local turns it off":     {settings: `{"enabled": true}`, local: `{"enabled": false}`},
+		"local without the key":  {settings: `{"enabled": false}`, local: `{}`},
+		"only local settings":    {local: `{"enabled": true}`, runs: true},
+		"settings not JSON":      {settings: `{"enabled":`},
+		"local settings not JSON": {settings: `{"enabled": true}`, local: `{`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			t.Setenv(tokenEnvVar, "provisioned")
+			if tc.settings != "" {
+				writeAgentSettings(t, world.repo, ".entire/settings.json", tc.settings)
+			}
+			if tc.local != "" {
+				writeAgentSettings(t, world.repo, ".entire/settings.local.json", tc.local)
+			}
+			world.expectUserHook(t, claude, tc.runs)
+		})
+	}
+}
+
+func TestHooksUninstallWarnsAboutCodexHooksItMoves(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codex, _ := agenthooks.Lookup("codex")
+	ours := strings.Replace(claudeSettings(t, agenthooks.UserDispatcher(codex, "stop")), "SessionStart", "Stop", 1)
+	ours = strings.Replace(ours, `]}]}}`, `]},{"hooks":[{"type":"command","command":"./mine.sh"}]}]}}`, 1)
+	writeAgentSettings(t, home, ".codex/hooks.json", ours)
+	_, stderr, err := runCLI(t, "hooks", "uninstall", "--user", "--agent", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "/hooks") || !strings.Contains(stderr, "  Stop: ./mine.sh\n") {
+		t.Errorf("stderr = %q, want a warning naming the moved hook", stderr)
+	}
+}
+
 func TestHooksInstallAndUninstallUser(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -201,7 +369,7 @@ func TestHooksInstallAndUninstallUser(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Installed baum's Claude Code hooks in ~/.claude/settings.json.",
-		"Previous file saved as ~/.claude/settings.json.baum-backup.",
+		"Previous file saved as ~/.local/state/baum/backups/claude-code-settings.json.",
 		"Installed baum's Codex hooks in ~/.codex/hooks.json.",
 		"/hooks",
 	} {
@@ -227,7 +395,7 @@ func TestHooksInstallAndUninstallUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout, "Removed baum's Claude Code hooks from ~/.claude/settings.json.") ||
-		!strings.Contains(stdout, "Removed baum's Codex hooks from ~/.codex/hooks.json.") {
+		!strings.Contains(stdout, "Removed baum's Codex hooks and ~/.codex/hooks.json, which baum had created.") {
 		t.Errorf("uninstall output:\n%s", stdout)
 	}
 	if got := readHookTestFile(t, settingsPath); got != original {
@@ -259,33 +427,53 @@ func TestHooksInstallRefusesMalformedSettings(t *testing.T) {
 	}
 }
 
-func TestSetupInstallsUserHooksUnlessSkipped(t *testing.T) {
-	for _, skip := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default", true: "skipped"}[skip], func(t *testing.T) {
+// Setup installs the user-wide hooks where they add something today, for a
+// hosted install or a logged-in user, and names the files in the --all plan;
+// an open-source user without a login gets none.
+func TestSetupInstallsUserHooksOnlyForHostedUsers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		hosted, login, skip bool
+		installs            bool
+	}{
+		"open source":            {},
+		"open source, logged in": {login: true, installs: true},
+		"hosted install":         {hosted: true, installs: true},
+		"hosted, skipped":        {hosted: true, skip: true},
+	} {
+		t.Run(name, func(t *testing.T) {
 			stub := workingEntire(t)
 			addStubAgent(t, stub.dir, "codex")
 			setTempConfigHome(t)
 			t.Setenv(serverEnvVar, failingServer(t))
-			repo := newGitHubRepo(t, t.TempDir(), "demo")
-			t.Chdir(repo)
-			args := []string{"setup"}
-			if skip {
+			if tc.login {
+				t.Setenv(tokenEnvVar, "provisioned")
+			}
+			if tc.hosted {
+				original := distribution
+				distribution = hostedDistribution
+				t.Cleanup(func() { distribution = original })
+			}
+			parent := t.TempDir()
+			newGitHubRepo(t, parent, "demo")
+			t.Chdir(parent)
+			args := []string{"setup", "--all", "--yes"}
+			if tc.skip {
 				args = append(args, "--skip-user-hooks")
 			}
-			if _, _, err := runCLI(t, args...); err != nil {
+			stdout, _, err := runCLI(t, args...)
+			if err != nil {
 				t.Fatal(err)
+			}
+			planned := strings.Contains(stdout, "Setup also adds baum's user-wide hooks to ~/.claude/settings.json and ~/.codex/hooks.json")
+			if planned != tc.installs {
+				t.Errorf("plan names the user-wide files: %v, want %v\n%s", planned, tc.installs, stdout)
 			}
 			home := os.Getenv("HOME")
 			for _, file := range []string{".claude/settings.json", ".codex/hooks.json"} {
 				contents, err := os.ReadFile(filepath.Join(home, file))
-				if skip {
-					if !os.IsNotExist(err) {
-						t.Errorf("%s was written with --skip-user-hooks", file)
-					}
-					continue
-				}
-				if err != nil || !strings.Contains(string(contents), "--check --user") {
-					t.Errorf("%s: %v\n%s", file, err, contents)
+				installed := err == nil && strings.Contains(string(contents), "--check --user")
+				if installed != tc.installs {
+					t.Errorf("%s installed: %v, want %v (%v)", file, installed, tc.installs, err)
 				}
 			}
 		})

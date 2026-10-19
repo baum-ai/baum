@@ -78,7 +78,7 @@ locally recorded agent sessions. Both need credentials: run baum login first.`,
 				yes: yes, skipEntire: skipEntire, sync: syncRepo, upload: upload,
 				previousPaths: previousPaths,
 			}
-			if !skipEntire && !skipUserHooks {
+			if !skipEntire && !skipUserHooks && setupInstallsUserHooks() {
 				opts.userHooks = &userHooksStep{}
 			}
 			if all {
@@ -372,6 +372,9 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 	if ready == 0 {
 		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
 		return nil
+	}
+	if opts.userHooks != nil {
+		writeUserHooksPlan(stdout)
 	}
 	if !opts.yes {
 		confirmed, confirmErr := confirmUpload(in, stdout)

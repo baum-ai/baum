@@ -78,6 +78,24 @@ func Uninstall(home, agent string) (Result, error) {
 	return update(home, agent, false)
 }
 
+// Pending reports whether Install would change an agent's settings below
+// home, without changing anything.
+func Pending(home, agent string) (bool, error) {
+	settings, ok := agenthooks.LookupUserWide(agent)
+	if !ok {
+		return false, fmt.Errorf("%s has no user-wide hooks baum can install", agent)
+	}
+	file, err := readSettingsFile(filepath.Join(home, filepath.FromSlash(settings.SettingsFile)))
+	if err != nil {
+		return false, err
+	}
+	next, _, err := installSettings(file.contents, agent)
+	if err != nil {
+		return false, err
+	}
+	return !file.existed || !bytes.Equal(next, file.contents), nil
+}
+
 func update(home, agent string, install bool) (Result, error) {
 	settings, ok := agenthooks.LookupUserWide(agent)
 	if !ok {
