@@ -305,7 +305,8 @@ longer accepts, belongs with them.
   distinct, and a shortened one is unchanged. The rule applies wherever the
   schema closes a value with an identifier pattern, then to every other string
   that equals an identifier it shortened (a summary attention reference, which
-  the schema leaves open), never to prose that mentions one. Generation still
+  the schema leaves open), never to a longer string, such as prose, that
+mentions one. Generation still
   rejects an identifier over the bound. `ShortenStoredIdentifiers` applies
   this rule alone to an encoded document, for a host that serves stored
   documents and keys records of its own (read marks, approvals) by their
