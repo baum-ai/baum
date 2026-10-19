@@ -22,24 +22,32 @@ handshake, in [`apiclient`](../apiclient).
   succeeds for a known agent event or Git hook only where the hosted service
   was opted in to, by any of:
   - a login: a stored token for any server, or `BAUM_TOKEN`;
-  - the repository is onboarded: an agent settings file committed at `HEAD`
-    (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`)
-    carries baum's dispatcher, as the onboarding pull request and `baum setup`
-    write it. Entire's own command or settings that are not committed do not
-    count, so a hook configured outside the repository still falls through in
-    a repository that was never onboarded;
   - the clone carries the marker of a `baum setup` (`setup-complete`) or of a
     hook bootstrap (`bootstrap-ok`) in `.git/baum`, of its worktree or of the
-    main one, so linked worktrees of a set-up clone count.
+    main one, so linked worktrees of a set-up clone count;
+  - for a hosted install only, the repository is onboarded: an agent settings
+    file committed at `HEAD` (`.claude/settings.json`, `.codex/hooks.json`,
+    `.cursor/hooks.json`) carries baum's dispatcher, as the onboarding pull
+    request and `baum setup` write it. Entire's own command, the pre-rename
+    dispatcher and settings that are not committed do not count, so a hook
+    configured outside the repository still falls through in a repository
+    that was never onboarded. The read runs under a timeout, without fetching
+    or prompting, and skips a settings file over 1 MiB.
+- A hosted install is a build linked with
+  `-X github.com/baum-ai/baum/hosted/baumcli.distribution=hosted`, as the
+  hosted release builds it, or a baum the hosted install script installed,
+  which writes `hosted-install` beside the credentials. The open-source and
+  desktop builds are neither, so they never set up Entire, whose hooks push
+  transcripts, in a repository merely because its committed files ask for it.
 - `--check` reads only local files. An onboarded repository or a marker lets
   the hooks do only local work: the session-start bootstrap (installing the
   pinned Entire and the Git hook dispatchers) and delegating to Entire. That
-  keeps the onboarding promise for a teammate who installed baum but never
-  logged in. Nothing a hook does contacts a baum server; uploads and every
-  other server request need a login in every case.
-- For an open-source user who never logged in, in a repository nobody
-  onboarded or set up, the hooks run Entire directly and baum does nothing,
-  not even the bootstrap.
+  keeps the onboarding promise for a teammate who installed the hosted baum
+  but never logged in. Nothing a hook does contacts a baum server; uploads
+  and every other server request need a login in every case.
+- For an open-source user who never logged in, in a clone nobody set up, the
+  hooks run Entire directly and baum does nothing, not even the bootstrap,
+  whatever the repository commits.
 - `logout` removes the stored token but leaves the markers in `.git/baum`, so
   a set-up clone's hooks keep running through baum; without a login they still
   reach no baum server.

@@ -233,93 +233,192 @@ func claudeSettings(t *testing.T, command string) string {
 	return `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":` + string(encoded) + `}]}]}}`
 }
 
-// TestOnboardedRepositoryBootstrapsWithoutLogin keeps the onboarding promise
-// for a teammate who has baum but never logged in: in a repository whose
-// committed hook settings dispatch through baum, the first agent session
-// installs the Git hook dispatchers, and no baum server hears anything.
-// Uploading still needs a login.
-func TestOnboardedRepositoryBootstrapsWithoutLogin(t *testing.T) {
+// onboardedWorld is a hook world whose repository committed baum's
+// dispatcher, as merging the onboarding pull request leaves it.
+func onboardedWorld(t *testing.T) hookWorld {
+	t.Helper()
 	world := newHookWorld(t)
 	claude, _ := agenthooks.Lookup("claude-code")
 	commitFile(t, world.repo, claude.SettingsFile, claudeSettings(t, agenthooks.Dispatcher(claude, "session-start")))
+	return world
+}
 
-	world.runAgentDispatcher(t, claude, "session-start")
-	baum, entire := world.logs(t)
-	want := []string{"hooks agent --check claude-code session-start", "hooks agent claude-code session-start"}
-	if strings.Join(baum, "|") != strings.Join(want, "|") {
-		t.Errorf("baum calls = %q, want %q", baum, want)
+// asHostedInstall makes the baum on PATH one installed for the hosted
+// service, by build or by the install script's marker.
+func asHostedInstall(t *testing.T, how string) {
+	t.Helper()
+	switch how {
+	case "build":
+		t.Setenv(testDistributionEnv, hostedDistribution)
+	case "install marker":
+		path, err := credentialsPath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeAgentSettings(t, filepath.Dir(path), hostedInstallMarkerName, "installed by the hosted install script\n")
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(filepath.Dir(path), hostedInstallMarkerName)) })
+	default:
+		t.Fatalf("unknown hosted install %q", how)
 	}
+}
+
+// sessionStartBootstraps runs the committed session-start command and reports
+// whether baum ran it and installed the Git hook dispatchers.
+func (w hookWorld) sessionStartBootstraps(t *testing.T) bool {
+	t.Helper()
+	claude, _ := agenthooks.Lookup("claude-code")
+	w.runAgentDispatcher(t, claude, "session-start")
+	baum, entire := w.logs(t)
 	if len(entire) != 1 || entire[0] != "hooks claude-code session-start" {
 		t.Errorf("entire calls = %q", entire)
 	}
+	ran := strings.Join(baum, "|") == "hooks agent --check claude-code session-start|hooks agent claude-code session-start"
+	if !ran && (len(baum) != 1 || baum[0] != "hooks agent --check claude-code session-start") {
+		t.Errorf("baum calls = %q", baum)
+	}
+	installed := 0
 	for _, name := range entireGitHookNames() {
-		if contents := readHookTestFile(t, filepath.Join(world.repo, ".git", "hooks", name)); !strings.Contains(contents, baumHookMarker) {
-			t.Errorf("session start did not install the %s dispatcher: %q", name, contents)
+		if contents, err := os.ReadFile(filepath.Join(w.repo, ".git", "hooks", name)); err == nil && strings.Contains(string(contents), baumHookMarker) {
+			installed++
 		}
 	}
+	if ran != (installed == len(entireGitHookNames())) {
+		t.Errorf("baum ran the hook: %v, but %d of %d Git hook dispatchers are installed", ran, installed, len(entireGitHookNames()))
+	}
+	return ran
+}
 
-	// A session recorded in the clone, which only a logged-in upload sends.
-	runGitTest(t, world.repo, "remote", "add", "origin", "https://github.com/acme/demo.git")
-	home, _ := os.UserHomeDir()
-	writeAgentSettings(t, home, ".codex/sessions/2026/07/22/rollout-test.jsonl",
-		`{"timestamp":"2026-07-22T12:00:00Z","type":"session_meta","payload":{"id":"codex-1","session_id":"codex-1","cwd":`+quoteJSON(world.repo)+`,"source":"cli"}}`+"\n")
-	t.Chdir(world.repo)
-	if _, _, err := runCLI(t, "upload", "--yes"); err == nil || !strings.Contains(err.Error(), "not logged in") {
-		t.Errorf("upload without login: err = %v, want a login hint", err)
+// An open-source baum never sets up Entire, whose hooks push transcripts, in
+// a repository just because its committed files ask for it: without a login
+// the hooks fall through to Entire, as before baum carried the hosted
+// commands.
+func TestOpenSourceBuildDoesNotBootstrapAnOnboardedRepositoryWithoutLogin(t *testing.T) {
+	world := onboardedWorld(t)
+	if world.sessionStartBootstraps(t) {
+		t.Error("an open-source build bootstrapped an onboarded repository without a login")
 	}
-	if n := world.requests.Load(); n != 0 {
-		t.Fatalf("%d requests reached the baum server without a login", n)
-	}
-	t.Setenv(tokenEnvVar, "provisioned")
-	_, _, _ = runCLI(t, "upload", "--yes")
-	if world.requests.Load() == 0 {
-		t.Error("a logged-in upload never reached the server")
+	if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+		t.Errorf("baum left state in the clone: %v", err)
 	}
 }
 
-// Only what the repository commits makes it onboarded: Entire's own hook
-// command does not run baum, and settings that are not committed may come
-// from anywhere, such as a user-wide configuration.
+// TestHostedInstallBootstrapsAnOnboardedRepositoryWithoutLogin keeps the
+// onboarding promise for a teammate who installed the hosted baum but never
+// logged in: the first agent session installs the Git hook dispatchers, and no
+// baum server hears anything. Uploading still needs a login.
+func TestHostedInstallBootstrapsAnOnboardedRepositoryWithoutLogin(t *testing.T) {
+	for _, how := range []string{"build", "install marker"} {
+		t.Run(how, func(t *testing.T) {
+			world := onboardedWorld(t)
+			asHostedInstall(t, how)
+			if !world.sessionStartBootstraps(t) {
+				t.Fatal("a hosted install did not bootstrap the onboarded repository")
+			}
+
+			// A session recorded in the clone, which only a logged-in upload sends.
+			runGitTest(t, world.repo, "remote", "add", "origin", "https://github.com/acme/demo.git")
+			home, _ := os.UserHomeDir()
+			writeAgentSettings(t, home, ".codex/sessions/2026/07/22/rollout-test.jsonl",
+				`{"timestamp":"2026-07-22T12:00:00Z","type":"session_meta","payload":{"id":"codex-1","session_id":"codex-1","cwd":`+quoteJSON(world.repo)+`,"source":"cli"}}`+"\n")
+			t.Chdir(world.repo)
+			if _, _, err := runCLI(t, "upload", "--yes"); err == nil || !strings.Contains(err.Error(), "not logged in") {
+				t.Errorf("upload without login: err = %v, want a login hint", err)
+			}
+			if n := world.requests.Load(); n != 0 {
+				t.Fatalf("%d requests reached the baum server without a login", n)
+			}
+			t.Setenv(tokenEnvVar, "provisioned")
+			_, _, _ = runCLI(t, "upload", "--yes")
+			if world.requests.Load() == 0 {
+				t.Error("a logged-in upload never reached the server")
+			}
+		})
+	}
+}
+
+// A login opts in with either build.
+func TestLoggedInUserBootstrapsWithEitherBuild(t *testing.T) {
+	for _, build := range []string{"", hostedDistribution} {
+		t.Run("distribution="+build, func(t *testing.T) {
+			world := onboardedWorld(t)
+			t.Setenv(testDistributionEnv, build)
+			t.Setenv(tokenEnvVar, "provisioned")
+			if !world.sessionStartBootstraps(t) {
+				t.Error("a logged-in user's hook did not run through baum")
+			}
+			if n := world.requests.Load(); n != 0 {
+				t.Errorf("the hook sent %d requests to the baum server", n)
+			}
+		})
+	}
+}
+
+// Only what the repository commits makes it onboarded, even for a hosted
+// install: Entire's own hook command and the pre-rename dispatcher do not run
+// baum, and settings that are not committed may come from anywhere, such as
+// a user-wide configuration.
 func TestRepositoryIsOnboardedOnlyByCommittedDispatchers(t *testing.T) {
 	claude, _ := agenthooks.Lookup("claude-code")
-	t.Run("Entire's own command committed", func(t *testing.T) {
-		world := newHookWorld(t)
-		commitFile(t, world.repo, claude.SettingsFile, claudeSettings(t, agenthooks.EntireCommand(claude, "session-start")))
-		world.runAgentDispatcher(t, claude, "stop")
-		if baum, _ := world.logs(t); len(baum) != 1 {
-			t.Errorf("baum calls = %q, want only the check", baum)
-		}
-	})
-	t.Run("dispatcher not committed", func(t *testing.T) {
-		world := newHookWorld(t)
-		commitFile(t, world.repo, "README.md", "demo\n")
-		writeAgentSettings(t, world.repo, claude.SettingsFile, claudeSettings(t, agenthooks.Dispatcher(claude, "session-start")))
-		world.runAgentDispatcher(t, claude, "session-start")
-		baum, entire := world.logs(t)
-		if len(baum) != 1 || len(entire) != 1 || entire[0] != "hooks claude-code session-start" {
-			t.Errorf("baum calls = %q, entire calls = %q, want a fall-through to Entire", baum, entire)
-		}
-		if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
-			t.Errorf("baum left state in a clone that was never onboarded: %v", err)
-		}
-	})
+	preRename := strings.ReplaceAll(agenthooks.Dispatcher(claude, "session-start"), "baum", "recount"+"able")
+	for name, setUp := range map[string]func(t *testing.T, repo string){
+		"Entire's own command committed": func(t *testing.T, repo string) {
+			commitFile(t, repo, claude.SettingsFile, claudeSettings(t, agenthooks.EntireCommand(claude, "session-start")))
+		},
+		"pre-rename dispatcher committed": func(t *testing.T, repo string) {
+			commitFile(t, repo, claude.SettingsFile, claudeSettings(t, preRename))
+		},
+		"dispatcher not committed": func(t *testing.T, repo string) {
+			commitFile(t, repo, "README.md", "demo\n")
+			writeAgentSettings(t, repo, claude.SettingsFile, claudeSettings(t, agenthooks.Dispatcher(claude, "session-start")))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			asHostedInstall(t, "build")
+			setUp(t, world.repo)
+			if world.sessionStartBootstraps(t) {
+				t.Error("the hook ran through baum in a repository that was never onboarded")
+			}
+			if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+				t.Errorf("baum left state in the clone: %v", err)
+			}
+		})
+	}
 }
 
-// A linked worktree of a clone set up with `baum setup` runs its hooks through
-// baum too: the opt-in reads the marker from the common Git directory.
-func TestSetupMarkerCoversLinkedWorktrees(t *testing.T) {
-	world := newHookWorld(t)
-	commitFile(t, world.repo, "README.md", "demo\n")
-	if err := markRepositorySetupComplete(t.Context(), world.repo); err != nil {
-		t.Fatal(err)
-	}
-	worktree := filepath.Join(t.TempDir(), "feature")
-	runGitTest(t, world.repo, "worktree", "add", "-q", "-b", "feature", worktree)
+// A linked worktree of a clone that was set up or bootstrapped runs its hooks
+// through baum too: the opt-in reads the markers from the common Git
+// directory.
+func TestCloneMarkersCoverLinkedWorktrees(t *testing.T) {
+	for name, mark := range map[string]func(t *testing.T, repo string){
+		"setup": func(t *testing.T, repo string) {
+			if err := markRepositorySetupComplete(t.Context(), repo); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"bootstrap": func(t *testing.T, repo string) {
+			marker, err := hooksBootstrapMarker(t.Context(), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeHooksBootstrapMarker(marker, "older"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			commitFile(t, world.repo, "README.md", "demo\n")
+			mark(t, world.repo)
+			worktree := filepath.Join(t.TempDir(), "feature")
+			runGitTest(t, world.repo, "worktree", "add", "-q", "-b", "feature", worktree)
 
-	world.repo = worktree
-	world.runGitDispatcher(t, "commit-msg", "message-file")
-	baum, _ := world.logs(t)
-	if want := []string{"hooks git --check commit-msg", "hooks git commit-msg message-file"}; strings.Join(baum, "|") != strings.Join(want, "|") {
-		t.Errorf("baum calls in the linked worktree = %q, want %q", baum, want)
+			world.repo = worktree
+			world.runGitDispatcher(t, "commit-msg", "message-file")
+			baum, _ := world.logs(t)
+			if want := []string{"hooks git --check commit-msg", "hooks git commit-msg message-file"}; strings.Join(baum, "|") != strings.Join(want, "|") {
+				t.Errorf("baum calls in the linked worktree = %q, want %q", baum, want)
+			}
+		})
 	}
 }

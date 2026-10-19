@@ -75,14 +75,24 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   checked against a SHA-256 built into the binary, and installs Entire's
   hooks and baum's in the repository.
 - Agent and Git hooks contact no baum server. The hook commands committed to
-  repositories run baum only for a logged-in user, in a repository whose
-  committed agent hook settings dispatch through baum (as the hosted service's
-  onboarding pull request and `baum setup` write them), or in a clone set up
-  with `baum setup`. There a hook may install the pinned Entire release from
-  GitHub and the clone's Git hook dispatchers, then hands the event to Entire.
-  Everywhere else the hooks run Entire directly, and baum does nothing at all.
-  Uploading, or anything else that contacts a baum server, needs `baum login`
-  in every case.
+  repositories run baum only for a logged-in user or in a clone set up with
+  `baum setup`, and, for a baum built or installed for the hosted service,
+  also in a repository whose committed agent hook settings dispatch through
+  baum (as the hosted service's onboarding pull request and `baum setup` write
+  them). There a hook may install the pinned Entire release from GitHub and
+  the clone's Git hook dispatchers, then hands the event to Entire.
+  Everywhere else the hooks run Entire directly, and baum does nothing at all:
+  this open-source build never installs Entire or its hooks in a repository
+  just because the repository's files ask for it. Uploading, or anything else
+  that contacts a baum server, needs `baum login` in every case.
+- Once installed, Entire's own hooks record agent sessions as checkpoints and
+  push them, transcripts included, with `git push` to the checkpoint branch of
+  the repository's remote (or the checkpoint remote its settings name). That
+  is Entire's behaviour, not baum's; whoever can read that remote can read
+  them.
+- A baum counts as installed for the hosted service when its release build
+  says so, or when the hosted install script left the file `hosted-install`
+  beside the credentials (`~/.config/baum/`).
 - `baum logout` revokes and removes the stored token but leaves the markers
   `baum setup` and the hook bootstrap write in a clone's `.git/baum`
   directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep

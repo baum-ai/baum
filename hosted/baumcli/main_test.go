@@ -15,11 +15,17 @@ import (
 // exactly as a shell would.
 const runAsBaumEnv = "BAUMCLI_TEST_RUN_AS_BAUM"
 
+// testDistributionEnv is the build distribution the test binary acting as
+// baum takes, which a release build gets from -X.
+const testDistributionEnv = "BAUMCLI_TEST_DISTRIBUTION"
+
 // TestMain keeps the developer's own login out of the tests: credentials are
 // read from an empty config directory and the token and server overrides are
 // cleared, so a test that wants a login sets one up itself.
 func TestMain(m *testing.M) {
 	if os.Getenv(runAsBaumEnv) == "1" {
+		// What -X sets in a release build.
+		distribution = os.Getenv(testDistributionEnv)
 		os.Exit(runAsBaum())
 	}
 	config, err := os.MkdirTemp("", "baumcli-config-")

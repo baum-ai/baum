@@ -2,7 +2,6 @@ package baumcli
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -149,20 +149,25 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 // installed as Git hooks run baum only when `--check` succeeds, and otherwise
 // run Entire directly, so an open-source user's hooks behave as if baum were
 // not installed.
-var errHostedHooksOff = errors.New("hosted hooks are off here: the repository's committed agent hooks do not dispatch through baum; run `baum login` or `baum setup` to opt in")
+var errHostedHooksOff = errors.New("hosted hooks are off here: run `baum login`, or `baum setup` in this clone, to opt in")
 
 // hostedHooksEnabled reports whether the hooks of the clone containing dir
 // should run through baum. They do when the user is logged in (BAUM_TOKEN or
-// stored credentials, for any server); when this clone was set up by
-// `baum setup` or bootstrapped, which leaves a marker in its Git directory;
-// or when the repository is onboarded: an agent settings file committed at
-// HEAD carries baum's dispatcher, as the onboarding pull request and
-// `baum setup` write it. The last two only let the hooks install Entire and
-// the Git hook dispatchers and delegate to Entire; nothing a hook does
-// contacts a baum server, and every command that does still needs a login.
-// The repository is judged by its committed files, not by a hook having run,
-// so a hook configured outside the repository falls through to Entire in a
-// repository that was never onboarded. It reads only local state.
+// stored credentials, for any server), or when this clone was set up by
+// `baum setup` or bootstrapped, which leaves a marker in its Git directory.
+// A baum installed for the hosted service (hostedInstall) also runs them in an
+// onboarded repository: one whose agent settings file committed at HEAD
+// carries baum's dispatcher, as the onboarding pull request and `baum setup`
+// write it. That keeps the onboarding promise for a teammate who never logged
+// in, while an open-source baum never sets up Entire, whose hooks push
+// transcripts, in a repository just because its files ask for it.
+//
+// The last two only let the hooks install Entire and the Git hook dispatchers
+// and delegate to Entire; nothing a hook does contacts a baum server, and
+// every command that does still needs a login. A repository is judged by its
+// committed files, not by a hook having run, so a hook configured outside the
+// repository falls through to Entire in a repository never onboarded. Only
+// local state is read.
 func hostedHooksEnabled(ctx context.Context, dir string) error {
 	if os.Getenv(tokenEnvVar) != "" {
 		return nil
@@ -170,7 +175,7 @@ func hostedHooksEnabled(ctx context.Context, dir string) error {
 	if creds, ok, err := loadCredentials(); err == nil && ok && creds.Token != "" {
 		return nil
 	}
-	if hostedClone(ctx, dir) || onboardedRepository(ctx, dir) {
+	if hostedClone(ctx, dir) || (hostedInstall() && onboardedRepository(ctx, dir)) {
 		return nil
 	}
 	return errHostedHooksOff
@@ -196,21 +201,43 @@ func hostedClone(ctx context.Context, dir string) bool {
 	return false
 }
 
+// Bounds on reading a repository's committed agent settings on every hook.
+const (
+	onboardingReadTimeout = 5 * time.Second
+	maxSettingsFileBytes  = 1 << 20
+)
+
 // onboardedRepository reports whether an agent settings file committed at
 // HEAD in the repository containing dir carries baum's dispatcher. One git
-// process reads every settings file, missing ones included.
+// process reads every settings file, missing ones included, under a timeout,
+// without fetching missing objects or prompting, and skipping a file larger
+// than maxSettingsFileBytes unread.
 func onboardedRepository(ctx context.Context, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, onboardingReadTimeout)
+	defer cancel()
 	var request strings.Builder
 	for _, spec := range agenthooks.All() {
 		request.WriteString("HEAD:" + spec.SettingsFile + "\n")
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "--batch")
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0")
 	cmd.Stdin = strings.NewReader(request.String())
-	output, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false
 	}
-	reader := bufio.NewReader(bytes.NewReader(output))
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	found := readsDispatcher(bufio.NewReader(stdout))
+	cancel()
+	_ = cmd.Wait()
+	return found
+}
+
+// readsDispatcher reads `git cat-file --batch` output and reports whether a
+// blob of at most maxSettingsFileBytes carries baum's dispatcher.
+func readsDispatcher(reader *bufio.Reader) bool {
 	for {
 		header, err := reader.ReadString('\n')
 		if err != nil {
@@ -221,15 +248,21 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 		if len(fields) != 3 {
 			continue
 		}
-		size, err := strconv.Atoi(fields[2])
+		size, err := strconv.ParseInt(fields[2], 10, 64)
 		if err != nil || size < 0 {
 			return false
+		}
+		if fields[1] != "blob" || size > maxSettingsFileBytes {
+			if _, err := io.CopyN(io.Discard, reader, size+1); err != nil {
+				return false
+			}
+			continue
 		}
 		contents := make([]byte, size+1)
 		if _, err := io.ReadFull(reader, contents); err != nil {
 			return false
 		}
-		if fields[1] == "blob" && agenthooks.ContainsDispatcher(contents[:size]) {
+		if agenthooks.ContainsDispatcher(contents[:size]) {
 			return true
 		}
 	}

@@ -17,8 +17,9 @@ The same binary also carries the hosted service's client commands (`login`,
 `logout`, `whoami`, `setup`, `upload` and the `hooks` dispatchers), listed
 under "Hosted service" in `--help`. They are opt-in: nothing reaches a baum
 server before `baum login`, and the hook commands committed to repositories
-run baum only for a logged-in user or in a repository onboarded or set up for
-the hosted service, falling through to Entire for everyone else. See "Hosted service client" below.
+run baum only for a logged-in user, in a clone set up for the hosted service,
+or, for a hosted install, in a repository onboarded to it; for everyone else
+they fall through to Entire. See "Hosted service client" below.
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
@@ -1147,9 +1148,10 @@ format and the protocol constants have one definition on both sides.
   credentials `baum login` stored, and stop with a login hint before any
   request without one. `baum hooks agent --check` and `baum hooks git --check`,
   which gate every committed dispatcher, succeed only for a logged-in user, in
-  a repository whose committed agent settings carry baum's dispatcher, or in a
-  clone carrying the marker of `baum setup` or a hook bootstrap; they read
-  local files only, and the hooks they admit never contact a server. The rules are in
+  a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
+  baum built or installed for the hosted service, in a repository whose
+  committed agent settings carry baum's dispatcher. They read local files
+  only, and the hooks they admit never contact a server. The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
 - Compatibility. A client and a server of different releases agree on an API
   protocol number: requests name the client's, responses the range the server
