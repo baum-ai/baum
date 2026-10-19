@@ -212,7 +212,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     diagnostics.getByRole("listitem").filter({ hasText: "git is available" }).getByText("OK"),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/diagnostics-wide.png", animations: "disabled" });
-  const again = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/diagnostics");
+  const again = page.waitForRequest((r) => new URL(r.url()).pathname === base + "api/diagnostics");
   await diagnostics.getByRole("button", { name: "Check again" }).click();
   await again;
   await expect(diagnostics.getByRole("button", { name: "Check again" })).toBeEnabled();
