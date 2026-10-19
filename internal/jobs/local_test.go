@@ -155,8 +155,9 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 }
 
 // A cursor-agent job has no estimate at API rates, whatever its model is
-// called: Cursor bills it through the user's subscription. Its progress and
-// recorded cost stay unknown for the same reason.
+// called: Cursor bills it through the user's subscription. It is not blocked:
+// it says why the estimate is unknown. Its progress and recorded cost stay
+// unknown for the same reason.
 func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
@@ -169,7 +170,7 @@ func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.EstimateUSD != nil || p.BlockedReason != pricing.ReasonBilledByCursor {
+	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.EstimateUSD != nil || p.EstimateReason != pricing.ReasonBilledByCursor || p.BlockedReason != "" {
 		t.Fatalf("prepared = %+v", p)
 	}
 

@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -109,11 +108,11 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	list := pricing.Active()
 	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}
 	// A backend billed by its own subscription has no estimate, rather than
-	// one at API rates; like an unpriced model, it is not queued from here.
-	var unpriced string
-	p.EstimateUSD, unpriced = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
-	if p.EstimateUSD == nil {
-		p.BlockedReason = cmp.Or(unpriced, "unknown_model_price")
+	// one at API rates, and says why; it runs after its own acknowledgement.
+	// An unpriced model is blocked.
+	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
+	if p.EstimateUSD == nil && p.EstimateReason == "" {
+		p.BlockedReason = "unknown_model_price"
 	}
 	return p, list.Version(), nil
 }
@@ -131,7 +130,7 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	if e != nil {
 		return e
 	}
-	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.EstimateReason != p.EstimateReason || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		return errors.New("generation inputs changed")
 	}
 	return nil

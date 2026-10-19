@@ -496,8 +496,10 @@ reported. Cursor bills the run through the user's subscription, so
 `pricing.List.BackendEstimate`, `BackendOutcomeCost` and
 `BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
 this backend whatever its model is called: the recorded cost is unknown, and a
-`baum ui` job is excluded with that reason instead of being estimated at API
-rates. A failed process is classified
+`baum ui` job carries it as `Prepared.EstimateReason` with a nil estimate
+instead of an estimate at API rates. Such a job is not blocked: `Queue.SubmitConfirmed`
+queues it only with `Confirmation.Unpriced` (`confirm_unpriced`) on top of the
+estimate and any isolation confirmation. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
 `authentication_error`); none is retried, as every attempt would fail the same
 way until the user acts.

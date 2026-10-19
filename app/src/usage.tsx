@@ -10,6 +10,7 @@ const reasons: Record<string, string> = {
   speed_not_reported: "The provider did not report its pricing speed.",
   cache_ttl_not_reported: "The provider did not report cache creation TTL.",
   model_or_prompt_rates_unknown: "Model rates or prompt pricing tiers could not be established.",
+  billed_by_cursor_subscription: "Billed by your Cursor subscription; baum can't price it.",
 };
 export function UsageDetails({
   accounting,

@@ -284,8 +284,8 @@ the earlier ones were skipped.
 The `cursor-agent` backend runs the Cursor Agent CLI under your own Cursor
 login (`cursor-agent login`; `CURSOR_API_KEY` is not passed to it), so it is
 billed through your Cursor plan: baum never prices it at API rates, records its
-cost as unknown (`billed_by_cursor_subscription`), and `baum ui`, which queues
-only jobs it can estimate, excludes it for that reason. It is found
+cost as unknown (`billed_by_cursor_subscription`), and `baum ui` shows no
+estimate for it and runs it once you acknowledge that. It is found
 as `cursor-agent`, or as `agent` when that is the Cursor Agent, and is used
 only when its `--help` lists every option baum passes; otherwise it asks you to
 run `cursor-agent update`. It runs in Cursor's read-only ask mode with Cursor's
@@ -744,7 +744,11 @@ budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
 is required; unknown backend default models have no invented estimate. The
 `anthropic` backend's default model (`claude-opus-5-5`) is known, so it is
-estimated without one.
+estimated without one. A `cursor-agent` item has no estimate on purpose:
+its `estimate_usd` is null with `estimate_reason:"billed_by_cursor_subscription"`,
+the batch total is unknown, and `POST /api/jobs` queues it only with
+`confirm_unpriced:true` as well, an acknowledgement the app asks for
+separately; its recorded cost stays unknown for the same reason.
 Estimates use the signed published full price list, falling back to the embedded
 release baseline if download or verification fails. A downloaded list that
 becomes active is stored with its signature beside the queue, in

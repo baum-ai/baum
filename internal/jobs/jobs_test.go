@@ -18,14 +18,20 @@ type fakeExecutor struct {
 	digest     string
 	restricted bool
 	price      *float64
-	started    chan Prepared
-	release    chan struct{}
+	// backend and reason, when set, replace claude and the estimate reason.
+	backend, reason string
+	started         chan Prepared
+	release         chan struct{}
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: "claude", Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
+	backend := f.backend
+	if backend == "" {
+		backend = "claude"
+	}
+	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, EstimateReason: f.reason, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
@@ -202,6 +208,51 @@ func TestUnknownPriceAndChangedHeadAreFailClosed(t *testing.T) {
 		t.Fatal("unknown price accepted")
 	}
 }
+
+// A backend billed outside the price list (cursor-agent) is not blocked: its
+// estimate is unknown with a reason, and it runs once that is acknowledged,
+// on top of the usual confirmations.
+func TestUnpricedBackendRunsAfterAcknowledgement(t *testing.T) {
+	q, f := newQueue(t)
+	f.mu.Lock()
+	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
+	f.mu.Unlock()
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if e.EstimateUSD != nil || e.Items[0].BlockedReason != "" || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
+		t.Fatalf("estimate = %+v", e)
+	}
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err == nil {
+		t.Fatal("an unpriced run was queued without its acknowledgement")
+	}
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Unpriced: true}); err == nil {
+		t.Fatal("an unpriced run was queued without confirming the estimate")
+	}
+	jobs, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true})
+	if err != nil || len(jobs) != 1 || jobs[0].EstimateReason != "billed_by_cursor_subscription" {
+		t.Fatalf("jobs = %+v, err = %v", jobs, err)
+	}
+	<-f.started
+	close(f.release)
+	waitState(t, q, jobs[0].ID, "completed")
+
+	// The fork rules still apply: isolation is confirmed separately.
+	q, f = newQueue(t)
+	f.mu.Lock()
+	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
+	f.mu.Unlock()
+	e = estimate(t, q, "single", Item{"clone", 1})
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true}); err == nil {
+		t.Fatal("a fork run was queued without isolation confirmation")
+	}
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true, Isolation: true}); err != nil {
+		t.Fatal(err)
+	}
+	batch := estimate(t, q, "batch", Item{"clone", 2})
+	if batch.Items[0].BlockedReason != "isolation_confirmation_required" {
+		t.Fatalf("batch = %+v", batch)
+	}
+}
+
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
