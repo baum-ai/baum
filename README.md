@@ -457,6 +457,7 @@ pass_timeout = "10m"
 run_timeout = "45m"
 max_calls = 40
 max_tokens = 2000000
+# Durations are strings such as "10m"; a bare number like 10 is rejected.
 
 [caps]
 # Overrides for the generation bundle caps, by name. Defaults apply otherwise.
