@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -194,6 +195,9 @@ func maskEmails(ctx context.Context, text string, out []byte) (int, error) {
 	src := []byte(text)
 	found := 0
 	err := eachEmail(ctx, src, func(start, end int) {
+		if alreadyMasked(text[start:end]) {
+			return
+		}
 		if bytes.Equal(out[start:end], src[start:end]) {
 			found++
 		}
@@ -277,16 +281,89 @@ func (s *Summary) Add(other Summary) {
 // Engine redacts with Config. It is immutable and safe for concurrent use.
 type Engine struct {
 	inner *goredact.Engine
-	// finders holds idle engines that report findings for FindContext; one
-	// is compiled whenever every other is busy.
+	// finders holds idle engines that report findings for RedactContext and
+	// FindContext. Compiling one is expensive, so at most cap(finders) exist:
+	// slots counts them, and a call waits for an idle one once all are made.
 	finders chan *finder
+	slots   chan struct{}
 }
 
-// finder is a goredact engine whose OnFinding collects into spans, used by
-// one FindContext call at a time.
+// finder is a goredact engine whose OnFinding collects into found, used by
+// one call at a time.
 type finder struct {
 	engine *goredact.Engine
-	spans  []Span
+	found  []foundSpan
+}
+
+// foundSpan is one finding of the engine: the rule and the bytes it masks.
+type foundSpan struct {
+	rule       string
+	start, end int
+}
+
+// echoRules are the rules that match the syntax around a value, such as
+// "Bearer", "--password=" or "user:...@". Input that was redacted before
+// holds that syntax around a value already masked, which the rules match
+// again.
+var echoRules = map[string]bool{
+	"url-credentials":            true,
+	EmailRuleID:                  true,
+	"authorization-bearer":       true,
+	"command-line-password-flag": true,
+}
+
+// alreadyMasked reports whether value is what the format-preserving mask
+// leaves of a secret and nothing else: only X, x, 9 and *, with the
+// separators the mask keeps, and at least one masked byte. Masking it again
+// changes no byte, so it is no new finding. A value that merely starts like
+// a mask, such as "xxxx-real", is not. It holds only for the
+// format-preserving mask; under another strategy nothing counts as masked.
+func alreadyMasked(value string) bool {
+	if Config.MaskStrategy != goredact.MaskFormatPreserving {
+		return false
+	}
+	masked := false
+	for i := 0; i < len(value); i++ {
+		switch b := value[i]; {
+		case b == 'X' || b == 'x' || b == '9' || b == '*':
+			masked = true
+		case formatMask(b) == b:
+		default:
+			return false
+		}
+	}
+	return masked
+}
+
+// scan redacts text into out with a borrowed finder and returns its
+// findings, leaving out the ones of echoRules over a value that is already
+// masked, and how many of them it left out per rule.
+func (e *Engine) scan(ctx context.Context, text string, out io.Writer) (goredact.Stats, []foundSpan, map[string]int, error) {
+	f, err := e.borrow(ctx)
+	if err != nil {
+		return goredact.Stats{}, nil, nil, err
+	}
+	defer func() {
+		f.found = nil
+		e.finders <- f
+	}()
+	stats, err := f.engine.Redact(ctx, out, strings.NewReader(text))
+	if err != nil {
+		return goredact.Stats{}, nil, nil, fmt.Errorf("redact: %w", err)
+	}
+	var kept []foundSpan
+	var skipped map[string]int
+	for _, found := range f.found {
+		if echoRules[found.rule] && found.start >= 0 && found.end <= len(text) && alreadyMasked(text[found.start:found.end]) {
+			if skipped == nil {
+				skipped = map[string]int{}
+			}
+			skipped[found.rule]++
+			continue
+		}
+		kept = append(kept, found)
+	}
+	return stats, kept, skipped, nil
 }
 
 // Span is the byte offsets [Start, End) of one secret or address the engine
@@ -302,7 +379,34 @@ func New() (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redact: constructing engine: %w", err)
 	}
-	return &Engine{inner: inner, finders: make(chan *finder, 4)}, nil
+	n := max(runtime.GOMAXPROCS(0), 1)
+	return &Engine{inner: inner, finders: make(chan *finder, n), slots: make(chan struct{}, n)}, nil
+}
+
+// borrow returns an idle finder, compiles one while fewer than cap(finders)
+// exist, and otherwise waits for one to be returned or for ctx to end.
+func (e *Engine) borrow(ctx context.Context) (*finder, error) {
+	select {
+	case f := <-e.finders:
+		return f, nil
+	default:
+	}
+	select {
+	case e.slots <- struct{}{}:
+		f, err := newFinder()
+		if err != nil {
+			<-e.slots
+			return nil, err
+		}
+		return f, nil
+	default:
+	}
+	select {
+	case f := <-e.finders:
+		return f, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("redact: %w", ctx.Err())
+	}
 }
 
 func newFinder() (*finder, error) {
@@ -310,7 +414,7 @@ func newFinder() (*finder, error) {
 	config := Config
 	config.RecordAligned = false
 	config.OnFinding = func(found goredact.Finding) {
-		f.spans = append(f.spans, Span{Start: int(found.Start), End: int(found.End), Email: found.RuleID == EmailRuleID})
+		f.found = append(f.found, foundSpan{rule: found.RuleID, start: int(found.Start), end: int(found.End)})
 	}
 	engine, err := goredact.New(config)
 	if err != nil {
@@ -323,33 +427,26 @@ func newFinder() (*finder, error) {
 // FindContext returns, in input order, the spans RedactContext masks in
 // text, one per finding: two secrets side by side are two spans however
 // little lies between them. An e-mail address is reported in full, and
-// may also be reported as the rule's window saw it. It stops with ctx's
-// error if ctx ends first.
+// may also be reported as the rule's window saw it. A value that is already
+// masked, behind "Bearer", "--password=" or "user:", is no finding. It stops
+// with ctx's error if ctx ends first.
 func (e *Engine) FindContext(ctx context.Context, text string) ([]Span, error) {
 	if text == "" {
 		return nil, nil
 	}
-	var f *finder
-	select {
-	case f = <-e.finders:
-	default:
-		var err error
-		if f, err = newFinder(); err != nil {
-			return nil, err
-		}
+	_, found, _, err := e.scan(ctx, text, io.Discard)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		f.spans = nil
-		select {
-		case e.finders <- f:
-		default:
-		}
-	}()
-	if _, err := f.engine.Redact(ctx, io.Discard, strings.NewReader(text)); err != nil {
-		return nil, fmt.Errorf("redact: %w", err)
+	spans := make([]Span, len(found))
+	for i, f := range found {
+		spans[i] = Span{Start: f.start, End: f.end, Email: f.rule == EmailRuleID}
 	}
-	spans := f.spans
-	err := eachEmail(ctx, []byte(text), func(start, end int) { spans = append(spans, Span{Start: start, End: end, Email: true}) })
+	err = eachEmail(ctx, []byte(text), func(start, end int) {
+		if !alreadyMasked(text[start:end]) {
+			spans = append(spans, Span{Start: start, End: end, Email: true})
+		}
+	})
 	if err != nil {
 		return nil, fmt.Errorf("redact: %w", err)
 	}
@@ -364,7 +461,9 @@ func (e *Engine) Profile() string {
 // RedactReader streams src to dst with every secret and e-mail address
 // masked. The stream is otherwise byte for byte the input. An address with
 // more than 254 bytes on one side of its @ is masked only within those 254
-// bytes; Redact and RedactContext mask it in full.
+// bytes; Redact and RedactContext mask it in full. A stream is not held, so
+// its Summary also counts a value that was already masked, which Redact
+// leaves out.
 func (e *Engine) RedactReader(ctx context.Context, dst io.Writer, src io.Reader) (Summary, error) {
 	stats, err := e.inner.Redact(ctx, dst, src)
 	if err != nil {
@@ -389,12 +488,18 @@ func (e *Engine) RedactContext(ctx context.Context, text string) (string, Summar
 	}
 	var out bytes.Buffer
 	out.Grow(len(text))
-	stats, err := e.inner.Redact(ctx, &out, strings.NewReader(text))
+	stats, _, skipped, err := e.scan(ctx, text, &out)
 	if err != nil {
-		return "", Summary{}, fmt.Errorf("redact: %w", err)
+		return "", Summary{}, err
 	}
 	masked := out.Bytes()
 	summary := fromStats(stats)
+	for rule, n := range skipped {
+		summary.Findings -= n
+		if summary.ByRule[rule] -= n; summary.ByRule[rule] <= 0 {
+			delete(summary.ByRule, rule)
+		}
+	}
 	if len(masked) == len(text) {
 		for i := 0; i < len(text); i++ {
 			if text[i] == '\n' {
