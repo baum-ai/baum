@@ -142,7 +142,7 @@ func modelServer(t *testing.T, silence time.Duration, chunks int, interval time.
 		w.Header().Set("X-Path", r.URL.Path+"?"+r.URL.RawQuery)
 		w.Header().Set("X-Authorization", r.Header.Get("Authorization"))
 		for i := range chunks {
-			fmt.Fprintf(w, "data: %d\n\n", i)
+			_, _ = fmt.Fprintf(w, "data: %d\n\n", i)
 			w.(http.Flusher).Flush()
 			time.Sleep(interval)
 		}
@@ -163,7 +163,7 @@ func callModel(t *testing.T) func(context.Context, Request, int) (Result, error)
 		if err != nil {
 			return Result{}, err
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		if _, err := io.Copy(io.Discard, response.Body); err != nil {
 			return Result{}, err
 		}
@@ -258,10 +258,10 @@ func TestObservedEndpointForwardsStreamsAndReportsRequests(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Path", r.URL.Path+"?"+r.URL.RawQuery)
 		w.Header().Set("X-Authorization", r.Header.Get("Authorization"))
-		fmt.Fprint(w, "data: 0\n\n")
+		_, _ = fmt.Fprint(w, "data: 0\n\n")
 		w.(http.Flusher).Flush()
 		<-release
-		fmt.Fprint(w, "data: 1\n\n")
+		_, _ = fmt.Fprint(w, "data: 1\n\n")
 	}))
 	defer server.Close()
 	activity := NewActivity()
