@@ -10,6 +10,7 @@ import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-doc
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
+  appURL,
   request,
   selector,
   documentRequest,
@@ -27,7 +28,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
     setLoad(null);
     setError(false);
     request<unknown>(
-      `/api/sessions/${encodeURIComponent(id)}?${query}`,
+      `api/sessions/${encodeURIComponent(id)}?${query}`,
       undefined,
       "GET",
       abort.signal,
@@ -125,7 +126,7 @@ export function LocalReview({
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
       });
-    request<Provenance[]>(`/api/versions?${latestQuery}`, undefined, "GET", abort.signal)
+    request<Provenance[]>(`api/versions?${latestQuery}`, undefined, "GET", abort.signal)
       .then((rows) => {
         setProvenance(rows);
         setVersions(rows.map((row) => row.version));
@@ -140,7 +141,7 @@ export function LocalReview({
     if (!viewedDocument) return;
     setSessions({ state: "loading" });
     const abort = new AbortController();
-    request<unknown>(`/api/sessions?${query}`, undefined, "GET", abort.signal)
+    request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
@@ -159,7 +160,7 @@ export function LocalReview({
       let pending = cache.get(key);
       if (!pending) {
         pending = request<{ patch: string | null }>(
-          `/api/patch?${selector(clone, pr.number, version)}&path=${encodeURIComponent(path)}`,
+          `api/patch?${selector(clone, pr.number, version)}&path=${encodeURIComponent(path)}`,
         )
           .then((body) => body.patch)
           .catch(() => {
@@ -173,7 +174,9 @@ export function LocalReview({
   }, [clone, pr.number]);
   const attachments = useMemo(
     () => (id: string, document?: ReviewDocument) =>
-      `/api/attachments/${encodeURIComponent(id)}?${selector(clone, pr.number, document?.review.version)}`,
+      appURL(
+        `api/attachments/${encodeURIComponent(id)}?${selector(clone, pr.number, document?.review.version)}`,
+      ),
     [clone, pr.number],
   );
   return (
@@ -193,7 +196,7 @@ export function LocalReview({
               url: pr.url,
               state: pr.state.toLowerCase(),
             },
-            back: { href: "/", label: "Inbox" },
+            back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             beside: (
               <Button disabled={generating} onClick={generate}>
@@ -334,7 +337,7 @@ function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> })
           onClick={() => {
             setCancelling(true);
             setError("");
-            void request(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+            void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
               .then(changed)
               .catch(() => setError("The job could not be cancelled. Try again."))
               .finally(() => setCancelling(false));

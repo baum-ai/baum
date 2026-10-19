@@ -142,6 +142,14 @@ func applicationRateLimit(body []byte) bool {
 	return false
 }
 
+// secondaryLimitResume is how long a limit that names no time waits. A limit
+// with quota left is a secondary one, which a short pause lifts.
+const secondaryLimitResume = time.Minute
+
+// rateLimitResumeAt is when GitHub says to try again. X-RateLimit-Reset is the
+// primary window's reset and arrives on every response, so it counts only when
+// X-RateLimit-Remaining is 0; a secondary limit waits Retry-After, or a minute
+// when it names nothing.
 func rateLimitResumeAt(header http.Header, now time.Time) time.Time {
 	var resumeAt time.Time
 	if seconds, err := strconv.ParseInt(header.Get("Retry-After"), 10, 64); err == nil {
@@ -149,11 +157,16 @@ func rateLimitResumeAt(header http.Header, now time.Time) time.Time {
 	} else if parsed, err := http.ParseTime(header.Get("Retry-After")); err == nil {
 		resumeAt = parsed
 	}
-	if unix, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
-		reset := time.Unix(unix, 0)
-		if reset.After(resumeAt) {
-			resumeAt = reset
+	exhausted := header.Get("X-RateLimit-Remaining") == "0"
+	if exhausted {
+		if unix, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+			if reset := time.Unix(unix, 0); reset.After(resumeAt) {
+				resumeAt = reset
+			}
 		}
+	}
+	if resumeAt.IsZero() && !exhausted {
+		resumeAt = now.Add(secondaryLimitResume)
 	}
 	return resumeAt
 }

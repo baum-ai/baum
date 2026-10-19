@@ -6,25 +6,29 @@ package pricing
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 )
 
-// Source says where the active price list came from. There is no on-disk
-// cache: the list is the one compiled in or the last one Refresh fetched in
-// this process.
+// Source says where the active price list came from: compiled in, fetched by
+// Refresh in this process, or loaded by LoadPersisted from the list an earlier
+// baum ui run stored.
 type Source struct {
-	// Origin is "embedded" or "fetched".
+	// Origin is "embedded", "fetched" or "cached".
 	Origin  string
 	Version string
 	// FetchedAt is when Refresh installed the active list; zero for the
-	// embedded list.
+	// embedded and cached lists.
 	FetchedAt time.Time
 	// RefreshError is why the last Refresh failed; empty after a success or
 	// before any attempt.
@@ -35,11 +39,13 @@ type Source struct {
 const (
 	OriginEmbedded = "embedded"
 	OriginFetched  = "fetched"
+	OriginCached   = "cached"
 )
 
 var refreshState struct {
 	mu        sync.Mutex
 	list      *List
+	origin    string
 	fetchedAt time.Time
 	err       string
 }
@@ -55,36 +61,101 @@ func CurrentSource() Source {
 	refreshState.mu.Lock()
 	defer refreshState.mu.Unlock()
 	if refreshState.list != nil && refreshState.list == active {
-		source.FetchedAt = refreshState.fetchedAt
+		source.Origin, source.FetchedAt = refreshState.origin, refreshState.fetchedAt
 	}
 	source.RefreshError = refreshState.err
 	return source
 }
 
 // noteRefresh records the outcome of one Refresh: the list it installed, if
-// any, and its error.
+// any, and its error. A list stays recorded when only storing it failed.
 func noteRefresh(installed *List, err error) {
 	refreshState.mu.Lock()
 	defer refreshState.mu.Unlock()
-	if err != nil {
-		refreshState.err = err.Error()
-		return
+	if installed != nil {
+		refreshState.list, refreshState.origin, refreshState.fetchedAt = installed, OriginFetched, time.Now()
 	}
 	refreshState.err = ""
-	if installed != nil {
-		refreshState.list, refreshState.fetchedAt = installed, time.Now()
+	if err != nil {
+		refreshState.err = err.Error()
 	}
 }
 
-// Refresh downloads only public signed data, without credentials or redirects.
-// A failure leaves the compiled or previously verified list active.
-func Refresh(ctx context.Context) error { return refresh(ctx, nil) }
+// noteCached records a stored list LoadPersisted installed.
+func noteCached(installed *List) {
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	refreshState.list, refreshState.origin, refreshState.fetchedAt = installed, OriginCached, time.Time{}
+}
 
-// refresh is Refresh over transport; nil is the default transport.
-func refresh(ctx context.Context, transport http.RoundTripper) (err error) {
+// persistedName holds the newest installed published list beside the job
+// journal, with its signature, so queued jobs confirmed against it can resume.
+const persistedName = "prices.signed.json"
+
+type persisted struct {
+	List      []byte `json:"list"`
+	Signature []byte `json:"signature"`
+}
+
+// LoadPersisted installs the list a previous Refresh stored in dir if its
+// signature still verifies and it is newer than the active list. A missing
+// file is not an error; any other failure leaves the active list unchanged.
+func LoadPersisted(dir string) error { return loadPersisted(dir, PublishedKey()) }
+
+func loadPersisted(dir string, key ed25519.PublicKey) error {
+	file, e := os.Open(filepath.Join(dir, persistedName))
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	defer func() { _ = file.Close() }()
+	raw, e := io.ReadAll(io.LimitReader(file, 4<<20+1))
+	if e != nil {
+		return e
+	}
+	if len(raw) > 4<<20 {
+		return errors.New("persisted price list too large")
+	}
+	var stored persisted
+	if e = json.Unmarshal(raw, &stored); e != nil {
+		return e
+	}
+	list, e := verified(stored.List, stored.Signature, key)
+	if e != nil {
+		return e
+	}
+	if Newest(Active(), list) == list {
+		Install(list)
+		noteCached(list)
+	}
+	return nil
+}
+
+func verified(raw, signature []byte, key ed25519.PublicKey) (*List, error) {
+	list, e := ParsePublished(raw, signature, key)
+	if e != nil {
+		return nil, e
+	}
+	if !list.Full() {
+		return nil, errors.New("full price list required")
+	}
+	return list, nil
+}
+
+// Refresh downloads only public signed data, without credentials or redirects.
+// A failure leaves the compiled or previously verified list active. When dir is
+// not empty, a downloaded list that becomes active is stored there for
+// LoadPersisted.
+func Refresh(ctx context.Context, dir string) error {
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
+	return refresh(ctx, client, PublishedURL, PublishedKey(), dir)
+}
+
+func refresh(ctx context.Context, client *http.Client, published string, key ed25519.PublicKey, dir string) (err error) {
 	var installed *List
 	defer func() { noteRefresh(installed, err) }()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("pricing redirect refused") }}
 	get := func(url string) ([]byte, error) {
 		r, e := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if e != nil {
@@ -104,26 +175,58 @@ func refresh(ctx context.Context, transport http.RoundTripper) (err error) {
 		}
 		return raw, e
 	}
-	raw, e := get(PublishedURL)
+	raw, e := get(published)
 	if e != nil {
 		return e
 	}
-	signature, e := get(PublishedURL + ".sig")
+	signature, e := get(published + ".sig")
 	if e != nil {
 		return e
 	}
-	list, e := ParsePublished(raw, signature, PublishedKey())
+	list, e := verified(raw, signature, key)
 	if e != nil {
 		return e
 	}
-	if !list.Full() {
-		return errors.New("full price list required")
+	if Newest(Active(), list) != list {
+		return nil
 	}
-	if Newest(Active(), list) == list {
-		Install(list)
-		installed = list
+	Install(list)
+	installed = list
+	if dir == "" {
+		return nil
 	}
-	return nil
+	encoded, e := json.Marshal(persisted{List: raw, Signature: signature})
+	if e != nil {
+		return e
+	}
+	return writePrivate(filepath.Join(dir, persistedName), encoded)
+}
+
+func writePrivate(path string, data []byte) (err error) {
+	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".baum-prices-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(file.Name())
+		}
+	}()
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 // Estimate is a planning estimate from configured charged-token and call

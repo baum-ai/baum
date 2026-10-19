@@ -49,6 +49,7 @@ type reviewDocument struct {
 }
 
 type documentReview struct {
+	ChecksHead          string                  `json:"checks_head,omitempty"`
 	Repository          string                  `json:"repository"`
 	PullRequest         int                     `json:"pull_request"`
 	PRState             string                  `json:"pr_state"`

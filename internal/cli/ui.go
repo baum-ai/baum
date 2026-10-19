@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -57,7 +59,7 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	defer stop()
 	handler := api.Handler()
 	defer handler.Close()
-	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: handler})
+	instance, err := uiserver.Start(ctx, "", port, uiserver.Options{API: handler, App: localapp.Handler()})
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,17 @@ func runUI(cmd *cobra.Command, _ []string) error {
 	server = instance.Server
 	if !instance.Existing {
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
-		queue, err = jobs.Open("", &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{})}, concurrency, func(job jobs.Job) {
+		var state string
+		if state, err = jobs.Directory(); err != nil {
+			return err
+		}
+		// Queued jobs resume with the price list they were confirmed against,
+		// so reinstall the verified downloaded list before workers start.
+		if err := pricing.LoadPersisted(state); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: stored price list not loaded: %v\n", err)
+		}
+		refresh := func(ctx context.Context) error { return pricing.Refresh(ctx, state) }
+		queue, err = jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
@@ -76,7 +88,7 @@ func runUI(cmd *cobra.Command, _ []string) error {
 		}
 		defer queue.Close()
 		jobHandler.handler = queue.Handler()
-		go func() { _ = pricing.Refresh(ctx) }()
+		go func() { _ = refresh(ctx) }()
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), instance.URL)
 	noOpen, _ := cmd.Flags().GetBool("no-open")

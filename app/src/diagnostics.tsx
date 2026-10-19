@@ -45,7 +45,7 @@ export function DiagnosticsSection() {
     setRunning(true);
     setError("");
     try {
-      const body = await request<Diagnostics>("/api/diagnostics");
+      const body = await request<Diagnostics>("api/diagnostics");
       if (mine === sequence.current) setReport(body.report);
     } catch (e) {
       if (mine === sequence.current)

@@ -654,7 +654,20 @@ func TestPriceList(t *testing.T) {
 		if c.Source != "embedded" || c.Version != "2026-01-01" {
 			t.Errorf("%+v", c)
 		}
-		wantContains(t, "detail", c.Detail, "embedded", "keeps no price list on disk")
+		wantContains(t, "detail", c.Detail, "embedded", "keeps the newest one in its state directory")
+	})
+	t.Run("cached by baum ui", func(t *testing.T) {
+		newMachine(t)
+		c := find(t, run(t, Options{
+			FetchPrices:   true,
+			RefreshPrices: func(context.Context) error { return nil },
+			PriceSource:   func() pricing.Source { return pricing.Source{Origin: pricing.OriginCached, Version: "2026-10-01"} },
+		}), "prices")
+		wantStatus(t, c, StatusOK)
+		if c.Source != "cached" || c.Version != "2026-10-01" {
+			t.Errorf("%+v", c)
+		}
+		wantContains(t, "detail", c.Detail, "stored earlier", "no newer")
 	})
 	t.Run("fetched", func(t *testing.T) {
 		newMachine(t)

@@ -19,6 +19,9 @@ func newReposCommand() *cobra.Command {
 			return e
 		}
 		defer func() { _ = r.Close() }()
+		if cmd.Flags().Changed("daily-cap") && cmd.Flags().Changed("clear-daily-cap") {
+			return fmt.Errorf("--daily-cap and --clear-daily-cap cannot be combined")
+		}
 		c, e := r.AddPatch(cmd.Context(), args[0], func(s repos.Settings) (repos.Settings, error) {
 			if cmd.Flags().Changed("automatic") {
 				s.Automatic, _ = cmd.Flags().GetBool("automatic")
@@ -26,6 +29,9 @@ func newReposCommand() *cobra.Command {
 			if cmd.Flags().Changed("daily-cap") {
 				v, _ := cmd.Flags().GetFloat64("daily-cap")
 				s.DailyCap = &v
+			}
+			if clear, _ := cmd.Flags().GetBool("clear-daily-cap"); clear {
+				s.DailyCap = nil
 			}
 			if cmd.Flags().Changed("backend") {
 				v, _ := cmd.Flags().GetString("backend")
@@ -55,6 +61,7 @@ func newReposCommand() *cobra.Command {
 	}}
 	add.Flags().Bool("automatic", false, "enable future automatic generation for this repository")
 	add.Flags().Float64("daily-cap", 0, "daily automatic spending cap in USD (zero permits no spend)")
+	add.Flags().Bool("clear-daily-cap", false, "remove the daily cap override so the repository inherits again")
 	add.Flags().String("backend", "", "repository backend override (empty resets to global)")
 	add.Flags().String("model", "", "repository model override (empty resets to global)")
 	remove := &cobra.Command{Use: "remove <path-or-id>", Short: "Remove a registered clone, even if its path is gone", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

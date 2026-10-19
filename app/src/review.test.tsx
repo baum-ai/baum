@@ -10,7 +10,7 @@ import { LocalReview } from "./review";
 import { reviewJob, type Entry, type Job } from "./api";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
-    <div data-generation={header?.generation?.state}>
+    <div data-generation={header?.generation?.state} data-back={header?.back?.href}>
       {header?.beside}
       {notices}
       {document ? <p>{document.summary.text}</p> : placeholder}
@@ -57,6 +57,7 @@ const changed = vi.fn(async () => {});
 const generate = vi.fn();
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  history.replaceState(null, "", "/s/test-ns/");
   documentValue = null;
   cancelFails = false;
   changed.mockClear();
@@ -72,11 +73,11 @@ beforeEach(() => {
             status: cancelFails ? 500 : 200,
             headers: { "Content-Type": "application/json" },
           })
-        : path.startsWith("/api/document")
+        : path.startsWith("/s/test-ns/api/document")
           ? documentValue
             ? Response.json(documentValue)
             : new Response("missing", { status: 404 })
-          : path.startsWith("/api/versions")
+          : path.startsWith("/s/test-ns/api/versions")
             ? Response.json([])
             : Response.json({ available: true, sessions: [], commits: [] }),
     ),
@@ -126,6 +127,7 @@ it("shows queued initial generation and progress instead of an empty review", as
     )!.disabled,
   ).toBe(true);
   expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
+  expect(node.querySelector("[data-back]")!.getAttribute("data-back")).toBe("/s/test-ns/");
 });
 it("keeps the saved document readable while regenerating and updates after completion", async () => {
   documentValue = structuredClone(example) as unknown as ReviewDocument;
@@ -137,6 +139,7 @@ it("keeps the saved document readable while regenerating and updates after compl
   await render(job("completed"), 1, { ...entry, version_count: 2, status: "current" });
   expect(node.textContent).toContain("Completed version");
   expect(node.textContent).not.toContain("Generating review");
+  for (const [url] of vi.mocked(fetch).mock.calls) expect(url).toMatch(/^\/s\/test-ns\/api\//);
   expect(
     Array.from(node.querySelectorAll("button")).find(
       (button) => button.textContent === "Regenerate review",
@@ -213,7 +216,7 @@ it("keeps the PR page through queued, running and completed SSE states across cl
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, ...args: unknown[]) =>
-      path === "/api/repos"
+      path === "/s/test-ns/api/repos"
         ? Response.json(
             ["selected-clone", "another-clone"].map((id) => ({
               id,
@@ -223,18 +226,18 @@ it("keeps the PR page through queued, running and completed SSE states across cl
               settings: { automatic: false },
             })),
           )
-        : path.startsWith("/api/index")
+        : path.startsWith("/s/test-ns/api/index")
           ? Response.json({ entries: [indexed], problems: [] })
-          : path === "/api/jobs"
+          : path === "/s/test-ns/api/jobs"
             ? Response.json({ jobs: [currentJob] })
-            : path === "/api/prs"
+            : path === "/s/test-ns/api/prs"
               ? Response.json([])
-              : path === "/api/health"
+              : path === "/s/test-ns/api/health"
                 ? Response.json({})
                 : original(path, ...(args as [])),
     ),
   );
-  history.replaceState(null, "", "/?clone=selected-clone&pr=7");
+  history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Review generation is queued");
   currentJob = job("running");

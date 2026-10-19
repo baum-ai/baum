@@ -97,7 +97,8 @@ type Options struct {
 	// GitHubToken resolves the token for host; nil uses the configuration's
 	// own resolver.
 	GitHubToken func(ctx context.Context, cfg config.Config, host string) (token, source string, err error)
-	// RefreshPrices fetches the signed list; nil uses pricing.Refresh.
+	// RefreshPrices fetches the signed list; nil uses pricing.Refresh without
+	// storing it, since a diagnostic run must not change baum ui's state.
 	RefreshPrices func(ctx context.Context) error
 	// PriceSource describes the active list; nil uses pricing.CurrentSource.
 	PriceSource func() pricing.Source
@@ -175,7 +176,7 @@ func (r *runner) defaults() {
 		}
 	}
 	if o.RefreshPrices == nil {
-		o.RefreshPrices = pricing.Refresh
+		o.RefreshPrices = func(ctx context.Context) error { return pricing.Refresh(ctx, "") }
 	}
 	if o.PriceSource == nil {
 		o.PriceSource = pricing.CurrentSource
@@ -696,7 +697,7 @@ func (r *runner) prices() {
 	}
 	source := r.opts.PriceSource()
 	c := Check{ID: "prices", Label: "price list", Version: source.Version, Source: source.Origin}
-	const scope = "baum generate and the other commands use the embedded list (version %s); baum ui fetches the signed list when it starts. baum keeps no price list on disk. This check only shows whether fetching works and which version is published"
+	const scope = "baum generate and the other commands use the embedded list (version %s); baum ui fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
 	when := ""
 	if !source.FetchedAt.IsZero() {
 		when = ", fetched " + source.FetchedAt.UTC().Format(time.RFC3339)
@@ -713,6 +714,13 @@ func (r *runner) prices() {
 	case source.Origin == pricing.OriginFetched:
 		c.Status = StatusOK
 		c.Detail = fmt.Sprintf("fetching works: the published list is version %s%s. ", source.Version, when) + fmt.Sprintf(scope, pricing.Embedded().Version())
+	case source.Origin == pricing.OriginCached:
+		c.Status = StatusOK
+		c.Detail = fmt.Sprintf("the signed list version %s that baum ui stored earlier is in use; the published list is no newer. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+		if !r.opts.FetchPrices {
+			c.Status = StatusInfo
+			c.Detail = fmt.Sprintf("not fetched (--offline); the signed list version %s that baum ui stored earlier is in use. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+		}
 	case r.opts.FetchPrices:
 		c.Status = StatusOK
 		c.Detail = "fetching works: the published list is no newer than the embedded one. " + fmt.Sprintf(scope, pricing.Embedded().Version())

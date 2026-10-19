@@ -247,6 +247,12 @@ describe("resolveAnchor", () => {
     });
   });
 
+  it("names an external link without a label by its URL", () => {
+    expect(resolve({ type: "external_url", url: "https://example.com/x" }).label).toBe(
+      "https://example.com/x",
+    );
+  });
+
   it("keeps a supplied GitHub diff anchor on this pull request as it is", () => {
     const doc = structuredClone(document);
     const anchor = `#diff-${sha256Hex("pkg/a.go")}R12`;
@@ -491,6 +497,27 @@ describe("checkStatus", () => {
         required,
       })),
     },
+  });
+
+  it("uses the refreshed checks head while a newer review is generating", () => {
+    const next = "e".repeat(40);
+    const refreshed = withChecks([["success", true]]);
+    refreshed.review = { ...refreshed.review, checks_head: next };
+    expect(checkStatus(refreshed)).toMatchObject({ state: "none", total: 0 });
+    refreshed.index.checks.push({
+      ...refreshed.index.checks[0]!,
+      id: "live",
+      head: next,
+      conclusion: "pending",
+    });
+    expect(checkStatus(refreshed)).toMatchObject({
+      state: "pending",
+      pending: 1,
+      passed: 0,
+      total: 1,
+    });
+    refreshed.index.checks[1]!.conclusion = "success";
+    expect(checkStatus(refreshed)).toMatchObject({ state: "passing", passed: 1, total: 1 });
   });
 
   it("is green only when every check settled successfully", () => {
@@ -819,7 +846,7 @@ describe("review history labels", () => {
         { version: 2, previous_version: 1 },
         "unchanged",
       ),
-    ).toBe("From v1");
+    ).toBe("Since v1");
     expect(
       riskLifecycleLabel(
         {
@@ -856,7 +883,7 @@ describe("review history labels", () => {
     expect(riskLifecycleLabel(risk("legacy", "low"), review, "stale")).toBe("Obsolete");
     expect(riskLifecycleTone(mitigated, "stale")).toBe("neutral");
     expect(riskLifecycleTone(mitigated, "changed")).toBe("positive");
-    expect(riskLifecycleLabel(active, review, "changed")).toBe("From v1");
+    expect(riskLifecycleLabel(active, review, "changed")).toBe("Since v1");
   });
 
   it("leaves new off the first review, where everything is new", () => {
@@ -1573,6 +1600,16 @@ describe("sectionsInReviewOrder", () => {
     expect(
       ids([ordered("a", 2), ordered("b", 4), ordered("c", 2), ordered("d", 5), ordered("e", 4)]),
     ).toEqual(["d", "b", "e", "a", "c"]);
+  });
+
+  it("prioritizes attention within the same score while preserving score order", () => {
+    const attention = {
+      ...ordered("attention", 4),
+      attention: { text: "Check recovery", refs: [] },
+    };
+    expect(
+      ids([ordered("plain", 4), ordered("highest", 5), attention, ordered("also-plain", 4)]),
+    ).toEqual(["highest", "attention", "plain", "also-plain"]);
   });
 
   it("puts the mechanical section, unscored and obsolete sections last, in that order", () => {

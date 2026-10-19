@@ -28,6 +28,9 @@ type Local struct {
 	Config   config.Config
 	Client   *github.Client
 	Backends generate.Backends
+	// RefreshPrices downloads and installs the signed price list; nil disables
+	// the refresh for jobs confirmed against a newer list than the active one.
+	RefreshPrices func(context.Context) error
 }
 
 func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
@@ -109,13 +112,28 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}
 	return p, list.Version(), nil
 }
-func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+
+// confirmed rechecks a job's confirmed inputs. A job confirmed against a newer
+// list than the active one (a restart that has not yet reinstalled it) refreshes
+// the signed list once before deciding.
+func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
+	if e == nil && l.RefreshPrices != nil && pricing.CompareVersions(p.PriceVersion, current.PriceVersion) > 0 {
+		if l.RefreshPrices(ctx) == nil {
+			current, _, e = l.Prepare(ctx, p.Item)
+		}
+	}
 	if e != nil {
-		return nil, e
+		return e
 	}
 	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
-		return nil, errors.New("generation inputs changed")
+		return errors.New("generation inputs changed")
+	}
+	return nil
+}
+func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+	if e := l.confirmed(ctx, p); e != nil {
+		return nil, e
 	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {

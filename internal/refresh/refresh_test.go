@@ -73,7 +73,7 @@ func TestRefreshLocalSourcesAndCurrencyPreserveAuthorship(t *testing.T) {
 					t.Errorf("changed generation field %s", key)
 				}
 			}
-			if source.checksHead != saved.Metadata.Head || source.head != saved.Metadata.Head || source.base != saved.Metadata.MergeBase {
+			if source.checksHead != "" || source.head != saved.Metadata.Head || source.base != saved.Metadata.MergeBase {
 				t.Fatalf("read wrong revisions: %+v", source)
 			}
 			oldSections, sections := before["sections"].([]any), after["sections"].([]any)
@@ -95,7 +95,7 @@ func TestRefreshLocalSourcesAndCurrencyPreserveAuthorship(t *testing.T) {
 			if len(index["sessions"].([]any)) != 0 {
 				t.Error("unlinked sessions retained")
 			}
-			if index["checks"].([]any)[0].(map[string]any)["head"] != saved.Metadata.Head {
+			if index["checks"].([]any)[0].(map[string]any)["head"] != tc.head {
 				t.Error("checks indexed under wrong head")
 			}
 		})

@@ -255,6 +255,7 @@ export function HunkEvidence({
     };
   });
   const unavailable = selected.filter((item) => !item.diff);
+  const hasLineTotals = unavailable.length === 0;
   const usesHistorical = selected.some((item) => item.historical);
   const additions = files.reduce((total, file) => total + file.additions, 0);
   const deletions = files.reduce((total, file) => total + file.deletions, 0);
@@ -265,7 +266,7 @@ export function HunkEvidence({
   const summary =
     fileCount === 0
       ? `${selected.length} ${selected.length === 1 ? "excerpt" : "excerpts"} · ${canLoadHistorical && !historicalReady && !historicalLoadFailed ? "historical evidence" : "source unavailable"}`
-      : `${selected.length} ${selected.length === 1 ? "excerpt" : "excerpts"} in ${fileCount} ${fileCount === 1 ? "file" : "files"} · +${additions} −${deletions}${usesHistorical && historicalVersion ? ` · review v${historicalVersion}` : ""}`;
+      : `${selected.length} ${selected.length === 1 ? "excerpt" : "excerpts"} in ${fileCount} ${fileCount === 1 ? "file" : "files"}${hasLineTotals ? ` · +${additions} −${deletions}` : ""}${usesHistorical && historicalVersion ? ` · review v${historicalVersion}` : ""}`;
 
   return (
     <details
@@ -302,9 +303,14 @@ export function HunkEvidence({
         ) : (
           <span>
             {selected.length} {selected.length === 1 ? "excerpt" : "excerpts"} in {fileCount}{" "}
-            {fileCount === 1 ? "file" : "files"} ·{" "}
-            <span className="text-(--status-positive)">+{additions}</span>{" "}
-            <span className="text-(--status-critical)">−{deletions}</span>
+            {fileCount === 1 ? "file" : "files"}
+            {hasLineTotals && (
+              <>
+                {" · "}
+                <span className="text-(--status-positive)">+{additions}</span>{" "}
+                <span className="text-(--status-critical)">−{deletions}</span>
+              </>
+            )}
             {usesHistorical && historicalVersion ? ` · review v${historicalVersion}` : ""}
           </span>
         )}
@@ -318,7 +324,12 @@ export function HunkEvidence({
           Historical evidence from review v{historicalVersion}
         </p>
       ) : null}
-      <CodeDiff files={files} bare className={diffClassName} />
+      <CodeDiff
+        files={files}
+        bare
+        highlight={openKey === disclosureKey}
+        className={diffClassName}
+      />
       {unavailable.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-base text-(--text-tertiary)">
           {unavailable.map(({ anchor, hunk, patch }) => (

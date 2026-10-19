@@ -216,10 +216,15 @@ backoff, `sources` and the mapping onto the bundle.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
   `generator.truncated` note.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
-  metadata. Files over the size limit and submodule contents are omitted
-  with a reason; their hunks stay in the index and must still be placed.
-  The same limits apply when the checkout is exported and again when an
-  agent unpacks it.
+  metadata. Files over the size limit, binary files (a NUL byte in the first
+  8000 bytes, as git decides; a compared file the diff holds as text is kept,
+  since the export applies working-tree-encoding) and submodule contents are
+  omitted with a reason; their hunks stay in the index and must still be placed. The
+  compared paths are exported first, at the head and then at the merge base,
+  and the rest of the head tree fills what the total byte and file budgets
+  leave: a file that does not fit is omitted (`omitted_budget`) instead of
+  failing the export. An agent unpacking the checkout enforces the same limits
+  again and rejects an archive over them.
 - Sessions carry paraphrased command events, never raw command lines, tool
   output, local paths, e-mail addresses or tokens.
 - A host may give a session the decisions it extracted from the session's
@@ -384,10 +389,10 @@ stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
-| `anthropic` | the Anthropic API directly, with read-only file tools over the checkout |
+| `anthropic` | planned: the Anthropic API directly, with read-only file tools over the checkout |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
-| `cursor-agent` | `cursor-agent` confined to the checkout |
+| `cursor-agent` | planned: `cursor-agent` confined to the checkout |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
@@ -1132,11 +1137,14 @@ Repository names, including GitHub host, and pull request numbers key rows.
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement
 fenced by both its version number and exact previous bytes, preserving
-metadata and every replaced version. Concurrent refreshes and generations
-cannot overwrite a document prepared against older evidence. `Put` publishes
-metadata and document in one transaction only if the expected previous version
-is still latest, so concurrent runs cannot assign a different predecessor to
-a completed document. A losing run reports a conflict; generation failure or
+metadata and every replaced version. Concurrent refreshes cannot overwrite a
+document prepared against older evidence, and a refresh never replaces a newer
+version. A running generation does not block refresh: live facts refresh
+independently, as in the hosted service. `Put` publishes metadata and document
+in one transaction only if the previous version the caller read is still
+latest, so concurrent runs cannot assign a different predecessor to a completed
+document. A refresh of that previous version in the meantime does not reject
+the generation; the next refresh updates the new version's live facts. A losing run reports a conflict; generation failure or
 cancellation before publication writes no version. Export errors after
 publication leave the successfully generated version available. Metadata records full revision IDs,
 bundle digest, backend and installed version, actual model, schema revision,
@@ -1261,6 +1269,9 @@ handler behind that middleware. The existing document viewer does not mount it.
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
 HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+Cookies are host-scoped across ports, so the browser application, its API and
+its cookie live under a secret `/s/<namespace>/` path returned by the exchange;
+the server strips that prefix before routing to providers and to `Options.App`.
 Its public bootstrap contains no local data or capability; all API providers
 run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
@@ -1285,6 +1296,8 @@ summaries in one transaction, plus separate latest-started run records. It does
 not move document bodies or maintain a second database. CLI generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
+Once `Store.Put` commits a version, generation succeeds: failing to record the
+run's outcome afterwards is only a warning, and the lease later expires.
 
 ### Local pull request discovery
 
@@ -1325,14 +1338,20 @@ into the independent OSS module; its signature, tier and normalization tests are
 retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
+An installed download is stored with its signature in the job state directory.
+`baum ui` re-verifies and installs it before opening the queue, so recovered
+jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
 a different priced model. Unknown actual usage remains null.
 
 ### Local application presentation
 
-`app/` builds into the committed `internal/localapp/dist` embed. `uiserver`
-serves its public static shell behind the existing bound-Host check; all data,
-auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
+`app/` builds into the committed `internal/localapp/dist` embed.
+`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+are served only under the authenticated `/s/<namespace>/` path; the public
+bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
+API, SSE and asset URLs relative to that path and routes with query strings on
+it. All data, auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
 supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
 PR page, sourcing documents, immutable versions, patches, sessions and commits
 from registered local clones. The renderer stays in `viewer/`; the app owns

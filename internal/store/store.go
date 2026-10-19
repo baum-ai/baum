@@ -1,6 +1,8 @@
 // Package store keeps local review versions with immutable generation provenance.
-// A SQLite transaction publishes the document and metadata together, comparing the previous version
-// under the same write lock so concurrent generations cannot fork history.
+// A SQLite transaction publishes the document and metadata together, comparing
+// the previous version under the same write lock so concurrent generations
+// cannot fork history. A refresh replaces the latest document only while its
+// exact bytes are unchanged, so concurrent refreshes cannot lose each other.
 package store
 
 import (
@@ -243,10 +245,14 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	return out, rows.Err()
 }
 
-// Put appends only when expected is still latest (zero means no history).
+// Put appends v only while previous is still the latest version; the zero
+// Version means no history. A refresh of previous during generation replaces
+// only its live facts in place, so it does not reject the generated version:
+// the next refresh brings the new version's live facts up to date.
 // A failed or cancelled transaction leaves every published version untouched.
-func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
-	if !k.valid() || expected < 0 || v.Metadata.Version != expected+1 || !json.Valid(v.Document) {
+func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) error {
+	expected := previous.Metadata.Version
+	if !k.valid() || expected < 0 || v.Metadata.Version != expected+1 || !json.Valid(v.Document) || (expected > 0) != (len(previous.Document) > 0) {
 		return errors.New("invalid stored version")
 	}
 	var doc struct {
@@ -299,7 +305,9 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 }
 
 // RefreshCurrent replaces only the latest document, preserving its metadata.
-// Both the version and exact previous bytes fence concurrent generation and refresh.
+// Both the version and exact previous bytes fence concurrent generation and
+// refresh. A running generation does not block it: live facts refresh
+// independently, and the generated version still publishes over it.
 func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
 	if !k.valid() || previous.Metadata.Version <= 0 || !json.Valid(document) {
 		return errors.New("invalid refreshed version")

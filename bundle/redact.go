@@ -25,7 +25,7 @@ import (
 // text and an image/video reference copies the matched URL, so a secret
 // masked in Body/Title could otherwise still surface here — and branch
 // names, check names/URLs, requested-reviewer logins, comment paths and a
-// session decision's summary, rationale, rejected alternative, evidence and
+// session decision's title, summary, rationale, rejected alternative, evidence and
 // files, none of which are structurally constrained enough to skip. SHA, ID
 // and closed-enum fields (Kind, State, Role, Change, Outcome, a decision's
 // Who, Category and Trigger, ...) are not redacted: they are not free text, and running
@@ -62,6 +62,9 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	}
 	for i := range bundle.Conversation {
 		fields = append(fields, &bundle.Conversation[i].AuthorLogin, &bundle.Conversation[i].Body, &bundle.Conversation[i].Path)
+	}
+	for i := range bundle.Threads {
+		fields = append(fields, &bundle.Threads[i].Path, &bundle.Threads[i].URL)
 	}
 	for i := range bundle.References {
 		fields = append(fields, &bundle.References[i].Value)
@@ -105,7 +108,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		if session.Decisions != nil {
 			for d := range *session.Decisions {
 				decision := &(*session.Decisions)[d]
-				fields = append(fields, &decision.Summary, &decision.Rationale, &decision.RejectedAlternative, &decision.Evidence)
+				fields = append(fields, &decision.Title, &decision.Summary, &decision.Rationale, &decision.RejectedAlternative, &decision.Evidence)
 				for f := range decision.Files {
 					fields = append(fields, &decision.Files[f])
 				}
@@ -134,6 +137,12 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 						if _, text := child.(string); text && line && childKey == "text" {
 							continue
 						}
+						// A behaviour step's evidence is an array of ev_ ids the
+						// next document must carry verbatim; a decision's
+						// evidence is one quoted string, which is scanned.
+						if refs, ok := child.([]any); ok && childKey == "evidence" && allStrings(refs) {
+							continue
+						}
 						redacted, err := redactContent(child, childKey, false)
 						if err != nil {
 							return nil, err
@@ -156,8 +165,9 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 						value[i] = redacted
 					}
 				case string:
-					// Preserve identifiers and closed vocabularies.
-					if !strings.Contains("|id|hunks|refs|evidence|type|kind|tier|category|source|status|state|who|sha|session|event|input|", "|"+key+"|") {
+					// Preserve identifiers and closed vocabularies; free-text keys
+					// (a decision's evidence, input, type) are scanned.
+					if !strings.Contains("|id|hunks|refs|kind|tier|category|source|status|state|who|sha|session|event|", "|"+key+"|") {
 						if err := redactField(&value); err != nil {
 							return nil, err
 						}
@@ -292,4 +302,13 @@ func (r *Redactor) RedactLines(ctx context.Context, lines []string) ([]string, i
 		offset += len(line) + 1
 	}
 	return masked, count, nil
+}
+
+func allStrings(values []any) bool {
+	for _, value := range values {
+		if _, ok := value.(string); !ok {
+			return false
+		}
+	}
+	return true
 }

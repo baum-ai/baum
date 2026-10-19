@@ -16,7 +16,8 @@ Everything runs locally:
   own token;
 - the review itself is written by a coding-agent CLI already installed on your
   machine, `claude` or `codex`, found on your `PATH` or at the path you set
-  with `backend_paths` in the config file.
+  with `backend_paths` in the config file. Backends for the Anthropic API and
+  the `cursor-agent` CLI are planned but not available yet.
 
 ## Status
 
@@ -117,9 +118,10 @@ for every warning and problem:
   gh's `hosts.yml` or `GH_HOST`) is a problem, with the fix;
 - whether `ANTHROPIC_API_KEY` is set (nothing uses it in this version);
 - the price list: `baum generate` and the other commands use the embedded
-  list, and `baum ui` fetches the signed list when it starts. baum keeps no
-  price list on disk. Doctor's own fetch only shows whether fetching works and
-  which version is published;
+  list, and `baum ui` fetches the signed list when it starts and keeps the
+  newest one in its state directory so queued jobs can resume; the source is
+  `embedded`, `fetched` or `cached`. Doctor's own fetch stores nothing and only
+  shows whether fetching works and which version is published;
 - the config file, repository registry, job queue, discovery cache, `baum ui`
   instance directory and each registered clone's review store, and the `PATH`
   entries. Doctor creates none of them and opens the registry read-only.
@@ -192,10 +194,11 @@ at the same canonical paths makes it available again. Re-add a moved clone at it
 new path and remove its old record explicitly.
 
 Automatic generation defaults **off**. `repos add` accepts `--automatic=true`,
-`--daily-cap <USD>`, `--backend <name>` and `--model <name>` to edit repository
+`--daily-cap <USD>`, `--clear-daily-cap`, `--backend <name>` and `--model <name>` to edit repository
 settings; omitted flags preserve existing settings. A cap must be finite and
 nonnegative; zero allows no automatic spending, and an unset cap has no
-repository override. Empty `--backend=` or `--model=` resets that override to
+repository override. `--clear-daily-cap` removes the override so the repository
+inherits again; it cannot be combined with `--daily-cap`. Empty `--backend=` or `--model=` resets that override to
 inherit the resolved global configuration. Automatic/cap settings are retained for compatibility only: the local app
 never schedules paid generation, even when automatic is true. Backend and model
 overrides apply to explicitly requested generation.
@@ -225,8 +228,9 @@ pull request; `--repo` and `--store` select the same repository and history as
 `generate` and `view`.
 
 The review is current only when both its saved head and base match GitHub;
-otherwise it becomes outdated. Checks are loaded for the saved reviewed head,
-and cannot verify evidence after the pull request moves to a newer head.
+otherwise it becomes outdated. Checks refresh for the latest GitHub head even
+while a replacement review is generating. The saved reviewed head and its check
+anchors remain unchanged; newer-head checks cannot verify older review evidence.
 Missing or unsupported evidence is downgraded. Failures leave the document
 unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
@@ -288,7 +292,10 @@ generation remain immutable; the latest version can refresh its evidence.
 A second generation supplies the previous document to the shared history logic,
 which retains section IDs, stale sections and risk introductions/mitigations.
 Concurrent runs may both generate from the same version; only one publishes,
-and the other fails with a conflict asking you to generate again. Generation
+and the other fails with a conflict asking you to generate again. A refresh of
+the previous version while generation runs does not cause a conflict: the new
+version publishes with the evidence it gathered, and the next refresh updates
+its live facts. Generation
 failures and cancellation before publication publish no version. A later stdout
 or export failure leaves the successfully generated version stored. An existing store is always preferred,
 even if read-only; a write then fails rather than silently hiding its history.
@@ -470,7 +477,12 @@ from the diff index), `max_diff_index_bytes` (524288), `max_diff_files` (3000),
 the same pull request is trimmed the same way in both places. An unknown name
 or a negative value is an error. Trimming cuts text in the documented order
 and says so in the bundle's `truncated` notes; it never drops a hunk from the
-diff index, and a diff index over its budget fails the command instead.
+diff index, and a diff index over its budget fails the command instead. Inline
+code patches are shortened before whole sessions are dropped, keeping extracted
+decisions and their cited prompt entries when shorter patches make room. The
+checkout leaves out binary files and files over `checkout_max_file_bytes`,
+takes the changed files first, and leaves out whatever else does not fit its
+total budgets instead of failing; `truncated` counts the files it left out.
 
 Precedence is flags, then environment, then the file, then defaults. The
 environment variables are:
@@ -524,6 +536,10 @@ Documents follow the `baum.review/1` JSON Schema in
 fetches it); a test validates the
 example document next to it. The hosted baum service reads the same file, and
 baum supports every field it defines.
+
+Decisions may carry a short `title` for compact lists alongside their full
+`text`. New model-authored decisions include one; older documents remain valid
+without it.
 
 ## Packages
 
@@ -589,14 +605,29 @@ requested. The embedded local application opens its multi-repository inbox,
 with the shared PR review page, history, generation jobs and repository settings.
 
 The URL carries a random capability in its fragment, which the bootstrap
-removes from browser history before exchanging it for an HttpOnly,
-SameSite=Strict session cookie. The capability remains valid for the lifetime
-of this instance so subsequent invocations and a desktop host can authorize a
-new browser. It is kept only in the private per-user instance file and printed
-launch URL. API clients may use `Authorization: Bearer <capability>` instead of
-a cookie. All mutations, including token exchange, require the exact local
-`Origin` and `Content-Type: application/json`; no CORS access is enabled.
-Only the exact bound `127.0.0.1:port` Host is accepted.
+removes from browser history before exchanging it at
+`POST /api/auth/exchange` (`{"token":"<capability>"}`). The response is
+`{"path":"/s/<namespace>/"}` and an HttpOnly, SameSite=Strict session cookie
+scoped to that path; the bootstrap then replaces itself with that path. The
+namespace is a separate random secret: browsers send cookies to every port on
+`127.0.0.1`, so the cookie only travels to URLs under the namespace, which
+other loopback services cannot guess. In the browser, the application and its
+API live only under `/s/<namespace>/`: `/s/<namespace>/api/...` and
+`/s/<namespace>/api/events` reach the endpoints below, and other `GET` paths
+there serve the embedded application's files (`/s/<namespace>/` is its page;
+it navigates with query strings on that path). The application resolves API
+URLs relative to its namespace (`api/repos` from `/s/<namespace>/`, taken from
+the first two segments of `location.pathname`). The cookie authorizes nothing
+outside the namespace, and an unknown namespace is 404.
+
+The capability remains valid for the lifetime of this instance so subsequent
+invocations and a desktop host can authorize a new browser. It is kept only in
+the private per-user instance file and printed launch URL; the namespace is
+never printed or stored. API clients may send `Authorization: Bearer
+<capability>` to the unprefixed `/api/...` paths instead. All mutations,
+including token exchange, require the exact local `Origin` and
+`Content-Type: application/json`; no CORS access is enabled. Only the exact
+bound `127.0.0.1:port` Host is accepted.
 
 The instance lock and 0600 capability file live under
 `$XDG_RUNTIME_DIR/baum`, or `$XDG_STATE_HOME/baum` (default
@@ -617,8 +648,9 @@ The persistent queue lives in `$XDG_STATE_HOME/baum/jobs.json` (default
 `~/.local/state/baum/jobs.json`), mode 0600. Jobs remain individually visible;
 restarting marks unfinished running jobs interrupted and resumes queued jobs.
 Only one queued or running job exists per repository/PR across registered clones.
-A newly confirmed head replaces queued work; running work must finish or be
-cancelled first. Cancelling propagates to the backend process group and removes
+Confirming the same inputs again returns the queued job. Any other confirmed
+input (head, backend, model, budgets, caps or price list version) replaces
+queued work; running work must finish or be cancelled first. Cancelling propagates to the backend process group and removes
 its temporary checkout and archives. Failed, cancelled and interrupted attempts
 never publish a partial version.
 
@@ -651,7 +683,11 @@ budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
 is required; unknown backend default models have no invented estimate.
 Estimates use the signed published full price list, falling back to the embedded
-release baseline if download or verification fails. The estimate uses the
+release baseline if download or verification fails. A downloaded list that
+becomes active is stored with its signature beside the queue, in
+`prices.signed.json`; on restart it is verified again and reinstalled before
+queued jobs resume. A queued job confirmed against a newer list than the active
+one downloads the signed list once more before its input check. The estimate uses the
 highest listed charged-token rates and reserves one budget-sized cache read per
 call. It is a planning estimate, not a hard dollar ceiling: cached reads are
 outside the charged-token budget and provider usage can overshoot a call limit.
@@ -699,6 +735,11 @@ exposing their paths. Rows carry version count, the latest version's generation
 time, backend/model, risk assessment and recorded USD cost. Cost is null when
 none was recorded, including current CLI backends, rather than an invented zero.
 
+Clones with distinct common directories keep independent histories, so each store
+gets its own row with its `clone_id`; a discovered PR with no saved review in a
+store gets a `no_review` row for that store even when another store has one.
+Linked worktrees share a store and therefore one row.
+
 Once the repository and store are resolved, terminal generation records its run
 separately from successful versions. Failures use only the fixed categories
 `input`, `backend`, `budget`, `validation`, `interrupted`, and `internal`; failed
@@ -737,13 +778,18 @@ and bounded to 45 seconds; shutdown waits for the worker to stop.
 
 The worker updates PR heads, titles, draft/closed/merged states and check summaries,
 including PRs with no generated review and saved PRs absent from the open inbox.
-For saved reviews it reuses model-free `refresh`: checks for the reviewed revision,
+For saved reviews it reuses model-free `refresh`: checks for the latest head,
 threads, bot reports, local session links and derived evidence are recomputed,
 while authored content, generation provenance, attachments and older versions
-stay unchanged. Current-head checks are read separately after a head moves, so
-checks from the saved revision never masquerade as checks on the new head.
-Concurrent generation/refresh uses the store's compare-and-swap publication;
-a race is retried on a later pass instead of overwriting newer work.
+stay unchanged. The inbox's check summary is read separately for the current
+head after a head moves, so checks from the saved revision never masquerade as
+checks on the new head. That read happens before the refreshed document is
+published: if it fails, or any other read does, the saved document stays
+unchanged and the PR is retried. Refresh runs while a generation of the PR is
+running; the generation still publishes its new version afterwards, and the
+next pass refreshes that version's live facts. A refresh that loses a race with
+newer work is retried on a later pass instead of overwriting it, and is not
+reported as a failure.
 
 `GET /api/background` exposes per-repository success, fixed failure category and
 next retry; authenticated index events update the app. Discovery rate information

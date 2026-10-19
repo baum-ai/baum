@@ -2,8 +2,21 @@
 
 `baum ui` serves this React single-page app from its embedded assets. It uses
 only the authenticated local server: no hosted baum API, account or login.
-The launch capability is exchanged for the server's HttpOnly cookie and removed
-from the address before the inbox loads.
+The server's own bootstrap page at `/` removes the launch capability from the
+address, exchanges it for an HttpOnly cookie scoped to a secret
+`/s/<namespace>/` path, and replaces itself with that path. The app is served
+only there, so it never sees the capability and only confirms the session with
+`api/health`.
+
+Every URL the app builds resolves under that namespace: `appBase()` in
+`src/api.ts` takes the first two segments of `location.pathname`, and API
+requests, the `api/events` stream, attachment images and in-app links are
+built from it. The server rejects the cookie on unprefixed `/api/...` paths,
+so an absolute `/api/...` URL fails with 401. Vite builds with `base: "./"`,
+so the bundle's own assets load relative to the page. Navigation keeps the
+path at the namespace root and changes only the query string (`?page=jobs`,
+`?clone=…&pr=…`), so a reload or a copied link opens the same view and the
+server needs no fallback route.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
@@ -52,9 +65,12 @@ Browser tests use an actual `uiserver.Server`, registry, version stores, queue,
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.
-The suite verifies bootstrap, filtering, shared PR viewing, narrow layout,
-estimation, generation/progress and repository settings. Unit tests cover
-first-run/authorization, each review state, unknown costs, selection and filters.
+The suite verifies bootstrap into the namespace (every app request stays under
+it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
+viewing and reloading a PR deep link, narrow layout, estimation,
+generation/progress and repository settings. Unit tests cover
+first-run/authorization, namespaced URLs and navigation, each review state,
+unknown costs, selection and filters.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call

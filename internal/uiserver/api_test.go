@@ -42,7 +42,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	const id = "att_0123456789abcdef0123456789abcdef"
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}]}}`, id))
-	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, 0, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}}}); err != nil {
+	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()

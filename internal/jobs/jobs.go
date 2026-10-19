@@ -37,6 +37,18 @@ type Prepared struct {
 	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
 	BlockedReason                 string   `json:"blocked_reason,omitempty"`
 }
+
+// sameConfirmedInputs reports whether two confirmations authorize the same
+// run: clone, head, backend, model, budgets and caps, isolation, price list
+// version and estimate. Only then is a resubmission idempotent.
+func (p Prepared) sameConfirmedInputs(o Prepared) bool {
+	if (p.EstimateUSD == nil) != (o.EstimateUSD == nil) || (p.EstimateUSD != nil && *p.EstimateUSD != *o.EstimateUSD) {
+		return false
+	}
+	p.EstimateUSD, o.EstimateUSD = nil, nil
+	return p == o
+}
+
 type Estimate struct {
 	ID           string     `json:"id"`
 	Items        []Prepared `json:"items"`
@@ -91,9 +103,9 @@ func id() string {
 	return hex.EncodeToString(b[:])
 }
 
-// DefaultPath is the queue file Open uses for an empty path:
-// $XDG_STATE_HOME/baum/jobs.json, defaulting to ~/.local/state.
-func DefaultPath() (string, error) {
+// Directory is the persistent state directory holding the default journal:
+// $XDG_STATE_HOME/baum, or ~/.local/state/baum.
+func Directory() (string, error) {
 	root := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(root) {
 		home, e := os.UserHomeDir()
@@ -102,7 +114,17 @@ func DefaultPath() (string, error) {
 		}
 		root = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(root, "baum", "jobs.json"), nil
+	return filepath.Join(root, "baum"), nil
+}
+
+// DefaultPath is the queue file Open uses for an empty path: jobs.json in
+// Directory.
+func DefaultPath() (string, error) {
+	dir, e := Directory()
+	if e != nil {
+		return "", e
+	}
+	return filepath.Join(dir, "jobs.json"), nil
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
@@ -306,7 +328,7 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 				q.jobs = before
 				return nil, errors.New("a job is already running for this pull request")
 			}
-			if j.HeadSHA == p.HeadSHA {
+			if j.sameConfirmedInputs(p) {
 				out = append(out, *j)
 				continue
 			}

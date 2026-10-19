@@ -18,12 +18,12 @@ func resetSource(t *testing.T) {
 	t.Cleanup(func() {
 		Install(previous)
 		refreshState.mu.Lock()
-		refreshState.list, refreshState.fetchedAt, refreshState.err = nil, time.Time{}, ""
+		refreshState.list, refreshState.origin, refreshState.fetchedAt, refreshState.err = nil, "", time.Time{}, ""
 		refreshState.mu.Unlock()
 	})
 	Install(Embedded())
 	refreshState.mu.Lock()
-	refreshState.list, refreshState.fetchedAt, refreshState.err = nil, time.Time{}, ""
+	refreshState.list, refreshState.origin, refreshState.fetchedAt, refreshState.err = nil, "", time.Time{}, ""
 	refreshState.mu.Unlock()
 }
 
@@ -57,11 +57,29 @@ func TestCurrentSourceReportsAFetchedListAndTheLastFailure(t *testing.T) {
 	}
 }
 
+func TestCurrentSourceReportsACachedListUntilARefreshReplacesIt(t *testing.T) {
+	resetSource(t)
+	cached := &List{version: "2999-01-01", full: true, entries: Embedded().entries}
+	Install(cached)
+	noteCached(cached)
+	got := CurrentSource()
+	if got.Origin != OriginCached || got.Version != "2999-01-01" || !got.FetchedAt.IsZero() {
+		t.Errorf("cached source = %+v", got)
+	}
+
+	fetched := &List{version: "2999-02-01", full: true, entries: Embedded().entries}
+	Install(fetched)
+	noteRefresh(fetched, nil)
+	if got = CurrentSource(); got.Origin != OriginFetched || got.FetchedAt.IsZero() {
+		t.Errorf("after a refresh = %+v", got)
+	}
+}
+
 func TestRefreshRecordsItsFailure(t *testing.T) {
 	resetSource(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Refresh(ctx); err == nil {
+	if err := Refresh(ctx, ""); err == nil {
 		t.Fatal("Refresh with a cancelled context succeeded")
 	}
 	got := CurrentSource()
@@ -86,7 +104,7 @@ func TestRefreshAndCurrentSourceRunConcurrently(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			if err := refresh(context.Background(), unavailable); err == nil {
+			if err := refresh(context.Background(), &http.Client{Transport: unavailable}, PublishedURL, PublishedKey(), ""); err == nil {
 				t.Error("refresh succeeded against a 503")
 			}
 		}()

@@ -637,7 +637,7 @@ func TestDecisionApprovalIsOnlyForAgentDecisions(t *testing.T) {
 	} {
 		doc, err := decodeObject(authoredFixture(), "candidate")
 		checkNoError(t, err)
-		item := map[string]any{"id": "dec_parser", "by": tc.by, "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
+		item := map[string]any{"id": "dec_parser", "title": "Choose the parser", "by": tc.by, "text": "Chose a parser.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}
 		if tc.approved != absent {
 			item["approved_by_human"] = tc.approved
 		}
@@ -802,6 +802,31 @@ func TestReviewMinutesIsOptionalAndKeptInRange(t *testing.T) {
 				t.Fatalf("review_minutes = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestModelSchemaAsksForDecisionTitles(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	var schema map[string]any
+	checkNoError(t, json.Unmarshal(v.Schema, &schema))
+	found := false
+	walkSchema(schema, func(node map[string]any) {
+		properties, _ := node["properties"].(map[string]any)
+		if properties["approved_by_human"] == nil || properties["text"] == nil {
+			return
+		}
+		found = true
+		if !containsString(stringSlice(node["required"]), "title") {
+			t.Error("model-authored decisions must require title")
+		}
+		title, _ := properties["title"].(map[string]any)
+		if title["type"] != "string" {
+			t.Errorf("model title must be a non-null string: %v", title)
+		}
+	})
+	if !found {
+		t.Fatal("no model decision schema found")
 	}
 }
 

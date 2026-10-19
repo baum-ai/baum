@@ -749,7 +749,7 @@ func addCreatedRefs(graph *session.Graph, refs *commitRefSet) {
 			observedAt = use.Timestamp
 		}
 		toolUseID := use.ID
-		for _, sha := range gitevidence.CommitSHAs(resultText(result)) {
+		for _, sha := range gitevidence.CommitSHAs(resultText(result), gitevidence.TrustsOnelineLog(command)) {
 			refs.add(CommitRef{SHA: sha, Role: RoleCreated, ObservedAt: observedAt, ToolUseID: &toolUseID})
 		}
 	}

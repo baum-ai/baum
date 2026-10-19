@@ -6,25 +6,38 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const evidence: string[] = [];
   const commits = new Map<string, number>();
   page.on("response", (response) => {
-    if (new URL(response.url()).pathname === "/api/sessions")
-      void response.json().then((body) => {
-        if (body.available)
-          commits.set(
-            new URL(response.url()).searchParams.get("version") ?? "current",
-            body.commits.length,
-          );
-      });
+    if (new URL(response.url()).pathname.endsWith("/api/sessions"))
+      // A reload can discard a body before it is read; that answer is not evidence.
+      void response
+        .json()
+        .then((body) => {
+          if (body.available)
+            commits.set(
+              new URL(response.url()).searchParams.get("version") ?? "current",
+              body.commits.length,
+            );
+        })
+        .catch(() => undefined);
   });
   page.on("request", (r) => {
     if (r.url().includes("/api/sessions?")) evidence.push(r.url());
   });
   const foreign: string[] = [];
+  const local: string[] = [];
   page.on("request", (r) => {
     if (!r.url().startsWith("http://127.0.0.1:4167")) foreign.push(r.url());
+    else local.push(new URL(r.url()).pathname);
   });
   await page.goto((await readFile("e2e/launch-url", "utf8")).trim());
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
+  // The bootstrap replaces itself with the secret session namespace; the app,
+  // its assets, API and event stream all live under it.
+  const base = new URL(page.url()).pathname;
+  expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{43}\/$/);
+  expect((await page.request.get(`${base}api/repos`)).status()).toBe(200);
+  expect((await page.request.get("/api/repos")).status()).toBe(401);
+  expect((await page.request.get("/s/wrong/api/repos")).status()).toBe(404);
   await expect(page.getByRole("link", { name: /Reuse the existing PR page/ })).toBeVisible();
   expect(errors).toEqual([]);
   await page.screenshot({
@@ -70,6 +83,10 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe(base);
+  // A deep link reloads into the same PR page under the namespace.
+  await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Review version", exact: true }).click();
   await page.getByRole("button", { name: "View v1", exact: true }).click();
@@ -206,4 +223,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/diagnostics-narrow.png", animations: "disabled" });
   expect(errors).toEqual([]);
   expect(foreign).toEqual([]);
+  expect(
+    local.filter(
+      (path) => !["/", "/launch.js", "/api/auth/exchange"].includes(path) && !path.startsWith(base),
+    ),
+  ).toEqual([]);
 });

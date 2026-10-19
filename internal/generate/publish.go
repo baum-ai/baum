@@ -11,22 +11,33 @@ import (
 	"github.com/baum-ai/baum/review"
 )
 
+// Versions is the part of *store.Store that Publish uses.
+type Versions interface {
+	Latest(context.Context, store.Key) (store.Version, error)
+	BeginRun(context.Context, store.Key, time.Time) (int64, error)
+	HeartbeatRun(context.Context, int64, time.Time) error
+	FinishRun(context.Context, int64, string) error
+	Put(context.Context, store.Key, store.Version, store.Version) error
+}
+
 // Publish runs the same validation/repair pipeline for CLI and queued jobs and
-// atomically appends only a completed document to the version store.
-func Publish(ctx context.Context, versions *store.Store, key store.Key, o Options, cost func(Result) *float64) (result Result, err error) {
+// atomically appends only a completed document to the version store. Once the
+// version is stored the call succeeds: the version is already visible, so a
+// failure to record the run's outcome afterwards is a warning on o.Progress.
+func Publish(ctx context.Context, versions Versions, key store.Key, o Options, cost func(Result) *float64) (result Result, err error) {
 	defer func() {
 		if err != nil && o.DiagnosticsOut != "" {
 			_ = WriteDiagnostics(o.DiagnosticsOut, err, result.Outcome)
 		}
 	}()
+	// Publication is fenced on this version: another generation that publishes
+	// first makes this one a conflict. A refresh of it in the meantime does not.
 	latest, err := versions.Latest(ctx, key)
-	previous := 0
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return result, err
 	}
 	if err == nil {
-		previous = latest.Metadata.Version
-		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, previous)
+		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, latest.Metadata.Version)
 		if err != nil {
 			return result, err
 		}
@@ -65,8 +76,8 @@ func Publish(ctx context.Context, versions *store.Store, key store.Key, o Option
 		}
 		finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if e := versions.FinishRun(finish, runID, reason); e != nil && err == nil {
-			err = fmt.Errorf("record generation outcome: %w", e)
+		if e := versions.FinishRun(finish, runID, reason); e != nil && o.Progress != nil {
+			_, _ = fmt.Fprintf(o.Progress, "warning: record generation outcome: %v\n", e)
 		}
 	}()
 	result, err = Run(ctx, o)
@@ -90,7 +101,7 @@ func Publish(ctx context.Context, versions *store.Store, key store.Key, o Option
 			result.Metadata.CostReason = "cost_not_calculated"
 		}
 	}
-	if err = versions.Put(ctx, key, previous, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
+	if err = versions.Put(ctx, key, latest, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true

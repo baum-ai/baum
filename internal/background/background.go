@@ -239,7 +239,9 @@ func (s *Service) Sync(ctx context.Context) {
 							state.Error = "cache_unavailable"
 						}
 					}
-					if err != nil {
+					// A conflict means a generation or another refresh published first;
+					// the next pass refreshes the latest document normally.
+					if err != nil && !errors.Is(err, store.ErrConflict) {
 						state.Error = "metadata_unavailable"
 						state.Problems = append(state.Problems, Problem{current.number, "metadata_unavailable"})
 						var limited *github.RateLimitedError

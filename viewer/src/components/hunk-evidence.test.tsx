@@ -1,9 +1,29 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { reviewDocumentFor } from "../../test/review-document";
 import type { ReviewDocument } from "../review-document";
 import { ReviewFilesProvider } from "./code-file-link";
 import { HunkEvidence } from "./hunk-evidence";
+
+let root: Root | null = null;
+
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(() => {
+  act(() => root?.unmount());
+  root = null;
+});
+
+const settle = (until: () => boolean, tries = 100) =>
+  act(async () => {
+    for (let wait = 0; wait < tries && !until(); wait++)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+  });
 
 function document(): ReviewDocument {
   const value = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
@@ -95,6 +115,9 @@ describe("hunk evidence", () => {
     const anchor = { type: "hunk" as const, id: "h_picker" };
     const html = renderToStaticMarkup(<HunkEvidence document={doc} anchors={[anchor, anchor]} />);
     expect(html).toContain("1 excerpt in 1 file");
+    expect(html).not.toContain("status-positive");
+    expect(html).not.toContain("status-critical");
+    expect(html).not.toMatch(/Code evidence:[^"]*[+−]0/);
     expect(html).toContain("Excerpt unavailable");
     expect(html).toContain("View web/app/components/repository-picker.tsx");
     // With no link supplied, the source still opens on the change itself.
@@ -133,5 +156,30 @@ describe("hunk evidence", () => {
     expect(html).toContain("Loading historical evidence from review v2");
     expect(html).not.toContain("View review v2");
     expect(html).not.toContain("Excerpt unavailable");
+  });
+
+  it("highlights the excerpts only once the evidence is opened", async () => {
+    const container = globalThis.document.createElement("div");
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
+        <HunkEvidence
+          document={document()}
+          anchors={[{ type: "hunk", id: "h_picker", lines: [12, 12] }]}
+        />,
+      ),
+    );
+    // Highlighted code is coloured by `--syntax-*` variables.
+    const highlighted = () => container.querySelector('[style*="--syntax-"]') !== null;
+    // Long enough for shiki to load and tokenise, were it going to.
+    await settle(highlighted, 25);
+    expect(highlighted()).toBe(false);
+    const details = container.querySelector("details")!;
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    await settle(highlighted);
+    expect(highlighted()).toBe(true);
   });
 });

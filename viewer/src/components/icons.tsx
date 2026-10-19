@@ -131,6 +131,17 @@ export function ExternalLinkIcon(props: IconProps) {
   );
 }
 
+/** A terminal window with a prompt: a device signed in from the command line. */
+export function TerminalIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+      <path d="m4.5 6.25 2 1.75-2 1.75" />
+      <path d="M8.5 10h3" />
+    </Icon>
+  );
+}
+
 /** GitHub's mark, filled rather than stroked: it is their logo, not a glyph
  *  drawn on this set's grid. */
 export function GitHubIcon({ size = 16, className }: IconProps) {
