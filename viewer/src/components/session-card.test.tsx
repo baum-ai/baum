@@ -142,7 +142,7 @@ async function settle() {
 
 function button(name: string): HTMLButtonElement {
   const found = [...container.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes(name),
+    (b.getAttribute("aria-label") ?? b.textContent ?? "").includes(name),
   );
   if (!found) throw new Error(`no button "${name}"`);
   return found;
@@ -160,6 +160,23 @@ afterEach(() => {
 });
 
 describe("SessionCard", () => {
+  it("keeps identifying metadata in the session toggle's accessible text", () => {
+    render(createElement(SessionCard, { session: session({ title: "" }), defaultOpen: false }));
+    const header = document.querySelector<HTMLButtonElement>("[data-session-id] > button")!;
+    expect(header.hasAttribute("aria-label")).toBe(false);
+    for (const text of [
+      "Coding session",
+      "Claude Code",
+      "claude-opus",
+      "feature/retry",
+      "30m",
+      "2 prompts",
+      "1 commit",
+    ]) {
+      expect(header.textContent).toContain(text);
+    }
+  });
+
   it("shows a restricted card with no usage, and the host's reason", () => {
     const restricted = session({
       restricted: true,
@@ -208,7 +225,11 @@ describe("SessionCard", () => {
     expect(text).toContain("read 3 files");
     expect(text).toContain("5 reads");
     expect(text).toContain("+10/−4");
-    expect(text).toContain("~/src/widgets");
+    expect(text).not.toContain("~/src/widgets");
+    expect(container.querySelector('[title="Branch: feature/retry"]')).not.toBeNull();
+    expect([...container.querySelectorAll("dt")].map((label) => label.textContent)).not.toContain(
+      "Commits",
+    );
     // Without a loader there is no activity to open, and without a cost
     // format no cost anywhere.
     expect(text).not.toContain("Agent activity");
@@ -307,9 +328,52 @@ describe("SessionCard", () => {
     expect(text).toContain("Reading the client.");
     expect(text).toContain("1 model call");
     expect(text).toContain("1 tool call · read");
+    const activityRegion = container.querySelector(
+      '[role="region"][aria-label="Agent activity for prompt 1"]',
+    )!;
+    expect(activityRegion.querySelector("details")?.open).toBe(true);
+    expect(activityRegion.querySelector("summary")?.className).not.toContain("mx-auto");
     expect(text).toContain('{"file_path":"client.go"}');
     expect(text).toContain("Output");
     expect(text).toContain("package client\n…");
+  });
+
+  it("opens activity below its toggle and explains when no visible output was recorded", async () => {
+    const loadTurnActivity = vi.fn(async () => ({
+      ...activity,
+      messages: [],
+      tool_calls: [],
+      subagents: [],
+      followups: [],
+      invocations: [{}],
+    }));
+    render(
+      createElement(SessionCard, {
+        session: session({ cost_per_prompt: false }),
+        source: { loadTurnActivity },
+        defaultOpen: true,
+      }),
+    );
+    const toggle = button("Agent activity");
+    const replyElement = [...container.querySelectorAll("p")].find(
+      (node) => node.textContent === "The budget is wired.",
+    );
+    expect(replyElement).toBeDefined();
+    act(() => toggle.click());
+    await settle();
+    const region = container.querySelector(
+      '[role="region"][aria-label="Agent activity for prompt 1"]',
+    )!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("The budget is wired.");
+    expect(replyElement!.isConnected).toBe(true);
+    expect(toggle.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(region.textContent).toContain("No agent output was captured for this prompt.");
+    act(() => toggle.click());
+    expect(
+      container.querySelector('[role="region"][aria-label="Agent activity for prompt 1"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("The budget is wired.");
   });
 
   it("swaps a reply's preview for its whole message from the activity", async () => {
@@ -370,7 +434,11 @@ describe("SessionCard", () => {
     render(createElement(SessionCard, { session: session(), defaultOpen: true, focusTurn: 2 }));
     const current = container.querySelector('[aria-current="step"]');
     expect(current?.textContent).toContain("Now test it");
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "instant",
+    });
+    expect(current?.className).not.toContain("ring-");
   });
 
   it("says when prompts were left out", () => {

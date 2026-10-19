@@ -15,7 +15,7 @@ import {
 import { cn, FOCUS_RING } from "./classnames";
 import { formatDate, formatLinesCompact, formatRelative } from "./format";
 import { BranchIcon, ChevronLeftIcon, GitHubIcon } from "./icons";
-import { Lines, RiskScoreBadge } from "./review-parts";
+import { ChangeKindTag, Lines, RiskScoreBadge } from "./review-parts";
 import { Badge, LiveDot } from "./ui";
 
 /** The review page's own gutter. Narrower than a dashboard's: the page is a
@@ -58,6 +58,8 @@ export type ReviewHeaderSlots = {
    *  such as a stack's: it replaces the number and title, and the document's
    *  own pull request (its number, link and state) is not shown. */
   heading?: string;
+  /** Additional status beside the full page title. */
+  titleAside?: ReactNode;
   pullRequest?: PullRequestFacts;
   /** The way back to wherever the reader came from, drawn in the compact bar
    *  through the host's link component. */
@@ -125,23 +127,31 @@ function BranchChip({
   );
 }
 
-/** The review's age beside the version menu, which on a phone stands in for
- *  the head's version line: when its evidence was refreshed, a live dot while
+/** The review's age and status beside the version menu: when its evidence
+ *  was refreshed, a live dot while
  *  a new review is being written, and a badge only for a review that needs
  *  attention (outdated or failed). */
 export function ReviewFreshness({
   document,
   generation,
   className,
+  facts,
 }: {
   document: ReviewDocument;
   generation?: GenerationView;
   className?: string;
+  facts?: PullRequestFacts;
 }) {
   const { state, generating, updated } = reviewGeneration(document, generation);
+  const generatedFor = document.review.pr_state;
+  const superseded = facts?.state && generatedFor && facts.state !== generatedFor;
   return (
     <span
-      className={cn("inline-flex items-center gap-2 text-base text-(--text-tertiary)", className)}
+      title={`Version ${document.review.version}, generated ${formatDate(document.review.generated_at)}${document.review.head ? ` against ${shortSha(document.review.head)}` : ""}`}
+      className={cn(
+        "inline-flex flex-wrap items-center gap-2 text-base text-(--text-tertiary)",
+        className,
+      )}
     >
       {generating ? (
         <span
@@ -155,8 +165,16 @@ export function ReviewFreshness({
       {updated ? (
         <span title={`Evidence refreshed ${formatDate(updated)}`}>{formatRelative(updated)}</span>
       ) : null}
+      {superseded ? (
+        <Badge tone="caution">Generated while {humanize(generatedFor).toLowerCase()}</Badge>
+      ) : null}
       {state === "outdated" || state === "failed" ? (
-        <Badge tone={generationTone(state)}>{humanize(state)}</Badge>
+        <Badge tone={generationTone(state)}>
+          {humanize(state)}
+          {generating ? " · Generating" : ""}
+        </Badge>
+      ) : generating ? (
+        <span>Generating</span>
       ) : null}
     </span>
   );
@@ -189,7 +207,6 @@ export function ReviewHeader({
   // live state is what the badge states, and the snapshot only stands in when
   // nothing live has arrived.
   const state = facts.state ?? ofPullRequest?.review.pr_state;
-  const generatedFor = ofPullRequest?.review.pr_state;
   // The head's figures carry the score; the compact bar, which has no
   // figures, carries it as a pill. Not assessed shows nothing in either: the
   // Summary says why, and a "not assessed" mark would read as a finding.
@@ -203,18 +220,6 @@ export function ReviewHeader({
     typeof minutes === "number" && Number.isInteger(minutes) && minutes >= 1 && minutes <= 240
       ? minutes
       : null;
-  // Any disagreement earns the caveat, and the caveat claims no direction. The
-  // live state can lag the forge, and the document is written when the review
-  // is generated: either can be the staler of the two, and the page cannot
-  // tell which. What it can say is the state the review was generated
-  // against, which is true either way.
-  const superseded = Boolean(state && generatedFor && state !== generatedFor);
-  const {
-    state: generationState,
-    rewriting,
-    generating,
-    updated,
-  } = reviewGeneration(document, slots.generation);
   // The page scrolls as one: the head goes with the content, and once it has
   // gone a single line keeps the pull request in view. The bar is always in
   // the document so that it can fade, and hidden from readers and the tab
@@ -233,11 +238,6 @@ export function ReviewHeader({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const versionTitle = document
-    ? `Version ${document.review.version}, generated ${formatDate(document.review.generated_at)}${
-        document.review.head ? ` against ${shortSha(document.review.head)}` : ""
-      }`
-    : undefined;
   return (
     <>
       <div className="sticky top-0 z-(--z-sticky) hidden h-0 lg:block">
@@ -318,6 +318,10 @@ export function ReviewHeader({
                 "Review preview"
               )}
             </h1>
+            {document?.summary.change_kind ? (
+              <ChangeKindTag kind={document.summary.change_kind} />
+            ) : null}
+            {slots.titleAside}
             {state ? (
               <Badge tone={pullRequestStateTone(state)}>
                 <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
@@ -382,54 +386,7 @@ export function ReviewHeader({
               <BranchChip name={facts.branches.base} fit className="max-w-1/2 flex-none" />
             </div>
           ) : null}
-          {/* On a phone the version menu's line says this, shorter
-          (`ReviewFreshness`), so the head leaves it out there. */}
-          <div
-            className={cn(
-              "flex-wrap items-center gap-x-2 gap-y-2 pt-3 text-base text-(--text-tertiary)",
-              document && generationState ? "hidden sm:flex" : "flex",
-            )}
-          >
-            {document && generationState ? (
-              <>
-                {/* A current review is the expected state and reads as plain
-                text; only one that needs attention earns a badge. */}
-                {generationState === "current" && !generating ? (
-                  <span title={versionTitle}>Review v{document.review.version} · Current</span>
-                ) : (
-                  <Badge tone={generationTone(generationState)} title={versionTitle}>
-                    {generating ? <LiveDot className="mr-1.5" /> : null}
-                    Review v{document.review.version} · {humanize(generationState)}
-                    {rewriting ? " · Generating" : ""}
-                  </Badge>
-                )}
-                {/* Only when the two disagree, because a review that still
-                describes the pull request in front of the reader needs no
-                caveat — and one that describes an earlier one cannot be left
-                claiming to be current. */}
-                {superseded && state && generatedFor && (
-                  <Badge
-                    tone="caution"
-                    title={`Review v${document.review.version} was generated against this pull request as ${humanize(
-                      generatedFor,
-                    ).toLowerCase()}. This page has it as ${humanize(state).toLowerCase()}.`}
-                  >
-                    Generated while {humanize(generatedFor).toLowerCase()}
-                  </Badge>
-                )}
-                {updated ? (
-                  <>
-                    <Dot />
-                    <span title={`Evidence refreshed ${formatDate(updated)}`}>
-                      Updated {formatRelative(updated)}
-                    </span>
-                  </>
-                ) : null}
-              </>
-            ) : number !== undefined ? (
-              <Badge tone="info">Preview</Badge>
-            ) : null}
-          </div>
+          {!document && number !== undefined ? <Badge tone="info">Preview</Badge> : null}
         </div>
         {slots.statistics ? (
           <div className="border-t border-(--border-subtle) py-3">{slots.statistics}</div>

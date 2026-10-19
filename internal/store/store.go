@@ -1,5 +1,5 @@
-// Package store keeps immutable local review versions. A SQLite transaction
-// publishes the document and metadata together, comparing the previous version
+// Package store keeps local review versions with immutable generation provenance.
+// A SQLite transaction publishes the document and metadata together, comparing the previous version
 // under the same write lock so concurrent generations cannot fork history.
 package store
 
@@ -22,7 +22,7 @@ import (
 )
 
 var ErrNotFound = errors.New("no stored review version; run baum generate first")
-var ErrConflict = errors.New("the stored review changed during generation; generate again using the latest version")
+var ErrConflict = errors.New("the stored review changed during the operation; retry using the latest version")
 
 // Key isolates pull requests of different GitHub repositories, including hosts.
 type Key struct {
@@ -283,4 +283,49 @@ func (s *Store) Put(ctx context.Context, k Key, expected int, v Version) error {
 		return ErrConflict
 	}
 	return tx.Commit()
+}
+
+// RefreshCurrent replaces only the latest document, preserving its metadata.
+// Both the version and exact previous bytes fence concurrent generation and refresh.
+func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
+	if !k.valid() || previous.Metadata.Version <= 0 || !json.Valid(document) {
+		return errors.New("invalid refreshed version")
+	}
+	var before, after struct {
+		Review struct {
+			Repository  string `json:"repository"`
+			PullRequest int    `json:"pull_request"`
+			Version     int    `json:"version"`
+			Head        string `json:"head"`
+			Base        string `json:"base"`
+			MergeBase   string `json:"merge_base"`
+			GeneratedAt string `json:"generated_at"`
+		} `json:"review"`
+	}
+	if err := json.Unmarshal(previous.Document, &before); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(document, &after); err != nil {
+		return err
+	}
+	if before != after || !strings.EqualFold(after.Review.Repository, k.documentRepository()) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
+		return errors.New("refresh changed generation identity")
+	}
+	db, err := s.database(true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	result, err := db.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("%w; refresh again using the latest document", ErrConflict)
+	}
+	return nil
 }

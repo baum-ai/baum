@@ -179,8 +179,9 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // alone never exceeds the content limit. The documented order is assistant
 // replies, older prompts, command paraphrases, comment bodies oldest first
 // (keeping review verdicts), generated and vendored patch text, superseded
-// session decisions, the text of cited prompts, then whole sessions from the
-// lowest confidence. A session's current decisions go only with the session:
+// session decisions, ordinary patch text, the text of cited prompts, then whole
+// sessions from lowest confidence. A session's current decisions go only with
+// the session:
 // they are a short, reviewed account of what its prompts decided, so they
 // outlast every cut of raw prompt text. The prompts at the turns they cite
 // are kept with them: the older-prompts stage spares them, and before any
@@ -222,8 +223,6 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		{cutOldestComments, "older comments omitted to fit the size limit; review verdicts are kept"},
 		{cutGeneratedOrVendoredPatches, "generated and vendored patch text omitted to fit the size limit"},
 		{cutSupersededDecisions, "superseded session decisions omitted to fit the size limit; current decisions are kept"},
-		{shortenCitedPrompts, "text of prompts that current decisions cite shortened to fit the size limit, longest first; the prompts and their decisions are kept"},
-		{cutLowestConfidenceSession, ""},
 	}
 	for _, stage := range stages {
 		for stage.cut(bundle) {
@@ -237,18 +236,11 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		}
 	}
 
-	// Every documented stage is exhausted (bundle.Sessions is now empty) and
-	// the content still does not fit: a long PR body, long patches of
-	// ordinary hunks, or retained review-verdict bodies exceed MaxBytes. The
-	// documented stages assume trimming always succeeds; this is the
-	// backstop for when it does not, so the encoded bundle a provider
-	// receives never silently exceeds its configured byte ceiling.
-	bundle.Truncated = append(bundle.Truncated, "additional content shortened to fit the size limit after every documented stage")
-	bundle.PullRequest.Body = ""
-	if fits(bundle, limit) {
-		return nil
+	// The checkout carries the source too. Prefer shorter inline patches to
+	// dropping the sessions whose decisions explain the change.
+	if slices.ContainsFunc(bundle.Diff, func(h Hunk) bool { return h.Patch != "" }) {
+		bundle.Truncated = append(bundle.Truncated, "code patch text shortened to fit the size limit; hunk entries are kept")
 	}
-	// Shorten every patch equally, retaining leading lines and every hunk ID.
 	for lines := max(caps.MaxHunkPatchLines/2, 1); ; lines /= 2 {
 		for i := range bundle.Diff {
 			hunk := &bundle.Diff[i]
@@ -266,6 +258,32 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		if lines == 0 {
 			break
 		}
+	}
+	shortenedPrompts := false
+	for shortenCitedPrompts(bundle) {
+		if !shortenedPrompts {
+			bundle.Truncated = append(bundle.Truncated, "text of prompts that current decisions cite shortened to fit the size limit, longest first; the prompts and their decisions are kept")
+			shortenedPrompts = true
+		}
+		if fits(bundle, limit) {
+			return nil
+		}
+	}
+	for cutLowestConfidenceSession(bundle) {
+		if fits(bundle, limit) {
+			return nil
+		}
+	}
+
+	// Every documented stage is exhausted (all removable sessions are gone) and
+	// the content still does not fit: a long PR body or retained review-verdict
+	// bodies exceed MaxBytes. This is the
+	// backstop for when it does not, so the encoded bundle a provider
+	// receives never silently exceeds its configured byte ceiling.
+	bundle.Truncated = append(bundle.Truncated, "additional content shortened to fit the size limit after every documented stage")
+	bundle.PullRequest.Body = ""
+	if fits(bundle, limit) {
+		return nil
 	}
 	for i := range bundle.Conversation {
 		bundle.Conversation[i].Body = ""
