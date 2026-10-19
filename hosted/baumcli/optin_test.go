@@ -129,6 +129,10 @@ func TestDispatchersFallThroughToEntireForOpenSourceUsers(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
 		t.Errorf("baum left state in an open-source user's clone: %v", err)
 	}
+	// baum never ran, so no event was sent, spooled or logged either.
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local", "state", "baum")); !os.IsNotExist(err) {
+		t.Errorf("baum left state for an open-source user: %v", err)
+	}
 	if n := world.requests.Load(); n != 0 {
 		t.Errorf("%d requests reached the baum server", n)
 	}

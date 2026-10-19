@@ -101,7 +101,15 @@ func TestAgentHookExitStatusPassesThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, _, err := run(t, "hooks", "agent", "claude-code", "stop")
+	// The hook's event goes to a daemon location of the test's own.
+	state, err := os.MkdirTemp("", "bcs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_RUNTIME_DIR", state)
+	_, _, err = run(t, "hooks", "agent", "claude-code", "stop")
 	if ExitCode(err) != 7 || !Quiet(err) {
 		t.Fatalf("err = %v: exit code %d, quiet %v", err, ExitCode(err), Quiet(err))
 	}

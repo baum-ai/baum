@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agenthooks"
+	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/proc"
 )
 
@@ -52,22 +53,18 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			if !ok {
 				return nil
 			}
-			entire, err := resolveEntireBinary()
-			if err != nil {
-				_, _ = fmt.Fprintln(stderr, "[baum] Entire CLI is not installed or not on PATH. Skipping Entire Git hook; continuing.")
-				return nil
+			// Git writes refs to a pre-push hook's input and rewritten
+			// commits to a post-rewrite hook's; the others get none.
+			var input *hookInput
+			if args[0] == "pre-push" || args[0] == "post-rewrite" {
+				input = newHookInput(cmd.InOrStdin())
 			}
-			entireCommand := exec.CommandContext(cmd.Context(), entire, entireArgs...)
-			entireCommand.Stdin = cmd.InOrStdin()
-			entireCommand.Stdout = stdout
-			entireCommand.Stderr = stderr
-			if err := entireCommand.Run(); err != nil {
-				if args[0] == "pre-push" {
-					return fmt.Errorf("Entire pre-push hook failed: %w", err)
-				}
-				_, _ = fmt.Fprintf(stderr, "[baum] Entire Git hook failed; continuing: %s: %v\n", strings.Join(entireCommand.Args, " "), err)
-			}
-			return nil
+			err := runEntireGitHook(cmd, args, entireArgs, input, stdout, stderr)
+			event := newHookEvent(hookevents.KindGit, "", args[0])
+			event.Git = gitHookEvent(args, input.payload())
+			event.Exit = exitStatus(err)
+			sendHookEvent(cmd.Context(), event)
+			return err
 		},
 	}
 	gitCommand.SetOut(stdout)
@@ -115,44 +112,100 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			if err := validateAgentHook(agent, event); err != nil {
 				return err
 			}
-			if event == entireAgentSessionStart {
-				// Session start precedes any commit in the session, so this is
-				// where a fresh clone gets the hooks its first commit needs.
-				bootstrapContext, cancel := context.WithTimeout(cmd.Context(), sessionStartBootstrapTimeout)
-				defer cancel()
-				bootstrapHooks(bootstrapContext, ".", stderr)
-			}
-			entire, err := resolveEntireBinary()
-			if err != nil {
-				spec, _ := lookupAgentHookSpec(agent)
-				if notice := missingEntireNotice(spec, event); notice != "" {
-					_, _ = fmt.Fprintln(stdout, notice)
-				}
-				return nil
-			}
-			entireCommand := exec.CommandContext(cmd.Context(), entire, "hooks", agent, event)
-			entireCommand.Stdin = cmd.InOrStdin()
-			entireCommand.Stdout = stdout
-			entireCommand.Stderr = stderr
-			err = entireCommand.Run()
-			if err == nil {
-				return nil
-			}
-			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) {
-				_, _ = fmt.Fprintf(stderr, "[baum] Entire agent hook could not run; continuing: %s: %v\n", strings.Join(entireCommand.Args, " "), err)
-				return nil
-			}
-			code := exitErr.ExitCode()
-			if code < 0 {
-				code = 1
-			}
-			return &ExitError{Code: code}
+			input := newHookInput(cmd.InOrStdin())
+			err := runEntireAgentHook(cmd, agent, event, input, stdout, stderr)
+			hookEvent := newHookEvent(hookevents.KindAgent, agent, event)
+			hookEvent.Session = agentSession(input.payload())
+			hookEvent.Exit = exitStatus(err)
+			sendHookEvent(cmd.Context(), hookEvent)
+			return err
 		},
 	}
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
+}
+
+// runEntireGitHook hands a Git hook to Entire. Only a failing pre-push fails
+// the hook, so the push stops; other failures and a missing Entire warn.
+func runEntireGitHook(cmd *cobra.Command, args, entireArgs []string, input *hookInput, stdout, stderr io.Writer) error {
+	entire, err := resolveEntireBinary()
+	if err != nil {
+		input.read()
+		_, _ = fmt.Fprintln(stderr, "[baum] Entire CLI is not installed or not on PATH. Skipping Entire Git hook; continuing.")
+		return nil
+	}
+	entireCommand := exec.CommandContext(cmd.Context(), entire, entireArgs...)
+	entireCommand.Stdout = stdout
+	entireCommand.Stderr = stderr
+	if err := runDelegated(entireCommand, cmd.InOrStdin(), input); err != nil {
+		if args[0] == "pre-push" {
+			return fmt.Errorf("Entire pre-push hook failed: %w", err)
+		}
+		_, _ = fmt.Fprintf(stderr, "[baum] Entire Git hook failed; continuing: %s: %v\n", strings.Join(entireCommand.Args, " "), err)
+	}
+	return nil
+}
+
+// runEntireAgentHook runs the session-start bootstrap, then hands the agent
+// hook to Entire and returns its exit status as an ExitError.
+func runEntireAgentHook(cmd *cobra.Command, agent, event string, input *hookInput, stdout, stderr io.Writer) error {
+	if event == entireAgentSessionStart {
+		// Session start precedes any commit in the session, so this is
+		// where a fresh clone gets the hooks its first commit needs.
+		bootstrapContext, cancel := context.WithTimeout(cmd.Context(), sessionStartBootstrapTimeout)
+		defer cancel()
+		bootstrapHooks(bootstrapContext, ".", stderr)
+	}
+	entire, err := resolveEntireBinary()
+	if err != nil {
+		input.read()
+		spec, _ := lookupAgentHookSpec(agent)
+		if notice := missingEntireNotice(spec, event); notice != "" {
+			_, _ = fmt.Fprintln(stdout, notice)
+		}
+		return nil
+	}
+	entireCommand := exec.CommandContext(cmd.Context(), entire, "hooks", agent, event)
+	entireCommand.Stdout = stdout
+	entireCommand.Stderr = stderr
+	err = runDelegated(entireCommand, cmd.InOrStdin(), input)
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		_, _ = fmt.Fprintf(stderr, "[baum] Entire agent hook could not run; continuing: %s: %v\n", strings.Join(entireCommand.Args, " "), err)
+		return nil
+	}
+	code := exitErr.ExitCode()
+	if code < 0 {
+		code = 1
+	}
+	return &ExitError{Code: code}
+}
+
+// runDelegated runs a delegated command on the hook's input. With input it
+// reads a pipe that input fills, so the hook keeps a copy for its event.
+func runDelegated(command *exec.Cmd, in io.Reader, input *hookInput) error {
+	command.Stdin = in
+	var pipe *os.File
+	if input != nil {
+		if r, err := input.pipe(); err == nil {
+			pipe = r
+			command.Stdin = r
+		}
+	}
+	err := command.Start()
+	if pipe != nil {
+		// The command holds its own copy; keeping this one open would keep
+		// the copy blocked on a command that stopped reading.
+		_ = pipe.Close()
+	}
+	if err != nil {
+		return err
+	}
+	return command.Wait()
 }
 
 // errHostedHooksOff is the `--check` answer where the user has not opted in
