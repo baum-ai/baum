@@ -346,9 +346,10 @@ address the redactor wrote, is no finding. A value longer than its schema's
 identifiers and categories) cannot be valid; a value whose schema sets no
 `maxLength`, such as a SHA, hunk ID or date-time, may be valid at any length,
 and one with more than 16 runs fits none of those patterns. Either is scanned
-whole and from its first 16 runs, then masked whole, and counts only if a
-secret was found in it, so the scan stays linear in the document's size and a
-harmless value never fails the run on its own.
+whole and from every run, past its first 16 runs a 256-byte window at a time
+and each distinct window of the value once, then masked whole, and counts only
+if a secret was found in it, so the scan stays linear in the document's size
+and a harmless value never fails the run on its own.
 
 Normalisation respells every identifier, category and tile-local name the
 model writes in lowercase with one underscore for each run of other
@@ -364,12 +365,21 @@ the respelling of each secret found and counted in an identifier, taken per
 finding and again widened to the words of that identifier it lies in, is a
 source when at most 128 bytes long, and every identifier whose respelling
 holds a source as whole words (from an underscore or its start to an
-underscore or its end) is masked whole and counted. A source exists only
+underscore or its end) is masked whole and counted. A rule may take a key
+together with its context: a URL's host or an address's domain
+(`KEY@db.example.com`), or a hyphenated tail (`sk-ant-…-prod-east`). So each
+part of such a finding before its last `@`, split at `:` and `/`, is a source
+too, which matches a password no rule detects alone without its host, and the
+finding's parts are scanned again: of the finding and of each key found in a
+part, the shortest prefix ending before a run of separators that a rule other
+than the e-mail rule still detects whole is a source. A source exists only
 once a finding has failed the run, so a harmless identifier is masked this
-way only in a run that fails already. Free text is neither
-scanned nor masked by `Identifiers`; `Document` masks it after `Prepare`. The
-order is `Identifiers`, `Prepare`, `Document` on what `Prepare` returned, with
-one redactor, then the `MaskedClosed` check. Text scattered across unrelated
+way only in a run that fails already. Free text is not scanned for secrets by
+`Identifiers`, and `Document` masks it after `Prepare`; but `Identifiers`
+masks the words of free text whose respelling is a source, such as the
+secret repeated upper-cased or respelled in prose, counted in `Masked` only.
+The order is `Identifiers`, `Prepare`, `Document` on what `Prepare`
+returned, with one redactor, then the `MaskedClosed` check. Text scattered across unrelated
 fields, a token wrapped mid-value, or a secret no rule detects on its own,
 such as a bare hex string, which reads as a SHA, is not caught. If redaction
 fails, the text is dropped rather than kept.
@@ -378,16 +388,16 @@ Known limits of the identifier pass:
 
 - A secret found only in free text is masked there, but an identifier that
   holds it in a spelling no rule detects is not matched to it.
-- A key the redactor finds as part of a larger span, a URL with credentials,
-  an e-mail address or a greedy hyphenated tail, is a source only as that
-  whole span, so another spelling of the key alone is not matched.
-- In an identifier over its bound, a key past the first 16 runs of
-  separators, behind an underscore, is masked with the rest of the value but
+- Context is trimmed from a key only where a rule detects the key alone, or
+  where it is the host after a credential's `@`; a secret no rule detects
+  alone, found with a tail or a prefix (a keyword rule's value), is a source
+  only as found.
+- In a value over its bound, a secret past its first 16 runs of separators
+  and longer than its 256-byte window is masked with the rest of the value but
   not found, so it is neither counted nor a source.
-- Free text that repeats an identifier's secret in another spelling is left
-  to `Document`, which finds it only if a rule detects that spelling.
 - Matching is by whole words, so a key glued without a separator to letters
-  or digits in another identifier (`xakia…`) is not matched there.
+  or digits in another identifier or in free text (`xakia…`) is not matched
+  there.
 
 ### Tiles
 
