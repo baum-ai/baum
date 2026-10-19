@@ -28,6 +28,12 @@ const (
 	ReasonDraft              = "draft"
 )
 
+// ReasonSettingsUnreadable is the gate's answer when it could not read the
+// settings. It says nothing about the job, so a queued job it stops is
+// recorded as interrupted, not cancelled: its head stays eligible for the one
+// retry an interrupted automatic run gets.
+const ReasonSettingsUnreadable = "settings_unreadable"
+
 var (
 	// ErrBusy: a job for the pull request is queued or running. Retry once it
 	// finishes; one PR never has two jobs at a time.
@@ -165,7 +171,7 @@ func (q *Queue) SetAutomaticGate(gate func(Job) string) {
 	q.signal()
 }
 
-// refuseAutomatic cancels the queued job at i if it is automatic and the gate
+// refuseAutomatic cancels (or, for an unreadable gate, interrupts) the queued job at i if it is automatic and the gate
 // refuses it, recording the reason. Called with mu held; the caller
 // publishes the returned job after unlocking.
 func (q *Queue) refuseAutomatic(i int) (Job, bool) {
@@ -179,6 +185,9 @@ func (q *Queue) refuseAutomatic(i int) (Job, bool) {
 	}
 	old := *j
 	j.State, j.Phase, j.Reason, j.UpdatedAt = "cancelled", "finished", reason, time.Now().UTC()
+	if reason == ReasonSettingsUnreadable {
+		j.State = "interrupted"
+	}
 	if q.save() != nil {
 		*j = old
 		return Job{}, false

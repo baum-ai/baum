@@ -1641,7 +1641,9 @@ it and `Queue.SubmitAutomatic` decides each job.
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
   the same pass, so Drain, the cap and the switches apply. Failed and
-  cancelled runs are never retried; the next push triggers as usual.
+  cancelled runs are never retried; the next push triggers as usual. A run
+  interrupted before a repository's baseline (turned off, then on again) is not
+  retried: the baseline marks its heads as already retried.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head),

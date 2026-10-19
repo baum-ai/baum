@@ -352,7 +352,10 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			return
 		}
 		for _, pr := range snapshot.PullRequests {
-			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr)}
+			// A run interrupted before this baseline (before an off, say) is
+			// not retried for the head it recorded: re-enabling catches up on
+			// nothing.
+			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Retried: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr)}
 		}
 		rs.AwaitingBaseline = false
 		s.save()
@@ -655,7 +658,7 @@ const (
 	GateOff               = "automatic_off"
 	GateRepositoryOff     = "repository_automatic_off"
 	GateRepositoryRemoved = "repository_removed"
-	GateUnreadable        = "settings_unreadable"
+	GateUnreadable        = jobs.ReasonSettingsUnreadable
 )
 
 // Gate reads the current settings for an automatic job, for

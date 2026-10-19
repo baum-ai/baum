@@ -25,6 +25,11 @@ type fakeRegistry struct {
 	mu       sync.Mutex
 	prefs    repos.Preferences
 	settings repos.Settings
+	// others are the settings of any other registered repository, by
+	// lower-case name.
+	others map[string]repos.Settings
+	// unreadable makes RepositorySettings fail, as a transient database error.
+	unreadable bool
 }
 
 func (r *fakeRegistry) List(context.Context) ([]repos.Clone, error) {
@@ -43,9 +48,18 @@ func (r *fakeRegistry) UpdatePreferences(_ context.Context, edit func(repos.Pref
 	r.prefs = edit(r.prefs)
 	return r.prefs, nil
 }
-func (r *fakeRegistry) RepositorySettings(context.Context, string) (repos.Settings, bool, error) {
+func (r *fakeRegistry) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.unreadable {
+		return repos.Settings{}, false, errors.New("database is locked")
+	}
+	if s, ok := r.others[strings.ToLower(repository)]; ok {
+		return s, true, nil
+	}
+	if !strings.EqualFold(repository, "org/repo") {
+		return repos.Settings{}, false, nil
+	}
 	return r.settings, true, nil
 }
 func (r *fakeRegistry) set(f func(*repos.Preferences, *repos.Settings)) {
@@ -711,4 +725,76 @@ func TestFailedAndCancelledAutomaticRunsAreNotRetried(t *testing.T) {
 	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
 	h.pass()
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+}
+
+// A re-enabled repository does not retry a run interrupted before it was
+// turned off: the new baseline treats that head as seen.
+func TestInterruptedRunBeforeAnOffIsNotRetriedAfterReenabling(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.pass()
+	<-h.exec.started
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
+	h.stop()
+	h.pass()
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = true })
+	h.now = h.now.Add(time.Minute)
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.pass()
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+}
+
+// Two repositories are gated by their own settings.
+func TestGateReadsEachRepositoryOwnSettings(t *testing.T) {
+	h := newHarness(t)
+	h.registry.mu.Lock()
+	h.registry.others = map[string]repos.Settings{"org/other": {Automatic: new(false)}}
+	h.registry.mu.Unlock()
+	price := 2.0
+	job := func(repository string) jobs.Job {
+		return jobs.Job{Prepared: jobs.Prepared{Repository: repository, EstimateUSD: &price}}
+	}
+	if reason := h.scheduler.Gate(job("org/repo")); reason != "" {
+		t.Fatalf("org/repo gated: %q", reason)
+	}
+	if reason := h.scheduler.Gate(job("Org/Other")); reason != GateRepositoryOff {
+		t.Fatalf("org/other gated: %q", reason)
+	}
+	if reason := h.scheduler.Gate(job("org/unknown")); reason != GateRepositoryRemoved {
+		t.Fatalf("org/unknown gated: %q", reason)
+	}
+}
+
+// A settings read that fails while a job waits does not use up its head: the
+// job is recorded as interrupted and gets the one retry such a run gets.
+func TestUnreadableSettingsDoNotConsumeTheHead(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	<-h.exec.started
+	h.registry.mu.Lock()
+	h.registry.unreadable = true
+	h.registry.mu.Unlock()
+	close(h.exec.block)
+	h.waitIdle()
+	states := map[int]jobs.Job{}
+	for _, j := range h.queue.List() {
+		states[j.PR] = j
+	}
+	if states[1].State != "completed" || states[2].State != "interrupted" || states[2].Reason != GateUnreadable {
+		t.Fatalf("states %+v", states)
+	}
+	h.registry.mu.Lock()
+	h.registry.unreadable = false
+	h.registry.mu.Unlock()
+	h.pass()
+	h.waitIdle()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:retry")
 }
