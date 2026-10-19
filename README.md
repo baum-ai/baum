@@ -294,20 +294,34 @@ a failed attempt. Cursor's read-only guarantees are weaker than Claude Code's
 or Codex's: read [SECURITY.md](SECURITY.md#the-cursor-agent-backend) before
 using it on pull requests you do not trust.
 
+This changes what `auto` does on a machine with neither CLI: where it used to
+fail with "no usable model backend", it now makes paid API calls when
+`ANTHROPIC_API_KEY` is exported. Each such run prints `using the Anthropic API
+with ANTHROPIC_API_KEY; calls are billed to that key` on stderr; set
+`backend = "anthropic"` (or pass `--backend anthropic`) to silence it, or
+unset the key or choose another backend to avoid the API. `baum ui` still asks
+you to confirm an estimate first.
+
 The `anthropic` backend calls the Anthropic Messages API
 (`https://api.anthropic.com`) with the key from `ANTHROPIC_API_KEY`, which is
 never written to the config file, printed or logged. Its default model is
 `claude-opus-5-5` at `medium` effort; `--model` names another. It gives the
 model read-only `Read`, `Glob` and `Grep` tools over the run directory alone
 (see [SECURITY.md](SECURITY.md#the-anthropic-backend)) and takes the document
-from a `StructuredOutput` tool call checked against the document schema. A
-rate limit (429), an overload (529), a server error or a dropped connection is
-retried up to four times, honouring `retry-after`, and the waits count against
-`run_timeout`; a rejected key (401 or 403), a refused request or a malformed
-response fails at once with its category in the message. Its usage is what the
-API reports per call, cache reads and writes included, so the run's cost is
-recorded from the price list; a call cut off before its response arrived leaves
-the cost unknown rather than zero.
+from a `StructuredOutput` tool call checked against the document schema.
+Responses are streamed. Before the API answers, a rate limit (429), an
+overload (529), a server error, a failed connection or no response within two
+minutes is retried up to four times, honouring `retry-after`, and the waits
+count against `run_timeout`. Once a response has started it is never sent
+again: a stream that breaks, or is silent for two minutes, fails the attempt.
+A rejected key (401 or 403), a refused request, a declined prompt or a
+conversation over the model's context window fails the run at once, without
+the loop's provider retries, as `the model provider rejected the request:
+<category>`; a malformed response fails with its category in the message. Its
+usage is what the API reports per call, cache reads and writes included, so
+the run's cost is recorded from the price list. Every request that was sent
+counts against `max_calls`, and one whose response never completed leaves the
+cost unknown rather than zero.
 
 The document goes through the same steps as a hosted one: the model's output is
 repaired against the validator (two repairs at most), secrets and e-mail

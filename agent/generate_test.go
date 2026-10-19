@@ -336,6 +336,19 @@ func TestGenerateRetriesProviderFailures(t *testing.T) {
 			t.Fatalf("%+v %v", outcome, err)
 		}
 	})
+	t.Run("a rejection is not retried", func(t *testing.T) {
+		for _, status := range []string{"authentication_error", "invalid_request", "refusal", "context_window_exceeded"} {
+			generator, run, backend := loopFixture(t, nil)
+			backend.run = func(context.Context, Request, int) (Result, error) {
+				return Result{Events: []Event{{Kind: "error", Status: status}}}, &RejectedError{Status: status, Err: errors.New("the key was refused")}
+			}
+			outcome, _, err := generator.Generate(context.Background(), run)
+			var rejected *RejectedError
+			if !errors.As(err, &rejected) || err.Error() != ProviderRejectedReason(status)+": the key was refused" || len(backend.calls) != 1 || outcome.ProviderAttempts != 1 {
+				t.Errorf("%s: %v, %d calls", status, err, len(backend.calls))
+			}
+		}
+	})
 	t.Run("a budget error is not retried", func(t *testing.T) {
 		generator, run, backend := loopFixture(t, nil)
 		backend.run = func(context.Context, Request, int) (Result, error) {

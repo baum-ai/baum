@@ -305,11 +305,17 @@ runs the model's tool calls in-process:
   element or a backslash is refused before any file is opened, and the
   directory is opened as an `os.Root`, so a symbolic link whose target is
   outside it cannot be read; listing and searching never follow a link at all.
-- Reads are bounded: a file over 4 MiB (an image over 3.75 MB) is not read,
-  `Read` returns at most 2,000 lines of 2,000 characters, a search returns at
-  most 500 paths or 200 matching lines, skips files over 4 MiB and binary
-  files, and visits at most 200,000 entries, and no tool result exceeds 64 KiB.
-  `Grep` uses Go's RE2 expressions, which run in linear time.
+- Reads are bounded: a file over 4 MiB is not read, `Read` returns at most
+  2,000 lines of 2,000 characters, a search returns at most 500 paths or 200
+  matching lines, skips files over 4 MiB and binary files, and visits at most
+  200,000 entries, and no text tool result exceeds 64 KiB. `Grep` uses Go's
+  RE2 expressions and globs are matched in time proportional to the pattern
+  and path lengths (with at most eight `**` segments), so neither can be made
+  to run for long.
+- `Read` sends a PNG, JPEG or GIF file as an image only when the standard
+  library decodes its header, it is at most 2,000 pixels a side and 1 MiB, and
+  the run has sent fewer than 10 images and 5 MiB of them; otherwise the
+  model gets a short note instead. Other image formats are treated as binary.
 - What the model reads is sent to the Anthropic API as part of the
   conversation, as it is, unredacted, like the checkout files the other
   backends read. Nothing outside the run directory is.
@@ -318,8 +324,10 @@ runs the model's tool calls in-process:
   address; redirects are not followed, so it never reaches another host. It is
   never written to the config file, the run directory, the diagnostics or the
   logs, and any error text that would contain it has it replaced.
-- Diagnostic events record tool names, relative paths, sizes, statuses and
-  token counts, never file contents, search patterns or model text.
+- Diagnostic events record tool names, sizes, statuses and token counts, and
+  a path only when it named an existing file or directory in the run
+  directory (otherwise `(refused path)`), never file contents, search
+  patterns or other model text.
 
 ## Local repository registry
 

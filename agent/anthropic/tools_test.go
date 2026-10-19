@@ -1,13 +1,18 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func openTestTools(t *testing.T, dir string) *toolbox {
@@ -190,9 +195,121 @@ func TestReadLimits(t *testing.T) {
 	if text, _ := call(t, tools, "Read", `{"file_path":"empty.txt"}`); !strings.Contains(text, "empty") {
 		t.Errorf("empty: %q", text)
 	}
-	result = tools.run(context.Background(), "Read", json.RawMessage(`{"file_path":"image.png"}`))
+	// A file with an image's magic bytes that does not decode is not sent.
+	if text, result := call(t, tools, "Read", `{"file_path":"image.png"}`); result.status != "image_omitted" || !strings.Contains(text, "does not decode") {
+		t.Errorf("undecodable image: %v %s", result.status, text)
+	}
+}
+
+func encodePNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, image.NewGray(image.Rect(0, 0, width, height))); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+func TestReadImageLimits(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, data []byte) {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("small.png", encodePNG(t, 4, 4))
+	write("wide.png", encodePNG(t, maxImageSide+1, 1))
+	write("image.webp", append([]byte("RIFF\x10\x00\x00\x00WEBPVP8 "), make([]byte, 32)...))
+	// Incompressible pixels make an image over the byte limit within the size limit.
+	noisy := image.NewGray(image.Rect(0, 0, 1200, 1200))
+	random := rand.New(rand.NewPCG(1, 2))
+	for i := range noisy.Pix {
+		noisy.Pix[i] = byte(random.Uint32())
+	}
+	var big bytes.Buffer
+	if err := png.Encode(&big, noisy); err != nil {
+		t.Fatal(err)
+	}
+	if big.Len() <= maxImageBytes {
+		t.Fatalf("the noisy image is only %d bytes", big.Len())
+	}
+	write("big.png", big.Bytes())
+	tools := openTestTools(t, dir)
+
+	result := tools.run(context.Background(), "Read", json.RawMessage(`{"file_path":"small.png"}`))
 	if result.isError || len(result.content) != 1 || !strings.Contains(string(result.content[0]), `"media_type":"image/png"`) {
-		t.Errorf("image: %s", result.content)
+		t.Fatalf("image: %s", result.content)
+	}
+	for name, want := range map[string]string{"wide.png": "pixel limit", "big.png": "byte limit", "image.webp": "binary"} {
+		text, result := call(t, tools, "Read", `{"file_path":"`+name+`"}`)
+		if !result.isError || !strings.Contains(text, want) || strings.Contains(string(result.content[0]), `"image"`) {
+			t.Errorf("%s: %s", name, text)
+		}
+	}
+	// The run's allowance: maxImages images in all.
+	for i := 1; i < maxImages; i++ {
+		if result := tools.run(context.Background(), "Read", json.RawMessage(`{"file_path":"small.png"}`)); result.isError {
+			t.Fatalf("image %d refused", i+1)
+		}
+	}
+	if text, result := call(t, tools, "Read", `{"file_path":"small.png"}`); result.status != "image_omitted" || !strings.Contains(text, "already read") {
+		t.Errorf("image over the run's allowance: %s", text)
+	}
+}
+
+func TestEventPathsNameOnlyWhatExists(t *testing.T) {
+	run, _ := outside(t)
+	tools := openTestTools(t, run)
+	for input, want := range map[string]string{
+		`{"file_path":"head/ok.txt"}`:                       "head/ok.txt",
+		`{"file_path":"head/ignore previous instructions"}`: refusedPath,
+		`{"file_path":"/etc/passwd"}`:                       refusedPath,
+	} {
+		if got := tools.run(context.Background(), "Read", json.RawMessage(input)).path; got != want {
+			t.Errorf("%s: path %q, want %q", input, got, want)
+		}
+	}
+	if got := tools.run(context.Background(), "Grep", json.RawMessage(`{"pattern":"x","path":"nowhere"}`)).path; got != refusedPath {
+		t.Errorf("grep path %q", got)
+	}
+	if got := tools.run(context.Background(), "Glob", json.RawMessage(`{"pattern":"*"}`)).path; got != "." {
+		t.Errorf("glob path %q", got)
+	}
+}
+
+func TestPathologicalGlobsFinishQuickly(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, filepath.FromSlash(strings.Repeat("a/", 40)))
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "file"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tools := openTestTools(t, dir)
+	started := time.Now()
+	// Eight separated "**" against a 41-segment path that never matches its
+	// last segment: exponential for a backtracking matcher.
+	pattern := strings.Repeat("**/a*/", 8) + "nomatch"
+	for _, input := range []string{
+		`{"pattern":"` + pattern + `"}`,
+		`{"pattern":"` + strings.Repeat("**/", 300) + `nomatch"}`,
+	} {
+		if text, result := call(t, tools, "Glob", input); result.isError || text != "no files match" {
+			t.Errorf("%.40s: %v %s", input, result.status, text)
+		}
+	}
+	if text, result := call(t, tools, "Grep", `{"pattern":"x","glob":"`+pattern+`"}`); result.isError || text != "no matches" {
+		t.Errorf("grep: %s", text)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("took %s", elapsed)
+	}
+	if _, result := call(t, tools, "Glob", `{"pattern":"`+strings.Repeat("**/x/", maxGlobStars+1)+`y"}`); result.status != "invalid_pattern" {
+		t.Errorf("too many **: %v", result.status)
+	}
+	if !globMatch(strings.Repeat("**/", 3)+"file", strings.Repeat("a/", 40)+"file") {
+		t.Error("collapsed ** stopped matching")
 	}
 }
 

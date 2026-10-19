@@ -24,6 +24,10 @@ import (
 // replace it with stubs.
 var generateBackends = generate.DefaultBackendsFor
 
+// autoAnthropicNotice is printed when backend auto falls back to the
+// Anthropic API, whose calls are billed to the user's key.
+const autoAnthropicNotice = `using the Anthropic API with ANTHROPIC_API_KEY; calls are billed to that key. Set backend = "anthropic" (or --backend anthropic) to silence this`
+
 // maxProviderAttempts and maxRepairAttempts are the hosted service's defaults.
 const (
 	maxProviderAttempts = 3
@@ -218,6 +222,10 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 			_ = versions.FinishRun(recordCtx, id, reason)
 		}
 		return err
+	}
+	if cfg.Backend == config.BackendAuto && selected.Backend.Name() == agent.BackendAnthropic {
+		// auto spends money only through this backend: say so every time.
+		_, _ = fmt.Fprintln(stderr, autoAnthropicNotice)
 	}
 
 	assembler := &assemble.Assembler{

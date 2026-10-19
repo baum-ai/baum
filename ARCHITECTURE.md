@@ -498,33 +498,43 @@ Each call sends the system prompt, four tools in a fixed order (`Read`, `Glob`,
 `Grep`, and `StructuredOutput`, whose input schema is the request's schema),
 the prompt as the first user message with a cache breakpoint after it, and
 top-level automatic caching for the growing conversation, both with the
-5-minute TTL. Assistant turns, thinking blocks included, are sent back exactly
-as received. The tools are confined to the run directory through an `os.Root`
+5-minute TTL. Each call is streamed (server-sent events read with the
+standard library) and the message is assembled from its events; assistant
+turns, thinking blocks and their signatures included, are sent back with the
+content the stream delivered. The tools are confined to the run directory through an `os.Root`
 (absolute paths, `..` elements and escaping links are refused; listing and
-searching never follow a link) and bounded in file size, matches and output
-bytes. A `StructuredOutput` input that does not match the schema goes back to
+searching never follow a link) and bounded in file size, matches, images and
+output bytes; globs are matched by dynamic programming with at most eight
+`**` segments, so a pattern cannot make a walk run long. A `StructuredOutput` input that does not match the schema goes back to
 the model as a tool error and counts as a structured output rejection; a turn
 that ends without one is nudged twice before the run fails. The key and base
 URL come from the request's `Endpoint`, else the `Backend`'s own (the local
 host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
 
-Every response is one call, charged before the next is made: a call the
+Every request sent is one call, charged before the next is made: a call the
 request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
 `max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
-per-call report in disjoint buckets, with the 1-hour share of cache writes
+per-call report in disjoint buckets (message_start's, updated by
+message_delta's cumulative counts), with the 1-hour share of cache writes
 (zero when unreported, since only the 5-minute TTL is requested), the speed
 (standard unless reported) and each call's prompt size, so `Accounting` prices
-it per call. A request that may have reached the model without a usable
-response marks the usage `Unreported`. 429, 529, other 5xx and 408 responses
-and dropped connections are retried four times, honouring `retry-after` (at
-most a minute) or backing off exponentially, and a wait that would outlast the
-context's deadline ends the call instead. Failures are an `*anthropic.Error`
-with a fixed `Category` (`authentication_error`, `rate_limit`,
-`provider_overloaded`, `provider_error`, `transport_error`, `invalid_request`,
-`malformed_response`, `refusal`, `context_window_exceeded`, `no_document`),
-which is also the status of the run's error event; a spent budget is the
-loop's budget reason. No error text, event or log line holds the key.
+it per call. A request that was sent without a complete, usable response marks
+the usage `Unreported`. Before any response, 429, 529, other 5xx and 408
+responses, failed connections and a response that does not start within two
+minutes are retried four times, honouring `retry-after` (at most a minute) or
+backing off exponentially, and a wait that would outlast the context's
+deadline ends the call instead. Once a 200 response has started it is never
+retried: a stream that ends early, carries an error event or is silent for
+two minutes fails the call. Failures are an `*anthropic.Error` with a fixed
+`Category` (`authentication_error`, `rate_limit`, `provider_overloaded`,
+`provider_error`, `transport_error`, `invalid_request`, `malformed_response`,
+`refusal`, `context_window_exceeded`, `no_document`), which is also the status
+of the run's error event; a spent budget is the loop's budget reason. The
+first, `invalid_request`, `refusal` and `context_window_exceeded` come wrapped
+in an `agent.RejectedError`, which the generate-and-repair loop does not retry
+and whose text starts with `agent.ProviderRejectedReason(status)`. No error
+text, event or log line holds the key.
 
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
@@ -605,7 +615,9 @@ identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
 (instructions, tile guidance, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
-`1<<min(n,4)` seconds). The document goes through `review`: the validator
+`1<<min(n,4)` seconds), except a spent budget and an `agent.RejectedError` (a
+rejected key, a refused request, a declined prompt, a conversation over the
+context window), which end the run with their own reason. The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
 bundle, the rejected document and the findings, without source excerpts, as a
 repair, up to `MaxRepairAttempts` (at least one), and a repair does not
