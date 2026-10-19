@@ -458,6 +458,19 @@ func TestBudgets(t *testing.T) {
 			t.Errorf("second max_tokens = %d", got)
 		}
 	})
+	t.Run("refused requests spend the call budget", func(t *testing.T) {
+		overloaded := status(529, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+		s := newStub(t, overloaded, overloaded)
+		req := request(runDir(t))
+		req.MaxCalls = 1
+		result, err := s.backend().Run(context.Background(), req)
+		if err == nil || !strings.HasPrefix(err.Error(), agent.GenerationBudgetExceededReason("model calls")) || !strings.Contains(err.Error(), "overloaded") {
+			t.Fatalf("err = %v", err)
+		}
+		if len(s.requests()) != 1 || result.Calls != 1 {
+			t.Errorf("%d requests, %d calls", len(s.requests()), result.Calls)
+		}
+	})
 	t.Run("nothing left", func(t *testing.T) {
 		s := newStub(t)
 		for _, req := range []agent.Request{{MaxCalls: 0, MaxTokens: 10}, {MaxCalls: 1, MaxTokens: 0}} {
@@ -551,8 +564,8 @@ func TestHTTPFailures(t *testing.T) {
 			if got := len(s.requests()); got != c.requests {
 				t.Errorf("%d requests, want %d", got, c.requests)
 			}
-			// Refused calls cost nothing and are not model calls.
-			if result.Calls != 0 || result.Usage.Unreported || !result.Usage.IsZero() {
+			// Every answered request is a call; refused ones cost nothing.
+			if result.Calls != c.requests || result.Usage.Unreported || !result.Usage.IsZero() {
 				t.Errorf("calls %d usage %+v", result.Calls, result.Usage)
 			}
 			if status := agent.LastErrorStatus(result.Events); status != string(c.category) {
@@ -569,7 +582,7 @@ func TestHTTPFailures(t *testing.T) {
 			return time.Millisecond
 		}
 		result, err := backend.Run(context.Background(), request(runDir(t)))
-		if err != nil || result.Calls != 1 || len(asked) != 1 || asked[0] != 7*time.Second {
+		if err != nil || result.Calls != 2 || len(asked) != 1 || asked[0] != 7*time.Second {
 			t.Fatalf("err %v calls %d asked %v", err, result.Calls, asked)
 		}
 	})
