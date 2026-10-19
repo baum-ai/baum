@@ -170,15 +170,14 @@ pull request; `--repo` and `--store` select the same repository and history as
 `generate` and `view`.
 
 The review is current only when both its saved head and base match GitHub;
-otherwise it becomes outdated. Checks are loaded for the saved reviewed head,
-and cannot verify evidence after the pull request moves to a newer head.
+otherwise it becomes outdated. Checks refresh for the latest GitHub head even
+while a replacement review is generating. The saved reviewed head and its check
+anchors remain unchanged; newer-head checks cannot verify older review evidence.
 Missing or unsupported evidence is downgraded. Failures leave the document
 unchanged and exit non-zero; they never implicitly generate or record a failed
 generation. Concurrent refresh or generation rejects a stale replacement, so
-retry against the latest document. While a generation of the pull request is
-running, refresh fails with a conflict rather than change the document that
-generation builds on; retry once it finishes. Refresh updates the store, not
-JSON files previously exported with `generate -o`.
+retry against the latest document. Refresh updates the store, not JSON files
+previously exported with `generate -o`.
 
 ### baum generate
 
@@ -411,7 +410,12 @@ from the diff index), `max_diff_index_bytes` (524288), `max_diff_files` (3000),
 the same pull request is trimmed the same way in both places. An unknown name
 or a negative value is an error. Trimming cuts text in the documented order
 and says so in the bundle's `truncated` notes; it never drops a hunk from the
-diff index, and a diff index over its budget fails the command instead.
+diff index, and a diff index over its budget fails the command instead. Inline
+code patches are shortened before whole sessions are dropped, keeping extracted
+decisions and their cited prompt entries when shorter patches make room. The
+checkout leaves out binary files and files over `checkout_max_file_bytes`,
+takes the changed files first, and leaves out whatever else does not fit its
+total budgets instead of failing; `truncated` counts the files it left out.
 
 Precedence is flags, then environment, then the file, then defaults. The
 environment variables are:
@@ -455,6 +459,10 @@ Documents follow the `baum.review/1` JSON Schema in
 fetches it); a test validates the
 example document next to it. The hosted baum service reads the same file, and
 baum supports every field it defines.
+
+Decisions may carry a short `title` for compact lists alongside their full
+`text`. New model-authored decisions include one; older documents remain valid
+without it.
 
 ## Packages
 

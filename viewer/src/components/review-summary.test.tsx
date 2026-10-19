@@ -32,6 +32,19 @@ describe("review summary policy note", () => {
 });
 
 describe("review summary parts", () => {
+  it("hides Risks when only lower-tier risks remain", () => {
+    const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+    for (const section of document.sections) {
+      for (const risk of section.risks) risk.tier = "medium";
+    }
+    const html = renderToStaticMarkup(
+      <ReviewSummary document={document} onSelectSection={() => {}} />,
+    );
+    expect(html).not.toContain('aria-label="Risks"');
+    expect(html).not.toContain("None to read first");
+    expect(html).not.toContain("View all risks");
+  });
+
   it("leaves the details and activity to the conversation pane", () => {
     const html = render(false);
     for (const label of ["Checks", "Author", "Change size", "Linked sessions", "Review exchange"])

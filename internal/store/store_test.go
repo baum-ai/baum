@@ -200,7 +200,11 @@ func TestExplicitStoreNeverFallsBack(t *testing.T) {
 	if _, err := Open(t.TempDir(), filepath.Join(file, "store"), true); err == nil {
 		t.Fatal("explicit failure fell back")
 	}
-	special := filepath.Join(t.TempDir(), "store?# name")
+	name := "store?# name"
+	if runtime.GOOS == "windows" {
+		name = "store# name" // Windows forbids '?' in directory names.
+	}
+	special := filepath.Join(t.TempDir(), name)
 	s, err := Open("", special, true)
 	if err != nil {
 		t.Fatal(err)

@@ -13,12 +13,14 @@ import type { HistorySelection, useHistoryView } from "../use-review-version";
 export function HistoryMenu({
   label,
   currentVersion,
+  currentLabel,
   versions,
   value,
   onChange,
 }: {
   label: string;
   currentVersion: number;
+  currentLabel?: string;
   versions: number[];
   value: HistorySelection | null;
   onChange: (value: HistorySelection | null) => void;
@@ -63,7 +65,7 @@ export function HistoryMenu({
         <span>
           {value
             ? `${value.compare ? "Compare" : "Viewing"} · v${value.version}`
-            : `Current · v${currentVersion}`}
+            : (currentLabel ?? `Review v${currentVersion} · Current`)}
         </span>
         <ChevronDownIcon size={12} />
       </button>
@@ -124,12 +126,14 @@ export function HistoryMenu({
 
 export function HistoryToolbar({
   currentVersion,
+  currentLabel,
   versions,
   view,
   status,
   children,
 }: {
   currentVersion: number;
+  currentLabel?: string;
   versions: number[];
   view: ReturnType<typeof useHistoryView>;
   /** Drawn right after the menu, such as how old the review is. */
@@ -141,6 +145,7 @@ export function HistoryToolbar({
       <HistoryMenu
         label="Review version"
         currentVersion={currentVersion}
+        currentLabel={currentLabel}
         versions={versions}
         value={view.selection}
         onChange={view.setSelection}
@@ -154,17 +159,13 @@ export function HistoryToolbar({
         </IconButton>
       )}
       {status}
-      {/* The current version is already named in the head; on a phone the
-        menu's own label says it again, and this line would only repeat it. */}
-      <span
-        className={cn("text-base text-(--text-tertiary)", !view.selection && "hidden sm:inline")}
-      >
-        {view.selection
-          ? view.selection.compare
+      {view.selection ? (
+        <span className="text-base text-(--text-tertiary)">
+          {view.selection.compare
             ? `Comparing current v${currentVersion} with v${view.selection.version}`
-            : `Viewing historical review v${view.selection.version} · Read only`
-          : `Current review v${currentVersion}`}
-      </span>
+            : `Viewing historical review v${view.selection.version} · Read only`}
+        </span>
+      ) : null}
       {children}
     </div>
   );

@@ -115,6 +115,9 @@ describe("hunk evidence", () => {
     const anchor = { type: "hunk" as const, id: "h_picker" };
     const html = renderToStaticMarkup(<HunkEvidence document={doc} anchors={[anchor, anchor]} />);
     expect(html).toContain("1 excerpt in 1 file");
+    expect(html).not.toContain("status-positive");
+    expect(html).not.toContain("status-critical");
+    expect(html).not.toMatch(/Code evidence:[^"]*[+−]0/);
     expect(html).toContain("Excerpt unavailable");
     expect(html).toContain("View web/app/components/repository-picker.tsx");
     // With no link supplied, the source still opens on the change itself.

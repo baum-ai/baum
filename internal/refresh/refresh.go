@@ -62,7 +62,7 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 	if stored.Review.Head != saved.Metadata.Head || stored.Review.Base != saved.Metadata.Base || stored.Review.MergeBase != saved.Metadata.MergeBase || stored.Review.Version != saved.Metadata.Version || !strings.EqualFold(stored.Review.Repository, repository.Owner+"/"+repository.Name) || stored.Review.PullRequest != number {
 		return nil, fmt.Errorf("stored review identity does not match metadata")
 	}
-	evidence, err := r.GitHub.Fetch(ctx, repository, number, github.FetchOptions{ChecksHead: stored.Review.Head})
+	evidence, err := r.GitHub.Fetch(ctx, repository, number, github.FetchOptions{})
 	if err != nil {
 		return nil, err
 	}
