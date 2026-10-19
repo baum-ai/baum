@@ -41,11 +41,24 @@ type DiffLimits struct {
 	MaxFiles int
 	// MaxPatchBytes bounds the patch bytes read across every file.
 	MaxPatchBytes int64
-	// MaxHunkLines is the per-hunk line cap the host applies later with its
-	// note. Parsing keeps one line past it, so that cap and note
-	// behave as on the full text while a long hunk is never held whole.
+	// MaxHunkLines is the per-hunk line cap Fit applies, with its note,
+	// after redaction. Parsing keeps each hunk's leading MaxHunkLines
+	// lines and up to redactionMargin bytes past them: the cap and its note
+	// behave as on the full text, redaction reads a secret the cap runs
+	// through whole, and a long hunk is never held whole.
 	MaxHunkLines int
 }
+
+// redactionMargin is how many bytes of a hunk past its line cap parsing
+// keeps for redaction to read. A secret that starts before the cut ends
+// within it: no redaction rule reads further past where a secret starts.
+//
+// It is measured, not derived: goredact does not export its rules'
+// lookahead. In goredact v0.2.0 the longest is 16384 bytes, for the
+// pem-private-key and putty-private-key rules (jwt and
+// supabase-service-role-key read 8192). Re-measure it on every goredact
+// upgrade: TestRedactionMarginCoversTheEngine fails until it is.
+const redactionMargin = 16 << 10
 
 // buildDiffIndex is BuildDiffIndex that also returns one truncation note
 // per kind of patch it could not read.
@@ -62,10 +75,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 	var hunks []Hunk
 	var patchBytes int64
 	omitted := map[string]int{}
-	keepLines := 0
-	if limits.MaxHunkLines > 0 {
-		keepLines = limits.MaxHunkLines + 1
-	}
+	keepLines := max(limits.MaxHunkLines, 0)
 	for _, file := range comparison.Files {
 		path := effectivePatchPath(file)
 		change := diffChangeKind(file)
@@ -151,7 +161,8 @@ type rawHunk struct {
 // parseFileHunks splits a unified diff patch into hunks. textless is true
 // for a binary change (no "@@" hunk headers found in a non-empty patch, or
 // an empty patch for a non-deletion change). keepLines above zero keeps only
-// each hunk's leading lines of text; counts and IDs still cover every line.
+// each hunk's leading lines of text and redactionMargin bytes past them;
+// counts and IDs still cover every line.
 func parseFileHunks(path string, patch []byte, keepLines int) ([]rawHunk, bool) {
 	if len(patch) == 0 {
 		return nil, true
@@ -165,7 +176,7 @@ func parseFileHunks(path string, patch []byte, keepLines int) ([]rawHunk, bool) 
 	var current *rawHunk
 	var body strings.Builder
 	var id hash.Hash
-	lines := 0
+	lines, margin := 0, 0
 	flush := func() {
 		if current == nil {
 			return
@@ -178,7 +189,11 @@ func parseFileHunks(path string, patch []byte, keepLines int) ([]rawHunk, bool) 
 	}
 	keep := func(line string) {
 		if keepLines > 0 && lines >= keepLines {
-			return
+			if margin >= redactionMargin {
+				return
+			}
+			line = line[:min(len(line), redactionMargin-margin)]
+			margin += len(line) + 1
 		}
 		lines++
 		body.WriteString(line)
@@ -191,7 +206,7 @@ func parseFileHunks(path string, patch []byte, keepLines int) ([]rawHunk, bool) 
 			newStart, newCount := parseHunkHeader(line)
 			current = &rawHunk{newStart: newStart, newCount: newCount}
 			id = newHunkIDDigest(path)
-			lines = 0
+			lines, margin = 0, 0
 			keep(line)
 			continue
 		}
