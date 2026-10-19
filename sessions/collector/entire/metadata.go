@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
 // maxMetadataBytes bounds one metadata.json read by Sessions; a larger one is
@@ -36,22 +37,29 @@ type Snapshot struct {
 	CreatedAt time.Time
 }
 
-// Sessions reads the metadata of the checkpoints ids names, in the branch
-// commit, and returns the sessions each records, without reading a
+// Sessions reads the metadata of the checkpoints ids names, in the store, and
+// returns the sessions each records, by canonical id, without reading a
 // transcript: a checkpoint holds the whole transcript of every session it
 // records, so reading one is slow, and this says which checkpoints are worth
 // reading. A checkpoint whose metadata is absent, unreadable or not as
 // expected is left out of the result, for a caller to read whole and find out
 // why. repoRoot is a private repository that borrows the clone's objects, as
-// for List; nothing is fetched.
-func Sessions(ctx context.Context, repoRoot, commit string, ids []string) (map[string][]Snapshot, error) {
-	if !commitPattern.MatchString(commit) {
-		return nil, fmt.Errorf("invalid Entire checkpoint branch commit %q", commit)
+// for List; nothing is fetched. An id the store does not hold is absent from
+// the result.
+func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (map[string][]Snapshot, error) {
+	if store.Branch != "" && !commitPattern.MatchString(store.Branch) {
+		return nil, fmt.Errorf("invalid Entire checkpoint branch commit %q", store.Branch)
 	}
 	var valid []string
+	var where []location
 	for _, id := range ids {
-		if checkpointIDPattern.MatchString(id) {
-			valid = append(valid, strings.ToLower(id))
+		canonical, ok := entirecheckpoint.CanonicalID(id)
+		if !ok || slices.Contains(valid, canonical) {
+			continue
+		}
+		if loc, held := store.locate(canonical); held {
+			valid = append(valid, canonical)
+			where = append(where, loc)
 		}
 	}
 	if len(valid) == 0 {
@@ -59,10 +67,10 @@ func Sessions(ctx context.Context, repoRoot, commit string, ids []string) (map[s
 	}
 
 	tops := make([]string, len(valid))
-	for i, id := range valid {
-		tops[i] = Path(id) + "/metadata.json"
+	for i := range valid {
+		tops[i] = where[i].spec("metadata.json")
 	}
-	topData, err := catBlobs(ctx, repoRoot, commit, tops)
+	topData, err := catBlobs(ctx, repoRoot, tops)
 	if err != nil {
 		return nil, err
 	}
@@ -88,14 +96,14 @@ func Sessions(ctx context.Context, repoRoot, commit string, ids []string) (map[s
 				paths = nil
 				break
 			}
-			paths = append(paths, Path(id)+"/"+dir+"/metadata.json")
+			paths = append(paths, where[i].spec(dir+"/metadata.json"))
 		}
 		if paths != nil {
 			sessionPaths[id] = paths
 			wanted = append(wanted, paths...)
 		}
 	}
-	sessionData, err := catBlobs(ctx, repoRoot, commit, wanted)
+	sessionData, err := catBlobs(ctx, repoRoot, wanted)
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +157,11 @@ func sessionDir(ref string, index int) (string, bool) {
 	return dir, true
 }
 
-// catBlobs reads the blobs at paths in commit with one git cat-file --batch,
-// in the private repository, and returns those that exist and fit
-// maxMetadataBytes. A path that is missing, including a blob a partial clone
+// catBlobs reads the blobs named by specs (<commit>:<path>) with one git
+// cat-file --batch, in the private repository, and returns those that exist
+// and fit maxMetadataBytes, by spec. A path that is missing, including a blob a partial clone
 // never downloaded, is simply absent.
-func catBlobs(ctx context.Context, repoRoot, commit string, paths []string) (map[string][]byte, error) {
+func catBlobs(ctx context.Context, repoRoot string, paths []string) (map[string][]byte, error) {
 	found := make(map[string][]byte, len(paths))
 	if len(paths) == 0 {
 		return found, nil
@@ -163,7 +171,7 @@ func catBlobs(ctx context.Context, repoRoot, commit string, paths []string) (map
 		if strings.ContainsAny(p, "\n\r\x00") {
 			return nil, fmt.Errorf("invalid checkpoint path %q", p)
 		}
-		input.WriteString(commit + ":" + p + "\n")
+		input.WriteString(p + "\n")
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "cat-file", "--batch")
 	cmd.Env = gitlocal.ReadEnv(repoRoot)

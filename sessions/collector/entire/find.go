@@ -1,7 +1,15 @@
-// Package entire finds Entire checkpoints in the checkpoint branch of the
-// user's own clone. Entire records every agent session as a checkpoint
-// directory under the branch entire/checkpoints/v1, laid out as
-// <2 hex>/<10 hex>/..., in the repository the session ran in.
+// Package entire finds Entire checkpoints in the user's own clone. Entire
+// keeps every agent session as a checkpoint in one of two stores, and a
+// repository may hold both:
+//
+//   - one ref per checkpoint, refs/entire/checkpoints/<last 2 characters of the
+//     id>/<id>, whose commit's root tree is the checkpoint (Entire's git-refs
+//     store, the only one that holds 26-character ULID ids; "entire migrate"
+//     moves the 12-hex ids of the older store there too);
+//   - the branch entire/checkpoints/v1, laid out as <2 hex>/<10 hex>/..., in
+//     the repository the session ran in.
+//
+// Where the same 12-hex id is in both, the ref wins: it is the newer copy.
 package entire
 
 import (
@@ -19,45 +27,98 @@ import (
 	"strings"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 const (
-	CheckpointBranch   = "entire/checkpoints/v1"
+	CheckpointBranch = "entire/checkpoints/v1"
+	// RefPrefix is where the git-refs store keeps one ref per checkpoint.
+	RefPrefix = "refs/entire/checkpoints/"
+	// FetchHint is the command that downloads the git-refs store, for a
+	// warning to name when a checkpoint is not in the clone. Nothing here
+	// runs it.
+	FetchHint = "git fetch origin 'refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+
 	maxCheckpointBytes = 256 << 20
 	maxCheckpointFiles = 512
+	branchIDLength     = 12
 )
 
-var (
-	checkpointIDPattern   = regexp.MustCompile(`(?i)^[0-9a-f]{12}$`)
-	checkpointPathPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}/[0-9a-f]{10}$`)
-)
+var checkpointPathPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}/[0-9a-f]{10}$`)
 
-// Path is the two-level store path for a 12-hex checkpoint id.
+// Path is the two-level branch path for a 12-hex checkpoint id.
 func Path(checkpointID string) string {
 	return checkpointID[:2] + "/" + checkpointID[2:]
 }
 
-// Checkpoint is one checkpoint directory in the branch. TreeOID identifies its
-// content, so an unchanged checkpoint can be recognised without reading it.
+// Checkpoint is one checkpoint in a store. TreeOID identifies its content, so
+// an unchanged checkpoint can be recognised without reading it.
 type Checkpoint struct {
 	ID      string
 	TreeOID string
 }
 
-// Resolve finds the commit the checkpoint branch points at in the clone at
-// repoRoot: the local branch first, then any remote-tracking copy of it. ok is
-// false when the clone has no checkpoint branch at all.
-func Resolve(ctx context.Context, repoRoot string) (commit string, ok bool, err error) {
+// Store is where a clone keeps its checkpoints: the commit of the checkpoint
+// branch, if it has one, and the commit of each per-checkpoint ref, by
+// canonical id.
+type Store struct {
+	Branch string
+	Refs   map[string]string
+}
+
+// location is where one checkpoint's files are: a commit and the directory in
+// its tree, which is empty for a ref, whose root tree is the checkpoint.
+type location struct {
+	commit, dir string
+}
+
+// spec names a file of the checkpoint as git cat-file does.
+func (l location) spec(rel string) string {
+	if l.dir == "" {
+		return l.commit + ":" + rel
+	}
+	return l.commit + ":" + l.dir + "/" + rel
+}
+
+// locate finds the checkpoint with the canonical id: its ref if it has one,
+// else the branch. The branch holds 12-hex ids only.
+func (s Store) locate(id string) (location, bool) {
+	if commit, ok := s.Refs[id]; ok {
+		return location{commit: commit}, true
+	}
+	if s.Branch != "" && len(id) == branchIDLength {
+		return location{commit: s.Branch, dir: Path(id)}, true
+	}
+	return location{}, false
+}
+
+// Resolve finds the checkpoint stores in the clone at repoRoot: the commit the
+// checkpoint branch points at (the local branch first, then any
+// remote-tracking copy of it) and every refs/entire/checkpoints/<shard>/<id>
+// ref. A ref is used only when its shard is the last two characters of its
+// id, which must be a valid checkpoint id, and it has no further path
+// segments; anything else under the prefix is ignored. ok is false when the
+// clone has neither store. Nothing is fetched.
+func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err error) {
 	out, err := git(ctx, repoRoot, "for-each-ref", "--format=%(objectname) %(refname)",
-		"refs/heads/"+CheckpointBranch, "refs/remotes/*/"+CheckpointBranch)
+		"refs/heads/"+CheckpointBranch, "refs/remotes/*/"+CheckpointBranch, RefPrefix)
 	if err != nil {
-		return "", false, fmt.Errorf("listing Entire checkpoint branches: %w", err)
+		return Store{}, false, fmt.Errorf("listing Entire checkpoint refs: %w", err)
 	}
 	var local, remote string
+	refs := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		oid, ref, found := strings.Cut(line, " ")
 		if !found {
+			continue
+		}
+		if rest, isCheckpoint := strings.CutPrefix(ref, RefPrefix); isCheckpoint {
+			if id, valid := refID(rest); valid && commitPattern.MatchString(oid) {
+				if _, dup := refs[id]; !dup {
+					refs[id] = oid
+				}
+			}
 			continue
 		}
 		switch {
@@ -67,18 +128,59 @@ func Resolve(ctx context.Context, repoRoot string) (commit string, ok bool, err 
 			remote = oid
 		}
 	}
-	if local != "" {
-		return local, true, nil
+	store = Store{Branch: local, Refs: refs}
+	if store.Branch == "" {
+		store.Branch = remote
 	}
-	if remote != "" {
-		return remote, true, nil
-	}
-	return "", false, nil
+	return store, store.Branch != "" || len(refs) > 0, nil
 }
 
-// List returns every checkpoint in the branch commit, in id order. repoRoot is
-// a private repository that borrows the clone's objects, such as gitlocal's.
-func List(ctx context.Context, repoRoot, commit string) ([]Checkpoint, error) {
+// refID is the canonical checkpoint id of a ref named <shard>/<id> below the
+// prefix, when the shard is the last two characters of the id.
+func refID(name string) (string, bool) {
+	shard, rest, found := strings.Cut(name, "/")
+	if !found || strings.Contains(rest, "/") {
+		return "", false
+	}
+	id, ok := entirecheckpoint.CanonicalID(rest)
+	if !ok || !strings.EqualFold(shard, id[len(id)-2:]) {
+		return "", false
+	}
+	return id, true
+}
+
+// List returns every checkpoint in the store, in id order; a checkpoint in
+// both the branch and the refs is listed once, as its ref. repoRoot is a
+// private repository that borrows the clone's objects, such as gitlocal's.
+func List(ctx context.Context, repoRoot string, store Store) ([]Checkpoint, error) {
+	byID := map[string]Checkpoint{}
+	if store.Branch != "" {
+		branch, err := listBranch(ctx, repoRoot, store.Branch)
+		if err != nil {
+			return nil, err
+		}
+		for _, checkpoint := range branch {
+			byID[checkpoint.ID] = checkpoint
+		}
+	}
+	if len(store.Refs) > 0 {
+		trees, err := refTrees(ctx, repoRoot, store.Refs)
+		if err != nil {
+			return nil, err
+		}
+		for id := range store.Refs {
+			byID[id] = Checkpoint{ID: id, TreeOID: trees[id]}
+		}
+	}
+	checkpoints := make([]Checkpoint, 0, len(byID))
+	for _, checkpoint := range byID {
+		checkpoints = append(checkpoints, checkpoint)
+	}
+	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].ID < checkpoints[j].ID })
+	return checkpoints, nil
+}
+
+func listBranch(ctx context.Context, repoRoot, commit string) ([]Checkpoint, error) {
 	out, err := privateGit(ctx, repoRoot, "ls-tree", "-r", "-d", "--full-tree", "-z", commit)
 	if err != nil {
 		return nil, fmt.Errorf("listing Entire checkpoint store: %w", err)
@@ -94,23 +196,59 @@ func List(ctx context.Context, repoRoot, commit string) ([]Checkpoint, error) {
 		if len(fields) != 3 || fields[1] != "tree" {
 			continue
 		}
-		id := strings.ReplaceAll(path, "/", "")
-		if checkpointIDPattern.MatchString(id) {
+		if id, ok := entirecheckpoint.CanonicalID(strings.ReplaceAll(path, "/", "")); ok {
 			checkpoints = append(checkpoints, Checkpoint{ID: id, TreeOID: fields[2]})
 		}
 	}
-	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].ID < checkpoints[j].ID })
 	return checkpoints, nil
 }
 
-// Read exports one checkpoint directory from the branch commit as an fs.FS
-// rooted at the checkpoint, the shape entirecheckpoint.ParseCheckpoint reads.
-func Read(ctx context.Context, repoRoot, commit, checkpointID string) (fs.FS, error) {
-	if !checkpointIDPattern.MatchString(checkpointID) {
+// refTrees returns the root tree of each ref's commit, by id, with one git
+// cat-file --batch-check. A commit that is not there leaves its id out.
+func refTrees(ctx context.Context, repoRoot string, refs map[string]string) (map[string]string, error) {
+	ids := make([]string, 0, len(refs))
+	for id := range refs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var input bytes.Buffer
+	for _, id := range ids {
+		input.WriteString(refs[id] + "^{tree}\n")
+	}
+	out, err := runGit(ctx, gitlocal.ReadEnv(repoRoot), repoRoot, &input, "cat-file", "--batch-check")
+	if err != nil {
+		return nil, fmt.Errorf("listing Entire checkpoint refs: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	trees := make(map[string]string, len(ids))
+	if len(lines) != len(ids) {
+		return trees, nil
+	}
+	for i, id := range ids {
+		if fields := strings.Fields(lines[i]); len(fields) == 3 && fields[1] == "tree" {
+			trees[id] = fields[0]
+		}
+	}
+	return trees, nil
+}
+
+// Read exports one checkpoint from the store as an fs.FS rooted at the
+// checkpoint, the shape entirecheckpoint.ParseCheckpoint reads. A checkpoint
+// in both the branch and the refs is read from its ref.
+func Read(ctx context.Context, repoRoot string, store Store, checkpointID string) (fs.FS, error) {
+	id, ok := entirecheckpoint.CanonicalID(checkpointID)
+	if !ok {
 		return nil, fmt.Errorf("invalid Entire checkpoint id %q", checkpointID)
 	}
-	path := Path(checkpointID)
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "archive", "--format=tar", commit, "--", path)
+	loc, ok := store.locate(id)
+	if !ok {
+		return nil, fmt.Errorf("entire checkpoint %s is not in this clone; fetch it with: %s", id, FetchHint)
+	}
+	args := []string{"archive", "--format=tar", loc.commit}
+	if loc.dir != "" {
+		args = append(args, "--", loc.dir)
+	}
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
 	cmd.Env = gitlocal.ReadEnv(repoRoot)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -119,13 +257,13 @@ func Read(ctx context.Context, repoRoot, commit, checkpointID string) (fs.FS, er
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("exporting Entire checkpoint %s: %w", checkpointID, err)
+		return nil, fmt.Errorf("exporting Entire checkpoint %s: %w", id, err)
 	}
-	fsys, openErr := Open(stdout, path)
+	fsys, openErr := Open(stdout, loc.dir)
 	// Drain so git can exit; a truncated read above is reported by Open.
 	_, _ = io.Copy(io.Discard, stdout)
 	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("exporting Entire checkpoint %s: %w: %s", checkpointID, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("exporting Entire checkpoint %s: %w: %s", id, err, strings.TrimSpace(stderr.String()))
 	}
 	return fsys, openErr
 }
@@ -154,7 +292,7 @@ func gitEnv() []string {
 
 // git runs a read of refs in the user's clone.
 func git(ctx context.Context, repoRoot string, args ...string) ([]byte, error) {
-	return runGit(ctx, gitEnv(), repoRoot, args...)
+	return runGit(ctx, gitEnv(), repoRoot, nil, args...)
 }
 
 // privateGit runs a read of objects in a private repository such as the one
@@ -163,12 +301,13 @@ func git(ctx context.Context, repoRoot string, args ...string) ([]byte, error) {
 // helper of the user's can run on a tree that came from a clone nobody has
 // vetted, and a home directory with nothing in it.
 func privateGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return runGit(ctx, gitlocal.ReadEnv(dir), dir, args...)
+	return runGit(ctx, gitlocal.ReadEnv(dir), dir, nil, args...)
 }
 
-func runGit(ctx context.Context, env []string, repoRoot string, args ...string) ([]byte, error) {
+func runGit(ctx context.Context, env []string, repoRoot string, stdin io.Reader, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
 	cmd.Env = env
+	cmd.Stdin = stdin
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -178,11 +317,16 @@ func runGit(ctx context.Context, env []string, repoRoot string, args ...string) 
 	return out, nil
 }
 
-// Open reads a git-archive of one checkpoint directory into an fs.FS.
+// Open reads a git-archive of one checkpoint into an fs.FS. checkpointPath is
+// the checkpoint's directory in the archive, or empty when the archive's root
+// is the checkpoint, as for a ref.
 func Open(reader io.Reader, checkpointPath string) (fs.FS, error) {
 	result := map[string][]byte{}
 	tarReader := tar.NewReader(io.LimitReader(reader, maxCheckpointBytes+1))
-	prefix := checkpointPath + "/"
+	prefix := ""
+	if checkpointPath != "" {
+		prefix = checkpointPath + "/"
+	}
 	var total int64
 	for {
 		header, err := tarReader.Next()

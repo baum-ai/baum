@@ -10,12 +10,14 @@ import (
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/linkage/steps"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/collector/entire"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
 // checkpointLinks is the ground truth Entire left in the pull request's
 // commits: for each commit whose Entire-Checkpoint trailers name checkpoints
-// on the clone's checkpoint branch, the sessions those checkpoints record.
+// in the clone, on the per-checkpoint refs (refs/entire/checkpoints/*) or the
+// checkpoint branch, the sessions those checkpoints record.
 // Trailers are read as the hosted resolver reads them
 // (entirecheckpoint.ParseTrailers): a commit naming several checkpoints links
 // to the union of their sessions, in trailer order, each once, and a malformed
@@ -26,13 +28,15 @@ import (
 // it) is mapped from the checkpoint and returned in extra. A session that
 // cannot be mapped is left out, and a commit none of whose sessions are left
 // has no ground truth. A trailer with no valid id, a checkpoint the clone does
-// not hold, and a branch that cannot be read all leave the commit to the
+// not hold (warned about, with the command that fetches the refs: nothing is
+// fetched here), and a store that cannot be read all leave the commit to the
 // heuristic steps, as in the hosted resolver.
 //
-// The checkpoint branch is read whatever Request.Sessions.Sources says: a
+// The checkpoints are read whatever Request.Sessions.Sources says: a
 // trailer is evidence in the commit, not a store the caller chose to read.
 func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
 	named := map[string][]string{} // commit → checkpoints, in trailer order
+	firstNamedBy := map[string]string{}
 	var ids []string
 	for _, c := range commits {
 		valid, malformed := entirecheckpoint.ParseTrailers(c.Trailers)
@@ -46,6 +50,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		for _, id := range valid {
 			if !slices.Contains(ids, id) {
 				ids = append(ids, id)
+				firstNamedBy[id] = c.OID
 			}
 		}
 	}
@@ -58,6 +63,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 	if branch == nil {
+		warnMissing(warn, ids, nil, firstNamedBy)
 		return nil, nil
 	}
 	defer branch.Close()
@@ -66,6 +72,8 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		warnf(warn, "warning: reading the Entire checkpoints the commits name: %v\n", err)
 		return nil, nil
 	}
+
+	warnMissing(warn, ids, recorded, firstNamedBy)
 
 	have := make(map[string]bool, len(found))
 	for _, s := range found {
@@ -107,6 +115,20 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		}
 	}
 	return truth, extra
+}
+
+// warnMissing names each checkpoint a trailer names that neither store holds
+// readably in the clone, with the command that downloads the git-refs store.
+// Nothing here runs it: local linking never fetches, and the commit is left to
+// the heuristic steps.
+func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, firstNamedBy map[string]string) {
+	for _, id := range ids {
+		if _, ok := recorded[id]; ok {
+			continue
+		}
+		warnf(warn, "warning: commit %s: Entire checkpoint %s is not in this clone (or its objects are not downloaded), so the commit is linked without it; fetch it with: %s\n",
+			firstNamedBy[id], id, entire.FetchHint)
+	}
 }
 
 // entireEdges are a commit's links to the sessions its checkpoints record,

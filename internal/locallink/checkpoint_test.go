@@ -149,7 +149,7 @@ func TestResolveFallsBackFromAnUnusableTrailer(t *testing.T) {
 		"Entire-Checkpoint: not-a-checkpoint\nEntire-Checkpoint: 01ARZ3NDEKTSV4RRFFQ69G5FAL",
 		"Entire-Checkpoint: ffffffffffff",
 		// A ULID is valid, but only the git-refs store holds those, and this
-		// reads the checkpoint branch.
+		// clone has only the checkpoint branch.
 		"Entire-Checkpoint: 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 	} {
 		t.Run(trailer, func(t *testing.T) {
@@ -244,4 +244,144 @@ func has(dir, oid string) bool {
 	cmd := exec.Command("git", "-C", dir, "cat-file", "-e", oid)
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
 	return cmd.Run() == nil
+}
+
+// refSessions are the sessions the git-refs checkpoints below record, which
+// are not CheckpointSessions, so a link to them cannot come from the branch.
+var refSessions = [2]string{"bbbbbbbb-1111-4000-8000-000000000001", "bbbbbbbb-1111-4000-8000-000000000002"}
+
+const (
+	// ulidCheckpoint is only ever in the git-refs store.
+	ulidCheckpoint = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	fetchHint      = "git fetch origin 'refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+)
+
+// A commit whose trailer names a checkpoint kept in a per-checkpoint ref links
+// to its sessions, with a ULID id, in any case, or a 12-hex one, and with no
+// checkpoint branch in the clone at all.
+func TestResolveLinksACheckpointInTheGitRefsStore(t *testing.T) {
+	for _, tc := range []struct{ name, id, trailer string }{
+		{"ULID", ulidCheckpoint, "Entire-Checkpoint: " + ulidCheckpoint},
+		{"lower-case ULID", ulidCheckpoint, "Entire-Checkpoint: " + strings.ToLower(ulidCheckpoint)},
+		{"12-hex", linktest.CheckpointID, linktest.CheckpointTrailer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linktest.NewWithTrailer(t, tc.trailer)
+			f.AddRefCheckpoint(t, tc.id, refSessions)
+			var warnings bytes.Buffer
+			req := request(f)
+			req.Warn = &warnings
+			result := resolve(t, req)
+			if !result.Available {
+				t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
+			}
+			got := linkedTo(result.Commits[0])
+			if !slices.Equal(got["entire_checkpoint"], refSessions[:]) {
+				t.Fatalf("first commit links = %+v, want the ref checkpoint's sessions", result.Commits[0].Links)
+			}
+			if strings.Contains(warnings.String(), "not in this clone") {
+				t.Errorf("warnings = %q; the checkpoint is in the clone", warnings.String())
+			}
+			listed := map[string]bool{}
+			for _, s := range result.Sessions {
+				listed[s.ID] = true
+			}
+			for _, id := range refSessions {
+				if !listed[id] {
+					t.Errorf("linked session %s is not listed: %+v", id, result.Sessions)
+				}
+			}
+		})
+	}
+}
+
+// A migrated clone holds a 12-hex checkpoint in the branch and in a ref; the
+// ref wins, and the other checkpoints in each store still link.
+func TestResolveLinksAMigratedCloneFromTheRef(t *testing.T) {
+	const branchOnly = "0004a7a444a1"
+	branchOnlySessions := [2]string{"aaaaaaaa-1111-4000-8000-000000000001", "aaaaaaaa-1111-4000-8000-000000000002"}
+	f := linktest.NewWithTrailer(t, strings.Join([]string{
+		linktest.CheckpointTrailer,
+		"Entire-Checkpoint: " + branchOnly,
+		"Entire-Checkpoint: " + ulidCheckpoint,
+	}, "\n"))
+	f.AddCheckpoint(t)                                        // CheckpointID in the branch, with CheckpointSessions
+	f.AddCheckpointAt(t, branchOnly, branchOnlySessions)      // only in the branch
+	f.AddRefCheckpoint(t, linktest.CheckpointID, refSessions) // the migrated copy, with other sessions
+	otherULID := [2]string{"cccccccc-1111-4000-8000-000000000001", "cccccccc-1111-4000-8000-000000000002"}
+	f.AddRefCheckpoint(t, ulidCheckpoint, otherULID)
+	result := resolve(t, request(f))
+	want := append(append(slices.Clone(refSessions[:]), branchOnlySessions[:]...), otherULID[:]...)
+	slices.Sort(want)
+	if got := linkedTo(result.Commits[0]); !slices.Equal(got["entire_checkpoint"], want) {
+		t.Fatalf("first commit links = %+v, want %v: the ref's sessions for the migrated id, not the branch copy's %v",
+			result.Commits[0].Links, want, linktest.CheckpointSessions)
+	}
+}
+
+// A ULID trailer whose ref is not in the clone leaves the commit to the
+// heuristics, warns with the command that fetches the refs, and fetches
+// nothing: origin is unreachable, and no checkpoint ref appears.
+func TestResolveWarnsWithTheFetchHintForAMissingRefCheckpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, linktest.Fixture)
+	}{
+		{"no checkpoints at all", func(*testing.T, linktest.Fixture) {}},
+		{"only the branch", func(t *testing.T, f linktest.Fixture) { f.AddCheckpoint(t) }},
+		{"another ref", func(t *testing.T, f linktest.Fixture) {
+			f.AddRefCheckpoint(t, "01ARZ3NDEKTSV4RRFFQ69G5FAW", refSessions)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linktest.NewWithTrailer(t, "Entire-Checkpoint: "+ulidCheckpoint)
+			tc.setup(t, f)
+			var warnings bytes.Buffer
+			req := request(f)
+			req.Warn = &warnings
+			result := resolve(t, req)
+			got := linkedTo(result.Commits[0])
+			if len(got) != 1 || !slices.Equal(got["commit_ref"], []string{linktest.SessionID}) {
+				t.Errorf("first commit links = %+v, want the heuristic commit_ref", result.Commits[0].Links)
+			}
+			for _, want := range []string{ulidCheckpoint, "not in this clone", fetchHint} {
+				if !strings.Contains(warnings.String(), want) {
+					t.Errorf("warnings = %q, want it to contain %q", warnings.String(), want)
+				}
+			}
+			if refs := linktest.Git(t, f.Repo, "for-each-ref", "refs/entire/checkpoints/"+ulidCheckpoint[len(ulidCheckpoint)-2:]+"/"+ulidCheckpoint); refs != "" {
+				t.Errorf("the checkpoint ref appeared: %s", refs)
+			}
+		})
+	}
+}
+
+// Reading a checkpoint ref in a partial clone downloads nothing either: the
+// ref is there, its blobs are not, and the commit falls back to the heuristics.
+func TestResolveReadsNoMissingRefCheckpointObject(t *testing.T) {
+	f := linktest.NewWithTrailer(t, "Entire-Checkpoint: "+ulidCheckpoint)
+	f.AddRefCheckpoint(t, ulidCheckpoint, refSessions)
+	linktest.Git(t, f.Repo, "config", "uploadpack.allowFilter", "true")
+	linktest.Git(t, f.Repo, "config", "uploadpack.allowAnySHA1InWant", "true")
+	ref := "refs/entire/checkpoints/" + ulidCheckpoint[len(ulidCheckpoint)-2:] + "/" + ulidCheckpoint
+	blob := linktest.Git(t, f.Repo, "rev-parse", ref+":metadata.json")
+	partial := filepath.Join(t.TempDir(), "partial")
+	linktest.Git(t, t.TempDir(), "clone", "-q", "--filter=blob:none", "file://"+filepath.ToSlash(f.Repo), partial)
+	linktest.Git(t, partial, "fetch", "-q", "origin", "refs/entire/checkpoints/*:refs/entire/checkpoints/*")
+	linktest.Git(t, partial, "remote", "add", "upstream", linktest.UnreachableOrigin)
+	if has(partial, blob) {
+		t.Fatal("the checkpoint metadata is already in the partial clone")
+	}
+	req := request(f)
+	req.Dir = partial
+	result := resolve(t, req)
+	if !result.Available {
+		t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
+	}
+	if has(partial, blob) {
+		t.Fatal("Resolve fetched the checkpoint metadata from the promisor remote")
+	}
+	if got := linkedTo(result.Commits[0]); len(got["entire_checkpoint"]) != 0 {
+		t.Errorf("first commit links = %+v; the checkpoint is not readable here", result.Commits[0].Links)
+	}
 }
