@@ -231,10 +231,10 @@ generation remain immutable; the latest version can refresh its evidence.
 A second generation supplies the previous document to the shared history logic,
 which retains section IDs, stale sections and risk introductions/mitigations.
 Concurrent runs may both generate from the same version; only one publishes,
-and the other fails with a conflict asking you to generate again. Publication
-also compares the exact document generation started from, so a version whose
-evidence a refresh replaced in the meantime is a conflict too, never a
-newer version that drops the refreshed evidence. Generation
+and the other fails with a conflict asking you to generate again. A refresh of
+the previous version while generation runs does not cause a conflict: the new
+version publishes with the evidence it gathered, and the next refresh updates
+its live facts. Generation
 failures and cancellation before publication publish no version. A later stdout
 or export failure leaves the successfully generated version stored. An existing store is always preferred,
 even if read-only; a write then fails rather than silently hiding its history.

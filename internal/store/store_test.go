@@ -353,6 +353,10 @@ func TestRefreshDuringGenerationKeepsBoth(t *testing.T) {
 	if err := s.Put(ctx, key, read, version(key, 2)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second generation from version 1 published: %v", err)
 	}
+	// The next refresh updates the generated version's live facts.
+	if err := s.RefreshCurrent(ctx, key, latest, []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":2},"checks":"newer"}`)); err != nil {
+		t.Fatalf("refresh of the generated version rejected: %v", err)
+	}
 }
 
 func TestRefreshInOlderStoreWithoutRuns(t *testing.T) {
