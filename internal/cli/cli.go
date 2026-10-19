@@ -17,11 +17,6 @@ import (
 // builds fall back to the module version recorded by the Go toolchain.
 var buildVersion string
 
-// ErrNotImplemented is returned by subcommands whose implementation lands in a
-// later phase. The command still prints its help so the intended interface is
-// visible.
-var ErrNotImplemented = errors.New("not implemented yet")
-
 // Exit codes of the command line. Failures of "baum generate" carry one of the
 // named categories; everything else, a bad command or a failure of another
 // command, exits with ExitFailure.
@@ -113,11 +108,4 @@ func version() string {
 		return info.Main.Version
 	}
 	return "devel"
-}
-
-// notImplemented prints the command's help and fails, so a stub is never
-// mistaken for a successful no-op in scripts.
-func notImplemented(cmd *cobra.Command, _ []string) error {
-	_, _ = fmt.Fprint(cmd.ErrOrStderr(), cmd.UsageString())
-	return fmt.Errorf("%s: %w", cmd.Name(), ErrNotImplemented)
 }

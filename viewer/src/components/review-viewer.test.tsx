@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import example from "../../../schema/review-example.json" with { type: "json" };
 import { type SearchUpdate, UrlStateProvider } from "../navigation";
-import type { LoadReviewVersion, ReviewDocument } from "../review-document";
+import type { Block, LoadReviewVersion, ReviewDocument } from "../review-document";
 import { ReviewViewer } from "./review-viewer";
 
 declare global {
@@ -88,7 +88,9 @@ async function render(node: ReactNode) {
 }
 
 function rows(container: HTMLElement, list: string) {
-  return [...container.querySelectorAll(`#${list} button`)].map((row) => row.textContent);
+  return [...container.querySelectorAll(`#${list} button[aria-pressed]`)].map(
+    (row) => row.textContent,
+  );
 }
 
 /** A rail row's text without the review score badge that follows its title. */
@@ -97,6 +99,110 @@ function titles(labels: (string | null)[]) {
 }
 
 describe("ReviewViewer without host slots", () => {
+  it("opens old risk links within their complete Changes section", async () => {
+    const section = current.sections.find((item) => item.risks.length > 0)!;
+    const risk = section.risks[0]!;
+    const container = await render(
+      <Host initial={`pane=risk&risk_section=${section.id}&risk_id=${risk.id}`}>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe(
+      section.title,
+    );
+    expect(container.querySelector("#review-risks")).toBeNull();
+    expect(container.querySelector(`[id="${section.id}-${risk.id}"]`)).not.toBeNull();
+  });
+
+  it("hides obsolete changes until requested and keeps direct links usable", async () => {
+    const snapshot = structuredClone(current);
+    const obsolete = snapshot.sections[0]!;
+    obsolete.derived.state = "stale";
+    const container = await render(
+      <Host initial={`pane=section&section=${obsolete.id}`}>
+        <ReviewViewer document={snapshot} />
+      </Host>,
+    );
+    const rail = container.querySelector("#review-changes")!;
+    const oldRow = () =>
+      [...rail.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        button.textContent?.includes(obsolete.title),
+      );
+    expect(oldRow()).toBeDefined();
+    expect(oldRow()!.parentElement!.parentElement!.className).toContain("grayscale");
+    const hide = [...rail.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Hide obsolete changes",
+    )!;
+    await act(async () => hide.click());
+    expect(oldRow()).toBeUndefined();
+    const reveal = [...rail.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.startsWith("View obsolete changes"),
+    )!;
+    expect(reveal.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => reveal.click());
+    expect(oldRow()).toBeDefined();
+    expect(reveal.getAttribute("aria-expanded")).toBe("true");
+  });
+  it("expands and highlights a linked decision, including when it is clicked again", async () => {
+    const snapshot = structuredClone(current);
+    const section = snapshot.sections.find((candidate) =>
+      candidate.blocks.some((block) => block.kind === "decisions"),
+    )!;
+    const block = section.blocks.find((candidate) => candidate.kind === "decisions") as Extract<
+      Block,
+      { kind: "decisions" }
+    >;
+    const decision = block.items[0]!;
+    decision.title = "A focused decision";
+    const animate = vi.fn(() => ({ cancel: vi.fn() }));
+    const originalAnimate = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = animate as unknown as typeof HTMLElement.prototype.animate;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    try {
+      const container = await render(
+        <Host initial={`pane=section&section=${section.id}&decision=${decision.id}`}>
+          <ReviewViewer document={snapshot} />
+        </Host>,
+      );
+      const disclosure = container.querySelector<HTMLDetailsElement>(
+        `[id="${section.id}-${decision.id}"] > details`,
+      )!;
+      expect(disclosure.open).toBe(true);
+      expect(animate).toHaveBeenCalledTimes(1);
+      const activity = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+        (tab) => tab.textContent === "Activity",
+      )!;
+      await act(async () => activity.click());
+      disclosure.open = false;
+      const link = [
+        ...container.querySelectorAll<HTMLButtonElement>('section[aria-label="Decisions"] button'),
+      ].find((button) => button.textContent?.includes("A focused decision"))!;
+      await act(async () => link.click());
+      expect(disclosure.open).toBe(true);
+      expect(animate).toHaveBeenCalledTimes(2);
+      disclosure.open = false;
+      await act(async () =>
+        root!.render(
+          <Host initial={`pane=section&section=${section.id}&decision=${decision.id}`}>
+            <ReviewViewer document={structuredClone(snapshot)} />
+          </Host>,
+        ),
+      );
+      expect(disclosure.open).toBe(false);
+      expect(animate).toHaveBeenCalledTimes(2);
+      expect(animate.mock.results[1]!.value.cancel).not.toHaveBeenCalled();
+    } finally {
+      act(() => root?.unmount());
+      root = null;
+      if (originalAnimate) HTMLElement.prototype.animate = originalAnimate;
+      else Reflect.deleteProperty(HTMLElement.prototype, "animate");
+      vi.unstubAllGlobals();
+    }
+  });
   it("renders the example document on its own", async () => {
     const container = await render(
       <Host>
@@ -108,6 +214,10 @@ describe("ReviewViewer without host slots", () => {
       "#212 Add retry budgets and a dead-letter queue",
     );
     expect(container.textContent).toContain("Review v3 · Current");
+    expect(container.querySelector("header")?.textContent).not.toContain("Review v3");
+    const category = container.querySelector("h1")?.nextElementSibling;
+    expect(category?.textContent).toBe("Feature");
+    expect(container.querySelector("#review-section")?.textContent).not.toContain("Feature");
     // The Summary opens by default and leads with the review's own summary.
     expect(container.querySelector("#review-section")?.getAttribute("aria-label")).toBe("Summary");
     expect(container.querySelector("#review-section")?.textContent).toContain(
@@ -122,23 +232,22 @@ describe("ReviewViewer without host slots", () => {
       "Second ack is ignored",
       "Docs and dependency bump",
       "Mechanical changes",
-      "Fixed retry delay",
     ]);
-    // The rail lists the critical and high risks, each named with its section.
-    const risks = rows(container, "review-risks");
-    expect(risks.length).toBeGreaterThan(0);
-    expect(risks.some((label) => label?.includes("Operator-only dead-letter endpoints"))).toBe(
-      true,
-    );
+    expect(container.querySelector("#review-risks")).toBeNull();
+    expect(
+      container.querySelector('#review-changes [aria-label="High or critical risks"]'),
+    ).not.toBeNull();
     // Without a resolver nothing is drawn for an attachment.
     expect(container.querySelectorAll("img")).toHaveLength(0);
     // One version only: no version menu.
     expect(container.querySelector('[aria-label="Review version"]')).toBeNull();
     // Every hosted feature is absent rather than empty or failed.
     const groups = [
-      ...container.querySelectorAll('nav[aria-label="Review sections"] button[aria-expanded]'),
+      ...container.querySelectorAll(
+        'nav[aria-label="Review sections"] button[aria-expanded][aria-controls]',
+      ),
     ].map((row) => row.textContent);
-    expect(groups).toEqual(["Changes", "Critical risks"]);
+    expect(groups).toEqual(["Changes6"]);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Details", "Activity"]);
     // Without a conversation nothing is named after one.
@@ -161,7 +270,6 @@ describe("ReviewViewer without host slots", () => {
     );
     expect(rows(container, "review-changes")).toEqual([
       "Retry policy and backoff",
-      "Fixed retry delay",
       "Operator-only dead-letter endpoints",
       "Dead-letter store and migration",
       "Docs and dependency bump",
@@ -272,7 +380,7 @@ describe("ReviewViewer with an earlier version", () => {
       </Host>,
     );
     expect(container.querySelector('[aria-label="Review version"]')?.textContent).toContain(
-      "Current · v3",
+      "Review v3 · Current",
     );
     expect(shown).toHaveBeenLastCalledWith([3]);
 
@@ -341,11 +449,13 @@ describe("ReviewViewer with host slots", () => {
     expect(container.querySelector('[aria-label="Read sec_ackfix"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Changes, 1 of 6 read"]')).not.toBeNull();
     const groups = [
-      ...container.querySelectorAll('nav[aria-label="Review sections"] button[aria-expanded]'),
+      ...container.querySelectorAll(
+        'nav[aria-label="Review sections"] button[aria-expanded][aria-controls]',
+      ),
     ].map((row) => row.textContent);
     // Files writes its total beside its read progress; Changes leaves it to
     // the progress alone.
-    expect(groups).toEqual(["Changes", "Critical risks", "Files changed1", "Sessions"]);
+    expect(groups).toEqual(["Changes6", "Files changed1", "Sessions"]);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Chat", "Details", "Activity"]);
     expect(container.querySelector('section[aria-label="Conversation"]')).not.toBeNull();
@@ -467,7 +577,9 @@ describe("ReviewViewer for a review of more than one pull request", () => {
       </Host>,
     );
     const links = [...changes.querySelectorAll("#review-section a[href^='/labels/']")];
-    expect(links.length).toBe(earlier().sections.length);
+    expect(links.length).toBe(
+      earlier().sections.filter((candidate) => candidate.derived.state !== "stale").length,
+    );
     expect(links.every((link) => link.textContent?.startsWith("v2 "))).toBe(true);
   });
 });

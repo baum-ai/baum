@@ -17,11 +17,19 @@ func (v *DocumentValidator) Refresh(document []byte, b *bundlepkg.Bundle, now ti
 		return nil, err
 	}
 	review, index := &doc.Review, &doc.Index
-	// The bundle's checks were loaded for the reviewed head, and that is the
-	// head they are indexed under: after a push the pull request's own head
-	// has moved on, and stamping them with it would leave every reader of the
-	// index looking for checks on a revision none of them ran on.
-	checks, checkCounts := checkIndex(b, review.Head)
+	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
+	// Retain old source anchors even when a host only loaded current checks.
+	seenChecks := map[string]bool{}
+	for _, check := range checks {
+		seenChecks[check.ID] = true
+	}
+	for _, check := range index.Checks {
+		if check.Head == review.Head && check.Head != b.PullRequest.HeadSHA && !seenChecks[check.ID] {
+			checks = append(checks, check)
+		}
+	}
+	review.ChecksHead = b.PullRequest.HeadSHA
+
 	sessions, vendors, models := sessionIndex(b)
 	carryPrompts(sessions, index.Sessions, review.GeneratedAt)
 	index.Checks, index.Sessions, index.Threads = checks, sessions, threadIndex(b)
@@ -122,6 +130,9 @@ func newRefreshEvidence(index *documentIndex, b *bundlepkg.Bundle, reviewedHead 
 		}
 	}
 	for _, check := range index.Checks {
+		if check.Head != reviewedHead {
+			continue
+		}
 		evidence.checks[check.ID] = check.Conclusion
 	}
 	for _, report := range index.Reports {

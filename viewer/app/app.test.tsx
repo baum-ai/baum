@@ -826,7 +826,7 @@ describe("sessions and commits", () => {
       // The replies came with the transcript, as a conversation.
       expect(text).toContain("The budget is wired.");
       expect(text).toContain("No text reply was recorded.");
-      expect(text).toContain("~/src/widgets");
+      expect(text).not.toContain("~/src/widgets");
       expect(text).not.toContain("Cost");
       expect(container.querySelector("[data-session-id]")?.getAttribute("data-session-id")).toBe(
         SESSION,
