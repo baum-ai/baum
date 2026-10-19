@@ -67,6 +67,9 @@ type FakeCursorPass struct {
 	// Split sends the final message as this many assistant events, as the CLI
 	// may.
 	Split int `json:"split,omitempty"`
+	// Retry sends part of the final message, then a retry event, then the
+	// whole message again, as a turn the CLI retries does.
+	Retry bool `json:"retry,omitempty"`
 }
 
 // FakeCursorRun is what the fake recorded of one run.
@@ -220,6 +223,10 @@ func fakeCursorAgent(configPath string, args []string, stdin io.Reader, stdout, 
 	emit(map[string]any{"type": "tool_call", "subtype": "started", "call_id": "call-1", "tool_call": call, "model_call_id": "mc-1", "session_id": session})
 	call[tool].(map[string]any)["result"] = map[string]any{"success": map[string]any{}}
 	emit(map[string]any{"type": "tool_call", "subtype": "completed", "call_id": "call-1", "tool_call": call, "model_call_id": "mc-1", "session_id": session})
+	if pass.Retry {
+		emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": text[:len(text)/2]}}}, "session_id": session})
+		emit(map[string]any{"type": "retry", "subtype": "starting", "attempt": 1, "is_resume": true, "session_id": session})
+	}
 	parts, runes := max(pass.Split, 1), []rune(text)
 	for i := range parts {
 		part := string(runes[i*len(runes)/parts : (i+1)*len(runes)/parts])

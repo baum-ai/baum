@@ -255,8 +255,10 @@ against a model):
   (`disallowed_tool`) as soon as the CLI reports any tool call other than
   reading, listing or searching files or updating its to-do list: shell
   commands, edits, deletes, MCP tools, web search and fetch, subagents, mode
-  switches and any tool baum does not know. Detection fails closed: a line
-  that may be a tool event but cannot be read as one stops the run too. The
+  switches and any tool baum does not know. Detection fails closed: it is an
+  allowlist of the event types, subtypes and text content the CLI writes in a
+  run that only reads, and any other event, or one baum cannot decode, stops
+  the run too. The
   attempt is not retried, so a pull request that steers the model into such
   a call gets no second try. The CLI reports a call as it starts, so this
   limits what a stray call can do; it does not prevent it.

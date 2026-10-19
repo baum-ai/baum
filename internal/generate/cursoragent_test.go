@@ -163,6 +163,18 @@ func TestCursorAgentBackendGeneratesARepairedRedactedDocument(t *testing.T) {
 	f.requireClean(t)
 }
 
+// A turn the CLI retries starts its answer over: the text before the retry is
+// not joined to the answer, which is valid on the first pass.
+func TestCursorAgentBackendRetriedTurn(t *testing.T) {
+	f := newFixture(t)
+	f.repo.Dirty(t)
+	options, runs := cursorAgentOptions(t, f, generatetest.FakeCursorPass{Retry: true, Split: 2})
+	result, err := generate.Run(context.Background(), options)
+	if err != nil || len(runs()) != 1 || result.Outcome.ValidationRepairs != 0 {
+		t.Fatalf("err = %v, runs = %d, outcome = %+v\n%s", err, len(runs()), result.Outcome, f.progress.String())
+	}
+}
+
 func TestCursorAgentBackendFailures(t *testing.T) {
 	t.Run("a tool that does not read stops the run", func(t *testing.T) {
 		f := newFixture(t)

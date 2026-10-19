@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -157,10 +158,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	finalUnidentified := false
 	var resultText string
 	completed := false
-	// stopTool ends the run on a tool baum does not allow, or on a line that
-	// may be a tool event but cannot be read as one: detection fails closed.
-	// Neither is retried, since a pull request that steers the model into it
-	// would get another chance on every attempt.
+	// stopTool ends the run on a tool baum does not allow, or on an event it
+	// does not know: detection is an allowlist and fails closed. Neither is
+	// retried, since a pull request that steers the model into it would get
+	// another chance on every attempt.
 	stopTool := func(name, reason string) {
 		record(agent.Event{Kind: "error", Tool: name, Status: "disallowed_tool"})
 		err = reject("cursor-agent run stopped", "disallowed_tool", errors.New(reason))
@@ -169,39 +170,41 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	scanner.Buffer(make([]byte, 65536), maxLineBytes)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
+		if len(line) == 0 || line[0] != '{' {
+			// Every stream-json event is a JSON object; other output is not
+			// an event.
 			continue
 		}
 		var event streamEvent
-		if line[0] != '{' || json.Unmarshal(line, &event) != nil {
-			// Not an event baum can read. Anything that may be a tool event
-			// stops the run; any other output is not the run's.
-			if bytes.Contains(bytes.ToLower(line), []byte("tool")) {
-				stopTool("", "cursor-agent printed a tool event baum cannot read; the run was stopped")
-				break
-			}
-			continue
+		if json.Unmarshal(line, &event) != nil {
+			stopTool("", "cursor-agent printed an event baum cannot read; the run was stopped")
+			break
+		}
+		if reason := event.unknown(); reason != "" {
+			stopTool("", "cursor-agent printed "+reason+", which baum does not allow in a review; the run was stopped")
+			break
 		}
 		if event.ModelCallID != "" {
 			calls[event.ModelCallID] = true
-		}
-		if event.Type != "tool_call" && (event.ToolCall != nil || strings.Contains(strings.ToLower(event.Type), "tool")) {
-			stopTool("", fmt.Sprintf("cursor-agent printed a %q event baum does not know as a tool call; the run was stopped", bounded(event.Type, 64)))
-			break
 		}
 		switch event.Type {
 		case "system":
 			if event.Subtype == "init" && c.Model == "" && event.Model != "" {
 				result.Model = event.Model
 			}
+		case "user":
+			// A new turn: earlier text is not its answer.
+			final.Reset()
+			finalUnidentified = false
 		case "assistant":
 			for _, content := range event.Message.Content {
-				if content.Type == "text" {
-					final.WriteString(content.Text)
-				}
+				final.WriteString(content.Text)
 			}
 			if event.ModelCallID == "" {
 				finalUnidentified = true
+			}
+			if final.Len() > maxDocumentBytes {
+				err = errors.New("cursor-agent's final message exceeds the size limit")
 			}
 		case "tool_call":
 			// Text before a tool call is not the final message.
@@ -219,6 +222,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				stopTool(name, fmt.Sprintf("cursor-agent started the %s tool, which baum does not allow in a review; the run was stopped", orUnknown(name)))
 			}
 		case "retry":
+			// A retried turn starts over: its text replaces the old text.
+			final.Reset()
+			finalUnidentified = false
 			record(agent.Event{Kind: "retry", Status: event.Subtype})
 		case "result":
 			resultText = event.Result
@@ -385,6 +391,7 @@ type streamEvent struct {
 	Model       string `json:"model"`
 	ModelCallID string `json:"model_call_id"`
 	CallID      string `json:"call_id"`
+	QueryType   string `json:"query_type"`
 	IsError     bool   `json:"is_error"`
 	Result      string `json:"result"`
 	Message     struct {
@@ -400,6 +407,41 @@ type streamEvent struct {
 		CacheRead  int64 `json:"cacheReadTokens"`
 		CacheWrite int64 `json:"cacheWriteTokens"`
 	} `json:"usage"`
+}
+
+// knownEvents are the stream-json event types and subtypes cursor-agent
+// 2026.10.16 writes in a run that only reads, as read from its source; an
+// empty list allows any subtype. task_notification and background_shell_timeout
+// report shells or subagents, and interaction_query requests (web search and
+// fetch, mode switches), so they are not on it; askQuestion is the exception,
+// which a headless run declines by itself.
+var knownEvents = map[string][]string{
+	"system": {"init"}, "user": nil, "assistant": nil, "tool_call": {"started", "completed"},
+	"thinking": nil, "result": nil, "retry": nil, "connection": nil,
+	"interaction_query": {"request", "response"},
+}
+
+// unknown says what about an event is not on the allowlist, empty when all of
+// it is: its type and subtype, an interaction other than a question, a
+// content block that is not text, or a tool call outside a tool_call event.
+func (e streamEvent) unknown() string {
+	subtypes, known := knownEvents[e.Type]
+	switch {
+	case !known:
+		return fmt.Sprintf("a %q event", bounded(e.Type, 64))
+	case len(subtypes) > 0 && !slices.Contains(subtypes, e.Subtype):
+		return fmt.Sprintf("a %q %s event", bounded(e.Subtype, 64), e.Type)
+	case e.Type == "interaction_query" && e.QueryType != "askQuestionInteractionQuery":
+		return fmt.Sprintf("a %q interaction", bounded(e.QueryType, 64))
+	case e.ToolCall != nil && e.Type != "tool_call":
+		return "a tool call in a " + e.Type + " event"
+	}
+	for _, content := range e.Message.Content {
+		if content.Type != "text" {
+			return fmt.Sprintf("a %q content block", bounded(content.Type, 64))
+		}
+	}
+	return ""
 }
 
 // tool returns the tool a tool_call event names, the single key of its

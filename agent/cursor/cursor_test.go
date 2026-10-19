@@ -283,14 +283,23 @@ func TestRunStopsOnAToolThatDoesNotRead(t *testing.T) {
 
 // Detection fails closed: a tool event baum cannot read stops the run like a
 // disallowed tool.
-func TestRunStopsOnAToolEventItCannotRead(t *testing.T) {
+// Detection is an allowlist of the event types, subtypes and content blocks
+// a reading run produces, and fails closed: anything else stops the run like
+// a disallowed tool.
+func TestRunStopsOnAnEventItDoesNotKnow(t *testing.T) {
 	for name, line := range map[string]string{
-		"tool_call of the wrong type":     `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":"shellToolCall","session_id":"s"}`,
-		"two tools in one call":           `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":{"readToolCall":{},"shellToolCall":{}},"session_id":"s"}`,
-		"tool call under another type":    `{"type":"tool_use","name":"shell","session_id":"s"}`,
-		"tool_call field on another type": `{"type":"assistant","tool_call":{"shellToolCall":{}},"session_id":"s"}`,
-		"a line that is not JSON":         `tool_call: shellToolCall`,
-		"a completed shell call":          toolEvent("completed", "shellToolCall", "x", "mc-1"),
+		"tool_call of the wrong type":      `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":"shellToolCall","session_id":"s"}`,
+		"two tools in one call":            `{"type":"tool_call","subtype":"started","call_id":"c","tool_call":{"readToolCall":{},"shellToolCall":{}},"session_id":"s"}`,
+		"tool_call of another subtype":     `{"type":"tool_call","subtype":"delta","call_id":"c","tool_call":{"readToolCall":{}},"session_id":"s"}`,
+		"tool call under another type":     `{"type":"tool_use","name":"shell","session_id":"s"}`,
+		"an mcp_call event":                `{"type":"mcp_call","server":"x","session_id":"s"}`,
+		"a shell event":                    `{"type":"shell","command":"ls","session_id":"s"}`,
+		"tool_call field on another type":  `{"type":"assistant","tool_call":{"shellToolCall":{}},"session_id":"s"}`,
+		"a content block that is not text": `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"shell","input":{}}]},"session_id":"s"}`,
+		"a background shell notification":  `{"type":"system","subtype":"task_notification","task_id":"t","status":"success","session_id":"s"}`,
+		"a web search request":             `{"type":"interaction_query","subtype":"request","query_type":"webSearchRequestQuery","session_id":"s"}`,
+		"an object that does not decode":   `{"type":"assistant","message":{"content":"text"}}`,
+		"a completed shell call":           toolEvent("completed", "shellToolCall", "x", "mc-1"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, line)+"sleep 30\n"+emit(assistant(`{}`, ""), resultEvent))
@@ -301,12 +310,44 @@ func TestRunStopsOnAToolEventItCannotRead(t *testing.T) {
 			}
 		})
 	}
-	t.Run("other unreadable output is not a tool event", func(t *testing.T) {
-		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, "Warning: something", `{"type":"thinking","subtype":`, assistant(`{}`, ""), resultEvent))
-		if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err != nil {
-			t.Fatalf("err = %v", err)
+	t.Run("known events and text about tools pass", func(t *testing.T) {
+		fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent,
+			"Using the toolchain from PATH; tool_call output follows",
+			`{"type":"thinking","subtype":"delta","text":"the toolbar","session_id":"s"}`,
+			`{"type":"connection","subtype":"reconnecting","session_id":"s"}`,
+			`{"type":"interaction_query","subtype":"request","query_type":"askQuestionInteractionQuery","session_id":"s"}`,
+			`{"type":"interaction_query","subtype":"response","query_type":"askQuestionInteractionQuery","session_id":"s"}`,
+			assistant("The toolchain and toolbar are fine.", "mc-1"),
+			toolEvent("started", "readToolCall", "a", "mc-1"),
+			assistant(`{"tool":"toolchain"}`, ""), resultEvent))
+		result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+		if err != nil || string(result.Document) != `{"tool":"toolchain"}` {
+			t.Fatalf("document = %q, err = %v", result.Document, err)
 		}
 	})
+}
+
+func TestRunStartsTheAnswerOverOnARetry(t *testing.T) {
+	fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(initEvent, assistant(`{"summary":{"te`, ""),
+		`{"type":"retry","subtype":"starting","attempt":1,"is_resume":true,"session_id":"s"}`,
+		assistant(`{"a":`, ""), assistant(`1}`, ""), resultEvent))
+	result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+	if err != nil || string(result.Document) != `{"a":1}` {
+		t.Fatalf("document = %q, err = %v", result.Document, err)
+	}
+}
+
+func TestRunBoundsTheFinalMessage(t *testing.T) {
+	// Each event is small; together they pass the document bound.
+	chunk := strings.Repeat("x", 1<<20)
+	var events []string
+	for range maxDocumentBytes>>20 + 1 {
+		events = append(events, assistant(chunk, ""))
+	}
+	fakeCLI(t, "cursor-agent", help, "cat > /dev/null\n"+emit(append(append([]string{initEvent}, events...), resultEvent)...))
+	if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), "exceeds the size limit") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestRunBudgets(t *testing.T) {

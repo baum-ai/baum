@@ -472,15 +472,19 @@ to compare; a missing one asks for `cursor-agent update`. A run is
 `AGENT_CLI_CREDENTIAL_STORE` (never `CURSOR_API_KEY`) and `NO_OPEN_BROWSER=1`.
 The prompt goes on stdin with the model schema appended under an "Output
 schema" heading, because the CLI has no structured output. The document is the
-final message (every assistant text after the last tool call, joined, since
-the CLI may split it; the result's text when that holds no JSON value): one
+final message (every assistant text after the last tool call, retry or user
+turn, joined, since the CLI may split it, and at most the document bound; the
+result's text when that holds no JSON value): one
 JSON object is kept, a fenced one or one with prose around it is unwrapped, and anything else goes to the validator as it is, so the loop
 rejects and repairs it. Any tool call other than reading, listing and
 searching files and the to-do list (`readToolCall`, `grepToolCall`,
 `globToolCall`, `lsToolCall`, `semSearchToolCall`, `readLintsToolCall`,
 `readTodosToolCall`, `updateTodosToolCall`) stops the run with the
-`disallowed_tool` status, as does a line that may be a tool event but cannot
-be read as one (detection fails closed); the stream reports a call as it
+`disallowed_tool` status, as does any event off the allowlist of event types,
+subtypes and content blocks a reading run writes (`system` init, `user`,
+`assistant` text, `tool_call` started and completed, `thinking`, `result`,
+`retry`, `connection`, and `interaction_query` only for a question) or one that
+does not decode: detection fails closed; the stream reports a call as it
 starts, so this detects rather than prevents. These failures, a missing option,
 an unavailable sandbox and a missing login are not retried: each unwraps to an
 `agent.RejectedError` for the loop, but its own text names cursor-agent
