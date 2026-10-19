@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/hosted/baumcli"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -248,7 +250,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
-			return localApplication(concurrency, logger)(ctx, server)
+			return localApplication(paths, concurrency, logger)(ctx, server)
 		},
 		Respawn: func(executable string, status daemon.Status) error {
 			return respawnDaemon(paths, executable, status, start)
@@ -334,17 +336,23 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 }
 
 // localApplication builds what the daemon serves: the registry, discovery,
-// review index, background refresh, diagnostics, the generation queue and
-// the automatic generation scheduler. Agent hook events are to reach the
-// scheduler through Scheduler.Trigger; no hook calls it yet.
-func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
+// review index, background refresh, diagnostics, the generation queue, the
+// automatic generation scheduler, and the record of agent and Git hook events
+// with its forwarding to the hosted service. Hook events are to reach the
+// scheduler through Scheduler.Trigger; none does yet.
+func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
 		if err != nil {
 			return daemon.App{}, err
 		}
+		events, err := hookevents.Open(paths, log)
+		if err != nil {
+			return daemon.App{}, err
+		}
 		registry, err := repos.Open("")
 		if err != nil {
+			_ = events.Close()
 			return daemon.App{}, err
 		}
 		changed := func() { _ = server.Publish("index", struct{}{}) }
@@ -354,6 +362,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		state, err := jobs.Directory()
 		if err != nil {
 			_ = registry.Close()
+			_ = events.Close()
 			return daemon.App{}, err
 		}
 		// Queued jobs resume with the price list they were confirmed against,
@@ -383,6 +392,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		})
 		if err != nil {
 			_ = registry.Close()
+			_ = events.Close()
 			return daemon.App{}, err
 		}
 		scheduler.Queue = queue
@@ -393,11 +403,17 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		}
 		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
+		// Subscribed before the socket serves, so no event precedes it.
+		forwarded, unsubscribe := events.Store.Subscribe(64, baumcli.Forwarded)
+		forwarder := &baumcli.SessionForwarder{Log: log}
 		return daemon.App{
-			API:    api,
-			Assets: localapp.Handler(),
+			API:     api,
+			Assets:  localapp.Handler(),
+			Methods: events.Methods(),
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
+				wg.Go(func() { events.Run(ctx) })
+				wg.Go(func() { forwarder.Run(ctx, forwarded) })
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
@@ -415,6 +431,8 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
+				unsubscribe()
+				_ = events.Close()
 				_ = registry.Close()
 			},
 		}, nil

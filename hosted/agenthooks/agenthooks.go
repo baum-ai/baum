@@ -38,6 +38,9 @@ const (
 	// SessionStartEvent is the one event that does more than delegate: it runs
 	// the bootstrap first and reports the install notice when Entire is absent.
 	SessionStartEvent = "session-start"
+	// SessionEndEvent ends a session; the daemon forwards the ended session
+	// to the hosted service for a logged-in user.
+	SessionEndEvent = "session-end"
 
 	entireMissingNotice = "Entire CLI is enabled but not installed or not on PATH."
 	entireInstallGuide  = "Installation guide: https://docs.entire.io/cli/installation#installation-methods"
