@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +27,6 @@ import (
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
-	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/shellenv"
@@ -129,6 +131,8 @@ func daemonClient(cmd *cobra.Command, start daemon.StartOptions) (*daemon.Client
 	}
 	return &daemon.Client{Paths: paths, Version: version(), Start: start, Spawn: daemonSpawn, Restarted: func(old daemon.Status) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Replacing the older baum daemon (version %s, process %d).\n", old.Version, old.PID)
+	}, Deferred: func(old daemon.Status) {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The baum daemon (version %s, process %d) is running jobs; it restarts as version %s once they finish.\n", old.Version, old.PID, version())
 	}}, nil
 }
 
@@ -205,19 +209,21 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err = privatefs.MkdirAll(paths.State); err != nil {
-		return err
+	// Until it owns the lock the daemon logs to stderr (daemon.out when
+	// detached); only the owner opens and rotates daemon.log.
+	logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
+	openLogger := func() (*slog.Logger, func(), error) {
+		logFile, err := daemon.OpenLog(paths.LogFile(), daemon.MaxLogBytes, daemon.LogBackups)
+		if err != nil {
+			return nil, nil, err
+		}
+		var w io.Writer = logFile
+		if !detached {
+			w = io.MultiWriter(logFile, cmd.ErrOrStderr())
+		}
+		logger = slog.New(slog.NewTextHandler(w, nil))
+		return logger, func() { _ = logFile.Close() }, nil
 	}
-	logFile, err := daemon.OpenLog(paths.LogFile(), daemon.MaxLogBytes, daemon.LogBackups)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = logFile.Close() }()
-	var w io.Writer = logFile
-	if !detached {
-		w = io.MultiWriter(logFile, cmd.ErrOrStderr())
-	}
-	logger := slog.New(slog.NewTextHandler(w, nil))
 	ctx, stop := viewContext()
 	defer stop()
 	concurrency := start.Concurrency
@@ -225,15 +231,21 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		concurrency = 1
 	}
 	err = daemon.Run(ctx, daemon.Options{
-		Paths:   paths,
-		Version: version(),
-		Port:    start.Port,
-		Logger:  logger,
+		Paths:      paths,
+		Version:    version(),
+		Port:       start.Port,
+		Logger:     logger,
+		OpenLogger: openLogger,
 		Prepare: func(ctx context.Context) error {
 			applyLoginEnvironment(ctx, logger)
 			return nil
 		},
-		Start: localApplication(concurrency, logger),
+		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
+			return localApplication(concurrency, logger)(ctx, server)
+		},
+		Respawn: func(executable string, status daemon.Status) error {
+			return respawnDaemon(paths, executable, status, start)
+		},
 	})
 	if errors.Is(err, daemon.ErrRunning) {
 		logger.Info("not starting: another daemon is running")
@@ -244,6 +256,29 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	if err != nil && !errors.Is(err, daemon.ErrRunning) {
 		logger.Error("daemon failed", "error", err)
 	}
+	return err
+}
+
+// respawnDaemon starts executable (the newer baum a client named) as a
+// detached daemon on the same port, to take over once this one exits. Only
+// processes of this user can reach the socket the request came through, and
+// they could run that executable themselves.
+func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, start daemon.StartOptions) error {
+	info, err := os.Stat(executable)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a file", executable)
+	}
+	args := []string{"daemon", "run", "--detached"}
+	if u, err := url.Parse(status.App); err == nil && u.Port() != "" {
+		args = append(args, "--port", u.Port())
+	}
+	if start.Concurrency != 0 {
+		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
+	}
+	_, err = daemon.Spawn(paths, exec.Command(executable, args...))
 	return err
 }
 
@@ -332,6 +367,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 				wg.Wait()
 			},
 			Shutdown: queue.Shutdown,
+			Idle:     queue.Idle,
 			Close: func() {
 				api.Close()
 				_ = registry.Close()
@@ -353,6 +389,11 @@ func daemonReport(ctx context.Context) doctor.Daemon {
 		return doctor.Daemon{Err: err}
 	}
 	report := doctor.Daemon{State: paths.State, Socket: paths.Socket}
+	// Inside the daemon, report on itself: probing its own lock or socket
+	// from the process that holds them proves nothing.
+	if status, ok := daemon.Self(); ok {
+		return daemonReportOf(report, status)
+	}
 	client := &daemon.Client{Paths: paths, Version: version()}
 	if _, statErr := os.Stat(paths.State); errors.Is(statErr, os.ErrNotExist) {
 		// Never create the state directory just to look.
@@ -366,7 +407,12 @@ func daemonReport(ctx context.Context) doctor.Daemon {
 		report.Err = err
 		return report
 	}
+	return daemonReportOf(report, status)
+}
+
+func daemonReportOf(report doctor.Daemon, status daemon.Status) doctor.Daemon {
 	report.Running = true
+	report.Socket = status.Socket
 	report.Version, report.Protocol, report.PID = status.Version, status.Protocol, status.PID
 	report.Uptime = status.Uptime(time.Now())
 	report.Incompatible = status.Protocol > daemon.Protocol

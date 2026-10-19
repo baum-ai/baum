@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -39,6 +40,9 @@ func TestDaemonHelper(t *testing.T) {
 		Paths:   paths,
 		Version: os.Getenv("BAUM_DAEMON_VERSION"),
 		Prepare: func(context.Context) error {
+			if os.Getenv("BAUM_DAEMON_SLOW") == "1" {
+				time.Sleep(1500 * time.Millisecond)
+			}
 			// Count the processes that got the lock: the daemons that served.
 			f, err := os.OpenFile(filepath.Join(paths.State, "served"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 			if err != nil {
@@ -51,7 +55,7 @@ func TestDaemonHelper(t *testing.T) {
 			if os.Getenv("BAUM_DAEMON_JOB") != "1" {
 				return App{}, nil
 			}
-			executor := &blockingExecutor{started: make(chan struct{})}
+			executor := &blockingExecutor{started: make(chan struct{}), release: filepath.Join(paths.State, "release")}
 			queue, err := jobs.Open(filepath.Join(paths.State, "jobs.json"), executor, 1, nil)
 			if err != nil {
 				return App{}, err
@@ -65,7 +69,13 @@ func TestDaemonHelper(t *testing.T) {
 				return App{}, err
 			}
 			<-executor.started
-			return App{Shutdown: queue.Shutdown}, nil
+			return App{Shutdown: queue.Shutdown, Idle: queue.Idle}, nil
+		},
+		Respawn: func(executable string, _ Status) error {
+			cmd := exec.Command(executable, "-test.run=^TestDaemonHelper$")
+			cmd.Env = append(os.Environ(), "BAUM_DAEMON_VERSION="+os.Getenv("BAUM_DAEMON_NEXT_VERSION"), "BAUM_DAEMON_JOB=0")
+			_, err := Spawn(paths, cmd)
+			return err
 		},
 		ShutdownTimeout: 5 * time.Second,
 	})
@@ -77,9 +87,12 @@ func TestDaemonHelper(t *testing.T) {
 	}
 }
 
+// blockingExecutor's job runs until it is cancelled or the release file
+// exists.
 type blockingExecutor struct {
 	once    sync.Once
 	started chan struct{}
+	release string
 }
 
 func (b *blockingExecutor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
@@ -88,8 +101,16 @@ func (b *blockingExecutor) Prepare(_ context.Context, item jobs.Item) (jobs.Prep
 }
 func (b *blockingExecutor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
 	b.once.Do(func() { close(b.started) })
-	<-ctx.Done()
-	return nil, ctx.Err()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+		if _, err := os.Stat(b.release); err == nil {
+			return nil, nil
+		}
+	}
 }
 
 // testPaths are short, private paths: Unix socket paths are limited to about
@@ -123,14 +144,16 @@ func newHelper(t *testing.T, env ...string) *helper {
 }
 
 func (h *helper) client(version string, env ...string) *Client {
-	return &Client{Paths: h.paths, Version: version, ReadyTimeout: 20 * time.Second, StopTimeout: 20 * time.Second, Spawn: func(paths Paths, _ StartOptions) (<-chan struct{}, error) {
-		h.spawns.Add(1)
-		self, err := os.Executable()
-		if err != nil {
-			return nil, err
-		}
+	return helperClient(h.paths, version, append(append([]string{}, h.env...), env...), func() { h.spawns.Add(1) })
+}
+
+// helperClient starts TestDaemonHelper processes of version as its daemon.
+func helperClient(paths Paths, version string, env []string, spawned func()) *Client {
+	self, _ := os.Executable()
+	return &Client{Paths: paths, Version: version, Executable: self, ReadyTimeout: 20 * time.Second, StopTimeout: 20 * time.Second, Spawn: func(paths Paths, _ StartOptions) (<-chan struct{}, error) {
+		spawned()
 		cmd := exec.Command(self, "-test.run=^TestDaemonHelper$")
-		cmd.Env = append(append(append(os.Environ(), "BAUM_DAEMON_HELPER=1", "BAUM_DAEMON_STATE="+paths.State, "BAUM_DAEMON_SOCKET="+paths.Socket, "BAUM_DAEMON_VERSION="+version), h.env...), env...)
+		cmd.Env = append(append(os.Environ(), "BAUM_DAEMON_HELPER=1", "BAUM_DAEMON_STATE="+paths.State, "BAUM_DAEMON_SOCKET="+paths.Socket, "BAUM_DAEMON_VERSION="+version), env...)
 		return Spawn(paths, cmd)
 	}}
 }
@@ -618,5 +641,205 @@ func TestRotatingFileIsBounded(t *testing.T) {
 	last, _ := os.ReadFile(path)
 	if !strings.Contains(string(last), "line 19") {
 		t.Fatalf("latest line not in the current file: %q", last)
+	}
+}
+
+// TestEnsureHelper is a separate "baum daemon ensure" process: it ensures the
+// helper daemon, prints its status as one JSON line and exits.
+func TestEnsureHelper(t *testing.T) {
+	if os.Getenv("BAUM_ENSURE_HELPER") != "1" {
+		t.Skip("ensure process")
+	}
+	paths := Paths{State: os.Getenv("BAUM_DAEMON_STATE"), Socket: os.Getenv("BAUM_DAEMON_SOCKET")}
+	client := helperClient(paths, "v1.0.0", nil, func() {
+		f, err := os.OpenFile(filepath.Join(paths.State, "spawned"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = fmt.Fprintln(f, os.Getpid())
+			_ = f.Close()
+		}
+	})
+	status, err := client.Ensure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(status)
+	fmt.Printf("STATUS %s\n", data)
+}
+
+// Separate processes ensure at once: exactly one daemon starts, and each
+// client's output reaches EOF although the daemon it started keeps running.
+func TestEnsureFromSeparateProcessesStartsOneAndReturns(t *testing.T) {
+	h := newHelper(t)
+	if err := os.MkdirAll(h.paths.State, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 4
+	type result struct {
+		pid int
+		err error
+	}
+	results := make(chan result, n)
+	for range n {
+		go func() {
+			cmd := exec.Command(self, "-test.run=^TestEnsureHelper$")
+			cmd.Env = append(os.Environ(), "BAUM_ENSURE_HELPER=1", "BAUM_DAEMON_STATE="+h.paths.State, "BAUM_DAEMON_SOCKET="+h.paths.Socket)
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			cmd.Stderr = os.Stderr
+			if err = cmd.Start(); err != nil {
+				results <- result{err: err}
+				return
+			}
+			out, readErr := io.ReadAll(stdout) // EOF only once nothing holds the pipe
+			waitErr := cmd.Wait()
+			var status Status
+			for _, line := range strings.Split(string(out), "\n") {
+				if rest, ok := strings.CutPrefix(line, "STATUS "); ok {
+					err = json.Unmarshal([]byte(rest), &status)
+				}
+			}
+			results <- result{pid: status.PID, err: errors.Join(readErr, waitErr, err)}
+		}()
+	}
+	var pids []int
+	for range n {
+		select {
+		case r := <-results:
+			if r.err != nil || r.pid == 0 {
+				t.Fatalf("ensure process: pid %d, %v", r.pid, r.err)
+			}
+			pids = append(pids, r.pid)
+		case <-time.After(60 * time.Second):
+			t.Fatal("an ensure process's output never reached EOF")
+		}
+	}
+	for _, pid := range pids {
+		if pid != pids[0] {
+			t.Fatalf("different daemons: %v", pids)
+		}
+	}
+	if served := h.served(t); len(served) != 1 {
+		t.Fatalf("daemons that served: %v", served)
+	}
+	spawned, _ := os.ReadFile(filepath.Join(h.paths.State, "spawned"))
+	if len(strings.Fields(string(spawned))) != 1 {
+		t.Fatalf("spawned by %q", spawned)
+	}
+}
+
+// A client whose runtime directory differs from the daemon's (ssh, su, a
+// sandbox) finds the socket through the daemon's own record.
+func TestClientFindsTheSocketTheDaemonRecorded(t *testing.T) {
+	h := newHelper(t)
+	started, err := h.client("v1.0.0").Ensure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := &Client{Paths: Paths{State: h.paths.State, Socket: filepath.Join(t.TempDir(), "other.sock")}, Version: "v1.0.0", ReadyTimeout: 2 * time.Second, Spawn: func(Paths, StartOptions) (<-chan struct{}, error) {
+		t.Error("spawned a second daemon")
+		return nil, errors.New("no")
+	}}
+	status, err := elsewhere.Ensure(context.Background())
+	if err != nil || status.PID != started.PID {
+		t.Fatalf("%+v %v", status, err)
+	}
+}
+
+func TestStopWhileTheDaemonIsStarting(t *testing.T) {
+	h := newHelper(t)
+	c := h.client("v1.0.0", "BAUM_DAEMON_SLOW=1")
+	if err := os.MkdirAll(h.paths.State, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Spawn(h.paths, StartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Wait until it holds the lock but does not answer yet.
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		if locked, _ := c.locked(context.Background()); locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("daemon never took the lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := c.Hello(context.Background()); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("answered too early: %v", err)
+	}
+	stopped, err := c.Stop(context.Background())
+	if err != nil || !stopped {
+		t.Fatal(stopped, err)
+	}
+	if _, err = c.Status(context.Background()); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("still running after stop: %v", err)
+	}
+}
+
+// A newer client with the same protocol keeps a busy older daemon, which
+// restarts as the newer version once its job finishes; the job is not
+// interrupted.
+func TestUpgradeWaitsUntilJobsFinish(t *testing.T) {
+	h := newHelper(t, "BAUM_DAEMON_JOB=1", "BAUM_DAEMON_NEXT_VERSION=v0.2.0")
+	ctx := context.Background()
+	old, err := h.client("v0.1.0").Ensure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded := h.client("v0.2.0")
+	var deferred []Status
+	upgraded.Deferred = func(s Status) { deferred = append(deferred, s) }
+	upgraded.Restarted = func(Status) { t.Error("interrupted a busy daemon") }
+	kept, err := upgraded.Ensure(ctx)
+	if err != nil || kept.PID != old.PID || !kept.RestartPending || len(deferred) != 1 {
+		t.Fatalf("kept %+v, %v, deferred %v", kept, err, deferred)
+	}
+	if err = os.WriteFile(filepath.Join(h.paths.State, "release"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var current Status
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		current, err = upgraded.Hello(ctx)
+		if err == nil && current.Version == "v0.2.0" && !current.Stopping {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("never restarted as v0.2.0: %+v %v", current, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if current.PID == old.PID {
+		t.Fatal("same process")
+	}
+	raw, err := os.ReadFile(filepath.Join(h.paths.State, "jobs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal []jobs.Job
+	if err = json.Unmarshal(raw, &journal); err != nil || len(journal) != 1 || journal[0].State != "completed" {
+		t.Fatalf("journal %s %v", raw, err)
+	}
+}
+
+func TestSelfReportsTheDaemonInThisProcess(t *testing.T) {
+	if _, ok := Self(); ok {
+		t.Fatal("no daemon runs yet")
+	}
+	paths := testPaths(t)
+	stop := runInProcess(t, paths, Options{Version: "v3.0.0"})
+	status, ok := Self()
+	if !ok || status.Version != "v3.0.0" || status.PID != os.Getpid() {
+		t.Fatalf("%+v %v", status, ok)
+	}
+	stop()
+	if _, ok = Self(); ok {
+		t.Fatal("still reported after stop")
 	}
 }

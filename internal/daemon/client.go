@@ -48,8 +48,42 @@ type Client struct {
 	Spawn        Spawner
 	ReadyTimeout time.Duration
 	StopTimeout  time.Duration
-	// Restarted is told when Ensure replaces an older daemon.
+	// Restarted is told when Ensure stops an older daemon to replace it.
 	Restarted func(old Status)
+	// Deferred is told when Ensure keeps an older daemon that is running jobs
+	// and has asked it to restart as this version once they finish.
+	Deferred func(old Status)
+	// Executable is what an older daemon restarts into; empty is this
+	// process's executable.
+	Executable string
+}
+
+// StopParams are the optional parameters of "stop".
+type StopParams struct {
+	// WhenIdle asks the daemon to wait until no job is queued or running and
+	// then restart as Executable; an idle daemon stops at once.
+	WhenIdle   bool   `json:"when_idle,omitempty"`
+	Executable string `json:"executable,omitempty"`
+}
+
+// socket is the daemon's own record of its socket, from its status file, so
+// clients whose runtime directory differs (ssh, su, a sandbox) still find it;
+// without a record it is Paths.Socket.
+func (c *Client) socket() string {
+	path := c.Paths.statusFile()
+	info, err := os.Lstat(path)
+	if err != nil || !privatefs.PrivateFile(path, info) || info.Size() > 4096 {
+		return c.Paths.Socket
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return c.Paths.Socket
+	}
+	var status Status
+	if json.Unmarshal(data, &status) != nil || !filepath.IsAbs(status.Socket) {
+		return c.Paths.Socket
+	}
+	return status.Socket
 }
 
 // Call sends one request and reads its response. A missing socket or a
@@ -58,7 +92,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (Response,
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", c.Paths.Socket)
+	conn, err := dialer.DialContext(ctx, "unix", c.socket())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || refused(err) {
 			return Response{}, ErrNotRunning
@@ -122,22 +156,41 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	return Status{}, c.unresponsive(err)
 }
 
-// Stop asks the daemon to stop and waits until it has exited. It reports
-// false when no daemon was running.
+// Stop asks the daemon to stop and waits until it has exited. A daemon that
+// is still starting is asked once it answers. It reports false when no daemon
+// was running.
 func (c *Client) Stop(ctx context.Context) (bool, error) {
-	response, err := c.Call(ctx, "stop", nil)
-	if errors.Is(err, ErrNotRunning) {
+	deadline := time.Now().Add(c.readyTimeout())
+	starting := false
+	for {
+		response, err := c.Call(ctx, "stop", nil)
+		switch {
+		case err == nil && !response.OK:
+			return false, errors.New("the baum daemon refused to stop")
+		case err == nil:
+			return true, c.waitExit(ctx)
+		case !errors.Is(err, ErrNotRunning):
+			return false, err
+		}
+		// Nothing answers: none runs, or one holds the lock and is starting
+		// (or stopping) and will answer or exit shortly.
 		locked, lockErr := c.locked(ctx)
-		if lockErr != nil || !locked {
+		if lockErr != nil {
 			return false, lockErr
 		}
-		// Starting, or stopping already: wait for it below.
-	} else if err != nil {
-		return false, err
-	} else if !response.OK {
-		return false, errors.New("the baum daemon refused to stop")
+		if !locked {
+			return starting, nil
+		}
+		starting = true
+		if !time.Now().Before(deadline) {
+			return true, c.unresponsive(err)
+		}
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	return true, c.waitExit(ctx)
 }
 
 // waitExit waits until the daemon lock is free.
@@ -233,7 +286,9 @@ func (c *Client) decide(ctx context.Context, status Status) (Status, bool, error
 	switch {
 	case status.Protocol > Protocol:
 		return status, true, &IncompatibleError{Daemon: status, Client: c.Version}
-	case status.Protocol < Protocol || Older(status.Version, c.Version):
+	case status.Protocol < Protocol:
+		// It cannot serve this client at all: replace it now, interrupting
+		// its jobs.
 		if c.Restarted != nil {
 			c.Restarted(status)
 		}
@@ -241,6 +296,35 @@ func (c *Client) decide(ctx context.Context, status Status) (Status, bool, error
 			return Status{}, true, fmt.Errorf("stop the older baum daemon (version %s): %w", status.Version, err)
 		}
 		return Status{}, false, nil
+	case Older(status.Version, c.Version):
+		// Same protocol: keep using it, and let it restart as this version
+		// once no job is queued or running, so no paid run is interrupted.
+		executable := c.Executable
+		if executable == "" {
+			self, err := os.Executable()
+			if err != nil {
+				return status, true, nil
+			}
+			executable = self
+		}
+		response, err := c.Call(ctx, "stop", StopParams{WhenIdle: true, Executable: executable})
+		if err != nil || !response.OK || response.Status == nil {
+			return status, true, nil
+		}
+		if response.Status.Stopping {
+			// It was idle and is stopping now; start this version.
+			if c.Restarted != nil {
+				c.Restarted(status)
+			}
+			if err = c.waitExit(ctx); err != nil {
+				return Status{}, true, err
+			}
+			return Status{}, false, nil
+		}
+		if c.Deferred != nil {
+			c.Deferred(*response.Status)
+		}
+		return *response.Status, true, nil
 	}
 	return status, true, nil
 }

@@ -101,6 +101,9 @@ type Status struct {
 	State  string `json:"state,omitempty"`
 	// Stopping is set once the daemon has been asked to stop.
 	Stopping bool `json:"stopping,omitempty"`
+	// RestartPending is set once a newer client asked the daemon to restart
+	// as its version when no job is queued or running.
+	RestartPending bool `json:"restart_pending,omitempty"`
 }
 
 // Uptime is how long the daemon has run, to the second.

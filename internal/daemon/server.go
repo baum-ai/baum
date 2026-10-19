@@ -29,6 +29,8 @@ const (
 	idleTimeout = 30 * time.Second
 	// methodTimeout bounds one control request's handler.
 	methodTimeout = 30 * time.Second
+	// restartPoll is how often a daemon asked to restart checks for idleness.
+	restartPoll = time.Second
 )
 
 // ErrRunning is returned by Run when another daemon owns the lock.
@@ -53,6 +55,9 @@ type App struct {
 	Shutdown func(ctx context.Context) error
 	// Close releases resources once nothing is served.
 	Close func()
+	// Idle reports that no paid work is queued or running. Without it the
+	// daemon is always idle.
+	Idle func() bool
 }
 
 // Options configure Run.
@@ -70,6 +75,14 @@ type Options struct {
 	// Methods registers further control requests; they require the client's
 	// protocol to match.
 	Methods map[string]Method
+	// Respawn starts the daemon executable a newer client named, detached,
+	// to take over once this daemon exits (see StopParams). Without it such
+	// requests stop the daemon only when it is idle, and are refused while
+	// it is not.
+	Respawn func(executable string, status Status) error
+	// OpenLogger opens the log once the lock is held, so a daemon that loses
+	// the race never rotates the winner's log. It replaces Logger.
+	OpenLogger func() (*slog.Logger, func(), error)
 	// ShutdownTimeout bounds App.Shutdown; zero is DefaultShutdownTimeout.
 	ShutdownTimeout time.Duration
 	// LockTimeout is how long to wait for a previous daemon to release the
@@ -108,6 +121,14 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer func() { _ = lock.Release() }()
+	if opts.OpenLogger != nil {
+		opened, closeLog, err := opts.OpenLogger()
+		if err != nil {
+			return err
+		}
+		defer closeLog()
+		log = opened
+	}
 	// Holding the lock proves an earlier daemon's files are stale.
 	for _, stale := range []string{paths.CredentialFile(), paths.statusFile(), paths.Socket} {
 		if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -169,7 +190,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	stopCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}}
+	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, idle: app.Idle, respawn: opts.Respawn}
+	self.Store(control)
+	defer self.Store(nil)
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
 	control.ctx = runCtx
@@ -184,6 +207,7 @@ func Run(ctx context.Context, opts Options) error {
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); control.serve(listener) }()
 	log.Info("daemon ready", "app", status.App, "socket", paths.Socket)
+	running.Go(func() { control.restartWhenIdle(runCtx) })
 
 	var serveErr error
 	select {
@@ -247,7 +271,11 @@ type controller struct {
 	methods map[string]Method
 	log     *slog.Logger
 	conns   map[net.Conn]struct{}
-	wg      sync.WaitGroup
+	idle    func() bool
+	respawn func(string, Status) error
+	// restartInto is the executable a newer client asked to restart as.
+	restartInto string
+	wg          sync.WaitGroup
 }
 
 func (c *controller) setStopping() {
@@ -259,6 +287,53 @@ func (c *controller) current() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.status
+}
+
+func (c *controller) isIdle() bool { return c.idle == nil || c.idle() }
+
+// restartWhenIdle starts the requested executable and stops once no job is
+// queued or running.
+func (c *controller) restartWhenIdle(ctx context.Context) {
+	ticker := time.NewTicker(restartPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		c.mu.Lock()
+		executable, status := c.restartInto, c.status
+		c.mu.Unlock()
+		if executable == "" || !c.isIdle() {
+			continue
+		}
+		c.setStopping()
+		c.log.Info("idle; restarting as the newer version")
+		if err := c.respawn(executable, status); err != nil {
+			c.log.Error("could not start the newer version; keeping this one", "error", err)
+			c.mu.Lock()
+			c.restartInto, c.status.RestartPending, c.status.Stopping = "", false, false
+			c.mu.Unlock()
+			continue
+		}
+		c.stop()
+		return
+	}
+}
+
+// self is the controller of the daemon this process runs, if any.
+var self atomic.Pointer[controller]
+
+// Self returns the status of the daemon running in this process. Code that
+// runs inside the daemon (its own diagnostics) uses it rather than probing the
+// socket or the lock.
+func Self() (Status, bool) {
+	c := self.Load()
+	if c == nil {
+		return Status{}, false
+	}
+	return c.current(), true
 }
 
 func (c *controller) serve(l net.Listener) {
@@ -318,6 +393,22 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 	case "hello":
 		return Response{OK: true, Status: &status}, false
 	case "stop":
+		var params StopParams
+		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) != nil {
+			return Response{Error: &Error{Code: CodeBadRequest, Message: "invalid stop parameters"}}, false
+		}
+		if params.WhenIdle && !c.isIdle() {
+			if c.respawn == nil || !filepath.IsAbs(params.Executable) {
+				return Response{OK: true, Status: &status}, false
+			}
+			c.mu.Lock()
+			c.restartInto = params.Executable
+			c.status.RestartPending = true
+			status = c.status
+			c.mu.Unlock()
+			c.log.Info("restart requested once idle", "client", req.Client)
+			return Response{OK: true, Status: &status}, false
+		}
 		status.Stopping = true
 		return Response{OK: true, Status: &status}, true
 	}
