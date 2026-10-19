@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/proc"
@@ -175,6 +176,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	// lastError is the latest "error" event's message, classified only when
 	// the run fails without a message of its own.
 	var lastError string
+	var turnStarted time.Time
+	toolStarts := map[string]time.Time{}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 65536), 8<<20)
 	for scanner.Scan() {
@@ -182,8 +185,12 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			Type    string `json:"type"`
 			Message string `json:"message"`
 			Item    struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Text     string `json:"text"`
+				Command  string `json:"command"`
+				ExitCode *int   `json:"exit_code"`
+				Status   string `json:"status"`
 			} `json:"item"`
 			Error struct {
 				Message string `json:"message"`
@@ -198,6 +205,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			break
 		}
+		request.Activity.Progress()
 		switch event.Type {
 		case "error":
 			lastError = event.Message
@@ -206,7 +214,29 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			// Count every started turn; never overwrite an earlier turn.
 			result.Calls++
 			pendingTurns++
+			turnStarted = time.Now()
+			logInfo(request, "codex turn started", "turn", result.Calls)
+		case "item.started":
+			if toolItems[event.Item.Type] {
+				toolStarts[event.Item.ID] = time.Now()
+				request.Activity.ToolStarted(event.Item.ID, event.Item.Type)
+				// The command is the model's own text, bounded; its output is
+				// repository content and is never logged.
+				logInfo(request, "codex tool started", "item", event.Item.ID, "tool", event.Item.Type, "command", bounded(event.Item.Command, maxLoggedCommandBytes))
+			}
 		case "item.completed":
+			if toolItems[event.Item.Type] {
+				request.Activity.ToolFinished(event.Item.ID)
+				attributes := []any{"item", event.Item.ID, "tool", event.Item.Type, "status", event.Item.Status}
+				if started, ok := toolStarts[event.Item.ID]; ok {
+					attributes = append(attributes, "duration", time.Since(started).Round(time.Millisecond))
+					delete(toolStarts, event.Item.ID)
+				}
+				if event.Item.ExitCode != nil {
+					attributes = append(attributes, "exit_code", *event.Item.ExitCode)
+				}
+				logInfo(request, "codex tool finished", attributes...)
+			}
 			if event.Item.Type == "agent_message" {
 				document = []byte(strings.TrimSpace(event.Item.Text))
 				if len(document) > 8<<20 {
@@ -220,6 +250,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if pendingTurns > 0 {
 				pendingTurns--
 			}
+			logInfo(request, "codex turn completed", "turn", result.Calls, "duration", time.Since(turnStarted).Round(time.Millisecond), "usage_reported", event.Usage != nil)
 			if event.Usage == nil {
 				result.Usage.Unreported = true
 				break
@@ -256,6 +287,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				message = lastError
 			}
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
+			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", time.Since(turnStarted).Round(time.Millisecond), "status", agent.ErrorStatus(message))
 			err = errors.New(agent.ReasonProviderUnavailable)
 		}
 		if err == nil && result.Calls > request.MaxCalls {
@@ -306,6 +338,30 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	result.Model = c.Model
 	result.Events = append(result.Events, agent.Event{Kind: "document", Bytes: len(document)})
 	return result, nil
+}
+
+// toolItems are the item types of Codex's JSON events that run a tool. Their
+// item.started and item.completed bracket the tool's execution.
+var toolItems = map[string]bool{"command_execution": true, "file_change": true, "mcp_tool_call": true, "web_search": true}
+
+// maxLoggedCommandBytes bounds a command in the logs.
+const maxLoggedCommandBytes = 512
+
+func logInfo(request agent.Request, message string, attributes ...any) {
+	if request.Logger != nil {
+		request.Logger.Info(message, attributes...)
+	}
+}
+
+// bounded cuts text to at most limit bytes on a rune boundary.
+func bounded(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit] + "…"
 }
 
 // Keep diagnostic output bounded; it is never exposed in a hosted failure.

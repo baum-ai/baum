@@ -48,6 +48,12 @@ type Budgets struct {
 	MaxTokens           int           `json:"max_tokens"`
 	MaxProviderAttempts int           `json:"max_provider_attempts"`
 	MaxRepairAttempts   int           `json:"max_repair_attempts"`
+	// StallTimeout ends an attempt that has no model request open and no
+	// tool running and has made no progress for this long; ToolTimeout ends
+	// one whose single tool runs longer. Zero disables each. An attempt ended
+	// either way is retried once, then the run fails with ReasonStalled.
+	StallTimeout time.Duration `json:"stall_timeout,omitempty"`
+	ToolTimeout  time.Duration `json:"tool_timeout,omitempty"`
 }
 
 type Request struct {
@@ -58,6 +64,9 @@ type Request struct {
 	// Endpoint replaces the backend's default provider address and key. Nil
 	// leaves the backend's own.
 	Endpoint *Endpoint
+	// Activity receives the backend's progress, tools and turns for the
+	// stall watchdog; nil when the run has none.
+	Activity *Activity
 }
 
 type Result struct {

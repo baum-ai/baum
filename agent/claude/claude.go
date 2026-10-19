@@ -320,6 +320,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			break
 		}
+		request.Activity.Progress()
 
 		if event.Type == "stream_event" {
 			switch event.Event.Type {

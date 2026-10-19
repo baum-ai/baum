@@ -184,6 +184,7 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 // and charging every call and token to the outcome and the run's budgets.
 func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, outcome *Outcome) (Result, error) {
 	var result Result
+	stalls := 0
 	for attempt := 0; attempt < budgets.MaxProviderAttempts; attempt++ {
 		request.MaxCalls = budgets.MaxCalls - outcome.Calls
 		request.MaxTokens = budgets.MaxTokens - outcome.Tokens
@@ -195,7 +196,7 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		}
 		var err error
 		outcome.ProviderAttempts++
-		result, err = g.Backend.Run(ctx, request)
+		result, err = g.runWatched(ctx, budgets, request)
 		if err != nil {
 			outcome.ErroredAttempts++
 		}
@@ -220,6 +221,16 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		}
 		if err == nil {
 			return result, nil
+		}
+		var stall *stallError
+		if errors.As(err, &stall) {
+			// A stall is retried at once and spends no provider attempt.
+			stalls++
+			if stalls > maxStallRetries {
+				return result, errors.New(ReasonStalled)
+			}
+			attempt--
+			continue
 		}
 		if request.Logger != nil {
 			request.Logger.ErrorContext(ctx, "review agent failed", "provider_attempt", attempt+1, "error", err, "status", LastErrorStatus(result.Events))

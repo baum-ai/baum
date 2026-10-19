@@ -537,7 +537,26 @@ identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
 (instructions, tile guidance, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
-`1<<min(n,4)` seconds). The document goes through `review`: the validator
+`1<<min(n,4)` seconds).
+
+A stall watchdog bounds each attempt when the budgets set `StallTimeout` or
+`ToolTimeout` (zero disables each). Backends report to the request's
+`Activity`: every harness event is progress, and Codex's `item.started` and
+`item.completed` bracket each tool it runs (commands, file changes, MCP calls,
+web searches). With an `Endpoint`, the attempt reaches the provider through a
+loopback forwarder that passes requests and streamed responses through
+unchanged and counts the requests open, so a long model call is never idle.
+An attempt is stalled when one tool runs past `ToolTimeout`, or when no model
+request is open, no tool runs and nothing has progressed for `StallTimeout`.
+Without an `Endpoint` the loop cannot see model calls, so only `ToolTimeout`
+applies. A stalled attempt is cancelled, logged (`review agent stalled`, with
+the cause, `tool_timeout` or `idle`, and the tool) and recorded as a `stalled`
+diagnostic, and retried once at once without spending a provider attempt; a
+second stall ends the run with `ReasonStalled`. The Codex backend logs each
+turn and each tool with its command (at most 512 bytes), duration, exit code
+and status, never its output.
+
+The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
 bundle, the rejected document and the findings, without source excerpts, as a
 repair, up to `MaxRepairAttempts` (at least one), and a repair does not
@@ -549,8 +568,8 @@ repairs: the run is rejected whatever a repair returns. After the last repair,
 or at once on a secret, a run still rejected ends with
 `ReasonValidationRejected` and the last rejected document in the outcome (at
 most `MaxRetainedDocumentBytes`, and only when it is JSON). A run that fails
-otherwise returns an error: a spent budget, `ReasonProviderUnavailable`, or the
-cancelled context.
+otherwise returns an error: a spent budget, `ReasonProviderUnavailable`,
+`ReasonStalled`, or the cancelled context.
 
 `Outcome` is what the loop reports besides the document: the model, the schema
 revision, the failure reason, the findings, the rejected document, the

@@ -5,6 +5,9 @@ package agent
 const (
 	ReasonValidationRejected  = "validation rejected the document"
 	ReasonProviderUnavailable = "the model provider was unavailable"
+	// ReasonStalled ends a run whose harness stopped making progress twice:
+	// see Budgets.StallTimeout.
+	ReasonStalled = "the review agent stalled"
 )
 
 // GenerationBudgetExceededReason is the reason of a run that exhausted the
