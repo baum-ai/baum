@@ -53,6 +53,21 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 			summary["required"] = append(required, "review_minutes")
 		}
 	}
+	// New model-authored decisions always have a compact title; stored
+	// documents keep it optional so earlier reviews still validate.
+	walkSchema(lenient, func(node map[string]any) {
+		properties, _ := node["properties"].(map[string]any)
+		kind, _ := properties["kind"].(map[string]any)
+		if kind["const"] != "decisions" {
+			return
+		}
+		items, _ := properties["items"].(map[string]any)
+		decision, _ := items["items"].(map[string]any)
+		required, _ := decision["required"].([]any)
+		if !containsString(stringSlice(required), "title") {
+			decision["required"] = append(required, "title")
+		}
+	})
 	relaxSchema(lenient, defs)
 	for _, def := range defs {
 		if node, ok := def.(map[string]any); ok {

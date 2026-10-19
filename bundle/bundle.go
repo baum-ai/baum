@@ -112,8 +112,10 @@ type Hunk struct {
 
 // Check is one check run or commit status for the head.
 type Check struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	// HeadSHA identifies checks retained from a different revision during refresh.
+	HeadSHA string `json:"head_sha,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
 	// Kind is "check_run" or "status".
 	Kind       string `json:"kind"`
 	Conclusion string `json:"conclusion,omitempty"`
@@ -225,6 +227,7 @@ type Prompt struct {
 // the choice was made, and Evidence a verbatim quote from EvidenceTurn
 // showing it; each is empty when not extracted.
 type SessionDecision struct {
+	Title               string   `json:"title,omitempty"`
 	Summary             string   `json:"summary"`
 	Who                 string   `json:"who"`
 	Category            string   `json:"category"`

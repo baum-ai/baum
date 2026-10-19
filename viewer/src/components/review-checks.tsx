@@ -28,7 +28,7 @@ function AsOf({ at }: { at?: string }) {
   );
 }
 
-/** The CI state of the head under review in one line: the state and the
+/** The CI state of the latest indexed head in one line: the state and the
  *  count that decides it, then whatever is left over.
  *
  *  `asOf` is when the document's check index was last refreshed. The index
@@ -144,7 +144,7 @@ export function ChecksPart({ document: supplied }: { document: ReviewDocument })
   };
   const status = checkStatus(document);
   const checks = document.index.checks
-    .filter((check) => check.head === document.review.head)
+    .filter((check) => check.head === (document.review.checks_head ?? document.review.head))
     .toSorted((left, right) => Number(right.required) - Number(left.required));
   return (
     <Part label="Checks">
@@ -153,6 +153,11 @@ export function ChecksPart({ document: supplied }: { document: ReviewDocument })
           status={status}
           asOf={document.review.evidence_refreshed_at || document.review.generated_at}
         />
+        {document.review.checks_head && document.review.checks_head !== document.review.head && (
+          <span className="block text-xs text-(--text-tertiary)">
+            Head {document.review.checks_head.slice(0, 7)}
+          </span>
+        )}
         <FailingChecks status={status} />
         {checks.length > 0 && (
           <details>
