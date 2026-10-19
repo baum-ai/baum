@@ -376,6 +376,35 @@ func TestSearchLimits(t *testing.T) {
 	}
 }
 
+func TestSearchesSayWhenTheyStoppedAtTheTraversalLimit(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "z.go"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("needle\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := walkLimit
+	walkLimit = 3 // the directory itself and two files
+	t.Cleanup(func() { walkLimit = old })
+	tools := openTestTools(t, dir)
+	for input, want := range map[string]string{
+		`{"pattern":"*.go"}`:  "no files matched, but the search stopped after visiting 3 entries",
+		`{"pattern":"*.txt"}`: "a.txt\nb.txt\n[the search stopped after visiting 3 entries",
+	} {
+		if text, _ := call(t, tools, "Glob", input); !strings.HasPrefix(text, want) || !strings.Contains(text, "narrow the path") {
+			t.Errorf("Glob %s = %q", input, text)
+		}
+	}
+	for input, want := range map[string]string{
+		`{"pattern":"needle","glob":"*.go"}`: "no matches, but the search stopped",
+		`{"pattern":"needle"}`:               "a.txt:1:needle\nb.txt:1:needle\n[the search stopped",
+	} {
+		if text, _ := call(t, tools, "Grep", input); !strings.HasPrefix(text, want) {
+			t.Errorf("Grep %s = %q", input, text)
+		}
+	}
+}
+
 func TestGlobMatch(t *testing.T) {
 	for _, c := range []struct {
 		pattern, name string
