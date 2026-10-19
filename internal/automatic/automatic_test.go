@@ -370,7 +370,10 @@ func TestTurningOffStopsNewJobsKeepsRunningOnesAndReenablingDoesNotCatchUp(t *te
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b4:new_head")
 }
 
-func TestRepositoryChoiceOverridesTheGlobalPreference(t *testing.T) {
+// The global switch is a master switch (the desktop tray's pause): off stops
+// every repository, even one set to on. With it on, a repository's off wins
+// and its on or default generate.
+func TestGlobalOffIsAMasterSwitch(t *testing.T) {
 	h := newHarness(t)
 	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.Automatic = new(false) })
 	h.observe(pr{number: 1, head: "a1", authored: true})
@@ -381,7 +384,21 @@ func TestRepositoryChoiceOverridesTheGlobalPreference(t *testing.T) {
 	h.observe(pr{number: 1, head: "a3", authored: true})
 	h.observe(pr{number: 1, head: "a4", authored: true})
 	h.pass()
-	h.want("org/repo#1@a4:new_head")
+	h.want()
+	o, err := h.scheduler.Overview(context.Background())
+	if err != nil || o.Repositories[0].Enabled {
+		t.Fatalf("repository set to on enabled under the global off switch: %+v %v", o, err)
+	}
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = true })
+	h.observe(pr{number: 1, head: "a5", authored: true})
+	h.observe(pr{number: 1, head: "a6", authored: true})
+	h.pass()
+	h.want("org/repo#1@a6:new_head")
+	h.waitIdle()
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.Automatic = nil })
+	h.observe(pr{number: 1, head: "a7", authored: true})
+	h.pass()
+	h.want("org/repo#1@a6:new_head", "org/repo#1@a7:new_head")
 }
 
 func TestDrainRefusalIsRetried(t *testing.T) {

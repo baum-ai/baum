@@ -305,7 +305,7 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(
     page
       .getByRole("region", { name: "Repository acme/demo", exact: true })
-      .getByText("Automatic reviews are off for this repository."),
+      .getByText("Automatic reviews are paused by the global switch."),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/automatic-settings.png", animations: "disabled" });
   await toggle.click();

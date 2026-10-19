@@ -26,8 +26,10 @@ import (
 var ErrNotFound = errors.New("registered clone not found")
 
 // Settings are shared by all clones of a repository. Nil overrides inherit
-// global settings. A nil Automatic follows Preferences.Automatic; true or
-// false is the repository's explicit choice and wins over it. A nil cap is
+// global settings. Automatic is the repository's choice under the global
+// master switch (see AutomaticEnabled): nil follows it, false turns the
+// repository off, true is an explicit on that still stops while the global
+// switch is off. A nil cap is
 // unset (no daily limit) and zero permits no automatic spending; the daemon's
 // automatic scheduler enforces it. Registration itself starts no generation.
 type Settings struct {
@@ -51,12 +53,14 @@ func (s Settings) Validate() error {
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
-// repository automatically: its explicit choice, else the global preference.
+// repository automatically. The global preference is a master switch: off
+// stops every repository, whatever its choice; on, only an explicit false
+// turns a repository off.
 func (s Settings) AutomaticEnabled(p Preferences) bool {
-	if s.Automatic != nil {
-		return *s.Automatic
+	if !p.Automatic {
+		return false
 	}
-	return p.Automatic
+	return s.Automatic == nil || *s.Automatic
 }
 
 // Preferences are the registry's global choices, edited in the app.

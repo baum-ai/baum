@@ -57,8 +57,12 @@ rate-limited and failed refreshes are visible and retried with backoff.
 Automatic reviews are on by default. Repositories & settings has the global
 "Generate reviews automatically" switch and the one-time "Allow automatic
 reviews with cursor-agent" acknowledgement (`GET`/`PUT api/automatic`, kept by
-the daemon, which enforces both). Each repository chooses "Global setting",
-"On" or "Off" (`automatic`: `null`, `true`, `false`) and an optional daily
+the daemon, which enforces both). The global switch is a master switch (the
+desktop tray's pause sets it): off stops automatic generation everywhere. Each
+repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
+`true`, `false`); only "Off" differs while the global switch is on, and while
+it is off a repository set to "On" is shown as paused by the global switch.
+Each also has an optional daily
 automatic cap in USD (empty is no cap, 0 permits no automatic spending), and
 shows today's automatic spend, how many triggered pull requests wait to start
 and the latest notice: a daily-cap pause until the next day (also a banner on

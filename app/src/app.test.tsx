@@ -378,7 +378,7 @@ const automaticOverview = {
   ],
 };
 /** Serves api/repos and api/automatic, and records PUT bodies. */
-function stubAutomatic() {
+function stubAutomatic(clone: object = demoClone, overview: object = automaticOverview) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const puts: { path: string; body: unknown }[] = [];
   vi.mocked(fetch).mockImplementation((...args) => {
@@ -386,13 +386,10 @@ function stubAutomatic() {
     const init = args[1] as RequestInit | undefined;
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
-      return Promise.resolve(
-        Response.json(path.endsWith("api/automatic") ? automaticOverview : {}),
-      );
+      return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
-    if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([demoClone]));
-    if (path === "/s/test-ns/api/automatic")
-      return Promise.resolve(Response.json(automaticOverview));
+    if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
+    if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     return original(...args);
   });
   return puts;
@@ -439,6 +436,37 @@ it("sets automatic reviews globally and per repository and shows a daily cap pau
     path: "/s/test-ns/api/repos/clone/settings",
     body: { automatic: false, daily_cap: 5, backend: null, model: null },
   });
+});
+it("shows a repository set to On as paused while the global switch is off", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(
+    { ...demoClone, settings: { ...demoClone.settings, automatic: true } },
+    {
+      enabled: false,
+      cursor_agent_acknowledged: false,
+      repositories: [
+        {
+          repository: "acme/demo",
+          enabled: false,
+          daily_cap: 5,
+          spent_today: 0,
+          spent_known: true,
+          pending: 0,
+        },
+      ],
+    },
+  );
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const mode = region.querySelector<HTMLSelectElement>("select")!;
+  expect(mode.value).toBe("on");
+  expect(mode.selectedOptions[0]!.textContent).toBe(
+    "On for this repository (paused by the global switch)",
+  );
+  expect(region.textContent).toContain(
+    "Automatic reviews are paused by the global switch, although this repository is set to On.",
+  );
 });
 it("marks automatically started jobs in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");

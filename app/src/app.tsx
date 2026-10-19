@@ -713,7 +713,8 @@ function AutomaticSettings({
             request, the daemon generates its review with the configured backend and budgets, and
             your provider bills it. Pull requests from forks or authors without write access always
             need your confirmation. Pull requests already open when this is turned on are not caught
-            up. Repositories can override this below.
+            up. Turning this off pauses automatic reviews in every repository, including those set
+            to On; while it is on, a repository can be turned off below.
           </span>
         </span>
       </label>
@@ -784,7 +785,11 @@ function RepositorySettings({
           <Field label="Automatic reviews">
             <select className="local-field" value={mode} onChange={(e) => setMode(e.target.value)}>
               <option value="default">Global setting ({automatic.enabled ? "on" : "off"})</option>
-              <option value="on">On for this repository</option>
+              <option value="on">
+                {automatic.enabled
+                  ? "On for this repository"
+                  : "On for this repository (paused by the global switch)"}
+              </option>
               <option value="off">Off for this repository</option>
             </select>
           </Field>
@@ -803,7 +808,13 @@ function RepositorySettings({
       ) : null}
       {status ? (
         <p className="text-xs" role="status">
-          Automatic reviews are {status.enabled ? "on" : "off"} for this repository.
+          {status.enabled
+            ? "Automatic reviews are on for this repository."
+            : clone.settings.automatic === false
+              ? "Automatic reviews are off for this repository."
+              : `Automatic reviews are paused by the global switch${
+                  clone.settings.automatic ? ", although this repository is set to On" : ""
+                }. Turn on “Generate reviews automatically” above to resume them.`}
           {status.enabled
             ? ` Spent automatically today: ${status.spent_known ? "" : "at least "}${cost(status.spent_today)}${
                 status.daily_cap === null ? "" : ` of ${cost(status.daily_cap)}`

@@ -293,8 +293,11 @@ automatically. What it can spend: up to the configured per-run budget for each
 new head, with no daily limit unless you set a repository's daily cap, which
 pauses that repository's automatic generation until the next day once reached.
 cursor-agent, which baum cannot estimate or cap, runs automatically only after
-you acknowledge that in the app. Turn it off globally or per repository in
-Repositories & settings, which stops new jobs without cancelling running ones.
+you acknowledge that in the app. Turning the global switch off (in Repositories
+& settings, or pausing automatic generation from the desktop app) stops it in
+every repository, including those set to "On"; while it is on, single
+repositories can be turned off. Either stops new jobs without cancelling
+running ones.
 The daemon keeps doing this after the app window closes, and the desktop app
 can quit without stopping it; only "Quit and stop background reviews" (or
 `baum daemon stop`) stops it.

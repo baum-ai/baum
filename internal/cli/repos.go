@@ -66,7 +66,7 @@ func newReposCommand() *cobra.Command {
 		_, e = fmt.Fprintln(cmd.OutOrStdout(), c.ID)
 		return e
 	}}
-	add.Flags().Bool("automatic", false, "generate reviews of this repository automatically (--automatic=false turns it off), whatever the global setting")
+	add.Flags().Bool("automatic", false, "generate reviews of this repository automatically while the global setting is on (--automatic=false turns it off)")
 	add.Flags().Bool("clear-automatic", false, "follow the global automatic generation setting again")
 	add.Flags().Float64("daily-cap", 0, "daily automatic spending cap in USD (zero permits no spend)")
 	add.Flags().Bool("clear-daily-cap", false, "remove the daily cap override so the repository inherits again")

@@ -10,7 +10,8 @@ import (
 func explicitlyOn(b *bool) bool { return b != nil && *b }
 
 // New registrations follow the global preference, which is on by default; an
-// explicit choice wins over it in either direction and survives reopening.
+// explicit off wins over a global on, nothing wins over a global off, and
+// choices survive reopening.
 func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "repos.sqlite")
@@ -40,9 +41,12 @@ func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 	if off.Settings.AutomaticEnabled(prefs) || !on.Settings.AutomaticEnabled(prefs) {
 		t.Fatal("explicit choices ignored")
 	}
+	// The global switch is a master switch: off stops every repository.
 	disabled := Preferences{}
-	if c.Settings.AutomaticEnabled(disabled) || !on.Settings.AutomaticEnabled(disabled) {
-		t.Fatal("global preference not followed by the default, or overriding an explicit on")
+	for _, s := range []Settings{c.Settings, off.Settings, on.Settings} {
+		if s.AutomaticEnabled(disabled) {
+			t.Fatalf("enabled under the global off switch: %#v", s)
+		}
 	}
 	prefs, e = r.UpdatePreferences(ctx, func(p Preferences) Preferences {
 		p.Automatic = false

@@ -1315,7 +1315,9 @@ reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
 A repository's `automatic` setting is `null` (follow the global preference) or
-an explicit `true`/`false` that wins over it. The `preferences` table holds the
+an explicit `true`/`false`. The global preference is a master switch
+(`Settings.AutomaticEnabled`): off disables every repository, `true` included;
+on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed) and
 `cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
@@ -1593,8 +1595,10 @@ background refresh, turns pull request changes into jobs on the same queue as
 confirmed runs. It has no backend or GitHub client of its own: discovery feeds
 it and `Queue.SubmitAutomatic` decides each job.
 
-- **Enabled** per repository: its explicit `automatic` setting, else the global
-  preference (on by default). Disabling a repository, or unregistering it,
+- **Enabled** per repository: the global preference (on by default) is a
+  master switch, which the desktop tray's pause turns off; while it is on, a
+  repository is enabled unless its `automatic` is `false`. Disabling a
+  repository (or the switch), or unregistering it,
   forgets its state; nothing in flight is cancelled.
 - **Baseline.** `Observe` gets every successful discovery snapshot. The first
   one for an enabled repository records each open PR's head, whether the
