@@ -7,13 +7,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/doctor"
-	"github.com/baum-ai/baum/internal/uiserver"
 )
 
 // doctorOptions builds the report's options; tests replace it to stand in for
 // the machine.
 var doctorOptions = func(fetchPrices bool) doctor.Options {
-	return doctor.Options{FetchPrices: fetchPrices, InstanceDir: uiserver.StateDirectory}
+	return doctor.Options{FetchPrices: fetchPrices, Daemon: daemonReport}
 }
 
 // problemsError is returned by "baum doctor" when the report has a problem, so

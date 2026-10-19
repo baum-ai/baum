@@ -100,6 +100,7 @@ and serves an embedded viewer for it on localhost.`,
 		newSessionsCommand(),
 		newReposCommand(),
 		newUICommand(),
+		newDaemonCommand(),
 		newDoctorCommand(),
 	)
 	return cmd

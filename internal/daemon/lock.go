@@ -28,6 +28,11 @@ type fileLock struct {
 
 // tryLock takes the lock at path or returns errLocked at once.
 func tryLock(ctx context.Context, path string) (*fileLock, error) {
+	// A relative path would be read as a URI authority below.
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err

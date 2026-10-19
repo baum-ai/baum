@@ -10,7 +10,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "BAUM_APP_BROWSER_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_LAUNCH_FILE=e2e/launch-url ./e2e/fixture -test.run '^TestLocalAppBrowserFixture$' -test.timeout=0",
+      "BAUM_APP_BROWSER_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_STATE_DIR=e2e/daemon-state ./e2e/fixture -test.run '^TestLocalAppBrowserFixture$' -test.timeout=0",
     url: "http://127.0.0.1:4167",
     reuseExistingServer: false,
     timeout: 30000,
