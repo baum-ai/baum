@@ -746,13 +746,17 @@ inside the clone and the session store overrides, and does this:
    blobs, so a rename lists both paths). A head or start the clone lacks is
    `commits_missing`; a partial clone that has the commits but not the trees
    is `partial_clone`. It never fetches: every read of objects, including the
-   Entire checkpoint branch, runs in the private repository `gitlocal` makes,
+   Entire checkpoint stores, runs in the private repository `gitlocal` makes,
    which has no remote and no promisor configuration, with
    `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot download an object;
-   a checkpoint whose objects are missing is skipped with a warning. Only the
+   a checkpoint whose objects are missing is skipped with a warning. Entire
+   keeps checkpoints in two stores, read alike (see step 6), and clones usually
+   lack the git-refs one, since a clone does not fetch it; fetching it is the
+   user's to do (`git fetch origin
+   'refs/entire/checkpoints/*:refs/entire/checkpoints/*'`), never baum's. Only the
    remotes' URLs are read from configuration, never contacted.
 4. Loads the sessions with `sessions.Load`, only those last modified within
-   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread.
+   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history, or, for a ref, its commit's date, so older ones are skipped unread.
    `sessions.Load` finds a session recorded in any working tree of the clone:
    it lists them with `gitlocal.Worktrees` (`git worktree list --porcelain
    -z`, run against the clone's repository directory with the read
@@ -786,12 +790,20 @@ inside the clone and the session store overrides, and does this:
    26-character Crockford ULIDs in any case, made canonical (hex lower-case,
    ULID upper-case) and kept in trailer order, each once. A malformed value
    beside a valid one is skipped with a warning line; a commit with no valid
-   value is left to the heuristics. Each id is looked up on the clone's
-   checkpoint branch (the local branch, else a remote-tracking copy), reading
-   only its metadata in the private repository, and maps to the sessions the
-   checkpoint records; a commit naming several checkpoints maps to the union
-   of their sessions. The branch holds only 12-hex checkpoints, so a ULID
-   finds none here. Such a commit is linked to those sessions
+   value is left to the heuristics. Each id is looked up in the clone's two
+   Entire stores, reading only its metadata in the private repository, and
+   maps to the sessions the checkpoint records; a commit naming several
+   checkpoints maps to the union of their sessions. The stores are:
+   the git-refs store, one ref `refs/entire/checkpoints/<shard>/<id>` per
+   checkpoint, where the shard is the last two characters of the canonical id
+   (a ref with another shard, extra path segments or an invalid id is
+   ignored) and the ref's commit has the checkpoint as its root tree
+   (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
+   (the local branch, else a remote-tracking copy), which keeps a 12-hex
+   checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
+   A 12-hex id in both stores (a clone migrated with `entire migrate`) is read
+   from its ref, which wins; the session paths in a ref's metadata carry no
+   shard prefix, and the parser reads them either way. Such a commit is linked to those sessions
    with `method` `entire_checkpoint` and confidence 1, as the hosted
    `entireEdges` writes them, and then goes through step 7 with those sessions
    already linked and the files they edited already explained. The
@@ -802,7 +814,10 @@ inside the clone and the session store overrides, and does this:
    the same id is listed once, from that store, since its transcript is the
    fuller record. Trailers with no valid id, checkpoints the clone does not
    hold, or ones whose sessions cannot be mapped leave the commit to the
-   heuristics.
+   heuristics. A checkpoint in neither store, or whose objects are not
+   downloaded, is named in a warning line with the command that fetches the
+   git-refs store (`git fetch origin
+   'refs/entire/checkpoints/*:refs/entire/checkpoints/*'`); nothing is fetched.
 7. Matches each commit the way the hosted resolver does, with the default
    config and `steps.Default`. As its `matchRemaining` does,
    `linkage.MatchCommit` runs over the sessions not yet linked, and runs
