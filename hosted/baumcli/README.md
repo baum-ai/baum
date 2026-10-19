@@ -1,7 +1,8 @@
 # baumcli
 
 The hosted service commands of the `baum` binary: login, logout, whoami,
-setup, upload and the hook dispatchers that agents and Git call. The open-source
+setup, upload, the hook dispatchers that agents and Git call, and the
+installer of the user-wide agent hooks. The open-source
 commands and these ship as one binary, built from `cmd/baum`; `--help` lists
 these under "Hosted service". Local session discovery lives in
 [`sessions/collector`](../../sessions/collector); the archive rules are in
@@ -47,7 +48,8 @@ handshake, in [`apiclient`](../apiclient).
   and every other server request need a login in every case.
 - For an open-source user who never logged in, in a clone nobody set up, the
   hooks run Entire directly and baum does nothing, not even the bootstrap,
-  whatever the repository commits.
+  whatever the repository commits. The user-wide hooks (below) apply the same
+  rules and, where they refuse, do nothing at all.
 - `logout` removes the stored token but leaves the markers in `.git/baum`, so
   a set-up clone's hooks keep running through baum; without a login they still
   reach no baum server.
@@ -123,6 +125,58 @@ handshake, in [`apiclient`](../apiclient).
 - Hook configuration comes from the shared [`agenthooks`](../agenthooks/agenthooks.go)
   specs, the same ones the hosted service's onboarding pull request writes, so
   the two never rewrite each other.
+- Setup also installs the user-wide hooks below, once per run, for the agents
+  it detects, unless `--skip-user-hooks` or `--skip-entire`. It keeps writing
+  the repository's own hooks: teammates without user-wide hooks need them, and
+  the user-wide ones yield to them.
+
+## User-wide hooks
+
+- `baum hooks install --user` adds baum's hooks to `~/.claude/settings.json`
+  (Claude Code) and `~/.codex/hooks.json` (Codex; it also reads inline hooks in
+  `config.toml`, which baum leaves alone), for the detected agents or those
+  named with `--agent`; `uninstall --user` removes them. The editing lives in
+  [`userhooks`](../userhooks/userhooks.go), the events, matchers, timeouts and
+  command in [`agenthooks`](../agenthooks/userwide.go). The desktop app's
+  onboarding is meant to call the same command.
+- The files belong to the user. Only handlers whose command is baum's
+  user-wide dispatcher are added, rewritten or removed; every other byte stays,
+  and new handlers go after the user's (Codex keys its trust in a hook to its
+  position). An install with nothing to change writes nothing; uninstalling
+  right after installing restores the original bytes. A file that is not JSON,
+  or whose `hooks` are not event → list of groups → list of handler objects,
+  is refused and left alone. The previous file is kept as `<file>.baum-backup`
+  and the new one renamed into place, unless the file changed meanwhile; a
+  symbolic link is followed and kept.
+- The command is `sh -c 'if command -v baum … && baum hooks agent --check
+  --user AGENT EVENT …; then exec baum hooks agent AGENT EVENT; fi'`. Unlike
+  the committed dispatcher it never falls through to Entire. It is pinned by a
+  test, because Codex asks the user to trust a hook again once its definition
+  changes.
+- `--check --user` succeeds only when all of these hold, in this order:
+  1. the working directory is inside a Git worktree (found by its `.git`,
+     without starting git) whose Entire is enabled (`.entire/settings.json` or
+     `settings.local.json`). Elsewhere the hook would only hand an event to an
+     Entire that ignores it, and its session-start bootstrap would put Git
+     hooks in a repository that never asked for them;
+  2. no project hook file of the agent (`.claude/settings.json` and
+     `settings.local.json`; `.codex/hooks.json` and `config.toml`), in the
+     working directory or a parent up to the worktree root, or in
+     `CLAUDE_PROJECT_DIR`, runs Entire for this event. The committed
+     dispatcher, the pre-rename one and Entire's own command all end in
+     `entire hooks AGENT EVENT`, so the text is searched for that; a file over
+     1 MiB or unreadable counts as running it. This is what keeps an event
+     from being reported twice in a repository set up by `baum setup` or the
+     onboarding pull request, without a daemon to deduplicate: the
+     repository's hook handles the event, the user-wide one does nothing, and
+     an event the repository's settings lack (such as Codex events added in a
+     later Entire) still arrives through the user-wide hook;
+  3. the opt-in rules above would run the committed dispatcher here.
+- The first two read a few small files and start no process: in a repository
+  without Entire the whole user-wide hook costs about one `baum` start
+  (measured at about 3 ms on Linux, against 2.4 ms for `baum --version` and
+  4 ms for the committed path's `--check` in a repository without agent
+  settings).
 
 ## Hooks
 

@@ -56,7 +56,7 @@ author write permissions remain unknown, rather than granting automatic work.
 
 ## Hosted service commands
 
-`baum login`, `logout`, `whoami`, `setup`, `upload` and the hidden `hooks`
+`baum login`, `logout`, `whoami`, `setup`, `upload` and `hooks`
 connect this machine to a hosted baum server. They are opt-in: nothing is sent
 to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
 
@@ -86,6 +86,18 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   in a repository just because the repository's files ask for it, unless the
   machine still has the hosted install script's marker (below). Uploading, or
   anything else that contacts a baum server, needs `baum login` in every case.
+- `baum hooks install --user`, and `baum setup` unless `--skip-user-hooks` or
+  `--skip-entire`, add baum's hooks to your user-wide agent settings:
+  `~/.claude/settings.json` for Claude Code and `~/.codex/hooks.json` for
+  Codex. Those run in every directory an agent works in, so they run baum only
+  in a Git repository with Entire enabled whose own agent settings do not
+  already run Entire for the event, and there only under the rules above;
+  everywhere else they do nothing. They read local files only. Nothing else in
+  the files changes; the previous version is kept as `<file>.baum-backup`, and
+  a file baum cannot parse is left alone. `baum hooks uninstall --user`
+  removes exactly those hooks (or delete the entries whose command contains
+  `baum hooks agent --check --user`). Codex runs them only after you trust
+  them with `/hooks`.
 - Once installed, Entire's own hooks record agent sessions as checkpoints and
   push them, transcripts included, with `git push` to the checkpoint branch of
   the repository's remote (or the checkpoint remote its settings name). That

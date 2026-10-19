@@ -68,7 +68,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
-| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too |
+| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `userhooks`, which edits the user-wide Claude Code and Codex settings |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
 store, the `doctor` diagnostics) stays under `internal/`.
@@ -1153,6 +1153,13 @@ format and the protocol constants have one definition on both sides.
   committed agent settings carry baum's dispatcher. They read local files
   only, and the hooks they admit never contact a server. The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
+- User-wide hooks. `baum hooks install --user` puts a dispatcher in
+  `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
+  edits them as text, touching only its own handlers). It calls
+  `--check --user`, which adds two conditions to the rules above: the
+  repository has Entire enabled, and none of its own agent hook files already
+  runs Entire for the event, so an event is never reported twice. Where it
+  refuses, the hook does nothing.
 - Compatibility. A client and a server of different releases agree on an API
   protocol number: requests name the client's, responses the range the server
   serves, and a client outside it stops with an error saying which side to
