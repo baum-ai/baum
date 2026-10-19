@@ -57,6 +57,10 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input
 	if _, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), run); err != nil {
 		t.Fatal(err)
 	}
+	// The finished command no longer runs: it cannot time out.
+	if running := run.Activity.Running(); running != 0 {
+		t.Fatalf("%d tools still running after the command finished", running)
+	}
 	text := logs.String()
 	for _, want := range []string{
 		`msg="codex turn started" turn=1`,
@@ -126,7 +130,7 @@ exec sleep 60
 	}
 	text := logs.String()
 	if strings.Count(text, `msg="codex tool started" item=item_0 tool=command_execution command="/bin/bash -lc 'git log'"`) != 2 ||
-		strings.Count(text, `msg="review agent stalled" cause=tool_timeout tool=command_execution`) != 2 {
+		strings.Count(text, `msg="review agent stalled" cause=tool_timeout tool=command_execution item=item_0`) != 2 {
 		t.Fatalf("logs:\n%s", text)
 	}
 }

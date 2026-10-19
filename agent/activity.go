@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,20 +27,20 @@ type Activity struct {
 	last     time.Time
 	requests int
 	tools    map[string]runningTool
-	lastTool string
+	lastTool runningTool
 }
 
 type runningTool struct {
-	kind    string
-	started time.Time
+	id, kind string
+	started  time.Time
 }
 
 func NewActivity() *Activity {
 	return &Activity{last: time.Now(), tools: map[string]runningTool{}}
 }
 
-// Progress records that the attempt did something: the harness emitted an
-// event or a model response streamed.
+// Progress records that the attempt did something, such as an event the
+// harness emitted.
 func (a *Activity) Progress() {
 	if a == nil {
 		return
@@ -61,8 +60,8 @@ func (a *Activity) ToolStarted(id, kind string) {
 	a.mu.Lock()
 	now := time.Now()
 	a.last = now
-	a.tools[id] = runningTool{kind: kind, started: now}
-	a.lastTool = kind
+	a.tools[id] = runningTool{id: id, kind: kind, started: now}
+	a.lastTool = runningTool{id: id, kind: kind, started: now}
 	a.mu.Unlock()
 }
 
@@ -75,6 +74,16 @@ func (a *Activity) ToolFinished(id string) {
 	a.last = time.Now()
 	delete(a.tools, id)
 	a.mu.Unlock()
+}
+
+// Running is the number of tools the attempt is running.
+func (a *Activity) Running() int {
+	if a == nil {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.tools)
 }
 
 func (a *Activity) requestStarted() {
@@ -96,9 +105,9 @@ func (a *Activity) requestFinished() {
 type stallError struct {
 	// cause is "tool_timeout" (a tool ran past the tool timeout) or "idle"
 	// (nothing in flight and no progress for the stall timeout).
-	cause   string
-	tool    string
-	elapsed time.Duration
+	cause      string
+	tool, item string
+	elapsed    time.Duration
 }
 
 func (e *stallError) Error() string { return ReasonStalled }
@@ -113,13 +122,13 @@ func (a *Activity) stalled(now time.Time, idle, toolTimeout time.Duration) *stal
 	if toolTimeout > 0 {
 		for _, tool := range a.tools {
 			if elapsed := now.Sub(tool.started); elapsed > toolTimeout {
-				return &stallError{cause: "tool_timeout", tool: tool.kind, elapsed: elapsed}
+				return &stallError{cause: "tool_timeout", tool: tool.kind, item: tool.id, elapsed: elapsed}
 			}
 		}
 	}
 	if idle > 0 && a.requests == 0 && len(a.tools) == 0 {
 		if elapsed := now.Sub(a.last); elapsed > idle {
-			return &stallError{cause: "idle", tool: a.lastTool, elapsed: elapsed}
+			return &stallError{cause: "idle", tool: a.lastTool.kind, item: a.lastTool.id, elapsed: elapsed}
 		}
 	}
 	return nil
@@ -156,7 +165,7 @@ func (a *Activity) watch(ctx context.Context, idle, toolTimeout time.Duration, c
 // see the backend's model calls, so only the tool timeout applies.
 func (g *Generator) runWatched(ctx context.Context, budgets Budgets, request Request) (Result, error) {
 	idle, toolTimeout := budgets.StallTimeout, budgets.ToolTimeout
-	if request.Endpoint == nil {
+	if request.Endpoint == nil || request.Endpoint.BaseURL == "" {
 		idle = 0
 	}
 	if idle <= 0 && toolTimeout <= 0 {
@@ -183,11 +192,13 @@ func (g *Generator) runWatched(ctx context.Context, budgets Budgets, request Req
 	cancel(nil)
 	<-watching
 	stall, ok := context.Cause(attempt).(*stallError)
-	if !ok || ctx.Err() != nil {
+	// An attempt that finished keeps its result, even if the watchdog fired
+	// as it did.
+	if err == nil || !ok || ctx.Err() != nil {
 		return result, err
 	}
 	if request.Logger != nil {
-		request.Logger.WarnContext(ctx, "review agent stalled", "cause", stall.cause, "tool", stall.tool,
+		request.Logger.WarnContext(ctx, "review agent stalled", "cause", stall.cause, "tool", stall.tool, "item", stall.item,
 			"elapsed", stall.elapsed.Round(time.Second), "stall_timeout", idle, "tool_timeout", toolTimeout)
 	}
 	result.Events = append(result.Events, Event{Kind: "stalled", Status: stall.cause, Tool: stall.tool, ElapsedMS: stall.elapsed.Milliseconds()})
@@ -197,8 +208,9 @@ func (g *Generator) runWatched(ctx context.Context, budgets Budgets, request Req
 // observeEndpoint starts a loopback forwarder to endpoint and returns the
 // endpoint that reaches the same provider through it, and the function that
 // stops it. The forwarder passes requests and responses through unchanged,
-// streaming, and reports to activity: a request is open from its arrival until
-// its response is copied, and every chunk of a response is progress.
+// streaming, and reports to activity that a request is open from its arrival
+// until its response is copied. It connects directly, as the harness did: no
+// proxy from the environment sees the run's key.
 func observeEndpoint(endpoint *Endpoint, activity *Activity) (*Endpoint, func(), error) {
 	target, err := url.Parse(endpoint.BaseURL)
 	if err != nil || target.Host == "" {
@@ -208,16 +220,15 @@ func observeEndpoint(endpoint *Endpoint, activity *Activity) (*Endpoint, func(),
 	if err != nil {
 		return nil, nil, fmt.Errorf("observing the model endpoint: %w", err)
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.Out.URL.Scheme, r.Out.URL.Host, r.Out.Host = target.Scheme, target.Host, target.Host
 		},
+		Transport: transport,
 		// Server-sent events must reach the harness as they arrive.
 		FlushInterval: -1,
-		ModifyResponse: func(response *http.Response) error {
-			response.Body = &progressBody{ReadCloser: response.Body, activity: activity}
-			return nil
-		},
 		// Never log or relay the transport error: it can name the URL.
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) { w.WriteHeader(http.StatusBadGateway) },
 		ErrorLog:     slog.NewLogLogger(slog.DiscardHandler, slog.LevelError),
@@ -233,18 +244,8 @@ func observeEndpoint(endpoint *Endpoint, activity *Activity) (*Endpoint, func(),
 	}
 	go func() { _ = server.Serve(listener) }()
 	observed := &Endpoint{BaseURL: "http://" + listener.Addr().String() + strings.TrimSuffix(target.Path, "/"), Key: endpoint.Key}
-	return observed, func() { _ = server.Close() }, nil
-}
-
-type progressBody struct {
-	io.ReadCloser
-	activity *Activity
-}
-
-func (b *progressBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if n > 0 {
-		b.activity.Progress()
-	}
-	return n, err
+	return observed, func() {
+		_ = server.Close()
+		transport.CloseIdleConnections()
+	}, nil
 }

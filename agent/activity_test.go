@@ -76,7 +76,7 @@ func TestGenerateEndsAToolThatRunsPastTheToolTimeoutAndRetriesOnce(t *testing.T)
 	if stalls != 2 {
 		t.Fatalf("diagnostics = %+v, want two stalls", outcome.Diagnostics)
 	}
-	if text := logs.String(); strings.Count(text, `msg="review agent stalled" cause=tool_timeout tool=command_execution`) != 2 || strings.Contains(text, "review agent failed") {
+	if text := logs.String(); strings.Count(text, `msg="review agent stalled" cause=tool_timeout tool=command_execution item=item_`) != 2 || strings.Contains(text, "review agent failed") {
 		t.Fatalf("logs:\n%s", text)
 	}
 }
@@ -94,6 +94,40 @@ func TestGenerateRetriesAStalledAttemptAndSucceeds(t *testing.T) {
 	outcome, document, err := generator.Generate(context.Background(), run)
 	if err != nil || len(document) == 0 || len(backend.calls) != 2 || outcome.Calls != 2 || outcome.ErroredAttempts != 1 {
 		t.Fatalf("outcome = %+v, err = %v, backend calls = %d", outcome, err, len(backend.calls))
+	}
+}
+
+// Stalls count over the run: a repair that stalls after the first pass
+// already stalled once fails the run.
+func TestGenerateCountsStallsOverTheRunRepairsIncluded(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.Budgets.ToolTimeout = 100 * time.Millisecond
+	backend.run = func(ctx context.Context, request Request, n int) (Result, error) {
+		switch n {
+		case 0, 2:
+			return hang(true)(ctx, request, n)
+		default:
+			return Result{Document: []byte("not JSON"), Calls: 1, Tokens: 10}, nil
+		}
+	}
+	outcome, _, err := generator.Generate(context.Background(), run)
+	if err == nil || err.Error() != ReasonStalled || len(backend.calls) != 3 || outcome.ValidationRepairs != 1 {
+		t.Fatalf("err = %v, outcome = %+v, backend calls = %d", err, outcome, len(backend.calls))
+	}
+}
+
+// An attempt that finished keeps its result even when the watchdog finds it
+// stalled as it returns.
+func TestGenerateKeepsAFinishedAttemptTheWatchdogCaught(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.Budgets.ToolTimeout = 50 * time.Millisecond
+	backend.run = func(ctx context.Context, request Request, n int) (Result, error) {
+		request.Activity.ToolStarted("item_0", "command_execution")
+		<-ctx.Done()
+		return Result{Document: authoredFixture(), Calls: 1, Tokens: 10}, nil
+	}
+	if _, document, err := generator.Generate(context.Background(), run); err != nil || len(document) == 0 || len(backend.calls) != 1 {
+		t.Fatalf("err = %v, backend calls = %d", err, len(backend.calls))
 	}
 }
 
@@ -154,7 +188,7 @@ func TestGenerateIdleStallNeedsNothingInFlight(t *testing.T) {
 	t.Run("a long model request does not", func(t *testing.T) {
 		generator, run, backend := loopFixture(t, nil)
 		// Silent for twice the stall timeout, then streaming for longer
-		// than it: open requests and streamed bytes are both progress.
+		// than it: an open model request is never idle.
 		run.Endpoint = &Endpoint{BaseURL: modelServer(t, 300*time.Millisecond, 6, 60*time.Millisecond).URL + "/openai", Key: "token"}
 		run.Budgets.StallTimeout = 150 * time.Millisecond
 		run.Budgets.ToolTimeout = 150 * time.Millisecond
@@ -164,20 +198,31 @@ func TestGenerateIdleStallNeedsNothingInFlight(t *testing.T) {
 			t.Fatalf("outcome = %+v, err = %v, backend calls = %d", outcome, err, len(backend.calls))
 		}
 	})
-	t.Run("without an endpoint only the tool timeout applies", func(t *testing.T) {
-		generator, run, backend := loopFixture(t, nil)
-		run.Budgets.StallTimeout = 50 * time.Millisecond
-		backend.run = func(ctx context.Context, request Request, n int) (Result, error) {
-			if request.Activity != nil {
-				t.Error("an attempt without a tool timeout or an endpoint is watched")
+	for name, endpoint := range map[string]*Endpoint{"without an endpoint": nil, "with an endpoint without a base URL": {Key: "token"}} {
+		t.Run(name+" only the tool timeout applies", func(t *testing.T) {
+			generator, run, backend := loopFixture(t, nil)
+			run.Endpoint = endpoint
+			run.Budgets.StallTimeout = 50 * time.Millisecond
+			run.Budgets.ToolTimeout = 100 * time.Millisecond
+			backend.run = func(ctx context.Context, request Request, n int) (Result, error) {
+				if n == 0 {
+					// Idle for four stall timeouts: not a stall.
+					time.Sleep(200 * time.Millisecond)
+					return Result{Document: []byte("not JSON"), Calls: 1, Tokens: 10}, nil
+				}
+				return hang(true)(ctx, request, n)
 			}
-			time.Sleep(200 * time.Millisecond)
-			return Result{Document: authoredFixture(), Calls: 1, Tokens: 10}, nil
-		}
-		if _, document, err := generator.Generate(context.Background(), run); err != nil || len(document) == 0 || len(backend.calls) != 1 {
-			t.Fatalf("err = %v, backend calls = %d", err, len(backend.calls))
-		}
-	})
+			outcome, _, err := generator.Generate(context.Background(), run)
+			if err == nil || err.Error() != ReasonStalled || len(backend.calls) != 3 {
+				t.Fatalf("err = %v, backend calls = %d", err, len(backend.calls))
+			}
+			for _, event := range outcome.Diagnostics {
+				if event.Kind == "stalled" && event.Status != "tool_timeout" {
+					t.Fatalf("diagnostics = %+v", outcome.Diagnostics)
+				}
+			}
+		})
+	}
 	t.Run("zero timeouts disable the watchdog", func(t *testing.T) {
 		generator, run, backend := loopFixture(t, nil)
 		run.Endpoint = &Endpoint{BaseURL: "http://model.example/openai", Key: "token"}
@@ -206,8 +251,19 @@ func TestGenerateCancellationIsNotAStall(t *testing.T) {
 	}
 }
 
-func TestObservedEndpointForwardsAndReportsRequests(t *testing.T) {
-	server := modelServer(t, 50*time.Millisecond, 3, 10*time.Millisecond)
+func TestObservedEndpointForwardsStreamsAndReportsRequests(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Path", r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("X-Authorization", r.Header.Get("Authorization"))
+		fmt.Fprint(w, "data: 0\n\n")
+		w.(http.Flusher).Flush()
+		<-release
+		fmt.Fprint(w, "data: 1\n\n")
+	}))
+	defer server.Close()
 	activity := NewActivity()
 	observed, stop, err := observeEndpoint(&Endpoint{BaseURL: server.URL + "/openai/", Key: "token"}, activity)
 	if err != nil {
@@ -219,42 +275,42 @@ func TestObservedEndpointForwardsAndReportsRequests(t *testing.T) {
 	}
 	request, _ := http.NewRequest(http.MethodPost, observed.BaseURL+"/responses?beta=true", strings.NewReader("{}"))
 	request.Header.Set("Authorization", "Bearer token")
-	done := make(chan struct{})
-	var response *http.Response
-	go func() {
-		defer close(done)
-		response, err = http.DefaultClient.Do(request)
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		activity.mu.Lock()
-		open := activity.requests
-		activity.mu.Unlock()
-		if open == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the forwarded request was never open")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if stall := activity.stalled(time.Now().Add(time.Hour), time.Millisecond, 0); stall != nil {
-		t.Fatalf("an open request stalled: %+v", stall)
-	}
-	<-done
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
+		close(release)
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if string(body) != "data: 0\n\ndata: 1\n\ndata: 2\n\n" || response.Header.Get("X-Path") != "/openai/responses?beta=true" || response.Header.Get("X-Authorization") != "Bearer token" {
-		t.Fatalf("response %d %q headers %v", response.StatusCode, body, response.Header)
-	}
+	// The first event arrives while the provider still holds the rest.
+	first := make([]byte, len("data: 0\n\n"))
+	_, readErr := io.ReadFull(response.Body, first)
 	activity.mu.Lock()
 	open := activity.requests
 	activity.mu.Unlock()
-	if open != 0 {
-		t.Fatalf("%d requests still open", open)
+	stall := activity.stalled(time.Now().Add(time.Hour), time.Millisecond, 0)
+	close(release)
+	if readErr != nil || string(first) != "data: 0\n\n" {
+		t.Fatalf("first event %q, %v: the response is not streamed", first, readErr)
+	}
+	if open != 1 || stall != nil {
+		t.Fatalf("open requests = %d, stall = %+v, want one open request and no stall", open, stall)
+	}
+	rest, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if string(rest) != "data: 1\n\n" || response.Header.Get("X-Path") != "/openai/responses?beta=true" || response.Header.Get("X-Authorization") != "Bearer token" {
+		t.Fatalf("response %d %q headers %v", response.StatusCode, rest, response.Header)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		activity.mu.Lock()
+		open = activity.requests
+		activity.mu.Unlock()
+		if open == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d requests still open", open)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -291,7 +347,7 @@ func TestActivityStallChecks(t *testing.T) {
 	if stall := activity.stalled(now.Add(time.Minute), 30*time.Second, 0); stall != nil {
 		t.Fatalf("a running tool is idle: %+v", stall)
 	}
-	if stall := activity.stalled(now.Add(time.Minute), 30*time.Second, 45*time.Second); stall == nil || stall.cause != "tool_timeout" || stall.tool != "command_execution" {
+	if stall := activity.stalled(now.Add(time.Minute), 30*time.Second, 45*time.Second); stall == nil || stall.cause != "tool_timeout" || stall.tool != "command_execution" || stall.item != "item_1" {
 		t.Fatalf("a tool past its timeout: %+v", stall)
 	}
 	activity.ToolFinished("item_1")
@@ -299,7 +355,7 @@ func TestActivityStallChecks(t *testing.T) {
 	if stall := activity.stalled(time.Now(), 30*time.Second, 45*time.Second); stall != nil {
 		t.Fatalf("a finished tool stalled: %+v", stall)
 	}
-	if stall := activity.stalled(time.Now().Add(time.Minute), 30*time.Second, 0); stall == nil || stall.tool != "command_execution" {
+	if stall := activity.stalled(time.Now().Add(time.Minute), 30*time.Second, 0); stall == nil || stall.tool != "command_execution" || stall.item != "item_1" {
 		t.Fatalf("an idle stall does not name the last tool: %+v", stall)
 	}
 	var none *Activity

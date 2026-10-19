@@ -549,10 +549,15 @@ unchanged and counts the requests open, so a long model call is never idle.
 An attempt is stalled when one tool runs past `ToolTimeout`, or when no model
 request is open, no tool runs and nothing has progressed for `StallTimeout`.
 Without an `Endpoint` the loop cannot see model calls, so only `ToolTimeout`
-applies. A stalled attempt is cancelled, logged (`review agent stalled`, with
-the cause, `tool_timeout` or `idle`, and the tool) and recorded as a `stalled`
-diagnostic, and retried once at once without spending a provider attempt; a
-second stall ends the run with `ReasonStalled`. The Codex backend logs each
+applies. An open request is never idle, however long it is silent: a stream
+that stops mid-response is left to the harness's own stream timeout and the
+run's wall clock. A stalled attempt is cancelled, logged (`review agent
+stalled`, with the cause, `tool_timeout` or `idle`, and the tool and its item
+ID) and recorded as a `stalled` diagnostic, and retried at once; it counts as
+a provider attempt but does not use up `MaxProviderAttempts`. A second stall
+anywhere in the run, repairs included, ends it with `ReasonStalled`. An
+attempt that returned its result is kept even if the watchdog fired as it
+did. The Codex backend logs each
 turn and each tool with its command (at most 512 bytes), duration, exit code
 and status, never its output.
 

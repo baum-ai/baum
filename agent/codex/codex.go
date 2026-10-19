@@ -250,7 +250,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if pendingTurns > 0 {
 				pendingTurns--
 			}
-			logInfo(request, "codex turn completed", "turn", result.Calls, "duration", time.Since(turnStarted).Round(time.Millisecond), "usage_reported", event.Usage != nil)
+			logInfo(request, "codex turn completed", "turn", result.Calls, "duration", since(turnStarted), "usage_reported", event.Usage != nil)
 			if event.Usage == nil {
 				result.Usage.Unreported = true
 				break
@@ -287,7 +287,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				message = lastError
 			}
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
-			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", time.Since(turnStarted).Round(time.Millisecond), "status", agent.ErrorStatus(message))
+			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", agent.ErrorStatus(message))
 			err = errors.New(agent.ReasonProviderUnavailable)
 		}
 		if err == nil && result.Calls > request.MaxCalls {
@@ -338,6 +338,14 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	result.Model = c.Model
 	result.Events = append(result.Events, agent.Event{Kind: "document", Bytes: len(document)})
 	return result, nil
+}
+
+// since is how long ago a turn started, or zero when none did.
+func since(started time.Time) time.Duration {
+	if started.IsZero() {
+		return 0
+	}
+	return time.Since(started).Round(time.Millisecond)
 }
 
 // toolItems are the item types of Codex's JSON events that run a tool. Their
