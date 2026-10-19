@@ -387,11 +387,12 @@ func isGeneratedPath(lowerPath, base string) bool {
 	return false
 }
 
-// isSqlcOutputPath reports sqlc's generated Go files inside an sqlc directory.
-// Hand-written query and schema sources there (queries/*.sql) stay code, and
-// db.go or models.go elsewhere are not sqlc output.
+// isSqlcOutputPath reports sqlc's generated Go files directly in an sqlc
+// directory. Hand-written query and schema sources there (queries/*.sql) stay
+// code, and db.go or models.go elsewhere are not sqlc output.
 func isSqlcOutputPath(lowerPath, base string) bool {
-	if !strings.Contains(lowerPath, "/sqlc/") && !strings.HasPrefix(lowerPath, "sqlc/") {
+	dir := strings.TrimSuffix(lowerPath, base)
+	if dir != "sqlc/" && !strings.HasSuffix(dir, "/sqlc/") {
 		return false
 	}
 	switch base {
