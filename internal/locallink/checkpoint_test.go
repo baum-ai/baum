@@ -2,6 +2,7 @@ package locallink
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -376,8 +377,10 @@ func TestResolveReadsNoMissingRefCheckpointObject(t *testing.T) {
 	if has(partial, blob) {
 		t.Fatal("the checkpoint metadata is already in the partial clone")
 	}
+	var warnings bytes.Buffer
 	req := request(f)
 	req.Dir = partial
+	req.Warn = &warnings
 	result := resolve(t, req)
 	if !result.Available {
 		t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
@@ -387,6 +390,9 @@ func TestResolveReadsNoMissingRefCheckpointObject(t *testing.T) {
 	}
 	if got := linkedTo(result.Commits[0]); len(got["entire_checkpoint"]) != 0 {
 		t.Errorf("first commit links = %+v; the checkpoint is not readable here", result.Commits[0].Links)
+	}
+	if !strings.Contains(warnings.String(), "cannot be read") || strings.Contains(warnings.String(), "git fetch") {
+		t.Errorf("warnings = %q, want a cannot-be-read warning with no fetch hint", warnings.String())
 	}
 }
 
@@ -449,5 +455,38 @@ func TestResolveDoesNotSuggestAFetchForAnUnreadableCheckpoint(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), "cannot be read") || strings.Contains(warnings.String(), "git fetch") {
 		t.Errorf("warnings = %q, want a cannot-be-read warning with no fetch hint", warnings.String())
+	}
+}
+
+// A branch directory with no metadata.json is held but unreadable: it says so
+// and suggests no fetch.
+func TestResolveDoesNotSuggestAFetchForABranchDirectoryWithoutMetadata(t *testing.T) {
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+	f.AddCheckpoint(t)
+	linktest.Git(t, f.Repo, "checkout", "-q", "entire/checkpoints/v1")
+	linktest.Git(t, f.Repo, "rm", "-q", linktest.CheckpointID[:2]+"/"+linktest.CheckpointID[2:]+"/metadata.json")
+	linktest.Git(t, f.Repo, "commit", "-qm", "drop the metadata")
+	linktest.Git(t, f.Repo, "checkout", "-q", "main")
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	resolve(t, req)
+	if !strings.Contains(warnings.String(), "cannot be read") || strings.Contains(warnings.String(), "git fetch") {
+		t.Errorf("warnings = %q, want a cannot-be-read warning with no fetch hint", warnings.String())
+	}
+}
+
+// When the clone cannot be asked whether it holds the checkpoints, the warning
+// says they could not be checked, and suggests no fetch.
+func TestWarnMissingSuggestsNoFetchWhenTheCheckFailed(t *testing.T) {
+	var warnings bytes.Buffer
+	warnMissing(&warnings, []string{ulidCheckpoint, "ffffffffffff"}, map[string][]string{"ffffffffffff": {"s"}}, nil,
+		errors.New("boom"), map[string]string{ulidCheckpoint: "abc"})
+	got := warnings.String()
+	if !strings.Contains(got, "could not check") || !strings.Contains(got, ulidCheckpoint) || !strings.Contains(got, "boom") {
+		t.Errorf("warnings = %q, want the unchecked checkpoint and the error named", got)
+	}
+	if strings.Contains(got, "git fetch") || strings.Contains(got, "ffffffffffff") {
+		t.Errorf("warnings = %q, want no fetch hint and no recorded checkpoint", got)
 	}
 }

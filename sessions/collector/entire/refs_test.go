@@ -333,3 +333,35 @@ func TestRefsThatAreNotCommitsAreHandledSoftly(t *testing.T) {
 		t.Errorf("the genuine checkpoint was not read: %v (commit %s)", err, refCommits[ulidID])
 	}
 }
+
+// A branch directory with no metadata.json is still held, so a caller can say
+// it is unreadable rather than missing.
+func TestLocatedHoldsABranchDirectoryWithoutMetadata(t *testing.T) {
+	ctx := context.Background()
+	dir := checkpointRepo(t)
+	gitIn(t, dir, refDate, "checkout", "-q", CheckpointBranch)
+	if err := os.MkdirAll(filepath.Join(dir, "ee", "0000000001"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ee", "0000000001", "stray.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, refDate, "add", ".")
+	gitIn(t, dir, refDate, "commit", "-q", "-m", "stray")
+	gitIn(t, dir, refDate, "checkout", "-q", "main")
+	store, _, err := Resolve(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Located(ctx, privateRepo(t, dir), store, []string{"ee0000000001", "ee0000000001", "ee0000000002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got["ee0000000001"] {
+		t.Errorf("Located = %v, want only the directory without metadata", got)
+	}
+	sessions, err := Sessions(ctx, privateRepo(t, dir), store, []string{"ee0000000001"})
+	if err != nil || len(sessions) != 0 {
+		t.Errorf("Sessions = %v, %v; want it unreadable", sessions, err)
+	}
+}

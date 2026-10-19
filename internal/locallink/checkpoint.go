@@ -64,7 +64,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 	if branch == nil {
-		warnMissing(warn, ids, nil, nil, firstNamedBy)
+		warnMissing(warn, ids, nil, nil, nil, firstNamedBy)
 		return nil, nil
 	}
 	defer branch.Close()
@@ -74,11 +74,8 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 
-	located, err := branch.Located(ctx, ids)
-	if err != nil {
-		located = nil // every one not recorded is reported as missing
-	}
-	warnMissing(warn, ids, recorded, located, firstNamedBy)
+	located, checkErr := branch.Located(ctx, ids)
+	warnMissing(warn, ids, recorded, located, checkErr, firstNamedBy)
 
 	have := make(map[string]bool, len(found))
 	for _, s := range found {
@@ -130,11 +127,16 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 // for any id, and the legacy branch too when one is 12-hex, which only the
 // branch may hold. Nothing here runs a command: local linking never fetches,
 // and the commits are left to the heuristic steps.
-func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, firstNamedBy map[string]string) {
+func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, checkErr error, firstNamedBy map[string]string) {
 	var missing []string
+	var unchecked []string
 	legacy := false
 	for _, id := range ids {
 		if _, ok := recorded[id]; ok {
+			continue
+		}
+		if checkErr != nil {
+			unchecked = append(unchecked, id)
 			continue
 		}
 		if located[id] {
@@ -144,6 +146,11 @@ func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, loc
 		}
 		missing = append(missing, id)
 		legacy = legacy || len(id) == 12
+	}
+	if len(unchecked) > 0 {
+		// Whether they are in the clone is unknown, so no fetch is suggested.
+		warnf(warn, "warning: could not check whether Entire checkpoints %s are in this clone, so the commits naming them are linked without them: %v\n",
+			strings.Join(unchecked, ", "), checkErr)
 	}
 	if len(missing) == 0 {
 		return

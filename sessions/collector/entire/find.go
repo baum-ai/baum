@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -173,17 +172,19 @@ func Located(ctx context.Context, repoRoot string, store Store, ids []string) (m
 	held := map[string]bool{}
 	var check []string
 	var specs []string
+	seen := map[string]bool{}
 	for _, id := range ids {
 		canonical, ok := entirecheckpoint.CanonicalID(id)
-		if !ok {
+		if !ok || seen[canonical] {
 			continue
 		}
+		seen[canonical] = true
 		loc, ok := store.locate(canonical)
 		switch {
 		case !ok:
 		case loc.dir == "":
 			held[canonical] = true
-		case !slices.Contains(check, canonical):
+		default:
 			check = append(check, canonical)
 			specs = append(specs, loc.commit+":"+loc.dir)
 		}
