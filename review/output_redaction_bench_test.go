@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
@@ -55,6 +56,15 @@ func BenchmarkOutputRedaction(b *testing.B) {
 		words[i] = fmt.Sprintf("w%x", i)
 	}
 	distinct := []byte(`{"sections":[{"id":"` + strings.Join(words, "_") + `","title":"T"}]}`)
+	letters := make([]byte, 1<<20)
+	shuffle := rand.New(rand.NewPCG(1, 2))
+	for i := range letters {
+		letters[i] = '_'
+		if i%2 == 0 {
+			letters[i] = byte('a' + shuffle.IntN(26))
+		}
+	}
+	random := []byte(`{"sections":[{"id":"` + string(letters) + `","title":"T"}]}`)
 	for _, c := range []struct {
 		name     string
 		document []byte
@@ -63,6 +73,7 @@ func BenchmarkOutputRedaction(b *testing.B) {
 		{"keys", benchmarkDocument(400, true)},
 		{"overlong", overlong},
 		{"overlong-distinct", distinct},
+		{"overlong-1mb", random},
 	} {
 		b.Run(c.name, func(b *testing.B) {
 			b.SetBytes(int64(len(c.document)))

@@ -346,10 +346,11 @@ address the redactor wrote, is no finding. A value longer than its schema's
 identifiers and categories) cannot be valid; a value whose schema sets no
 `maxLength`, such as a SHA, hunk ID or date-time, may be valid at any length,
 and one with more than 16 runs fits none of those patterns. Either is scanned
-whole and from every run, past its first 16 runs a 256-byte window at a time
-and each distinct window of the value once, then masked whole, and counts only
-if a secret was found in it, so the scan stays linear in the document's size
-and a harmless value never fails the run on its own.
+whole and from every run, past its first 16 runs a 256-byte window at a time,
+each distinct window of the value once and at most 256 KiB of such windows
+per value and 1 MiB per document, then masked whole, and counts only if a
+secret was found in it, so the scan stays linear in the document's size and
+a harmless value never fails the run on its own.
 
 Normalisation respells every identifier, category and tile-local name the
 model writes in lowercase with one underscore for each run of other
@@ -393,8 +394,12 @@ Known limits of the identifier pass:
   alone, found with a tail or a prefix (a keyword rule's value), is a source
   only as found.
 - In a value over its bound, a secret past its first 16 runs of separators
-  and longer than its 256-byte window is masked with the rest of the value but
-  not found, so it is neither counted nor a source.
+  that is longer than its 256-byte window, or lies past the value's or the
+  document's window budget, is masked with the rest of the value but not
+  found, so it is neither counted nor a source.
+- Sources, and the findings trimmed into more, are capped at 64 KiB each per
+  document; in a run with more, which fails already, other spellings of the
+  secrets left out may stay in the rejected document.
 - Matching is by whole words, so a key glued without a separator to letters
   or digits in another identifier or in free text (`xakia…`) is not matched
   there.

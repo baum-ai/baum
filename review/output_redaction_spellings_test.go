@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -132,6 +134,72 @@ func TestOutputRedactionMasksFreeTextSpellingsOfAnIdentifierSecret(t *testing.T)
 	}
 	checkEqual(t, 2, o.MaskedClosed())
 	checkEqual(t, 6, o.Masked())
+}
+
+// A 1 MB identifier of random one-letter words, a restart every two bytes,
+// costs a fixed scan past its first windows, in bytes scanned and allocated,
+// and is still masked whole. A key past the budget, behind an underscore, is
+// masked, not found.
+func TestOutputRedactionBoundsAnAdversarialIdentifier(t *testing.T) {
+	random := rand.New(rand.NewPCG(1, 2))
+	value := make([]byte, 1<<20)
+	for i := range value {
+		value[i] = '_'
+		if i%2 == 0 {
+			value[i] = byte('a' + random.IntN(26))
+		}
+	}
+	const stripe = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	value = append(value, stripe...)
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	raw, _, _ := identifiersThenPrepare(t, o, identifierDocument(string(value), "rsk_x", "T"))
+	runtime.ReadMemStats(&after)
+	if !strings.Contains(raw, `"id":`+quoted(testFormatMask(string(value)))) {
+		t.Fatal("the identifier is not masked whole")
+	}
+	checkEqual(t, 0, o.MaskedClosed())
+	// Identifiers and Document each scan the value whole, closedCopyLimit
+	// full windows and at most closedRestartBudget of small ones.
+	if bound := 2*(len(value)+closedCopyLimit*(closedScanWindow+1)+closedRestartBudget) + 64<<10; o.o.scanned > bound {
+		t.Fatalf("scanned %d bytes, over %d", o.o.scanned, bound)
+	}
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("scanned %d bytes, allocated %d", o.o.scanned, allocated)
+	if !raceEnabled && allocated > 160<<20 {
+		t.Fatalf("allocated %d bytes", allocated)
+	}
+}
+
+// The sources Identifiers keeps are bounded in bytes however many secrets
+// the identifiers hold; every one of them still fails the run.
+func TestOutputRedactionBoundsSources(t *testing.T) {
+	var evidence []string
+	const keys = 5000
+	for i := range keys {
+		evidence = append(evidence, `{"id":"`+accessKey(i)+`"}`)
+	}
+	document := `{"sections":[{"evidence":[` + strings.Join(evidence, ",") + `],"title":"T"}]}`
+	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
+	raw, err := o.Identifiers(context.Background(), []byte(document))
+	checkNoError(t, err)
+	// A rule takes a few of these generated keys, such as ...ABCD, for
+	// placeholders.
+	kept := 0
+	for i := range keys {
+		if strings.Contains(string(raw), accessKey(i)) {
+			kept++
+		}
+	}
+	if kept > 5 {
+		t.Fatalf("%d keys were not detected", kept)
+	}
+	checkEqual(t, keys-kept, o.MaskedClosed())
+	if o.o.sourceBytes == 0 || o.o.sourceBytes > sourceBytesMax || o.o.pendingBytes > sourceBytesMax {
+		t.Fatalf("sources hold %d bytes, pending %d", o.o.sourceBytes, o.o.pendingBytes)
+	}
 }
 
 // Spellings are whole words of the text as written, respelled rune by rune.

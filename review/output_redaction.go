@@ -128,11 +128,13 @@ type outputRedaction struct {
 	changed      bool
 	// sources are the respelled findings Identifiers collects in
 	// identifiers, nil otherwise, and pending the finding texts keySources
-	// has yet to trim; scanned is the text the closed-value and source scans
-	// joined, which tests read to bound their cost.
-	sources map[string]bool
-	pending []string
-	scanned int
+	// has yet to trim, each up to sourceBytesMax bytes in all; scanned is the
+	// text the closed-value and source scans joined, which tests read to
+	// bound their cost.
+	sources                   map[string]bool
+	pending                   []string
+	sourceBytes, pendingBytes int
+	scanned                   int
 	// hashSeed keys the windows closedCopies skips as seen.
 	hashSeed maphash.Seed
 	seeded   bool
@@ -446,6 +448,16 @@ const closedScanWindow = 4096
 // with a restart every few bytes costs a bounded multiple of its length.
 const closedRestartWindow = 2 * closedSourceMax
 
+// closedRestartBudget and closedRestartDocumentBudget cap the bytes of
+// closedRestartWindow copies one value, and one pass over a document, may
+// scan. Past either, a value's later restarts are not scanned: it is masked
+// whole all the same, so an adversarial value costs a fixed amount however
+// many runs it has, and a secret past the cap is masked but not found.
+const (
+	closedRestartBudget         = 256 << 10
+	closedRestartDocumentBudget = 1 << 20
+)
+
 // closedScanBatch caps the text one scan of closed values joins, so the copies
 // of a document's values never sit in memory all at once; a single copy
 // longer than it is scanned in a batch of its own.
@@ -483,6 +495,7 @@ func (o *outputRedaction) maskClosed(indexes []int) error {
 	found := map[int][][2]int{}
 	var copies []closedCopy
 	var builder strings.Builder
+	budget := closedRestartDocumentBudget
 	flush := func() error {
 		if builder.Len() == 0 {
 			return nil
@@ -514,7 +527,7 @@ func (o *outputRedaction) maskClosed(indexes []int) error {
 	}
 	for _, i := range indexes {
 		text := o.slots[i].text
-		err := o.closedCopies(o.slots[i], func(from, n int) error {
+		err := o.closedCopies(o.slots[i], &budget, func(from, n int) error {
 			if builder.Len() > 0 {
 				builder.WriteByte('\n')
 			}
@@ -547,15 +560,17 @@ type closedCopy struct{ slot, from, at, n int }
 // maskedWhole names has no bound on its restarts, so past its first
 // closedCopyLimit each copy holds a closedRestartWindow, and a window whose
 // text an earlier one of the value had is skipped: a value repeating itself
-// costs its distinct windows only.
-func (o *outputRedaction) closedCopies(slot outputSlot, visit func(from, n int) error) error {
+// costs its distinct windows only. Those copies stop once they would exceed
+// closedRestartBudget for the value or the document's budget, which they
+// draw from.
+func (o *outputRedaction) closedCopies(slot outputSlot, budget *int, visit func(from, n int) error) error {
 	text := slot.text
 	if err := visit(0, len(text)); err != nil {
 		return err
 	}
 	whole := slot.maskedWhole()
 	var seen map[uint64]bool
-	restarts := 0
+	restarts, spent := 0, 0
 	for from := 1; from < len(text); from++ {
 		if !scanRestart(text, from) {
 			continue
@@ -571,7 +586,12 @@ func (o *outputRedaction) closedCopies(slot outputSlot, visit func(from, n int) 
 			if seen[key] {
 				continue
 			}
+			if spent+n > closedRestartBudget || n > *budget {
+				break
+			}
 			seen[key] = true
+			spent += n
+			*budget -= n
 		}
 		if err := visit(from, n); err != nil {
 			return err
@@ -707,6 +727,14 @@ func distinctFindings(ranges [][2]int) int {
 // masking more spellings costs nothing more.
 const closedSourceMax = 128
 
+// sourceBytesMax bounds the bytes of the sources Identifiers keeps, and of
+// the findings it trims into more, so the matcher and the scans of
+// keySources cost a bounded amount whatever the document holds. Sources from
+// identifiers exist only in a run that fails already, so past the bound the
+// run still fails; only other spellings of the secrets left out may stay in
+// the rejected document.
+const sourceBytesMax = 64 << 10
+
 // addSources records, while Identifiers runs, the respellings otherSpellings
 // looks for in every identifier: of a counted finding's text, and of that
 // text widened to the words of the value it lies in, so a key glued to
@@ -735,13 +763,19 @@ func (o *outputRedaction) addSources(text string, r [2]int) {
 	for _, source := range sources {
 		o.addSource(source)
 	}
-	o.pending = append(o.pending, finding)
+	if o.pendingBytes+len(finding) <= sourceBytesMax {
+		o.pending = append(o.pending, finding)
+		o.pendingBytes += len(finding)
+	}
 }
 
 func (o *outputRedaction) addSource(text string) {
-	if token := identifierToken(text); token != "" && len(token) <= closedSourceMax {
-		o.sources[token] = true
+	token := identifierToken(text)
+	if token == "" || len(token) > closedSourceMax || o.sources[token] || o.sourceBytes+len(token) > sourceBytesMax {
+		return
 	}
+	o.sources[token] = true
+	o.sourceBytes += len(token)
 }
 
 // sourcePieceSeparator reports the characters a credential or address is
@@ -946,7 +980,7 @@ func (o *outputRedaction) identifiers(document []byte) ([]byte, error) {
 		return nil, err
 	}
 	masks := map[string]string{}
-	o.slots, o.sources, o.pending = nil, map[string]bool{}, nil
+	o.slots, o.sources, o.pending, o.sourceBytes, o.pendingBytes = nil, map[string]bool{}, nil, 0, 0
 	defer func() { o.slots, o.sources, o.pending = nil, nil, nil }()
 	var indexes []int
 	identifiers := map[string]bool{}
