@@ -17,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/anthropic"
+	"github.com/baum-ai/baum/agent/anthropic/anthropictest"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -94,8 +95,20 @@ func messagesStub(t *testing.T, answer func(n int, call messagesCall) string) (*
 		n := len(calls)
 		calls = append(calls, call)
 		mu.Unlock()
-		w.Header().Set("content-type", "application/json")
-		_, _ = io.WriteString(w, answer(n, call))
+		answered := answer(n, call)
+		if strings.HasPrefix(answered, "HTTP ") {
+			// "HTTP <status> <body>" answers with an error status.
+			var status int
+			var body string
+			_, _ = fmt.Sscanf(answered, "HTTP %d", &status)
+			body = answered[strings.Index(answered[5:], " ")+6:]
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		if err := anthropictest.WriteMessage(w, answered); err != nil {
+			t.Error(err)
+		}
 	}))
 	t.Cleanup(server.Close)
 	return server, func() []messagesCall {
@@ -324,3 +337,29 @@ func TestAnthropicBudgetsSpanRepairs(t *testing.T) {
 }
 
 const smallRepairUsage = `{"input_tokens":10,"output_tokens":10}`
+
+// A failure no retry can change is attempted once, though the run allows
+// three provider attempts, and fails naming the provider's rejection.
+func TestAnthropicRejectionsAreNotRetried(t *testing.T) {
+	for status, answer := range map[string]string{
+		"authentication_error":    `HTTP 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`,
+		"invalid_request":         `HTTP 400 {"type":"error","error":{"type":"invalid_request_error","message":"model: unknown"}}`,
+		"refusal":                 messagesReply(0, "refusal", smallRepairUsage),
+		"context_window_exceeded": messagesReply(0, "model_context_window_exceeded", smallRepairUsage),
+	} {
+		t.Run(status, func(t *testing.T) {
+			f := newFixture(t)
+			f.repo.Dirty(t)
+			server, calls := messagesStub(t, func(int, messagesCall) string { return answer })
+			options := anthropicOptions(t, f, server)
+			options.Budgets.MaxProviderAttempts = 3
+			result, err := generate.Run(context.Background(), options)
+			if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), agent.ProviderRejectedReason(status)) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(calls()) != 1 || result.Outcome.ProviderAttempts != 1 {
+				t.Errorf("%d requests, %d provider attempts", len(calls()), result.Outcome.ProviderAttempts)
+			}
+		})
+	}
+}

@@ -89,6 +89,9 @@ type Backend struct {
 	// retryDelay, when set, replaces the wait before retry n (from 0); tests
 	// use it. retryAfter is the server's request, zero when it sent none.
 	retryDelay func(attempt int, retryAfter time.Duration) time.Duration
+	// headerTimeout and idleTimeout replace defaultHeaderTimeout and
+	// defaultIdleTimeout when set; tests use them.
+	headerTimeout, idleTimeout time.Duration
 
 	once   sync.Once
 	client *http.Client
@@ -147,7 +150,7 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	endpoint.BaseURL = cmp.Or(endpoint.BaseURL, DefaultBaseURL)
 	if endpoint.Key == "" {
-		return result, &Error{Category: CategoryAuthentication, Detail: "no API key; set ANTHROPIC_API_KEY"}
+		return result, &agent.RejectedError{Status: string(CategoryAuthentication), Err: &Error{Category: CategoryAuthentication, Detail: "no API key; set ANTHROPIC_API_KEY"}}
 	}
 	started := time.Now()
 	record := func(event agent.Event) {
@@ -185,6 +188,10 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				status = "budget_exceeded"
 			}
 			record(agent.Event{Kind: "error", Status: status})
+			// A failure a retry cannot change ends the shared loop at once.
+			if named != nil && final[named.Category] {
+				err = &agent.RejectedError{Status: string(named.Category), Err: named}
+			}
 		}
 		status := "success"
 		if err != nil {
@@ -211,6 +218,7 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		return result, err
 	}
 	body := requestBody{
+		Stream:       true,
 		Model:        b.model(),
 		System:       []textBlock{{Type: "text", Text: systemPrompt}},
 		Tools:        definitions,
@@ -243,7 +251,7 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if err != nil {
 			return result, err
 		}
-		response, err := b.send(ctx, endpoint, encoded, &result, record)
+		response, err := b.send(ctx, endpoint, encoded, request.MaxCalls, &result, record)
 		if err != nil {
 			return result, err
 		}
@@ -328,6 +336,10 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 }
 
+// final are the failures the shared loop must not retry: they come back as
+// an agent.RejectedError.
+var final = map[Category]bool{CategoryAuthentication: true, CategoryInvalidRequest: true, CategoryRefusal: true, CategoryContextWindow: true}
+
 // stopStatus is a stop reason for an event: a known one, else "unknown", so
 // provider text never reaches the event log.
 func stopStatus(reason string) string {
@@ -385,6 +397,7 @@ type requestBody struct {
 	System       []textBlock       `json:"system"`
 	Messages     []message         `json:"messages"`
 	Tools        []json.RawMessage `json:"tools"`
+	Stream       bool              `json:"stream"`
 	CacheControl *cacheControl     `json:"cache_control,omitempty"`
 	OutputConfig *outputConfig     `json:"output_config,omitempty"`
 }

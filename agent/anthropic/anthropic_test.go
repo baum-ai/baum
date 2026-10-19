@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/anthropic/anthropictest"
 )
 
 const testKey = "sk-ant-api03-test-SECRET-KEY-0123456789"
@@ -131,13 +132,27 @@ func (s *stub) backend() *Backend {
 
 var messageCount atomic.Int64
 
-// reply is a message response. usage is the usage object's JSON.
+// reply streams a message. usage is the usage object's JSON.
 func reply(stop, usage string, blocks ...string) step {
-	return func(_ *testing.T, _ sent, w http.ResponseWriter) {
-		w.Header().Set("content-type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"id":"msg_%d","type":"message","role":"assistant","model":"claude-opus-5-5","content":[%s],"stop_reason":%q,"usage":%s}`, messageCount.Add(1), strings.Join(blocks, ","), stop, usage)
+	return func(t *testing.T, _ sent, w http.ResponseWriter) {
+		message := fmt.Sprintf(`{"id":"msg_%d","type":"message","role":"assistant","model":"claude-opus-5-5","content":[%s],"stop_reason":%q,"usage":%s}`, messageCount.Add(1), strings.Join(blocks, ","), stop, usage)
+		if err := anthropictest.WriteMessage(w, message); err != nil {
+			t.Error(err)
+		}
 	}
 }
+
+// events writes raw stream events (each the data of one event), then stops.
+func events(data ...string) step {
+	return func(_ *testing.T, _ sent, w http.ResponseWriter) {
+		w.Header().Set("content-type", "text/event-stream")
+		for _, d := range data {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", d)
+		}
+	}
+}
+
+const messageStart = `{"type":"message_start","message":{"id":"msg_x","type":"message","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}`
 
 func status(code int, body string, header ...string) step {
 	return func(_ *testing.T, _ sent, w http.ResponseWriter) {
@@ -202,7 +217,10 @@ func TestToolLoopSubmitsTheDocument(t *testing.T) {
 			toolUse("toolu_3", "Grep", `{"pattern":"func [A-Z]","path":"head","glob":"*.go"}`)),
 		then(func(t *testing.T, r sent) {
 			assistant := r.body.Messages[1]
-			if assistant.Role != "assistant" || string(assistant.Content[0]) != thinking {
+			var replayed, original any
+			_ = json.Unmarshal(assistant.Content[0], &replayed)
+			_ = json.Unmarshal([]byte(thinking), &original)
+			if assistant.Role != "assistant" || fmt.Sprint(replayed) != fmt.Sprint(original) {
 				t.Errorf("the thinking block was not replayed unchanged: %s", assistant.Content[0])
 			}
 			results := r.results(t)
@@ -275,6 +293,9 @@ func TestToolLoopSubmitsTheDocument(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "Read,Glob,Grep,StructuredOutput" {
 		t.Errorf("tools = %v", names)
+	}
+	if !strings.Contains(string(first.raw), `"stream":true`) || first.header.Get("accept") != "text/event-stream" {
+		t.Error("the request does not ask for a stream")
 	}
 	if !strings.Contains(string(first.raw), `"input_schema":`+string(testSchema)) {
 		t.Error("StructuredOutput does not take the document schema")
@@ -468,7 +489,7 @@ func TestCancellation(t *testing.T) {
 		t.Fatalf("err %v after %s", err, time.Since(started))
 	}
 	// The request reached the API, so what it cost is unknown, not zero.
-	if !result.Usage.Unreported || result.Calls != 0 {
+	if !result.Usage.Unreported || result.Calls != 1 {
 		t.Errorf("usage %+v calls %d", result.Usage, result.Calls)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/agent/anthropic"
+	"github.com/baum-ai/baum/agent/anthropic/anthropictest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -49,7 +50,9 @@ func TestGenerateWithTheAnthropicBackend(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"id":"msg_1","type":"message","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"toolu_1","name":"StructuredOutput","input":%s}],"stop_reason":"tool_use","usage":{"input_tokens":120,"output_tokens":80,"cache_creation_input_tokens":40}}`, document)
+		if err := anthropictest.WriteMessage(w, fmt.Sprintf(`{"id":"msg_1","type":"message","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"toolu_1","name":"StructuredOutput","input":%s}],"stop_reason":"tool_use","usage":{"input_tokens":120,"output_tokens":80,"cache_creation_input_tokens":40}}`, document)); err != nil {
+			t.Error(err)
+		}
 	}))
 	t.Cleanup(server.Close)
 	generateBackends = func(cfg config.Config) generate.Backends {
@@ -80,5 +83,18 @@ func TestGenerateWithTheAnthropicBackend(t *testing.T) {
 	}
 	if strings.Contains(stderr+stdout, key) {
 		t.Error("the key was printed")
+	}
+	if strings.Contains(stderr, "billed to that key") {
+		t.Error("an explicit anthropic backend printed the auto notice")
+	}
+
+	// auto falls back to it (neither CLI is built here) and says it bills
+	// the key.
+	_, stderr, err = run(t, append([]string{"generate", "--pr", "7", "--store", t.TempDir()}, stores...)...)
+	if err != nil {
+		t.Fatalf("auto: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, autoAnthropicNotice) {
+		t.Errorf("auto did not print the notice:\n%s", stderr)
 	}
 }
