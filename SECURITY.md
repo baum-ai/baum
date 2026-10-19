@@ -281,7 +281,10 @@ It never contacts a baum server. To stop it, quit the desktop app with "stop
 background reviews" or run `baum daemon stop`: running jobs are cancelled and
 recorded as interrupted (after at most 20 seconds), and nothing runs until
 something starts it again. `baum daemon status` and `baum doctor` show whether
-it runs, its version, process id and uptime.
+it runs, its version, process id and uptime. When a newer baum finds an older
+daemon running jobs, it lets them finish: the daemon then starts the newer
+`baum` executable that asked (a program any process of yours could start) and
+exits. Only a daemon speaking an incompatible protocol is stopped at once.
 
 Its state directory, `$XDG_STATE_HOME/baum/daemon` (default
 `~/.local/state/baum/daemon`), is mode 0700 and holds the lock, `daemon.json`
@@ -298,13 +301,16 @@ for the daemon's status and stop it. The socket accepts no other requests yet.
 The daemon does not use the environment of whatever started it. It runs your
 login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
 with only session variables and reads the environment your startup files set,
-then keeps only `PATH`, your home and XDG directories, locale, proxy and
-certificate settings, `SSH_AUTH_SOCK`, the desktop session bus and display,
+then keeps only `PATH`, locale, proxy and certificate settings, the desktop
+session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
 `GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
-environment is therefore not used. If the shell is slow or fails, the same
-variables come from the starting environment instead. Startup files can check
+environment is therefore not used. Your home, XDG and temporary directories
+come only from the starting environment, never from the shell, because they
+decide which state directory, lock and job journal the daemon uses. The SSH
+agent is not passed on. If the shell is slow or fails, the same variables come
+from the starting environment instead. Startup files can check
 `BAUM_RESOLVING_ENVIRONMENT=1` to skip slow work. The backends then filter this
 environment further, as described under "Agent isolation".
 

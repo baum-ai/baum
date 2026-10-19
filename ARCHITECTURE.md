@@ -1376,7 +1376,9 @@ snapshots; it never treats missing PRs in an open-only snapshot as closed.
 ### Persistent generation jobs
 
 `internal/jobs` serializes queue mutations in a private atomic JSON journal,
-without duplicating review documents. Workers use the same `generate.Publish`
+without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
+until its workers stop, so two processes never run one queue. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
@@ -1462,11 +1464,23 @@ resolves the login shell environment there), builds the application with
 file, and listens on the control socket last, so a daemon that answers on
 the socket serves the app.
 
+Locks are `internal/filelock`: an existing lock file is opened only through
+SQLite, never with a plain descriptor, because on Unix closing any descriptor
+of a file drops every POSIX lock the process holds on it. Code inside the
+daemon reports on it through `daemon.Self` rather than probing its own lock or
+socket.
+
 `Client.Ensure` (`baum daemon ensure`) says hello on the socket. A daemon of
-this version or newer is kept. An older one (lower protocol, or an older
-release by semver; a development build is replaced by any release, and two
-development builds are left alone) is asked to stop and replaced. A daemon
-speaking a newer protocol is an `IncompatibleError` naming both versions.
+this version or newer is kept. One speaking an older protocol is stopped at
+once (its running jobs are interrupted) and replaced. One with the same
+protocol but an older version (an older release by semver; a development
+build is older than any release, and two development builds are left alone)
+is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
+baum>}`: an idle daemon stops at once and the client starts its own version;
+a busy one answers with `restart_pending` and, once no job is queued or
+running, starts that executable detached on the same port and stops, so no
+confirmed run is interrupted. A daemon speaking a newer protocol is an
+`IncompatibleError` naming both versions.
 When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
 the holder starts `baum daemon run --detached` and waits until it answers,
 and every other caller finds it running once it gets the lock, so concurrent
@@ -1479,7 +1493,9 @@ caller's job object when the job allows it), in the home directory, with no
 standard input and its standard output and error in `daemon.out` (the
 previous start's in `daemon.out.1`). It outlives every client.
 
-`baum daemon stop` (and the version restart) sends `stop`. The daemon answers,
+`baum daemon stop` (and the version restart) sends `stop`; while a daemon
+holds the lock but does not answer yet (it is starting), the client keeps
+asking until it does. The daemon answers,
 marks itself stopping (hello reports it, so `ensure` waits for it to exit
 rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
 cancel running jobs, which are recorded as interrupted (a backend that does
@@ -1500,17 +1516,24 @@ shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
 `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`), a default `PATH`
 and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
 which prints the environment as JSON between two copies of a random marker,
-so whatever startup files print is ignored. `shellenv.Merge` then keeps only:
+so whatever startup files print is ignored; once it has, whatever is left of
+the shell's process group is killed. `shellenv.Merge` then keeps only:
 `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
-the XDG directories, `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
+the XDG directories, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
 `WAYLAND_DISPLAY`, proxy and CA variables, `GITHUB_TOKEN`, `GH_TOKEN`,
 `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
 `GH_PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `BAUM_*`
-and, on Windows, the system variables programs need. With a resolved shell
-environment every kept variable comes from it, so a token only the agent's
-environment had is dropped; only `HOME`, the XDG directories, `USERPROFILE`,
-`APPDATA` and `LOCALAPPDATA` keep the starting client's value, because clients
-find the daemon through them. When the shell is slow, fails or prints nothing,
+and, on Windows, the system variables programs need. `SSH_AUTH_SOCK` is not
+kept: the backends drop it anyway and an agent socket goes stale in a
+long-lived process, so a pull request commit missing from a clone with an SSH
+remote must be fetched from a terminal. The locations, `HOME`, the XDG
+directories, `TMPDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, only ever
+come from the starting process and stay unset when it lacks them: the daemon
+resolved its lock and socket from them before reading the shell, and a state
+directory only the shell named would let a second daemon share its job
+journal. Every other kept variable comes from a resolved shell environment,
+so a token only the agent's environment had is dropped. When the shell is
+slow, fails or prints nothing,
 the kept variables come from the inherited environment. Windows has no login
 shell and always uses the inherited one. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
@@ -1526,7 +1549,10 @@ the credential file instead of being printed by a foreground process.
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
 `$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
 directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
-under the system temporary directory. Windows 10 1803 and later have
+under the system temporary directory. That is where a daemon listens; clients
+dial the `socket` the running daemon recorded in `daemon.json` in the state
+directory, so one with a different `XDG_RUNTIME_DIR` (ssh, su, a sandbox)
+still reaches it. Windows 10 1803 and later have
 `AF_UNIX` sockets, so Windows uses the same socket in the state directory,
 protected by that directory's current-user DACL, instead of a named pipe
 (which would need a new dependency for overlapped I/O). Each request is one
@@ -1551,7 +1577,9 @@ and two files:
 1. `baum daemon ensure --json` starts the daemon if needed (replacing an older
    one), waits until it serves, and prints one JSON line on stdout:
    `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
-   `stopping` appears only while it shuts down. On failure it exits non-zero
+   `stopping` appears only while it shuts down, and `restart_pending` when an
+   older daemon was kept because it is running jobs and will restart as this
+   version once they finish (see Lifecycle). On failure it exits non-zero
    with the reason on stderr. `--port` and `--concurrency` apply only when it
    starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
