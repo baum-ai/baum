@@ -33,6 +33,9 @@ const (
 
 // ExitCode is the process exit code for the error Run returned; nil is 0.
 func ExitCode(err error) int {
+	if code, ok := hookExitCode(err); ok {
+		return code
+	}
 	var problems *problemsError
 	if errors.As(err, &problems) {
 		return ExitDiagnostics
@@ -102,6 +105,7 @@ and serves an embedded viewer for it on localhost.`,
 		newUICommand(),
 		newDoctorCommand(),
 	)
+	addHostedCommands(cmd, stdout, stderr)
 	return cmd
 }
 

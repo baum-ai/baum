@@ -1,5 +1,6 @@
 // Command baum generates and views pull request review documents from
-// local coding-agent sessions, the local git clone and GitHub.
+// local coding-agent sessions, the local git clone and GitHub, and carries the
+// opt-in hosted service commands (login, setup, upload and the hooks).
 package main
 
 import (
@@ -11,7 +12,9 @@ import (
 
 func main() {
 	if err := cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "baum:", err)
+		if !cli.Quiet(err) {
+			fmt.Fprintln(os.Stderr, "baum:", err)
+		}
 		os.Exit(cli.ExitCode(err))
 	}
 }
