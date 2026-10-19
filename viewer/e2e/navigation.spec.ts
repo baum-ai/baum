@@ -59,32 +59,24 @@ test("the summary's jump links open the section they name", async ({ page }) => 
   ).toBeVisible();
 });
 
-test("the Changes and Risks overviews open from the summary", async ({ page }) => {
+test("Changes replaces the old risk overview and risk links retain section context", async ({
+  page,
+}) => {
   await page.goto("/");
-
-  await page.getByRole("button", { name: "View all risks →" }).click();
-  await expect(page).toHaveURL(/pane=risks/);
-  await expect(page.getByRole("heading", { level: 2, name: "Risks" })).toBeVisible();
-
-  await page.goBack();
-  await page
-    .getByRole("navigation", { name: "Review sections" })
-    .getByRole("button", { name: "Changes", exact: true })
-    .click();
+  await expect(page.getByRole("button", { name: "View all risks →" })).toHaveCount(0);
+  const rail = page.getByRole("navigation", { name: "Review sections" });
+  await rail.getByRole("button", { name: /^Changes,/ }).click();
   await expect(page).toHaveURL(/pane=changes/);
-});
-
-test("a risk opens by its link, from the rail or the address", async ({ page }) => {
+  await page.goto("/?pane=risks");
+  await expect(page.getByRole("heading", { level: 2, name: "Changes", exact: true })).toBeVisible();
   await page.goto("/?pane=risk&risk_section=sec_api&risk_id=rsk_api_header");
-  await expect(page.getByText("Critical risk").first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Operator-only dead-letter endpoints" }),
+  ).toBeVisible();
   await expect(page.getByText("RoleFromRequest trusts X-Taskline-Role").first()).toBeVisible();
-
-  await page.goto("/");
-  await page
-    .getByRole("navigation", { name: "Review sections" })
-    .getByRole("button", { name: "Concurrency · Retry policy and backoff" })
-    .click();
-  await expect(page).toHaveURL(/pane=risk&risk_section=sec_retry&risk_id=rsk_retry_herd/);
+  await expect(rail.getByRole("button", { name: /^Critical risks/ })).toHaveCount(0);
+  await rail.getByRole("button", { name: "Retry policy and backoff", exact: true }).click();
+  await expect(page).toHaveURL(/pane=section&section=sec_retry/);
   await expect(page.getByText("All workers share one policy").first()).toBeVisible();
 });
 

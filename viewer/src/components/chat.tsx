@@ -15,9 +15,23 @@ import { Markdown } from "./markdown";
  *  pieces, so a prompt reads the same wherever it appears. */
 
 /** The conversation's own background, which the bubbles sit on. */
-export function ChatSurface({ children, className }: { children: ReactNode; className?: string }) {
+export function ChatSurface({
+  children,
+  className,
+  plain = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  plain?: boolean;
+}) {
   return (
-    <div className={cn("flex flex-col rounded-xl bg-(--surface-sunken) p-3 sm:p-4", className)}>
+    <div
+      className={cn(
+        "flex flex-col rounded-xl p-3 sm:p-4",
+        !plain && "bg-(--surface-sunken)",
+        className,
+      )}
+    >
       {children}
     </div>
   );
@@ -25,11 +39,20 @@ export function ChatSurface({ children, className }: { children: ReactNode; clas
 
 /** A line the conversation itself did not say — a date, a status, what the
  *  agent did between messages — centred as a chat app sets them. */
-export function SystemNote({ children, className }: { children: ReactNode; className?: string }) {
+export function SystemNote({
+  children,
+  className,
+  align = "center",
+}: {
+  children: ReactNode;
+  className?: string;
+  align?: "center" | "start";
+}) {
   return (
     <p
       className={cn(
-        "flex max-w-full items-center gap-2 self-center rounded-2xl border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-center text-xs text-(--text-tertiary)",
+        "flex max-w-full items-center gap-2 rounded-2xl border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-tertiary)",
+        align === "start" ? "self-start text-left" : "self-center text-center",
         className,
       )}
     >
@@ -40,8 +63,7 @@ export function SystemNote({ children, className }: { children: ReactNode; class
 
 /** A bubble's shared shape. The first of a run keeps a sharp corner on its
  *  speaker's side, where a chat app draws the tail. */
-const BUBBLE =
-  "min-w-0 max-w-[88%] rounded-2xl border border-(--border-subtle) px-3 pt-2 pb-1.5 sm:max-w-[80%]";
+const BUBBLE = "min-w-0 max-w-[88%] rounded-2xl border px-3 pt-2 pb-1.5 sm:max-w-[80%]";
 
 /** A prompt, as a bubble on the right: the side a chat puts its reader on.
  *  `avatar` is the person's picture beside it, when the host knows who typed
@@ -70,7 +92,10 @@ export function PromptBubble({
 }) {
   return (
     <div className="flex items-start justify-end gap-2">
-      <div data-message={kind} className={cn(BUBBLE, "rounded-tr-sm bg-(--surface-selected)")}>
+      <div
+        data-message={kind}
+        className={cn(BUBBLE, "rounded-tr-sm border-(--border-subtle) bg-(--surface-selected)")}
+      >
         {author ? (
           <p className="mb-0.5 min-w-0 truncate text-right text-xs font-medium text-(--text-secondary)">
             {author}
@@ -256,7 +281,13 @@ export function AgentText({
   return (
     <div className="flex items-start gap-2">
       <AgentAvatar vendor={vendor} />
-      <div className={cn(BUBBLE, "bg-(--surface-card)", vendor !== undefined && "rounded-tl-sm")}>
+      <div
+        className={cn(
+          BUBBLE,
+          "border-(--border-strong) bg-(--surface-card)",
+          vendor !== undefined && "rounded-tl-sm",
+        )}
+      >
         {vendor !== undefined ? (
           <p className="mb-0.5 text-xs font-medium text-(--text-secondary)">
             {author ?? harnessName(vendor)}

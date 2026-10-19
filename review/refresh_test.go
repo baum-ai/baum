@@ -121,25 +121,25 @@ func TestRefreshDoesNotVerifyChecksAgainstANewerHead(t *testing.T) {
 	}
 }
 
-// A refresh after a push keeps the reviewed head's checks in the index, under
-// the reviewed head: the pull request's own head has moved on, but these are
-// the runs that speak for the revision this document describes.
-func TestRefreshIndexesChecksUnderTheReviewedHeadAfterAPush(t *testing.T) {
+// Latest CI refreshes while reviewed checks remain available as source anchors.
+func TestRefreshIndexesBothHeadsWithoutChangingTheReviewedRevision(t *testing.T) {
 	validator, bundle, published := refreshFixture(t)
 	bundle.PullRequest.HeadSHA = "ccccccc"
-	bundle.Checks[0].Conclusion = "success"
+	bundle.Checks[0].HeadSHA, bundle.Checks[0].Conclusion = "aaaaaaa", "success"
+	bundle.Checks = append(bundle.Checks, bundlepkg.Check{ID: "live", HeadSHA: "ccccccc", Kind: "check_run", Status: "in_progress"})
 	refreshed, err := validator.Refresh(published, bundle, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _ := decodeObject(refreshed, "new")
-	checks := doc["index"].(map[string]any)["checks"].([]any)
-	if len(checks) != 1 {
-		t.Fatalf("checks after refresh = %v, want the one loaded for the reviewed head", checks)
+	var doc reviewDocument
+	if err := json.Unmarshal(refreshed, &doc); err != nil {
+		t.Fatal(err)
 	}
-	check := checks[0].(map[string]any)
-	if check["head"] != "aaaaaaa" || check["conclusion"] != "success" {
-		t.Fatalf("check = %v, want success under the reviewed head aaaaaaa", check)
+	if doc.Review.Head != "aaaaaaa" || doc.Review.ChecksHead != "ccccccc" || len(doc.Index.Checks) != 2 {
+		t.Fatalf("incorrect revisions: %s", refreshed)
+	}
+	if doc.Index.Checks[0].Head != "aaaaaaa" || doc.Index.Checks[1].Head != "ccccccc" || doc.Stats.Checks.Pending != 1 {
+		t.Fatalf("incorrect check snapshot: %+v", doc.Index.Checks)
 	}
 }
 

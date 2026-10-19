@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 )
@@ -31,20 +30,6 @@ func TestUnknownCommandPrintsUsage(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "Available Commands") {
 		t.Errorf("stderr should carry usage, got %q", stderr)
-	}
-}
-
-func TestStubsPrintHelpAndFail(t *testing.T) {
-	for _, name := range []string{"refresh"} {
-		t.Run(name, func(t *testing.T) {
-			_, stderr, err := run(t, name)
-			if !errors.Is(err, ErrNotImplemented) {
-				t.Fatalf("err = %v, want ErrNotImplemented", err)
-			}
-			if !strings.Contains(stderr, "Usage:") || !strings.Contains(stderr, "baum "+name) {
-				t.Errorf("stderr should carry the %s usage, got %q", name, stderr)
-			}
-		})
 	}
 }
 

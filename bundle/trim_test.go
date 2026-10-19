@@ -15,8 +15,8 @@ import (
 // These test the individual trim-order steps directly (Fit:
 // assistant replies, older prompts, command paraphrases,
 // comment bodies oldest-first keeping review verdicts, generated/vendored
-// patch text, superseded session decisions, cited prompt text, then whole
-// sessions from lowest confidence), which is more
+// patch text, superseded session decisions, ordinary patch text, cited prompt
+// text, then whole sessions from lowest confidence), which is more
 // robust than reverse-engineering exact byte thresholds for the cascading
 // Fit driver. TestFitBytesStopsAsSoonAsItFits below checks the
 // cascade itself stops at the first stage that satisfies the limit.
@@ -208,9 +208,8 @@ func TestFitBytesLoopsCommentCutUntilItFits(t *testing.T) {
 }
 
 // TestFitBytesBackstopTrimsWhatDocumentedStagesCannotReach covers content
-// the documented trim order cannot shrink at all: a large PR body, a
-// non-generated/vendored patch (so cutGeneratedOrVendoredPatches skips it),
-// and a review verdict's body (cutOldestComments explicitly keeps review
+// the remaining stages cannot shrink: a large PR body and a review
+// verdict's body (cutOldestComments explicitly keeps review
 // verdicts, and there are no sessions to fall back to). Without a final
 // backstop, Fit would exhaust every stage and silently return a bundle
 // well over MaxBytes.
@@ -231,12 +230,14 @@ func TestFitBytesBackstopTrimsWhatDocumentedStagesCannotReach(t *testing.T) {
 	skeleton.PullRequest.Body = ""
 	skeleton.Diff[0].Patch, skeleton.Diff[0].Textless, skeleton.Diff[0].TextlessReason = "", true, "trimmed_oversized"
 	skeleton.Conversation[0].Body = ""
-	skeleton.Truncated = append(skeleton.Truncated, "additional content shortened to fit the size limit after every documented stage")
+	skeleton.Truncated = append(skeleton.Truncated, "code patch text shortened to fit the size limit; hunk entries are kept", "additional content shortened to fit the size limit after every documented stage")
 	limit := len(mustJSON(t, skeleton)) - diffIndexBytes(skeleton)
 
 	bundle := build()
 	caps := Caps{MaxBytes: limit}
-	_ = Fit(bundle, caps)
+	if err := Fit(bundle, caps); err != nil {
+		t.Fatal(err)
+	}
 
 	if !fits(bundle, limit) {
 		t.Fatalf("bundle still exceeds the byte limit after Fit: %d bytes, limit %d", len(mustJSON(t, bundle)), limit)
@@ -245,7 +246,7 @@ func TestFitBytesBackstopTrimsWhatDocumentedStagesCannotReach(t *testing.T) {
 		t.Errorf("expected the PR body truncated by the backstop, got %q", bundle.PullRequest.Body)
 	}
 	if bundle.Diff[0].Patch != "" || !bundle.Diff[0].Textless {
-		t.Errorf("expected the non-generated/vendored patch truncated by the backstop, got %+v", bundle.Diff[0])
+		t.Errorf("expected the ordinary code patch truncated, got %+v", bundle.Diff[0])
 	}
 	if bundle.Conversation[0].Kind != "review" {
 		t.Fatalf("the review verdict item itself must survive, got %+v", bundle.Conversation)
@@ -610,6 +611,7 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 			RootSessionID: "s1",
 			Title:         "Fix the outage using token " + plantedSecret,
 			Decisions: decisionsOf(SessionDecision{
+				Title:   "Rotate " + plantedSecret,
 				Summary: "Rotate " + plantedSecret, Who: "human", Category: "behavior", Trigger: "failure", Turns: []int{1},
 				Rationale: "Leaked " + plantedSecret, RejectedAlternative: "Keep " + plantedSecret,
 				Evidence: "rotate " + plantedSecret + " now", EvidenceTurn: 1, Files: []string{"config/" + plantedSecret + ".toml"},
@@ -630,6 +632,7 @@ func TestRedactCoversEveryBundleStringField(t *testing.T) {
 	}
 	decision := (*bundle.Sessions[0].Decisions)[0]
 	for name, text := range map[string]string{
+		"title":   decision.Title,
 		"summary": decision.Summary, "rationale": decision.Rationale, "rejected alternative": decision.RejectedAlternative,
 		"evidence": decision.Evidence, "file": decision.Files[0],
 	} {
@@ -687,6 +690,77 @@ func TestFitBytesRetainsLeadingPatchLines(t *testing.T) {
 		if hunk.Patch == "" || hunk.Textless || len(splitLines(hunk.Patch)) >= 200 {
 			t.Fatalf("lost all patch text: %+v", hunk)
 		}
+	}
+}
+
+func TestFitBytesKeepsDecisionsWhenCodePatchesExceedTheContentBudget(t *testing.T) {
+	build := func() *Bundle {
+		bundle := &Bundle{Repository: "org/repo"}
+		for i := range 267 {
+			bundle.Diff = append(bundle.Diff, Hunk{
+				ID: fmt.Sprintf("h_%012x", i), Path: fmt.Sprintf("src/file_%d.go", i),
+				Role: RoleCode, Additions: 200,
+				Patch: "@@ -0,0 +1,200 @@\n" + strings.Repeat("+"+strings.Repeat("code", 20)+"\n", 200),
+			})
+		}
+		for i := range 3 {
+			bundle.Sessions = append(bundle.Sessions, Session{
+				RootSessionID: fmt.Sprintf("session-%d", i), Confidence: 0.9,
+				Prompts:   []Prompt{{Index: 1, ID: fmt.Sprintf("prompt-%d", i), Text: "Keep the requested behavior"}},
+				Decisions: decisionsOf(SessionDecision{Summary: "Keep the requested behavior", Who: "human", Turns: []int{1}, Files: []string{"src/file_0.go"}}),
+			})
+		}
+		return bundle
+	}
+	bundle := build()
+	caps := Caps{MaxBytes: 256 << 10, MaxHunkPatchLines: 200}
+	indexBytes := diffIndexBytes(bundle)
+	if fits(bundle, caps.MaxBytes) {
+		t.Fatal("fixture must exceed the content budget")
+	}
+	if err := Fit(bundle, caps); err != nil {
+		t.Fatal(err)
+	}
+	if !fits(bundle, caps.MaxBytes) || len(bundle.Sessions) != 3 {
+		t.Fatalf("want every session within the content budget, got %d sessions and %d bytes", len(bundle.Sessions), contentBytes(t, bundle))
+	}
+	for _, session := range bundle.Sessions {
+		if session.Decisions == nil || len(*session.Decisions) != 1 || len(session.Prompts) != 1 || session.Prompts[0].Index != 1 || session.Prompts[0].Text != "Keep the requested behavior" {
+			t.Fatalf("lost a current decision or its cited prompt: %+v", session)
+		}
+	}
+	if len(bundle.Diff) != 267 || diffIndexBytes(bundle) != indexBytes {
+		t.Fatal("trimming changed the diff index")
+	}
+	if patch := bundle.Diff[0].Patch; patch == "" || len(splitLines(patch)) >= 200 || !strings.HasPrefix(patch, "@@ -0,0 +1,200 @@") {
+		t.Fatalf("want a leading patch excerpt, got %q", patch)
+	}
+	again := build()
+	if err := Fit(again, caps); err != nil {
+		t.Fatal(err)
+	}
+	if string(mustJSON(t, again)) != string(mustJSON(t, bundle)) {
+		t.Fatal("trimming is not deterministic")
+	}
+}
+
+func TestFitBytesDropsLowestConfidenceSessionAfterPatchesAreExhausted(t *testing.T) {
+	bundle := &Bundle{
+		Diff: []Hunk{{ID: testHunk, Path: "main.go", Role: RoleCode, Patch: strings.Repeat("+code\n", 200)}},
+		Sessions: []Session{
+			{RootSessionID: "high", Confidence: 0.9, Decisions: decisionsOf(SessionDecision{Summary: "Keep this decision"})},
+			{RootSessionID: "low", Confidence: 0.1, Decisions: decisionsOf(SessionDecision{Summary: strings.Repeat("large decision ", 2000)})},
+		},
+	}
+	caps := Caps{MaxBytes: 2000, MaxHunkPatchLines: 200}
+	if err := Fit(bundle, caps); err != nil {
+		t.Fatal(err)
+	}
+	if !fits(bundle, caps.MaxBytes) || len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" {
+		t.Fatalf("want the high-confidence session within budget, got %+v", bundle.Sessions)
+	}
+	if hunk := bundle.Diff[0]; hunk.Patch != "" || !hunk.Textless || hunk.TextlessReason != "trimmed_oversized" {
+		t.Fatalf("session removed before exhausting patch text: %+v", hunk)
 	}
 }
 

@@ -25,7 +25,7 @@ import (
 // text and an image/video reference copies the matched URL, so a secret
 // masked in Body/Title could otherwise still surface here — and branch
 // names, check names/URLs, requested-reviewer logins, comment paths and a
-// session decision's summary, rationale, rejected alternative, evidence and
+// session decision's title, summary, rationale, rejected alternative, evidence and
 // files, none of which are structurally constrained enough to skip. SHA, ID
 // and closed-enum fields (Kind, State, Role, Change, Outcome, a decision's
 // Who, Category and Trigger, ...) are not redacted: they are not free text, and running
@@ -108,7 +108,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		if session.Decisions != nil {
 			for d := range *session.Decisions {
 				decision := &(*session.Decisions)[d]
-				fields = append(fields, &decision.Summary, &decision.Rationale, &decision.RejectedAlternative, &decision.Evidence)
+				fields = append(fields, &decision.Title, &decision.Summary, &decision.Rationale, &decision.RejectedAlternative, &decision.Evidence)
 				for f := range decision.Files {
 					fields = append(fields, &decision.Files[f])
 				}

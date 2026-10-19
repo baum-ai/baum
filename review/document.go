@@ -1099,9 +1099,7 @@ func indexedHunkDiff(hunk bundlepkg.Hunk) *tileHunk {
 	return &tileHunk{Header: header, Lines: lines}
 }
 
-// checkIndex lists the bundle's checks as the document indexes them. head is
-// the revision those checks ran on — the reviewed head, which is not always
-// the pull request's current one once it has been pushed again.
+// checkIndex retains each run's revision and counts the selected head only.
 func checkIndex(b *bundlepkg.Bundle, head string) ([]documentCheck, documentStatsChecks) {
 	checks := []documentCheck{}
 	checkCounts := documentStatsChecks{}
@@ -1113,11 +1111,18 @@ func checkIndex(b *bundlepkg.Bundle, head string) ([]documentCheck, documentStat
 		if conclusion == "timed_out" || conclusion == "action_required" || conclusion == "error" {
 			conclusion = "failure"
 		}
-		item := documentCheck{ID: c.ID, Kind: c.Kind, Name: c.Name, Conclusion: conclusion, Required: c.Required, Head: head, StartedAt: documentTime(c.StartedAt), CompletedAt: documentTime(c.CompletedAt)}
+		checkHead := c.HeadSHA
+		if checkHead == "" {
+			checkHead = head
+		}
+		item := documentCheck{ID: c.ID, Kind: c.Kind, Name: c.Name, Conclusion: conclusion, Required: c.Required, Head: checkHead, StartedAt: documentTime(c.StartedAt), CompletedAt: documentTime(c.CompletedAt)}
 		if c.URL != "" {
 			item.URL = &c.URL
 		}
 		checks = append(checks, item)
+		if checkHead != head {
+			continue
+		}
 		switch conclusion {
 		case "pending":
 			checkCounts.Pending++
