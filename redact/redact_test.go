@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -423,5 +424,62 @@ func TestExactWindowWithoutDotIsNotAnAddress(t *testing.T) {
 	}
 	if got != text {
 		t.Fatalf("dotless exact-window run was masked: %q", got)
+	}
+}
+
+// A value that input redaction already masked is no finding when a rule
+// matches the syntax around it again; a real value, even one that starts
+// like a mask, still is.
+func TestAlreadyMaskedValuesAreNoFindings(t *testing.T) {
+	e := engine(t)
+	secret := "nQ7wL4" + "mX8pZ1" + "sT6bK3" + "jH0cV5"
+	tests := []struct {
+		name, rule, format string
+	}{
+		{"bearer", "authorization-bearer", "curl -H 'Authorization: Bearer %s' https://api.example.com/v1"},
+		{"password flag", "command-line-password-flag", "mysql -h db.internal -u app --password=%s app_db"},
+		{"url credentials", "url-credentials", "postgres://svc_user:%s@localhost:5432/app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			real := fmt.Sprintf(tt.format, secret)
+			masked, first, err := e.Redact(real)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.ByRule[tt.rule] != 1 || first.Findings != 1 || strings.Contains(masked, secret) {
+				t.Fatalf("real value: %q, %+v", masked, first)
+			}
+			again, second, err := e.Redact(masked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again != masked || second.Findings != 0 || len(second.ByRule) != 0 {
+				t.Fatalf("masked value: %q, %+v", again, second)
+			}
+			if spans, err := e.FindContext(context.Background(), masked); err != nil || len(spans) != 0 {
+				t.Fatalf("FindContext of masked value: %v, %v", spans, err)
+			}
+			// Starts like a mask, but is not made of mask output only.
+			started := fmt.Sprintf(tt.format, "Xx9-"+secret)
+			out, third, err := e.Redact(started)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if third.Findings != 1 || strings.Contains(out, secret) {
+				t.Fatalf("value starting like a mask: %q, %+v", out, third)
+			}
+		})
+	}
+}
+
+func TestAlreadyMasked(t *testing.T) {
+	for in, want := range map[string]bool{
+		"XXXXxxxx-9999_**": true, "x": true, "***": true,
+		"": false, "---": false, "xxxx-real": false, "Xk9": false, "xxxx xxxx": false,
+	} {
+		if got := alreadyMasked(in); got != want {
+			t.Errorf("alreadyMasked(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
