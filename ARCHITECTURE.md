@@ -541,9 +541,10 @@ retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
 
 A stall watchdog bounds each attempt when the budgets set `StallTimeout` or
 `ToolTimeout` (zero disables each). Backends report to the request's
-`Activity`: every harness event is progress, and Codex's `item.started` and
-`item.completed` bracket each tool it runs (commands, file changes, MCP calls,
-web searches). With an `Endpoint`, the attempt reaches the provider through a
+`Activity`: every harness event is progress, and each tool runs from its start
+to its end: Codex's `item.started` and `item.completed` for commands, file
+changes, MCP calls and web searches, and Claude Code's `tool_use` and matching
+`tool_result`. With an `Endpoint`, the attempt reaches the provider through a
 loopback forwarder that passes requests and streamed responses through
 unchanged and counts the requests open, so a long model call is never idle.
 An attempt is stalled when one tool runs past `ToolTimeout`, or when no model
