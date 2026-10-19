@@ -197,7 +197,7 @@ func TestHTTP(t *testing.T) {
 	if e := json.Unmarshal(w.Body.Bytes(), &c); e != nil {
 		t.Fatal(e)
 	}
-	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
+	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"automatic":null}`, `{"daily_cap":null}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {
 			t.Fatal(body, w.Code)
 		}

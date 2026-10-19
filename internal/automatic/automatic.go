@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -41,6 +42,7 @@ type Registry interface {
 	List(context.Context) ([]repos.Clone, error)
 	Preferences(context.Context) (repos.Preferences, error)
 	UpdatePreferences(context.Context, func(repos.Preferences) repos.Preferences) (repos.Preferences, error)
+	RepositorySettings(ctx context.Context, repository string) (repos.Settings, bool, error)
 }
 
 type Queue interface {
@@ -49,6 +51,9 @@ type Queue interface {
 	// Interrupted lists automatic jobs a daemon stop or restart cut short
 	// that may be retried once.
 	Interrupted() []jobs.Job
+	// CancelDisallowedAutomatic cancels queued automatic jobs the gate
+	// (Scheduler.Gate) now refuses.
+	CancelDisallowedAutomatic() []jobs.Job
 }
 
 // Scheduler decides which pull requests get automatic jobs. Run it once in
@@ -116,6 +121,12 @@ type repoState struct {
 	PRs         map[int]*prState `json:"prs"`
 	PausedUntil time.Time        `json:"paused_until,omitzero"`
 	Notice      string           `json:"notice,omitempty"`
+	// PausedCap is the daily cap that caused the pause; raising or clearing
+	// the cap lifts it.
+	PausedCap *float64 `json:"paused_cap,omitempty"`
+	// AwaitingBaseline: enabled at Since, but no discovery snapshot fetched
+	// since then has been seen yet; older snapshots are not a baseline.
+	AwaitingBaseline bool `json:"awaiting_baseline,omitempty"`
 }
 
 type prState struct {
@@ -187,7 +198,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // Trigger looks at one repository again now and feeds what it finds through
 // Observe, the only way pull requests become automatic jobs. Hook events
-// (an agent session ending, a push) call it.
+// (an agent session ending, a push) are meant to call it; nothing does yet.
 func (s *Scheduler) Trigger(ctx context.Context, repository string) error {
 	repo, err := github.ParseRepository(repository)
 	if err != nil {
@@ -287,6 +298,15 @@ func (s *Scheduler) prune(v view) bool {
 	return changed
 }
 
+// enable records that automatic generation is on for a repository from now
+// on; its baseline is the first snapshot fetched after this. Called with mu
+// held.
+func (s *Scheduler) enable(name string) *repoState {
+	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, AwaitingBaseline: true}
+	s.state.Repositories[name] = rs
+	return rs
+}
+
 // eligible: the viewer's review is requested or the viewer wrote it, and it
 // is not a draft, not from a fork and not by an author without known write
 // access.
@@ -318,11 +338,23 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	}
 	rs := state.Repositories[name]
 	if rs == nil {
-		rs = &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}}
+		rs = s.enable(name)
+		changed = true
+	}
+	if rs.AwaitingBaseline {
+		// A snapshot fetched before automatic generation was enabled (a
+		// cached one) must not become the baseline: what changed between it
+		// and the enabling would be caught up.
+		if snapshot.FetchedAt.Before(rs.Since) {
+			if changed {
+				s.save()
+			}
+			return
+		}
 		for _, pr := range snapshot.PullRequests {
 			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr)}
 		}
-		state.Repositories[name] = rs
+		rs.AwaitingBaseline = false
 		s.save()
 		return
 	}
@@ -391,6 +423,8 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		s.log().Warn("automatic generation pass skipped", "error", err)
 		return
 	}
+	// Whatever was turned off since the last pass loses its queued jobs.
+	s.Queue.CancelDisallowedAutomatic()
 	now := s.now()
 	var due []work
 	var notices []Status
@@ -398,6 +432,14 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	s.mu.Lock()
 	state := s.load()
 	changed := s.prune(v)
+	// Enabling is dated when it is first seen, so the baseline is a
+	// snapshot fetched after it.
+	for name, r := range v.repos {
+		if r.enabled && state.Repositories[name] == nil {
+			s.enable(name)
+			changed = true
+		}
+	}
 	// An automatic run a daemon stop or restart cut short is retried once,
 	// if its PR is still open, eligible and at that head.
 	for _, j := range interrupted {
@@ -419,11 +461,14 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	sort.Strings(names)
 	for _, name := range names {
 		rs := state.Repositories[name]
-		if !rs.PausedUntil.IsZero() && !now.Before(rs.PausedUntil) {
-			rs.PausedUntil, rs.Notice, changed = time.Time{}, "", true
-			notices = append(notices, s.status(name, v.repos[name], rs, now))
-		}
 		r := v.repos[name]
+		// A pause ends the next day, or as soon as the cap that caused it is
+		// raised or removed; a lowered cap keeps it.
+		capRaised := r.settings.DailyCap == nil || (rs.PausedCap != nil && *r.settings.DailyCap > *rs.PausedCap)
+		if !rs.PausedUntil.IsZero() && (!now.Before(rs.PausedUntil) || capRaised) {
+			rs.PausedUntil, rs.PausedCap, rs.Notice, changed = time.Time{}, nil, "", true
+			notices = append(notices, s.status(name, r, rs, now))
+		}
 		if !rs.PausedUntil.IsZero() || !r.clone.Available {
 			continue
 		}
@@ -497,6 +542,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	result := carryOn
 	notice := rs.Notice
 	var notAutomatic *jobs.NotAutomaticError
+	var notAllowed *jobs.NotAllowedError
 	switch {
 	case err == nil:
 		s.log().Info("queued an automatic review", "repository", w.name, "pr", w.number, "job", job.ID, "trigger", w.trigger)
@@ -513,9 +559,16 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		pr.Pending, pr.Trigger = "", ""
 	case errors.Is(err, jobs.ErrDailyCap):
 		rs.PausedUntil = startOfDay(now).AddDate(0, 0, 1)
+		if limit := w.repo.settings.DailyCap; limit != nil {
+			rs.PausedCap = new(*limit)
+		}
 		notice = NoticeDailyCap
 		result = stopRepository
 		s.log().Info("automatic generation paused by the daily cap", "repository", w.name, "until", rs.PausedUntil)
+	case errors.As(err, &notAllowed):
+		// Turned off since this pass read the settings: the next pass drops
+		// the repository's state, or submits once it is back on.
+		result = stopRepository
 	case errors.As(err, &notAutomatic):
 		pr.Pending, pr.Trigger = "", ""
 		notice = notAutomatic.Reason
@@ -595,6 +648,42 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 		o.Repositories = append(o.Repositories, s.status(name, r, rs, now))
 	}
 	return o, nil
+}
+
+// Why Gate refuses an automatic job.
+const (
+	GateOff               = "automatic_off"
+	GateRepositoryOff     = "repository_automatic_off"
+	GateRepositoryRemoved = "repository_removed"
+	GateUnreadable        = "settings_unreadable"
+)
+
+// Gate reads the current settings for an automatic job, for
+// jobs.Queue.SetAutomaticGate: the queue asks it when the job is submitted
+// and again before it starts, so turning generation off (globally, for the
+// repository, or withdrawing the cursor-agent acknowledgement) stops jobs
+// that are queued but not started. It reads only the registry database.
+func (s *Scheduler) Gate(j jobs.Job) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	prefs, err := s.Registry.Preferences(ctx)
+	if err != nil {
+		return GateUnreadable
+	}
+	settings, registered, err := s.Registry.RepositorySettings(ctx, j.Repository)
+	switch {
+	case err != nil:
+		return GateUnreadable
+	case !prefs.Automatic:
+		return GateOff
+	case !registered:
+		return GateRepositoryRemoved
+	case !settings.AutomaticEnabled(prefs):
+		return GateRepositoryOff
+	case (j.Backend == agent.BackendCursorAgent || (j.EstimateUSD == nil && j.BlockedReason == "")) && !prefs.CursorAgentAcknowledged:
+		return jobs.ReasonCursorAgentConsent
+	}
+	return ""
 }
 
 // SavedHead is the head of the PR's latest saved review in the clone's

@@ -46,6 +46,7 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 		return discovery.Snapshot{Repository: repository.String(), PullRequests: []discovery.PullRequest{{Repository: repository.String(), Number: 1, Title: "Other repository change", State: "OPEN", TeamMembershipKnown: true}}, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, nil
 	}
 	snapshot := d.snapshot
+	snapshot.FetchedAt = time.Now()
 	if d.pushed != nil && d.pushed() {
 		snapshot.PullRequests = append([]discovery.PullRequest(nil), snapshot.PullRequests...)
 		for i := range snapshot.PullRequests {
@@ -238,6 +239,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		scheduler.Queue = runner
+		runner.SetAutomaticGate(scheduler.Gate)
 		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot

@@ -467,6 +467,27 @@ func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
 	return e
 }
 
+// RepositorySettings reads one repository's shared settings without probing
+// its clones; false means no clone of it is registered.
+func (r *Registry) RepositorySettings(ctx context.Context, repository string) (Settings, bool, error) {
+	var s Settings
+	if r.noSchema {
+		return s, false, nil
+	}
+	var raw string
+	e := r.db.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity)`, strings.ToLower(repository)).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return s, false, nil
+	}
+	if e == nil {
+		e = json.Unmarshal([]byte(raw), &s)
+	}
+	if e == nil && r.legacy && s.Automatic != nil && !*s.Automatic {
+		s.Automatic = nil
+	}
+	return s, e == nil, e
+}
+
 const automaticPreferences = "automatic"
 
 // Preferences reads the global preferences: DefaultPreferences until saved.

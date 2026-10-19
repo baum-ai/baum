@@ -25,6 +25,7 @@ const (
 const (
 	ReasonIsolation          = "isolation_confirmation_required"
 	ReasonCursorAgentConsent = "cursor_agent_acknowledgement_required"
+	ReasonDraft              = "draft"
 )
 
 var (
@@ -94,6 +95,9 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if p.HeadSHA != r.Head {
 		return Job{}, ErrHeadChanged
 	}
+	if p.Draft {
+		return Job{}, &NotAutomaticError{ReasonDraft}
+	}
 	if p.RequiresIsolationConfirmation {
 		return Job{}, &NotAutomaticError{ReasonIsolation}
 	}
@@ -115,14 +119,22 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if err := q.automaticConflict(p.Repository, p.PR, p.HeadSHA); err != nil {
 		return Job{}, err
 	}
+	now := time.Now().UTC()
+	j := Job{ID: id(), Prepared: p, Automatic: true, Trigger: r.Trigger, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
+	// Settings are read again here, under the mutex the worker and
+	// CancelDisallowedAutomatic hold, so a pass that read them before an off
+	// cannot queue after it.
+	if q.gate != nil {
+		if reason := q.gate(j); reason != "" {
+			return Job{}, &NotAllowedError{reason}
+		}
+	}
 	if r.DailyCap != nil {
 		spent, known := q.automaticSpend(p.Repository, r.Day)
 		if !known || p.EstimateUSD == nil || spent+*p.EstimateUSD > *r.DailyCap+1e-9 {
 			return Job{}, ErrDailyCap
 		}
 	}
-	now := time.Now().UTC()
-	j := Job{ID: id(), Prepared: p, Automatic: true, Trigger: r.Trigger, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 	q.jobs = append(q.jobs, j)
 	if err := q.save(); err != nil {
 		q.jobs = q.jobs[:len(q.jobs)-1]
@@ -131,6 +143,61 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	notification = &j
 	q.signal()
 	return j, nil
+}
+
+// NotAllowedError refuses an automatic job because automatic generation is
+// off for it now (the gate's Reason); it is not a verdict on the PR.
+type NotAllowedError struct{ Reason string }
+
+func (e *NotAllowedError) Error() string { return "automatic generation not allowed: " + e.Reason }
+
+// SetAutomaticGate installs the check of current settings that every
+// automatic job passes when it is submitted and again before it starts: it
+// returns why the job may not run (automatic generation turned off globally
+// or for its repository, cursor-agent no longer acknowledged), or "". It is
+// called with the queue's mutex held and must not call the queue.
+func (q *Queue) SetAutomaticGate(gate func(Job) string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.gate = gate
+}
+
+// refuseAutomatic cancels the queued job at i if it is automatic and the gate
+// refuses it, recording the reason. Called with mu held; the caller
+// publishes the returned job after unlocking.
+func (q *Queue) refuseAutomatic(i int) (Job, bool) {
+	j := &q.jobs[i]
+	if !j.Automatic || j.State != "queued" || q.gate == nil {
+		return Job{}, false
+	}
+	reason := q.gate(*j)
+	if reason == "" {
+		return Job{}, false
+	}
+	old := *j
+	j.State, j.Phase, j.Reason, j.UpdatedAt = "cancelled", "finished", reason, time.Now().UTC()
+	if q.save() != nil {
+		*j = old
+		return Job{}, false
+	}
+	return *j, true
+}
+
+// CancelDisallowedAutomatic cancels every queued, not yet started automatic
+// job the gate now refuses, with its reason. Running jobs keep running.
+func (q *Queue) CancelDisallowedAutomatic() []Job {
+	q.mu.Lock()
+	var out []Job
+	for i := range q.jobs {
+		if j, ok := q.refuseAutomatic(i); ok {
+			out = append(out, j)
+		}
+	}
+	q.mu.Unlock()
+	for _, j := range out {
+		q.notify(j)
+	}
+	return out
 }
 
 // automaticConflict is called with mu held.

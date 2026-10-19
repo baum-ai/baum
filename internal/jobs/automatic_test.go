@@ -19,6 +19,7 @@ type autoExecutor struct {
 	price      *float64
 	backend    string
 	restricted bool
+	draft      bool
 	prepared   int
 	started    chan Prepared
 	release    chan struct{}
@@ -29,7 +30,7 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared++
-	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted}
+	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted, Draft: f.draft}
 	if f.price == nil && f.backend != agent.BackendCursorAgent {
 		p.BlockedReason = "unknown_model_price"
 	}
@@ -336,6 +337,84 @@ func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 	for _, r := range []AutomaticRequest{auto(3, "c1"), auto(4, "d1")} {
 		if _, err = q.SubmitAutomatic(ctx, r); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("PR %d: %v", r.PR, err)
+		}
+	}
+}
+
+func TestAutomaticRefusesDrafts(t *testing.T) {
+	q, f := newAutoQueue(t)
+	f.draft = true
+	if _, err := q.SubmitAutomatic(context.Background(), auto(1, "a1")); reason(err) != ReasonDraft {
+		t.Fatalf("draft: %v", err)
+	}
+	// A confirmed run of a draft still works.
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The gate is asked under the queue's mutex when an automatic job is
+// submitted and again before it starts; CancelDisallowedAutomatic cancels
+// queued ones it refuses. Running and confirmed jobs are untouched.
+func TestAutomaticGateStopsQueuedJobs(t *testing.T) {
+	q, f := newAutoQueue(t)
+	ctx := context.Background()
+	var mu sync.Mutex
+	refuse := map[int]string{}
+	q.SetAutomaticGate(func(j Job) string {
+		mu.Lock()
+		defer mu.Unlock()
+		return refuse[j.PR]
+	})
+	set := func(pr int, reason string) {
+		mu.Lock()
+		defer mu.Unlock()
+		refuse[pr] = reason
+	}
+	set(1, "automatic_off")
+	var refused *NotAllowedError
+	if _, err := q.SubmitAutomatic(ctx, auto(1, "a1")); !errors.As(err, &refused) || refused.Reason != "automatic_off" {
+		t.Fatalf("submitted while off: %v", err)
+	}
+	set(1, "")
+	running, err := q.SubmitAutomatic(ctx, auto(1, "a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	queued := []Job{}
+	for _, pr := range []int{2, 3} {
+		j, err := q.SubmitAutomatic(ctx, auto(pr, f.heads[pr]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued = append(queued, j)
+	}
+	f.heads[4] = "d1"
+	e := estimate(t, q, "single", Item{"clone", 4})
+	confirmed, err := q.Submit(ctx, e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range []int{1, 2, 4} {
+		set(pr, "automatic_off")
+	}
+	cancelled := q.CancelDisallowedAutomatic()
+	if len(cancelled) != 1 || cancelled[0].ID != queued[0].ID || cancelled[0].State != "cancelled" || cancelled[0].Reason != "automatic_off" {
+		t.Fatalf("cancelled %+v", cancelled)
+	}
+	// PR 3 is refused only now: the worker cancels it instead of starting it.
+	set(3, "repository_automatic_off")
+	f.release <- struct{}{}
+	waitState(t, q, running.ID, "completed")
+	waitState(t, q, queued[1].ID, "cancelled")
+	<-f.started
+	f.release <- struct{}{}
+	waitState(t, q, confirmed[0].ID, "completed")
+	for _, j := range q.List() {
+		if j.ID == queued[1].ID && j.Reason != "repository_automatic_off" {
+			t.Fatalf("reason %+v", j)
 		}
 	}
 }

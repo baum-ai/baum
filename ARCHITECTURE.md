@@ -1324,7 +1324,11 @@ global preferences as one JSON row: `automatic` (true until changed) and
 transaction, turning the `automatic: false` every earlier registration stored
 into `null`, and keeping a stored `true` (only `baum repos add --automatic`
 could set it). `OpenReadOnly` reads an unmigrated file the same way without
-writing it.
+writing it. An older baum that registers a repository after the migration
+still stores `automatic: false`, which now reads as an explicit off: that
+repository stays off until changed in the app, which fails safe.
+`PUT /api/repos/{id}/settings` replaces the whole object and requires the
+`automatic` and `daily_cap` fields, so removing either is an explicit `null`.
 
 `internal/cli` and the reusable `Registry.Handler` use the same service. The
 handler exposes registry operations only; `internal/uiserver` owns listening,
@@ -1602,12 +1606,24 @@ it and `Queue.SubmitAutomatic` decides each job.
   master switch, which the desktop tray's pause turns off; while it is on, a
   repository is enabled unless its `automatic` is `false`. Disabling a
   repository (or the switch), or unregistering it,
-  forgets its state; nothing in flight is cancelled.
-- **Baseline.** `Observe` gets every successful discovery snapshot. The first
-  one for an enabled repository records each open PR's head, whether the
-  user's review is requested, and whether team membership was readable, and
-  queues nothing: PRs open at first launch, registration or re-enabling are
-  not caught up.
+  forgets its state.
+- **Turning off.** `Scheduler.Gate`, installed with
+  `Queue.SetAutomaticGate`, reads the current preferences and repository
+  settings from the registry. The queue asks it under its mutex when an
+  automatic job is submitted and again before the worker starts one, so a pass
+  that read the settings before an off cannot queue after it, and a queued job
+  never starts once its scope is off. `Queue.CancelDisallowedAutomatic` cancels
+  queued automatic jobs the gate refuses, with its reason (`automatic_off`,
+  `repository_automatic_off`, `repository_removed`,
+  `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
+  runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
+  running.
+- **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
+  first snapshot `Observe` gets that was fetched at or after that time records
+  each open PR's head, whether the user's review is requested, whether team
+  membership was readable and whether it is a draft, and queues nothing: PRs
+  open at first launch, registration or re-enabling are not caught up. An older
+  (cached) snapshot is not a baseline; the next poll's is.
 - **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
   new PR included), whose review request turned on (not merely because team
   membership became readable), or that was marked ready for review, gets a
@@ -1638,8 +1654,12 @@ it and `Queue.SubmitAutomatic` decides each job.
   head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
   pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
   head); `ErrDailyCap` pauses the repository until local midnight with the
-  `daily_cap` notice; a `NotAutomaticError` drops it with its reason as the
-  notice; other errors retry with backoff, five times.
+  `daily_cap` notice, or until its cap is raised above or cleared from the
+  amount that caused the pause; a `NotAllowedError` (turned off meanwhile)
+  leaves the head for the next pass, which forgets it if the repository stays
+  off; a `NotAutomaticError` (a draft, a fork, an unpriced model, cursor-agent
+  not acknowledged) drops it with its reason as the notice; other errors retry
+  with backoff, five times.
 - **Spending.** No default cap. Each job keeps the configured run budgets, and
   `daily_cap` is enforced per repository and calendar day. cursor-agent runs
   automatically only after `cursor_agent_acknowledged`, checked by
@@ -1647,11 +1667,12 @@ it and `Queue.SubmitAutomatic` decides each job.
 - **Interfaces.** `GET /api/automatic` returns the preferences and each
   repository's effective state, cap, today's automatic spend, pause, notice
   and pending count; `PUT /api/automatic` changes the preferences. A changed
-  pause or notice is published as an `automatic` SSE event for the app and the
-  desktop app's notifications. `Trigger(ctx, repository)` polls discovery for
-  one repository (within discovery's own poll deadline and rate budget) and
-  passes the snapshot to `Observe`: hook events (an agent
-  session ending, a push) use it rather than a separate path.
+  pause or notice, and every repository's status after a `PUT`, is published
+  as an `automatic` SSE event for other app windows and the desktop app's
+  notifications. `Trigger(ctx, repository)` polls discovery for one
+  repository (within discovery's own poll deadline and rate budget) and passes
+  the snapshot to `Observe`. Agent hook events (a session ending, a push) are
+  to use it rather than a separate path; no hook calls it yet.
 
 ### Transports and control protocol
 
@@ -1679,7 +1700,7 @@ identify and replace any daemon. `ping` and every method registered in
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
 `daemon.Protocol` for any incompatible change. Hook ingestion
 will add methods through `Options.Methods`; a hook event that should look for
-new heads calls the automatic scheduler's `Trigger` (see "Automatic
+new heads will call the automatic scheduler's `Trigger` (see "Automatic
 generation"). Remote attach would be another transport beside
 these two; none exists.
 

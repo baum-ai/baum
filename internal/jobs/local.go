@@ -68,6 +68,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}
 	var pr struct {
 		State string
+		Draft bool
 		Head  struct {
 			SHA  string
 			Repo struct {
@@ -106,7 +107,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), Draft: pr.Draft, EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
 	if p.EstimateUSD == nil {
 		p.BlockedReason = "unknown_model_price"
 	}

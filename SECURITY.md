@@ -298,8 +298,11 @@ cursor-agent, which baum cannot estimate or cap, runs automatically only after
 you acknowledge that in the app. Turning the global switch off (in Repositories
 & settings, or pausing automatic generation from the desktop app) stops it in
 every repository, including those set to "On"; while it is on, single
-repositories can be turned off. Either stops new jobs without cancelling
-running ones.
+repositories can be turned off. Turning off (or withdrawing the cursor-agent
+acknowledgement) also cancels that scope's automatic jobs that are queued but
+not started, and the queue checks the current settings again before starting
+each one; only a job already running finishes, within its budget. Raising or
+removing a repository's daily cap ends its pause.
 The daemon keeps doing this after the app window closes, and the desktop app
 can quit without stopping it; only "Quit and stop background reviews" (or
 `baum daemon stop`) stops it.

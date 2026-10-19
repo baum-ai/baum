@@ -49,7 +49,16 @@ func (s *Scheduler) Handler() http.Handler {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		// Turning off (the tray's pause included) cancels queued automatic
+		// jobs before answering; running ones finish.
+		if s.Queue != nil {
+			s.Queue.CancelDisallowedAutomatic()
+		}
 		s.Wake()
+		// Other windows and the desktop app learn of the change.
+		if o, err := s.Overview(r.Context()); err == nil {
+			s.notify(o.Repositories)
+		}
 		write(w, r)
 	})
 	return mux

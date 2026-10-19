@@ -43,6 +43,11 @@ func (r *fakeRegistry) UpdatePreferences(_ context.Context, edit func(repos.Pref
 	r.prefs = edit(r.prefs)
 	return r.prefs, nil
 }
+func (r *fakeRegistry) RepositorySettings(context.Context, string) (repos.Settings, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.settings, true, nil
+}
 func (r *fakeRegistry) set(f func(*repos.Preferences, *repos.Settings)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,6 +134,7 @@ func (h *harness) restart() {
 		Reviewed: func(_ context.Context, _ repos.Clone, n int) (string, error) { return h.reviewed[n], nil },
 		Notify:   func(s Status) { h.notices = append(h.notices, s) },
 	}
+	h.queue.SetAutomaticGate(h.scheduler.Gate)
 }
 
 type pr struct {
@@ -145,7 +151,7 @@ type pr struct {
 
 func (h *harness) observe(prs ...pr) {
 	h.t.Helper()
-	snapshot := discovery.Snapshot{Repository: "org/repo", PullRequests: []discovery.PullRequest{}}
+	snapshot := discovery.Snapshot{Repository: "org/repo", FetchedAt: h.now, PullRequests: []discovery.PullRequest{}}
 	for _, p := range prs {
 		var write *bool
 		switch p.write {
@@ -354,27 +360,151 @@ func TestTurningOffStopsNewJobsKeepsRunningOnesAndReenablingDoesNotCatchUp(t *te
 	h.exec.block = make(chan struct{})
 	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b1", authored: true})
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
-	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
+	h.exec.started = make(chan struct{}, 10)
 	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
 	h.pass()
-	h.want("org/repo#1@a2:new_head")
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	<-h.exec.started
+	// Off (the tray's pause): the queued, not yet started job is cancelled
+	// with a reason; the running one keeps running.
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	states := map[int]jobs.Job{}
 	for _, j := range h.queue.List() {
-		if j.State != "running" && j.State != "queued" {
-			t.Fatalf("turning off touched a job: %+v", j)
-		}
+		states[j.PR] = j
+	}
+	if states[1].State != "running" || states[2].State != "cancelled" || states[2].Reason != GateOff {
+		t.Fatalf("after turning off: %+v", states)
 	}
 	close(h.exec.block)
 	h.waitIdle()
 	// Back on: what changed while off is the new baseline.
 	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = true })
-	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b3", authored: true})
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
 	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b4", authored: true})
 	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b4:new_head")
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b5", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b5:new_head")
+}
+
+// A repository turned off, or cursor-agent no longer acknowledged, cancels
+// that scope's queued automatic jobs; the worker re-checks before starting.
+func TestRepositoryOffAndWithdrawnAcknowledgementCancelQueuedJobs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backend string
+		off     func(*repos.Preferences, *repos.Settings)
+		reason  string
+	}{
+		{"repository off", "", func(_ *repos.Preferences, s *repos.Settings) { s.Automatic = new(false) }, GateRepositoryOff},
+		{"acknowledgement withdrawn", agent.BackendCursorAgent, func(p *repos.Preferences, _ *repos.Settings) { p.CursorAgentAcknowledged = false }, jobs.ReasonCursorAgentConsent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.exec.backend = tc.backend
+			h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.CursorAgentAcknowledged = true })
+			h.exec.block = make(chan struct{})
+			h.exec.started = make(chan struct{}, 10)
+			h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+			h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+			h.pass()
+			<-h.exec.started
+			h.registry.set(tc.off)
+			// The worker refuses the queued job when it would start it, even
+			// before a pass runs.
+			close(h.exec.block)
+			h.waitIdle()
+			for _, j := range h.queue.List() {
+				if j.PR == 2 && (j.State != "cancelled" || j.Reason != tc.reason) {
+					t.Fatalf("queued job %+v", j)
+				}
+				if j.PR == 1 && j.State != "completed" {
+					t.Fatalf("running job %+v", j)
+				}
+			}
+		})
+	}
+}
+
+// A stale pass cannot queue after an off: SubmitAutomatic re-reads the
+// settings under the queue's mutex.
+func TestStalePassCannotQueueAfterOff(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.exec.setHead(1, "a2")
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
+	v := view{prefs: repos.Preferences{Automatic: true}, repos: map[string]repository{"org/repo": {clone: repos.Clone{ID: "clone", Repository: "org/repo", Available: true}, enabled: true}}}
+	h.scheduler.submit(context.Background(), v, work{name: "org/repo", repo: v.repos["org/repo"], number: 1, head: "a2", trigger: jobs.TriggerNewHead}, h.now)
+	h.want()
+}
+
+func TestRaisingOrClearingTheCapLiftsThePause(t *testing.T) {
+	h := newHarness(t)
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(3.0) })
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true}, pr{number: 3, head: "c1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true}, pr{number: 3, head: "c2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+	// Lowering keeps the pause.
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(1.0) })
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+	// Raising lifts it; the next job that fits runs, the one after pauses again.
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(5.0) })
+	h.waitIdle()
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	if last := h.notices[len(h.notices)-1]; last.Notice != NoticeDailyCap {
+		t.Fatalf("not paused again %+v", last)
+	}
+	h.waitIdle()
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = nil })
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#3@c2:new_head")
+}
+
+// The baseline is a snapshot fetched after enabling, never an older cached one.
+func TestBaselineIsNotTakenFromASnapshotOlderThanEnabling(t *testing.T) {
+	h := newHarness(t)
+	h.pass() // enabling is seen at 10:00
+	old := h.now
+	h.now = old.Add(-time.Hour)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.now = old.Add(time.Minute)
+	// Pushed before enabling, fetched after: part of the baseline.
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.pass()
+	h.want()
+	h.observe(pr{number: 1, head: "a3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a3:new_head")
+}
+
+func TestPutCancelsQueuedJobsAndPublishes(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	<-h.exec.started
+	h.notices = nil
+	if code := put(h.scheduler, `{"enabled":false}`); code != 200 {
+		t.Fatal(code)
+	}
+	for _, j := range h.queue.List() {
+		if j.PR == 2 && j.State != "cancelled" {
+			t.Fatalf("queued job survived the pause: %+v", j)
+		}
+	}
+	if len(h.notices) != 1 || h.notices[0].Enabled {
+		t.Fatalf("no event for other windows: %+v", h.notices)
+	}
+	close(h.exec.block)
 }
 
 // The global switch is a master switch (the desktop tray's pause): off stops
@@ -428,7 +558,7 @@ func TestTriggerFeedsTheSameScheduler(t *testing.T) {
 	h.scheduler.Discover = func(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 		write := true
 		h.exec.setHead(1, heads["1"])
-		return discovery.Snapshot{Repository: repo.String(), PullRequests: []discovery.PullRequest{{Repository: repo.String(), Number: 1, HeadSHA: heads["1"], AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}}, nil
+		return discovery.Snapshot{Repository: repo.String(), FetchedAt: h.now, PullRequests: []discovery.PullRequest{{Repository: repo.String(), Number: 1, HeadSHA: heads["1"], AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}}, nil
 	}
 	if err := h.scheduler.Trigger(context.Background(), "org/repo"); err != nil {
 		t.Fatal(err)

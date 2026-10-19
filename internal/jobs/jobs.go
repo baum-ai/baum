@@ -37,6 +37,9 @@ type Prepared struct {
 	EstimateUSD                   *float64 `json:"estimate_usd"`
 	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
 	BlockedReason                 string   `json:"blocked_reason,omitempty"`
+	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
+	// a confirmed run does not.
+	Draft bool `json:"draft,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -104,6 +107,9 @@ type Queue struct {
 	releaseOnce sync.Once
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
+	// gate, when set, says why an automatic job may not run now ("" when
+	// it may); see SetAutomaticGate.
+	gate func(Job) string
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -510,6 +516,12 @@ func (q *Queue) worker() {
 			if i < 0 {
 				q.mu.Unlock()
 				break
+			}
+			// An automatic job turned off while it waited never starts.
+			if refused, ok := q.refuseAutomatic(i); ok {
+				q.mu.Unlock()
+				q.notify(refused)
+				continue
 			}
 			old := q.jobs[i]
 			q.jobs[i].State = "running"

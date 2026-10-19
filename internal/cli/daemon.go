@@ -335,8 +335,8 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 
 // localApplication builds what the daemon serves: the registry, discovery,
 // review index, background refresh, diagnostics, the generation queue and
-// the automatic generation scheduler. Agent hook events reach the
-// scheduler through Scheduler.Trigger.
+// the automatic generation scheduler. Agent hook events are to reach the
+// scheduler through Scheduler.Trigger; no hook calls it yet.
 func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
@@ -386,6 +386,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 			return daemon.App{}, err
 		}
 		scheduler.Queue = queue
+		queue.SetAutomaticGate(scheduler.Gate)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
