@@ -202,6 +202,9 @@ type Session struct {
 	Confidence     float64   `json:"-"`
 	HasStartedAt   bool      `json:"-"`
 	StartedAtValue time.Time `json:"-"`
+	// AuthoritativeLink is the host's: whether the session is linked to the
+	// pull request by more than a heuristic. Not part of the encoded bundle.
+	AuthoritativeLink bool `json:"-"`
 }
 
 // Prompt is one human prompt. Index is
