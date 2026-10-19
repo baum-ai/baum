@@ -209,8 +209,9 @@ func newMarker() (string, error) {
 	return "__baum_env_" + hex.EncodeToString(b[:]) + "__", nil
 }
 
-// quoteAll single-quotes each word for POSIX shells and fish, which both read
-// 'it'\''s' as it's.
+// quoteAll single-quotes each word for POSIX shells and fish. A quote inside a
+// word closes the quoted text, adds an escaped quote and reopens it, which
+// both kinds of shell read the same way.
 func quoteAll(words []string) string {
 	quoted := make([]string, len(words))
 	for i, w := range words {

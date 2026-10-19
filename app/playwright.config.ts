@@ -1,4 +1,12 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
+
+// The fixture daemon keeps its state, credential and socket outside the source
+// tree; the spec reads the credential from the same directory.
+const stateDir = join(tmpdir(), "baum-app-e2e-daemon");
+process.env.BAUM_APP_STATE_DIR = stateDir;
+
 export default defineConfig({
   testDir: "./e2e",
   workers: 1,
@@ -9,8 +17,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command:
-      "BAUM_APP_BROWSER_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_STATE_DIR=e2e/daemon-state ./e2e/fixture -test.run '^TestLocalAppBrowserFixture$' -test.timeout=0",
+    command: `BAUM_APP_BROWSER_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_STATE_DIR='${stateDir}' ./e2e/fixture -test.run '^TestLocalAppBrowserFixture$' -test.timeout=0`,
     url: "http://127.0.0.1:4167",
     reuseExistingServer: false,
     timeout: 30000,

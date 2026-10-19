@@ -145,19 +145,19 @@ func TestApplyLoginEnvironment(t *testing.T) {
 	old := resolveShell
 	t.Cleanup(func() { resolveShell = old })
 	for _, tc := range []struct {
-		name     string
-		resolve  func(context.Context, shellenv.Options) (shellenv.Result, error)
-		inherit  []string
-		want     map[string]string
-		dropped  []string
+		name    string
+		resolve func(context.Context, shellenv.Options) (shellenv.Result, error)
+		inherit []string
+		want    map[string]string
+		dropped []string
 	}{
 		{
 			name: "login shell wins",
 			resolve: func(context.Context, shellenv.Options) (shellenv.Result, error) {
 				return shellenv.Result{Shell: "/bin/zsh", Env: map[string]string{"PATH": "/opt/bin:/usr/bin", "GITHUB_TOKEN": "tok-from-shell", "HOME": "/elsewhere"}}, nil
 			},
-			inherit: []string{"PATH=/usr/bin", "GITHUB_TOKEN=tok-from-agent", "HOME=/home/ada", "CLAUDE_CODE_ENTRYPOINT=cli"},
-			want:    map[string]string{"PATH": "/opt/bin:/usr/bin", "GITHUB_TOKEN": "tok-from-shell", "HOME": "/home/ada"},
+			inherit: []string{"PATH=/usr/bin", "GITHUB_TOKEN=tok-from-agent", "HOME=/home/user", "CLAUDE_CODE_ENTRYPOINT=cli"},
+			want:    map[string]string{"PATH": "/opt/bin:/usr/bin", "GITHUB_TOKEN": "tok-from-shell", "HOME": "/home/user"},
 			dropped: []string{"CLAUDE_CODE_ENTRYPOINT"},
 		},
 		{

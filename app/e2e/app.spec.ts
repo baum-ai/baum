@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 // The fixture runs the real daemon, which publishes its launch URL in a private
@@ -6,7 +7,8 @@ import { expect, test } from "@playwright/test";
 async function launchURL(): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
-      const { url } = JSON.parse(await readFile("e2e/daemon-state/credential.json", "utf8"));
+      const path = join(process.env.BAUM_APP_STATE_DIR ?? "", "credential.json");
+      const { url } = JSON.parse(await readFile(path, "utf8"));
       if (typeof url === "string") return url;
     } catch {
       // Not written yet.

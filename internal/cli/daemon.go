@@ -277,7 +277,7 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 
 // localApplication builds what the daemon serves: the registry, discovery,
 // review index, background refresh, diagnostics and the generation queue.
-// It is the extension point for automatic generation (ENG-1313).
+// It is where automatic generation belongs.
 func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})

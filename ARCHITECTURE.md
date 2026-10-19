@@ -1537,8 +1537,8 @@ one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
 identify and replace any daemon. `ping` and every method registered in
 `Options.Methods` require the client's protocol to equal the daemon's, and
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
-`daemon.Protocol` for any incompatible change. Hook ingestion (ENG-1318)
-adds methods through `Options.Methods`; automatic generation (ENG-1313)
+`daemon.Protocol` for any incompatible change. Hook ingestion
+will add methods through `Options.Methods`; automatic generation
 belongs in the application built by `localApplication` in
 `internal/cli/daemon.go`. Remote attach would be another transport beside
 these two; none exists.
@@ -1550,7 +1550,7 @@ and two files:
 
 1. `baum daemon ensure --json` starts the daemon if needed (replacing an older
    one), waits until it serves, and prints one JSON line on stdout:
-   `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/ada/.local/state/baum/daemon"}`.
+   `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
    `stopping` appears only while it shuts down. On failure it exits non-zero
    with the reason on stderr. `--port` and `--concurrency` apply only when it
    starts the daemon.

@@ -3,5 +3,3 @@ coverage/
 playwright-report/
 test-results/
 e2e/fixture
-
-e2e/daemon-state/

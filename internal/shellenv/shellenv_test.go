@@ -153,7 +153,7 @@ func TestArguments(t *testing.T) {
 
 func TestPasswdShell(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "passwd")
-	if err := os.WriteFile(path, []byte("root:x:0:0:root:/root:/bin/bash\nada:x:1000:1000:Ada:/home/ada:/usr/bin/fish\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("root:x:0:0:root:/root:/bin/bash\nada:x:1000:1000:Ada:/home/user:/usr/bin/fish\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := passwdShell(path, 1000); got != "/usr/bin/fish" {

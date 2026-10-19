@@ -741,7 +741,9 @@ func TestConfigErrorIsAProblemAndTheReportContinues(t *testing.T) {
 func TestDoctorCreatesNothing(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "daemon")} }})
+	run(t, Options{Daemon: func(context.Context) Daemon {
+		return Daemon{State: filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "daemon")}
+	}})
 	home := os.Getenv("HOME")
 	var created []string
 	_ = filepath.WalkDir(home, func(path string, _ os.DirEntry, _ error) error {

@@ -6,10 +6,10 @@ import (
 )
 
 func TestMergeTakesKeptVariablesFromTheLoginShell(t *testing.T) {
-	inherited := []string{"HOME=/home/agent-view", "PATH=/agent/bin", "GITHUB_TOKEN=agent", "GH_TOKEN=agent-only", "AGENT_SECRET=x", "XDG_STATE_HOME=/client/state", "BAUM_MODEL=inherited"}
-	resolved := map[string]string{"HOME": "/home/ada", "PATH": "/usr/bin", "GITHUB_TOKEN": "shell", "BAUM_BACKEND": "codex", "XDG_STATE_HOME": "/shell/state", "EDITOR": "vim", ResolvingVariable: "1", "LC_ALL": "C"}
+	inherited := []string{"HOME=/home/dev", "PATH=/agent/bin", "GITHUB_TOKEN=agent", "GH_TOKEN=agent-only", "AGENT_SECRET=x", "XDG_STATE_HOME=/client/state", "BAUM_MODEL=inherited"}
+	resolved := map[string]string{"HOME": "/home/user", "PATH": "/usr/bin", "GITHUB_TOKEN": "shell", "BAUM_BACKEND": "codex", "XDG_STATE_HOME": "/shell/state", "EDITOR": "vim", ResolvingVariable: "1", "LC_ALL": "C"}
 	got := merge(false, inherited, resolved)
-	want := []string{"BAUM_BACKEND=codex", "GITHUB_TOKEN=shell", "HOME=/home/agent-view", "LC_ALL=C", "PATH=/usr/bin", "XDG_STATE_HOME=/client/state"}
+	want := []string{"BAUM_BACKEND=codex", "GITHUB_TOKEN=shell", "HOME=/home/dev", "LC_ALL=C", "PATH=/usr/bin", "XDG_STATE_HOME=/client/state"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}

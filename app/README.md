@@ -63,7 +63,7 @@ to `../internal/localapp/dist`; the common `viewer-build` / `viewer-fresh` recip
 also build/check this bundle, so `go install` needs no Node.js.
 
 Browser tests run the actual daemon (`daemon.Run`, with its lock, credential
-file and control socket in `e2e/daemon-state`) serving a `uiserver.Server`,
+file and control socket in a temporary directory) serving a `uiserver.Server`,
 registry, version stores, queue, `jobs.Local` and generation publisher. The
 suite reads the launch URL from the daemon's `credential.json`, as the desktop
 app does, and opens it a second time in a fresh browser context to check that
