@@ -35,9 +35,10 @@ func newGenerateCommand() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate the review document for a pull request",
 		Long: `Generate assembles the generation bundle of a pull request, as "baum bundle"
-does, and has a coding agent installed on this machine (Claude Code or Codex,
-under your own login), or the Anthropic API with your ANTHROPIC_API_KEY, read
-the bundle and a read-only checkout of the pull request and write the review.
+does, and has a coding agent installed on this machine (Claude Code, Codex or
+the Cursor Agent CLI, under your own login), or the Anthropic API with your
+ANTHROPIC_API_KEY, read the bundle and a read-only checkout of the pull request
+and write the review.
 The document is repaired against the validator,
 has secrets masked, is completed with the fields baum derives and is checked
 strictly; only then is it stored as the next local version and written to
@@ -52,19 +53,21 @@ version store is written under the shared git directory, or the fallback or
 override selected by --store.
 
 --backend auto uses claude when it is installed and passes its checks, else
-codex, else the Anthropic API when ANTHROPIC_API_KEY is set. The cursor-agent
-backend is not available in this version. The agent runs in a private
-temporary directory that holds the bundle and the pull request's head and
-merge-base files, with its tools restricted to reading, and is removed
-afterwards; the anthropic backend's tools read only that directory.
+codex, else cursor-agent, else the Anthropic API when ANTHROPIC_API_KEY is set.
+The agent runs in a private temporary directory that holds the bundle and the
+pull request's head and merge-base files, with its tools restricted to
+reading, and is removed afterwards; the anthropic backend's tools read only
+that directory. cursor-agent runs in Cursor's read-only ask mode with its
+sandbox enabled, but Cursor cannot be confined as tightly as the others: see
+SECURITY.md.
 
 Progress goes to stderr; stdout holds only the document. Budgets come from the
 config file: run_timeout (the whole run), pass_timeout (each model call),
 max_calls and max_tokens. --model names a model of one backend, so with
---backend auto it applies to claude only; if auto falls back to codex or
-anthropic, that backend uses its own default model and stderr says why the
-earlier ones were skipped. The anthropic backend's default model is
-claude-opus-5-5.
+--backend auto it applies to claude only; if auto falls back to codex,
+cursor-agent or anthropic, that backend uses its own default model and stderr
+says why the earlier ones were skipped. The anthropic backend's default model
+is claude-opus-5-5.
 
 --diagnostics writes how the run ended and its redacted outcome, also when it
 fails after the command line was accepted. --keep-run-dir keeps the agent's run
@@ -89,7 +92,7 @@ written); 130 interrupted.`,
 	})
 	cmd.Flags().Int("pr", 0, "pull request number (default: the pull request of the current branch)")
 	cmd.Flags().String("repo", "", "GitHub repository as owner/name (defaults to the origin remote)")
-	cmd.Flags().String("backend", "", "model backend: auto, claude, codex or anthropic (cursor-agent is not available yet)")
+	cmd.Flags().String("backend", "", "model backend: auto, claude, codex, cursor-agent or anthropic")
 	cmd.Flags().String("model", "", "model name for the selected backend")
 	cmd.Flags().String("store", "", "local version store directory (default: shared git directory, with XDG data fallback)")
 	cmd.Flags().StringP("output", "o", "", "write the document to this file instead of stdout")

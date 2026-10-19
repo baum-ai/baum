@@ -34,6 +34,9 @@ func generateEnv(t *testing.T) (*generatetest.Backend, []string) {
 		return generate.Backends{
 			Claude: func(string) generate.CheckedBackend { return stub },
 			Codex:  func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "codex"} },
+			CursorAgent: func(string) generate.CheckedBackend {
+				return &generatetest.Backend{BackendName: "cursor-agent", CheckErr: errors.New("finding cursor-agent: not installed")}
+			},
 			// The real backend, at an address nothing listens on.
 			Anthropic: func(model string) generate.CheckedBackend {
 				return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, BaseURL: "http://127.0.0.1:1", Model: model}
@@ -142,7 +145,7 @@ func TestGenerateFailuresKeepTheirExitCodesAndWriteNothing(t *testing.T) {
 		{"negative pr", []string{"--pr", "-3"}, nil, ExitInput, "pull request number"},
 		{"missing output directory", []string{"--pr", "7", "-o", filepath.Join(dir, "absent", "r.json")}, nil, ExitInput, "directory does not exist"},
 		{"anthropic backend without a key", []string{"--pr", "7", "--backend", "anthropic"}, nil, ExitBackend, "ANTHROPIC_API_KEY is not set"},
-		{"cursor-agent backend", []string{"--pr", "7", "--backend", "cursor-agent"}, nil, ExitBackend, "not available in this version"},
+		{"cursor-agent backend not installed", []string{"--pr", "7", "--backend", "cursor-agent"}, nil, ExitBackend, "finding cursor-agent"},
 		{"unknown backend", []string{"--pr", "7", "--backend", "gpt"}, nil, ExitInput, "unknown backend"},
 		{"provider down", []string{"--pr", "7"}, func() {
 			stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {

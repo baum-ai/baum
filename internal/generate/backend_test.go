@@ -57,9 +57,42 @@ func TestExplicitBackendsAndTheUnavailableOnes(t *testing.T) {
 	if _, err := generate.Select(context.Background(), config.BackendClaude, "", fakes(claude, codex), nil); err == nil || generate.CategoryOf(err) != generate.CategoryBackend {
 		t.Fatalf("claude explicit with a failing check should not fall back: %v", err)
 	}
-	_, err := generate.Select(context.Background(), config.BackendCursorAgent, "", fakes(claude, codex), nil)
-	if generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "not available in this version") {
-		t.Errorf("cursor-agent: %v", err)
+	backends := fakes(claude, codex)
+	cursor := &generatetest.Backend{BackendName: "cursor-agent", Version: "2026.10.16"}
+	var models []string
+	backends.CursorAgent = func(model string) generate.CheckedBackend {
+		models = append(models, model)
+		return cursor
+	}
+	selected, err := generate.Select(context.Background(), config.BackendCursorAgent, "gpt-5", backends, nil)
+	if err != nil || selected.Backend.Name() != "cursor-agent" || selected.Version != "2026.10.16" || selected.Model != "gpt-5" || models[0] != "gpt-5" {
+		t.Fatalf("cursor-agent: %+v %v", selected, err)
+	}
+	cursor.CheckErr = errors.New("not signed in")
+	if _, err := generate.Select(context.Background(), config.BackendCursorAgent, "", backends, nil); generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), "not signed in") {
+		t.Fatalf("cursor-agent explicit with a failing check: %v", err)
+	}
+}
+
+// TestAutoOrder is the documented order: claude, codex, cursor-agent, then the
+// Anthropic API.
+func TestAutoOrder(t *testing.T) {
+	if fmt.Sprint(generate.AutoOrder) != "[claude codex cursor-agent anthropic]" {
+		t.Fatalf("AutoOrder = %v", generate.AutoOrder)
+	}
+	failing := &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
+	backends := fakes(failing, &generatetest.Backend{BackendName: "codex", CheckErr: errors.New("sandbox cannot start")})
+	backends.CursorAgent = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "cursor-agent"} }
+	backends.Anthropic = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "anthropic"} }
+	var skipped bytes.Buffer
+	selected, err := generate.Select(context.Background(), config.BackendAuto, "opus", backends, &skipped)
+	if err != nil || selected.Backend.Name() != "cursor-agent" || selected.Model != "" {
+		t.Fatalf("%+v %v", selected, err)
+	}
+	for _, want := range []string{"claude skipped: not installed", "codex skipped: sandbox cannot start", "cursor-agent uses its own default model"} {
+		if !strings.Contains(skipped.String(), want) {
+			t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
+		}
 	}
 }
 
@@ -102,7 +135,7 @@ func TestAnthropicBackend(t *testing.T) {
 		if err != nil || selected.Backend.Name() != "anthropic" || selected.Model != anthropic.DefaultModel {
 			t.Fatalf("%+v %v", selected, err)
 		}
-		for _, want := range []string{"claude skipped: finding Claude Code", "codex skipped: finding Codex", `the model "opus" was meant for claude; anthropic uses its own default model`} {
+		for _, want := range []string{"claude skipped: finding Claude Code", "codex skipped: finding Codex", "cursor-agent skipped: finding cursor-agent", `the model "opus" was meant for claude; anthropic uses its own default model`} {
 			if !strings.Contains(skipped.String(), want) {
 				t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
 			}
@@ -111,10 +144,10 @@ func TestAnthropicBackend(t *testing.T) {
 			t.Error("the skipped output prints the key")
 		}
 	})
-	t.Run("auto without a key names all three", func(t *testing.T) {
+	t.Run("auto without a key names all four", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		_, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackendsFor(config.Config{}), nil)
-		for _, want := range []string{"claude: finding Claude Code", "codex: finding Codex", "anthropic: ANTHROPIC_API_KEY is not set"} {
+		for _, want := range []string{"claude: finding Claude Code", "codex: finding Codex", "cursor-agent: finding cursor-agent", "anthropic: ANTHROPIC_API_KEY is not set"} {
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("err %v lacks %q", err, want)
 			}
@@ -197,7 +230,7 @@ func TestGenerateOnlyBuildsLocalProfiles(t *testing.T) {
 		})
 	}
 	source, _ := os.ReadFile("backend.go")
-	for _, want := range []string{"claude.User", "codex.Local"} {
+	for _, want := range []string{"claude.User", "codex.Local", "cursor.Backend"} {
 		if !strings.Contains(string(source), want) {
 			t.Errorf("DefaultBackends does not build %s", want)
 		}
