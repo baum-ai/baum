@@ -17,7 +17,7 @@ import (
 // builds fall back to the module version recorded by the Go toolchain.
 var buildVersion string
 
-// Exit codes of the command line. Failures of "baum generate" carry one of the
+// Exit codes of the command line. Failures of "baum internal generate" carry one of the
 // named categories; everything else, a bad command or a failure of another
 // command, exits with ExitFailure.
 const (
@@ -26,7 +26,7 @@ const (
 	ExitBackend    = 3
 	ExitBudget     = 4
 	ExitValidation = 5
-	// ExitDiagnostics is "baum doctor" finding at least one problem.
+	// ExitDiagnostics is "baum internal doctor" finding at least one problem.
 	ExitDiagnostics = 6
 	ExitInterrupted = 130
 )
@@ -76,10 +76,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 func newRootCommand(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "baum",
-		Short: "Local-first pull request review generator and viewer",
-		Long: `baum builds a baum.review/1 document for a pull request from
-coding-agent sessions in your home directory, the local git clone and GitHub,
-and serves an embedded viewer for it on localhost.`,
+		Short: "Local-first pull request review for coding-agent work",
+		Long: `baum reviews pull requests from the coding-agent sessions on your machine.
+The desktop app is how you read the reviews; the agent hooks and the baum
+daemon keep them current. The commands here set those up.`,
 		Version:       version(),
 		SilenceErrors: true,
 		// Runtime failures should not dump usage; Run prints usage for unknown
@@ -95,16 +95,8 @@ and serves an embedded viewer for it on localhost.`,
 	cmd.SetErr(stderr)
 
 	cmd.AddCommand(
-		newGenerateCommand(),
-		newBundleCommand(),
-		newViewCommand(),
-		newValidateCommand(),
-		newRefreshCommand(),
-		newSessionsCommand(),
-		newReposCommand(),
-		newUICommand(),
 		newDaemonCommand(),
-		newDoctorCommand(),
+		newInternalCommand(),
 	)
 	addHostedCommands(cmd, stdout, stderr)
 	return cmd

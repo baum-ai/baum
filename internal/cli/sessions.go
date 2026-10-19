@@ -66,7 +66,7 @@ printed is redacted first.`,
 	return cmd
 }
 
-// sessionRow is one listed session, and the JSON shape of --json; "baum view"
+// sessionRow is one listed session, and the JSON shape of --json; "baum internal view"
 // summarises sessions with the same code.
 type sessionRow = locallink.Row
 

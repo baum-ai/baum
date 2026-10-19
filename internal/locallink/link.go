@@ -8,10 +8,10 @@
 // It never fetches. Commits the clone does not hold make the answer
 // unavailable rather than being downloaded, and nothing here contacts a
 // server. Every piece of text Resolve returns has been redacted the way
-// "baum sessions" redacts its listing.
+// "baum internal sessions" redacts its listing.
 //
-// A caller such as "baum view" serves the Result. BuildSessionEvidence gives
-// "baum bundle" the same linked sessions as bundle sessions, which the
+// A caller such as "baum internal view" serves the Result. BuildSessionEvidence gives
+// "baum internal bundle" the same linked sessions as bundle sessions, which the
 // bundle's own input redaction masks.
 package locallink
 
@@ -78,7 +78,7 @@ type Request struct {
 	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
-	// read, as "baum sessions" prints them. It defaults to discarding them.
+	// read, as "baum internal sessions" prints them. It defaults to discarding them.
 	Warn io.Writer
 }
 

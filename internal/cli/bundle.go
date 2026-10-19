@@ -18,7 +18,7 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// pullRequestSource is what "baum bundle" asks GitHub: which pull request to
+// pullRequestSource is what "baum internal bundle" asks GitHub: which pull request to
 // work on, and its evidence. *github.Client implements it.
 type pullRequestSource interface {
 	assemble.GitHub
@@ -43,7 +43,7 @@ func newBundleCommand() *cobra.Command {
 		Use:   "bundle",
 		Short: "Assemble the generation input for a pull request without calling a model",
 		Long: `Bundle assembles the generation input of a pull request, the baum.review/1
-bundle that "baum generate" gives its model, and writes it as JSON to stdout or
+bundle that "baum internal generate" gives its model, and writes it as JSON to stdout or
 to the file given with -o. It calls no model. Only the bundle is written to
 stdout; progress and warnings go to stderr, including the bundle's SHA-256
 digest, which is the digest of the JSON written without its final newline.

@@ -53,7 +53,7 @@ func writeConfig(t *testing.T, content string) {
 
 func TestGenerateWritesOnlyTheDocumentToStdout(t *testing.T) {
 	stub, stores := generateEnv(t)
-	stdout, stderr, err := run(t, append([]string{"generate", "--pr", "7"}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7"}, stores...)...)
 	if err != nil {
 		t.Fatalf("generate: %v\n%s", err, stderr)
 	}
@@ -71,7 +71,7 @@ func TestGenerateWritesOnlyTheDocumentToStdout(t *testing.T) {
 	if findings := validator.ValidateStored([]byte(stdout), nil); len(findings) > 0 {
 		t.Errorf("the stored document is invalid: %v", findings)
 	}
-	for _, want := range []string{"assembling the bundle", "running claude 9.9.9", "generated in", "baum view"} {
+	for _, want := range []string{"assembling the bundle", "running claude 9.9.9", "generated in", "baum internal view"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
@@ -96,7 +96,7 @@ func TestGenerateOutputFileIsAtomicPrivateAndHinted(t *testing.T) {
 	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := run(t, append([]string{"generate", "--pr", "7", "-o", path}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "-o", path}, stores...)...)
 	if err != nil {
 		t.Fatalf("generate: %v\n%s", err, stderr)
 	}
@@ -112,7 +112,7 @@ func TestGenerateOutputFileIsAtomicPrivateAndHinted(t *testing.T) {
 			t.Errorf("mode = %v", info.Mode().Perm())
 		}
 	}
-	if !strings.Contains(stderr, "view it with: baum view "+path) {
+	if !strings.Contains(stderr, "view it with: baum internal view "+path) {
 		t.Errorf("stderr lacks the view hint:\n%s", stderr)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
@@ -162,7 +162,7 @@ func TestGenerateFailuresKeepTheirExitCodesAndWriteNothing(t *testing.T) {
 			if c.edit != nil {
 				c.edit()
 			}
-			args := append(append([]string{"generate"}, c.args...), stores...)
+			args := append(append([]string{"internal", "generate"}, c.args...), stores...)
 			if c.name == "rejected" || c.name == "provider down" || c.name == "pass timeout" {
 				args = append(args, "-o", path)
 			}
@@ -208,7 +208,7 @@ func TestGenerateInterruptedExitsWithItsCode(t *testing.T) {
 		<-ctx.Done()
 		return agent.Result{}, ctx.Err()
 	}
-	_, _, err := run(t, append([]string{"generate", "--pr", "7"}, stores...)...)
+	_, _, err := run(t, append([]string{"internal", "generate", "--pr", "7"}, stores...)...)
 	if ExitCode(err) != ExitInterrupted {
 		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
 	}
@@ -217,7 +217,7 @@ func TestGenerateInterruptedExitsWithItsCode(t *testing.T) {
 func TestGenerateDiagnosticsForEarlyFailures(t *testing.T) {
 	_, stores := generateEnv(t)
 	path := filepath.Join(t.TempDir(), "diagnostics.json")
-	_, _, err := run(t, append([]string{"generate", "--pr", "7", "--backend", "anthropic", "--diagnostics", path}, stores...)...)
+	_, _, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "anthropic", "--diagnostics", path}, stores...)...)
 	if ExitCode(err) != ExitBackend {
 		t.Fatalf("err = %v", err)
 	}
@@ -230,7 +230,7 @@ func TestGenerateDiagnosticsForEarlyFailures(t *testing.T) {
 func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 	stub, stores := generateEnv(t)
 	root := filepath.Join(t.TempDir(), "custom versions")
-	args := append([]string{"generate", "--pr", "7", "--store", root}, stores...)
+	args := append([]string{"internal", "generate", "--pr", "7", "--store", root}, stores...)
 	var inputs []bundle.Bundle
 	stub.RunFunc = func(ctx context.Context, req agent.Request, n int) (agent.Result, error) {
 		raw, err := os.ReadFile(filepath.Join(req.Directory, "bundle.json"))
@@ -306,7 +306,7 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 		t.Fatalf("incomplete metadata: %+v", m)
 	}
 	for _, version := range []string{"1", "2"} {
-		_, stderr, err := run(t, "validate", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", version)
+		_, stderr, err := run(t, "internal", "validate", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", version)
 		if err != nil {
 			t.Fatalf("validate stored %s: %v %s", version, err, stderr)
 		}
@@ -314,7 +314,7 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 	// Serving an immutable selected version needs no live GitHub lookup.
 	_, stop := stubViewSeams(t)
 	stop()
-	if _, stderr, err := run(t, "view", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", "1", "--no-open"); err != nil {
+	if _, stderr, err := run(t, "internal", "view", "--pr", "7", "--repo", key.Repository, "--store", root, "--version", "1", "--no-open"); err != nil {
 		t.Fatalf("view stored: %v %s", err, stderr)
 	}
 	stub.RunFunc = func(context.Context, agent.Request, int) (agent.Result, error) {
@@ -333,7 +333,7 @@ func TestGenerateEnterpriseDocumentStoresAndReopensWithHostKey(t *testing.T) {
 	_, sessions := generateEnv(t)
 	root := filepath.Join(t.TempDir(), "reviews")
 	repository := "acme.ghe.com/acme/demo"
-	stdout, stderr, err := run(t, append([]string{"generate", "--pr", "7", "--repo", repository, "--store", root}, sessions...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--repo", repository, "--store", root}, sessions...)...)
 	if err != nil {
 		t.Fatalf("generate Enterprise review: %v\n%s", err, stderr)
 	}
@@ -351,7 +351,7 @@ func TestGenerateEnterpriseDocumentStoresAndReopensWithHostKey(t *testing.T) {
 	if _, err := versions.Latest(context.Background(), store.Key{Repository: "acme/demo", Number: 7}); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Enterprise review crossed host: %v", err)
 	}
-	if _, stderr, err := run(t, "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
+	if _, stderr, err := run(t, "internal", "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
 		t.Fatalf("reopen Enterprise review: %v\n%s", err, stderr)
 	}
 }
@@ -370,7 +370,7 @@ func TestGeneratePublishesRunStateForConcurrentLocalReaders(t *testing.T) {
 		}
 		return agent.Result{}, errors.New("provider unavailable")
 	}
-	_, _, err = run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...)
+	_, _, err = run(t, append([]string{"internal", "generate", "--pr", "7", "--store", root}, sessions...)...)
 	if generate.CategoryOf(err) != generate.CategoryBackend {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestGeneratePublishesRunStateForConcurrentLocalReaders(t *testing.T) {
 		t.Fatalf("failed snapshot=%+v err=%v", snapshot, err)
 	}
 	stub.RunFunc = nil
-	if _, stderr, err := run(t, append([]string{"generate", "--pr", "7", "--store", root}, sessions...)...); err != nil {
+	if _, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--store", root}, sessions...)...); err != nil {
 		t.Fatal(err, stderr)
 	}
 	snapshot, err = versions.Snapshot(context.Background())
@@ -392,7 +392,7 @@ func TestGenerateRecordsBackendPreflightFailure(t *testing.T) {
 	stub, sessions := generateEnv(t)
 	stub.CheckErr = errors.New("backend not installed")
 	root := t.TempDir()
-	_, _, err := run(t, append([]string{"generate", "--pr", "7", "--backend", "claude", "--store", root}, sessions...)...)
+	_, _, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "claude", "--store", root}, sessions...)...)
 	if generate.CategoryOf(err) != generate.CategoryBackend {
 		t.Fatal(err)
 	}

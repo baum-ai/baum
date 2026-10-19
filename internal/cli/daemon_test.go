@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/shellenv"
 )
 
@@ -23,10 +24,8 @@ func stubDaemon(t *testing.T) daemon.Paths {
 		t.Fatal(err)
 	}
 	paths := daemon.Paths{State: filepath.Join(dir, "s"), Socket: filepath.Join(dir, "d.sock")}
-	oldPaths, oldSpawn, oldOpen := daemonPaths, daemonSpawn, openBrowser
+	oldPaths, oldSpawn := daemonPaths, daemonSpawn
 	daemonPaths = func() (daemon.Paths, error) { return paths, nil }
-	var opened []string
-	openBrowser = func(url string) error { opened = append(opened, url); return nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	started := false
@@ -45,7 +44,7 @@ func stubDaemon(t *testing.T) daemon.Paths {
 		if started {
 			<-done
 		}
-		daemonPaths, daemonSpawn, openBrowser = oldPaths, oldSpawn, oldOpen
+		daemonPaths, daemonSpawn = oldPaths, oldSpawn
 		_ = os.RemoveAll(dir)
 	})
 	return paths
@@ -89,23 +88,10 @@ func TestDaemonCommands(t *testing.T) {
 	}
 }
 
-func TestUIOpensTheDaemonsLaunchURL(t *testing.T) {
+func TestDaemonReportDescribesTheRunningDaemon(t *testing.T) {
 	paths := stubDaemon(t)
-	out, errOut, err := run(t, "ui", "--no-open")
-	if err != nil {
+	if _, _, err := run(t, "daemon", "ensure"); err != nil {
 		t.Fatal(err)
-	}
-	credential, err := daemon.ReadCredential(paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(out) != credential.URL || !strings.Contains(errOut, "baum daemon stop") {
-		t.Fatalf("stdout %q, stderr %q", out, errOut)
-	}
-	// A second invocation reuses the running daemon and its credential.
-	again, _, err := run(t, "ui", "--no-open")
-	if err != nil || again != out {
-		t.Fatalf("second ui %q %v", again, err)
 	}
 	report := daemonReport(context.Background())
 	if !report.Running || report.State != paths.State || report.PID != os.Getpid() || report.Older || report.Incompatible {
@@ -126,7 +112,7 @@ func TestDoctorReportsStoppedDaemonWithoutCreatingState(t *testing.T) {
 
 func TestDaemonFlagsAreValidated(t *testing.T) {
 	stubDaemon(t)
-	for _, args := range [][]string{{"daemon", "ensure", "--port", "70000"}, {"daemon", "run", "--concurrency", "0"}, {"ui", "--concurrency", "17"}} {
+	for _, args := range [][]string{{"daemon", "ensure", "--port", "70000"}, {"daemon", "run", "--concurrency", "0"}, {"daemon", "ensure", "--concurrency", "17"}} {
 		if _, _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "out of range") {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -217,5 +203,22 @@ func TestApplyLoginEnvironment(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDaemonDiagnosticsNeverFetchPrices(t *testing.T) {
+	doctorMachine(t)
+	old := doctorOptions
+	t.Cleanup(func() { doctorOptions = old })
+	var fetch []bool
+	doctorOptions = func(f bool) doctor.Options {
+		fetch = append(fetch, f)
+		opts := old(f)
+		opts.RefreshPrices = func(context.Context) error { t.Error("price list fetched"); return nil }
+		return opts
+	}
+	report := uiDiagnostics(context.Background())
+	if len(report.Checks) == 0 || len(fetch) != 1 || fetch[0] {
+		t.Fatalf("checks %d, fetch flags %v", len(report.Checks), fetch)
 	}
 }

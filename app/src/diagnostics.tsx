@@ -33,7 +33,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** The report `baum doctor` prints, as the local server computes it. It never
+/** The report `baum internal doctor` prints, as the local server computes it. It never
  * fetches the price list; "Check again" re-inspects this machine. */
 export function DiagnosticsSection() {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
@@ -76,8 +76,8 @@ export function DiagnosticsSection() {
         </Button>
       </div>
       <p className="text-xs">
-        The same report as <code>baum doctor</code>: which tools and credentials baum found on this
-        machine, never their values.
+        The same report as <code>baum internal doctor</code>: which tools and credentials baum found
+        on this machine, never their values.
       </p>
       {error ? (
         <Alert>

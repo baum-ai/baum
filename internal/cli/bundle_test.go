@@ -84,7 +84,7 @@ func bundleEnv(t *testing.T) (assembletest.Repo, *fakeGitHub, []string) {
 func TestBundleWritesOnlyTheBundleToStdout(t *testing.T) {
 	repo, fake, stores := bundleEnv(t)
 	before := repo.State(t)
-	stdout, stderr, err := run(t, append([]string{"bundle", "--pr", "7"}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "bundle", "--pr", "7"}, stores...)...)
 	if err != nil {
 		t.Fatalf("bundle: %v\n%s", err, stderr)
 	}
@@ -119,7 +119,7 @@ func TestBundleWritesOnlyTheBundleToStdout(t *testing.T) {
 
 func TestBundleOutputFile(t *testing.T) {
 	_, _, stores := bundleEnv(t)
-	stdout, _, err := run(t, append([]string{"bundle", "--pr", "7"}, stores...)...)
+	stdout, _, err := run(t, append([]string{"internal", "bundle", "--pr", "7"}, stores...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestBundleOutputFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, stderr, err := run(t, append([]string{"bundle", "--pr", "7", flag, path}, stores...)...)
+		out, stderr, err := run(t, append([]string{"internal", "bundle", "--pr", "7", flag, path}, stores...)...)
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, stderr)
 		}
@@ -151,7 +151,7 @@ func TestBundleOutputFile(t *testing.T) {
 
 func TestBundleFlagsReachTheResolver(t *testing.T) {
 	_, fake, stores := bundleEnv(t)
-	if _, stderr, err := run(t, append([]string{"bundle", "--repo", "acme/demo"}, stores...)...); err != nil {
+	if _, stderr, err := run(t, append([]string{"internal", "bundle", "--repo", "acme/demo"}, stores...)...); err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
 	if len(fake.resolved) != 1 || fake.resolved[0].PR != 0 || fake.resolved[0].Repo != "acme/demo" {
@@ -197,7 +197,7 @@ func TestBundleErrors(t *testing.T) {
 				tc.setup(t, fake)
 			}
 			before := repo.State(t)
-			stdout, stderr, err := run(t, append(append([]string{"bundle"}, tc.args...), stores...)...)
+			stdout, stderr, err := run(t, append(append([]string{"internal", "bundle"}, tc.args...), stores...)...)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want it to mention %q\nstderr: %s", err, tc.want, stderr)
 			}
@@ -215,7 +215,7 @@ func TestBundleFailureWritesNoOutputFile(t *testing.T) {
 	_, fake, stores := bundleEnv(t)
 	fake.Err = github.ErrNotFound
 	path := filepath.Join(t.TempDir(), "bundle.json")
-	if _, _, err := run(t, append([]string{"bundle", "--pr", "7", "-o", path}, stores...)...); !errors.Is(err, github.ErrNotFound) {
+	if _, _, err := run(t, append([]string{"internal", "bundle", "--pr", "7", "-o", path}, stores...)...); !errors.Is(err, github.ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -223,7 +223,7 @@ func TestBundleFailureWritesNoOutputFile(t *testing.T) {
 	}
 	// A directory that does not exist is an error, and nothing reaches stdout.
 	fake.Err = nil
-	stdout, _, err := run(t, append([]string{"bundle", "--pr", "7", "-o", filepath.Join(t.TempDir(), "absent", "b.json")}, stores...)...)
+	stdout, _, err := run(t, append([]string{"internal", "bundle", "--pr", "7", "-o", filepath.Join(t.TempDir(), "absent", "b.json")}, stores...)...)
 	if err == nil || !strings.Contains(err.Error(), "writing the bundle") || stdout != "" {
 		t.Errorf("err = %v, stdout = %.50q", err, stdout)
 	}
@@ -243,7 +243,7 @@ func TestBundleCancellationCleansUp(t *testing.T) {
 	t.Cleanup(func() { bundleContext = old })
 	before := repo.State(t)
 	dir := t.TempDir()
-	stdout, _, err := run(t, append([]string{"bundle", "--pr", "7", "-o", filepath.Join(dir, "bundle.json")}, stores...)...)
+	stdout, _, err := run(t, append([]string{"internal", "bundle", "--pr", "7", "-o", filepath.Join(dir, "bundle.json")}, stores...)...)
 	if !cancelled || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled = %v, err = %v", cancelled, err)
 	}
@@ -264,7 +264,7 @@ func TestBundleRejectsAnUnknownCap(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[caps]\nmax_sessoins = 3\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := run(t, append([]string{"bundle", "--pr", "7"}, stores...)...)
+	_, _, err := run(t, append([]string{"internal", "bundle", "--pr", "7"}, stores...)...)
 	if err == nil || !strings.Contains(err.Error(), `unknown cap "max_sessoins"`) {
 		t.Errorf("err = %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBundleHonoursConfiguredCaps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[caps]\nmax_comments = 1\nmax_hunk_patch_lines = 2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, err := run(t, append([]string{"bundle", "--pr", "7"}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "bundle", "--pr", "7"}, stores...)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
@@ -293,7 +293,7 @@ func TestBundleHonoursConfiguredCaps(t *testing.T) {
 }
 
 func TestBundleHelp(t *testing.T) {
-	stdout, _, err := run(t, "bundle", "--help")
+	stdout, _, err := run(t, "internal", "bundle", "--help")
 	if err != nil {
 		t.Fatal(err)
 	}

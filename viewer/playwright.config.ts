@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // The standalone app is built from source into a scratch directory and served
-// by a fixture server that stands in for `baum view`, so the suite needs
+// by a fixture server that stands in for `baum internal view`, so the suite needs
 // neither the Go binary nor any hosted API.
 const port = Number.parseInt(process.env.E2E_PORT ?? "4173", 10);
 

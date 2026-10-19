@@ -85,7 +85,7 @@ func runRefresh(cmd *cobra.Command, _ []string) error {
 	if err := versions.RefreshCurrent(ctx, key, saved, document); err != nil {
 		return err
 	}
-	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
+	hint := fmt.Sprintf("baum internal view --pr %d --repo %q", target.Number, target.Repository.String())
 	if override != "" {
 		hint += fmt.Sprintf(" --store %q", override)
 	}
