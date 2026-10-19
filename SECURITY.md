@@ -301,15 +301,19 @@ for the daemon's status and stop it. The socket accepts no other requests yet.
 The daemon does not use the environment of whatever started it. It runs your
 login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
 with only session variables and reads the environment your startup files set,
-then keeps only `PATH`, locale, proxy and certificate settings, the desktop
-session bus and display,
+then keeps only `PATH`, locale, proxy and certificate settings, the SSH agent
+socket and ssh command git uses, the desktop session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
 `GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
 environment is therefore not used. Your home, XDG and temporary directories
 come only from the starting environment, never from the shell, because they
 decide which state directory, lock and job journal the daemon uses. The SSH
-agent is not passed on. If the shell is slow or fails, the same variables come
+agent socket is the starting environment's, else the shell's; it is used only
+to fetch a missing pull request commit from your clone's remote, as `baum
+generate` would, never given to an agent backend, and dropped when it no longer
+exists. The daemon's fetches never prompt: SSH runs in batch mode, so a key
+that needs a passphrase or an unknown host key fails the run with git's error. If the shell is slow or fails, the same variables come
 from the starting environment instead. Startup files can check
 `BAUM_RESOLVING_ENVIRONMENT=1` to skip slow work. The backends then filter this
 environment further, as described under "Agent isolation".

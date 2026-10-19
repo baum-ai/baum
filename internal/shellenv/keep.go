@@ -23,13 +23,20 @@ var Locations = []string{
 // the backend CLIs' configuration directories. Nothing else is passed on.
 var Kept = []string{
 	"USER", "LOGNAME", "SHELL", "LANG", "TZ",
-	"DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY",
+	"SSH_AUTH_SOCK", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY",
+	"GIT_SSH_COMMAND", "GIT_SSH",
 	"PATH",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
 	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
 	"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "GH_PATH",
 	"ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
 }
+
+// preferInherited are kept from the starting process when it has them and
+// from the login shell otherwise. The SSH agent belongs to the session that
+// started the process (launchd's agent for an app started from Finder, the
+// forwarded agent of an ssh login); a shell's own agent is the fallback.
+var preferInherited = []string{"SSH_AUTH_SOCK"}
 
 // keptWindows are the system variables Windows programs need.
 var keptWindows = []string{
@@ -88,7 +95,7 @@ func merge(windows bool, inherited []string, resolved map[string]string) []strin
 		if !ok || !kept(name) {
 			continue
 		}
-		if resolved == nil || location(name) {
+		if resolved == nil || location(name) || slices.Contains(preferInherited, name) {
 			put(name, value)
 		}
 	}

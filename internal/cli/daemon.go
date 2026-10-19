@@ -24,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -238,6 +239,9 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		OpenLogger: openLogger,
 		Prepare: func(ctx context.Context) error {
 			applyLoginEnvironment(ctx, logger)
+			// Nobody answers prompts in the daemon: fetches over SSH run in
+			// batch mode with an agent socket that still exists.
+			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: sshAgent().Socket})
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
@@ -284,6 +288,22 @@ func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, 
 
 // resolveShell is a seam for tests.
 var resolveShell = shellenv.Resolve
+
+// sshAgent replaces a stale SSH agent socket with the login shell's. The
+// shell is not given the stale socket, so it reports the one its own startup
+// files or session provide.
+func sshAgent() *shellenv.Agent {
+	return &shellenv.Agent{Resolve: func(ctx context.Context) (string, error) {
+		var environ []string
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "SSH_AUTH_SOCK=") {
+				environ = append(environ, entry)
+			}
+		}
+		result, err := resolveShell(ctx, shellenv.Options{Environ: environ})
+		return result.Env["SSH_AUTH_SOCK"], err
+	}}
+}
 
 // applyLoginEnvironment replaces this process's environment with the
 // variables the daemon keeps, taken from the login shell when it answers (see

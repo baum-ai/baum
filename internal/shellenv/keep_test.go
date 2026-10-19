@@ -20,7 +20,7 @@ func TestMergeTakesKeptVariablesFromTheLoginShell(t *testing.T) {
 // there too.
 func TestMergeNeverTakesLocationsFromTheShell(t *testing.T) {
 	inherited := []string{"HOME=/home/dev", "PATH=/usr/bin"}
-	resolved := map[string]string{"HOME": "/home/dev", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/other", "TMPDIR": "/shell/tmp", "SSH_AUTH_SOCK": "/tmp/agent.sock", "PATH": "/opt/bin"}
+	resolved := map[string]string{"HOME": "/home/dev", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/other", "TMPDIR": "/shell/tmp", "PATH": "/opt/bin"}
 	got := merge(false, inherited, resolved)
 	want := []string{"HOME=/home/dev", "PATH=/opt/bin"}
 	if !slices.Equal(got, want) {
@@ -44,5 +44,19 @@ func TestMergeFoldsWindowsNames(t *testing.T) {
 	}
 	if names := Names(got); !slices.Equal(names, []string{"Path", "SystemRoot", "UserProfile"}) {
 		t.Fatal(names)
+	}
+}
+
+func TestMergeKeepsTheStartersSSHAgentAndFallsBackToTheShells(t *testing.T) {
+	resolved := map[string]string{"SSH_AUTH_SOCK": "/shell/agent.sock", "GIT_SSH_COMMAND": "ssh -i ~/.ssh/work"}
+	got := merge(false, []string{"SSH_AUTH_SOCK=/launchd/Listeners"}, resolved)
+	want := []string{"GIT_SSH_COMMAND=ssh -i ~/.ssh/work", "SSH_AUTH_SOCK=/launchd/Listeners"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("starter's agent: got %v", got)
+	}
+	got = merge(false, nil, resolved)
+	want = []string{"GIT_SSH_COMMAND=ssh -i ~/.ssh/work", "SSH_AUTH_SOCK=/shell/agent.sock"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("shell fallback: got %v", got)
 	}
 }

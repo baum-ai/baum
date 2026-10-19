@@ -1519,14 +1519,23 @@ which prints the environment as JSON between two copies of a random marker,
 so whatever startup files print is ignored; once it has, whatever is left of
 the shell's process group is killed. `shellenv.Merge` then keeps only:
 `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
-the XDG directories, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
+the XDG directories, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
 `WAYLAND_DISPLAY`, proxy and CA variables, `GITHUB_TOKEN`, `GH_TOKEN`,
 `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
 `GH_PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `BAUM_*`
-and, on Windows, the system variables programs need. `SSH_AUTH_SOCK` is not
-kept: the backends drop it anyway and an agent socket goes stale in a
-long-lived process, so a pull request commit missing from a clone with an SSH
-remote must be fetched from a terminal. The locations, `HOME`, the XDG
+and, on Windows, the system variables programs need. `SSH_AUTH_SOCK` comes
+from the starting process when it has one (launchd's agent for an app started
+from Finder) and from the login shell otherwise, so the daemon can fetch a
+pull request commit missing from a clone with an SSH remote. A socket goes
+stale when its session ends: before each fetch `shellenv.Agent` checks that it
+still exists and otherwise asks the login shell again (at most once a minute)
+or drops it. The daemon installs a `gitlocal.Background`, so its fetches never
+wait for an answer: `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS_REQUIRE=never` and
+`BatchMode=yes` appended to the ssh command that applies (`GIT_SSH_COMMAND`,
+`core.sshCommand`, `GIT_SSH`, else `ssh`); a missing key or unknown host is a
+git error. The backends never receive the agent or any `GIT_` variable. The
+locations, `HOME`, the XDG
 directories, `TMPDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, only ever
 come from the starting process and stay unset when it lacks them: the daemon
 resolved its lock and socket from them before reading the shell, and a state
