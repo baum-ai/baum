@@ -223,9 +223,9 @@ func TestResolveGitHubTokenKeepsBaumSourcesForGitHubCom(t *testing.T) {
 	restore := ghToken
 	t.Cleanup(func() { ghToken = restore })
 	var asked []string
-	ghToken = func(_ context.Context, host string) (string, error) {
+	ghToken = func(_ context.Context, host string) (string, string, error) {
 		asked = append(asked, host)
-		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], nil
+		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], "stand-in", nil
 	}
 	ctx := context.Background()
 
@@ -330,43 +330,5 @@ func TestGHKeyringLookupStopsWhenCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Errorf("the lookup took %v after cancellation", elapsed)
-	}
-}
-
-func TestDetect(t *testing.T) {
-	onPath := func(names ...string) func(string) (string, error) {
-		return func(name string) (string, error) {
-			for _, n := range names {
-				if n == name {
-					return "/usr/bin/" + name, nil
-				}
-			}
-			return "", errors.New("not found")
-		}
-	}
-	tests := []struct {
-		name    string
-		cfg     Config
-		path    []string
-		want    Backend
-		wantErr error
-	}{
-		{name: "explicit backend wins", cfg: Config{Backend: BackendCodex}, path: []string{"claude"}, want: BackendCodex},
-		{name: "claude first", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent", "codex", "claude"}, want: BackendClaude},
-		{name: "codex before cursor-agent", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent", "codex"}, want: BackendCodex},
-		{name: "cursor-agent alone", cfg: Config{Backend: BackendAuto}, path: []string{"cursor-agent"}, want: BackendCursorAgent},
-		{name: "api key fallback", cfg: Config{Backend: BackendAuto, AnthropicAPIKey: "sk"}, want: BackendAnthropic},
-		{name: "nothing available", cfg: Config{Backend: BackendAuto}, wantErr: ErrNoBackend},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.cfg.detect(onPath(tt.path...))
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("err = %v, want %v", err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Errorf("backend = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }

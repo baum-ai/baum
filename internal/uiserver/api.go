@@ -6,8 +6,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
@@ -23,7 +27,21 @@ type LocalAPI struct {
 	PRs, Index, Jobs http.Handler
 	Background       http.Handler
 	Changed          func()
+	// Diagnostics builds the report served at /api/diagnostics; nil serves the
+	// capability fields with a null report. It must honour its context.
+	Diagnostics func(context.Context) doctor.Report
+	// DiagnosticsTimeout bounds one shared run; zero means
+	// defaultDiagnosticsTimeout.
+	DiagnosticsTimeout time.Duration
+
+	// diagnosticsWaiting is a test hook, called once a request is waiting on
+	// the shared run.
+	diagnosticsWaiting func()
 }
+
+const defaultDiagnosticsTimeout = 45 * time.Second
+
+var errDiagnosticsTimeout = errors.New("diagnostics timed out")
 
 // LocalHandler owns bounded per-document viewer resources.
 type LocalHandler struct {
@@ -70,8 +88,46 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps    map[string]int `json:"caps"`
 		}{a.Config.Backend, a.Config.Model, a.Config.Budgets, a.Config.Caps})
 	})
-	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil})
+	// Runs are shared only while one is in flight; a later request runs the
+	// checks again. That is deliberate: the endpoint is local, authenticated
+	// and user-triggered, so there is no cache.
+	var diagnostics singleflight.Group
+	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
+		if a.Diagnostics != nil {
+			timeout := a.DiagnosticsTimeout
+			if timeout <= 0 {
+				timeout = defaultDiagnosticsTimeout
+			}
+			// Concurrent requests share one run, which a single client
+			// disconnecting does not cancel.
+			result := diagnostics.DoChan("report", func() (any, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				defer cancel()
+				done := make(chan doctor.Report, 1)
+				go func() { done <- a.Diagnostics(ctx) }()
+				select {
+				case report := <-done:
+					return report, nil
+				case <-ctx.Done():
+					return nil, errDiagnosticsTimeout
+				}
+			})
+			if a.diagnosticsWaiting != nil {
+				a.diagnosticsWaiting()
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case res := <-result:
+				if res.Err != nil {
+					http.Error(w, res.Err.Error(), http.StatusGatewayTimeout)
+					return
+				}
+				body["report"] = res.Val
+			}
+		}
+		writeJSON(w, body)
 	})
 	mux.HandleFunc("GET /api/versions", func(w http.ResponseWriter, r *http.Request) {
 		c, key, _, ok := a.selector(w, r)

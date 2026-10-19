@@ -19,6 +19,7 @@ import {
 } from "@baum/viewer/navigation";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
+import { DiagnosticsSection } from "./diagnostics";
 import {
   appBase,
   appURL,
@@ -613,7 +614,7 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
           key={clone.id}
         >
           <h2 className="text-lg">{clone.repository}</h2>
-          <p>
+          <p className="[overflow-wrap:anywhere]">
             {clone.path} — {clone.available ? "Available" : "Unavailable; history retained"}
           </p>
           <RepositorySettings
@@ -631,6 +632,7 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
           </Button>
         </div>
       ))}
+      <DiagnosticsSection />
     </section>
   );
 }

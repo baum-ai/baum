@@ -164,3 +164,50 @@ func TestAutoAppliesTheModelToClaudeOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestBackendPathsReplaceThePATHLookup(t *testing.T) {
+	t.Run("explicit path found without PATH", func(t *testing.T) {
+		fakeBinary(t, "other", `true`) // PATH holds no claude
+		custom := filepath.Join(t.TempDir(), "claude-custom")
+		if err := os.WriteFile(custom, []byte("#!/bin/sh\necho \"2.3.4 (Claude Code)\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cfg := config.Config{BackendPaths: map[config.Backend]string{config.BackendClaude: custom}}
+		selected, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackendsFor(cfg), nil)
+		if err != nil || selected.Backend.Name() != "claude" || selected.Version != "2.3.4" {
+			t.Fatalf("%v %v", selected, err)
+		}
+	})
+	t.Run("missing explicit path does not fall back to PATH", func(t *testing.T) {
+		fakeBinary(t, "claude", `echo "2.1.7 (Claude Code)"`)
+		missing := filepath.Join(t.TempDir(), "missing-claude")
+		cfg := config.Config{BackendPaths: map[config.Backend]string{config.BackendClaude: missing}}
+		var skipped strings.Builder
+		_, err := generate.Select(context.Background(), config.BackendClaude, "", generate.DefaultBackendsFor(cfg), &skipped)
+		var pathErr *generate.ExplicitPathError
+		if !errors.As(err, &pathErr) || generate.CategoryOf(err) != generate.CategoryBackend {
+			t.Fatalf("err = %v, want an ExplicitPathError of the backend category", err)
+		}
+		for _, want := range []string{"backend_paths.claude", missing} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "install it") {
+			t.Errorf("error %q suggests installing a tool that is installed", err)
+		}
+
+		// auto skips claude with the same reason and, with no codex, fails naming it.
+		_, err = generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackendsFor(cfg), &skipped)
+		if err == nil || !strings.Contains(skipped.String(), "backend_paths.claude") || !strings.Contains(err.Error(), "backend_paths.claude") {
+			t.Fatalf("auto: err = %v, skipped = %q", err, skipped.String())
+		}
+	})
+	t.Run("an explicit codex path that is a directory", func(t *testing.T) {
+		cfg := config.Config{BackendPaths: map[config.Backend]string{config.BackendCodex: t.TempDir()}}
+		_, err := generate.Select(context.Background(), config.BackendCodex, "", generate.DefaultBackendsFor(cfg), nil)
+		if err == nil || !strings.Contains(err.Error(), "backend_paths.codex") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}

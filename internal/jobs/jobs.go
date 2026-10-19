@@ -116,16 +116,26 @@ func Directory() (string, error) {
 	}
 	return filepath.Join(root, "baum"), nil
 }
+
+// DefaultPath is the queue file Open uses for an empty path: jobs.json in
+// Directory.
+func DefaultPath() (string, error) {
+	dir, e := Directory()
+	if e != nil {
+		return "", e
+	}
+	return filepath.Join(dir, "jobs.json"), nil
+}
+
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
 	if executor == nil || concurrency < 1 || concurrency > 16 {
 		return nil, errors.New("invalid runner configuration")
 	}
 	if path == "" {
-		dir, e := Directory()
-		if e != nil {
+		var e error
+		if path, e = DefaultPath(); e != nil {
 			return nil, e
 		}
-		path = filepath.Join(dir, "jobs.json")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err

@@ -14,9 +14,10 @@ Everything runs locally:
 - the diff and checkout come from your local git clone;
 - pull request metadata, checks and conversation come from GitHub with your
   own token;
-- the review itself is written by the model backend you configure: the
-  `claude` or `codex` CLI already on your `PATH`. Backends for the Anthropic
-  API and the `cursor-agent` CLI are planned but not available yet.
+- the review itself is written by a coding-agent CLI already installed on your
+  machine, `claude` or `codex`, found on your `PATH` or at the path you set
+  with `backend_paths` in the config file. Backends for the Anthropic API and
+  the `cursor-agent` CLI are planned but not available yet.
 
 ## Status
 
@@ -90,7 +91,64 @@ baum validate review.json
 # Also check it against the bundle it was generated from: hunk line ranges,
 # section outlines, evidence against checks, and restricted sessions.
 baum validate review.json --bundle bundle.json
+
+# Show why a backend or the GitHub token is not found, with a fix for each
+# problem (see "baum doctor" below).
+baum doctor
 ```
+
+### baum doctor
+
+```sh
+baum doctor [--json] [--offline]
+```
+
+Doctor reports what baum finds on this machine and why, with a `fix:` line
+for every warning and problem:
+
+- the resolved path and version of `git` (2.29 or newer), `gh`, `claude`,
+  `codex` and `cursor-agent`, and whether each came from `backend_paths` in the
+  config file, `GH_PATH` or `PATH`;
+- which backend `--backend auto` would pick and why, including why `claude`
+  was skipped, and the configured backend when it is not `auto`;
+- where the GitHub token comes from for github.com and for the host of every
+  registered clone: the environment (`GITHUB_TOKEN`, `GH_TOKEN`), the config
+  file, the GitHub CLI's environment variable or `hosts.yml`, or its keyring
+  (`gh auth token`). The token itself, or any part of it, is never printed. A
+  host baum would not talk to (not github.com, a `*.ghe.com` tenant, a host in
+  gh's `hosts.yml` or `GH_HOST`) is a problem, with the fix;
+- whether `ANTHROPIC_API_KEY` is set (nothing uses it in this version);
+- the price list: `baum generate` and the other commands use the embedded
+  list, and `baum ui` fetches the signed list when it starts and keeps the
+  newest one in its state directory so queued jobs can resume; the source is
+  `embedded`, `fetched` or `cached`. Doctor's own fetch stores nothing and only
+  shows whether fetching works and which version is published;
+- the config file, repository registry, job queue, discovery cache, `baum ui`
+  instance directory and each registered clone's review store, and the `PATH`
+  entries. Doctor creates none of them and opens the registry read-only.
+
+It runs `--version` on `git`, `gh` and `cursor-agent`, the same checks
+`baum generate` runs for `claude` and `codex` (including codex's read-only
+sandbox check) and, when no token is configured, `gh auth token`. The tools get
+the same filtered environment their backends give them, never your provider
+keys or tokens, and a tool that hangs is stopped with its child processes.
+Its one network request is the signed price list; `--offline` skips it.
+`--json` prints the report as one object, `{"status", "checks": [{"id", "label", "status", "detail", "path", "version",
+"source", "fix"}]}`, where `status` is `ok`, `warning`, `problem` or `info`
+(`path`, `version`, `source` and `fix` are present when they apply). A config
+file that does not load is reported as a problem and the rest of the report
+uses default settings. Doctor exits 0 when no check is a problem, warnings
+allowed, 6 when one is, and 130 when interrupted. A config file that does not
+parse is reported by line and column (a syntax error), or by key, line and
+column (a wrong type or value), never by the value, in case it is a token. If
+the file itself parses but the load still fails, because `BAUM_BACKEND` or the
+file's `backend` value is invalid, doctor reads the file and applies
+`BAUM_MODEL` and the token variables as the commands would.
+
+A missing or failing backend is a warning. The `backend: auto` check is the
+problem when neither `claude` nor `codex` is usable. A backend is a problem
+itself when it is the configured backend (`backend` in the config file or
+`BAUM_BACKEND`), or when `backend_paths` names a file that cannot be run.
 
 ### Pull request discovery
 
@@ -203,6 +261,9 @@ baum sends it no credential of its own.
 `--backend auto` (the default, or `backend` in the config file) uses `claude`
 when it is installed and passes its checks (a recent enough version), and `codex`
 otherwise (recent enough, and its read-only sandbox starts on this machine).
+Each is found at its `backend_paths` entry when the config file has one, else
+on `PATH`; see [Configuration](#configuration). `baum doctor` shows what `auto`
+picks and why.
 `--backend claude` and `--backend codex` use exactly that one. `--model` names
 a model of one backend, so with `auto` it applies to `claude` only: when `auto`
 falls back to `codex`, codex uses its own default model, and stderr says why
@@ -387,7 +448,7 @@ baum reads `$XDG_CONFIG_HOME/baum/config.toml`, which defaults to
 mode 0600 when written.
 
 ```toml
-backend = "auto"          # auto | anthropic | claude | codex | cursor-agent
+backend = "auto"          # auto | claude | codex (anthropic and cursor-agent are accepted but not available yet)
 model = ""                # backend default when empty
 github_token = ""         # optional; see the precedence below
 
@@ -400,6 +461,12 @@ max_tokens = 2000000
 [caps]
 # Overrides for the generation bundle caps, by name. Defaults apply otherwise.
 # max_sessions = 12
+
+[backend_paths]
+# Absolute path of a backend's executable, used instead of looking it up on
+# PATH. Keys: claude, codex, cursor-agent.
+# claude = "/opt/homebrew/bin/claude"
+# codex = "/opt/homebrew/bin/codex"
 ```
 
 The caps are `max_sessions` (12), `max_prompts_per_session` (2),
@@ -427,7 +494,7 @@ environment variables are:
 | --- | --- |
 | `GITHUB_TOKEN`, `GH_TOKEN` | github.com token, also used for `*.ghe.com` tenants as the GitHub CLI uses it; when neither is set and the file has none, the GitHub CLI's token is used |
 | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it and only ever sent to an Enterprise host the GitHub CLI knows (logged in with `gh auth login`, or named by `GH_HOST`) |
-| `ANTHROPIC_API_KEY` | key for the `anthropic` backend |
+| `ANTHROPIC_API_KEY` | key for the `anthropic` backend, which is not available in this version; never passed to the `claude` and `codex` CLIs |
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
@@ -445,9 +512,19 @@ stays unknown unless the protection is readable. The repository is
 `--repo` or the one `origin` names, and the pull request `--pr` or the one
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
-`backend = "auto"` picks `claude`, then `codex`, as described under
-[`baum generate`](#baum-generate). `anthropic` and `cursor-agent` are accepted
-names but not available in this version.
+`backend = "auto"` picks `claude` when it is installed and passes its checks,
+else `codex` when it does. `cursor-agent` and `anthropic` are not available in
+this version, so `auto` never picks them, and `ANTHROPIC_API_KEY` is not used.
+
+`[backend_paths]` names a backend's executable by absolute path, for `claude`,
+`codex` and `cursor-agent`. A named path is used instead of the `PATH` lookup,
+never as well as it: when the file is missing or not executable the backend
+fails naming `backend_paths.<name>`, and a `claude` on `PATH` is not tried. Use
+it where `PATH` is not what your shell has, for example an application started
+from the macOS Finder, which does not inherit the shell's `PATH`. A key other
+than those three, or a relative path, is an error when the config loads.
+Per-repository settings do not override it. `baum doctor` reports the path and
+version each backend resolves to.
 
 baum sends no telemetry and talks to no server other than GitHub, the
 model provider you configure and `static.usebaum.com`, from which it
@@ -579,6 +656,28 @@ input (head, backend, model, budgets, caps or price list version) replaces
 queued work; running work must finish or be cancelled first. Cancelling propagates to the backend process group and removes
 its temporary checkout and archives. Failed, cancelled and interrupted attempts
 never publish a partial version.
+
+The "Repositories & settings" page ends with a Diagnostics section: the same
+report as `baum doctor`, each check with its status (OK, Warning, Problem or
+Info, as text), detail, path, version, source and fix, problems first, and a
+"Check again" button that runs it again and is disabled while a run is in
+flight. It exists for a `baum ui` started without a shell `PATH` (for example
+from Finder), where a missing tool or token is the likeliest failure.
+`GET /api/diagnostics` returns the capability flags and the report:
+
+```json
+{"local": true, "generation_runner": true, "discovery": true, "index": true,
+ "report": {"status": "problem", "checks": [
+   {"id": "gh", "label": "GitHub CLI", "status": "problem", "detail": "…",
+    "fix": "…"}]}}
+```
+
+`report` has the shape of `baum doctor --json` and is `null` when the server
+has no diagnostics provider. `baum ui` runs the report without the price-list
+fetch (the page shows what the startup refresh produced) and with no tokens or
+keys in it. Concurrent requests share one run, which a disconnecting client does
+not cancel, and a run is cut off after 45 seconds with `504`. The endpoint
+accepts `GET` only.
 
 `POST /api/jobs/estimate` accepts `{items:[{clone,pr}],mode:"single"|"batch"}`.
 An estimate expires after five minutes. `POST /api/jobs` requires its

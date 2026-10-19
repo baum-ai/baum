@@ -14,10 +14,79 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 )
+
+// Source says where the active price list came from: compiled in, fetched by
+// Refresh in this process, or loaded by LoadPersisted from the list an earlier
+// baum ui run stored.
+type Source struct {
+	// Origin is "embedded", "fetched" or "cached".
+	Origin  string
+	Version string
+	// FetchedAt is when Refresh installed the active list; zero for the
+	// embedded and cached lists.
+	FetchedAt time.Time
+	// RefreshError is why the last Refresh failed; empty after a success or
+	// before any attempt.
+	RefreshError string
+}
+
+// Origins of the active price list.
+const (
+	OriginEmbedded = "embedded"
+	OriginFetched  = "fetched"
+	OriginCached   = "cached"
+)
+
+var refreshState struct {
+	mu        sync.Mutex
+	list      *List
+	origin    string
+	fetchedAt time.Time
+	err       string
+}
+
+// CurrentSource describes the active price list and the last Refresh. It is
+// safe to call while Refresh runs.
+func CurrentSource() Source {
+	active := Active()
+	source := Source{Origin: OriginEmbedded, Version: active.Version()}
+	if active != Embedded() {
+		source.Origin = OriginFetched
+	}
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	if refreshState.list != nil && refreshState.list == active {
+		source.Origin, source.FetchedAt = refreshState.origin, refreshState.fetchedAt
+	}
+	source.RefreshError = refreshState.err
+	return source
+}
+
+// noteRefresh records the outcome of one Refresh: the list it installed, if
+// any, and its error. A list stays recorded when only storing it failed.
+func noteRefresh(installed *List, err error) {
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	if installed != nil {
+		refreshState.list, refreshState.origin, refreshState.fetchedAt = installed, OriginFetched, time.Now()
+	}
+	refreshState.err = ""
+	if err != nil {
+		refreshState.err = err.Error()
+	}
+}
+
+// noteCached records a stored list LoadPersisted installed.
+func noteCached(installed *List) {
+	refreshState.mu.Lock()
+	defer refreshState.mu.Unlock()
+	refreshState.list, refreshState.origin, refreshState.fetchedAt = installed, OriginCached, time.Time{}
+}
 
 // persistedName holds the newest installed published list beside the job
 // journal, with its signature, so queued jobs confirmed against it can resume.
@@ -57,7 +126,10 @@ func loadPersisted(dir string, key ed25519.PublicKey) error {
 	if e != nil {
 		return e
 	}
-	Install(Newest(Active(), list))
+	if Newest(Active(), list) == list {
+		Install(list)
+		noteCached(list)
+	}
 	return nil
 }
 
@@ -81,7 +153,9 @@ func Refresh(ctx context.Context, dir string) error {
 	return refresh(ctx, client, PublishedURL, PublishedKey(), dir)
 }
 
-func refresh(ctx context.Context, client *http.Client, published string, key ed25519.PublicKey, dir string) error {
+func refresh(ctx context.Context, client *http.Client, published string, key ed25519.PublicKey, dir string) (err error) {
+	var installed *List
+	defer func() { noteRefresh(installed, err) }()
 	get := func(url string) ([]byte, error) {
 		r, e := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if e != nil {
@@ -113,9 +187,12 @@ func refresh(ctx context.Context, client *http.Client, published string, key ed2
 	if e != nil {
 		return e
 	}
-	installed := Newest(Active(), list)
-	Install(installed)
-	if dir == "" || installed != list {
+	if Newest(Active(), list) != list {
+		return nil
+	}
+	Install(list)
+	installed = list
+	if dir == "" {
 		return nil
 	}
 	encoded, e := json.Marshal(persisted{List: raw, Signature: signature})

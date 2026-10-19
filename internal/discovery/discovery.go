@@ -100,14 +100,23 @@ func New(client *github.Client, directory string) *Service {
 	return &Service{client: client, directory: directory, now: time.Now, validated: map[string]bool{}}
 }
 
+// DefaultDirectory is the cache directory used when New is given none: baum/discovery
+// under the OS user cache directory ($XDG_CACHE_HOME on Linux).
+func DefaultDirectory() (string, error) {
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "baum", "discovery"), nil
+}
+
 func (s *Service) path(identity, repository string) (string, error) {
 	directory := s.directory
 	if directory == "" {
-		root, err := os.UserCacheDir()
-		if err != nil {
+		var err error
+		if directory, err = DefaultDirectory(); err != nil {
 			return "", err
 		}
-		directory = filepath.Join(root, "baum", "discovery")
 	}
 	sum := sha256.Sum256([]byte(identity + "\x00" + strings.ToLower(repository)))
 	return filepath.Join(directory, hex.EncodeToString(sum[:])+".json"), nil

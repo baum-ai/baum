@@ -287,3 +287,87 @@ it("shows failed background refresh without hiding cached reviews", async () => 
   expect(node.textContent).toContain("Cached reviews remain readable");
   expect(node.querySelector('[aria-label="Select acme/demo #1"]')).not.toBeNull();
 });
+
+const diagnosticsReport = {
+  status: "problem",
+  checks: [
+    { id: "git", label: "git", status: "ok", detail: "git is available.", path: "/usr/bin/git" },
+    {
+      id: "gh",
+      label: "GitHub CLI",
+      status: "warning",
+      detail: "gh is old.",
+      version: "2.40.0",
+      fix: "Upgrade gh.",
+    },
+    {
+      id: "token",
+      label: "GitHub token",
+      status: "problem",
+      detail: "No token found.",
+      source: "none",
+      fix: "Run gh auth login.",
+    },
+  ],
+};
+function stubDiagnostics(respond: () => Promise<Response>) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const calls = { count: 0 };
+  vi.mocked(fetch).mockImplementation((...args) => {
+    if (String(args[0]) !== "/s/test-ns/api/diagnostics") return original(...args);
+    calls.count++;
+    return respond();
+  });
+  return calls;
+}
+it("lists diagnostics problems first with status text and fixes", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Diagnostics");
+  expect(text).toContain("Overall: Problem. 1 problem found.");
+  for (const word of ["OK", "Warning", "Problem"]) expect(text).toContain(word);
+  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).toContain("Fix: Upgrade gh.");
+  expect(text).toContain("/usr/bin/git");
+  expect(text).toContain("2.40.0");
+  const checks = [...node.querySelectorAll("li h3")].map((h) => h.textContent);
+  expect(checks).toEqual(["GitHub token", "GitHub CLI", "git"]);
+});
+it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  let resolve: (r: Response) => void = () => {};
+  const calls = stubDiagnostics(() => new Promise<Response>((r) => (resolve = r)));
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Checking this machine…");
+  const button = () =>
+    [...node.querySelectorAll("button")].find((b) => /Check/.test(b.textContent ?? ""))!;
+  expect(button().disabled).toBe(true);
+  await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
+  expect(button().textContent).toBe("Check again");
+  expect(button().disabled).toBe(false);
+  expect(calls.count).toBe(1);
+  await act(async () => button().click());
+  expect(calls.count).toBe(2);
+  expect(button().disabled).toBe(true);
+  await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
+  expect(button().disabled).toBe(false);
+});
+it("shows a diagnostics error with a retry that recovers", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  let ok = false;
+  const calls = stubDiagnostics(async () =>
+    ok
+      ? Response.json({ local: true, report: diagnosticsReport })
+      : new Response("boom", { status: 504 }),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Local request failed (504): boom");
+  ok = true;
+  const retry = [...node.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
+  await act(async () => retry.click());
+  expect(calls.count).toBe(2);
+  expect(node.textContent).not.toContain("boom");
+  expect(node.textContent).toContain("Fix: Run gh auth login.");
+});

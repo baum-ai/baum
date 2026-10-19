@@ -66,7 +66,11 @@ type Clone struct {
 	Settings   Settings `json:"settings"`
 	Available  bool     `json:"available"`
 }
-type Registry struct{ db *sql.DB }
+type Registry struct {
+	db *sql.DB
+	// noSchema marks a read-only registry whose file has no tables yet.
+	noSchema bool
+}
 
 func Path() (string, error) {
 	p, e := config.Path()
@@ -98,15 +102,11 @@ func Open(path string) (*Registry, error) {
 	if ce != nil {
 		return nil, ce
 	}
-	absolute, e := filepath.Abs(path)
+	uri, e := databaseURI(path)
 	if e != nil {
 		return nil, e
 	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	db, e := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)")
+	db, e := sql.Open("sqlite", uri+"?_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)")
 	if e != nil {
 		return nil, e
 	}
@@ -118,6 +118,51 @@ func Open(path string) (*Registry, error) {
 	}
 	return &Registry{db: db}, nil
 }
+
+func databaseURI(path string) (string, error) {
+	absolute, e := filepath.Abs(path)
+	if e != nil {
+		return "", e
+	}
+	uriPath := filepath.ToSlash(absolute)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	return (&url.URL{Scheme: "file", Path: uriPath}).String(), nil
+}
+
+// OpenReadOnly opens an existing registry only to list it. Unlike Open it
+// creates no directory, file or table and changes no file mode, and SQLite
+// opens the file read-only, so it writes no journal. A missing file is an error
+// wrapping fs.ErrNotExist; a file without tables lists no clones.
+func OpenReadOnly(path string) (*Registry, error) {
+	if path == "" {
+		var e error
+		path, e = Path()
+		if e != nil {
+			return nil, e
+		}
+	}
+	if _, e := os.Stat(path); e != nil {
+		return nil, e
+	}
+	uri, e := databaseURI(path)
+	if e != nil {
+		return nil, e
+	}
+	db, e := sql.Open("sqlite", uri+"?mode=ro&_pragma=busy_timeout(10000)")
+	if e != nil {
+		return nil, e
+	}
+	db.SetMaxOpenConns(1)
+	var tables int
+	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
+		_ = db.Close()
+		return nil, e
+	}
+	return &Registry{db: db, noSchema: tables < 2}, nil
+}
+
 func (r *Registry) Close() error { return r.db.Close() }
 func inspect(ctx context.Context, path string) (Clone, error) {
 	repo, e := gitlocal.Open(ctx, path, gitlocal.Options{})
@@ -243,6 +288,9 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	return e
 }
 func (r *Registry) List(ctx context.Context) ([]Clone, error) {
+	if r.noSchema {
+		return []Clone{}, nil
+	}
 	rows, e := r.db.QueryContext(ctx, `SELECT c.id,c.path,c.common_dir,c.repository,r.settings FROM clones c JOIN repositories r ON c.repository=r.identity ORDER BY c.repository,c.path`)
 	if e != nil {
 		return nil, e

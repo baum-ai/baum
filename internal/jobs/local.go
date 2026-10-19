@@ -90,7 +90,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	cfg := c.Settings.Resolve(l.Config)
 	backends := l.Backends
 	if backends.Claude == nil {
-		backends = generate.DefaultBackends()
+		backends = generate.DefaultBackendsFor(cfg)
 	}
 	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
@@ -159,7 +159,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	}
 	backends := l.Backends
 	if backends.Claude == nil {
-		backends = generate.DefaultBackends()
+		backends = generate.DefaultBackendsFor(cfg)
 	}
 	selected, e := generate.Select(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
 	if e != nil {

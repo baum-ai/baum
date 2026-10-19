@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
@@ -37,6 +38,16 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 }
 func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	return d.Cached(ctx, repository)
+}
+
+// browserDiagnostics is a fixed report: no machine is inspected.
+func browserDiagnostics(context.Context) doctor.Report {
+	return doctor.Report{Status: doctor.StatusProblem, Checks: []doctor.Check{
+		{ID: "git", Label: "git", Status: doctor.StatusOK, Detail: "git is available.", Path: "/usr/bin/git", Version: "2.43.0"},
+		{ID: "gh", Label: "GitHub CLI", Status: doctor.StatusWarning, Detail: "gh is older than the version baum was tested with.", Path: "/usr/local/bin/gh", Version: "2.40.0", Fix: "Upgrade gh to 2.45.0 or newer."},
+		{ID: "github-token", Label: "GitHub token", Status: doctor.StatusProblem, Detail: "No GitHub token was found in the environment, the config file or gh.", Fix: "Run gh auth login, or set github_token in ~/.config/baum/a-deliberately-long-directory-name/for-narrow-layouts/config.toml."},
+		{ID: "price-list", Label: "Price list", Status: doctor.StatusInfo, Detail: "Using the built-in price list.", Source: "built-in"},
+	}}
 }
 
 type browserTransport func(*http.Request) (*http.Response, error)
@@ -189,7 +200,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	}
 	defer runner.Close()
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
-	api := LocalAPI{Registry: registry, Config: cfg, PRs: DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler()}.Handler()
+	api := LocalAPI{Registry: registry, Config: cfg, PRs: DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Diagnostics: browserDiagnostics}.Handler()
 	defer api.Close()
 	server.opts.API = api
 	url, err := server.Listen(4167)

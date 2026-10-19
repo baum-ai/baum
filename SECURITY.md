@@ -52,6 +52,33 @@ fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
 
+## What `baum doctor` runs and prints
+
+`baum doctor` diagnoses the machine and starts no model. It runs
+`<tool> --version` for `git`, `gh` and `cursor-agent`, each with a timeout, in
+a process group that is killed whole when the timeout passes, and with the
+filtered environment of the local backends, which drops provider keys and
+GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
+path comes from `backend_paths`, `GH_PATH` or `PATH`;
+the same checks `baum generate` runs for `claude` and `codex`, which include
+codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
+temporary directory it removes); and, only when no token comes from the
+environment, the config file or `gh`'s own files, `gh auth token
+--secure-storage --hostname <host>`. Its one network contact is the signed price
+list described above, skipped with `--offline`; nothing else leaves the machine.
+It creates no files of its own: it opens the registry read-only (SQLite
+`mode=ro`, so no journal, table or file mode changes) and only when it exists,
+and does not create a review store. A config file that does not parse is shown
+by position, and by key for a wrong type or value, and never by its text. Asking
+gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
+its own configuration, as `baum generate` does.
+
+It never prints a token or an API key, or a prefix, length or hash of one. For a
+GitHub token it prints only where it was found (an environment variable's name,
+the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
+whether it is set. It does print paths, tool versions and the `PATH` entries,
+so look at a report before pasting it into a public issue.
+
 ## What `baum view` shows
 
 `baum view` listens only on `127.0.0.1` and never contacts a server. Besides
@@ -250,6 +277,9 @@ OS locking prevents concurrent owners and releases locks after process exit.
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
+`GET /api/diagnostics` serves the `baum doctor` report behind the same
+authentication, Origin and Host checks, runs the same bounded commands as
+`baum doctor` but never the price-list fetch, and is limited to `GET`.
 Stored image APIs return only document-listed, content-checked PNG, JPEG, GIF
 or WebP copies. They reject SVG/HTML and never follow document URLs. Images
 carry nosniff and a sandboxed, deny-all content security policy. Local successful
