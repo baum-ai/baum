@@ -216,8 +216,13 @@ func (f *threadState) noteUserMessageTurn(line codextranscript.Line) {
 // itemCompleted maps the human prompt that newer Codex versions record only as
 // an item_completed UserMessage item, with no user_message event. In a turn
 // that still writes user_message events every item_completed is a discarded
-// copy, so no prompt counts twice. Other item types are discarded as before.
+// copy, so no prompt counts twice. A SubAgentActivity item, in any turn, is
+// sub-agent activity evidence like a sub_agent_activity event. Other item
+// types are discarded as before.
 func (f *threadState) itemCompleted(line codextranscript.Line, completed *codextranscript.ItemCompleted) (accountCategory, string, error) {
+	if activity, ok := subAgentActivityItem(completed.Item); ok {
+		return f.subAgentActivity(line, activity)
+	}
 	turnID := completed.TurnID
 	if turnID == "" {
 		turnID = f.openTurn
@@ -266,6 +271,25 @@ func (f *threadState) itemCompleted(line codextranscript.Line, completed *codext
 	message.Images, message.LocalImages, message.TextElements = rawArray(images), rawArray(localImages), rawArray(elements)
 	f.addHumanInput(line, message)
 	return accountMapped, "", nil
+}
+
+// subAgentActivityItem decodes an item_completed SubAgentActivity item, the
+// form current Codex versions write instead of a sub_agent_activity event.
+// The item's id is the event_id: the call_id of the collaboration tool call
+// (spawn_agent, send_message, ...) it reports on. ok is false for any other
+// item type, including one that is not an object.
+func subAgentActivityItem(raw json.RawMessage) (codextranscript.SubAgentActivity, bool) {
+	var item struct {
+		Type          string `json:"type"`
+		ID            string `json:"id"`
+		Kind          string `json:"kind"`
+		AgentThreadID string `json:"agent_thread_id"`
+		AgentPath     string `json:"agent_path"`
+	}
+	if json.Unmarshal(raw, &item) != nil || item.Type != "SubAgentActivity" {
+		return codextranscript.SubAgentActivity{}, false
+	}
+	return codextranscript.SubAgentActivity{EventID: item.ID, Kind: item.Kind, AgentThreadID: item.AgentThreadID, AgentPath: item.AgentPath}, true
 }
 
 // shiftTextElements returns a text part's text_elements with each byte_range
@@ -359,6 +383,13 @@ func (f *threadState) endTurn(turnID string, aborted bool) (accountCategory, str
 }
 
 func (f *threadState) subAgentActivity(line codextranscript.Line, activity codextranscript.SubAgentActivity) (accountCategory, string, error) {
+	for _, seen := range f.activities {
+		if seen.activity == activity {
+			// A rollout resumed across Codex versions can report one activity
+			// both as a sub_agent_activity event and as an item_completed item.
+			return accountDiscarded, "context/sub_agent_activity_copy", nil
+		}
+	}
 	f.activities = append(f.activities, activityEvidence{line: line, activity: activity})
 	evidence := f.b.toolByCall[callKey(f.meta.ID, activity.EventID)]
 	if evidence == nil {

@@ -134,6 +134,9 @@ func (b *builder) ownedBoundary(file *codextranscript.File) (int, error) {
 		}
 		return *start, nil
 	}
+	if file.Meta.ForkedFromID == "" {
+		return b.unforkedBoundary(file)
+	}
 	fork := b.tree.Rollout(file.Meta.ForkedFromID)
 	if fork == nil {
 		return 0, fmt.Errorf("child rollout %s names missing fork source %s", file.Path, file.Meta.ForkedFromID)
@@ -150,6 +153,33 @@ func (b *builder) ownedBoundary(file *codextranscript.File) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("child rollout %s has no provable own-history boundary", file.Path)
+}
+
+// unforkedBoundary owns a child rollout from its first line when it records
+// neither a fork source nor a history start, as a collaboration spawn_agent
+// child started with fork_turns "none" does. Such a child must show no
+// inherited history: no session_meta after its own and no turn its parent
+// also ran. Anything else fails rather than risk counting history twice.
+func (b *builder) unforkedBoundary(file *codextranscript.File) (int, error) {
+	parent := b.tree.Rollout(file.Meta.ParentThreadID)
+	if parent == nil {
+		return 0, fmt.Errorf("child rollout %s names missing parent %s", file.Path, file.Meta.ParentThreadID)
+	}
+	parentTurns := map[string]bool{}
+	for _, line := range parent.Lines {
+		if line.EventMsg != nil && line.EventMsg.TaskStarted != nil {
+			parentTurns[line.EventMsg.TaskStarted.TurnID] = true
+		}
+	}
+	for _, line := range file.Lines[1:] {
+		if line.Class == codextranscript.ClassSessionMeta {
+			return 0, fmt.Errorf("child rollout %s has no fork source but repeats session_meta at line %d", file.Path, line.Ordinal)
+		}
+		if line.EventMsg != nil && line.EventMsg.TaskStarted != nil && parentTurns[line.EventMsg.TaskStarted.TurnID] {
+			return 0, fmt.Errorf("child rollout %s has no fork source but repeats parent turn %s", file.Path, line.EventMsg.TaskStarted.TurnID)
+		}
+	}
+	return 1, nil
 }
 
 func validateTree(tree *codextranscript.Tree) error {
