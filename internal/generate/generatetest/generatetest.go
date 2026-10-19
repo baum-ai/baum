@@ -71,6 +71,12 @@ func Document(dir string, edit func(map[string]any)) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return DocumentFor(raw, edit)
+}
+
+// DocumentFor is Document for the encoded bundle, for a stub that sees only
+// the prompt.
+func DocumentFor(raw []byte, edit func(map[string]any)) ([]byte, error) {
 	var b bundle.Bundle
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return nil, err

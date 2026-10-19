@@ -96,11 +96,14 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendAnthropic }
 
+// ErrNoKey is Check's failure for a Backend without an API key.
+var ErrNoKey = errors.New("ANTHROPIC_API_KEY is not set; export your Anthropic API key to use the anthropic backend")
+
 // Check reports a Backend that cannot run: one without an API key. It makes
 // no request, so it neither spends nor proves that the key is accepted.
 func (b *Backend) Check(context.Context) (string, error) {
 	if b.APIKey == "" {
-		return "", &Error{Category: CategoryAuthentication, Detail: "ANTHROPIC_API_KEY is not set; export your Anthropic API key to use the anthropic backend"}
+		return "", ErrNoKey
 	}
 	return "", nil
 }
