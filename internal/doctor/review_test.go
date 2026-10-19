@@ -32,6 +32,7 @@ func TestToolsDoNotReceiveSecretsFromTheEnvironment(t *testing.T) {
 		"GH_TOKEN":            plantedGHToken,
 		"OPENAI_API_KEY":      "sk-PLANTEDopenai00000000000000000000000",
 		"CODEX_API_KEY":       "PLANTEDcodex000000000000000000000000000",
+		"CURSOR_API_KEY":      "PLANTEDcursor00000000000000000000000000",
 		"AWS_SECRET_KEY":      "PLANTEDaws0000000000000000000000000000",
 		"SSH_AUTH_SOCK":       "/tmp/PLANTED-agent.sock",
 		"GIT_ASKPASS":         "/tmp/PLANTED-askpass",
@@ -202,8 +203,7 @@ func TestExplicitCodexPathPointingAtAMissingFile(t *testing.T) {
 
 func TestConfiguredBackendThatIsNotAvailableHasADirectFix(t *testing.T) {
 	for backend, wants := range map[string][]string{
-		"cursor-agent": {"not available in this version", `backend = "auto", "claude", "codex" or "anthropic"`, "config.toml"},
-		"anthropic":    {"export ANTHROPIC_API_KEY", `backend = "auto", "claude" or "codex"`, "config.toml"},
+		"anthropic": {"export ANTHROPIC_API_KEY", `backend = "auto", "claude", "codex" or "cursor-agent"`, "config.toml"},
 	} {
 		t.Run(backend, func(t *testing.T) {
 			m := newMachine(t)
@@ -430,7 +430,7 @@ func TestAnUnknownBackendNameInTheFileGetsADirectFix(t *testing.T) {
 	report := run(t, Options{})
 	c := find(t, report, "backend-configured")
 	wantStatus(t, c, StatusProblem)
-	wantContains(t, "fix", c.Fix, "unknown backend bogus", `set backend = "auto", "claude", "codex" or "anthropic"`, cfgPath)
+	wantContains(t, "fix", c.Fix, "unknown backend bogus", `set backend = "auto", "claude", "codex", "cursor-agent" or "anthropic"`, cfgPath)
 	if strings.Contains(c.Fix, "check above") || strings.Contains(c.Detail, "cannot run") {
 		t.Errorf("an unknown name was treated as a backend that failed a check: %+v", c)
 	}
