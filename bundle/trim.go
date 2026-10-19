@@ -274,7 +274,7 @@ func fitContent(bundle *Bundle, caps Caps) error {
 	sessionsCut, sessionsNote := 0, -1
 	for cutLowestConfidenceSession(bundle) {
 		sessionsCut++
-		note := fmt.Sprintf("%d session(s) omitted to fit the size limit, lowest confidence first", sessionsCut)
+		note := fmt.Sprintf("%d session(s) omitted to fit the size limit", sessionsCut)
 		if sessionsNote < 0 {
 			sessionsNote = len(bundle.Truncated)
 			bundle.Truncated = append(bundle.Truncated, note)

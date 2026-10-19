@@ -762,7 +762,7 @@ func TestFitBytesDropsLowestConfidenceSessionAfterPatchesAreExhausted(t *testing
 	if hunk := bundle.Diff[0]; hunk.Patch != "" || !hunk.Textless || hunk.TextlessReason != "trimmed_oversized" {
 		t.Fatalf("session removed before exhausting patch text: %+v", hunk)
 	}
-	if got := countNotes(bundle.Truncated, "session(s) omitted"); got != 1 || !slices.Contains(bundle.Truncated, "1 session(s) omitted to fit the size limit, lowest confidence first") {
+	if got := countNotes(bundle.Truncated, "session(s) omitted"); got != 1 || !slices.Contains(bundle.Truncated, "1 session(s) omitted to fit the size limit") {
 		t.Fatalf("want one note counting 1 omitted session, got %v", bundle.Truncated)
 	}
 }
@@ -799,7 +799,7 @@ func TestFitBytesNotesEverySessionCutOnceAndDeterministically(t *testing.T) {
 	if len(first.Sessions) != 0 {
 		t.Fatalf("want every session cut, got %+v", first.Sessions)
 	}
-	if countNotes(first.Truncated, "session(s) omitted") != 1 || !slices.Contains(first.Truncated, "3 session(s) omitted to fit the size limit, lowest confidence first") {
+	if countNotes(first.Truncated, "session(s) omitted") != 1 || !slices.Contains(first.Truncated, "3 session(s) omitted to fit the size limit") {
 		t.Fatalf("want one note counting 3 sessions, got %v", first.Truncated)
 	}
 	if string(mustJSON(t, first)) != string(mustJSON(t, second)) {

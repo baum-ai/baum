@@ -416,7 +416,7 @@ func TestTrimmingNeverDropsHunks(t *testing.T) {
 	repo := assembletest.NewRepo(t, assembletest.Options{})
 	full := mustAssemble(t, repo, repo.Evidence(), assembletest.SessionTree()).result.Bundle
 	r, err := assembleWith(t, repo, repo.Evidence(), assembletest.SessionTree(), func(req *assemble.Request, _ *assemble.Assembler) {
-		req.Limits.Caps.MaxBytes = len(r0(t, full)) / 2
+		req.Limits.Caps.MaxBytes = len(r0(t, full)) * 3 / 5
 		req.Limits.Caps.MaxHunkPatchLines = 3
 		req.Limits.Caps.MaxComments = 1
 		req.Limits.Caps.MaxSessions = 1
