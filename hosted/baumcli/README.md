@@ -15,8 +15,10 @@ handshake, in [`apiclient`](../apiclient).
   provisioned for CI or by an administrator. `login` starts the device flow
   with the server it names; `whoami`, `logout`, `upload`, `setup --sync` and
   `setup --upload` need a token and fail with a `baum login` hint before any
-  request without one. `setup` without those flags and the hooks never contact
-  a baum server.
+  request without one. `setup` without those flags and the hook commands
+  never contact a baum server. The hooks hand their events to the local
+  daemon, which forwards an ended session to the server only for a logged-in
+  user (see "Hook events").
 - The hook dispatchers committed to customer repositories and installed as Git
   hooks run `baum hooks agent --check` (`baum hooks git --check`) and use baum
   only when it succeeds, falling through to Entire otherwise. `--check`
@@ -44,8 +46,9 @@ handshake, in [`apiclient`](../apiclient).
   the hooks do only local work: the session-start bootstrap (installing the
   pinned Entire and the Git hook dispatchers) and delegating to Entire. That
   keeps the onboarding promise for a teammate who installed the hosted baum
-  but never logged in. Nothing a hook does contacts a baum server; uploads
-  and every other server request need a login in every case.
+  but never logged in. Nothing a hook does contacts a baum server; uploads,
+  the daemon's forwarding included, and every other server request need a
+  login in every case.
 - For an open-source user who never logged in, in a clone nobody set up, the
   hooks run Entire directly and baum does nothing, not even the bootstrap,
   whatever the repository commits. The user-wide hooks (below) apply the same
@@ -215,6 +218,68 @@ handshake, in [`apiclient`](../apiclient).
 - A delegated agent hook's exit code propagates (signal death maps to 1),
   because the agent acts on it. A failing Git `pre-push` propagates so the push
   stops; other Git-hook failures warn and continue.
+
+## Hook events
+
+- Every `baum hooks agent AGENT EVENT` and `baum hooks git HOOK` run, after
+  Entire returns, sends one event to the user's daemon over its control
+  socket ([`internal/hookevents`](../../internal/hookevents)). `--check` sends
+  nothing: where it refuses, baum does not run at all, so the opt-in rules
+  above decide which hooks report. Sending changes nothing the agent or Git
+  sees: Entire still reads the hook's standard input byte for byte (through a
+  pipe the hook fills, keeping a copy of at most 256 KiB), its output still
+  reaches them untouched, and the exit status is the one it was. The event
+  writes nothing to standard output or error.
+- An agent event keeps only the payload's identifiers: `session_id` (Cursor:
+  `conversation_id`), `transcript_path`, `cwd`, `hook_event_name`, `source`
+  and `reason`. Prompts, tool input and output and every other field are
+  never kept. A Git event keeps the hook's arguments, except the remote URL a
+  `pre-push` gets, which can carry credentials (its remote name is kept), and
+  the lines Git writes to `pre-push` and `post-rewrite` (refs and commits).
+  Every event names its working directory, exit status and baum version, and
+  is bounded so it fits one control line.
+- Latency: sending adds at most `hookevents.Budget` (300 ms) to a hook,
+  whatever the daemon does; the request itself gets 150 ms. Against a running
+  daemon a hook costs about one `baum` start more than delegating to Entire
+  (measured at 5 ms against 4 ms for `baum --version`). Once Entire is done,
+  the hook waits at most 20 ms more for its input to end.
+- No daemon running: the event is spooled and the hook starts one (`baum
+  daemon run --detached`, as `baum daemon ensure` would) without waiting for
+  it to serve (15 ms measured), unless one holds the daemon lock (starting,
+  stopping or not answering) or another client is starting one. The new
+  daemon drains the spool when it starts. Hosted users without the desktop
+  app get a daemon this way.
+- A daemon that does not answer within the budget, refuses the event or
+  predates it (`unknown_method`, `protocol_mismatch`, or `event_version` for
+  an event of a newer format) gets it through the spool instead; a running
+  daemon drains it every 30 s. One older than this baum is also asked to
+  restart as this version once idle (`stop` with `when_idle`). An event that
+  cannot be spooled either is dropped.
+- The spool is `<state>/spool/` (the daemon's state directory, mode 0700),
+  one file per event, mode 0600, written atomically. It holds at most 1000
+  events and 8 MiB; a hook that would pass a bound drops the oldest events
+  first. What hooks spool, drop or start, and why, goes to `<state>/hooks.log`
+  (0600, rotated at 256 KiB), never an event's contents.
+
+## Forwarding to the hosted service
+
+- The daemon forwards hook events with `SessionForwarder`. The hosted service
+  receives sessions one way, `baum upload`'s, so forwarding is that upload,
+  unchanged, of the session an agent's `session-end` event names (matched by
+  session id, or by transcript path): the same endpoint, archive, local
+  redaction (goredact, before anything is archived) and 512 MiB bound, no
+  upload for a repository the server reports not enabled in baum, and no root
+  inventory, which one session's roots could not complete. Other events stay
+  local.
+- Only for a logged-in user: a `BAUM_TOKEN` in the daemon's environment
+  (which it reads from the login shell, not from the hook) or a stored token,
+  sent only to the server it was issued for. Without one the daemon logs once
+  that events stay on this machine. The login is read for every event, so
+  `baum login` and `logout` apply without a restart.
+- As with `baum upload`, one attempt: a failure (network, server, an expired
+  token) is logged with its reason, never retried, and the session stays on
+  disk for a later `baum upload`. Forwarding runs in the daemon, one session
+  at a time, never in the hook.
 
 ## Discovery
 

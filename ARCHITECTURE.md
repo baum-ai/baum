@@ -1151,7 +1151,9 @@ format and the protocol constants have one definition on both sides.
   a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
   baum built or installed for the hosted service, in a repository whose
   committed agent settings carry baum's dispatcher. They read local files
-  only, and the hooks they admit never contact a server. The rules are in
+  only, and the hooks they admit never contact a server themselves: they hand
+  their events to the local daemon, which forwards an ended session only for
+  a logged-in user (see "Hook events" under "Local daemon"). The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
 - User-wide hooks. `baum hooks install --user` puts a dispatcher in
   `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
@@ -1536,7 +1538,8 @@ desktop app and coding-agent hooks; the `baum` command line is how both reach
 it. It owns the authenticated app server above and everything that used to run
 inside `baum ui`: registry, discovery, review index, background refresh,
 diagnostics and the generation queue, and the automatic generation scheduler. `baum ui` only ensures the daemon and
-opens its launch URL, so there is one server implementation.
+opens its launch URL, so there is one server implementation. It also keeps
+the record of the events agent and Git hooks send it.
 
 ### Lifecycle
 
@@ -1724,6 +1727,56 @@ it and `Queue.SubmitAutomatic` decides each job.
   the snapshot to `Observe`. Agent hook events (a session ending, a push) are
   to use it rather than a separate path; no hook calls it yet.
 
+### Hook events
+
+`internal/hookevents` carries what `baum hooks agent` and `baum hooks git`
+report to the daemon; the hook side is in `hosted/baumcli` (rules in its
+[README](hosted/baumcli/README.md), "Hook events").
+
+- **Event.** One JSON object per hook run, sent as the params of the `event`
+  control request: `v` (the event format, `hookevents.Version`, 1), a random
+  `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
+  Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
+  `session` (an agent payload's `id`, `transcript_path`, `cwd`, `hook_event`,
+  `source`, `reason`; nothing else of the payload) or `git` (`args` without a
+  pre-push remote URL, and `lines`, the refs or commits Git wrote to the
+  hook). Fields are cut to fit one control line. The daemon ignores fields it
+  does not know and records kinds it does not know, so adding a field keeps
+  `v`; it refuses a higher `v` with `event_version`.
+- **Sending.** `Sender.Send` never fails a hook and adds at most `Budget`
+  (300 ms): the request gets 150 ms. When nothing listens it spools the event
+  and starts a daemon with `Client.StartDetached`, which spawns `baum daemon
+  run --detached` under the start lock unless a daemon holds the daemon lock,
+  and returns once the new process holds it or the budget ends, without
+  waiting for it to serve. A daemon that does not answer in time, answers an
+  error, or does not know `event` gets the event through the spool; one older
+  than the hook's baum is sent `stop` with `when_idle`, as `Ensure` would. A
+  daemon holding the socket but not answering is never replaced by a hook.
+- **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
+  nanosecond it was spooled, written to a temporary file and renamed. At most
+  `MaxSpoolEvents` (1000) and `MaxSpoolBytes` (8 MiB): a hook drops the oldest
+  first and logs each drop. The daemon drains it when it starts and every 30 s,
+  oldest first, removing a file once recorded; a file that is not a small
+  private file or not an event is removed and logged, and an event of a newer
+  `v` is left for a newer daemon. Hooks log what they spool, drop and start to
+  `<state>/hooks.log` (0600, 256 KiB, one older file), never an event's
+  contents.
+- **Record.** `hookevents.Store`, opened by the daemon that holds the lock:
+  JSON lines `{"received","via","event"}` in `<state>/events/events.jsonl`
+  (0600 in a 0700 directory), rotated at 1 MiB with two older files kept, a few
+  thousand events. An event id is recorded once, across restarts, however
+  often it arrives (a late answer and the spool can both deliver it).
+  `Store.Recent(n)` reads the latest records, oldest first; spooled events
+  arrive late, so readers order by `event.time`. `Store.Subscribe(buffer,
+  match)` delivers new records matching a filter; a subscriber that falls
+  behind misses records (logged) and can reread `Recent`. This is the
+  interface the live features (in-progress sessions, refresh on session end
+  or push, decision capture) are to build on; none does yet.
+- **Forwarding.** `baumcli.SessionForwarder` subscribes to `session-end`
+  events and, for a user logged in to a hosted server, uploads the ended
+  session exactly as `baum upload` does (one session, no root inventory, one
+  attempt). Without a login nothing leaves the machine.
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
@@ -1748,11 +1801,12 @@ one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
 identify and replace any daemon. `ping` and every method registered in
 `Options.Methods` require the client's protocol to equal the daemon's, and
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
-`daemon.Protocol` for any incompatible change. Hook ingestion
-will add methods through `Options.Methods`; a hook event that should look for
-new heads will call the automatic scheduler's `Trigger` (see "Automatic
-generation"). Remote attach would be another transport beside
-these two; none exists.
+`daemon.Protocol` for any incompatible change. The application registers its
+methods through `App.Methods`; a method answers with its own error code by
+returning a `daemon.Error`. `event` is the one it has (see "Hook events"); a
+hook event that should look for new heads is to call the automatic
+scheduler's `Trigger` (see "Automatic generation"). Remote attach would be
+another transport beside these two; none exists.
 
 ### Desktop app interface
 
