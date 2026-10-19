@@ -226,7 +226,7 @@ func (b *trackedBackend) report(phase string) {
 		if list == nil {
 			list = pricing.Active()
 		}
-		_, reason = list.BackendAccountingCost(b.Backend.Name(), b.accounting)
+		_, reason = list.BackendAccountingCost(b.Name(), b.accounting)
 	}
 	safe := b.accounting.Clone()
 	if !b.redacted {
