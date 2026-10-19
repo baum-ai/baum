@@ -5,7 +5,8 @@
 baum is local-first, but generating a review requires a model. When you
 run `baum generate`, the following is sent to the **model provider you
 configure** (the `claude` or `codex` CLI, each of which talks to its own
-provider under your own account):
+provider under your own account, or the Anthropic API, which the `anthropic`
+backend calls with your `ANTHROPIC_API_KEY`):
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -62,7 +63,8 @@ GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
 path comes from `backend_paths`, `GH_PATH` or `PATH`;
 the same checks `baum generate` runs for `claude` and `codex`, which include
 codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
-temporary directory it removes); and, only when no token comes from the
+temporary directory it removes), and for `anthropic`, which only looks at
+whether `ANTHROPIC_API_KEY` is set and sends it nowhere; and, only when no token comes from the
 environment, the config file or `gh`'s own files, `gh auth token
 --secure-storage --hostname <host>`. Its one network contact is the signed price
 list described above, skipped with `--offline`; nothing else leaves the machine.
@@ -219,6 +221,36 @@ What remains for `codex`:
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
+
+### The anthropic backend
+
+The `anthropic` backend (`agent/anthropic`) runs no agent process. baum itself
+calls the Anthropic Messages API (`https://api.anthropic.com/v1/messages`) and
+runs the model's tool calls in-process:
+
+- The model gets four tools: `Read`, `Glob` and `Grep`, which read the
+  temporary run directory, and `StructuredOutput`, which submits the document.
+  There is no tool that writes, runs a command or reaches the network, and a
+  call to any other tool name is refused.
+- Every path is relative to the run directory. An absolute path, a `..`
+  element or a backslash is refused before any file is opened, and the
+  directory is opened as an `os.Root`, so a symbolic link whose target is
+  outside it cannot be read; listing and searching never follow a link at all.
+- Reads are bounded: a file over 4 MiB (an image over 3.75 MB) is not read,
+  `Read` returns at most 2,000 lines of 2,000 characters, a search returns at
+  most 500 paths or 200 matching lines, skips files over 4 MiB and binary
+  files, and visits at most 200,000 entries, and no tool result exceeds 64 KiB.
+  `Grep` uses Go's RE2 expressions, which run in linear time.
+- What the model reads is sent to the Anthropic API as part of the
+  conversation, as it is, unredacted, like the checkout files the other
+  backends read. Nothing outside the run directory is.
+- The key comes only from `ANTHROPIC_API_KEY` (or, for a host, the endpoint it
+  configures). It is sent only in the `x-api-key` header to the API's own
+  address; redirects are not followed, so it never reaches another host. It is
+  never written to the config file, the run directory, the diagnostics or the
+  logs, and any error text that would contain it has it replaced.
+- Diagnostic events record tool names, relative paths, sizes, statuses and
+  token counts, never file contents, search patterns or model text.
 
 ## Local repository registry
 

@@ -16,8 +16,9 @@ Everything runs locally:
   own token;
 - the review itself is written by a coding-agent CLI already installed on your
   machine, `claude` or `codex`, found on your `PATH` or at the path you set
-  with `backend_paths` in the config file. Backends for the Anthropic API and
-  the `cursor-agent` CLI are planned but not available yet.
+  with `backend_paths` in the config file, or by the Anthropic API directly
+  with your `ANTHROPIC_API_KEY`. A backend for the `cursor-agent` CLI is
+  planned but not available yet.
 
 ## Status
 
@@ -110,14 +111,16 @@ for every warning and problem:
   `codex` and `cursor-agent`, and whether each came from `backend_paths` in the
   config file, `GH_PATH` or `PATH`;
 - which backend `--backend auto` would pick and why, including why `claude`
-  was skipped, and the configured backend when it is not `auto`;
+  (and `codex`) were skipped, and the configured backend when it is not `auto`;
 - where the GitHub token comes from for github.com and for the host of every
   registered clone: the environment (`GITHUB_TOKEN`, `GH_TOKEN`), the config
   file, the GitHub CLI's environment variable or `hosts.yml`, or its keyring
   (`gh auth token`). The token itself, or any part of it, is never printed. A
   host baum would not talk to (not github.com, a `*.ghe.com` tenant, a host in
   gh's `hosts.yml` or `GH_HOST`) is a problem, with the fix;
-- whether `ANTHROPIC_API_KEY` is set (nothing uses it in this version);
+- whether `ANTHROPIC_API_KEY` is set, which makes the `anthropic` backend
+  available. The key is never printed and not tried against the API, so a
+  revoked key still shows as set; the first `generate` reports it;
 - the price list: `baum generate` and the other commands use the embedded
   list, and `baum ui` fetches the signed list when it starts and keeps the
   newest one in its state directory so queued jobs can resume; the source is
@@ -128,8 +131,9 @@ for every warning and problem:
   entries. Doctor creates none of them and opens the registry read-only.
 
 It runs `--version` on `git`, `gh` and `cursor-agent`, the same checks
-`baum generate` runs for `claude` and `codex` (including codex's read-only
-sandbox check) and, when no token is configured, `gh auth token`. The tools get
+`baum generate` runs for `claude`, `codex` (including codex's read-only
+sandbox check) and `anthropic` (the key is set) and, when no token is
+configured, `gh auth token`. The tools get
 the same filtered environment their backends give them, never your provider
 keys or tokens, and a tool that hangs is stopped with its child processes.
 Its one network request is the signed price list; `--offline` skips it.
@@ -146,7 +150,8 @@ file's `backend` value is invalid, doctor reads the file and applies
 `BAUM_MODEL` and the token variables as the commands would.
 
 A missing or failing backend is a warning. The `backend: auto` check is the
-problem when neither `claude` nor `codex` is usable. A backend is a problem
+problem when neither `claude` nor `codex` is usable and `ANTHROPIC_API_KEY` is
+not set. A backend is a problem
 itself when it is the configured backend (`backend` in the config file or
 `BAUM_BACKEND`), or when `backend_paths` names a file that cannot be run.
 
@@ -243,7 +248,7 @@ previously exported with `generate -o`.
 ### baum generate
 
 ```sh
-baum generate [--pr N] [--repo owner/name] [--backend auto|claude|codex]
+baum generate [--pr N] [--repo owner/name] [--backend auto|claude|codex|anthropic]
               [--model M] [-o review.json] [--bundle-out bundle.json]
               [--diagnostics outcome.json] [--keep-run-dir] [--store directory]
 ```
@@ -251,25 +256,41 @@ baum generate [--pr N] [--repo owner/name] [--backend auto|claude|codex]
 `generate` assembles the same bundle as `baum bundle`, unpacks the pull
 request's head and merge-base files into a private temporary directory
 (`baum-agent-run-*`, mode 0700, removed when the command ends, also on Ctrl-C),
-and has a coding agent installed on your machine read them and write the
-review. Git objects, refs, index and working tree are only read, as for
-`baum bundle`; nothing is checked out or fetched. The local version store is
-written under the shared git directory, or the fallback/override below. The agent runs under your own login with its
+and has a coding agent installed on your machine, or the Anthropic API, read
+them and write the review. Git objects, refs, index and working tree are only
+read, as for `baum bundle`; nothing is checked out or fetched. The local version store is
+written under the shared git directory, or the fallback/override below. A CLI agent runs under your own login with its
 read-only mode, as described in [SECURITY.md](SECURITY.md#agent-isolation);
 baum sends it no credential of its own.
 
 `--backend auto` (the default, or `backend` in the config file) uses `claude`
-when it is installed and passes its checks (a recent enough version), and `codex`
-otherwise (recent enough, and its read-only sandbox starts on this machine).
-Each is found at its `backend_paths` entry when the config file has one, else
+when it is installed and passes its checks (a recent enough version), else `codex`
+(recent enough, and its read-only sandbox starts on this machine), else
+`anthropic` when `ANTHROPIC_API_KEY` is set.
+`claude` and `codex` are found at their `backend_paths` entry when the config file has one, else
 on `PATH`; see [Configuration](#configuration). `baum doctor` shows what `auto`
 picks and why.
-`--backend claude` and `--backend codex` use exactly that one. `--model` names
+`--backend claude`, `--backend codex` and `--backend anthropic` use exactly that one. `--model` names
 a model of one backend, so with `auto` it applies to `claude` only: when `auto`
-falls back to `codex`, codex uses its own default model, and stderr says why
-claude was skipped. The `anthropic`
-and `cursor-agent` backends are named by the config but are not available in
-this version: asking for one fails, and `auto` skips them.
+falls back to `codex` or `anthropic`, that backend uses its own default model, and stderr says why
+the earlier ones were skipped. The `cursor-agent` backend is named by the
+config but is not available in this version: asking for it fails, and `auto`
+skips it.
+
+The `anthropic` backend calls the Anthropic Messages API
+(`https://api.anthropic.com`) with the key from `ANTHROPIC_API_KEY`, which is
+never written to the config file, printed or logged. Its default model is
+`claude-opus-5-5` at `medium` effort; `--model` names another. It gives the
+model read-only `Read`, `Glob` and `Grep` tools over the run directory alone
+(see [SECURITY.md](SECURITY.md#the-anthropic-backend)) and takes the document
+from a `StructuredOutput` tool call checked against the document schema. A
+rate limit (429), an overload (529), a server error or a dropped connection is
+retried up to four times, honouring `retry-after`, and the waits count against
+`run_timeout`; a rejected key (401 or 403), a refused request or a malformed
+response fails at once with its category in the message. Its usage is what the
+API reports per call, cache reads and writes included, so the run's cost is
+recorded from the price list; a call cut off before its response arrived leaves
+the cost unknown rather than zero.
 
 The document goes through the same steps as a hosted one: the model's output is
 repaired against the validator (two repairs at most), secrets and e-mail
@@ -448,7 +469,7 @@ baum reads `$XDG_CONFIG_HOME/baum/config.toml`, which defaults to
 mode 0600 when written.
 
 ```toml
-backend = "auto"          # auto | claude | codex (anthropic and cursor-agent are accepted but not available yet)
+backend = "auto"          # auto | claude | codex | anthropic (cursor-agent is accepted but not available yet)
 model = ""                # backend default when empty
 github_token = ""         # optional; see the precedence below
 
@@ -494,7 +515,7 @@ environment variables are:
 | --- | --- |
 | `GITHUB_TOKEN`, `GH_TOKEN` | github.com token, also used for `*.ghe.com` tenants as the GitHub CLI uses it; when neither is set and the file has none, the GitHub CLI's token is used |
 | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | GitHub Enterprise Server token, read as the GitHub CLI reads it and only ever sent to an Enterprise host the GitHub CLI knows (logged in with `gh auth login`, or named by `GH_HOST`) |
-| `ANTHROPIC_API_KEY` | key for the `anthropic` backend, which is not available in this version; never passed to the `claude` and `codex` CLIs |
+| `ANTHROPIC_API_KEY` | key for the `anthropic` backend, read from the environment only and never written to the config file; never passed to the `claude` and `codex` CLIs |
 | `BAUM_BACKEND` | backend name |
 | `BAUM_MODEL` | model name |
 
@@ -513,8 +534,8 @@ stays unknown unless the protection is readable. The repository is
 for the current branch. See [ARCHITECTURE.md](ARCHITECTURE.md#github-source).
 
 `backend = "auto"` picks `claude` when it is installed and passes its checks,
-else `codex` when it does. `cursor-agent` and `anthropic` are not available in
-this version, so `auto` never picks them, and `ANTHROPIC_API_KEY` is not used.
+else `codex` when it does, else `anthropic` when `ANTHROPIC_API_KEY` is set.
+`cursor-agent` is not available in this version, so `auto` never picks it.
 
 `[backend_paths]` names a backend's executable by absolute path, for `claude`,
 `codex` and `cursor-agent`. A named path is used instead of the `PATH` lookup,
@@ -552,7 +573,7 @@ describes how they fit together and what a host implements.
 
 | Package | What it does |
 | --- | --- |
-| `agent` | the model backend interface and the Claude Code and Codex backends, the generate-and-repair loop (`Generator`) with its `Prompts` interface, repair text and output redaction, the run budgets and the environment allowlist for local CLI backends |
+| `agent` | the model backend interface and the Claude Code, Codex and Anthropic API backends, the generate-and-repair loop (`Generator`) with its `Prompts` interface, repair text and output redaction, the run budgets and the environment allowlist for local CLI backends |
 | `agent/prompt` | the public review prompt (`review-public-v2`) this module ships, with a submit block per backend |
 | `bundle` | the evidence bundle types a generation run reads, the diff index (hunk IDs, roles, diff URLs) built from a comparison, the `REVIEW.md` loader, reference extraction and bot flags, the code checkout archive, description image handling, the paraphrase of a session's shell commands, and the caps, input redaction, byte trimming and digest applied to a bundle |
 | `review` | the review document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh and the tile catalogue (`review/tilecatalogue`) |
@@ -684,7 +705,9 @@ An estimate expires after five minutes. `POST /api/jobs` requires its
 `estimate_id` and `confirm_estimate:true`; it rechecks head, backend, model,
 budgets and price version before enqueueing. Execution checks them again and
 refuses changed inputs before a model call. An explicit model with known rates
-is required; unknown backend default models have no invented estimate.
+is required; unknown backend default models have no invented estimate. The
+`anthropic` backend's default model (`claude-opus-5-5`) is known, so it is
+estimated without one.
 Estimates use the signed published full price list, falling back to the embedded
 release baseline if download or verification fails. A downloaded list that
 becomes active is stored with its signature beside the queue, in
@@ -736,7 +759,8 @@ An inbox row reports `no_review`, `current` (saved and discovered heads match),
 unreadable store reports `unknown`; filesystem errors are reported without
 exposing their paths. Rows carry version count, the latest version's generation
 time, backend/model, risk assessment and recorded USD cost. Cost is null when
-none was recorded, including current CLI backends, rather than an invented zero.
+none was recorded, as for a run whose backend did not report all of its usage,
+rather than an invented zero.
 
 Clones with distinct common directories keep independent histories, so each store
 gets its own row with its `clone_id`; a discovered PR with no saved review in a

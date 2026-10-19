@@ -420,7 +420,7 @@ stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
-| `anthropic` | planned: the Anthropic API directly, with read-only file tools over the checkout |
+| `anthropic` | the Anthropic Messages API directly, with read-only file tools over the run directory, submitting through a `StructuredOutput` tool (`agent/anthropic`) |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
 | `cursor-agent` | planned: `cursor-agent` confined to the checkout |
@@ -459,6 +459,41 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 `Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
+
+`agent/anthropic` is not a CLI: baum runs the model call loop itself, over
+`net/http` rather than the official SDK (one endpoint, retries that must count
+against the run's deadline, and no new dependency in this published module).
+Each call sends the system prompt, four tools in a fixed order (`Read`, `Glob`,
+`Grep`, and `StructuredOutput`, whose input schema is the request's schema),
+the prompt as the first user message with a cache breakpoint after it, and
+top-level automatic caching for the growing conversation, both with the
+5-minute TTL. Assistant turns, thinking blocks included, are sent back exactly
+as received. The tools are confined to the run directory through an `os.Root`
+(absolute paths, `..` elements and escaping links are refused; listing and
+searching never follow a link) and bounded in file size, matches and output
+bytes. A `StructuredOutput` input that does not match the schema goes back to
+the model as a tool error and counts as a structured output rejection; a turn
+that ends without one is nudged twice before the run fails. The key and base
+URL come from the request's `Endpoint`, else the `Backend`'s own (the local
+host sets the key from `ANTHROPIC_API_KEY`). The default model is
+`claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+
+Every response is one call, charged before the next is made: a call the
+request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
+`max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
+per-call report in disjoint buckets, with the 1-hour share of cache writes
+(zero when unreported, since only the 5-minute TTL is requested), the speed
+(standard unless reported) and each call's prompt size, so `Accounting` prices
+it per call. A request that may have reached the model without a usable
+response marks the usage `Unreported`. 429, 529, other 5xx and 408 responses
+and dropped connections are retried four times, honouring `retry-after` (at
+most a minute) or backing off exponentially, and a wait that would outlast the
+context's deadline ends the call instead. Failures are an `*anthropic.Error`
+with a fixed `Category` (`authentication_error`, `rate_limit`,
+`provider_overloaded`, `provider_error`, `transport_error`, `invalid_request`,
+`malformed_response`, `refusal`, `context_window_exceeded`, `no_document`),
+which is also the status of the run's error event; a spent budget is the
+loop's budget reason. No error text, event or log line holds the key.
 
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
@@ -1131,13 +1166,14 @@ context ends the event streams and shuts the server down.
 repository/PR version, and passes `review.PreviousVersionOf` into
 `assemble.Request.Previous`. After resolving the pull request and recording its
 run, it selects and checks the backend before assembling (`claude.Backend.Check`,
-`codex.Backend.Check`; `auto`
-tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
+`codex.Backend.Check`, `anthropic.Backend.Check`, which only needs the key;
+`auto` tries `generate.AutoOrder`: claude, then codex, then anthropic), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
 bundle's own caps, and runs `agent.Generator` with the `claude.User` or
-`codex.Local` profile, never `Isolated` or `Container` (a test guards this). The
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this), or
+with `anthropic.Backend` and the key from `ANTHROPIC_API_KEY`. The
 wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
