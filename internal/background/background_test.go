@@ -71,7 +71,7 @@ func TestRefreshConflictIsRetriedWithoutFailure(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
 	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
-		return discovery.Observation{Number: n, HeadSHA: "new"}, fmt.Errorf("%w; a generation is in progress", store.ErrConflict)
+		return discovery.Observation{Number: n, HeadSHA: "new"}, fmt.Errorf("%w; refresh again using the latest document", store.ErrConflict)
 	}}
 	s.Sync(context.Background())
 	state := s.state("acme/app")

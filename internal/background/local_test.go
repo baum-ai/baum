@@ -167,7 +167,7 @@ func (s *movedSource) Fetch(_ context.Context, _ github.Repository, _ int, opts 
 func TestLocalRefreshLeavesDocumentWhenCurrentHeadFetchFails(t *testing.T) {
 	ctx := context.Background()
 	f := savedReview(t)
-	pr := bundle.PullRequest{Number: 212, State: "open", HeadSHA: "moved", BaseSHA: f.head}
+	pr := bundle.PullRequest{Number: 212, State: "open", HeadSHA: "0123456789abcdef0123456789abcdef01234567", BaseSHA: f.head}
 	remote := &movedSource{
 		reviewed:   github.Evidence{Repository: f.key.Repository, PullRequest: pr, Checks: []bundle.Check{{ID: "chk_1", Kind: "check_run", Name: "Old head", Status: "completed", Conclusion: "failure"}}, Sources: bundle.Sources{"checks": true, "review_threads": true}},
 		currentErr: &github.RateLimitedError{ResumeAt: time.Now().Add(time.Hour)},
@@ -178,7 +178,7 @@ func TestLocalRefreshLeavesDocumentWhenCurrentHeadFetchFails(t *testing.T) {
 	if !errors.As(err, &limited) {
 		t.Fatalf("current-head fetch failure not reported: %v", err)
 	}
-	if observation.HeadSHA != "moved" || observation.Checks != "unknown" {
+	if observation.HeadSHA != "0123456789abcdef0123456789abcdef01234567" || observation.Checks != "unknown" {
 		t.Fatalf("saved-head checks reported for the new head: %+v", observation)
 	}
 	unchanged, err := f.versions.Latest(ctx, f.key)
@@ -190,7 +190,7 @@ func TestLocalRefreshLeavesDocumentWhenCurrentHeadFetchFails(t *testing.T) {
 	remote.currentErr = nil
 	remote.current = github.Evidence{PullRequest: pr, Checks: []bundle.Check{{ID: "chk_2", Kind: "check_run", Name: "New head", Status: "completed", Conclusion: "success"}}, Sources: bundle.Sources{"checks": true}}
 	observation, err = local.Refresh(ctx, f.clone, 212)
-	if err != nil || observation.HeadSHA != "moved" || observation.Checks != "success" {
+	if err != nil || observation.HeadSHA != "0123456789abcdef0123456789abcdef01234567" || observation.Checks != "success" {
 		t.Fatalf("observation=%+v err=%v", observation, err)
 	}
 	refreshed, err := f.versions.Latest(ctx, f.key)

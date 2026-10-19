@@ -21,7 +21,7 @@ function earliestEvidenceBound(documents: ReviewDocument[]): number {
  *  the earlier versions that a stale section or a mitigated risk can ask about
  *  have been read. Null until then, and null when nothing on the page needs
  *  an earlier version. The earlier versions come through the host's loader,
- *  which should cache them for the section pane's "From v1" links. `shown` is
+ *  which should cache them for the section pane's "Since v1" links. `shown` is
  *  an earlier version or comparison on screen, whose own stale sections and
  *  mitigated risks ask about versions too. */
 export function useSectionHistory(

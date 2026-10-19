@@ -239,8 +239,8 @@ func (s *Service) Sync(ctx context.Context) {
 							state.Error = "cache_unavailable"
 						}
 					}
-					// A conflict means a generation is running or newer work won the
-					// race; the next pass refreshes the latest document normally.
+					// A conflict means a generation or another refresh published first;
+					// the next pass refreshes the latest document normally.
 					if err != nil && !errors.Is(err, store.ErrConflict) {
 						state.Error = "metadata_unavailable"
 						state.Problems = append(state.Problems, Problem{current.number, "metadata_unavailable"})

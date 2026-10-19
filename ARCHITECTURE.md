@@ -216,10 +216,15 @@ backoff, `sources` and the mapping onto the bundle.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
   `generator.truncated` note.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
-  metadata. Files over the size limit and submodule contents are omitted
-  with a reason; their hunks stay in the index and must still be placed.
-  The same limits apply when the checkout is exported and again when an
-  agent unpacks it.
+  metadata. Files over the size limit, binary files (a NUL byte in the first
+  8000 bytes, as git decides; a compared file the diff holds as text is kept,
+  since the export applies working-tree-encoding) and submodule contents are
+  omitted with a reason; their hunks stay in the index and must still be placed. The
+  compared paths are exported first, at the head and then at the merge base,
+  and the rest of the head tree fills what the total byte and file budgets
+  leave: a file that does not fit is omitted (`omitted_budget`) instead of
+  failing the export. An agent unpacking the checkout enforces the same limits
+  again and rejects an archive over them.
 - Sessions carry paraphrased command events, never raw command lines, tool
   output, local paths, e-mail addresses or tokens.
 - A host may give a session the decisions it extracted from the session's
@@ -1132,13 +1137,14 @@ Repository names, including GitHub host, and pull request numbers key rows.
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement
 fenced by both its version number and exact previous bytes, preserving
-metadata and every replaced version, and is rejected while an unexpired
-generation run of the PR is recorded. Concurrent refreshes and generations
-cannot overwrite a document prepared against older evidence. `Put` publishes
-metadata and document in one transaction only if the previous version the
-caller read is still latest with exactly the bytes it read, so concurrent runs
-cannot assign a different predecessor to a completed document, and a
-generation cannot become latest over evidence refreshed after it started. A losing run reports a conflict; generation failure or
+metadata and every replaced version. Concurrent refreshes cannot overwrite a
+document prepared against older evidence, and a refresh never replaces a newer
+version. A running generation does not block refresh: live facts refresh
+independently, as in the hosted service. `Put` publishes metadata and document
+in one transaction only if the previous version the caller read is still
+latest, so concurrent runs cannot assign a different predecessor to a completed
+document. A refresh of that previous version in the meantime does not reject
+the generation; the next refresh updates the new version's live facts. A losing run reports a conflict; generation failure or
 cancellation before publication writes no version. Export errors after
 publication leave the successfully generated version available. Metadata records full revision IDs,
 bundle digest, backend and installed version, actual model, schema revision,

@@ -30,8 +30,8 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 			_ = WriteDiagnostics(o.DiagnosticsOut, err, result.Outcome)
 		}
 	}()
-	// Publication is fenced on this exact document: a refresh that replaces it
-	// during generation makes the generated version a conflict, not latest.
+	// Publication is fenced on this version: another generation that publishes
+	// first makes this one a conflict. A refresh of it in the meantime does not.
 	latest, err := versions.Latest(ctx, key)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return result, err

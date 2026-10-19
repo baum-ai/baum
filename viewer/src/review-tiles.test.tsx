@@ -506,10 +506,11 @@ describe("JSON review tiles", () => {
     expect(html).not.toContain("Loses access:");
   });
 
-  it("shows the attention box as a neutral card listing what each reference points at", () => {
+  it("shows high risks in a flat attention callout with unknown references", () => {
     const doc = document();
     const section = doc.sections.find((item) => item.risks.length > 0)!;
     const risk = section.risks[0]!;
+    risk.tier = "high";
     risk.text = "Two writers can take the locks in opposite orders";
     section.attention = { text: "Check the lock order.", refs: [risk.id, "rsk_missing"] };
     const html = renderToStaticMarkup(
@@ -517,13 +518,13 @@ describe("JSON review tiles", () => {
     );
     const box = html.slice(
       html.indexOf('aria-label="Attention"'),
-      html.indexOf("</section>", html.indexOf('aria-label="Attention"')),
+      html.indexOf('aria-label="Behavior"'),
     );
     expect(box).toContain("Check the lock order.");
     expect(box).toContain(risk.text);
     expect(box).not.toContain("status-critical-bg");
-    // One jump for the risk; the reference that names nothing is text, not a link.
-    expect(box.match(/View ↓/g)).toHaveLength(1);
+    // Risks render in place; the reference that names nothing stays text.
+    expect(box).not.toContain("View ↓");
     expect(box).toContain("rsk_missing");
   });
 
