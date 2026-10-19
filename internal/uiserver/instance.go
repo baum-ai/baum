@@ -15,6 +15,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 // Instance holds the per-user process lock for as long as its server lives.
@@ -56,7 +58,7 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
-	if err := protectDirectory(directory); err != nil {
+	if err := privatefs.ProtectDirectory(directory); err != nil {
 		return nil, err
 	}
 	lockpath := filepath.Join(directory, "ui.lock.sqlite")
@@ -71,7 +73,7 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 	if err != nil {
 		return nil, err
 	}
-	if !privateFile(lockpath, info) {
+	if !privatefs.PrivateFile(lockpath, info) {
 		return nil, errors.New("ui lock file must be private (0600)")
 	}
 	// A Windows drive path needs a leading slash so "C:" is not read as the URI authority.
@@ -159,7 +161,7 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 }
 func running(ctx context.Context, path string) (string, bool) {
 	info, err := os.Lstat(path)
-	if err != nil || !privateFile(path, info) || info.Size() > 4096 {
+	if err != nil || !privatefs.PrivateFile(path, info) || info.Size() > 4096 {
 		return "", false
 	}
 	data, err := os.ReadFile(path)
