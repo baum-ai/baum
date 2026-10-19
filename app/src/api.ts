@@ -6,7 +6,8 @@ export type Clone = {
   repository: string;
   available: boolean;
   settings: {
-    automatic: boolean;
+    /** null follows the global automatic generation preference. */
+    automatic: boolean | null;
     daily_cap: number | null;
     backend: string | null;
     model: string | null;
@@ -90,7 +91,61 @@ export type Job = {
   accounting?: Accounting;
   cost_reason?: string;
   reason?: string;
+  /** Queued by the daemon's scheduler, not confirmed by a person. */
+  automatic?: boolean;
+  trigger?: string;
 };
+/** One repository's automatic generation, from `api/automatic`. */
+export type AutomaticStatus = {
+  repository: string;
+  enabled: boolean;
+  daily_cap: number | null;
+  spent_today: number;
+  spent_known: boolean;
+  paused_until?: string;
+  notice?: string;
+  pending: number;
+};
+export type Automatic = {
+  enabled: boolean;
+  cursor_agent_acknowledged: boolean;
+  repositories: AutomaticStatus[];
+};
+/** How the jobs list and PR page say a job started without confirmation. */
+export function automaticLabel(job: Job): string | null {
+  if (!job.automatic) return null;
+  const why =
+    job.trigger === "review_requested"
+      ? "your review was requested"
+      : job.trigger === "new_head"
+        ? "new commits were pushed"
+        : "";
+  return why ? `Started automatically because ${why}` : "Started automatically";
+}
+/** Plain-language text for a repository's automatic generation notice. */
+export function automaticNotice(status: AutomaticStatus): string | null {
+  switch (status.notice) {
+    case undefined:
+    case "":
+      return null;
+    case "daily_cap":
+      return `Automatic generation is paused: today's automatic spending reached the daily cap${
+        status.daily_cap === null ? "" : ` of ${formatUSD(status.daily_cap)}`
+      }. It resumes ${
+        status.paused_until ? new Date(status.paused_until).toLocaleString() : "tomorrow"
+      }.`;
+    case "cursor_agent_acknowledgement_required":
+      return "A pull request was not generated automatically: cursor-agent has no cost estimate. Acknowledge this in Repositories & settings to let automatic generation use it.";
+    case "isolation_confirmation_required":
+      return "A pull request was not generated automatically: it comes from a fork or an author without known write access, which always needs your confirmation.";
+    case "unknown_model_price":
+      return "A pull request was not generated automatically: the configured model has no known price. Choose a priced model.";
+    case "unavailable":
+      return "A pull request was not generated automatically: GitHub or the local clone was unavailable after several attempts.";
+    default:
+      return `A pull request was not generated automatically (${status.notice}).`;
+  }
+}
 export type Estimate = {
   id: string;
   estimate_usd: number | null;

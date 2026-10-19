@@ -16,6 +16,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -31,13 +32,29 @@ import (
 	"github.com/baum-ai/baum/internal/uiserver"
 )
 
-type browserDiscovery struct{ snapshot discovery.Snapshot }
+// browserDiscovery serves fixed pull requests. Once pushed reports true (the
+// browser test writes a marker file), PR 10 has a new head: the push the
+// automatic generation scheduler reacts to.
+type browserDiscovery struct {
+	snapshot discovery.Snapshot
+	pushed   func() bool
+	head     string
+}
 
 func (d browserDiscovery) Cached(_ context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	if repository.String() != "acme/demo" {
 		return discovery.Snapshot{Repository: repository.String(), PullRequests: []discovery.PullRequest{{Repository: repository.String(), Number: 1, Title: "Other repository change", State: "OPEN", TeamMembershipKnown: true}}, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, nil
 	}
-	return d.snapshot, nil
+	snapshot := d.snapshot
+	if d.pushed != nil && d.pushed() {
+		snapshot.PullRequests = append([]discovery.PullRequest(nil), snapshot.PullRequests...)
+		for i := range snapshot.PullRequests {
+			if snapshot.PullRequests[i].Number == 10 {
+				snapshot.PullRequests[i].HeadSHA = d.head
+			}
+		}
+	}
+	return snapshot, nil
 }
 func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	return d.Cached(ctx, repository)
@@ -143,8 +160,15 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		previous = next
 	}
 	write := true
-	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
-	disc := browserDiscovery{discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}}
+	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
+	// The browser test pushes PR 10 by writing this marker; a marker left by
+	// an earlier run must not count as already seen.
+	pushMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "push-10")
+	_ = os.Remove(pushMarker)
+	disc := browserDiscovery{snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
+		_, err := os.Stat(pushMarker)
+		return err == nil
+	}}
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
@@ -201,15 +225,40 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(_ context.Context, server *uiserver.Server) (daemon.App, error) {
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
+			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
 		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
+			if job.Phase == "finished" {
+				scheduler.Wake()
+			}
 		})
 		if err != nil {
 			return daemon.App{}, err
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Diagnostics: browserDiagnostics}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close}, nil
+		scheduler.Queue = runner
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close, Drain: runner.Drain, Resume: runner.Resume,
+			// Background discovery's place: hand the scheduler a snapshot
+			// every quarter second, as the daemon does after each poll.
+			Run: func(ctx context.Context) {
+				go scheduler.Run(ctx)
+				ticker := time.NewTicker(250 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					for _, name := range []string{"acme/demo", "acme/other"} {
+						if err := scheduler.Trigger(ctx, name); err != nil && ctx.Err() == nil {
+							t.Log("automatic trigger:", err)
+						}
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}}, nil
 	}})
 	if err != nil {
 		t.Fatal(err)

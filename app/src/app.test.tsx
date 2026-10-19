@@ -354,6 +354,124 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().disabled).toBe(false);
 });
+const demoClone = {
+  id: "clone",
+  path: "/work/demo",
+  repository: "acme/demo",
+  available: true,
+  settings: { automatic: null, daily_cap: 5, backend: null, model: null },
+};
+const automaticOverview = {
+  enabled: true,
+  cursor_agent_acknowledged: false,
+  repositories: [
+    {
+      repository: "acme/demo",
+      enabled: true,
+      daily_cap: 5,
+      spent_today: 5,
+      spent_known: true,
+      paused_until: "2026-10-20T00:00:00+02:00",
+      notice: "daily_cap",
+      pending: 1,
+    },
+  ],
+};
+/** Serves api/repos and api/automatic, and records PUT bodies. */
+function stubAutomatic() {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const puts: { path: string; body: unknown }[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    const init = args[1] as RequestInit | undefined;
+    if (init?.method === "PUT") {
+      puts.push({ path, body: JSON.parse(String(init.body)) });
+      return Promise.resolve(
+        Response.json(path.endsWith("api/automatic") ? automaticOverview : {}),
+      );
+    }
+    if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([demoClone]));
+    if (path === "/s/test-ns/api/automatic")
+      return Promise.resolve(Response.json(automaticOverview));
+    return original(...args);
+  });
+  return puts;
+}
+it("sets automatic reviews globally and per repository and shows a daily cap pause", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Automatic reviews");
+  expect(text).toContain("acme/demo: Automatic generation is paused");
+  expect(text).toContain("Spent automatically today: $5.00 of $5.00. 1 waiting to start.");
+  const global = node.querySelector<HTMLInputElement>(
+    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
+  )!;
+  expect(global.checked).toBe(true);
+  await act(async () => global.click());
+  expect(puts).toContainEqual({ path: "/s/test-ns/api/automatic", body: { enabled: false } });
+  const acknowledge = node.querySelectorAll<HTMLInputElement>(
+    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
+  )[1]!;
+  await act(async () => acknowledge.click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/automatic",
+    body: { cursor_agent_acknowledged: true },
+  });
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const mode = region.querySelector<HTMLSelectElement>("select")!;
+  expect(mode.value).toBe("default");
+  expect(mode.options[0]!.textContent).toBe("Global setting (on)");
+  await act(async () => {
+    mode.value = "off";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const cap = region.querySelector<HTMLInputElement>('input[type="number"]')!;
+  expect(cap.value).toBe("5");
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: false, daily_cap: 5, backend: null, model: null },
+  });
+});
+it("marks automatically started jobs in the jobs list", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const job = (id: string, automatic: boolean, trigger?: string) => ({
+    id,
+    clone: "clone",
+    repository: "acme/demo",
+    pr: 1,
+    state: "queued",
+    phase: "queued",
+    calls: 0,
+    tokens: 0,
+    repairs: 0,
+    actual_cost_usd: null,
+    automatic,
+    trigger,
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/jobs"
+      ? Promise.resolve(
+          Response.json({
+            jobs: [job("a", true, "new_head"), job("b", true, "review_requested"), job("c", false)],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Started automatically because new commits were pushed");
+  expect(text).toContain("Started automatically because your review was requested");
+  expect(text.match(/Started automatically/g)).toHaveLength(2);
+});
 it("shows a diagnostics error with a retry that recovers", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   let ok = false;

@@ -128,6 +128,11 @@ it("shows queued initial generation and progress instead of an empty review", as
   ).toBe(true);
   expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
   expect(node.querySelector("[data-back]")!.getAttribute("data-back")).toBe("/s/test-ns/");
+  expect(node.textContent).not.toContain("Started automatically");
+});
+it("says when the PR's job was started automatically", async () => {
+  await render({ ...job("running"), automatic: true, trigger: "review_requested" });
+  expect(node.textContent).toContain("Started automatically because your review was requested");
 });
 it("keeps the saved document readable while regenerating and updates after completion", async () => {
   documentValue = structuredClone(example) as unknown as ReviewDocument;

@@ -29,6 +29,10 @@ import {
   filtered,
   rowKey,
   cost,
+  automaticLabel,
+  automaticNotice,
+  type Automatic,
+  type AutomaticStatus,
   type Clone,
   type Entry,
   type Snapshot,
@@ -146,16 +150,19 @@ function Workspace({ url }: { url: UrlState }) {
       rate: { remaining: number | null; reset: string };
     }[]
   >([]);
+  const [automatic, setAutomatic] = useState<Automatic | null>(null);
   const lastReload = useRef(0);
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
     try {
-      const [repos, index, jobList, discovery, sync] = await Promise.all([
+      const [repos, index, jobList, discovery, sync, auto] = await Promise.all([
         request<Clone[]>("api/repos"),
         request<Snapshot>("api/index?history=1"),
         request<{ jobs?: Job[] }>("api/jobs"),
         request<typeof rates>("api/prs"),
         request<typeof background>("api/background"),
+        // A daemon without automatic generation answers without repositories.
+        request<Partial<Automatic>>("api/automatic").catch(() => null),
       ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
@@ -163,6 +170,7 @@ function Workspace({ url }: { url: UrlState }) {
       setJobs(jobList.jobs ?? []);
       setRates(discovery);
       setBackground(Array.isArray(sync) ? sync : []);
+      setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
       setError("");
       setRevision((n) => n + 1);
     } catch (e) {
@@ -178,6 +186,7 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("open", refresh);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
+    source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
     return () => source.close();
   }, [reload]);
@@ -260,6 +269,13 @@ function Workspace({ url }: { url: UrlState }) {
             .
           </Alert>
         ))}
+      {(automatic?.repositories ?? [])
+        .filter((status) => status.enabled && status.paused_until)
+        .map((status) => (
+          <Alert key={`automatic-${status.repository}`}>
+            {status.repository}: {automaticNotice(status)}
+          </Alert>
+        ))}
       <main className="local-main">
         {error ? (
           <Alert>
@@ -267,7 +283,7 @@ function Workspace({ url }: { url: UrlState }) {
           </Alert>
         ) : null}
         {page === "settings" ? (
-          <Settings clones={clones} changed={reload} />
+          <Settings clones={clones} automatic={automatic} changed={reload} />
         ) : page === "jobs" ? (
           <Jobs jobs={jobs} changed={reload} />
         ) : selectedEntry ? (
@@ -540,6 +556,9 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
               {job.repository} #{job.pr}
             </strong>{" "}
             — {job.state} · {job.phase}
+            {automaticLabel(job) ? (
+              <p className="text-xs font-semibold text-(--text-secondary)">{automaticLabel(job)}</p>
+            ) : null}
             <p>
               Calls {job.calls} · Repairs {job.repairs}
             </p>
@@ -568,7 +587,15 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
     </section>
   );
 }
-function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise<void> }) {
+function Settings({
+  clones,
+  automatic,
+  changed,
+}: {
+  clones: Clone[];
+  automatic: Automatic | null;
+  changed: () => Promise<void>;
+}) {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
   const action = async (fn: () => Promise<unknown>) => {
@@ -588,6 +615,12 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
         shared by this repository’s registered clones.
       </p>
       {error ? <Alert>{error}</Alert> : null}
+      {automatic ? (
+        <AutomaticSettings
+          automatic={automatic}
+          save={(patch) => action(() => request("api/automatic", patch, "PUT"))}
+        />
+      ) : null}
       <form
         className="flex flex-wrap gap-3"
         onSubmit={(e) => {
@@ -620,6 +653,10 @@ function Settings({ clones, changed }: { clones: Clone[]; changed: () => Promise
           <RepositorySettings
             key={JSON.stringify(clone.settings)}
             clone={clone}
+            automatic={automatic}
+            status={automatic?.repositories.find(
+              (status) => status.repository === clone.repository.toLowerCase(),
+            )}
             save={(settings) =>
               action(() => request(`api/repos/${clone.id}/settings`, settings, "PUT"))
             }
@@ -644,28 +681,138 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
+/** The global automatic generation switch and the one-time cursor-agent
+ * acknowledgement. The server enforces both. */
+function AutomaticSettings({
+  automatic,
+  save,
+}: {
+  automatic: Automatic;
+  save: (patch: Partial<Omit<Automatic, "repositories">>) => Promise<void>;
+}) {
+  const [pending, setPending] = useState(false);
+  const update = (patch: Partial<Omit<Automatic, "repositories">>) => {
+    setPending(true);
+    void save(patch).finally(() => setPending(false));
+  };
+  return (
+    <section aria-label="Automatic reviews" className="local-panel space-y-3">
+      <h2 className="text-lg">Automatic reviews</h2>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={automatic.enabled}
+          disabled={pending}
+          onChange={(e) => update({ enabled: e.target.checked })}
+        />
+        <span>
+          Generate reviews automatically
+          <span className="block text-xs text-(--text-tertiary)">
+            When a pull request you wrote or were asked to review gets new commits or a new review
+            request, the daemon generates its review with the configured backend and budgets, and
+            your provider bills it. Pull requests from forks or authors without write access always
+            need your confirmation. Pull requests already open when this is turned on are not caught
+            up. Repositories can override this below.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={automatic.cursor_agent_acknowledged}
+          disabled={pending}
+          onChange={(e) => update({ cursor_agent_acknowledged: e.target.checked })}
+        />
+        <span>
+          Allow automatic reviews with cursor-agent
+          <span className="block text-xs text-(--text-tertiary)">
+            cursor-agent is billed by Cursor and baum cannot estimate or cap its cost. Without this
+            acknowledgement automatic generation skips repositories that use it.
+          </span>
+        </span>
+      </label>
+      <p className="text-xs">
+        The daemon keeps generating after you close this window. Quit the desktop app with “Quit and
+        stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
+      </p>
+    </section>
+  );
+}
 function RepositorySettings({
   clone,
+  automatic,
+  status,
   save,
 }: {
   clone: Clone;
+  automatic: Automatic | null;
+  status?: AutomaticStatus;
   save: (settings: Clone["settings"]) => Promise<void>;
 }) {
   const [backend, setBackend] = useState(clone.settings.backend ?? "");
   const [model, setModel] = useState(clone.settings.model ?? "");
+  const [mode, setMode] = useState(
+    clone.settings.automatic === null || clone.settings.automatic === undefined
+      ? "default"
+      : clone.settings.automatic
+        ? "on"
+        : "off",
+  );
+  const [cap, setCap] = useState(
+    clone.settings.daily_cap === null || clone.settings.daily_cap === undefined
+      ? ""
+      : String(clone.settings.daily_cap),
+  );
   const [pending, setPending] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setPending(true);
     void save({
-      automatic: clone.settings.automatic,
-      daily_cap: clone.settings.daily_cap,
+      automatic: mode === "default" ? null : mode === "on",
+      daily_cap: cap.trim() === "" ? null : Number(cap),
       backend: backend || null,
       model: model || null,
     }).finally(() => setPending(false));
   };
+  const notice = status ? automaticNotice(status) : null;
   return (
     <form onSubmit={submit} className="space-y-3">
+      {automatic ? (
+        <div className="flex flex-wrap gap-3">
+          <Field label="Automatic reviews">
+            <select className="local-field" value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="default">Global setting ({automatic.enabled ? "on" : "off"})</option>
+              <option value="on">On for this repository</option>
+              <option value="off">Off for this repository</option>
+            </select>
+          </Field>
+          <Field label="Daily automatic cap (USD)">
+            <input
+              className="local-field"
+              type="number"
+              min="0"
+              step="0.01"
+              value={cap}
+              onChange={(e) => setCap(e.target.value)}
+              placeholder="No cap"
+            />
+          </Field>
+        </div>
+      ) : null}
+      {status ? (
+        <p className="text-xs" role="status">
+          Automatic reviews are {status.enabled ? "on" : "off"} for this repository.
+          {status.enabled
+            ? ` Spent automatically today: ${status.spent_known ? "" : "at least "}${cost(status.spent_today)}${
+                status.daily_cap === null ? "" : ` of ${cost(status.daily_cap)}`
+              }.`
+            : ""}
+          {status.pending ? ` ${status.pending} waiting to start.` : ""}
+        </p>
+      ) : null}
+      {notice ? <Alert>{notice}</Alert> : null}
       <div className="flex flex-wrap gap-3">
         <Field label="Backend">
           <select
@@ -689,8 +836,9 @@ function RepositorySettings({
         </Field>
       </div>
       <p className="text-xs">
-        GitHub metadata and saved review evidence refresh in the background. Model generation runs
-        only when you request and confirm it.
+        GitHub metadata and saved review evidence refresh in the background without model calls.
+        Model generation runs when you request and confirm it, or automatically as set above. Every
+        run stays within the configured budgets.
       </p>
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save repository settings"}
