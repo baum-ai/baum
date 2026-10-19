@@ -762,6 +762,62 @@ func TestFitBytesDropsLowestConfidenceSessionAfterPatchesAreExhausted(t *testing
 	if hunk := bundle.Diff[0]; hunk.Patch != "" || !hunk.Textless || hunk.TextlessReason != "trimmed_oversized" {
 		t.Fatalf("session removed before exhausting patch text: %+v", hunk)
 	}
+	if got := countNotes(bundle.Truncated, "session(s) omitted"); got != 1 || !slices.Contains(bundle.Truncated, "1 session(s) omitted to fit the size limit") {
+		t.Fatalf("want one note counting 1 omitted session, got %v", bundle.Truncated)
+	}
+}
+
+func countNotes(notes []string, fragment string) int {
+	n := 0
+	for _, note := range notes {
+		if strings.Contains(note, fragment) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestFitBytesNotesEverySessionCutOnceAndDeterministically(t *testing.T) {
+	build := func() *Bundle {
+		return &Bundle{
+			PullRequest: PullRequest{Title: "t"},
+			Sessions: []Session{
+				{RootSessionID: "a", Confidence: 0.9, Decisions: decisionsOf(SessionDecision{Summary: strings.Repeat("a ", 1500)})},
+				{RootSessionID: "b", Confidence: 0.5, Decisions: decisionsOf(SessionDecision{Summary: strings.Repeat("b ", 1500)})},
+				{RootSessionID: "c", Confidence: 0.1, Decisions: decisionsOf(SessionDecision{Summary: strings.Repeat("c ", 1500)})},
+			},
+		}
+	}
+	caps := Caps{MaxBytes: 1000}
+	first, second := build(), build()
+	if err := Fit(first, caps); err != nil {
+		t.Fatal(err)
+	}
+	if err := Fit(second, caps); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Sessions) != 0 {
+		t.Fatalf("want every session cut, got %+v", first.Sessions)
+	}
+	if countNotes(first.Truncated, "session(s) omitted") != 1 || !slices.Contains(first.Truncated, "3 session(s) omitted to fit the size limit") {
+		t.Fatalf("want one note counting 3 sessions, got %v", first.Truncated)
+	}
+	if string(mustJSON(t, first)) != string(mustJSON(t, second)) {
+		t.Error("same input produced different bundles")
+	}
+}
+
+func TestFitBytesAddsNoSessionNoteWhenNoSessionIsCut(t *testing.T) {
+	bundle := &Bundle{
+		Diff:     []Hunk{{ID: testHunk, Path: "main.go", Role: RoleCode, Patch: strings.Repeat("+code\n", 200)}},
+		Sessions: []Session{{RootSessionID: "keep", Confidence: 0.9, Decisions: decisionsOf(SessionDecision{Summary: "short"})}},
+	}
+	if err := Fit(bundle, Caps{MaxBytes: 1500, MaxHunkPatchLines: 200}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Sessions) != 1 || countNotes(bundle.Truncated, "session(s) omitted") != 0 {
+		t.Fatalf("want the session kept and no session note, got %+v %v", bundle.Sessions, bundle.Truncated)
+	}
 }
 
 func TestFitBytesRejectsStructuralOversize(t *testing.T) {
@@ -924,6 +980,12 @@ func TestApplyCapsCutsExactlyAtTheBoundary(t *testing.T) {
 		Diff: []Hunk{{ID: "h1", Patch: "l1\nl2\nl3"}},
 	}
 	ApplyCaps(bundle, caps)
+	if bundle.Diff[0].Patch != "l1\nl2\nl3" {
+		t.Errorf("ApplyCaps cut patch lines before redaction: %q", bundle.Diff[0].Patch)
+	}
+	if err := Fit(bundle, caps); err != nil {
+		t.Fatal(err)
+	}
 	if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" {
 		t.Errorf("expected only the high-confidence session kept, got %+v", bundle.Sessions)
 	}
@@ -943,14 +1005,14 @@ func TestCapAttachmentsShortensAltAndHeadingAndNotes(t *testing.T) {
 		{ID: "a", Alt: strings.Repeat("x", 50), Heading: "short"},
 		{ID: "b", Alt: "ok"},
 	}}
-	CapAttachments(bundle, Caps{MaxImageAltBytes: 10})
+	capAttachments(bundle, Caps{MaxImageAltBytes: 10})
 	if len(bundle.Attachments[0].Alt) != 10 || bundle.Attachments[0].Heading != "short" || bundle.Attachments[1].Alt != "ok" {
 		t.Fatalf("attachments = %+v", bundle.Attachments)
 	}
 	if len(bundle.Truncated) != 1 || !strings.Contains(bundle.Truncated[0], "for 1 description image(s)") {
 		t.Fatalf("truncated = %v", bundle.Truncated)
 	}
-	CapAttachments(bundle, Caps{})
+	capAttachments(bundle, Caps{})
 	if len(bundle.Truncated) != 1 {
 		t.Fatal("a zero limit must not cap or note")
 	}

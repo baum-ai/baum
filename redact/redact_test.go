@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -423,5 +424,123 @@ func TestExactWindowWithoutDotIsNotAnAddress(t *testing.T) {
 	}
 	if got != text {
 		t.Fatalf("dotless exact-window run was masked: %q", got)
+	}
+}
+
+// A value that input redaction already masked is no finding when a rule
+// matches the syntax around it again; a real value, even one that starts
+// like a mask, still is.
+func TestAlreadyMaskedValuesAreNoFindings(t *testing.T) {
+	e := engine(t)
+	secret := "nQ7wL4" + "mX8pZ1" + "sT6bK3" + "jH0cV5"
+	tests := []struct {
+		name, rule, format string
+	}{
+		{"bearer", "authorization-bearer", "curl -H 'Authorization: Bearer %s' https://api.example.com/v1"},
+		{"password flag", "command-line-password-flag", "mysql -h db.internal -u app --password=%s app_db"},
+		{"url credentials", "url-credentials", "postgres://svc_user:%s@localhost:5432/app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			real := fmt.Sprintf(tt.format, secret)
+			masked, first, err := e.Redact(real)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.ByRule[tt.rule] != 1 || first.Findings != 1 || strings.Contains(masked, secret) {
+				t.Fatalf("real value: %q, %+v", masked, first)
+			}
+			again, second, err := e.Redact(masked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again != masked || second.Findings != 0 || len(second.ByRule) != 0 {
+				t.Fatalf("masked value: %q, %+v", again, second)
+			}
+			if spans, err := e.FindContext(context.Background(), masked); err != nil || len(spans) != 0 {
+				t.Fatalf("FindContext of masked value: %v, %v", spans, err)
+			}
+			// Starts like a mask, but is not made of mask output only.
+			started := fmt.Sprintf(tt.format, "Xx9-"+secret)
+			out, third, err := e.Redact(started)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if third.Findings != 1 || strings.Contains(out, secret) {
+				t.Fatalf("value starting like a mask: %q, %+v", out, third)
+			}
+		})
+	}
+}
+
+func TestAlreadyMasked(t *testing.T) {
+	for in, want := range map[string]bool{
+		"XXXXxxxx-9999_**": true, "x": true, "***": true,
+		"": false, "---": false, "xxxx-real": false, "Xk9": false, "xxxx xxxx": false,
+	} {
+		if got := alreadyMasked(in); got != want {
+			t.Errorf("alreadyMasked(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// Concurrent calls share at most cap(finders) compiled engines and wait for
+// an idle one rather than compiling more.
+func TestConcurrentRedactionBoundsCompiledFinders(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "connect to " + plantedURL + " now"
+	errs := make(chan error, 4*cap(e.slots)+8)
+	for range cap(errs) {
+		go func() {
+			out, _, err := e.RedactContext(context.Background(), text)
+			if err == nil && strings.Contains(out, "Tr0ub4dor") {
+				err = fmt.Errorf("secret kept: %q", out)
+			}
+			errs <- err
+		}()
+	}
+	for range cap(errs) {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if made := len(e.slots); made > cap(e.slots) || made != len(e.finders) {
+		t.Fatalf("compiled %d finders for a limit of %d, %d idle", made, cap(e.slots), len(e.finders))
+	}
+}
+
+func TestBorrowStopsWhenContextEnds(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range cap(e.slots) {
+		if _, err := e.borrow(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.borrow(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("borrow with every finder busy and ctx ended: %v", err)
+	}
+}
+
+func TestMaskedDottedURLCredentialsAreNoFindings(t *testing.T) {
+	e := engine(t)
+	original := "postgres://svc:" + "nQ7wL4mX8pZ1sT6bK3jH0cV5" + "@db.internal/app"
+	masked, first, err := e.Redact(original)
+	if err != nil || first.Findings == 0 {
+		t.Fatalf("first: %v, %v", first, err)
+	}
+	again, second, err := e.Redact(masked)
+	if err != nil || again != masked || second.Findings != 0 {
+		t.Fatalf("second: %q, %v, %v", again, second, err)
+	}
+	if spans, err := e.FindContext(context.Background(), masked); err != nil || len(spans) != 0 {
+		t.Fatalf("find: %v, %v", spans, err)
 	}
 }

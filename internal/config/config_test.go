@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -330,5 +332,83 @@ func TestGHKeyringLookupStopsWhenCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Errorf("the lookup took %v after cancellation", elapsed)
+	}
+}
+
+func TestDurationFieldsOnlyTakeStrings(t *testing.T) {
+	const hint = `write it like "10m"`
+	cases := []struct {
+		name    string
+		toml    string
+		field   func(Budgets) Duration
+		want    time.Duration
+		wantErr []string
+	}{
+		{"pass string", "[budgets]\npass_timeout = \"3m\"\n", func(b Budgets) Duration { return b.PassTimeout }, 3 * time.Minute, nil},
+		{"pass integer", "[budgets]\npass_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
+		{"pass float", "[budgets]\npass_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
+		{"run string", "[budgets]\nrun_timeout = \"3m\"\n", func(b Budgets) Duration { return b.RunTimeout }, 3 * time.Minute, nil},
+		{"run inline table", "[budgets]\nrun_timeout = { value = 10 }\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"run integer", "[budgets]\nrun_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"inline table integer", "budgets = { run_timeout = 10 }\n", nil, 0, []string{"budgets.run_timeout at line 1, column", hint}},
+		{"dotted key integer", "budgets.pass_timeout = 10\n", nil, 0, []string{"budgets.pass_timeout at line 1, column", hint}},
+		{"run float", "[budgets]\nrun_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		// go-toml matches keys to fields without regard to case.
+		{"upper-case key integer", "[Budgets]\nRUN_TIMEOUT = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
+		{"upper-case key string", "[BUDGETS]\nPass_Timeout = \"4m\"\n", func(b Budgets) Duration { return b.PassTimeout }, 4 * time.Minute, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := ReadFile(path)
+			t.Logf("err=%v pass=%v run=%v", err, time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.RunTimeout))
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := time.Duration(tc.field(cfg.Budgets)); got != tc.want {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, s := range tc.wantErr {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("error %q lacks %q", err, s)
+				}
+			}
+		})
+	}
+}
+
+func TestDurationKeysCoverEveryDurationField(t *testing.T) {
+	var found []string
+	var walk func(prefix string, typ reflect.Type)
+	walk = func(prefix string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			name := strings.Split(field.Tag.Get("toml"), ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			switch {
+			case field.Type == reflect.TypeOf(Duration(0)):
+				found = append(found, prefix+name)
+			case field.Type.Kind() == reflect.Struct:
+				walk(prefix+name+".", field.Type)
+			}
+		}
+	}
+	walk("", reflect.TypeOf(Config{}))
+	slices.Sort(found)
+	want := slices.Clone(durationKeys)
+	slices.Sort(want)
+	if !slices.Equal(found, want) {
+		t.Errorf("Duration fields %v, durationKeys %v", found, want)
 	}
 }

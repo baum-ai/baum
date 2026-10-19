@@ -140,6 +140,15 @@ func TestAConfigThatDoesNotLoadSaysItsTokenWasNotRead(t *testing.T) {
 	}
 }
 
+func TestAnIntegerDurationInTheConfigIsReportedByKeyAndPosition(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	cfgPath := m.writeConfig("[budgets]\nrun_timeout = 10\n")
+	c := find(t, run(t, Options{}), "config")
+	wantStatus(t, c, StatusProblem)
+	wantContains(t, "detail", c.Detail, cfgPath, "budgets.run_timeout", "line 2, column", `write it like "10m"`)
+}
+
 func TestAnUnquotedTokenIsNeverEchoedByAParseError(t *testing.T) {
 	m := newMachine(t)
 	m.git()
