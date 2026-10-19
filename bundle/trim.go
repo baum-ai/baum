@@ -269,7 +269,18 @@ func fitContent(bundle *Bundle, caps Caps) error {
 			return nil
 		}
 	}
+	// One note, rewritten with the running count on each cut so the fit check
+	// counts its bytes and the count is exact however many sessions are cut.
+	sessionsCut, sessionsNote := 0, -1
 	for cutLowestConfidenceSession(bundle) {
+		sessionsCut++
+		note := fmt.Sprintf("%d session(s) omitted to fit the size limit", sessionsCut)
+		if sessionsNote < 0 {
+			sessionsNote = len(bundle.Truncated)
+			bundle.Truncated = append(bundle.Truncated, note)
+		} else {
+			bundle.Truncated[sessionsNote] = note
+		}
 		if fits(bundle, limit) {
 			return nil
 		}
