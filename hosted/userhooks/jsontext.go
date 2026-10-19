@@ -174,7 +174,7 @@ func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\
 // edit replaces document[from:to] with text.
 type edit struct {
 	from, to int
-	text string
+	text     string
 }
 
 func (e edit) apply(document []byte) []byte {

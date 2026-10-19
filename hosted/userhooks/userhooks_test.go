@@ -52,7 +52,7 @@ const codexUserHooks = `{
       {
         "hooks": [
           {
-            "command": "bash /home/u/.tmux/plugins/sidebar/hook.sh codex session-start",
+            "command": "bash /opt/sidebar/hook.sh codex session-start",
             "type": "command"
           }
         ],
@@ -63,7 +63,7 @@ const codexUserHooks = `{
       {
         "hooks": [
           {
-            "command": "bash /home/u/.tmux/plugins/sidebar/hook.sh codex stop",
+            "command": "bash /opt/sidebar/hook.sh codex stop",
             "type": "command"
           }
         ],
@@ -349,16 +349,16 @@ func TestInstallRepairsEarlierHandlers(t *testing.T) {
 
 func TestMalformedSettingsAreRefusedAndKept(t *testing.T) {
 	for name, contents := range map[string]string{
-		"invalid JSON":         `{"hooks": {`,
-		"comments":             "{\n  // mine\n  \"hooks\": {}\n}\n",
-		"not an object":        `[]`,
-		"hooks not an object":  `{"hooks": []}`,
-		"event not a list":     `{"hooks": {"Stop": {}}}`,
-		"group not an object":  `{"hooks": {"Stop": ["x"]}}`,
-		"handlers not a list":  `{"hooks": {"Stop": [{"hooks": {}}]}}`,
-		"duplicate hooks key":  `{"hooks": {}, "hooks": {}}`,
-		"duplicate event key":  `{"hooks": {"Stop": [], "Stop": []}}`,
-		"handler not object":   `{"hooks": {"Stop": [{"hooks": [1]}]}}`,
+		"invalid JSON":          `{"hooks": {`,
+		"comments":              "{\n  // mine\n  \"hooks\": {}\n}\n",
+		"not an object":         `[]`,
+		"hooks not an object":   `{"hooks": []}`,
+		"event not a list":      `{"hooks": {"Stop": {}}}`,
+		"group not an object":   `{"hooks": {"Stop": ["x"]}}`,
+		"handlers not a list":   `{"hooks": {"Stop": [{"hooks": {}}]}}`,
+		"duplicate hooks key":   `{"hooks": {}, "hooks": {}}`,
+		"duplicate event key":   `{"hooks": {"Stop": [], "Stop": []}}`,
+		"handler not object":    `{"hooks": {"Stop": [{"hooks": [1]}]}}`,
 		"duplicate command key": `{"hooks": {"Stop": [{"hooks": [{"command": "a", "command": "b"}]}]}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
