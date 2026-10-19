@@ -208,6 +208,14 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			if !strings.Contains(logged.String(), "PATH") {
 				t.Errorf("names not logged: %s", logged.String())
 			}
+			if token, ok := tc.want["GITHUB_TOKEN"]; ok {
+				if !strings.Contains(logged.String(), "GITHUB_TOKEN") {
+					t.Errorf("GITHUB_TOKEN not named: %s", logged.String())
+				}
+				if strings.Contains(logged.String(), token) {
+					t.Errorf("GITHUB_TOKEN's value logged: %s", logged.String())
+				}
+			}
 		})
 	}
 }

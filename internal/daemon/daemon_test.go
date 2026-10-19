@@ -69,7 +69,7 @@ func TestDaemonHelper(t *testing.T) {
 				return App{}, err
 			}
 			<-executor.started
-			return App{Shutdown: queue.Shutdown, Idle: queue.Idle}, nil
+			return App{Shutdown: queue.Shutdown, Drain: queue.Drain, Resume: queue.Resume}, nil
 		},
 		Respawn: func(executable string, _ Status) error {
 			cmd := exec.Command(executable, "-test.run=^TestDaemonHelper$")
@@ -841,5 +841,47 @@ func TestSelfReportsTheDaemonInThisProcess(t *testing.T) {
 	stop()
 	if _, ok = Self(); ok {
 		t.Fatal("still reported after stop")
+	}
+}
+
+// Racing newer clients: the daemon restarts as the newest, and a client is
+// told about the deferred restart once, not on every ensure.
+func TestRestartTargetsTheNewestClientAndNoticesOnce(t *testing.T) {
+	paths := testPaths(t)
+	var busy atomic.Bool
+	busy.Store(true)
+	respawned := make(chan string, 4)
+	runInProcess(t, paths, Options{
+		Version: "v0.1.0",
+		Start: func(context.Context, *uiserver.Server) (App, error) {
+			return App{Drain: func() bool { return !busy.Load() }}, nil
+		},
+		Respawn: func(executable string, _ Status) error { respawned <- executable; return nil },
+	})
+	notices := 0
+	client := &Client{Paths: paths, Version: "v0.2.0", Executable: "/opt/baum-0.2.0", Deferred: func(Status) { notices++ }}
+	for range 3 {
+		status, err := client.Ensure(context.Background())
+		if err != nil || status.Version != "v0.1.0" || !status.RestartPending {
+			t.Fatalf("%+v %v", status, err)
+		}
+	}
+	if notices != 1 {
+		t.Fatalf("%d notices", notices)
+	}
+	for _, c := range []struct{ version, exe string }{{"v0.3.0", "/opt/baum-0.3.0"}, {"v0.2.5", "/opt/baum-0.2.5"}} {
+		r := rawCall(t, paths, fmt.Sprintf(`{"protocol":%d,"method":"stop","client":%q,"params":{"when_idle":true,"executable":%q}}`, Protocol, c.version, c.exe))
+		if !r.OK || r.Status == nil || r.Status.Stopping {
+			t.Fatalf("%+v", r)
+		}
+	}
+	busy.Store(false)
+	select {
+	case exe := <-respawned:
+		if exe != "/opt/baum-0.3.0" {
+			t.Fatalf("restarted as %s", exe)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("never restarted")
 	}
 }

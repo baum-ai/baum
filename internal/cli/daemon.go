@@ -387,7 +387,8 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 				wg.Wait()
 			},
 			Shutdown: queue.Shutdown,
-			Idle:     queue.Idle,
+			Drain:    queue.Drain,
+			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
 				_ = registry.Close()

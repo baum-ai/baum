@@ -97,7 +97,17 @@ type Queue struct {
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once
+	// draining refuses new jobs while the daemon restarts.
+	draining bool
 }
+
+// ErrRestarting refuses a job while the daemon restarts as a newer version.
+// Estimate and confirm again in a moment: the new daemon takes the job.
+var ErrRestarting = errors.New("the baum daemon is restarting as a newer version; estimate and confirm again in a moment")
+
+// lockWait is how long Open waits for a predecessor process to let go of the
+// journal: one whose shutdown timed out exits right after.
+const lockWait = 10 * time.Second
 
 func id() string {
 	var b [16]byte
@@ -155,7 +165,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	// One process owns a journal: two queues on one file would run confirmed
 	// jobs twice and overwrite each other's records.
-	lock, err := filelock.TryLock(context.Background(), path+".lock")
+	lock, err := filelock.Wait(context.Background(), path+".lock", lockWait)
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil, errors.New("another baum process is running this job queue")
 	}
@@ -252,12 +262,36 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 func (q *Queue) Idle() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	return q.idle()
+}
+
+func (q *Queue) idle() bool {
 	for _, j := range q.jobs {
 		if j.State == "queued" || j.State == "running" {
 			return false
 		}
 	}
 	return true
+}
+
+// Drain refuses new jobs with ErrRestarting and reports true, if no job is
+// queued or running; otherwise it changes nothing and reports false. Submit
+// checks under the same mutex, so no job is accepted after a true answer.
+func (q *Queue) Drain() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.idle() {
+		return false
+	}
+	q.draining = true
+	return true
+}
+
+// Resume accepts jobs again after Drain.
+func (q *Queue) Resume() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.draining = false
 }
 func (q *Queue) List() []Job {
 	q.mu.Lock()
@@ -359,6 +393,9 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 			q.notify(j)
 		}
 	}()
+	if q.draining {
+		return nil, ErrRestarting
+	}
 	if _, ok := q.estimates[estimateID]; !ok || time.Now().After(e.ExpiresAt) || q.ctx.Err() != nil {
 		return nil, errors.New("estimate expired or already submitted")
 	}

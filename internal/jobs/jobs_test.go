@@ -3,8 +3,12 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -286,9 +290,13 @@ func TestOneProcessOwnsTheJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	opened := time.Now()
 	if second, err := Open(path, &fakeExecutor{price: &price}, 1, nil); err == nil {
 		second.Close()
 		t.Fatal("a second queue opened the same journal")
+	}
+	if time.Since(opened) < lockWait {
+		t.Fatal("gave up before the wait")
 	}
 	if !first.Idle() {
 		t.Fatal("empty queue not idle")
@@ -299,6 +307,67 @@ func TestOneProcessOwnsTheJournal(t *testing.T) {
 		t.Fatal("journal still locked after Close:", err)
 	}
 	again.Close()
+}
+
+// Drain and Submit race: either the job is accepted and Drain reports work
+// pending, or Drain wins and the job is refused, never both or neither.
+func TestDrainAndSubmitNeverBothSucceed(t *testing.T) {
+	for range 50 {
+		q, f := newQueue(t)
+		e := estimate(t, q, "single", Item{"clone", 1})
+		var drained bool
+		var submitted []Job
+		var submitErr error
+		var wg sync.WaitGroup
+		wg.Go(func() { drained = q.Drain() })
+		wg.Go(func() { submitted, submitErr = q.Submit(context.Background(), e.ID, true, false) })
+		wg.Wait()
+		switch {
+		case drained && (submitErr == nil || !errors.Is(submitErr, ErrRestarting) || len(q.List()) != 0):
+			t.Fatalf("drained, yet submit %v, %v, %d jobs", submitted, submitErr, len(q.List()))
+		case !drained && submitErr != nil:
+			t.Fatalf("neither drained nor submitted: %v", submitErr)
+		}
+		if !drained {
+			<-f.started
+			close(f.release)
+		}
+		q.Close()
+	}
+}
+
+func TestSubmitWhileRestartingIsAServiceUnavailableToRetry(t *testing.T) {
+	q, _ := newQueue(t)
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if !q.Drain() {
+		t.Fatal("empty queue not drained")
+	}
+	body := strings.NewReader(`{"estimate_id":"` + e.ID + `","confirm_estimate":true,"confirm_isolation":false}`)
+	w := httptest.NewRecorder()
+	q.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/jobs", body))
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "restarting") {
+		t.Fatalf("%d %q %q", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+	}
+	q.Resume()
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal("not accepted after Resume:", err)
+	}
+}
+
+// A predecessor that holds the journal while it exits is waited for.
+func TestOpenWaitsForThePreviousOwner(t *testing.T) {
+	path := filepath.Join(privateDir(t), "jobs.json")
+	price := 1.0
+	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); first.Close() }()
+	second, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.Close()
 }
 func TestQueuePersistenceFailureDoesNotStartSpend(t *testing.T) {
 	q, f := newQueue(t)

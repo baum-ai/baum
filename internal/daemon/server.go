@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
@@ -24,7 +25,9 @@ import (
 // Defaults of Options.
 const (
 	DefaultShutdownTimeout = 20 * time.Second
-	DefaultLockTimeout     = 10 * time.Second
+	// DefaultLockTimeout outlasts a predecessor's shutdown, so a successor
+	// started during a restart waits for it rather than giving up.
+	DefaultLockTimeout = DefaultShutdownTimeout + 15*time.Second
 	// idleTimeout closes a control connection that sends nothing.
 	idleTimeout = 30 * time.Second
 	// methodTimeout bounds one control request's handler.
@@ -55,9 +58,13 @@ type App struct {
 	Shutdown func(ctx context.Context) error
 	// Close releases resources once nothing is served.
 	Close func()
-	// Idle reports that no paid work is queued or running. Without it the
-	// daemon is always idle.
-	Idle func() bool
+	// Drain stops accepting paid work and reports true when none is queued
+	// or running, atomically with accepting work, so nothing confirmed can
+	// slip in between; when work is pending it changes nothing and reports
+	// false. Without it the daemon is always idle.
+	Drain func() bool
+	// Resume accepts paid work again after a Drain that led nowhere.
+	Resume func()
 }
 
 // Options configure Run.
@@ -113,10 +120,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := privatefs.MkdirAll(filepath.Dir(paths.Socket)); err != nil {
 		return err
 	}
-	lock, err := waitLock(ctx, paths.lockFile(), lockTimeout)
-	if errors.Is(err, errLocked) {
-		return ErrRunning
-	}
+	lock, err := acquire(ctx, paths, lockTimeout)
 	if err != nil {
 		return err
 	}
@@ -190,7 +194,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	stopCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, idle: app.Idle, respawn: opts.Respawn}
+	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn}
 	self.Store(control)
 	defer self.Store(nil)
 	runCtx, cancelRun := context.WithCancel(context.Background())
@@ -228,6 +232,31 @@ func Run(ctx context.Context, opts Options) error {
 	<-controlDone
 	log.Info("daemon stopped")
 	return serveErr
+}
+
+// acquire takes the daemon lock. A daemon that answers and is not stopping
+// owns it: ErrRunning at once. One that is stopping (its jobs may take up to
+// its shutdown timeout) or starting is waited for, up to timeout.
+func acquire(ctx context.Context, paths Paths, timeout time.Duration) (*filelock.Lock, error) {
+	deadline := time.Now().Add(timeout)
+	probe := &Client{Paths: paths}
+	for {
+		lock, err := tryLock(ctx, paths.lockFile())
+		if !errors.Is(err, errLocked) {
+			return lock, err
+		}
+		if status, err := probe.Hello(ctx); err == nil && !status.Stopping {
+			return nil, ErrRunning
+		}
+		if !time.Now().Before(deadline) {
+			return nil, ErrRunning
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // listenControl listens on the control socket, readable and writable only by
@@ -271,11 +300,13 @@ type controller struct {
 	methods map[string]Method
 	log     *slog.Logger
 	conns   map[net.Conn]struct{}
-	idle    func() bool
+	drain   func() bool
+	resume  func()
 	respawn func(string, Status) error
-	// restartInto is the executable a newer client asked to restart as.
-	restartInto string
-	wg          sync.WaitGroup
+	// restartInto is the executable of the newest client that asked the
+	// daemon to restart as its version, and restartVersion that version.
+	restartInto, restartVersion string
+	wg                          sync.WaitGroup
 }
 
 func (c *controller) setStopping() {
@@ -289,7 +320,15 @@ func (c *controller) current() Status {
 	return c.status
 }
 
-func (c *controller) isIdle() bool { return c.idle == nil || c.idle() }
+// drained stops accepting paid work if none is pending.
+func (c *controller) drained() bool { return c.drain == nil || c.drain() }
+
+// undrain accepts paid work again.
+func (c *controller) undrain() {
+	if c.resume != nil {
+		c.resume()
+	}
+}
 
 // restartWhenIdle starts the requested executable and stops once no job is
 // queued or running.
@@ -305,7 +344,10 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 		c.mu.Lock()
 		executable, status := c.restartInto, c.status
 		c.mu.Unlock()
-		if executable == "" || !c.isIdle() {
+		// Drain refuses new jobs in the same step that finds none pending,
+		// so a job confirmed now gets a "restarting, retry" answer instead of
+		// being interrupted.
+		if executable == "" || !c.drained() {
 			continue
 		}
 		c.setStopping()
@@ -313,8 +355,9 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 		if err := c.respawn(executable, status); err != nil {
 			c.log.Error("could not start the newer version; keeping this one", "error", err)
 			c.mu.Lock()
-			c.restartInto, c.status.RestartPending, c.status.Stopping = "", false, false
+			c.restartInto, c.restartVersion, c.status.RestartPending, c.status.Stopping = "", "", false, false
 			c.mu.Unlock()
+			c.undrain()
 			continue
 		}
 		c.stop()
@@ -397,16 +440,19 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) != nil {
 			return Response{Error: &Error{Code: CodeBadRequest, Message: "invalid stop parameters"}}, false
 		}
-		if params.WhenIdle && !c.isIdle() {
+		if params.WhenIdle && !c.drained() {
 			if c.respawn == nil || !filepath.IsAbs(params.Executable) {
 				return Response{OK: true, Status: &status}, false
 			}
 			c.mu.Lock()
-			c.restartInto = params.Executable
+			// Racing clients of different versions: the newest wins.
+			if c.restartInto == "" || Older(c.restartVersion, req.Client) {
+				c.restartInto, c.restartVersion = params.Executable, req.Client
+				c.log.Info("restart requested once idle", "client", req.Client)
+			}
 			c.status.RestartPending = true
 			status = c.status
 			c.mu.Unlock()
-			c.log.Info("restart requested once idle", "client", req.Client)
 			return Response{OK: true, Status: &status}, false
 		}
 		status.Stopping = true

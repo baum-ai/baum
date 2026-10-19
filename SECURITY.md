@@ -312,11 +312,10 @@ decide which state directory, lock and job journal the daemon uses. The SSH
 agent socket is the starting environment's, else the shell's; it is used only
 to fetch a missing pull request commit from your clone's remote, as `baum
 generate` would, never given to an agent backend, and dropped when it no longer
-exists. The daemon's fetches never prompt: SSH runs in batch mode, so a key
-that needs a passphrase or an unknown host key fails the run with git's error. If the shell is slow or fails, the same variables come
-from the starting environment instead. Startup files can check
-`BAUM_RESOLVING_ENVIRONMENT=1` to skip slow work. The backends then filter this
-environment further, as described under "Agent isolation".
+exists. The daemon's fetches never prompt: git's terminal prompts and SSH's
+askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout, so
+a key that needs a passphrase or an unknown host key fails the run with git's
+error. An ssh command you configured runs as you wrote it.
 
 ## Authenticated local application
 

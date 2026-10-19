@@ -21,7 +21,9 @@ var ErrNotRunning = errors.New("the baum daemon is not running")
 
 // Client defaults.
 const (
-	DefaultReadyTimeout = 30 * time.Second
+	// DefaultReadyTimeout covers a new daemon waiting for its predecessor
+	// to finish stopping.
+	DefaultReadyTimeout = DefaultLockTimeout + 15*time.Second
 	// DefaultStopTimeout leaves a stopping daemon its shutdown timeout and
 	// time to close.
 	DefaultStopTimeout = DefaultShutdownTimeout + 15*time.Second
@@ -321,7 +323,9 @@ func (c *Client) decide(ctx context.Context, status Status) (Status, bool, error
 			}
 			return Status{}, false, nil
 		}
-		if c.Deferred != nil {
+		// Tell the user once, when the restart is first scheduled, not on
+		// every later hook run.
+		if c.Deferred != nil && !status.RestartPending {
 			c.Deferred(*response.Status)
 		}
 		return *response.Status, true, nil

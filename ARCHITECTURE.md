@@ -1378,7 +1378,12 @@ snapshots; it never treats missing PRs in an open-only snapshot as closed.
 `internal/jobs` serializes queue mutations in a private atomic JSON journal,
 without duplicating review documents. `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
-until its workers stop, so two processes never run one queue. Workers use the same `generate.Publish`
+until its workers stop, so two processes never run one queue; it waits up to
+10 s for a predecessor whose shutdown timed out and that is exiting.
+`Queue.Drain` refuses new jobs and reports true only when none is queued or
+running, under the mutex `Submit` checks, so a restart never cuts a confirmed
+job short: one confirmed during it gets `503` with `Retry-After` and is
+estimated and confirmed again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
@@ -1457,8 +1462,9 @@ opens its launch URL, so there is one server implementation.
 state directory and holds it for its whole life. The operating system releases
 it however the process exits, so a lock is never stale; the new owner deletes
 the socket, credential and status files a crashed daemon left. A second
-`Run` waits briefly (a stopping daemon is releasing the lock), then returns
-`ErrRunning`. Once it owns the lock it runs `Options.Prepare` (the command line
+`Run` returns `ErrRunning` at once when the holder answers and is not
+stopping; otherwise (it is starting, or stopping and giving its jobs up to
+the 20 s shutdown timeout) it waits up to 35 s for the lock. Once it owns the lock it runs `Options.Prepare` (the command line
 resolves the login shell environment there), builds the application with
 `Options.Start`, listens on loopback, writes the credential and the status
 file, and listens on the control socket last, so a daemon that answers on
@@ -1477,9 +1483,11 @@ protocol but an older version (an older release by semver; a development
 build is older than any release, and two development builds are left alone)
 is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
 baum>}`: an idle daemon stops at once and the client starts its own version;
-a busy one answers with `restart_pending` and, once no job is queued or
-running, starts that executable detached on the same port and stops, so no
-confirmed run is interrupted. A daemon speaking a newer protocol is an
+a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
+that executable detached on the same port and stops, so no confirmed run is
+interrupted. Of racing clients the newest version is the one it restarts
+as, and a client tells its user about the deferred restart only when it
+first schedules it. A daemon speaking a newer protocol is an
 `IncompatibleError` naming both versions.
 When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
 the holder starts `baum daemon run --detached` and waits until it answers,
@@ -1529,12 +1537,14 @@ from the starting process when it has one (launchd's agent for an app started
 from Finder) and from the login shell otherwise, so the daemon can fetch a
 pull request commit missing from a clone with an SSH remote. A socket goes
 stale when its session ends: before each fetch `shellenv.Agent` checks that it
-still exists and otherwise asks the login shell again (at most once a minute)
-or drops it. The daemon installs a `gitlocal.Background`, so its fetches never
-wait for an answer: `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS_REQUIRE=never` and
-`BatchMode=yes` appended to the ssh command that applies (`GIT_SSH_COMMAND`,
-`core.sshCommand`, `GIT_SSH`, else `ssh`); a missing key or unknown host is a
-git error. The backends never receive the agent or any `GIT_` variable. The
+still exists, and only when a socket it had has gone stale asks the login
+shell again (one shared run, remembered when the shell has none, retried a
+minute after a failure) or drops it; it is asked only for SSH remotes. The
+daemon installs a `gitlocal.Background`, so its fetches never wait for an
+answer: `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS_REQUIRE=never`, the fetch
+timeout, and `ssh -o BatchMode=yes` when no ssh command is configured; a
+configured `GIT_SSH_COMMAND`, `core.sshCommand` or `GIT_SSH` (plink, a
+wrapper) runs as written. A missing key or unknown host is a git error. The backends never receive the agent or any `GIT_` variable. The
 locations, `HOME`, the XDG
 directories, `TMPDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, only ever
 come from the starting process and stay unset when it lacks them: the daemon
