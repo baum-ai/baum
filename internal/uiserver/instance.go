@@ -74,7 +74,12 @@ func Start(ctx context.Context, directory string, port int, opts Options) (*Inst
 	if !privateFile(lockpath, info) {
 		return nil, errors.New("ui lock file must be private (0600)")
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.ToSlash(lockpath)}).String()+"?_pragma=busy_timeout(0)")
+	// A Windows drive path needs a leading slash so "C:" is not read as the URI authority.
+	uriPath := filepath.ToSlash(lockpath)
+	if filepath.VolumeName(lockpath) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?_pragma=busy_timeout(0)")
 	if err != nil {
 		return nil, err
 	}
