@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,9 +37,13 @@ const (
 	// RefPrefix is where the git-refs store keeps one ref per checkpoint.
 	RefPrefix = "refs/entire/checkpoints/"
 	// FetchHint is the command that downloads the git-refs store, for a
-	// warning to name when a checkpoint is not in the clone. Nothing here
-	// runs it.
-	FetchHint = "git fetch origin 'refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+	// warning to name when a checkpoint is not in the clone. The + forces the
+	// update, since a rewritten ref (as "entire migrate" leaves) is otherwise
+	// rejected as a non-fast-forward. Nothing here runs it.
+	FetchHint = "git fetch origin '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+	// BranchFetchHint downloads the legacy checkpoint branch, which holds the
+	// 12-hex checkpoints a migration has not moved.
+	BranchFetchHint = "git fetch origin entire/checkpoints/v1"
 
 	maxCheckpointBytes = 256 << 20
 	maxCheckpointFiles = 512
@@ -84,10 +89,12 @@ func (l location) spec(rel string) string {
 // locate finds the checkpoint with the canonical id: its ref if it has one,
 // else the branch. The branch holds 12-hex ids only.
 func (s Store) locate(id string) (location, bool) {
+	// A commit is checked where it is used, so a Store built by a caller
+	// cannot hand git an option or a revision expression.
 	if commit, ok := s.Refs[id]; ok {
-		return location{commit: commit}, true
+		return location{commit: commit}, commitPattern.MatchString(commit)
 	}
-	if s.Branch != "" && len(id) == branchIDLength {
+	if s.Branch != "" && commitPattern.MatchString(s.Branch) && len(id) == branchIDLength {
 		return location{commit: s.Branch, dir: Path(id)}, true
 	}
 	return location{}, false
@@ -113,8 +120,8 @@ func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err er
 		if !found {
 			continue
 		}
-		if rest, isCheckpoint := strings.CutPrefix(ref, RefPrefix); isCheckpoint {
-			if id, valid := refID(rest); valid && commitPattern.MatchString(oid) {
+		if strings.HasPrefix(ref, RefPrefix) {
+			if id, valid := refID(ref); valid && commitPattern.MatchString(oid) {
 				if _, dup := refs[id]; !dup {
 					refs[id] = oid
 				}
@@ -135,18 +142,70 @@ func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err er
 	return store, store.Branch != "" || len(refs) > 0, nil
 }
 
-// refID is the canonical checkpoint id of a ref named <shard>/<id> below the
-// prefix, when the shard is the last two characters of the id.
-func refID(name string) (string, bool) {
-	shard, rest, found := strings.Cut(name, "/")
-	if !found || strings.Contains(rest, "/") {
+// refID is the canonical checkpoint id of a ref, which must be named exactly
+// RefPrefix, the last two characters of the canonical id, a slash and the
+// canonical id (hex lower-case, ULID upper-case), as the platform mirror
+// reads them. Any other spelling is not a checkpoint Entire wrote, and a
+// case variant must not shadow the real one.
+func refID(ref string) (string, bool) {
+	rest, ok := strings.CutPrefix(ref, RefPrefix)
+	if !ok {
 		return "", false
 	}
-	id, ok := entirecheckpoint.CanonicalID(rest)
-	if !ok || !strings.EqualFold(shard, id[len(id)-2:]) {
+	_, name, found := strings.Cut(rest, "/")
+	if !found {
+		return "", false
+	}
+	id, ok := entirecheckpoint.CanonicalID(name)
+	if !ok || ref != RefPrefix+id[len(id)-2:]+"/"+id {
 		return "", false
 	}
 	return id, true
+}
+
+// Located reports which of ids the store holds, by canonical id: a ref is
+// there, and the branch holds a 12-hex id whose directory is in its tree
+// (which a partial clone has even when the checkpoint's blobs were never
+// downloaded). A checkpoint the store holds but Sessions leaves out is
+// unreadable; one it does not hold is missing. repoRoot is a private
+// repository, as for List.
+func Located(ctx context.Context, repoRoot string, store Store, ids []string) (map[string]bool, error) {
+	held := map[string]bool{}
+	var check []string
+	var specs []string
+	for _, id := range ids {
+		canonical, ok := entirecheckpoint.CanonicalID(id)
+		if !ok {
+			continue
+		}
+		loc, ok := store.locate(canonical)
+		switch {
+		case !ok:
+		case loc.dir == "":
+			held[canonical] = true
+		case !slices.Contains(check, canonical):
+			check = append(check, canonical)
+			specs = append(specs, loc.commit+":"+loc.dir)
+		}
+	}
+	if len(specs) == 0 {
+		return held, nil
+	}
+	out, err := runGit(ctx, gitlocal.ReadEnv(repoRoot), repoRoot, strings.NewReader(strings.Join(specs, "\n")+"\n"),
+		"cat-file", "--batch-check")
+	if err != nil {
+		return nil, fmt.Errorf("looking for Entire checkpoints: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != len(check) {
+		return held, nil
+	}
+	for i, id := range check {
+		if fields := strings.Fields(lines[i]); len(fields) == 3 && fields[1] == "tree" {
+			held[id] = true
+		}
+	}
+	return held, nil
 }
 
 // List returns every checkpoint in the store, in id order; a checkpoint in

@@ -339,6 +339,13 @@ func (c *Checkpoints) Sessions(ctx context.Context, ids []string) (map[string][]
 	return out, nil
 }
 
+// Located reports which of ids the clone holds, by canonical id, whether or
+// not its metadata can be read: a checkpoint Sessions leaves out that Located
+// reports is unreadable, and one it does not report is not in the clone.
+func (c *Checkpoints) Located(ctx context.Context, ids []string) (map[string]bool, error) {
+	return entire.Located(ctx, c.store.objects, c.store.store, ids)
+}
+
 // Load maps the sessions one checkpoint in the clone records, as Load maps
 // an Entire session, with no Since applied. A session that cannot be mapped
 // is a Failure; an error is a checkpoint that could not be read at all.

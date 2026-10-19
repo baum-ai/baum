@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/linkage"
@@ -63,7 +64,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 	if branch == nil {
-		warnMissing(warn, ids, nil, firstNamedBy)
+		warnMissing(warn, ids, nil, nil, firstNamedBy)
 		return nil, nil
 	}
 	defer branch.Close()
@@ -73,7 +74,11 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 
-	warnMissing(warn, ids, recorded, firstNamedBy)
+	located, err := branch.Located(ctx, ids)
+	if err != nil {
+		located = nil // every one not recorded is reported as missing
+	}
+	warnMissing(warn, ids, recorded, located, firstNamedBy)
 
 	have := make(map[string]bool, len(found))
 	for _, s := range found {
@@ -117,18 +122,38 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 	return truth, extra
 }
 
-// warnMissing names each checkpoint a trailer names that neither store holds
-// readably in the clone, with the command that downloads the git-refs store.
-// Nothing here runs it: local linking never fetches, and the commit is left to
-// the heuristic steps.
-func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, firstNamedBy map[string]string) {
+// warnMissing reports the checkpoints a trailer names that Sessions did not
+// return. Those the clone holds but cannot read (metadata that is unreadable,
+// too large or malformed, or objects a partial clone never downloaded) get a
+// line each, with no fetch hint: fetching would not help. Those it does not
+// hold are listed in one line with the command that downloads them: the refs
+// for any id, and the legacy branch too when one is 12-hex, which only the
+// branch may hold. Nothing here runs a command: local linking never fetches,
+// and the commits are left to the heuristic steps.
+func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, firstNamedBy map[string]string) {
+	var missing []string
+	legacy := false
 	for _, id := range ids {
 		if _, ok := recorded[id]; ok {
 			continue
 		}
-		warnf(warn, "warning: commit %s: Entire checkpoint %s is not in this clone (or its objects are not downloaded), so the commit is linked without it; fetch it with: %s\n",
-			firstNamedBy[id], id, entire.FetchHint)
+		if located[id] {
+			warnf(warn, "warning: commit %s: Entire checkpoint %s is in this clone but cannot be read (its metadata is unreadable or its objects are not downloaded), so the commit is linked without it\n",
+				firstNamedBy[id], id)
+			continue
+		}
+		missing = append(missing, id)
+		legacy = legacy || len(id) == 12
 	}
+	if len(missing) == 0 {
+		return
+	}
+	hint := entire.FetchHint
+	if legacy {
+		hint += " or " + entire.BranchFetchHint
+	}
+	warnf(warn, "warning: Entire checkpoints not in this clone, so the commits naming them are linked without them: %s; fetch them with: %s\n",
+		strings.Join(missing, ", "), hint)
 }
 
 // entireEdges are a commit's links to the sessions its checkpoints record,

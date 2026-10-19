@@ -253,7 +253,8 @@ var refSessions = [2]string{"bbbbbbbb-1111-4000-8000-000000000001", "bbbbbbbb-11
 const (
 	// ulidCheckpoint is only ever in the git-refs store.
 	ulidCheckpoint = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	fetchHint      = "git fetch origin 'refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+	fetchHint      = "git fetch origin '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+	branchHint     = "git fetch origin entire/checkpoints/v1"
 )
 
 // A commit whose trailer names a checkpoint kept in a per-checkpoint ref links
@@ -349,6 +350,9 @@ func TestResolveWarnsWithTheFetchHintForAMissingRefCheckpoint(t *testing.T) {
 					t.Errorf("warnings = %q, want it to contain %q", warnings.String(), want)
 				}
 			}
+			if strings.Contains(warnings.String(), branchHint) {
+				t.Errorf("warnings = %q; a ULID is never in the branch, so no branch hint", warnings.String())
+			}
 			if refs := linktest.Git(t, f.Repo, "for-each-ref", "refs/entire/checkpoints/"+ulidCheckpoint[len(ulidCheckpoint)-2:]+"/"+ulidCheckpoint); refs != "" {
 				t.Errorf("the checkpoint ref appeared: %s", refs)
 			}
@@ -383,5 +387,67 @@ func TestResolveReadsNoMissingRefCheckpointObject(t *testing.T) {
 	}
 	if got := linkedTo(result.Commits[0]); len(got["entire_checkpoint"]) != 0 {
 		t.Errorf("first commit links = %+v; the checkpoint is not readable here", result.Commits[0].Links)
+	}
+}
+
+// A 12-hex checkpoint may be in either store, so its warning names both
+// fetches; and all the missing ids of a run share one line.
+func TestResolveGroupsTheMissingCheckpointsInOneWarning(t *testing.T) {
+	f := linktest.NewWithTrailer(t, "Entire-Checkpoint: ffffffffffff\nEntire-Checkpoint: "+ulidCheckpoint)
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	resolve(t, req)
+	lines := 0
+	for _, line := range strings.Split(warnings.String(), "\n") {
+		if strings.Contains(line, "not in this clone") {
+			lines++
+			for _, want := range []string{"ffffffffffff", ulidCheckpoint, fetchHint, branchHint} {
+				if !strings.Contains(line, want) {
+					t.Errorf("warning %q does not contain %q", line, want)
+				}
+			}
+		}
+	}
+	if lines != 1 {
+		t.Errorf("warnings = %q, want one line for both checkpoints", warnings.String())
+	}
+
+	// A hex id alone names the refs fetch and the branch fetch.
+	hex := linktest.NewWithTrailer(t, "Entire-Checkpoint: ffffffffffff")
+	warnings.Reset()
+	req = request(hex)
+	req.Warn = &warnings
+	resolve(t, req)
+	if !strings.Contains(warnings.String(), fetchHint) || !strings.Contains(warnings.String(), branchHint) {
+		t.Errorf("warnings = %q, want both hints for a 12-hex id", warnings.String())
+	}
+}
+
+// A checkpoint the clone holds whose metadata cannot be read is not "missing":
+// the warning says it cannot be read, and suggests no fetch.
+func TestResolveDoesNotSuggestAFetchForAnUnreadableCheckpoint(t *testing.T) {
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+	f.AddCheckpoint(t)
+	linktest.Git(t, f.Repo, "checkout", "-q", "entire/checkpoints/v1")
+	path := filepath.Join(f.Repo, linktest.CheckpointID[:2], linktest.CheckpointID[2:], "0", "metadata.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte("2026-07-26T15:52:20Z"), []byte("yesterday")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linktest.Git(t, f.Repo, "commit", "-qam", "break a date")
+	linktest.Git(t, f.Repo, "checkout", "-q", "main")
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	result := resolve(t, req)
+	if got := linkedTo(result.Commits[0]); len(got["entire_checkpoint"]) != 0 {
+		t.Errorf("first commit links = %+v; the checkpoint is not readable", result.Commits[0].Links)
+	}
+	if !strings.Contains(warnings.String(), "cannot be read") || strings.Contains(warnings.String(), "git fetch") {
+		t.Errorf("warnings = %q, want a cannot-be-read warning with no fetch hint", warnings.String())
 	}
 }

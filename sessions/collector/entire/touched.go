@@ -3,6 +3,7 @@ package entire
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,12 +15,14 @@ import (
 // Touched maps each checkpoint id to when it was last written. For the
 // branch that is the commit time of the newest commit that changed it, from
 // one git log over trees alone: Entire writes a checkpoint, and rewrites it
-// when its session goes on, in a commit of its own. For a ref it is the commit
-// time of the ref's commit (a migrated ref dates from the migration, so it
-// reads as newer than it was written, never older). It is known without
-// reading the checkpoint, so a caller that only wants recent checkpoints uses
-// it to skip reading the rest. repoRoot may be a private repository that
-// borrows the clone's objects.
+// when its session goes on, in a commit of its own. For a checkpoint only a
+// ref holds it is the commit time of the ref's commit. An id in both stores
+// keeps the branch's date, since a migrated ref's commit dates from the
+// migration, not from when the session was written, and would make an old
+// checkpoint look new. Refs that do not point at a commit are not dated. It
+// is known without reading the checkpoint, so a caller that only wants recent
+// checkpoints uses it to skip reading the rest. repoRoot may be a private
+// repository that borrows the clone's objects.
 func Touched(ctx context.Context, repoRoot string, store Store) (map[string]time.Time, error) {
 	touched := map[string]time.Time{}
 	if store.Branch != "" {
@@ -27,19 +30,49 @@ func Touched(ctx context.Context, repoRoot string, store Store) (map[string]time
 			return nil, err
 		}
 	}
-	if len(store.Refs) == 0 {
+	var ids []string
+	for id, commit := range store.Refs {
+		if _, dated := touched[id]; !dated && commitPattern.MatchString(commit) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
 		return touched, nil
 	}
+	sort.Strings(ids)
+	env := gitlocal.ReadEnv(repoRoot)
+	// Only commits can be dated: keep what cat-file says is one.
 	var input strings.Builder
-	for _, commit := range store.Refs {
+	for _, id := range ids {
+		input.WriteString(store.Refs[id] + "\n")
+	}
+	kinds, err := runGit(ctx, env, repoRoot, strings.NewReader(input.String()), "cat-file", "--batch-check=%(objecttype)")
+	if err != nil {
+		return nil, fmt.Errorf("dating Entire checkpoints: %w", err)
+	}
+	types := strings.Split(strings.TrimSpace(string(kinds)), "\n")
+	if len(types) != len(ids) {
+		return touched, nil
+	}
+	input.Reset()
+	commits := map[string]bool{}
+	for i, id := range ids {
+		if strings.TrimSpace(types[i]) == "commit" {
+			commits[store.Refs[id]] = true
+		}
+	}
+	if len(commits) == 0 {
+		return touched, nil
+	}
+	for commit := range commits {
 		input.WriteString(commit + "\n")
 	}
-	out, err := runGit(ctx, gitlocal.ReadEnv(repoRoot), repoRoot, strings.NewReader(input.String()),
+	out, err := runGit(ctx, env, repoRoot, strings.NewReader(input.String()),
 		"log", "--no-walk", "--no-color", "--no-show-signature", "--stdin", "--format=%H %ct")
 	if err != nil {
 		return nil, fmt.Errorf("dating Entire checkpoints: %w", err)
 	}
-	commits := map[string]time.Time{}
+	dates := map[string]time.Time{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		commit, seconds, found := strings.Cut(line, " ")
 		if !found {
@@ -49,10 +82,10 @@ func Touched(ctx context.Context, repoRoot string, store Store) (map[string]time
 		if err != nil {
 			return nil, fmt.Errorf("dating Entire checkpoints: bad commit time %q", seconds)
 		}
-		commits[commit] = time.Unix(unix, 0).UTC()
+		dates[commit] = time.Unix(unix, 0).UTC()
 	}
-	for id, commit := range store.Refs {
-		if at, ok := commits[commit]; ok {
+	for _, id := range ids {
+		if at, ok := dates[store.Refs[id]]; ok {
 			touched[id] = at
 		}
 	}

@@ -52,11 +52,13 @@ func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (
 	}
 	var valid []string
 	var where []location
+	seen := map[string]bool{}
 	for _, id := range ids {
 		canonical, ok := entirecheckpoint.CanonicalID(id)
-		if !ok || slices.Contains(valid, canonical) {
+		if !ok || seen[canonical] {
 			continue
 		}
+		seen[canonical] = true
 		if loc, held := store.locate(canonical); held {
 			valid = append(valid, canonical)
 			where = append(where, loc)
