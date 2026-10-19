@@ -1,7 +1,8 @@
 // Package store keeps local review versions with immutable generation provenance.
 // A SQLite transaction publishes the document and metadata together, comparing
-// the previous version and its exact document under the same write lock, so
-// neither a concurrent generation nor a refresh of that version can be lost.
+// the previous version under the same write lock so concurrent generations
+// cannot fork history. A refresh replaces the latest document only while its
+// exact bytes are unchanged, so concurrent refreshes cannot lose each other.
 package store
 
 import (
@@ -146,12 +147,9 @@ func openRoot(root string, write bool) (*Store, error) {
 		return nil, err
 	}
 	defer db.Close()
-	_, err = db.Exec(tables)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
 	return s, err
 }
-
-const tables = `CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`
-
 func (s *Store) path() string { return filepath.Join(s.root, "versions.sqlite") }
 func (s *Store) database(write bool) (*sql.DB, error) {
 	if _, err := os.Stat(s.path()); err != nil {
@@ -242,10 +240,10 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	return out, rows.Err()
 }
 
-// Put appends v only while previous is still latest with exactly the document
-// the caller read; the zero Version means no history. A refresh replaces the
-// latest document in place, so comparing the version number alone would let a
-// generation assembled before that refresh hide its newer evidence.
+// Put appends v only while previous is still the latest version; the zero
+// Version means no history. A refresh of previous during generation replaces
+// only its live facts in place, so it does not reject the generated version:
+// the next refresh brings the new version's live facts up to date.
 // A failed or cancelled transaction leaves every published version untouched.
 func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) error {
 	expected := previous.Metadata.Version
@@ -284,7 +282,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=? AND (?=0 OR EXISTS(SELECT 1 FROM versions WHERE repository=? AND pr=? AND version=? AND document=?))`, k.repository(), k.Number, v.Metadata.Version, metadata, []byte(v.Document), k.repository(), k.Number, expected, expected, k.repository(), k.Number, expected, []byte(previous.Document))
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, []byte(v.Document), k.repository(), k.Number, expected)
 	if err != nil {
 		return err
 	}
@@ -303,7 +301,8 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 
 // RefreshCurrent replaces only the latest document, preserving its metadata.
 // Both the version and exact previous bytes fence concurrent generation and
-// refresh; it is also rejected while a generation run of the PR is unexpired.
+// refresh. A running generation does not block it: live facts refresh
+// independently, and the generated version still publishes over it.
 func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
 	if !k.valid() || previous.Metadata.Version <= 0 || !json.Valid(document) {
 		return errors.New("invalid refreshed version")
@@ -333,14 +332,7 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 		return err
 	}
 	defer db.Close()
-	// Read-only opens never create tables; an older store may still lack runs.
-	if _, err := db.ExecContext(ctx, tables); err != nil {
-		return err
-	}
-	// Put rejects a generation whose previous document changed, so a refresh
-	// defers to an unexpired generation run instead of discarding paid work.
-	now := time.Now().UnixNano()
-	result, err := db.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?) AND NOT EXISTS(SELECT 1 FROM runs WHERE repository=? AND pr=? AND state='generating' AND expires>?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number, k.repository(), k.Number, now)
+	result, err := db.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
 	if err != nil {
 		return err
 	}
@@ -348,12 +340,8 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 	if err != nil {
 		return err
 	}
-	if n == 1 {
-		return nil
+	if n != 1 {
+		return fmt.Errorf("%w; refresh again using the latest document", ErrConflict)
 	}
-	var generating int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE repository=? AND pr=? AND state='generating' AND expires>?`, k.repository(), k.Number, now).Scan(&generating); err == nil && generating > 0 {
-		return fmt.Errorf("%w; a generation is in progress, refresh after it finishes", ErrConflict)
-	}
-	return fmt.Errorf("%w; refresh again using the latest document", ErrConflict)
+	return nil
 }

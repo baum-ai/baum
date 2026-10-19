@@ -1137,13 +1137,14 @@ Repository names, including GitHub host, and pull request numbers key rows.
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement
 fenced by both its version number and exact previous bytes, preserving
-metadata and every replaced version, and is rejected while an unexpired
-generation run of the PR is recorded. Concurrent refreshes and generations
-cannot overwrite a document prepared against older evidence. `Put` publishes
-metadata and document in one transaction only if the previous version the
-caller read is still latest with exactly the bytes it read, so concurrent runs
-cannot assign a different predecessor to a completed document, and a
-generation cannot become latest over evidence refreshed after it started. A losing run reports a conflict; generation failure or
+metadata and every replaced version. Concurrent refreshes cannot overwrite a
+document prepared against older evidence, and a refresh never replaces a newer
+version. A running generation does not block refresh: live facts refresh
+independently, as in the hosted service. `Put` publishes metadata and document
+in one transaction only if the previous version the caller read is still
+latest, so concurrent runs cannot assign a different predecessor to a completed
+document. A refresh of that previous version in the meantime does not reject
+the generation; the next refresh updates the new version's live facts. A losing run reports a conflict; generation failure or
 cancellation before publication writes no version. Export errors after
 publication leave the successfully generated version available. Metadata records full revision IDs,
 bundle digest, backend and installed version, actual model, schema revision,

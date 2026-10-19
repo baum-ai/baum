@@ -309,72 +309,53 @@ func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
 	}
 }
 
-func TestGenerationFencesOnExactRefreshedDocument(t *testing.T) {
+func TestRefreshDuringGenerationKeepsBoth(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	key := Key{"owner/repo", 7}
 	if err := s.Put(ctx, key, Version{}, version(key, 1)); err != nil {
 		t.Fatal(err)
 	}
-	// Generation reads version 1, then a refresh replaces it with newer evidence.
+	// Generation reads version 1 and starts its run.
 	read, err := s.Latest(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)
-	if err := s.RefreshCurrent(ctx, key, read, refreshed); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Put(ctx, key, read, version(key, 2)); !errors.Is(err, ErrConflict) {
-		t.Fatalf("generation assembled before the refresh became latest: %v", err)
-	}
-	latest, err := s.Latest(ctx, key)
-	if err != nil || latest.Metadata.Version != 1 || string(latest.Document) != string(refreshed) {
-		t.Fatalf("refreshed evidence lost: %+v %v", latest, err)
-	}
-	if err := s.Put(ctx, key, latest, version(key, 2)); err != nil {
-		t.Fatalf("generation from the refreshed document rejected: %v", err)
-	}
-}
-
-func TestRefreshDefersToUnexpiredGenerationRun(t *testing.T) {
-	ctx := context.Background()
-	s := opened(t)
-	key := Key{"owner/repo", 7}
-	saved := version(key, 1)
-	if err := s.Put(ctx, key, Version{}, saved); err != nil {
-		t.Fatal(err)
-	}
-	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)
 	run, err := s.BeginRun(ctx, key, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RefreshCurrent(ctx, key, saved, refreshed); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "generation is in progress") {
-		t.Fatalf("refresh replaced the document a generation is building on: %v", err)
+	// Live facts refresh independently while the generation runs.
+	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)
+	if err := s.RefreshCurrent(ctx, key, read, refreshed); err != nil {
+		t.Fatalf("refresh blocked by a running generation: %v", err)
 	}
-	// Other pull requests are not blocked.
-	other := Key{"owner/repo", 8}
-	if err := s.Put(ctx, other, Version{}, version(other, 1)); err != nil {
+	// The paid generation still publishes over the refreshed version.
+	if err := s.Put(ctx, key, read, version(key, 2)); err != nil {
+		t.Fatalf("generation discarded after a refresh: %v", err)
+	}
+	if err := s.FinishRun(ctx, run, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RefreshCurrent(ctx, other, version(other, 1), []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1},"checks":"newer"}`)); err != nil {
-		t.Fatal(err)
+	latest, err := s.Latest(ctx, key)
+	if err != nil || latest.Metadata.Version != 2 {
+		t.Fatalf("generated version not latest: %+v %v", latest, err)
 	}
-	if err := s.FinishRun(ctx, run, "backend"); err != nil {
-		t.Fatal(err)
+	previous, err := s.Get(ctx, key, 1)
+	if err != nil || string(previous.Document) != string(refreshed) {
+		t.Fatalf("refreshed version 1 not kept in history: %+v %v", previous, err)
 	}
-	// A crashed generation stops blocking once its lease expires.
-	if _, err := s.BeginRun(ctx, key, time.Now().Add(time.Millisecond)); err != nil {
-		t.Fatal(err)
+	// A refresh that read version 1 cannot overwrite the newer version.
+	if err := s.RefreshCurrent(ctx, key, read, refreshed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale refresh replaced the generated version: %v", err)
 	}
-	time.Sleep(5 * time.Millisecond)
-	if err := s.RefreshCurrent(ctx, key, saved, refreshed); err != nil {
-		t.Fatal(err)
+	// A second generation built on version 1 cannot fork history.
+	if err := s.Put(ctx, key, read, version(key, 2)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second generation from version 1 published: %v", err)
 	}
 }
 
-func TestRefreshCreatesRunsTableInOlderStore(t *testing.T) {
+func TestRefreshInOlderStoreWithoutRuns(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	key := Key{"owner/repo", 7}

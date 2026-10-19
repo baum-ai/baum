@@ -679,17 +679,18 @@ and bounded to 45 seconds; shutdown waits for the worker to stop.
 
 The worker updates PR heads, titles, draft/closed/merged states and check summaries,
 including PRs with no generated review and saved PRs absent from the open inbox.
-For saved reviews it reuses model-free `refresh`: checks for the reviewed revision,
+For saved reviews it reuses model-free `refresh`: checks for the latest head,
 threads, bot reports, local session links and derived evidence are recomputed,
 while authored content, generation provenance, attachments and older versions
-stay unchanged. Current-head checks are read separately after a head moves, so
-checks from the saved revision never masquerade as checks on the new head. That
-read happens before the refreshed document is published: if it fails, or any
-other read does, the saved document stays unchanged and the PR is retried.
-Concurrent generation/refresh uses the store's compare-and-swap publication;
-a race is retried on a later pass instead of overwriting newer work, and is
-not reported as a failure. A PR whose generation is running is not refreshed
-until it finishes, so background work never makes paid generation conflict.
+stay unchanged. The inbox's check summary is read separately for the current
+head after a head moves, so checks from the saved revision never masquerade as
+checks on the new head. That read happens before the refreshed document is
+published: if it fails, or any other read does, the saved document stays
+unchanged and the PR is retried. Refresh runs while a generation of the PR is
+running; the generation still publishes its new version afterwards, and the
+next pass refreshes that version's live facts. A refresh that loses a race with
+newer work is retried on a later pass instead of overwriting it, and is not
+reported as a failure.
 
 `GET /api/background` exposes per-repository success, fixed failure category and
 next retry; authenticated index events update the app. Discovery rate information

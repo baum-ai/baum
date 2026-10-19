@@ -15,9 +15,9 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
-// A refresh cannot replace the document a generation is building on, so the
-// generation publishes instead of conflicting with a background refresh.
-func TestPublishKeepsPreviousDocumentFixedDuringGeneration(t *testing.T) {
+// Live facts refresh independently while a generation runs, and the
+// generation still publishes over the refreshed previous version.
+func TestPublishAfterRefreshDuringGeneration(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	valid := func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
@@ -51,14 +51,14 @@ func TestPublishKeepsPreviousDocumentFixedDuringGeneration(t *testing.T) {
 	if _, err = generate.Publish(ctx, s, key, f.options(t), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(refreshErr, store.ErrConflict) {
-		t.Fatalf("refresh replaced the previous document during generation: %v", refreshErr)
+	if refreshErr != nil {
+		t.Fatalf("refresh blocked during generation: %v", refreshErr)
 	}
 	if latest, err := s.Latest(ctx, key); err != nil || latest.Metadata.Version != 2 {
 		t.Fatalf("generation not published: %+v %v", latest.Metadata, err)
 	}
-	if old, err := s.Get(ctx, key, 1); err != nil || !bytes.Equal(old.Document, first.Document) {
-		t.Fatal("previous version changed", err)
+	if old, err := s.Get(ctx, key, 1); err != nil || !bytes.Equal(old.Document, refreshed) {
+		t.Fatal("refreshed previous version not kept", err)
 	}
 }
 
