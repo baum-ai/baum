@@ -214,7 +214,8 @@ backoff, `sources` and the mapping onto the bundle.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
 - Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
-  `generator.truncated` note.
+  `generator.truncated` note. When whole sessions are dropped, one note gives
+  the total number omitted; its bytes count against the size limit.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
   metadata. Files over the size limit, binary files (a NUL byte in the first
   8000 bytes, as git decides; a compared file the diff holds as text is kept,
