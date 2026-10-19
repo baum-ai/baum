@@ -437,6 +437,46 @@ it("sets automatic reviews globally and per repository and shows a daily cap pau
     body: { automatic: false, daily_cap: 5, backend: null, model: null },
   });
 });
+function typeInto(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+it("never saves an invalid daily cap as no cap; removing it is explicit", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const cap = () => region.querySelector<HTMLInputElement>('input[type="number"]')!;
+  const save = () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click();
+  for (const value of ["", "-1", "1e999", "abc"]) {
+    await act(async () => typeInto(cap(), value));
+    await act(async () => save());
+    expect(region.textContent).toContain(
+      "Enter a daily cap of 0 or more in USD, or choose No daily cap.",
+    );
+  }
+  expect(puts.filter((p) => p.path.endsWith("/settings"))).toEqual([]);
+  await act(async () => typeInto(cap(), "2.5"));
+  await act(async () => save());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: 2.5, backend: null, model: null },
+  });
+  const noCap = Array.from(region.querySelectorAll("label"))
+    .find((l) => l.textContent === "No daily cap")!
+    .querySelector("input")!;
+  await act(async () => noCap.click());
+  expect(cap().disabled).toBe(true);
+  await act(async () => save());
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: null, backend: null, model: null },
+  });
+});
 it("shows a repository set to On as paused while the global switch is off", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

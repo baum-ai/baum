@@ -62,18 +62,23 @@ desktop tray's pause sets it): off stops automatic generation everywhere. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
 `true`, `false`); only "Off" differs while the global switch is on, and while
 it is off a repository set to "On" is shown as paused by the global switch.
-Each also has an optional daily
-automatic cap in USD (empty is no cap, 0 permits no automatic spending), and
-shows today's automatic spend, how many triggered pull requests wait to start
-and the latest notice: a daily-cap pause until the next day (also a banner on
-every page), cursor-agent not acknowledged, an unpriced model, or GitHub
-unavailable. The jobs list and the PR page mark an automatic job "Started
+Turning automatic generation off, for everything or one repository, or
+withdrawing the cursor-agent acknowledgement cancels the affected automatic
+jobs that have not started (the jobs list shows the reason); a running job
+finishes. Each repository also has a daily automatic cap in USD (0 permits no
+automatic spending) or an explicit "No daily cap" checkbox; an empty,
+negative or unreadable amount is an error and is not saved, never read as no
+cap. It shows today's automatic spend, how many triggered pull requests wait
+to start and the latest notice: a daily-cap pause until the next day or until
+the cap is raised or removed (also a banner on every page), cursor-agent not
+acknowledged, an unpriced model, or GitHub unavailable. The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
 restart interrupted); it is cancelled like any other. Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a pause,
-its end, a notice) reload the page and are what the desktop app can notify on.
+its end, a notice, and every repository's status after a settings change in
+any window) reload the page and are what the desktop app can notify on.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.

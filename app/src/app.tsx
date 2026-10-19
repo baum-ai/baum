@@ -766,20 +766,34 @@ function RepositorySettings({
       ? ""
       : String(clone.settings.daily_cap),
   );
+  // Removing the cap is an explicit choice: an empty or unreadable amount is
+  // an error, never "no cap".
+  const [noCap, setNoCap] = useState(
+    clone.settings.daily_cap === null || clone.settings.daily_cap === undefined,
+  );
+  const [capError, setCapError] = useState("");
   const [pending, setPending] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const amount = cap.trim() === "" ? Number.NaN : Number(cap);
+    if (automatic && !noCap && !(Number.isFinite(amount) && amount >= 0)) {
+      setCapError("Enter a daily cap of 0 or more in USD, or choose No daily cap.");
+      return;
+    }
+    setCapError("");
     setPending(true);
     void save({
       automatic: mode === "default" ? null : mode === "on",
-      daily_cap: cap.trim() === "" ? null : Number(cap),
+      daily_cap: !automatic ? clone.settings.daily_cap : noCap ? null : amount,
       backend: backend || null,
       model: model || null,
     }).finally(() => setPending(false));
   };
   const notice = status ? automaticNotice(status) : null;
   return (
-    <form onSubmit={submit} className="space-y-3">
+    // The form validates the cap itself, with one message for every invalid
+    // amount, rather than the browser's range bubble.
+    <form onSubmit={submit} className="space-y-3" noValidate>
       {automatic ? (
         <div className="flex flex-wrap gap-3">
           <Field label="Automatic reviews">
@@ -799,13 +813,30 @@ function RepositorySettings({
               type="number"
               min="0"
               step="0.01"
-              value={cap}
-              onChange={(e) => setCap(e.target.value)}
-              placeholder="No cap"
+              value={noCap ? "" : cap}
+              disabled={noCap}
+              aria-invalid={capError ? true : undefined}
+              onChange={(e) => {
+                setCap(e.target.value);
+                setCapError("");
+              }}
+              placeholder={noCap ? "No cap" : "0.00"}
             />
           </Field>
+          <label className="flex items-center gap-2 self-end pb-2">
+            <input
+              type="checkbox"
+              checked={noCap}
+              onChange={(e) => {
+                setNoCap(e.target.checked);
+                setCapError("");
+              }}
+            />
+            No daily cap
+          </label>
         </div>
       ) : null}
+      {capError ? <Alert>{capError}</Alert> : null}
       {status ? (
         <p className="text-xs" role="status">
           {status.enabled
