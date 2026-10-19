@@ -32,6 +32,8 @@ func TestAgentHookPassesPayloadOutputAndExitStatusThrough(t *testing.T) {
 }
 
 func TestAgentHookCheckAcceptsOnlyKnownAgentEvents(t *testing.T) {
+	// Logged in, so the answer depends only on the agent and event.
+	t.Setenv(tokenEnvVar, "token")
 	tests := []struct {
 		agent   string
 		event   string

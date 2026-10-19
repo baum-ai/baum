@@ -23,6 +23,10 @@ import (
 // again on the next session.
 const sessionStartBootstrapTimeout = 15 * time.Second
 
+// bootstrapMarkerName is the file in the clone's .git/baum directory recording
+// which dispatchers and Entire release the last bootstrap installed.
+const bootstrapMarkerName = "bootstrap-ok"
+
 func newBootstrapHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
@@ -128,7 +132,7 @@ func hooksBootstrapMarker(ctx context.Context, root string) (string, error) {
 	if err != nil {
 		return "", commandError(cmd, err)
 	}
-	return filepath.Join(filepath.Clean(strings.TrimSpace(string(output))), "baum", "bootstrap-ok"), nil
+	return filepath.Join(filepath.Clean(strings.TrimSpace(string(output))), "baum", bootstrapMarkerName), nil
 }
 
 func hooksBootstrapFingerprint() string {
