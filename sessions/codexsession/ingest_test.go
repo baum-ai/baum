@@ -112,7 +112,7 @@ func TestBuildMapsCollaborationItemSpawns(t *testing.T) {
 		if err := json.Unmarshal(spawn.Input, &input); err != nil {
 			t.Fatal(err)
 		}
-		if _, dup := wantInput[input.TaskName]; !dup || input.TaskName == "" {
+		if _, known := wantInput[input.TaskName]; !known || input.TaskName == "" {
 			t.Fatalf("session %s spawned by task %q", mapped.ID, input.TaskName)
 		}
 		sessionTask[mapped.ID] = input.TaskName
