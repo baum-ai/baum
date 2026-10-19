@@ -8,6 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif" // image.DecodeConfig reads the formats Read sends.
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"net/http"
@@ -26,9 +30,13 @@ import (
 const (
 	// maxReadFileBytes is the largest file Read returns.
 	maxReadFileBytes = 4 << 20
-	// maxImageBytes is the largest image Read returns, which the API accepts
-	// once base64-encoded.
-	maxImageBytes = 3_750_000
+	// maxImageBytes and maxImageSide bound one image Read returns, and
+	// maxImages and maxRunImageBytes the images of one run, so a request
+	// stays far below the API's size limit.
+	maxImageBytes    = 1 << 20
+	maxImageSide     = 2000
+	maxImages        = 10
+	maxRunImageBytes = 5 << 20
 	// maxReadLines is Read's default and largest line count.
 	maxReadLines = 2000
 	// maxLineChars bounds one line Read returns.
@@ -46,10 +54,19 @@ const (
 	maxWalkEntries = 200_000
 	// maxPatternBytes bounds a glob or regular expression.
 	maxPatternBytes = 1024
+	// maxGlobStars bounds the "**" segments of a glob.
+	maxGlobStars = 8
 )
+
+// refusedPath stands in an event for a path that did not resolve to an
+// existing file or directory in the run directory, so model text that names
+// nothing real never reaches the diagnostics.
+const refusedPath = "(refused path)"
 
 type toolbox struct {
 	root *os.Root
+	// images and imageBytes count the images Read has returned in this run.
+	images, imageBytes int
 }
 
 func openTools(dir string) (*toolbox, error) {
@@ -90,7 +107,7 @@ func (t *toolbox) run(ctx context.Context, name string, input json.RawMessage) t
 			return failed("invalid_input", "invalid Read input: "+err.Error())
 		}
 		call = t.read(in.FilePath, in.Offset, in.Limit)
-		call.path, call.offset, call.limit = eventPath(in.FilePath), in.Offset, in.Limit
+		call.offset, call.limit = in.Offset, in.Limit
 	case "Glob":
 		var in struct {
 			Pattern string `json:"pattern"`
@@ -100,7 +117,6 @@ func (t *toolbox) run(ctx context.Context, name string, input json.RawMessage) t
 			return failed("invalid_input", "invalid Glob input: "+err.Error())
 		}
 		call = t.glob(ctx, in.Pattern, in.Path)
-		call.path = eventPath(in.Path)
 	case "Grep":
 		var in struct {
 			Pattern    string `json:"pattern"`
@@ -112,9 +128,13 @@ func (t *toolbox) run(ctx context.Context, name string, input json.RawMessage) t
 			return failed("invalid_input", "invalid Grep input: "+err.Error())
 		}
 		call = t.grep(ctx, in.Pattern, in.Path, in.Glob, in.IgnoreCase)
-		call.path = eventPath(in.Path)
 	default:
 		return failed("unknown_tool", fmt.Sprintf("unknown tool %q; use Read, Glob, Grep or StructuredOutput", boundedText(name, 64)))
+	}
+	if call.path == "" {
+		call.path = refusedPath
+	} else {
+		call.path = boundedText(call.path, 256)
 	}
 	return call
 }
@@ -149,17 +169,6 @@ func relative(name string, allowRoot bool) (string, error) {
 	return path.Clean(name), nil
 }
 
-// eventPath is a path for an event: relative, without control characters and
-// bounded.
-func eventPath(name string) string {
-	if rel, err := relative(name, true); err == nil {
-		name = rel
-	} else {
-		name = "<refused>"
-	}
-	return boundedText(name, 256)
-}
-
 func (t *toolbox) read(name string, offset, limit int) toolCall {
 	rel, err := relative(name, false)
 	if err != nil {
@@ -170,6 +179,12 @@ func (t *toolbox) read(name string, offset, limit int) toolCall {
 		return failed(fileStatus(err), fmt.Sprintf("cannot read %s: %s", rel, fileError(err)))
 	}
 	defer func() { _ = file.Close() }()
+	call := t.readOpen(file, rel, offset, limit)
+	call.path = rel
+	return call
+}
+
+func (t *toolbox) readOpen(file *os.File, rel string, offset, limit int) toolCall {
 	info, err := file.Stat()
 	switch {
 	case err != nil:
@@ -186,11 +201,7 @@ func (t *toolbox) read(name string, offset, limit int) toolCall {
 		return failed("error", fmt.Sprintf("cannot read %s", rel))
 	}
 	if media := imageType(data); media != "" {
-		if len(data) > maxImageBytes {
-			return failed("file_too_large", fmt.Sprintf("%s is an image of %d bytes, over the %d-byte limit", rel, len(data), maxImageBytes))
-		}
-		encoded, _ := json.Marshal(map[string]any{"type": "image", "source": map[string]string{"type": "base64", "media_type": media, "data": base64.StdEncoding.EncodeToString(data)}})
-		return toolCall{content: []json.RawMessage{encoded}, bytes: len(data)}
+		return t.image(rel, media, data)
 	}
 	if binary(data) {
 		return failed("binary_file", rel+" is a binary file and is not shown")
@@ -233,12 +244,35 @@ func (t *toolbox) read(name string, offset, limit int) toolCall {
 
 func text(s string) toolCall { return toolCall{content: textContent(s), bytes: len(s)} }
 
+// imageType is the media type of an image Read may send: PNG, JPEG or GIF,
+// the formats the standard library can check. Anything else, WebP included,
+// is treated as binary.
 func imageType(data []byte) string {
 	switch media := http.DetectContentType(data); media {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	case "image/png", "image/jpeg", "image/gif":
 		return media
 	}
 	return ""
+}
+
+// image returns an image as an image block when it decodes, is small and the
+// run's image allowance has room, and otherwise a short text saying why not.
+func (t *toolbox) image(rel, media string, data []byte) toolCall {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	switch {
+	case err != nil || "image/"+format != media:
+		return failed("image_omitted", rel+" looks like an image but does not decode; it is not shown")
+	case config.Width > maxImageSide || config.Height > maxImageSide:
+		return failed("image_omitted", fmt.Sprintf("%s is %dx%d pixels, over the %d-pixel limit; it is not shown", rel, config.Width, config.Height, maxImageSide))
+	case len(data) > maxImageBytes:
+		return failed("image_omitted", fmt.Sprintf("%s is an image of %d bytes, over the %d-byte limit; it is not shown", rel, len(data), maxImageBytes))
+	case t.images >= maxImages || t.imageBytes+len(data) > maxRunImageBytes:
+		return failed("image_omitted", fmt.Sprintf("%s is not shown: this run has already read its %d images or %d bytes of images", rel, maxImages, maxRunImageBytes))
+	}
+	t.images++
+	t.imageBytes += len(data)
+	encoded, _ := json.Marshal(map[string]any{"type": "image", "source": map[string]string{"type": "base64", "media_type": media, "data": base64.StdEncoding.EncodeToString(data)}})
+	return toolCall{content: []json.RawMessage{encoded}, bytes: len(data)}
 }
 
 func binary(data []byte) bool { return bytes.IndexByte(data[:min(len(data), 8192)], 0) >= 0 }
@@ -307,13 +341,20 @@ func (t *toolbox) base(name string) (string, *toolCall) {
 }
 
 func (t *toolbox) glob(ctx context.Context, pattern, dir string) toolCall {
-	if err := checkGlob(pattern); err != nil {
+	pattern, err := checkGlob(pattern)
+	if err != nil {
 		return failed("invalid_pattern", err.Error())
 	}
 	base, refused := t.base(dir)
 	if refused != nil {
 		return *refused
 	}
+	call := t.globIn(ctx, pattern, base)
+	call.path = base
+	return call
+}
+
+func (t *toolbox) globIn(ctx context.Context, pattern, base string) toolCall {
 	var matches []string
 	more := false
 	err := t.walk(ctx, base, func(name string) bool {
@@ -359,7 +400,7 @@ func (t *toolbox) grep(ctx context.Context, pattern, dir, filter string, ignoreC
 		return failed("invalid_pattern", "invalid regular expression (RE2 syntax): "+err.Error())
 	}
 	if filter != "" {
-		if err := checkGlob(filter); err != nil {
+		if filter, err = checkGlob(filter); err != nil {
 			return failed("invalid_pattern", "glob: "+err.Error())
 		}
 	}
@@ -367,6 +408,12 @@ func (t *toolbox) grep(ctx context.Context, pattern, dir, filter string, ignoreC
 	if refused != nil {
 		return *refused
 	}
+	call := t.grepIn(ctx, expression, base, filter)
+	call.path = base
+	return call
+}
+
+func (t *toolbox) grepIn(ctx context.Context, expression *regexp.Regexp, base, filter string) toolCall {
 	var out strings.Builder
 	matches := 0
 	more := false
@@ -429,22 +476,35 @@ func (t *toolbox) grep(ctx context.Context, pattern, dir, filter string, ignoreC
 	return text(out.String())
 }
 
-func checkGlob(pattern string) error {
+// checkGlob validates a glob and returns it with runs of "**" segments
+// collapsed into one, which match the same paths.
+func checkGlob(pattern string) (string, error) {
 	if pattern == "" || len(pattern) > maxPatternBytes {
-		return fmt.Errorf("the pattern must be 1 to %d bytes", maxPatternBytes)
+		return "", fmt.Errorf("the pattern must be 1 to %d bytes", maxPatternBytes)
 	}
 	if strings.HasPrefix(pattern, "/") || strings.Contains(pattern, `\`) {
-		return errors.New("the pattern must be relative and use forward slashes")
+		return "", errors.New("the pattern must be relative and use forward slashes")
 	}
+	var segments []string
+	stars := 0
 	for _, segment := range strings.Split(pattern, "/") {
 		if segment == ".." {
-			return errors.New(`".." is not allowed`)
+			return "", errors.New(`".." is not allowed`)
 		}
 		if _, err := path.Match(segment, ""); err != nil {
-			return errors.New("malformed glob pattern")
+			return "", errors.New("malformed glob pattern")
 		}
+		if segment == "**" {
+			if len(segments) > 0 && segments[len(segments)-1] == "**" {
+				continue
+			}
+			if stars++; stars > maxGlobStars {
+				return "", fmt.Errorf("the pattern has more than %d ** segments", maxGlobStars)
+			}
+		}
+		segments = append(segments, segment)
 	}
-	return nil
+	return strings.Join(segments, "/"), nil
 }
 
 // globMatch matches a slash-separated path against a pattern whose segments
@@ -453,25 +513,32 @@ func globMatch(pattern, name string) bool {
 	return matchSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
 }
 
+// matchSegments decides the match by dynamic programming over pattern and
+// path segments, so its time is proportional to their product whatever the
+// pattern. reach[j] says the segments seen so far match the first j path
+// segments.
 func matchSegments(pattern, name []string) bool {
-	for len(pattern) > 0 {
-		if pattern[0] == "**" {
-			for skip := 0; skip <= len(name); skip++ {
-				if matchSegments(pattern[1:], name[skip:]) {
-					return true
+	reach := make([]bool, len(name)+1)
+	reach[0] = true
+	next := make([]bool, len(name)+1)
+	for _, segment := range pattern {
+		clear(next)
+		if segment == "**" {
+			seen := false
+			for j := range reach {
+				seen = seen || reach[j]
+				next[j] = seen
+			}
+		} else {
+			for j := range name {
+				if reach[j] {
+					next[j+1], _ = path.Match(segment, name[j])
 				}
 			}
-			return false
 		}
-		if len(name) == 0 {
-			return false
-		}
-		if ok, _ := path.Match(pattern[0], name[0]); !ok {
-			return false
-		}
-		pattern, name = pattern[1:], name[1:]
+		reach, next = next, reach
 	}
-	return len(name) == 0
+	return reach[len(name)]
 }
 
 // toolDefinitions are the tools every call offers, in a fixed order so the
