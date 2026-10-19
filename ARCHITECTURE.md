@@ -7,10 +7,18 @@ support every field in the schema; they differ only in where evidence comes
 from and what they do with the result.
 
 The dependency runs one way. The hosted service imports these packages, but
-the `baum` binary never uses hosted baum data and never contacts a baum server:
-everything it reads comes from the user's machine, GitHub (with the user's own
-token) or the model provider the user configures. The one other contact is the
-public, signed price list described under "Running locally".
+the review commands of the `baum` binary never use hosted baum data and never
+contact a baum server: everything they read comes from the user's machine,
+GitHub (with the user's own token) or the model provider the user configures.
+The one other contact is the public, signed price list described under
+"Running locally".
+
+The same binary also carries the hosted service's client commands (`login`,
+`logout`, `whoami`, `setup`, `upload` and the `hooks` dispatchers), listed
+under "Hosted service" in `--help`. They are opt-in: nothing reaches a baum
+server before `baum login`, and the hook commands committed to repositories
+run baum only for a user who logged in or set the clone up, falling through to
+Entire for everyone else. See "Hosted service client" below.
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
@@ -59,6 +67,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
+| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
 store, the `doctor` diagnostics) stays under `internal/`.
@@ -1124,6 +1133,30 @@ The server exposes `Mux` and `Use` so a host with its own routes or
 authentication extends it without changing these
 rules; its handlers sit behind the host check and the headers. Cancelling the
 context ends the event streams and shuts the server down.
+
+## Hosted service client
+
+`hosted/baumcli` adds the hosted commands to the root command in
+`internal/cli`; `cmd/baum` builds the one binary, which the hosted service also
+ships to its users until the public release replaces that path. The hosted
+service imports `hosted/agenthooks`, `hosted/traceupload` and
+`hosted/apiclient` from this module, so the hook strings, the upload archive
+format and the protocol constants have one definition on both sides.
+
+- Opt-in. Commands that need the server read a token from `BAUM_TOKEN` or the
+  credentials `baum login` stored, and stop with a login hint before any
+  request without one. `baum hooks agent --check` and `baum hooks git --check`,
+  which gate every committed dispatcher, succeed only for a logged-in user or a
+  clone carrying the marker of `baum setup` or a hook bootstrap; they read
+  local files only. The rules are in
+  [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
+- Compatibility. A client and a server of different releases agree on an API
+  protocol number: requests name the client's, responses the range the server
+  serves, and a client outside it stops with an error saying which side to
+  update. A server that predates the handshake counts as protocol 1.
+- Session discovery for uploads uses `sessions/collector`, with
+  `ExcludeNestedClones` so a session in an independent clone nested inside the
+  repository is uploaded only for its own repository.
 
 ## Running locally
 

@@ -1,9 +1,51 @@
 # baumcli
 
-The `baum` command: login, logout, whoami, setup, upload and the hook
-dispatchers that agents and Git call. Local session discovery lives in
-[`traceprocessing/collector`](../traceprocessing/collector); the archive rules
-are in [traceupload](../traceupload/README.md).
+The hosted service commands of the `baum` binary: login, logout, whoami,
+setup, upload and the hook dispatchers that agents and Git call. The open-source
+commands and these ship as one binary, built from `cmd/baum`; `--help` lists
+these under "Hosted service". Local session discovery lives in
+[`sessions/collector`](../../sessions/collector); the archive rules are in
+[traceupload](../traceupload/README.md), and the HTTP client, with the protocol
+handshake, in [`apiclient`](../apiclient).
+
+## Opt-in
+
+- Nothing is sent to a baum server before `baum login`, or a `BAUM_TOKEN`
+  provisioned for CI or by an administrator. `login` starts the device flow
+  with the server it names; `whoami`, `logout`, `upload`, `setup --sync` and
+  `setup --upload` need a token and fail with a `baum login` hint before any
+  request without one. `setup` without those flags and the hooks never contact
+  a baum server.
+- The hook dispatchers committed to customer repositories and installed as Git
+  hooks run `baum hooks agent --check` (`baum hooks git --check`) and use baum
+  only when it succeeds, falling through to Entire otherwise. `--check`
+  succeeds for a known agent event or Git hook only when the user opted in:
+  logged in (a stored token for any server, or `BAUM_TOKEN`), or this clone
+  carries the marker of a `baum setup` (`.git/baum/setup-complete`) or of a
+  hook bootstrap (`.git/baum/bootstrap-ok`). It reads only local files. So
+  for an open-source user who never logged in or set the clone up, the
+  committed hooks run Entire directly and baum does nothing, not even the
+  session-start bootstrap; a hosted user's clone set up before this rule keeps
+  working through its markers.
+
+## Compatibility
+
+- One binary runs against servers of many releases, so the two agree on a CLI
+  API protocol number rather than on versions. Every request names the
+  client's (`X-Baum-CLI-Protocol`, `apiclient.Protocol`) and every response of
+  a server that knows the handshake names the range it serves
+  (`X-Baum-CLI-Protocol-Min` and `-Max`). A client outside the range stops
+  before reading the response with an error naming the server and the side to
+  update: "this baum is too old" (update baum) or "too new" (update the
+  server, or use an older baum). The server refuses nothing itself.
+- A server that sends no range predates the handshake and counts as protocol 1,
+  except in a 5xx answer, which may come from a proxy in front of it.
+- Raise `apiclient.Protocol` when the client starts to need an API a server of
+  an earlier release lacks, or stops working with one it used to; a new
+  `traceupload.ManifestVersion` is such a change. The server built from the
+  same commit serves up to that number. The server's minimum is raised only
+  when a release drops an API older clients use.
+- Requests also carry `User-Agent: baum/<version>`.
 
 ## Credentials
 
@@ -55,8 +97,8 @@ are in [traceupload](../traceupload/README.md).
   repository get hooks each, but request one sync and share one inventory entry
   per repository ID (roots merged).
 - Hook configuration comes from the shared [`agenthooks`](../agenthooks/agenthooks.go)
-  specs, the same ones [onboarding](../onboardingpr/README.md) writes, so the two
-  never rewrite each other.
+  specs, the same ones the hosted service's onboarding pull request writes, so
+  the two never rewrite each other.
 
 ## Hooks
 
