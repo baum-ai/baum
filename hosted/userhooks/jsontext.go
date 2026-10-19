@@ -199,13 +199,24 @@ func removeItem(container *jsonValue, index int) edit {
 	}
 }
 
-// layout is how a document is indented: by unit per level, or on one line.
+// layout is how a document is indented, by unit per level or on one line,
+// and how its lines end: a file written on Windows keeps its CRLFs.
 type layout struct {
 	unit    string
 	compact bool
+	newline string
 }
 
 func detectLayout(document []byte) layout {
+	style := detectIndent(document)
+	style.newline = "\n"
+	if bytes.Contains(document, []byte("\r\n")) {
+		style.newline = "\r\n"
+	}
+	return style
+}
+
+func detectIndent(document []byte) layout {
 	if !bytes.ContainsRune(bytes.TrimSpace(document), '\n') {
 		// A one-line document stays on one line, unless it is the empty
 		// object a new or blank file starts as.
@@ -245,7 +256,7 @@ func appendItem(document []byte, container *jsonValue, depthIndent string, style
 		}
 		inner := depthIndent + style.unit
 		text, err := render(inner)
-		return edit{container.start + 1, container.end - 1, "\n" + inner + text + "\n" + depthIndent}, err
+		return edit{container.start + 1, container.end - 1, style.newline + inner + text + style.newline + depthIndent}, err
 	}
 	gap := string(document[container.start+1 : items[0].start])
 	text, err := render(gap[strings.LastIndexByte(gap, '\n')+1:])
@@ -263,7 +274,11 @@ func encode(value any, indent string, style layout) (string, error) {
 	if err := encoder.Encode(value); err != nil {
 		return "", err
 	}
-	return strings.TrimSuffix(buffer.String(), "\n"), nil
+	text := strings.TrimSuffix(buffer.String(), "\n")
+	if style.newline != "" && style.newline != "\n" {
+		text = strings.ReplaceAll(text, "\n", style.newline)
+	}
+	return text, nil
 }
 
 func encodeMember(key string, value any, indent string, style layout) (string, error) {

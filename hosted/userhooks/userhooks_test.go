@@ -231,11 +231,17 @@ func TestReinstallIsByteIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.Changed || first.Backup != path+userhooks.BackupSuffix {
-		t.Fatalf("first install = %+v", first)
+	if want := filepath.Join(home, ".local", "state", "baum", "backups", "claude-code-settings.json"); !first.Changed || first.Backup != want {
+		t.Fatalf("first install = %+v, want the backup at %s", first, want)
 	}
 	if backup := readFile(t, first.Backup); backup != claudeUserSettings {
 		t.Errorf("backup does not hold the previous file:\n%s", backup)
+	}
+	if info, err := os.Stat(first.Backup); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode: %v %v", info, err)
+	}
+	if siblings, _ := filepath.Glob(path + "*"); len(siblings) != 1 {
+		t.Errorf("files beside the settings: %v", siblings)
 	}
 	installed := readFile(t, path)
 	info, _ := os.Stat(path)
@@ -301,17 +307,137 @@ func TestUninstallWithoutSettingsCreatesNothing(t *testing.T) {
 	}
 }
 
-func TestFreshInstallThenUninstallLeavesAnEmptyObject(t *testing.T) {
+// A settings file baum created goes again on uninstall, unless something
+// else was put in it meanwhile.
+func TestUninstallRemovesTheFileBaumCreated(t *testing.T) {
 	home := t.TempDir()
 	result, err := userhooks.Install(home, "codex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := userhooks.Uninstall(home, "codex"); err != nil {
+	removed, err := userhooks.Uninstall(home, "codex")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := readFile(t, result.Path); got != "{}\n" {
+	if !removed.Removed || !removed.Changed {
+		t.Errorf("uninstall = %+v, want the file removed", removed)
+	}
+	if _, err := os.Stat(result.Path); !os.IsNotExist(err) {
+		t.Errorf("the settings file baum created is still there: %v", err)
+	}
+
+	if _, err := userhooks.Install(home, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	withMine, err := userhooks.UninstallSettings([]byte(readFile(t, result.Path)), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := strings.Replace(readFile(t, result.Path), "{", `{"mine": true,`, 1)
+	writeFile(t, result.Path, mine)
+	kept, err := userhooks.Uninstall(home, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Removed || !strings.Contains(readFile(t, result.Path), `"mine": true`) || string(withMine) == readFile(t, result.Path) {
+		t.Errorf("uninstall removed a file holding the user's settings: %+v\n%s", kept, readFile(t, result.Path))
+	}
+
+	// A file the user had before is never removed, even when left empty.
+	other := t.TempDir()
+	writeFile(t, filepath.Join(other, ".codex", "hooks.json"), "{}\n")
+	if _, err := userhooks.Install(other, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := userhooks.Uninstall(other, "codex"); err != nil || result.Removed {
+		t.Errorf("uninstall = %+v, %v", result, err)
+	}
+	if got := readFile(t, filepath.Join(other, ".codex", "hooks.json")); got != "{}\n" {
 		t.Errorf("after uninstall = %q", got)
+	}
+}
+
+// Codex keys its trust in a hook to the hook's position, so baum always adds
+// its own after the user's and reports every hook of the user's that a removal
+// moves.
+func TestCodexHooksMovedByARemovalAreReported(t *testing.T) {
+	spec, _ := agenthooks.Lookup("codex")
+	ours, _ := json.Marshal(agenthooks.UserDispatcher(spec, "stop"))
+	stale, _ := json.Marshal(agenthooks.UserDispatcher(spec, "session-start"))
+	settings := `{"hooks":{"Stop":[` +
+		`{"hooks":[{"type":"command","command":` + string(ours) + `,"timeout":30}]},` +
+		`{"hooks":[{"type":"command","command":"./after-ours.sh"}]}],` +
+		`"SessionStart":[{"hooks":[{"type":"command","command":"./first.sh"},{"type":"command","command":` + string(stale) + `},{"type":"command","command":"./second.sh"}]}]}}`
+	for _, agent := range []string{"codex", "claude-code"} {
+		home := t.TempDir()
+		path := filepath.Join(home, filepath.FromSlash(map[string]string{"codex": ".codex/hooks.json", "claude-code": ".claude/settings.json"}[agent]))
+		writeFile(t, path, settings)
+		result, err := userhooks.Uninstall(home, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"Stop: ./after-ours.sh", "SessionStart: ./second.sh"}
+		if agent == "claude-code" {
+			want = nil // Claude Code does not key trust to position.
+		}
+		if strings.Join(result.Shifted, "|") != strings.Join(want, "|") {
+			t.Errorf("%s uninstall shifted = %q, want %q", agent, result.Shifted, want)
+		}
+	}
+
+	// Installing appends, so nothing of the user's moves; relocating baum's
+	// misplaced handler from the front of a group moves what follows it.
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".codex", "hooks.json"), codexUserHooks)
+	if result, err := userhooks.Install(home, "codex"); err != nil || len(result.Shifted) != 0 {
+		t.Errorf("install shifted %q (%v)", result.Shifted, err)
+	}
+	misplaced := `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":` + string(stale) + `},{"type":"command","command":"./mine.sh"}]}]}}`
+	writeFile(t, filepath.Join(home, ".codex", "hooks.json"), misplaced)
+	result, err := userhooks.Install(home, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Shifted, "|") != "UserPromptSubmit: ./mine.sh" {
+		t.Errorf("relocation shifted %q", result.Shifted)
+	}
+}
+
+func TestCRLFLineEndingsArePreserved(t *testing.T) {
+	original := strings.ReplaceAll(claudeUserSettings, "\n", "\r\n")
+	installed, err := userhooks.InstallSettings([]byte(original), "claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare := strings.Count(string(installed), "\n") - strings.Count(string(installed), "\r\n"); bare != 0 {
+		t.Errorf("%d lines lost their CR:\n%q", bare, installed)
+	}
+	assertInstalled(t, "claude-code", installed)
+	removed, err := userhooks.UninstallSettings(installed, "claude-code")
+	if err != nil || string(removed) != original {
+		t.Errorf("uninstall did not restore the CRLF file (%v)", err)
+	}
+	fresh, err := userhooks.InstallSettings([]byte("{}\r\n"), "codex")
+	if err != nil || strings.Count(string(fresh), "\n") != strings.Count(string(fresh), "\r\n") {
+		t.Errorf("a CRLF empty file got LF lines (%v):\n%q", err, fresh)
+	}
+}
+
+// Root editing another user's home, as sudo with HOME kept does, is refused
+// before anything is read or written.
+func TestRootIsRefusedInAnotherUsersHome(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the test home would belong to root")
+	}
+	t.Cleanup(userhooks.SetGeteuid(func() int { return 0 }))
+	home := t.TempDir()
+	for _, run := range []func(string, string) (userhooks.Result, error){userhooks.Install, userhooks.Uninstall} {
+		if _, err := run(home, "claude-code"); err == nil || !strings.Contains(err.Error(), "sudo") {
+			t.Errorf("err = %v, want a refusal naming sudo", err)
+		}
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Errorf("root wrote %v", entries)
 	}
 }
 
@@ -424,8 +550,13 @@ func TestSymlinkedSettingsStayLinked(t *testing.T) {
 		t.Fatalf("the link was replaced: %v", err)
 	}
 	assertInstalled(t, "claude-code", []byte(readFile(t, target)))
-	if result.Backup != target+userhooks.BackupSuffix || readFile(t, result.Backup) != claudeUserSettings {
+	// The backup goes to baum's state directory, not beside the target,
+	// where a dotfiles repository could commit it.
+	if !strings.HasPrefix(result.Backup, filepath.Join(home, ".local", "state", "baum")) || readFile(t, result.Backup) != claudeUserSettings {
 		t.Errorf("backup = %q", result.Backup)
+	}
+	if entries, _ := os.ReadDir(dotfiles); len(entries) != 1 {
+		t.Errorf("files beside the link target: %v", entries)
 	}
 	if info, _ := os.Stat(target); info.Mode().Perm() != 0o640 {
 		t.Errorf("mode = %v, want the original 0640", info.Mode().Perm())
