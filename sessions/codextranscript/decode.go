@@ -155,10 +155,10 @@ func validateOuterOrdinal(line Line, outer *int, paginated bool) error {
 		return nil
 	}
 	if outer == nil {
-		// Codex omits the envelope ordinal on reasoning items in otherwise
-		// paginated rollouts. They still occupy their physical line; every
-		// supplied ordinal must continue to agree with that position.
-		if line.ResponseItem != nil && line.ResponseItem.Reasoning != nil {
+		// Codex omits envelope ordinals on reasoning and compaction records
+		// in otherwise paginated rollouts. They still occupy their physical
+		// line; every supplied ordinal must agree with that position.
+		if line.Compacted != nil || (line.ResponseItem != nil && line.ResponseItem.Reasoning != nil) {
 			return nil
 		}
 		return fmt.Errorf("line %d has no paginated ordinal", ordinal)
