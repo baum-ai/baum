@@ -2,7 +2,9 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -57,6 +59,9 @@ func newAutoQueue(t *testing.T) (*Queue, *autoExecutor) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.Close)
+	// Like the daemon, which installs the gate right after Open: an automatic
+	// job does not start before one is set.
+	q.SetAutomaticGate(func(Job) string { return "" })
 	return q, f
 }
 
@@ -274,6 +279,7 @@ func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(q.Close)
+		q.SetAutomaticGate(func(Job) string { return "" })
 		return q
 	}
 	q := open()
@@ -416,5 +422,54 @@ func TestAutomaticGateStopsQueuedJobs(t *testing.T) {
 		if j.ID == queued[1].ID && j.Reason != "repository_automatic_off" {
 			t.Fatalf("reason %+v", j)
 		}
+	}
+}
+
+// A queued automatic job in the journal does not start on restart before the
+// daemon installs the gate; once the gate refuses it, it is cancelled instead.
+func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
+	dir := privateDir(t)
+	path := filepath.Join(dir, "jobs.json")
+	now := time.Now().UTC()
+	raw, err := json.Marshal([]Job{{ID: "a", Prepared: Prepared{Item: Item{"clone", 1}, Repository: "org/repo", HeadSHA: "a1"}, Automatic: true, Trigger: TriggerNewHead, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := &autoExecutor{started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(path, f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	select {
+	case <-f.started:
+		t.Fatal("automatic job started before a gate was installed")
+	case <-time.After(200 * time.Millisecond):
+	}
+	done := make(chan Job, 1)
+	q.SetAutomaticGate(func(j Job) string { return "automatic_off" })
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if l := q.List(); len(l) == 1 && l[0].State == "cancelled" {
+			done <- l[0]
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case j := <-done:
+		if j.Reason != "automatic_off" {
+			t.Fatalf("reason %q", j.Reason)
+		}
+	default:
+		t.Fatal("job was not cancelled once the gate refused it")
+	}
+	select {
+	case <-f.started:
+		t.Fatal("refused job started")
+	default:
 	}
 }

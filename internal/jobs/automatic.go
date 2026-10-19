@@ -155,11 +155,14 @@ func (e *NotAllowedError) Error() string { return "automatic generation not allo
 // automatic job passes when it is submitted and again before it starts: it
 // returns why the job may not run (automatic generation turned off globally
 // or for its repository, cursor-agent no longer acknowledged), or "". It is
-// called with the queue's mutex held and must not call the queue.
+// called with the queue's mutex held and must not call the queue. Until a
+// gate is installed no automatic job starts, so a journaled one cannot run
+// between Open and this call; confirmed jobs are not held.
 func (q *Queue) SetAutomaticGate(gate func(Job) string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.gate = gate
+	q.signal()
 }
 
 // refuseAutomatic cancels the queued job at i if it is automatic and the gate

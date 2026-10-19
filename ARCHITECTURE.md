@@ -1612,7 +1612,10 @@ it and `Queue.SubmitAutomatic` decides each job.
   settings from the registry. The queue asks it under its mutex when an
   automatic job is submitted and again before the worker starts one, so a pass
   that read the settings before an off cannot queue after it, and a queued job
-  never starts once its scope is off. `Queue.CancelDisallowedAutomatic` cancels
+  never starts once its scope is off. Until the gate is installed (right after
+  `jobs.Open`) workers leave queued automatic jobs alone, so a journaled job
+  cannot start on restart before the settings are checked.
+  `Queue.CancelDisallowedAutomatic` cancels
   queued automatic jobs the gate refuses, with its reason (`automatic_off`,
   `repository_automatic_off`, `repository_removed`,
   `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass

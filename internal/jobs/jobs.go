@@ -508,7 +508,9 @@ func (q *Queue) worker() {
 			}
 			i := -1
 			for n, j := range q.jobs {
-				if j.State == "queued" {
+				// Without a gate an automatic job waits: the daemon installs it
+				// right after Open, and a journaled job must not start first.
+				if j.State == "queued" && (!j.Automatic || q.gate != nil) {
 					i = n
 					break
 				}
