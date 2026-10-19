@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/proc"
 )
 
@@ -125,21 +126,23 @@ func run(ctx context.Context, binary string, args ...string) (string, error) {
 }
 
 // runFailure explains a run that exited with an error, from its stderr, which
-// is the user's own and bounded.
-func runFailure(waitErr error, stderr string) error {
+// is the user's own and bounded, and classifies it into a fixed word for the
+// run's error event.
+func runFailure(waitErr error, stderr string) (status string, err error) {
 	lower := strings.ToLower(stderr)
 	switch {
 	case strings.Contains(lower, "unknown option") || strings.Contains(lower, "unknown argument") || strings.Contains(lower, "invalid argument"):
-		return fmt.Errorf("cursor-agent does not accept the options baum needs (%s); upgrade it with `cursor-agent update`", firstLine(stderr))
+		return "unsupported_option", fmt.Errorf("cursor-agent does not accept the options baum needs (%s); upgrade it with `cursor-agent update`", firstLine(stderr))
 	case strings.Contains(lower, "sandbox mode is enabled but not available"):
-		return fmt.Errorf("cursor-agent could not start its sandbox on this machine (%s); baum runs cursor-agent only with its sandbox enabled", firstLine(stderr))
+		return "sandbox_unavailable", fmt.Errorf("cursor-agent could not start its sandbox on this machine (%s); baum runs cursor-agent only with its sandbox enabled", firstLine(stderr))
 	case strings.Contains(lower, "not authenticated") || strings.Contains(lower, "not logged in") || strings.Contains(lower, "login required") || strings.Contains(lower, "authentication required"):
-		return fmt.Errorf("cursor-agent is not signed in (%s); run cursor-agent login", firstLine(stderr))
+		return "authentication_error", fmt.Errorf("cursor-agent is not signed in (%s); run cursor-agent login", firstLine(stderr))
 	}
+	status = agent.ErrorStatus(stderr)
 	if line := firstLine(stderr); line != "" {
-		return fmt.Errorf("cursor-agent failed: %w (%s)", waitErr, line)
+		return status, fmt.Errorf("cursor-agent failed: %w (%s)", waitErr, line)
 	}
-	return fmt.Errorf("cursor-agent failed: %w", waitErr)
+	return status, fmt.Errorf("cursor-agent failed: %w", waitErr)
 }
 
 // firstLine is the first non-empty line of text, bounded.

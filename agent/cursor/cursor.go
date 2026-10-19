@@ -188,6 +188,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if event.Subtype == "started" {
 				record(agent.Event{Kind: "tool_call", ID: event.CallID, Tool: name, Path: path})
 				if !allowedTools[name] {
+					record(agent.Event{Kind: "error", Tool: name, Status: "disallowed_tool"})
 					err = fmt.Errorf("cursor-agent started the %s tool, which baum does not allow in a review; the run was stopped", orUnknown(name))
 				}
 			} else if event.Subtype == "completed" {
@@ -248,7 +249,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		return result, err
 	}
 	if waitErr != nil {
-		return result, runFailure(waitErr, stderr.String())
+		status, failure := runFailure(waitErr, stderr.String())
+		record(agent.Event{Kind: "error", Status: status})
+		return result, failure
 	}
 	if !completed {
 		return result, errors.New("cursor-agent ended without a result")

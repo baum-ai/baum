@@ -244,6 +244,9 @@ func TestRunStopsOnAToolThatDoesNotRead(t *testing.T) {
 			if len(result.Document) != 0 {
 				t.Error("a stopped run returned a document")
 			}
+			if status := agent.LastErrorStatus(result.Events); status != "disallowed_tool" {
+				t.Errorf("error status = %q", status)
+			}
 		})
 	}
 }
@@ -292,16 +295,20 @@ func TestRunCancellation(t *testing.T) {
 }
 
 func TestRunFailures(t *testing.T) {
-	for name, tc := range map[string]struct{ stderr, want string }{
-		"unknown option": {"error: unknown option '--mode'", "upgrade it with `cursor-agent update`"},
-		"sandbox":        {"Error: Sandbox mode is enabled but not available on this system. Sandbox requires kernel v6.2 or later.", "only with its sandbox enabled"},
-		"login":          {"Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", "run cursor-agent login"},
-		"other":          {"Error: something broke", "something broke"},
+	for name, tc := range map[string]struct{ stderr, want, status string }{
+		"unknown option": {"error: unknown option '--mode'", "upgrade it with `cursor-agent update`", "unsupported_option"},
+		"sandbox":        {"Error: Sandbox mode is enabled but not available on this system. Sandbox requires kernel v6.2 or later.", "only with its sandbox enabled", "sandbox_unavailable"},
+		"login":          {"Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", "run cursor-agent login", "authentication_error"},
+		"other":          {"Error: something broke", "something broke", "error"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fakeCLI(t, "cursor-agent", help, "cat > /dev/null\necho "+quoteShell(tc.stderr)+" >&2\nexit 1\n")
-			if _, err := (&Backend{}).Run(context.Background(), request(t.TempDir())); err == nil || !strings.Contains(err.Error(), tc.want) {
+			result, err := (&Backend{}).Run(context.Background(), request(t.TempDir()))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if status := agent.LastErrorStatus(result.Events); status != tc.status {
+				t.Errorf("error status = %q, want %q", status, tc.status)
 			}
 		})
 	}
