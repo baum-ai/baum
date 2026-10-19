@@ -18,22 +18,27 @@ func fakeSSH(t *testing.T) (path, record string) {
 	dir := t.TempDir()
 	record = filepath.Join(dir, "record")
 	path = filepath.Join(dir, "ssh")
-	write(t, dir, "ssh", "#!/bin/sh\necho \"args: $*\" >> '"+record+"'\necho \"agent: $SSH_AUTH_SOCK\" >> '"+record+"'\nexit 255\n", 0o755)
+	write(t, dir, "ssh", "#!/bin/sh\necho \"args: $*\" >> '"+record+"'\necho \"agent: $SSH_AUTH_SOCK\" >> '"+record+"'\necho \"askpass: $SSH_ASKPASS_REQUIRE\" >> '"+record+"'\nexit 255\n", 0o755)
 	return path, record
 }
 
-// A background fetch over SSH never waits for a prompt: the configured ssh
-// command gets BatchMode=yes appended and only the agent socket the daemon
-// vouches for.
+// A background fetch over SSH never waits for a prompt and only gets the
+// agent socket the daemon vouches for; a configured ssh command runs as the
+// user wrote it, and plain ssh gets BatchMode=yes.
 func TestBackgroundFetchOverSSHIsNonInteractive(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		configure func(t *testing.T, clone, ssh string)
+		args      string
 	}{
 		{"core.sshCommand", func(t *testing.T, clone, ssh string) {
 			git(t, clone, "config", "core.sshCommand", ssh+" -o Custom=yes")
-		}},
-		{"GIT_SSH_COMMAND", func(t *testing.T, _, ssh string) { t.Setenv("GIT_SSH_COMMAND", ssh+" -o Custom=yes") }},
+		}, "args: -o Custom=yes"},
+		{"GIT_SSH_COMMAND", func(t *testing.T, _, ssh string) { t.Setenv("GIT_SSH_COMMAND", ssh+" -o Custom=yes") }, "args: -o Custom=yes"},
+		{"plain ssh", func(t *testing.T, _, ssh string) {
+			// Put the fake first on PATH as "ssh".
+			t.Setenv("PATH", filepath.Dir(ssh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		}, "-o BatchMode=yes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRemoteFixture(t)
@@ -57,10 +62,13 @@ func TestBackgroundFetchOverSSHIsNonInteractive(t *testing.T) {
 				t.Fatal("ssh never ran:", err)
 			}
 			got := string(raw)
-			for _, want := range []string{"-o Custom=yes -o BatchMode=yes", "agent: /live/agent.sock"} {
+			for _, want := range []string{tc.args, "agent: /live/agent.sock", "askpass: never"} {
 				if !strings.Contains(got, want) {
 					t.Errorf("ssh saw %q, want %q", got, want)
 				}
+			}
+			if tc.name != "plain ssh" && strings.Contains(got, "BatchMode") {
+				t.Errorf("changed the configured ssh command: %q", got)
 			}
 			if strings.Contains(got, "/stale/") {
 				t.Errorf("stale agent socket passed: %q", got)
@@ -69,16 +77,26 @@ func TestBackgroundFetchOverSSHIsNonInteractive(t *testing.T) {
 	}
 }
 
-func TestBackgroundEnvWithoutAgentOrSSHSettings(t *testing.T) {
-	b := &Background{SSHAgent: func(context.Context) string { return "" }}
-	env := b.env(context.Background(), t.TempDir(), []string{"PATH=/usr/bin", "SSH_AUTH_SOCK=/stale", "SSH_ASKPASS_REQUIRE=force", "GIT_SSH=/opt/my ssh"})
-	joined := strings.Join(env, "\n")
-	for _, want := range []string{"GIT_SSH_COMMAND='/opt/my ssh' -o BatchMode=yes", "SSH_ASKPASS_REQUIRE=never"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("env lacks %q:\n%s", want, joined)
-		}
+func TestBackgroundEnvAsksForTheAgentOnlyForSSH(t *testing.T) {
+	asked := 0
+	b := &Background{SSHAgent: func(context.Context) string { asked++; return "/live" }}
+	env := strings.Join(b.env(context.Background(), t.TempDir(), []string{"PATH=/usr/bin", "SSH_AUTH_SOCK=/stale", "SSH_ASKPASS_REQUIRE=force"}, false), "\n")
+	if asked != 0 || strings.Contains(env, "SSH_AUTH_SOCK") || strings.Contains(env, "GIT_SSH_COMMAND") || !strings.Contains(env, "SSH_ASKPASS_REQUIRE=never") || strings.Contains(env, "=force") {
+		t.Fatalf("asked %d:\n%s", asked, env)
 	}
-	if strings.Contains(joined, "SSH_AUTH_SOCK") || strings.Contains(joined, "=force") {
-		t.Errorf("kept:\n%s", joined)
+	env = strings.Join(b.env(context.Background(), t.TempDir(), []string{"GIT_SSH=/opt/plink"}, true), "\n")
+	if asked != 1 || !strings.Contains(env, "SSH_AUTH_SOCK=/live") || strings.Contains(env, "BatchMode") || !strings.Contains(env, "GIT_SSH=/opt/plink") {
+		t.Fatalf("GIT_SSH:\n%s", env)
+	}
+}
+
+func TestSSHRemote(t *testing.T) {
+	for url, want := range map[string]bool{
+		"ssh://git@github.com/a/b": true, "git+ssh://h/x": true, "git@github.com:a/b.git": true, "github.com:a/b": true,
+		"https://github.com/a/b": false, "/srv/repo.git": false, "./repo": false, `C:\repos\x`: false, "file:///srv/x": false, "": true,
+	} {
+		if got := sshRemote(url); got != want {
+			t.Errorf("sshRemote(%q) = %v", url, got)
+		}
 	}
 }
