@@ -879,12 +879,18 @@ inside the clone and the session store overrides, and does this:
    `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
    agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
    empty, which the branch step reads as unknown.
-6. Reads each commit's `Entire-Checkpoint` trailer as the hosted resolver
-   does: one 12-hex id, case-insensitive key, repeated ids allowed; a malformed
-   value or two distinct ids is unusable. A usable id is looked up on the
-   clone's checkpoint branch (the local branch, else a remote-tracking copy),
-   reading only its metadata in the private repository, and maps to the
-   sessions the checkpoint records. Such a commit is linked to those sessions
+6. Reads each commit's `Entire-Checkpoint` trailers with
+   `sessions/entirecheckpoint.ParseTrailers`, the parser the hosted resolver
+   uses: a case-insensitive key, and values that are legacy 12-hex ids or
+   26-character Crockford ULIDs in any case, made canonical (hex lower-case,
+   ULID upper-case) and kept in trailer order, each once. A malformed value
+   beside a valid one is skipped with a warning line; a commit with no valid
+   value is left to the heuristics. Each id is looked up on the clone's
+   checkpoint branch (the local branch, else a remote-tracking copy), reading
+   only its metadata in the private repository, and maps to the sessions the
+   checkpoint records; a commit naming several checkpoints maps to the union
+   of their sessions. The branch holds only 12-hex checkpoints, so a ULID
+   finds none here. Such a commit is linked to those sessions
    with `method` `entire_checkpoint` and confidence 1, as the hosted
    `entireEdges` writes them, and then goes through step 7 with those sessions
    already linked and the files they edited already explained. The
@@ -893,8 +899,9 @@ inside the clone and the session store overrides, and does this:
    outside the window, or only Entire holds it), it is mapped from that
    checkpoint. A session that already came from a home-directory store under
    the same id is listed once, from that store, since its transcript is the
-   fuller record. An unusable trailer, a checkpoint the clone does not hold,
-   or one whose sessions cannot be mapped leaves the commit to the heuristics.
+   fuller record. Trailers with no valid id, checkpoints the clone does not
+   hold, or ones whose sessions cannot be mapped leave the commit to the
+   heuristics.
 7. Matches each commit the way the hosted resolver does, with the default
    config and `steps.Default`. As its `matchRemaining` does,
    `linkage.MatchCommit` runs over the sessions not yet linked, and runs

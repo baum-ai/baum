@@ -1,45 +1,18 @@
 package locallink
 
 import (
-	"errors"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
-
-func TestEntireCheckpointID(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		trailers []string
-		id       string
-		present  bool
-		invalid  bool
-	}{
-		{"none", []string{"Co-Authored-By: A <a@example.com>"}, "", false, false},
-		{"one", []string{"Entire-Checkpoint: 0004a7a444a0"}, "0004a7a444a0", true, false},
-		{"case", []string{"entire-checkpoint:  0004A7A444A0 "}, "0004a7a444a0", true, false},
-		{"repeated", []string{"Entire-Checkpoint: 0004a7a444a0", "Entire-Checkpoint: 0004a7a444a0"}, "0004a7a444a0", true, false},
-		{"malformed", []string{"Entire-Checkpoint: not-a-checkpoint"}, "", true, true},
-		{"too long", []string{"Entire-Checkpoint: 0004a7a444a0ff"}, "", true, true},
-		{"two ids", []string{"Entire-Checkpoint: 0004a7a444a0", "Entire-Checkpoint: 111111111111"}, "", true, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			id, present, err := entireCheckpointID(tc.trailers)
-			if id != tc.id || present != tc.present || (err != nil) != tc.invalid {
-				t.Errorf("= %q, %v, %v", id, present, err)
-			}
-			if err != nil && !errors.Is(err, errInvalidCheckpointTrailer) {
-				t.Errorf("error %v is not errInvalidCheckpointTrailer", err)
-			}
-		})
-	}
-}
 
 // linkedTo is the sessions a commit links to, by method.
 func linkedTo(c Commit) map[string][]string {
@@ -168,13 +141,16 @@ func TestResolveDropsWeakMatchesBesideACheckpoint(t *testing.T) {
 	}
 }
 
-// A trailer that is malformed, names two checkpoints, or names one the clone
-// does not hold leaves the commit to the heuristic steps.
+// A trailer with no valid checkpoint id, or one naming a checkpoint the clone
+// does not hold, leaves the commit to the heuristic steps.
 func TestResolveFallsBackFromAnUnusableTrailer(t *testing.T) {
 	for _, trailer := range []string{
 		"Entire-Checkpoint: not-a-checkpoint",
-		"Entire-Checkpoint: " + linktest.CheckpointID + "\nEntire-Checkpoint: 111111111111",
+		"Entire-Checkpoint: not-a-checkpoint\nEntire-Checkpoint: 01ARZ3NDEKTSV4RRFFQ69G5FAL",
 		"Entire-Checkpoint: ffffffffffff",
+		// A ULID is valid, but only the git-refs store holds those, and this
+		// reads the checkpoint branch.
+		"Entire-Checkpoint: 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 	} {
 		t.Run(trailer, func(t *testing.T) {
 			f := linktest.NewWithTrailer(t, trailer)
@@ -185,6 +161,50 @@ func TestResolveFallsBackFromAnUnusableTrailer(t *testing.T) {
 				t.Errorf("first commit links = %+v, want the heuristic commit_ref", result.Commits[0].Links)
 			}
 		})
+	}
+}
+
+// A commit naming several checkpoints links to the union of the sessions they
+// record, as the hosted resolver does. Repeats collapse, a checkpoint the
+// clone does not hold adds nothing, and the id is matched in any case.
+func TestResolveLinksTheUnionOfSeveralCheckpoints(t *testing.T) {
+	const second = "0004a7a444a1"
+	others := [2]string{"aaaaaaaa-1111-4000-8000-000000000001", "aaaaaaaa-1111-4000-8000-000000000002"}
+	f := linktest.NewWithTrailer(t, strings.Join([]string{
+		linktest.CheckpointTrailer,
+		"Entire-Checkpoint: ffffffffffff",
+		"entire-checkpoint: " + strings.ToUpper(second),
+		linktest.CheckpointTrailer,
+	}, "\n"))
+	f.AddCheckpointEditing(t, "b.txt")
+	f.AddCheckpointAt(t, second, others)
+	result := resolve(t, request(f))
+	if !result.Available {
+		t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
+	}
+	want := append(slices.Clone(linktest.CheckpointSessions), others[:]...)
+	slices.Sort(want)
+	got := linkedTo(result.Commits[0])
+	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], want) {
+		t.Fatalf("first commit links = %+v, want both checkpoints' sessions", result.Commits[0].Links)
+	}
+}
+
+// A malformed value beside a valid one is skipped with a warning; the valid
+// checkpoint still links.
+func TestResolveSkipsAMalformedValueBesideAValidOne(t *testing.T) {
+	f := linktest.NewWithTrailer(t, "Entire-Checkpoint: not-a-checkpoint\n"+linktest.CheckpointTrailer)
+	f.AddCheckpointEditing(t, "b.txt")
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	result := resolve(t, req)
+	got := linkedTo(result.Commits[0])
+	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) {
+		t.Fatalf("first commit links = %+v, want the valid checkpoint's sessions", result.Commits[0].Links)
+	}
+	if !strings.Contains(warnings.String(), `skipping malformed Entire-Checkpoint value "not-a-checkpoint"`) {
+		t.Errorf("warnings = %q, want the skipped value named", warnings.String())
 	}
 }
 

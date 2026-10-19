@@ -78,7 +78,9 @@ type Request struct {
 	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
-	// read, as "baum sessions" prints them. It defaults to discarding them.
+	// read, as "baum sessions" prints them, and for each malformed
+	// Entire-Checkpoint value skipped beside a valid one. It defaults to
+	// discarding them.
 	Warn io.Writer
 }
 
