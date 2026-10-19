@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agenthooks"
+	"github.com/baum-ai/baum/internal/proc"
 )
 
 var entireGitHookArgumentCounts = map[string]int{
@@ -220,7 +221,13 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 		request.WriteString("HEAD:" + spec.SettingsFile + "\n")
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "--batch")
+	// GIT_NO_LAZY_FETCH (git 2.44 and later) keeps a partial clone from
+	// fetching a missing blob. Older git ignores it, so the timeout kills the
+	// whole process group: a fetch git started cannot outlive it or hold the
+	// pipe open.
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0")
+	proc.Configure(cmd)
+	cmd.WaitDelay = time.Second
 	cmd.Stdin = strings.NewReader(request.String())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

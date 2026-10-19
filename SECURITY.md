@@ -82,9 +82,10 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   them). There a hook may install the pinned Entire release from GitHub and
   the clone's Git hook dispatchers, then hands the event to Entire.
   Everywhere else the hooks run Entire directly, and baum does nothing at all:
-  this open-source build never installs Entire or its hooks in a repository
-  just because the repository's files ask for it. Uploading, or anything else
-  that contacts a baum server, needs `baum login` in every case.
+  without a login, an open-source build does not install Entire or its hooks
+  in a repository just because the repository's files ask for it, unless the
+  machine still has the hosted install script's marker (below). Uploading, or
+  anything else that contacts a baum server, needs `baum login` in every case.
 - Once installed, Entire's own hooks record agent sessions as checkpoints and
   push them, transcripts included, with `git push` to the checkpoint branch of
   the repository's remote (or the checkpoint remote its settings name). That
@@ -92,7 +93,10 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   them.
 - A baum counts as installed for the hosted service when its release build
   says so, or when the hosted install script left the file `hosted-install`
-  beside the credentials (`~/.config/baum/`).
+  beside the credentials (`~/.config/baum/`, or under `XDG_CONFIG_HOME`). The
+  marker outlives the binary that came with it: an open-source baum installed
+  later on the same machine also sets up onboarded repositories without a
+  login. Delete the file (`rm ~/.config/baum/hosted-install`) to stop that.
 - `baum logout` revokes and removes the stored token but leaves the markers
   `baum setup` and the hook bootstrap write in a clone's `.git/baum`
   directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep

@@ -13,9 +13,9 @@
 // are frozen once they land: change what a hook *does* in the binary, not in
 // the string that invokes it. The strings run baum only when `baum hooks agent
 // --check` succeeds, which it does only where the hosted service was opted in
-// to: a login, a repository whose committed settings carry these strings, or a
-// set-up clone. Everyone else runs Entire directly, as if baum were not
-// installed.
+// to: a login, a set-up clone, or, for a baum built or installed for the
+// hosted service, a repository whose committed settings carry these strings.
+// Everyone else runs Entire directly, as if baum were not installed.
 package agenthooks
 
 import (
