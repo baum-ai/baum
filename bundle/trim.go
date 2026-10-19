@@ -11,10 +11,10 @@ import (
 )
 
 // Caps are the configured count and byte ceilings applied to a bundle.
-// ApplyCaps, CapAttachments and Fit read the comment, session, patch, image
-// and byte limits. MaxPromptsPerSession and MaxCommandEventsPerSession are
-// applied by the source that collects sessions, and DiffLimits gives the
-// limits diff assembly reads.
+// ApplyCaps, CapPatches, CapAttachments and Fit read the comment, session,
+// patch, image and byte limits. MaxPromptsPerSession and
+// MaxCommandEventsPerSession are applied by the source that collects
+// sessions, and DiffLimits gives the limits diff assembly reads.
 type Caps struct {
 	MaxSessions                int
 	MaxPromptsPerSession       int
@@ -71,10 +71,10 @@ func CapAttachments(bundle *Bundle, caps Caps) {
 
 // ApplyCaps enforces the count ceilings, after sorting, so the same rows in
 // any order produce the same selection: sessions by confidence then earliest
-// start; comments to the newest N plus every review verdict; each hunk's
-// patch to its leading lines. It does not cap prompts or command events: the
-// source that collects sessions already selected them (MaxPromptsPerSession,
-// MaxCommandEventsPerSession).
+// start; comments to the newest N plus every review verdict. It does not cap
+// prompts or command events: the source that collects sessions already
+// selected them (MaxPromptsPerSession, MaxCommandEventsPerSession). Nor does
+// it cap patch lines: CapPatches does, after redaction.
 func ApplyCaps(bundle *Bundle, caps Caps) {
 	var notes []string
 
@@ -98,20 +98,28 @@ func ApplyCaps(bundle *Bundle, caps Caps) {
 		notes = append(notes, fmt.Sprintf("%d older comment(s) omitted beyond the %d-comment limit; every review verdict is kept", before-len(bundle.Conversation), limit))
 	}
 
-	if limit := max(caps.MaxHunkPatchLines, 0); limit > 0 {
-		cutHunks := 0
-		for i := range bundle.Diff {
-			if cutLines, cut := capPatchLines(bundle.Diff[i].Patch, limit); cut {
-				bundle.Diff[i].Patch = cutLines
-				cutHunks++
-			}
-		}
-		if cutHunks > 0 {
-			notes = append(notes, fmt.Sprintf("patch text capped to the leading %d line(s) for %d hunk(s)", limit, cutHunks))
+	bundle.Truncated = append(bundle.Truncated, notes...)
+}
+
+// CapPatches bounds each hunk's patch to its leading MaxHunkPatchLines lines
+// and notes how many hunks it shortened. It runs after redaction, which reads
+// the margin diff parsing keeps past the cap (DiffLimits.MaxHunkLines), so a
+// secret the cut runs through is masked whole.
+func CapPatches(bundle *Bundle, caps Caps) {
+	limit := caps.MaxHunkPatchLines
+	if limit <= 0 {
+		return
+	}
+	cutHunks := 0
+	for i := range bundle.Diff {
+		if cutLines, cut := capPatchLines(bundle.Diff[i].Patch, limit); cut {
+			bundle.Diff[i].Patch = cutLines
+			cutHunks++
 		}
 	}
-
-	bundle.Truncated = append(bundle.Truncated, notes...)
+	if cutHunks > 0 {
+		bundle.Truncated = append(bundle.Truncated, fmt.Sprintf("patch text capped to the leading %d line(s) for %d hunk(s)", limit, cutHunks))
+	}
 }
 
 // cutLowestConfidenceSessions drops the lowest-confidence primary sessions

@@ -104,6 +104,7 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 	if err := bundle.Redact(ctx, &b, redactor); err != nil {
 		return nil, err
 	}
+	bundle.CapPatches(&b, caps)
 	if err := bundle.Fit(&b, caps); err != nil {
 		return nil, err
 	}

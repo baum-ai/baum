@@ -10,10 +10,12 @@ import (
 
 // Redact masks secrets and e-mail addresses in every bundle string field,
 // after reference extraction (which runs against the unredacted bundle) and
-// before the byte-fit pass. Each field, a whole patch included, is redacted
-// as one text, so a secret spanning lines is found, and keeps its length and
-// lines. MaskedSpanCount is the number of spans masked, e-mail addresses
-// included.
+// before the hunk line cap (CapPatches) and the byte-fit pass. Each field, a
+// whole patch included, is redacted as one text, so a secret spanning lines
+// is found, and keeps its length and lines. A patch still holds the margin
+// diff parsing keeps past the line cap, so a secret the cap runs through is
+// masked whole. MaskedSpanCount is the number of spans masked, e-mail
+// addresses included, and so counts a secret found only in that margin too.
 //
 // Mentions are not rewritten: nothing in the bundle is posted to a code
 // host as it is, and a field may hold code (a patch, a suggestion block, a

@@ -924,6 +924,10 @@ func TestApplyCapsCutsExactlyAtTheBoundary(t *testing.T) {
 		Diff: []Hunk{{ID: "h1", Patch: "l1\nl2\nl3"}},
 	}
 	ApplyCaps(bundle, caps)
+	if bundle.Diff[0].Patch != "l1\nl2\nl3" {
+		t.Errorf("ApplyCaps cut patch lines before redaction: %q", bundle.Diff[0].Patch)
+	}
+	CapPatches(bundle, caps)
 	if len(bundle.Sessions) != 1 || bundle.Sessions[0].RootSessionID != "high" {
 		t.Errorf("expected only the high-confidence session kept, got %+v", bundle.Sessions)
 	}

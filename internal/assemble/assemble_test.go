@@ -9,9 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -441,6 +443,52 @@ func TestTrimmingNeverDropsHunks(t *testing.T) {
 	}
 	if len(r.result.JSON) >= len(r0(t, full)) {
 		t.Errorf("the bundle was not trimmed: %d bytes, was %d", len(r.result.JSON), len(r0(t, full)))
+	}
+}
+
+// A private key the per-hunk line cap runs through reaches the bundle
+// masked whole: the cap cuts after redaction, which reads past it.
+func TestKeyAcrossTheHunkLineCapIsMaskedWhole(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	label := "RSA " + "PRIVATE KEY"
+	key := []string{"-----BEGIN " + label + "-----"}
+	for i := range 6 {
+		key = append(key, strings.Repeat("Qz7"+"Lw3Kp"+string(rune('a'+i))+"Xb9", 8)[:64])
+	}
+	key = append(key, "-----END "+label+"-----")
+	// The new file's hunk is "@@" then nine lines, so the key starts on
+	// line 11 of the hunk.
+	content := "1\n2\n3\n4\n5\n6\n7\n8\n9\n" + strings.Join(key, "\n") + "\nafter\n"
+	assembletest.Git(t, repo.Dir, "checkout", "-q", "feature")
+	assembletest.Write(t, repo.Dir, "config/deploy.pem", content)
+	assembletest.Git(t, repo.Dir, "add", "-A")
+	assembletest.Git(t, repo.Dir, "commit", "-q", "-m", "Add the deploy key")
+	head := assembletest.Git(t, repo.Dir, "rev-parse", "HEAD")
+	assembletest.Git(t, repo.Dir, "checkout", "-q", "main")
+	evidence := repo.Evidence()
+	evidence.PullRequest.HeadSHA = head
+	evidence.PullRequest.Commits = append(evidence.PullRequest.Commits, bundle.Commit{SHA: head, Subject: "Add the deploy key", Parents: []string{repo.Head}})
+
+	// From only the BEGIN line kept to all but the END line.
+	for limit := 11; limit <= 17; limit++ {
+		r, err := assembleWith(t, repo, evidence, nil, func(req *assemble.Request, _ *assemble.Assembler) {
+			req.Limits.Caps.MaxHunkPatchLines = limit
+		})
+		if err != nil {
+			t.Fatalf("limit %d: %v\n%s", limit, err, r.stderr.String())
+		}
+		hunks := hunksOf(r.result.Bundle, "config/deploy.pem")
+		if len(hunks) != 1 || strings.Count(hunks[0].Patch, "\n")+1 != limit {
+			t.Fatalf("limit %d: hunks %+v", limit, hunks)
+		}
+		if !slices.Contains(r.result.Bundle.Truncated, fmt.Sprintf("patch text capped to the leading %d line(s) for 1 hunk(s)", limit)) {
+			t.Errorf("limit %d: notes %q", limit, r.result.Bundle.Truncated)
+		}
+		for _, line := range slices.Concat(key[1:len(key)-1], []string{label}) {
+			if bytes.Contains(r.result.JSON, []byte(line)) {
+				t.Fatalf("limit %d: the bundle holds %q:\n%s", limit, line, hunks[0].Patch)
+			}
+		}
 	}
 }
 

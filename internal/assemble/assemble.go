@@ -258,8 +258,8 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	bundle.ApplyCheckoutOmissions(&b, omissions)
 
-	// Redaction runs before trimming, so a cut cannot leave part of a secret
-	// unmasked.
+	// Redaction runs before the patch line cap and trimming, so a cut cannot
+	// leave part of a secret unmasked.
 	bundle.ApplyCaps(&b, limits.Caps)
 	if err := bundle.Redact(ctx, &b, redactor); err != nil {
 		return Result{}, err
@@ -267,6 +267,7 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// Alt text was masked when the images were captured, so Redact found
 	// nothing left in it to count.
 	b.MaskedSpanCount += altMasked
+	bundle.CapPatches(&b, limits.Caps)
 	bundle.CapAttachments(&b, limits.Caps)
 	if err := bundle.Fit(&b, limits.Caps); err != nil {
 		return Result{}, err
