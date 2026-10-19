@@ -29,13 +29,13 @@ var entireGitHookArgumentCounts = map[string]int{
 
 func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:    "hooks",
-		Short:  "Run baum integration hooks",
-		Hidden: true,
+		Use:   "hooks",
+		Short: "Install baum's coding-agent hooks, or run them",
 	}
 	gitCommand := &cobra.Command{
 		Use:                "git HOOK [args...]",
 		Short:              "Run a baum Git hook",
+		Hidden:             true,
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -75,6 +75,8 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(gitCommand)
 	cmd.AddCommand(newAgentHooksCommand(stdout, stderr))
 	cmd.AddCommand(newBootstrapHooksCommand(stdout, stderr))
+	cmd.AddCommand(newInstallUserHooksCommand(stdout, stderr))
+	cmd.AddCommand(newUninstallUserHooksCommand(stdout, stderr))
 	return cmd
 }
 
@@ -86,15 +88,23 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "agent AGENT EVENT",
 		Short:              "Run a baum coding-agent hook",
+		Hidden:             true,
 		Args:               cobra.MinimumNArgs(2),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if args[0] == "--check" {
+				userWide := len(args) > 1 && args[1] == "--user"
+				if userWide {
+					args = args[1:]
+				}
 				if len(args) != 3 {
-					return errors.New("usage: baum hooks agent --check AGENT EVENT")
+					return errors.New("usage: baum hooks agent --check [--user] AGENT EVENT")
 				}
 				if err := validateAgentHook(args[1], args[2]); err != nil {
 					return err
+				}
+				if userWide {
+					return userHooksEnabled(cmd.Context(), ".", args[1], args[2])
 				}
 				return hostedHooksEnabled(cmd.Context(), ".")
 			}

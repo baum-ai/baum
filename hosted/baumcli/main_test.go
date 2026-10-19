@@ -34,10 +34,20 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = os.Setenv("XDG_CONFIG_HOME", config)
+	// Setup installs user-wide agent hooks below HOME; a test that forgets
+	// to set its own must not reach the developer's.
+	home, err := os.MkdirTemp("", "baumcli-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_ = os.Setenv("HOME", home)
+	_ = os.Unsetenv("CLAUDE_PROJECT_DIR")
 	_ = os.Unsetenv(tokenEnvVar)
 	_ = os.Unsetenv(serverEnvVar)
 	code := m.Run()
 	_ = os.RemoveAll(config)
+	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
 
