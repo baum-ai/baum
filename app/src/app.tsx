@@ -784,7 +784,7 @@ function RepositorySettings({
     setPending(true);
     void save({
       automatic: mode === "default" ? null : mode === "on",
-      daily_cap: !automatic ? clone.settings.daily_cap : noCap ? null : amount,
+      daily_cap: !automatic ? (clone.settings.daily_cap ?? null) : noCap ? null : amount,
       backend: backend || null,
       model: model || null,
     }).finally(() => setPending(false));

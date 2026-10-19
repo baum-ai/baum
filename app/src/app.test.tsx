@@ -477,6 +477,32 @@ it("never saves an invalid daily cap as no cap; removing it is explicit", async 
     body: { automatic: null, daily_cap: null, backend: null, model: null },
   });
 });
+it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  // The server omits daily_cap when there is none.
+  const puts = stubAutomatic({
+    ...demoClone,
+    settings: { automatic: null, backend: null, model: null },
+  });
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/automatic"
+      ? Promise.resolve(new Response("{}", { status: 500 }))
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/repos/clone/settings",
+    body: { automatic: null, daily_cap: null, backend: null, model: null },
+  });
+});
 it("shows a repository set to On as paused while the global switch is off", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
