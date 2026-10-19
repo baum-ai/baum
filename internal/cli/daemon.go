@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
@@ -47,7 +48,9 @@ func newDaemonCommand() *cobra.Command {
 		Short: "Run and control the local baum daemon shared by the app and agent hooks",
 		Long: `The baum daemon is one long-lived local server per user. It serves the local
 application on 127.0.0.1, keeps GitHub metadata of registered clones fresh, and
-runs the generation jobs you confirm in the app. The desktop app and agent hooks
+runs the generation jobs you confirm in the app. Unless you turn it off in the
+app, it also generates reviews automatically when a pull request you authored
+or were asked to review gets a new head or review request. The desktop app and agent hooks
 start it with "baum daemon ensure"; it keeps running after they exit, until
 "baum daemon stop".
 
@@ -331,8 +334,9 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 }
 
 // localApplication builds what the daemon serves: the registry, discovery,
-// review index, background refresh, diagnostics and the generation queue.
-// It is where automatic generation belongs.
+// review index, background refresh, diagnostics, the generation queue and
+// the automatic generation scheduler. Hook events (ENG-1321) reach the
+// scheduler through Scheduler.Trigger.
 func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
@@ -358,17 +362,35 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 			log.Warn("stored price list not loaded", "error", err)
 		}
 		refresh := func(ctx context.Context) error { return pricing.Refresh(ctx, state) }
+		// Automatic generation is separate from the model-free background
+		// refresh: discovery hands it snapshots, and it queues through the
+		// same runner as confirmed jobs.
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.Poll, Log: log,
+			Hold: func() bool {
+				status, ok := daemon.Self()
+				return ok && (status.Stopping || status.RestartPending)
+			},
+			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) },
+		}
+		worker.Discovered = scheduler.Observe
 		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
+				// A PR whose job finished may have a pending head.
+				scheduler.Wake()
 			}
 		})
 		if err != nil {
 			_ = registry.Close()
 			return daemon.App{}, err
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Changed: changed,
+		scheduler.Queue = queue
+		settingsChanged := func() {
+			changed()
+			scheduler.Wake()
+		}
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:    api,
@@ -381,6 +403,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 					}
 				})
 				wg.Go(func() { worker.Run(ctx) })
+				wg.Go(func() { scheduler.Run(ctx) })
 				wg.Go(func() {
 					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
 				})

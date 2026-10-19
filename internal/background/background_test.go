@@ -79,6 +79,26 @@ func TestRefreshConflictIsRetriedWithoutFailure(t *testing.T) {
 		t.Fatalf("conflict treated as failure: %+v", state)
 	}
 }
+// Successful discovery snapshots go to Discovered (the daemon's automatic
+// scheduler); failed polls do not, so a stale inbox never looks like news.
+func TestDiscoveredReceivesOnlySuccessfulSnapshots(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{err: errors.New("offline")}
+	var seen []discovery.Snapshot
+	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+		return discovery.Observation{}, nil
+	}, Discovered: func(_ context.Context, snapshot discovery.Snapshot) { seen = append(seen, snapshot) }}
+	s.Sync(context.Background())
+	if len(seen) != 0 {
+		t.Fatalf("failed poll delivered %+v", seen)
+	}
+	d.err = nil
+	now = now.Add(time.Hour)
+	s.Sync(context.Background())
+	if len(seen) != 1 || seen[0].Repository != "acme/app" || len(seen[0].PullRequests) != 1 {
+		t.Fatalf("snapshot not delivered %+v", seen)
+	}
+}
 func TestOfflineBackoffAndRecovery(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{err: errors.New("offline")}
