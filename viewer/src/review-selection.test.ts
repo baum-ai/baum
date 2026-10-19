@@ -68,6 +68,7 @@ describe("withSelection", () => {
       { kind: "changes" as const },
       { kind: "risks" as const },
       { kind: "section" as const, id: "sec_a" },
+      { kind: "section" as const, id: "sec_a", decision: "dec_choice" },
       { kind: "risk" as const, section: "sec_a", id: "rsk_1" },
       { kind: "files" as const },
       { kind: "file" as const, id: "file_1" },
@@ -86,6 +87,15 @@ describe("withSelection", () => {
     const risk = withSelection(new URLSearchParams(), { kind: "risk", section: "a", id: "r1" });
     const section = withSelection(risk, { kind: "section", id: "sec_b" });
     expect([...section.keys()].toSorted()).toEqual(["pane", "section"]);
+  });
+  it("clears a decision target when navigating elsewhere", () => {
+    const focused = withSelection(new URLSearchParams(), {
+      kind: "section",
+      id: "sec_a",
+      decision: "dec_choice",
+    });
+    expect(withSelection(focused, { kind: "section", id: "sec_b" }).has("decision")).toBe(false);
+    expect(withSelection(focused, { kind: "session", id: "run_1" }).has("decision")).toBe(false);
   });
 });
 

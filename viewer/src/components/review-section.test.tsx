@@ -2,7 +2,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { reviewDocumentFor } from "../../test/review-document";
-import type { Block, Decision, ReviewDocument } from "../review-document";
+import type { Block, ReviewDocument } from "../review-document";
+import { UrlStateProvider } from "../navigation";
 import { ReviewSummary } from "./review-summary";
 import { ReviewSection } from "./review-section";
 
@@ -96,61 +97,77 @@ function header(tier: "unrated" | "high", state: "new" | "stale", keepRisks = fa
 }
 
 describe("review section decisions", () => {
-  const anchors = [{ type: "hunk" as const, id: "h_picker" }];
-  const approval = "Proposed by the agent and approved by a person";
-
-  /** Each decision's badge, found by the decision's item id rather than by
-   *  how the badge is styled. */
-  function badges(items: Decision[]) {
-    const html = render([{ kind: "decisions", items }]);
-    const page = new DOMParser().parseFromString(html, "text/html");
-    const part = page.querySelector('section[aria-label="Key decisions"]')!;
-    return Object.fromEntries(
-      items.map((item) => [item.id, part.querySelector(`[id$="-${item.id}"] span`)!]),
+  it("links a quote to its session turn while preserving the review version", () => {
+    const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+    document.index.sessions = [{ id: "run-1", vendor: "codex", title: null, restricted: false }];
+    const section = {
+      ...document.sections[0]!,
+      risks: [],
+      blocks: [
+        {
+          kind: "decisions" as const,
+          items: [
+            {
+              id: "choice",
+              by: "human" as const,
+              title: "Skip assets",
+              text: "Skip binary assets to keep the checkout small",
+              evidence: "Leave binary files out",
+              anchors: [{ type: "prompt" as const, session: "run-1", index: 8 }],
+            },
+          ],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <UrlStateProvider
+        value={{
+          search: new URLSearchParams("pane=section&section=old&version=2"),
+          update: () => {},
+        }}
+      >
+        <ReviewSection document={document} section={section} onSelectSection={() => {}} />
+      </UrlStateProvider>,
     );
-  }
-
-  it("says who took each decision, and that a person approved an agent's", () => {
-    const found = badges([
-      { id: "dec_h", by: "human", text: "Person chose", anchors },
-      { id: "dec_a", by: "agent", text: "Agent chose", anchors },
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const link = [...page.querySelectorAll("a")].find(
+      (a) => a.textContent === "View in session →",
+    )!;
+    const query = new URLSearchParams(link.getAttribute("href")!.slice(1));
+    expect(link.closest("blockquote")).toBeNull();
+    expect(link.closest("details")).toBeNull();
+    expect(page.querySelector('section[aria-label="Key decisions"] summary')).toBeNull();
+    expect(page.body.textContent).toContain("Skip assets");
+    expect(query.get("pane")).toBe("session");
+    expect(query.get("session")).toBe("run-1");
+    expect(query.get("turn")).toBe("8");
+    expect(query.get("version")).toBe("2");
+    expect(query.has("section")).toBe(false);
+    expect(page.querySelector('section[aria-label="Risks"]')).toBeNull();
+  });
+  const anchors = [{ type: "hunk" as const, id: "h_picker" }];
+  it("groups people and approved choices first, then the agent's own calls", () => {
+    const html = render([
       {
-        id: "dec_ok",
-        by: "agent",
-        text: "Agent proposed, person agreed",
-        approved_by_human: true,
-        anchors,
+        kind: "decisions",
+        items: [
+          { id: "dec_a", by: "agent", text: "Agent chose", anchors },
+          { id: "dec_h", by: "human", text: "Person chose", anchors },
+          { id: "dec_ok", by: "agent", text: "Person accepted", approved_by_human: true, anchors },
+        ],
       },
     ]);
-    expect(found.dec_h!.textContent).toBe("Human");
-    expect(found.dec_a!.textContent).toBe("Agent");
-    expect(found.dec_h!.getAttribute("title")).toBeNull();
-    expect(found.dec_a!.getAttribute("title")).toBeNull();
-    // The approval is in words and a tick, not only a colour; the tick is
-    // decoration, so a screen reader hears the words alone.
-    const approved = found.dec_ok!;
-    expect(approved.textContent).toBe("Agent · approved");
-    expect(approved.getAttribute("title")).toBe(approval);
-    const tick = approved.querySelector("svg");
-    expect(tick).not.toBeNull();
-    expect(tick!.getAttribute("aria-hidden")).toBe("true");
-  });
-
-  // The schema allows the flag only on an agent decision, but an old or
-  // hand-edited document can carry it on a person's own.
-  it("keeps a person's decision plainly Human even if it carries the approval flag", () => {
-    const found = badges([
-      {
-        id: "dec_bad",
-        by: "human",
-        text: "Person chose",
-        approved_by_human: true,
-        anchors,
-      } as Decision,
-    ]);
-    expect(found.dec_bad!.textContent).toBe("Human");
-    expect(found.dec_bad!.getAttribute("title")).toBeNull();
-    expect(found.dec_bad!.querySelector("svg")).toBeNull();
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const part = page.querySelector('section[aria-label="Key decisions"]')!;
+    const groups = [...part.querySelectorAll("ul")];
+    expect(groups).toHaveLength(2);
+    expect(groups[0]!.textContent).toContain("Person chose");
+    expect(groups[0]!.textContent).toContain("Person accepted");
+    expect(groups[0]!.textContent).not.toContain("Agent chose");
+    expect(groups[1]!.textContent).toContain("Agent chose");
+    expect(part.textContent).toContain("Made or approved by a person · 2");
+    expect(part.textContent).toContain("Agent's own calls · 1");
+    expect(part.querySelector("svg")).toBeNull();
   });
 
   it("shows what prompted a decision, why, and the session's words, as plain text", () => {
@@ -180,22 +197,21 @@ describe("review section decisions", () => {
     ]);
     const page = new DOMParser().parseFromString(html, "text/html");
     const withContext = page.querySelector('[id$="-dec_ctx"]')!;
-    const why = [...withContext.querySelectorAll("p")].find((p) =>
-      p.textContent!.startsWith("Prompted"),
+    const why = [...withContext.querySelectorAll("p")].find(
+      (p) => p.textContent === "The upload test **flaked** twice",
     );
-    expect(why!.textContent).toBe("Prompted by a failure: The upload test **flaked** twice");
+    expect(why!.textContent).toBe("The upload test **flaked** twice");
+    expect(withContext.querySelector("details")!.hasAttribute("open")).toBe(false);
+    expect(withContext.textContent).not.toContain("Instead of:");
     expect(withContext.querySelector("strong")).toBeNull();
-    expect(withContext.querySelector("blockquote")!.textContent).toBe(
-      "“retry with backoff instead”",
-    );
+    expect(withContext.querySelector("blockquote")!.textContent).toBe("retry with backoff instead");
     const bare = page.querySelector('[id$="-dec_bare"]')!;
     expect(bare.querySelector("blockquote")).toBeNull();
     expect(bare.textContent).not.toContain("Prompted");
-    // An initiative label reads right beside either badge, a person's included.
     const own = page.querySelector('[id$="-dec_own"]')!;
     const ownWhy = [...own.querySelectorAll("p")].find((p) => p.textContent === "Own initiative");
-    expect(ownWhy).toBeDefined();
-    expect([...own.querySelectorAll("span")].map((span) => span.textContent)).toContain("Human");
+    expect(ownWhy).toBeUndefined();
+    expect(own.textContent).toContain("Person chose unprompted");
   });
 });
 
@@ -220,4 +236,73 @@ describe("review section tier", () => {
   it("shows the review score that ranked the section beside its tier", () => {
     expect(header("high", "new")).toContain("3 · Shared behavior or compatibility");
   });
+});
+
+function attentionPage(
+  refs: string[] | null,
+  onlyAttentionRisk = false,
+  tier: "high" | "medium" | "low" = "high",
+) {
+  const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+  const section = document.sections[0]!;
+  section.attention = refs === null ? null : { text: "Inspect these changes", refs };
+  section.risks[0]!.tier = tier;
+  if (onlyAttentionRisk) section.risks = section.risks.slice(0, 1);
+  const html = renderToStaticMarkup(
+    <ReviewSection
+      document={document}
+      section={section}
+      onSelectSection={() => {}}
+      idPrefix="old-"
+    />,
+  );
+  return new DOMParser().parseFromString(html, "text/html");
+}
+
+describe("attention risks", () => {
+  it.each(["medium", "low"] as const)(
+    "keeps %s risks below decisions rather than in Attention",
+    (tier) => {
+      const found = attentionPage(["rsk_1"], true, tier);
+      expect(found.querySelector('section[aria-label="Attention"]')).toBeNull();
+      const risks = found.querySelector('section[aria-label="Risks"]')!;
+      expect(risks.querySelector('[id$="-rsk_1"]')).not.toBeNull();
+      const decisions = found.querySelector('section[aria-label="Key decisions"]')!;
+      expect(decisions).not.toBeNull();
+      expect(decisions.compareDocumentPosition(risks) & 4).toBeTruthy();
+    },
+  );
+
+  it("shows risk text and evidence once in a flat attention callout", () => {
+    const found = attentionPage(["rsk_1", "rsk_1"]);
+    const attention = found.querySelector('section[aria-label="Attention"]')!;
+    const risk = attention.querySelector('[id$="-rsk_1"]')!;
+    expect(risk).not.toBeNull();
+    expect(risk.id).toMatch(/^old-/);
+    expect(risk.textContent).toContain("Repository names");
+    expect(risk.textContent).not.toContain("Permissions");
+    expect(risk.querySelector("details")).not.toBeNull();
+    expect(attention.textContent).not.toContain("Inspect these changes");
+    expect(risk.className).not.toContain("border");
+    expect(found.querySelectorAll('[id$="-rsk_1"]')).toHaveLength(1);
+    const other = found.querySelector('section[aria-label="Risks"]')!;
+    expect(other.querySelector('[id$="-rsk_old"]')).not.toBeNull();
+    expect(other.textContent).not.toContain("Repository names");
+  });
+
+  it("omits the bottom risk section when all risks are in attention", () => {
+    const found = attentionPage(["rsk_1"], true);
+    expect(found.querySelector('section[aria-label="Attention"] [id$="-rsk_1"]')).not.toBeNull();
+    expect(found.querySelector('section[aria-label="Other risks"]')).toBeNull();
+    expect(found.querySelector('section[aria-label="Risks"]')).toBeNull();
+  });
+
+  it.each([null, [], ["missing-reference"]])(
+    "keeps Risks when attention contains no risks: %s",
+    (refs) => {
+      const found = attentionPage(refs);
+      expect(found.querySelector('section[aria-label="Risks"] [id$="-rsk_1"]')).not.toBeNull();
+      expect(found.querySelector('section[aria-label="Other risks"]')).toBeNull();
+    },
+  );
 });

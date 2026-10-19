@@ -1,3 +1,4 @@
+import { centerJump, flashJump } from "./jump-focus";
 import pluralize from "pluralize";
 import {
   createContext,
@@ -141,7 +142,7 @@ export function SessionTranscript({
   const days = mounted ? dayBreaks(session.prompts.map((prompt) => prompt.started_at)) : [];
   return (
     <SubagentHostContext.Provider value={host}>
-      <ChatSurface>
+      <ChatSurface plain>
         {/* Said once for the session rather than once a turn, in a region that
           stays mounted so a screen reader hears it change. */}
         <div aria-live="polite" className="flex flex-col">
@@ -221,10 +222,17 @@ function Turn({
 } & TranscriptHostProps) {
   const { activity, load, available } = useTurnActivity(session.run_id, prompt.turn_id, source);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [replyExpanded, setReplyExpanded] = useState(false);
   const row = useRef<HTMLLIElement>(null);
-  // Again once the replies arrive: they grow every turn above this one.
+  // Wait for replies: their arrival changes the height of preceding turns.
   useEffect(() => {
-    if (focused) row.current?.scrollIntoView({ block: "nearest" });
+    const target = row.current;
+    if (!focused || replies === "loading" || !target) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const promptElement = target.querySelector<HTMLElement>('[data-message="human"]') ?? target;
+    const cancelScroll = centerJump(promptElement, reduced);
+    flashJump(promptElement, reduced);
+    return cancelScroll;
   }, [focused, replies]);
 
   const toggleActivity = () => {
@@ -237,10 +245,7 @@ function Turn({
     <li
       ref={row}
       aria-current={focused ? "step" : undefined}
-      className={cn(
-        "flex flex-col gap-2",
-        focused && "-mx-2 rounded-xl px-2 py-2 ring-2 ring-(--action-accent)",
-      )}
+      className="flex flex-col gap-2 rounded-xl"
     >
       {day ? <SystemNote className="mb-1">{day}</SystemNote> : null}
       <HumanMessage
@@ -251,23 +256,17 @@ function Turn({
         renderAvatar={renderAvatar}
       />
       <AgentSide>
-        {activityOpen ? (
-          <ActivityTimeline
-            vendor={session.source}
-            activity={activity}
-            sessionLevelTokens={sessionLevelTokens}
-            onRetry={load}
-          />
-        ) : (
-          <AgentReplies
-            vendor={session.source}
-            prompt={prompt}
-            state={replies}
-            activity={activity}
-            loadActivity={load}
-            openActivity={available ? toggleActivity : undefined}
-          />
-        )}
+        <AgentReplies
+          vendor={session.source}
+          prompt={prompt}
+          state={replies}
+          activity={replyExpanded ? activity : null}
+          loadActivity={() => {
+            setReplyExpanded(true);
+            load();
+          }}
+          openActivity={available ? toggleActivity : undefined}
+        />
         <TurnFooter
           prompt={prompt}
           cost={session.cost_per_prompt ? prompt.cost_usd : null}
@@ -277,6 +276,20 @@ function Turn({
           activityOpen={activityOpen}
           onToggleActivity={available ? toggleActivity : undefined}
         />
+        {activityOpen ? (
+          <div
+            role="region"
+            aria-label={`Agent activity for prompt ${prompt.ordinal}`}
+            className="flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3"
+          >
+            <ActivityTimeline
+              vendor={session.source}
+              activity={activity}
+              sessionLevelTokens={sessionLevelTokens}
+              onRetry={load}
+            />
+          </div>
+        ) : null}
       </AgentSide>
     </li>
   );
@@ -482,7 +495,7 @@ function ActivityTimeline({
 }) {
   if (activity === null || activity === "loading") {
     return (
-      <SystemNote>
+      <SystemNote align="start">
         <Spinner />
         Loading agent activity…
       </SystemNote>
@@ -501,14 +514,13 @@ function ActivityTimeline({
   const followups = activity.followups ?? [];
   if (
     activity.messages.length === 0 &&
-    activity.invocations.length === 0 &&
     activity.tool_calls.length === 0 &&
     (activity.subagents?.length ?? 0) === 0 &&
     followups.length === 0 &&
-    activity.token_usage.tokens === 0 &&
-    !sessionLevelTokens
+    (sessionLevelTokens ||
+      (activity.token_usage.tokens === 0 && activity.token_usage.api_calls === 0))
   ) {
-    return <SystemNote>No agent output was captured for this prompt.</SystemNote>;
+    return <SystemNote align="start">No agent output was captured for this prompt.</SystemNote>;
   }
 
   const usage = activity.token_usage;
@@ -516,7 +528,7 @@ function ActivityTimeline({
   return (
     <>
       {!sessionLevelTokens && (usage.api_calls > 0 || usage.tokens > 0) ? (
-        <SystemNote>
+        <SystemNote align="start">
           {join([
             usage.api_calls > 0 && pluralize("model call", usage.api_calls, true),
             models.length > 0 && models.join(", "),
@@ -531,7 +543,7 @@ function ActivityTimeline({
         <FollowupTurn key={followup.input.turn_id} followup={followup} vendor={vendor} />
       ))}
       {activity.followups_truncated ? (
-        <SystemNote>More follow-up turns were recorded.</SystemNote>
+        <SystemNote align="start">More follow-up turns were recorded.</SystemNote>
       ) : null}
     </>
   );
@@ -576,10 +588,10 @@ function ActivityEntries({ vendor, activity }: { vendor: string; activity: Trans
         ),
       )}
       {activity.messages_truncated ? (
-        <SystemNote>More agent messages were recorded.</SystemNote>
+        <SystemNote align="start">More agent messages were recorded.</SystemNote>
       ) : null}
       {activity.tool_calls_truncated ? (
-        <SystemNote>More tool calls were recorded.</SystemNote>
+        <SystemNote align="start">More tool calls were recorded.</SystemNote>
       ) : null}
     </>
   );
@@ -639,7 +651,7 @@ function FollowupTurn({
         // A command, its output or an interruption asks nothing of the agent,
         // so silence after it is not a gap.
         kind.wrapper ? null : (
-          <SystemNote>No agent output was captured for this input.</SystemNote>
+          <SystemNote align="start">No agent output was captured for this input.</SystemNote>
         )
       ) : (
         <ActivityEntries vendor={vendor} activity={activity} />
@@ -660,10 +672,10 @@ function ToolRun({ calls }: { calls: TranscriptToolCall[] }) {
     .map(([verb, count]) => `${verb.replaceAll("_", " ")}${count > 1 ? ` ×${count}` : ""}`)
     .join(", ");
   return (
-    <details className="group flex flex-col">
+    <details open className="group flex flex-col">
       <summary
         className={cn(
-          "mx-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+          "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >
@@ -675,7 +687,7 @@ function ToolRun({ calls }: { calls: TranscriptToolCall[] }) {
           {pluralize("tool call", calls.length, true)} · {kinds}
         </span>
       </summary>
-      <ul className="mx-auto mt-1.5 flex w-full max-w-[92%] flex-col gap-2 rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2">
+      <ul className="mt-1.5 flex w-full min-w-0 flex-col gap-2 rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2">
         {calls.map((call) => (
           <li key={call.id} className="text-xs text-(--text-tertiary)">
             {join([call.name, call.status, call.timestamp && formatTime(call.timestamp)])}
@@ -799,7 +811,9 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
               {/* A host that cannot load a captured transcript shows the
                   input alone rather than call it missing. */}
               {subagent.session_id === "" ? (
-                <SystemNote>This subagent's own transcript was not captured.</SystemNote>
+                <SystemNote align="start">
+                  This subagent's own transcript was not captured.
+                </SystemNote>
               ) : null}
               <p className="text-xs text-(--text-tertiary)">Input to {subagent.name}</p>
               {redactedSpawnMessage(subagent.input) ? (
@@ -871,7 +885,7 @@ function SubagentConversation({ detail, onRetry }: { detail: SubagentState; onRe
   const { vendor } = useContext(SubagentHostContext);
   if (detail === null || detail === "loading") {
     return (
-      <SystemNote>
+      <SystemNote align="start">
         <Spinner />
         Loading the subagent's activity…
       </SystemNote>
@@ -890,7 +904,7 @@ function SubagentConversation({ detail, onRetry }: { detail: SubagentState; onRe
     );
   }
   if (detail === "missing" || detail.turns.length === 0) {
-    return <SystemNote>No activity was captured for this subagent.</SystemNote>;
+    return <SystemNote align="start">No activity was captured for this subagent.</SystemNote>;
   }
   return (
     <ol className="flex flex-col gap-4">
