@@ -217,7 +217,11 @@ func TestHTTP(t *testing.T) {
 }
 
 func TestSpecialDatabasePath(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "with?#space ", "repos.sqlite")
+	name := "with?#space "
+	if runtime.GOOS == "windows" {
+		name = "with# space" // Windows forbids '?' and trailing spaces in directory names.
+	}
+	p := filepath.Join(t.TempDir(), name, "repos.sqlite")
 	r, e := Open(p)
 	if e != nil {
 		t.Fatal(e)
