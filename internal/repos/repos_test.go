@@ -49,7 +49,7 @@ func TestClonesAndSettings(t *testing.T) {
 	cap := 1.25
 	b := config.BackendCodex
 	m := "model"
-	s := Settings{Automatic: true, DailyCap: &cap, Backend: &b, Model: &m}
+	s := Settings{Automatic: new(true), DailyCap: &cap, Backend: &b, Model: &m}
 	c, e := r.Add(ctx, p, &s)
 	if e != nil {
 		t.Fatal(e)
@@ -64,11 +64,11 @@ func TestClonesAndSettings(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if w.ID == c.ID || other.ID == c.ID || w.CommonDir != c.CommonDir || other.CommonDir == c.CommonDir || w.Repository != "owner/repo" || !w.Settings.Automatic {
+	if w.ID == c.ID || other.ID == c.ID || w.CommonDir != c.CommonDir || other.CommonDir == c.CommonDir || w.Repository != "owner/repo" || !explicitlyOn(w.Settings.Automatic) {
 		t.Fatalf("clones %#v %#v %#v", c, w, other)
 	}
 	again, e := r.Add(ctx, p, nil)
-	if e != nil || !again.Settings.Automatic {
+	if e != nil || !explicitlyOn(again.Settings.Automatic) {
 		t.Fatalf("idempotent %#v %v", again, e)
 	}
 	global := config.Default()
@@ -122,7 +122,7 @@ func TestRejectAndFallback(t *testing.T) {
 	p := clone(t, "https://gitlab.com/owner/repo")
 	git(t, p, "remote", "add", "upstream", "https://token:secret@github.com/owner/repo")
 	c, e := r.Add(ctx, p, nil)
-	if e != nil || c.Settings.Automatic || c.Repository != "owner/repo" {
+	if e != nil || c.Settings.Automatic != nil || c.Repository != "owner/repo" {
 		t.Fatalf("%#v %v", c, e)
 	}
 	t.Setenv("GH_HOST", "git.example.com")
@@ -257,7 +257,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 			<-start
 			_, e := db.AddPatch(context.Background(), p, func(s Settings) (Settings, error) {
 				if i == 0 {
-					s.Automatic = true
+					s.Automatic = new(true)
 				} else {
 					v := 7.5
 					s.DailyCap = &v
@@ -272,7 +272,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 	close(start)
 	wg.Wait()
 	list, e := r.List(context.Background())
-	if e != nil || len(list) != 1 || !list[0].Settings.Automatic || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 7.5 {
+	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 7.5 {
 		t.Fatalf("lost settings %#v %v", list, e)
 	}
 }
