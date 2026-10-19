@@ -483,3 +483,48 @@ func TestAlreadyMasked(t *testing.T) {
 		}
 	}
 }
+
+// Concurrent calls share at most cap(finders) compiled engines and wait for
+// an idle one rather than compiling more.
+func TestConcurrentRedactionBoundsCompiledFinders(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "connect to " + plantedURL + " now"
+	errs := make(chan error, 4*cap(e.slots)+8)
+	for range cap(errs) {
+		go func() {
+			out, _, err := e.RedactContext(context.Background(), text)
+			if err == nil && strings.Contains(out, "Tr0ub4dor") {
+				err = fmt.Errorf("secret kept: %q", out)
+			}
+			errs <- err
+		}()
+	}
+	for range cap(errs) {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if made := len(e.slots); made > cap(e.slots) || made != len(e.finders) {
+		t.Fatalf("compiled %d finders for a limit of %d, %d idle", made, cap(e.slots), len(e.finders))
+	}
+}
+
+func TestBorrowStopsWhenContextEnds(t *testing.T) {
+	e, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range cap(e.slots) {
+		if _, err := e.borrow(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.borrow(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("borrow with every finder busy and ctx ended: %v", err)
+	}
+}

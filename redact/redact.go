@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -277,9 +278,11 @@ func (s *Summary) Add(other Summary) {
 // Engine redacts with Config. It is immutable and safe for concurrent use.
 type Engine struct {
 	inner *goredact.Engine
-	// finders holds idle engines that report findings for FindContext; one
-	// is compiled whenever every other is busy.
+	// finders holds idle engines that report findings for RedactContext and
+	// FindContext. Compiling one is expensive, so at most cap(finders) exist:
+	// slots counts them, and a call waits for an idle one once all are made.
 	finders chan *finder
+	slots   chan struct{}
 }
 
 // finder is a goredact engine whose OnFinding collects into found, used by
@@ -309,8 +312,12 @@ var echoRules = map[string]bool{
 // leaves of a secret and nothing else: only X, x, 9 and *, with the
 // separators the mask keeps, and at least one masked byte. Masking it again
 // changes no byte, so it is no new finding. A value that merely starts like
-// a mask, such as "xxxx-real", is not.
+// a mask, such as "xxxx-real", is not. It holds only for the
+// format-preserving mask; under another strategy nothing counts as masked.
 func alreadyMasked(value string) bool {
+	if Config.MaskStrategy != goredact.MaskFormatPreserving {
+		return false
+	}
 	masked := false
 	for i := 0; i < len(value); i++ {
 		switch b := value[i]; {
@@ -328,21 +335,13 @@ func alreadyMasked(value string) bool {
 // findings, leaving out the ones of echoRules over a value that is already
 // masked, and how many of them it left out per rule.
 func (e *Engine) scan(ctx context.Context, text string, out io.Writer) (goredact.Stats, []foundSpan, map[string]int, error) {
-	var f *finder
-	select {
-	case f = <-e.finders:
-	default:
-		var err error
-		if f, err = newFinder(); err != nil {
-			return goredact.Stats{}, nil, nil, err
-		}
+	f, err := e.borrow(ctx)
+	if err != nil {
+		return goredact.Stats{}, nil, nil, err
 	}
 	defer func() {
 		f.found = nil
-		select {
-		case e.finders <- f:
-		default:
-		}
+		e.finders <- f
 	}()
 	stats, err := f.engine.Redact(ctx, out, strings.NewReader(text))
 	if err != nil {
@@ -376,7 +375,34 @@ func New() (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redact: constructing engine: %w", err)
 	}
-	return &Engine{inner: inner, finders: make(chan *finder, 4)}, nil
+	n := max(runtime.GOMAXPROCS(0), 1)
+	return &Engine{inner: inner, finders: make(chan *finder, n), slots: make(chan struct{}, n)}, nil
+}
+
+// borrow returns an idle finder, compiles one while fewer than cap(finders)
+// exist, and otherwise waits for one to be returned or for ctx to end.
+func (e *Engine) borrow(ctx context.Context) (*finder, error) {
+	select {
+	case f := <-e.finders:
+		return f, nil
+	default:
+	}
+	select {
+	case e.slots <- struct{}{}:
+		f, err := newFinder()
+		if err != nil {
+			<-e.slots
+			return nil, err
+		}
+		return f, nil
+	default:
+	}
+	select {
+	case f := <-e.finders:
+		return f, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("redact: %w", ctx.Err())
+	}
 }
 
 func newFinder() (*finder, error) {
