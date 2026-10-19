@@ -482,7 +482,8 @@ or a negative value is an error. Trimming cuts text in the documented order
 and says so in the bundle's `truncated` notes; it never drops a hunk from the
 diff index, and a diff index over its budget fails the command instead. Inline
 code patches are shortened before whole sessions are dropped, keeping extracted
-decisions and their cited prompt entries when shorter patches make room. The
+decisions and their cited prompt entries when shorter patches make room. When
+sessions are dropped, one note gives how many, lowest confidence first. The
 checkout leaves out binary files and files over `checkout_max_file_bytes`,
 takes the changed files first, and leaves out whatever else does not fit its
 total budgets instead of failing; `truncated` counts the files it left out.
