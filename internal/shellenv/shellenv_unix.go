@@ -31,6 +31,13 @@ func detach(cmd *exec.Cmd) {
 	}
 }
 
+// killGroup kills what remains of the shell's session after it exited.
+func killGroup(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+}
+
 // detectShell is $SHELL when it is absolute, else the user's shell from the
 // user database.
 func detectShell(fromEnv string) string {

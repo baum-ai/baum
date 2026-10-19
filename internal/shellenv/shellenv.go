@@ -117,6 +117,9 @@ func Resolve(ctx context.Context, opts Options) (Result, error) {
 	detach(cmd)
 	cmd.WaitDelay = time.Second
 	runErr := cmd.Run()
+	// Startup files may leave background processes behind (an ssh-agent, a
+	// version manager's daemon); none of them belongs to baum.
+	killGroup(cmd)
 	if ctx.Err() != nil {
 		return Result{Shell: shell}, fmt.Errorf("login shell %s did not finish within %s", shell, timeout)
 	}

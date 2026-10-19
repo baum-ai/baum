@@ -3,12 +3,16 @@
 package shellenv
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -88,6 +92,39 @@ func TestResolveSlowShellTimesOut(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("waited %s for a killed shell", elapsed)
 	}
+}
+
+func TestResolveKillsWhatStartupFilesLeaveRunning(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	shell, _ := fakeShell(t, "bash", "sleep 300 >/dev/null 2>&1 & echo $! > '"+pidFile+"'")
+	if _, err := Resolve(context.Background(), Options{Shell: shell, Printer: printer(t), Environ: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatal("a process the startup files started outlived the resolution")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// alive reports a running process; a zombie nobody reaps counts as dead.
+func alive(pid int) bool {
+	if stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		fields := strings.Fields(string(stat[bytes.LastIndexByte(stat, ')')+1:]))
+		return len(fields) > 0 && fields[0] != "Z"
+	}
+	return syscall.Kill(pid, 0) == nil
 }
 
 func TestResolveFailingShell(t *testing.T) {

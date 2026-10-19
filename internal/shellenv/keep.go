@@ -7,19 +7,23 @@ import (
 	"strings"
 )
 
-// Locations are where the user's files and the session live. The starting
-// client's values win, because clients find a running daemon through them.
+// Locations decide where baum keeps its files: the daemon's lock, socket and
+// job journal, the registry, caches and stores. They always come from the
+// starting process, never from the login shell, because the daemon resolved
+// its lock and socket from them before reading the shell; a location only the
+// shell sets would put its job journal somewhere another daemon could also
+// use.
 var Locations = []string{
 	"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
-	"USERPROFILE", "APPDATA", "LOCALAPPDATA",
+	"TMPDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
 }
 
 // Kept lists the variables a background baum process keeps, besides BAUM_*
 // and LC_*: the session, the tools' PATH, network settings, GitHub tokens and
 // the backend CLIs' configuration directories. Nothing else is passed on.
 var Kept = []string{
-	"USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "TZ",
-	"SSH_AUTH_SOCK", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY",
+	"USER", "LOGNAME", "SHELL", "LANG", "TZ",
+	"DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY",
 	"PATH",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
 	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
@@ -34,11 +38,12 @@ var keptWindows = []string{
 	"NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
 }
 
-// Merge builds a background process's environment. With a resolved login
-// shell environment, every kept variable comes from it, except the Locations,
-// where the inherited value wins; a variable only the inherited environment
-// has is dropped, so the result does not depend on who started the process.
-// Without one (resolved is nil), kept variables come from inherited.
+// Merge builds a background process's environment. The Locations only ever
+// come from inherited, and stay unset when it lacks them. With a resolved
+// login shell environment, every other kept variable comes from it, and one
+// only the inherited environment has is dropped, so the result does not
+// depend on who started the process. Without one (resolved is nil), kept
+// variables come from inherited.
 func Merge(inherited []string, resolved map[string]string) []string {
 	windows := runtime.GOOS == "windows"
 	return merge(windows, inherited, resolved)
@@ -74,7 +79,7 @@ func merge(windows bool, inherited []string, resolved map[string]string) []strin
 		out[fold(name)] = value
 	}
 	for name, value := range resolved {
-		if kept(name) {
+		if kept(name) && !location(name) {
 			put(name, value)
 		}
 	}

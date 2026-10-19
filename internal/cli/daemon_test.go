@@ -161,6 +161,18 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			dropped: []string{"CLAUDE_CODE_ENTRYPOINT"},
 		},
 		{
+			// Launched from a desktop launcher without XDG_STATE_HOME while the
+			// shell sets one: the daemon locked the default state directory, so
+			// its job journal must stay beside it.
+			name: "locations never come from the shell",
+			resolve: func(context.Context, shellenv.Options) (shellenv.Result, error) {
+				return shellenv.Result{Shell: "/bin/zsh", Env: map[string]string{"PATH": "/opt/bin", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/elsewhere"}}, nil
+			},
+			inherit: []string{"PATH=/usr/bin", "HOME=/home/user"},
+			want:    map[string]string{"PATH": "/opt/bin", "HOME": "/home/user"},
+			dropped: []string{"XDG_STATE_HOME", "XDG_RUNTIME_DIR"},
+		},
+		{
 			name: "failing shell falls back",
 			resolve: func(context.Context, shellenv.Options) (shellenv.Result, error) {
 				return shellenv.Result{Shell: "/bin/zsh"}, errors.New("login shell /bin/zsh did not finish within 10s")
@@ -193,7 +205,7 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			if strings.Contains(logged.String(), "tok-from-") {
 				t.Errorf("value logged: %s", logged.String())
 			}
-			if !strings.Contains(logged.String(), "GITHUB_TOKEN") {
+			if !strings.Contains(logged.String(), "PATH") {
 				t.Errorf("names not logged: %s", logged.String())
 			}
 		})

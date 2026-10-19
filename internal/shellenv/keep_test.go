@@ -15,6 +15,19 @@ func TestMergeTakesKeptVariablesFromTheLoginShell(t *testing.T) {
 	}
 }
 
+// A launcher without XDG_STATE_HOME and a login shell that sets it: the
+// daemon locked the default state directory, so its job journal must stay
+// there too.
+func TestMergeNeverTakesLocationsFromTheShell(t *testing.T) {
+	inherited := []string{"HOME=/home/dev", "PATH=/usr/bin"}
+	resolved := map[string]string{"HOME": "/home/dev", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/other", "TMPDIR": "/shell/tmp", "SSH_AUTH_SOCK": "/tmp/agent.sock", "PATH": "/opt/bin"}
+	got := merge(false, inherited, resolved)
+	want := []string{"HOME=/home/dev", "PATH=/opt/bin"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
+
 func TestMergeFallsBackToInheritedKeptVariables(t *testing.T) {
 	got := merge(false, []string{"PATH=/bin", "GH_TOKEN=t", "AGENT_SECRET=x", "BAUM_MODEL=m", "=C:=C:\\"}, nil)
 	want := []string{"BAUM_MODEL=m", "GH_TOKEN=t", "PATH=/bin"}
