@@ -159,6 +159,9 @@ type entry struct {
 	ended    bool
 	endedAt  time.Time
 	linkedAt time.Time
+	// stale is set when an event arrived within RelinkEvery of the last lookup
+	// and so skipped one: the link may be out of date until Sweep looks again.
+	stale bool
 	// unlinked is a session whose link is yet to be looked up: it is not
 	// shown, and is dropped when its directory is in no registered clone.
 	unlinked bool
@@ -376,6 +379,7 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 func (e *entry) setLink(link Link, now time.Time) {
 	e.Repository, e.Branch, e.PR = link.Repository, link.Branch, link.PR
 	e.linkedAt = now
+	e.stale = false
 }
 
 func cwdOf(e hookevents.Event) string {
@@ -433,6 +437,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			default:
 				// A directory that no longer resolves keeps the last link.
 				r.s.linkedAt = now
+				r.s.stale = false
 			}
 			after, exists := t.view(r.k, now)
 			if significant(before, after, existed, exists) {
@@ -545,8 +550,13 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 		s = &entry{Session: Session{Agent: e.Agent, ID: e.Session.ID, StartedAt: at, LastActivityAt: at}, cwd: cwd, unlinked: true}
 		t.sessions[k] = s
 		t.queue(k)
-	} else if cwd != "" && !s.unlinked && !t.pending[k] && now.Sub(s.linkedAt) >= RelinkEvery {
-		t.queue(k)
+	} else if cwd != "" && !s.unlinked && !t.pending[k] {
+		if now.Sub(s.linkedAt) >= RelinkEvery {
+			t.queue(k)
+		} else {
+			// Skipped by the throttle: Sweep looks again after the window.
+			s.stale = true
+		}
 	}
 	if cwd != "" {
 		s.cwd = cwd
@@ -602,6 +612,13 @@ func (t *Tracker) Sweep() bool {
 		case s.State != s.state(now):
 			s.State = s.state(now)
 			changed = changed || !s.unlinked
+		}
+		// A throttled lookup is retried once the window has passed, and a
+		// session with no pull request is looked at again, as discovery may
+		// have learned of one since.
+		if t.sessions[k] == s && !s.ended && !s.unlinked && !t.pending[k] && s.cwd != "" &&
+			now.Sub(s.linkedAt) >= RelinkEvery && (s.stale || s.PR == 0) {
+			t.queue(k)
 		}
 	}
 	return changed

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
@@ -29,11 +30,12 @@ type Work struct {
 // empty.
 func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
 	var w Work
+	parsed, parseErr := github.ParseRepository(repository)
 	if branch, err := repo.CurrentBranch(ctx); err == nil {
 		w.Branch = branch
 	}
-	if w.Branch != "" {
-		w.Upstream = upstreamBranch(ctx, repo, repository, w.Branch)
+	if w.Branch != "" && parseErr == nil {
+		w.Upstream = upstreamBranch(ctx, repo, parsed, w.Branch)
 	}
 	if head, err := repo.HeadCommit(ctx); err == nil {
 		w.Head = head
@@ -42,8 +44,9 @@ func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
 }
 
 // upstreamBranch is the name of the branch of repository that branch's
-// upstream is, "" when it has none there.
-func upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository, branch string) string {
+// upstream is, "" when it has none there. The host counts: on an Enterprise
+// host the same owner/name elsewhere is another repository.
+func upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository github.Repository, branch string) string {
 	remote, merge, err := repo.BranchUpstream(ctx, branch)
 	name, ok := strings.CutPrefix(merge, "refs/heads/")
 	if err != nil || !ok || name == "" || remote == "" || remote == "." {
@@ -56,7 +59,7 @@ func upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository, branch
 	if url == "" {
 		url = remote
 	}
-	if !gitlocal.SameRepository(url, repository) {
+	if !github.RemoteNames(url, repository) {
 		return ""
 	}
 	return name
