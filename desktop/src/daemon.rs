@@ -41,13 +41,32 @@ pub struct Status {
 }
 
 /// A daemon the window can load.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Launch {
     pub status: Status,
     /// The launch URL, holding the credential in its fragment. Never log it.
     pub url: Url,
     pub origin: url::Origin,
     token: String,
+}
+
+/// Never prints the launch URL or token, so a stray `{:?}` cannot leak them.
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launch")
+            .field("status", &self.status)
+            .field("origin", &self.origin.ascii_serialization())
+            .field("credential", &"<redacted>")
+            .finish()
+    }
+}
+
+impl Launch {
+    /// The launch capability, which the daemon also accepts as a bearer token
+    /// on its `/api/` routes. Never log it.
+    pub fn bearer(&self) -> &str {
+        &self.token
+    }
 }
 
 /// Why the app could not reach a daemon, with whatever the user needs to see.
@@ -103,27 +122,33 @@ pub fn ensure(cli: &Path, timeout: Duration) -> Result<Launch, Failure> {
     Ok(launch)
 }
 
-struct Output {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
+pub struct Output {
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
 }
 
 /// Runs the CLI with a deadline. Output is read line by line on separate
 /// threads, so a detached daemon that kept a copy of a pipe cannot hold the
 /// app up once the command itself has exited.
-fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
-    let mut child = Command::new(cli)
+pub fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
+    let mut command = Command::new(cli);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            Failure::new(format!(
-                "Cannot run the bundled baum command ({}): {e}",
-                cli.display()
-            ))
-        })?;
+        .stderr(Stdio::piped());
+    // No console window flashing next to the app.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().map_err(|e| {
+        Failure::new(format!(
+            "Cannot run the bundled baum command ({}): {e}",
+            cli.display()
+        ))
+    })?;
     let stdout = lines(child.stdout.take());
     let stderr = lines(child.stderr.take());
     let deadline = Instant::now() + timeout;
@@ -332,6 +357,24 @@ pub fn log_tail(state: &Path, max: usize) -> Vec<String> {
     out
 }
 
+/// A launch on a local test server, for other modules' tests.
+#[cfg(test)]
+pub fn test_launch(port: u16) -> Launch {
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+    let (url, token) = launch_url(&format!("http://127.0.0.1:{port}/#token={token}")).unwrap();
+    Launch {
+        status: Status {
+            version: String::new(),
+            pid: 0,
+            app: None,
+            state: PathBuf::from("/s"),
+        },
+        origin: url.origin(),
+        url,
+        token,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +452,13 @@ mod tests {
         assert!(parse_status(&[r#"{"state":"relative"}"#.into()]).is_err());
         assert!(parse_status(&[]).is_err());
         assert!(parse_status(&["not json".into()]).is_err());
+    }
+
+    #[test]
+    fn debug_output_never_holds_the_credential() {
+        let shown = format!("{:?}", launch_on(4100));
+        assert!(!shown.contains(TOKEN), "{shown}");
+        assert!(!shown.contains("token="), "{shown}");
     }
 
     #[test]

@@ -1,18 +1,18 @@
 //! Native notifications from the daemon's events.
 //!
 //! The app subscribes to the daemon's events stream itself (`events`), so a
-//! hidden or minimised window does not stop them. The app runs only while its
-//! window exists (until the tray lands, closing the window quits it), and a
-//! click needs that window. `toast` turns the
-//! events that matter into text: a `notice` event (review finished or failed,
+//! hidden or minimised window does not stop them (closing the window hides it
+//! and the app keeps running). `toast` turns the events that matter into text: a `notice` event (review finished or failed,
 //! review requested from the user, review generated automatically) and an
 //! `automatic` event reporting the daily cost cap. `notifier` applies the
 //! settings, the operating system's permission and the focused window;
 //! `platform` shows the notification. A click makes Rust load the right app
 //! URL in the window, so pages the daemon serves need no capability.
 //!
-//! The toggles are a "Notifications" submenu of the app menu, one check item
-//! per kind, saved in `notifications.json` in the app's config directory.
+//! The toggles are a "Notifications" submenu in both the window's menu bar
+//! and the tray menu, one check item per kind, saved in `notifications.json`
+//! in the app's config directory. The saved settings are the only state; a
+//! click flips them and both menus are brought to them.
 
 mod events;
 mod notifier;
@@ -23,7 +23,7 @@ mod toast;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
-use tauri::menu::{CheckMenuItem, Menu, MenuEvent, Submenu};
+use tauri::menu::{CheckMenuItem, MenuItemKind, Submenu};
 use tauri::{AppHandle, Manager};
 use url::Url;
 
@@ -34,6 +34,7 @@ use settings::Store;
 use toast::{Kind, Route};
 
 const MAIN_WINDOW: &str = "main";
+const SUBMENU_ID: &str = "notifications";
 
 /// The notifier the app manages, and the window it works through.
 pub struct Service {
@@ -95,9 +96,7 @@ impl Host for AppHost {
         let Some(window) = self.app.get_webview_window(MAIN_WINDOW) else {
             return;
         };
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        crate::lifecycle::show_window(&self.app);
         if let Err(e) = window.navigate(route.url(&base)) {
             eprintln!("baum desktop: cannot open the notification's page: {e}");
         }
@@ -123,58 +122,62 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         Arc::new(platform::Os),
         Store::in_dir(dir),
     ));
-    install_menu(app, &notifier)?;
     app.manage(Service { notifier, host });
     Ok(())
 }
 
-/// Adds the Notifications submenu to the app menu. All of the menu code is
-/// `submenu`, so the submenu can be placed in another menu.
-fn install_menu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<()> {
-    let submenu = submenu(app, notifier)?;
-    let menu = match app.menu() {
-        Some(menu) => menu,
-        None => Menu::new(app)?,
+/// A "Notifications" submenu: one check item per kind, built from the saved
+/// settings, which are the only copy of the state. The window menu and the
+/// tray each hold one; `on_menu` handles a click on either. `None` before
+/// `install`.
+pub fn submenu(app: &AppHandle) -> tauri::Result<Option<Submenu<tauri::Wry>>> {
+    let Some(service) = app.try_state::<Service>() else {
+        return Ok(None);
     };
-    menu.append(&submenu)?;
-    app.set_menu(menu)?;
-    Ok(())
+    let kinds = service.notifier.settings().kinds;
+    let submenu = Submenu::with_id(app, SUBMENU_ID, "Notifications", true)?;
+    for kind in Kind::ALL {
+        submenu.append(&CheckMenuItem::with_id(
+            app,
+            kind.menu_id(),
+            kind.label(),
+            true,
+            kinds.get(kind),
+            None::<&str>,
+        )?)?;
+    }
+    Ok(Some(submenu))
 }
 
-/// The "Notifications" submenu: one check item per kind, each saved as it is
-/// toggled. Registers the menu event handler that does so.
-pub fn submenu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<Submenu<tauri::Wry>> {
-    let kinds = notifier.settings().kinds;
-    let items = Kind::ALL
-        .into_iter()
-        .map(|kind| {
-            CheckMenuItem::with_id(
-                app,
-                kind.menu_id(),
-                kind.label(),
-                true,
-                kinds.get(kind),
-                None::<&str>,
-            )
-        })
-        .collect::<tauri::Result<Vec<_>>>()?;
-    let submenu = Submenu::with_id(app, "notifications", "Notifications", true)?;
-    for item in &items {
-        submenu.append(item)?;
-    }
-    let notifier = notifier.clone();
-    app.on_menu_event(move |_, event: MenuEvent| {
-        let Some(kind) = Kind::from_menu_id(event.id().as_ref()) else {
-            return;
-        };
-        if let Some(item) = items.iter().find(|item| item.id() == event.id()) {
-            // The item has already flipped itself; keep what it shows.
-            if let Ok(on) = item.is_checked() {
-                notifier.set_kind(kind, on);
-            }
+/// Handles a menu click: flips the kind the item names (from the saved
+/// state, not the item's own check) and brings both menus to it. Returns
+/// whether the id was one of ours.
+pub fn on_menu(app: &AppHandle, id: &str) -> bool {
+    let (Some(kind), Some(service)) = (Kind::from_menu_id(id), app.try_state::<Service>()) else {
+        return false;
+    };
+    let on = !service.notifier.settings().kinds.get(kind);
+    service.notifier.set_kind(kind, on);
+    sync_window_menu(app);
+    crate::tray::refresh(app);
+    true
+}
+
+/// Sets the window menu's check items to the saved state.
+fn sync_window_menu(app: &AppHandle) {
+    let Some(service) = app.try_state::<Service>() else {
+        return;
+    };
+    let kinds = service.notifier.settings().kinds;
+    let Some(MenuItemKind::Submenu(submenu)) = app.menu().and_then(|menu| menu.get(SUBMENU_ID))
+    else {
+        return;
+    };
+    for kind in Kind::ALL {
+        if let Some(MenuItemKind::Check(item)) = submenu.get(kind.menu_id()) {
+            let _ = item.set_checked(kinds.get(kind));
         }
-    });
-    Ok(submenu)
+    }
 }
 
 /// Starts reading the attached daemon's events until `stop` returns true (the
