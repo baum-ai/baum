@@ -1,0 +1,310 @@
+name: Desktop bundles
+
+# Builds the desktop app's bundles on each platform with desktop/scripts/bundle.sh
+# and uploads them as the artifact desktop-<platform>. Check calls it on pull
+# requests and main for unsigned snapshots; Release calls it on a version tag
+# with the bundled baum binaries goreleaser built and the signing secrets.
+# Every kind of signing is skipped when its secrets are absent; see
+# desktop/README.md. This workflow never publishes anything: Release attaches
+# the bundles to the GitHub release.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version without the leading v; 0.0.0 for snapshots, which never check for updates
+        type: string
+        required: true
+      cli-artifact:
+        description: Artifact holding goreleaser's dist/baum_<os>_<arch>*/ binaries; empty builds them from source
+        type: string
+        default: ""
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_PRIVATE_KEY:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      WINDOWS_CERTIFICATE:
+        required: false
+      WINDOWS_CERTIFICATE_PASSWORD:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_TRUSTED_SIGNING_ENDPOINT:
+        required: false
+      AZURE_TRUSTED_SIGNING_ACCOUNT:
+        required: false
+      AZURE_TRUSTED_SIGNING_PROFILE:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Desktop bundle (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+            go: linux_amd64
+            optional: false
+          # Free for public repositories; a failure here does not hold up
+          # the other platforms or the updater manifest.
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            go: linux_arm64
+            optional: true
+          - platform: darwin-universal
+            runner: macos-latest
+            optional: false
+          - platform: windows-amd64
+            runner: windows-2025
+            go: windows_amd64
+            optional: false
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.optional }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.version }}
+      PLATFORM: ${{ matrix.platform }}
+      CLI_ARTIFACT: ${{ inputs.cli-artifact }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Which kinds of signing this run can do, without exposing the secrets
+      # to any step that does not use them.
+      - name: Signing configuration
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+        run: |
+          has() { if [ -n "$1" ]; then echo true; else echo false; fi; }
+          {
+            echo "updater=$(has "$TAURI_SIGNING_PRIVATE_KEY")"
+            echo "apple=$(has "$APPLE_CERTIFICATE")"
+            echo "apple-api-key=$(has "$APPLE_API_PRIVATE_KEY")"
+            echo "windows-certificate=$(has "$WINDOWS_CERTIFICATE")"
+            echo "trusted-signing=$(has "$AZURE_TRUSTED_SIGNING_ACCOUNT")"
+          } >>"$GITHUB_OUTPUT"
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::APPLE_CERTIFICATE is set without APPLE_SIGNING_IDENTITY"
+            exit 1
+          fi
+
+      - name: Set up Go
+        if: inputs.cli-artifact == ''
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build the bundled baum binaries
+        if: inputs.cli-artifact == ''
+        run: |
+          case "$PLATFORM" in
+            linux-amd64) sh desktop/scripts/sidecar.sh x86_64-unknown-linux-gnu ;;
+            linux-arm64) sh desktop/scripts/sidecar.sh aarch64-unknown-linux-gnu ;;
+            darwin-universal)
+              sh desktop/scripts/sidecar.sh aarch64-apple-darwin
+              sh desktop/scripts/sidecar.sh x86_64-apple-darwin
+              ;;
+            windows-amd64) sh desktop/scripts/sidecar.sh x86_64-pc-windows-msvc ;;
+          esac
+
+      - name: Download the release's baum binaries
+        if: inputs.cli-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.cli-artifact }}
+          path: cli-dist
+
+      # The app bundles the very binaries the CLI release archives hold.
+      - name: Use the release's baum binaries
+        if: inputs.cli-artifact != ''
+        run: |
+          shopt -s nullglob
+          mkdir -p desktop/binaries
+          # goreleaser puts each build in dist/baum_<os>_<arch>[_<variant>]/.
+          take() {
+            local found=(cli-dist/baum_"$1"*/baum"$3")
+            if [ "${#found[@]}" -ne 1 ]; then
+              echo "::error::expected one baum binary for $1 in $CLI_ARTIFACT, found ${#found[@]}"
+              exit 1
+            fi
+            cp "${found[0]}" "desktop/binaries/baum-$2$3"
+            chmod 0755 "desktop/binaries/baum-$2$3"
+          }
+          case "$PLATFORM" in
+            linux-amd64) take linux_amd64 x86_64-unknown-linux-gnu "" ;;
+            linux-arm64) take linux_arm64 aarch64-unknown-linux-gnu "" ;;
+            darwin-universal)
+              take darwin_arm64 aarch64-apple-darwin ""
+              take darwin_amd64 x86_64-apple-darwin ""
+              ;;
+            windows-amd64) take windows_amd64 x86_64-pc-windows-msvc .exe ;;
+          esac
+
+      - name: Combine the macOS binaries
+        if: matrix.platform == 'darwin-universal'
+        working-directory: desktop/binaries
+        run: |
+          lipo -create -output baum-universal-apple-darwin baum-aarch64-apple-darwin baum-x86_64-apple-darwin
+          lipo baum-universal-apple-darwin -verify_arch arm64 x86_64
+
+      - name: Set up Rust
+        if: runner.os != 'Linux'
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          if [ "$PLATFORM" = darwin-universal ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+
+      # Snapshots reuse the Tauri CLI; release builds compile it afresh.
+      - name: Cache the Tauri CLI
+        if: runner.os != 'Linux' && inputs.cli-artifact == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri*
+          key: tauri-cli-2.12.3-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install the Tauri CLI
+        if: runner.os != 'Linux'
+        run: |
+          if ! cargo tauri --version 2>/dev/null | grep -qx 'tauri-cli 2.12.3'; then
+            cargo install --locked tauri-cli --version 2.12.3
+          fi
+
+      # Linux bundles are built on Debian 12 so they run on older systems
+      # too, in the same image as `just desktop::bundle`.
+      - name: Build the Linux build image
+        if: runner.os == 'Linux'
+        run: docker build --tag baum-desktop-build desktop
+
+      - name: Import the Developer ID certificate
+        if: matrix.platform == 'darwin-universal' && steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+      - name: Write the App Store Connect API key
+        if: matrix.platform == 'darwin-universal' && steps.signing.outputs.apple == 'true' && steps.signing.outputs.apple-api-key == 'true'
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          install -m 0600 /dev/null "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$APPLE_API_PRIVATE_KEY" >"$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >>"$GITHUB_ENV"
+
+      - name: Set up Windows signing
+        if: matrix.platform == 'windows-amd64' && (steps.signing.outputs.windows-certificate == 'true' || steps.signing.outputs.trusted-signing == 'true')
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          if [ -n "$WINDOWS_CERTIFICATE" ]; then
+            printf '%s' "$WINDOWS_CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.pfx"
+            echo "WINDOWS_CERTIFICATE_PATH=$RUNNER_TEMP/certificate.pfx" >>"$GITHUB_ENV"
+          else
+            cargo install --locked trusted-signing-cli --version 0.11.0
+          fi
+          echo "BAUM_WINDOWS_SIGN=1" >>"$GITHUB_ENV"
+
+      - name: Build the bundles (Linux)
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          docker run --rm --volume "$PWD:/oss" --workdir /oss/desktop \
+            --env TAURI_SIGNING_PRIVATE_KEY --env TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+            baum-desktop-build scripts/bundle.sh "$PLATFORM" "$VERSION" target/release-bundles
+          sudo chown -R "$(id -u):$(id -g)" desktop/target
+
+      - name: Build the bundles
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+        run: |
+          # Signing needs the identity only when the certificate was imported.
+          if [ "${{ steps.signing.outputs.apple }}" != true ]; then unset APPLE_SIGNING_IDENTITY; fi
+          bash scripts/bundle.sh "$PLATFORM" "$VERSION" target/release-bundles
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/certificate.pfx" "$RUNNER_TEMP/certificate.p12"
+          if [ "$RUNNER_OS" = macOS ] && [ -f "$RUNNER_TEMP/signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          fi
+
+      - name: Upload the bundles
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: desktop/target/release-bundles/
+          if-no-files-found: error
+          retention-days: 14

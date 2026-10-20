@@ -1,12 +1,15 @@
 # Linux build and check environment for the desktop app: Rust, the WebKitGTK
 # and GTK development packages Tauri links against, and the Tauri CLI.
 # Bookworm keeps the WebKitGTK and glibc baseline older than current
-# distributions, so a Linux build from it runs on them too.
+# distributions, so a Linux build from it runs on them too. The release
+# workflow builds the Linux bundles in this image. jq and minisign write and
+# check the updater manifest (scripts/updater-manifest.sh).
 FROM rust:1.99.1-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         file \
+        jq \
         libayatana-appindicator3-dev \
         libgtk-3-dev \
         librsvg2-bin \
@@ -14,6 +17,7 @@ RUN apt-get update \
         libssl-dev \
         libwebkit2gtk-4.1-dev \
         libxdo-dev \
+        minisign \
         xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 

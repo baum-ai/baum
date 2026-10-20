@@ -2,11 +2,12 @@ dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
 heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --no-deps"
 cargo := heavy + " desktop-test cargo"
 
-# Format check, lints and unit tests
+# Format check, lints, unit tests and the updater manifest checks
 check: sidecar
     {{ cargo }} fmt --check
     {{ cargo }} clippy --locked --all-targets -- -D warnings
     {{ cargo }} test --locked
+    {{ heavy }} desktop-test scripts/updater-manifest-test.sh
 
 fmt:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test cargo fmt
@@ -21,6 +22,16 @@ sidecar:
 # Build the Linux bundles into target/release/bundle (default: deb)
 build bundles="deb": sidecar
     {{ heavy }} desktop-test cargo tauri build --bundles {{ bundles }}
+
+# Build the Linux release bundles (deb, AppImage) into target/release-bundles
+# as the release workflow does, without updater signatures. The version
+# defaults to a snapshot's.
+bundle version="0.0.0": sidecar
+    {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
+
+# Check that scripts/updater-manifest.sh rejects tampered releases
+updater-test:
+    {{ heavy }} desktop-test scripts/updater-manifest-test.sh
 
 # Regenerate icons/ from icons/source.svg
 icons:
