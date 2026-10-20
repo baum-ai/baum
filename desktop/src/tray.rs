@@ -178,10 +178,6 @@ fn host_check() -> Host {
     Host::Present
 }
 
-fn host_present() -> bool {
-    host_check() == Host::Present
-}
-
 /// How long a hidden start at login waits for the desktop's tray host, which
 /// may start after the app does.
 const HOST_WAIT: Duration = Duration::from_secs(10);
@@ -197,8 +193,6 @@ struct Inner {
     /// A tray icon was created; whether the desktop shows it is asked again
     /// when it matters.
     has_tray: AtomicBool,
-    /// The last answer to whether the desktop shows it.
-    hosted: AtomicBool,
     /// Counts attachments, so diagnostics run again for a new daemon.
     generation: AtomicU64,
     launch: Mutex<Option<Launch>>,
@@ -220,21 +214,20 @@ fn shared(app: &AppHandle) -> Option<Shared> {
     app.try_state::<Shared>().map(|s| s.inner().clone())
 }
 
-/// Whether a tray icon is showing, so the window may hide into it. Asked
-/// again each time it has not been, since the host can appear after the app.
+/// Whether a tray icon is showing, so the window may hide into it. The
+/// desktop is asked every time, never remembered: the host can appear after
+/// the app, and it can go away (the panel exits, an extension is disabled),
+/// after which hiding the window would leave nothing to reopen it.
 pub fn available(app: &AppHandle) -> bool {
     let Some(shared) = shared(app) else {
         return false;
     };
-    if !shared.0.has_tray.load(Ordering::Relaxed) {
-        return false;
-    }
-    if shared.0.hosted.load(Ordering::Relaxed) {
-        return true;
-    }
-    let now = host_present();
-    shared.0.hosted.store(now, Ordering::Relaxed);
-    now
+    tray_usable(shared.0.has_tray.load(Ordering::Relaxed), host_check())
+}
+
+/// The decision: a tray was created and the desktop shows it now.
+fn tray_usable(has_tray: bool, host: Host) -> bool {
+    has_tray && host == Host::Present
 }
 
 /// Creates the tray and the window menu, and starts the poll threads. Runs on
@@ -464,16 +457,15 @@ pub fn window_seen(app: &AppHandle) {
     render(app, &shared, false);
 }
 
-/// Running and queued jobs, asked of the daemon now; the last poll's answer
-/// when it cannot be asked.
-pub fn job_counts(app: &AppHandle) -> (usize, usize) {
-    let Some(shared) = shared(app) else {
-        return (0, 0);
-    };
-    let launch = lock(&shared.0.launch).clone();
-    let fresh = launch.and_then(|l| client::jobs(&l).and_then(|b| status::parse_jobs(&b)).ok());
-    let jobs = fresh.or_else(|| lock(&shared.0.observed).jobs.clone());
-    jobs.map_or((0, 0), |j| (j.running, j.queued))
+/// Running and queued jobs, asked of the daemon now. `None` when it cannot be
+/// asked: the last poll may be seconds old, so it is not a substitute.
+pub fn job_counts(app: &AppHandle) -> Option<(usize, usize)> {
+    let shared = shared(app)?;
+    let launch = lock(&shared.0.launch).clone()?;
+    let jobs = client::jobs(&launch)
+        .and_then(|b| status::parse_jobs(&b))
+        .ok()?;
+    Some((jobs.running, jobs.queued))
 }
 
 fn wake(shared: &Shared) {
@@ -686,6 +678,15 @@ mod tests {
         assert_eq!(spec[1].text, "Idle");
         assert_eq!(spec[2].text, "! A diagnostics check reports a problem");
         assert!(!spec[2].enabled);
+    }
+
+    #[test]
+    fn the_window_hides_only_into_a_tray_the_desktop_shows_now() {
+        assert!(tray_usable(true, Host::Present));
+        // The watcher went away since the last check.
+        assert!(!tray_usable(true, Host::Absent));
+        assert!(!tray_usable(true, Host::Unknown));
+        assert!(!tray_usable(false, Host::Present));
     }
 
     #[test]

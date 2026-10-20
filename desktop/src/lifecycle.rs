@@ -83,6 +83,16 @@ fn stop_failure_text(message: &str, details: &[String]) -> String {
     text
 }
 
+/// What to ask before stopping, given the live job count, or `None` when the
+/// daemon could not be asked: then it is always asked, since a review may be
+/// running that no earlier poll saw.
+pub fn stop_confirmation(counts: Option<(usize, usize)>) -> Option<String> {
+    match counts {
+        Some((running, queued)) => stop_prompt(running, queued),
+        None => Some("baum couldn't check whether reviews are running; stopping will interrupt any that are. Interrupted reviews are recorded as interrupted, and an interrupted automatic review is retried once when background reviews start again.".to_string()),
+    }
+}
+
 /// The window's close button and focus.
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
     let app = window.app_handle();
@@ -122,18 +132,15 @@ pub fn quit(app: &AppHandle) {
 /// running review, and does not quit when the daemon will not stop.
 pub fn quit_and_stop(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || {
-        let (running, queued) = tray::job_counts(&app);
-        match stop_prompt(running, queued) {
-            Some(text) => confirm(
-                &app,
-                "Stop background reviews?",
-                &text,
-                "Stop and quit",
-                stop_and_exit,
-            ),
-            None => stop_and_exit(&app),
-        }
+    thread::spawn(move || match stop_confirmation(tray::job_counts(&app)) {
+        Some(text) => confirm(
+            &app,
+            "Stop background reviews?",
+            &text,
+            "Stop and quit",
+            stop_and_exit,
+        ),
+        None => stop_and_exit(&app),
     });
 }
 
@@ -219,6 +226,18 @@ mod tests {
         assert!(text.contains("Hooks will not restart"), "{text}");
         assert!(text.contains("baum daemon ensure"), "{text}");
         assert!(text.ends_with("timeout"), "{text}");
+    }
+
+    #[test]
+    fn stopping_asks_when_the_job_count_is_unknown() {
+        let text = stop_confirmation(None).unwrap();
+        assert!(
+            text.contains("couldn't check whether reviews are running"),
+            "{text}"
+        );
+        assert!(text.contains("will interrupt any that are"), "{text}");
+        assert_eq!(stop_confirmation(Some((0, 3))), None);
+        assert!(stop_confirmation(Some((1, 0))).is_some());
     }
 
     #[test]
