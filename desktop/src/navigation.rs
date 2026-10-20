@@ -47,7 +47,11 @@ fn is_bundled(url: &Url) -> bool {
 fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_unspecified(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Some(url::Host::Ipv6(ip)) => match ip.to_ipv4_mapped() {
+            // `[::ffff:127.0.0.1]` reaches 127.0.0.1.
+            Some(v4) => v4.is_loopback() || v4.is_unspecified(),
+            None => ip.is_loopback() || ip.is_unspecified(),
+        },
         Some(url::Host::Domain(d)) => {
             let d = d.trim_end_matches('.').to_ascii_lowercase();
             d == "localhost" || d.ends_with(".localhost")
@@ -110,6 +114,9 @@ mod tests {
             "http://localhost:4100/",
             "http://app.localhost/",
             "http://[::1]:4100/",
+            "http://[::ffff:127.0.0.1]:8080/",
+            "http://[::ffff:7f00:1]:4100/",
+            "http://[::ffff:0.0.0.0]:4100/",
             "http://0.0.0.0:4100/",
             "file:///etc/passwd",
             "javascript:alert(1)",
