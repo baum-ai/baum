@@ -1869,7 +1869,10 @@ journal. Every other kept variable comes from a resolved shell environment,
 so a token only the agent's environment had is dropped. When the shell is
 slow, fails or prints nothing,
 the kept variables come from the inherited environment. Windows has no login
-shell and always uses the inherited one. The log records the shell, the
+shell: there `shellenv.Resolve` returns the inherited environment with the
+`PATH` a new logon of the user gets, the system `Path` and then the user's
+from the registry (`CreateEnvironmentBlock`), so `gh` and agent CLIs
+installed after the starting process are found. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
 way to name a backend executable explicitly.
 

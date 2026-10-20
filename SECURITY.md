@@ -594,7 +594,9 @@ socket and ssh command git uses, the desktop session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
 `GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
-environment is therefore not used. Your home, XDG and temporary directories
+environment is therefore not used. Windows has no login shell: there the
+daemon keeps those variables from the starting environment, except `PATH`,
+which it reads from the registry (the system `Path`, then yours). Your home, XDG and temporary directories
 come only from the starting environment, never from the shell, because they
 decide which state directory, lock and job journal the daemon uses. The SSH
 agent socket is the starting environment's, else the shell's; it is used only

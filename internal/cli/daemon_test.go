@@ -201,6 +201,22 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			dropped: []string{"XDG_STATE_HOME", "XDG_RUNTIME_DIR"},
 		},
 		{
+			// Windows: shellenv.Resolve returns the inherited environment
+			// with the registry's PATH, and no shell.
+			name: "registry PATH",
+			resolve: func(_ context.Context, opts shellenv.Options) (shellenv.Result, error) {
+				env := map[string]string{}
+				for _, entry := range opts.Environ {
+					name, value, _ := strings.Cut(entry, "=")
+					env[name] = value
+				}
+				env["PATH"] = `/registry/bin`
+				return shellenv.Result{Env: env}, nil
+			},
+			inherit: []string{"PATH=/usr/bin", "GITHUB_TOKEN=tok-from-agent", "HOME=/home/user"},
+			want:    map[string]string{"PATH": "/registry/bin", "GITHUB_TOKEN": "tok-from-agent", "HOME": "/home/user"},
+		},
+		{
 			name: "failing shell falls back",
 			resolve: func(context.Context, shellenv.Options) (shellenv.Result, error) {
 				return shellenv.Result{Shell: "/bin/zsh"}, errors.New("login shell /bin/zsh did not finish within 10s")

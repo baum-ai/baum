@@ -334,6 +334,10 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 		log.Info("using the inherited environment", "reason", err.Error())
 	case err != nil:
 		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error())
+	case result.Shell == "":
+		// Windows: the inherited environment with the registry's PATH.
+		resolved = result.Env
+		log.Info("read PATH from the registry")
 	default:
 		resolved = result.Env
 		log.Info("read the login shell environment", "shell", result.Shell)

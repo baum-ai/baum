@@ -9,6 +9,12 @@
 // files rather than on whoever started baum. A program printed between two
 // random markers reports the resulting environment as JSON, so whatever the
 // startup files print is ignored. Values are never logged.
+//
+// Windows has no login shell. There the result is the inherited environment
+// with the PATH a new logon would get: the system Path followed by the
+// user's, from the registry. A tool installed after the starting process was
+// (winget, an installer that edits the user Path) is found without signing
+// out, and so is one only the user's Path names when an agent started baum.
 package shellenv
 
 import (
@@ -43,7 +49,8 @@ const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 // maxOutput bounds what the shell may print.
 const maxOutput = 1 << 20
 
-// ErrUnsupported is returned where there is no login shell to ask (Windows).
+// ErrUnsupported is returned where there is neither a login shell nor a
+// registry to ask.
 var ErrUnsupported = errors.New("login shell environment is not supported on this platform")
 
 // Options configure Resolve.
@@ -72,12 +79,16 @@ type Result struct {
 // that is slow, fails or prints no environment is an error; callers fall back
 // to the inherited environment.
 func Resolve(ctx context.Context, opts Options) (Result, error) {
-	if runtime.GOOS == "windows" {
-		return Result{}, ErrUnsupported
-	}
 	environ := opts.Environ
 	if environ == nil {
 		environ = os.Environ()
+	}
+	if runtime.GOOS == "windows" {
+		path, err := registryPath()
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Env: withPath(environ, path)}, nil
 	}
 	shell := opts.Shell
 	if shell == "" {
@@ -221,6 +232,22 @@ func quoteAll(words []string) string {
 		quoted[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
 	}
 	return strings.Join(quoted, " ")
+}
+
+// withPath is environ with its PATH, in whatever case it is spelled,
+// replaced by path. Entries without a name, such as Windows' per-drive
+// directories ("=C:=C:\work"), are not variables and are left out.
+func withPath(environ []string, path string) map[string]string {
+	env := map[string]string{}
+	for _, entry := range environ {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || name == "" || strings.EqualFold(name, "PATH") {
+			continue
+		}
+		env[name] = value
+	}
+	env["Path"] = path
+	return env
 }
 
 func lookup(environ []string, name string) string {

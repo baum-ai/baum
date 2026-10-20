@@ -38,6 +38,9 @@ func killGroup(cmd *exec.Cmd) {
 	}
 }
 
+// registryPath is Windows only.
+func registryPath() (string, error) { return "", ErrUnsupported }
+
 // detectShell is $SHELL when it is absolute, else the user's shell from the
 // user database.
 func detectShell(fromEnv string) string {
