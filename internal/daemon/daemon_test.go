@@ -77,6 +77,14 @@ func TestDaemonHelper(t *testing.T) {
 			_, err := Spawn(paths, cmd)
 			return err
 		},
+		// The test binary is under the temporary directory, which the
+		// default policy refuses; it is this daemon's own executable.
+		trust: func(path string) (string, error) {
+			if self, err := os.Executable(); err != nil || path != self {
+				return "", errors.New("not this test binary")
+			}
+			return path, nil
+		},
 		ShutdownTimeout: 5 * time.Second,
 	})
 	if errors.Is(err, ErrRunning) {
@@ -857,6 +865,7 @@ func TestRestartTargetsTheNewestClientAndNoticesOnce(t *testing.T) {
 			return App{Drain: func() bool { return !busy.Load() }}, nil
 		},
 		Respawn: func(executable string, _ Status) error { respawned <- executable; return nil },
+		trust:   func(path string) (string, error) { return path, nil },
 	})
 	notices := 0
 	client := &Client{Paths: paths, Version: "v0.2.0", Executable: "/opt/baum-0.2.0", Deferred: func(Status) { notices++ }}

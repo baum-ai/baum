@@ -102,6 +102,8 @@ type Queue struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	changed   func(Job)
+	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
+	clock func() time.Time
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once

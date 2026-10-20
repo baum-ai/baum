@@ -302,17 +302,12 @@ func runPaths(cmd *cobra.Command) (daemon.Paths, error) {
 }
 
 // respawnDaemon starts executable (the newer baum a client named) as a
-// detached daemon on the same port, to take over once this one exits. Only
-// processes of this user can reach the socket the request came through, and
-// they could run that executable themselves.
+// detached daemon on the same port, to take over once this one exits. It runs
+// with the daemon's environment, unsandboxed, while the client that named it
+// may be a sandboxed agent's hook, so the daemon passes only an executable it
+// trusts, checked just before: this daemon's own, the baum on its PATH or one
+// of daemon.TrustedExecutables, which no other user can replace.
 func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, start daemon.StartOptions) error {
-	info, err := os.Stat(executable)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a file", executable)
-	}
 	args := []string{"daemon", "run", "--detached"}
 	if u, err := url.Parse(status.App); err == nil && u.Port() != "" {
 		args = append(args, "--port", u.Port())
@@ -320,7 +315,7 @@ func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, 
 	if start.Concurrency != 0 {
 		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
-	_, err = daemon.Spawn(paths, exec.Command(executable, args...))
+	_, err := daemon.Spawn(paths, exec.Command(executable, args...))
 	return err
 }
 
