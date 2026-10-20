@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -360,27 +359,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
 				request.Activity.ToolStarted(content.ID, content.Name)
-				path := content.Input.FilePath
-				if path == "" {
-					path = content.Input.Path
-				}
-				if filepath.IsAbs(path) {
-					relative, relativeErr := filepath.Rel(request.Directory, path)
-					if relativeErr == nil && relative != ".." && !strings.HasPrefix(relative, "../") {
-						path = relative
-					} else {
-						path = "<outside-run>"
-					}
-				}
-				path = strings.Map(func(r rune) rune {
-					if r < 32 {
-						return '?'
-					}
-					return r
-				}, path)
-				if len(path) > 256 {
-					path = path[:256]
-				}
+				path := agent.EventPath(request.Directory, cmp.Or(content.Input.FilePath, content.Input.Path))
 				record(agent.Event{Kind: "tool_call", ID: content.ID, Tool: content.Name, Path: path, Offset: content.Input.Offset, Limit: content.Input.Limit})
 			}
 			if content.Type == "tool_result" {
