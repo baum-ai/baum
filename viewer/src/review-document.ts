@@ -370,7 +370,7 @@ export type ReviewStack = {
   members: { number: number; head_sha: string; review_version: number }[];
 };
 
-/** A file of the repository, and optionally a symbol in it. */
+/** A file or directory of the repository, and optionally a symbol in it. */
 export type ReviewContextRef = {
   path: string;
   symbol: string | null;

@@ -283,9 +283,9 @@ The stored contract stays strict; leniency exists only in derived views.
 - A count the tool cannot establish is null, never zero.
 - `summary.context` (how the change fits into the codebase: a required
   `area` and optional `reached_by`, `contracts` and `related` parts, each
-  text with file references) is optional in the stored schema, for documents
-  generated before it existed, and required in the strict authored contract,
-  so its absence is a repair finding. Normalisation drops optional parts
+  text with references to files or directories) is optional in the stored
+  schema, for documents generated before it existed, and required in the
+  strict authored contract, so its absence is a repair finding. Normalisation drops optional parts
   without text and makes reference paths repository-relative; with a
   checkout in the run directory it drops paths that are neither a file nor
   a directory inside either tree, and it never spends a repair on a
