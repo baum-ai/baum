@@ -1363,3 +1363,53 @@ func TestRedactMasksThreadPathAndURL(t *testing.T) {
 		t.Fatalf("masked spans = %d, want 2", bundle.MaskedSpanCount)
 	}
 }
+
+// A decision's ID stays with it through trimming and is never encoded, so
+// the bundle the model reads is the same with or without IDs; the host
+// carries the IDs beside it and sets them again on the decoded bundle.
+func TestDecisionIDsSurviveTrimmingOutsideTheEncodedBundle(t *testing.T) {
+	build := func(withIDs bool) *Bundle {
+		id := func(value string) string {
+			if withIDs {
+				return value
+			}
+			return ""
+		}
+		return &Bundle{Sessions: []Session{
+			{RootSessionID: "s1", Decisions: decisionsOf(
+				SessionDecision{Summary: "Chose a map.", Who: "agent", Category: "implementation", Superseded: true, Turns: []int{1}, DecisionID: id("id-map")},
+				SessionDecision{Summary: "Chose a slice.", Who: "human", Category: "implementation", Turns: []int{2}, DecisionID: id("id-slice")},
+			)},
+			{RootSessionID: "s2", Decisions: decisionsOf()},
+			{RootSessionID: "s3"},
+		}}
+	}
+	bundle := build(true)
+	cutSupersededDecisions(bundle)
+	ids := bundle.DecisionIDs()
+	if want := map[string][]string{"s1": {"id-slice"}}; fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Fatalf("decision IDs after trimming = %v, want %v", ids, want)
+	}
+	plain := build(false)
+	cutSupersededDecisions(plain)
+	if encoded := string(mustJSON(t, bundle)); encoded != string(mustJSON(t, plain)) || strings.Contains(encoded, "id-slice") {
+		t.Fatalf("decision IDs changed the encoded bundle: %s", encoded)
+	}
+	if plain.DecisionIDs() != nil {
+		t.Fatal("a bundle without IDs reported some")
+	}
+
+	var decoded Bundle
+	if err := json.Unmarshal(mustJSON(t, bundle), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded.SetDecisionIDs(ids)
+	if got := (*decoded.Sessions[0].Decisions)[0].DecisionID; got != "id-slice" {
+		t.Fatalf("decision ID set again = %q", got)
+	}
+	// IDs that do not line up with a session's decisions are not applied.
+	decoded.SetDecisionIDs(map[string][]string{"s1": {"a", "b"}})
+	if got := (*decoded.Sessions[0].Decisions)[0].DecisionID; got != "id-slice" {
+		t.Fatalf("misaligned IDs were applied: %q", got)
+	}
+}
