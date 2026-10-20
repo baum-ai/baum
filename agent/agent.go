@@ -82,17 +82,21 @@ type Result struct {
 
 // Event stores bounded metadata, never assistant text, tool output or search patterns.
 type Event struct {
-	Kind        string `json:"kind"`
-	ElapsedMS   int64  `json:"elapsed_ms"`
-	ID          string `json:"id,omitempty"`
-	Tool        string `json:"tool,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Offset      int    `json:"offset,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Bytes       int    `json:"bytes,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Input       int    `json:"input_tokens,omitempty"`
-	Output      int    `json:"output_tokens,omitempty"`
-	CacheRead   int    `json:"cache_read_tokens,omitempty"`
-	CacheCreate int    `json:"cache_creation_tokens,omitempty"`
+	Kind      string `json:"kind"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	ID        string `json:"id,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Offset    int    `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	Bytes     int    `json:"bytes,omitempty"`
+	Status    string `json:"status,omitempty"`
+	// FromProvider marks an error event whose Status was read from the
+	// provider's HTTP status or a structured field of its response, not
+	// guessed from free text.
+	FromProvider bool `json:"from_provider,omitempty"`
+	Input        int  `json:"input_tokens,omitempty"`
+	Output       int  `json:"output_tokens,omitempty"`
+	CacheRead    int  `json:"cache_read_tokens,omitempty"`
+	CacheCreate  int  `json:"cache_creation_tokens,omitempty"`
 }

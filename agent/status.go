@@ -43,6 +43,22 @@ func LastErrorStatus(events []Event) string {
 	return ""
 }
 
+// LastProviderErrorStatus is LastErrorStatus when the last error event's class
+// was read from the provider (Event.FromProvider), and otherwise empty: a class
+// guessed from free text may be a request ID or quoted content that reads
+// like a status.
+func LastProviderErrorStatus(events []Event) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == "error" {
+			if events[i].FromProvider {
+				return events[i].Status
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // HTTPErrorStatus classifies the HTTP status code of a failed provider
 // response: 401 and 403 are a rejected key, 404 a model or route that does not
 // exist, 426 a protocol the endpoint refuses, 429 a rate limit, 529 an

@@ -439,7 +439,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				default:
 					status = agent.ErrorStatus(strings.Join(event.Errors, " "))
 				}
-				record(agent.Event{Kind: "error", Status: status})
+				record(agent.Event{Kind: "error", Status: status, FromProvider: refused})
 				err = agent.ProviderFailure("claude code", status, refused)
 				break
 			}

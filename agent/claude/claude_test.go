@@ -278,6 +278,10 @@ func TestClaudeClassifiesTheProviderStatusOfAFailedResult(t *testing.T) {
 			if status := agent.LastErrorStatus(r.Events); status != tt.want {
 				t.Fatalf("status = %q, want %q", status, tt.want)
 			}
+			// Only api_error_status is the provider's own class.
+			if structured := tt.rejected || tt.want == "provider_overloaded"; (agent.LastProviderErrorStatus(r.Events) == tt.want) != structured {
+				t.Fatalf("provider status = %q for %q", agent.LastProviderErrorStatus(r.Events), tt.want)
+			}
 			var rejected *agent.RejectedError
 			if errors.As(err, &rejected) != tt.rejected || (!tt.rejected && (err == nil || err.Error() != agent.ReasonProviderUnavailable)) {
 				t.Fatalf("err = %v, want rejected %t", err, tt.rejected)

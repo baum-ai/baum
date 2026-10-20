@@ -212,6 +212,10 @@ func TestCodexFailedTurnRecordsErrorStatus(t *testing.T) {
 			if errors.As(err, &rejected) != tt.rejected || (!tt.rejected && (err == nil || err.Error() != agent.ReasonProviderUnavailable)) {
 				t.Fatalf("err = %v, want rejected %t", err, tt.rejected)
 			}
+			// Only a class read from the provider is one a host may report.
+			if structured := tt.rejected || tt.want == "rate_limit"; (agent.LastProviderErrorStatus(result.Events) == tt.want) != structured {
+				t.Fatalf("provider status = %q for %q (structured %t)", agent.LastProviderErrorStatus(result.Events), tt.want, structured)
+			}
 			if strings.Contains(err.Error(), "private") {
 				t.Fatalf("the error exposes the message: %v", err)
 			}
@@ -227,7 +231,7 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 		exit               bool
 	}{
 		{"failed turn message wins", `{"type":"error","message":"stream disconnected, retrying 1/5"}
-{"type":"turn.failed","error":{"message":"unexpected status 400: invalid_json_schema"}}`, "invalid_schema", false},
+{"type":"turn.failed","error":{"message":"unexpected status 400: {\"code\":\"invalid_json_schema\"}"}}`, "invalid_schema", false},
 		{"failed turn without message", `{"type":"error","message":"unexpected status 429 Too Many Requests"}
 {"type":"turn.failed"}`, "rate_limit", false},
 		{"nonzero exit", `{"type":"error","message":"unexpected status 401 Unauthorized"}`, "authentication_error", true},

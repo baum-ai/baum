@@ -597,7 +597,11 @@ Code's `api_error_status` on its failed `result`, and the status Codex names in
 a failed turn's message (`unexpected status NNN`). A Codex 400 carries only the
 response body, whose structured fields classify it (`"type":
 "invalid_request_error"`, `"code": "invalid_json_schema"`), as `last status:
-429` does an exhausted rate limit. A 4xx other than 408 and 429
+429` does an exhausted rate limit; only such an OpenAI-shaped 400 refuses, and
+a 400 whose body lacks them is retried as unavailable. Codex's 426 answer to
+its WebSocket attempt is a silent fallback to HTTPS and never reaches this
+classification. An error event whose class was read this way, rather than
+from free text, has `Event.FromProvider` set (`agent.LastProviderErrorStatus`). A 4xx other than 408 and 429
 (`authentication_error` for 401 and 403, `not_found` for 404,
 `upgrade_required` for 426, `invalid_schema`, `invalid_request`) is a refusal a
 retry cannot change and comes back as an `agent.RejectedError`. Every other

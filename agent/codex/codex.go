@@ -289,7 +289,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				message = lastError
 			}
 			status, refused := failureStatus(message)
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status})
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: refused})
 			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
 			err = agent.ProviderFailure("codex", status, refused)
 		}
@@ -320,8 +320,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	if waitErr != nil {
 		if lastError != "" {
-			status, _ := failureStatus(lastError)
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status})
+			status, structured := failureStatus(lastError)
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: structured})
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
@@ -349,19 +349,23 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 // an exhausted 429 ("last status: 429").
 var unexpectedStatus = regexp.MustCompile(`unexpected status (\d{3})\b`)
 
+// invalidSchema is the error code of a response format the provider refused.
+var invalidSchema = regexp.MustCompile(`"code":\s*"invalid_json_schema"`)
+
 // bodyMarkers are structured parts of a provider response Codex quotes
 // without naming its status, each with the class it gives.
 var bodyMarkers = []struct {
 	pattern *regexp.Regexp
 	status  string
 }{
-	{regexp.MustCompile(`"code":\s*"invalid_json_schema"`), "invalid_schema"},
+	{invalidSchema, "invalid_schema"},
 	{regexp.MustCompile(`"type":\s*"invalid_request_error"`), "invalid_request"},
 	{regexp.MustCompile(`last status: 429\b`), "rate_limit"},
 }
 
 // failureStatus classifies a failed turn's message and reports whether the
-// class may end the run as a refusal. A named HTTP status decides alone (a
+// class was read from the provider rather than guessed from free text: only
+// such a class may end the run as a refusal. A named HTTP status decides alone (a
 // 400 whose body names an invalid schema is invalid_schema), so a 408 or 5xx
 // is never a refusal whatever its body quotes; without one, only a structured
 // marker of the body may refuse. Free text is classified for the diagnostics
@@ -369,7 +373,7 @@ var bodyMarkers = []struct {
 func failureStatus(message string) (string, bool) {
 	if match := unexpectedStatus.FindStringSubmatch(message); match != nil {
 		code, _ := strconv.Atoi(match[1])
-		if code == 400 && strings.Contains(message, "invalid_json_schema") {
+		if code == 400 && invalidSchema.MatchString(message) {
 			return "invalid_schema", true
 		}
 		if status := agent.HTTPErrorStatus(code); status != "" {

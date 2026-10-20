@@ -49,6 +49,14 @@ func TestErrorStatus(t *testing.T) {
 	if got := LastErrorStatus(nil); got != "" {
 		t.Errorf("LastErrorStatus(nil) = %q", got)
 	}
+	// A class guessed from free text is not the provider's.
+	read := []Event{{Kind: "error", Status: "invalid_schema", FromProvider: true}, {Kind: "error", Status: "authentication_error"}}
+	if got := LastProviderErrorStatus(read); got != "" {
+		t.Errorf("LastProviderErrorStatus = %q, want none for a free-text class", got)
+	}
+	if got := LastProviderErrorStatus(read[:1]); got != "invalid_schema" {
+		t.Errorf("LastProviderErrorStatus = %q, want invalid_schema", got)
+	}
 }
 
 // A provider's 4xx but 408 and 429 is a refusal no retry changes; 408, 429
