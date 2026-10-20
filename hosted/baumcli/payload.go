@@ -12,8 +12,10 @@ const (
 // members of its top level whose names it is given, each up to
 // maxPayloadValue bytes. It keeps nothing else, however large the object or
 // its other members are, so an agent's payload of any size yields its
-// identifiers in bounded memory. Input that is not an object yields nothing;
-// a value too long, or not a string, is skipped.
+// identifiers in bounded memory. A name given twice keeps its last value, as
+// json.Unmarshal does. Input that is not an object yields nothing; a value
+// too long, or not a string, is skipped; a payload cut short yields the
+// members read before the cut.
 type topLevelStrings struct {
 	keep   map[string]bool
 	values map[string]string
@@ -127,9 +129,7 @@ func (t *topLevelStrings) endString() {
 		}
 	case &t.val:
 		if value, ok := decodeJSONString(t.val); ok && !t.overflow {
-			if _, seen := t.values[string(t.key)]; !seen {
-				t.values[string(t.key)] = value
-			}
+			t.values[string(t.key)] = value
 		}
 	}
 	t.capture = nil

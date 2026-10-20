@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agenthooks"
+	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/proc"
 )
@@ -106,8 +108,12 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				}
 				return hooksEnabled(cmd.Context(), ".")
 			}
+			userWide := args[0] == "--user"
+			if userWide {
+				args = args[1:]
+			}
 			if len(args) != 2 {
-				return errors.New("usage: baum hooks agent AGENT EVENT")
+				return errors.New("usage: baum hooks agent [--user] AGENT EVENT")
 			}
 			agent, event := args[0], args[1]
 			if err := validateAgentHook(agent, event); err != nil {
@@ -115,7 +121,15 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 			input := newHookInput(cmd.InOrStdin())
 			hosted := hostedHooksEnabled(cmd.Context(), ".") == nil
-			err := runEntireAgentHook(cmd, hosted, agent, event, input, stdout, stderr)
+			var err error
+			if userWide && !hosted {
+				// A user-wide hook admitted only because the user has a
+				// daemon records the event and does nothing else, as the
+				// dispatcher does where `--check` refuses.
+				input.read()
+			} else {
+				err = runEntireAgentHook(cmd, hosted, agent, event, input, stdout, stderr)
+			}
 			hookEvent := newHookEvent(hookevents.KindAgent, agent, event)
 			hookEvent.Session = agentSession(input.identifiers())
 			hookEvent.Exit = exitStatus(err)
@@ -152,6 +166,11 @@ func runEntireGitHook(cmd *cobra.Command, hosted bool, args, entireArgs []string
 	entireCommand.Stderr = stderr
 	if err := runDelegated(entireCommand, cmd.InOrStdin(), input); err != nil {
 		if args[0] == "pre-push" {
+			// A local hook exits as the fall-through command would: with
+			// Entire's status, which stops the push.
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && !hosted {
+				return &ExitError{Code: shellStatus(exitErr)}
+			}
 			return fmt.Errorf("Entire pre-push hook failed: %w", err)
 		}
 		_, _ = fmt.Fprintf(stderr, "[baum] Entire Git hook failed; continuing: %s: %v\n", strings.Join(entireCommand.Args, " "), err)
@@ -199,6 +218,21 @@ func runEntireAgentHook(cmd *cobra.Command, hosted bool, agent, event string, in
 	return &ExitError{Code: code}
 }
 
+// shellStatus is the status a shell reports for a command that exited this
+// way: its exit code, or 128 plus the signal that killed it.
+func shellStatus(exitErr *exec.ExitError) int {
+	if status, ok := exitErr.Sys().(interface {
+		Signaled() bool
+		Signal() syscall.Signal
+	}); ok && status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	if code := exitErr.ExitCode(); code >= 0 {
+		return code
+	}
+	return 1
+}
+
 // runDelegated runs a delegated command on the hook's input. With input it
 // reads a pipe that input fills, so the hook keeps a copy for its event.
 func runDelegated(command *exec.Cmd, in io.Reader, input *hookInput) error {
@@ -230,27 +264,25 @@ func runDelegated(command *exec.Cmd, in io.Reader, input *hookInput) error {
 var errHostedHooksOff = errors.New("baum hooks are off here: run `baum login`, or `baum setup` in this clone, to opt in to the hosted service, or start the baum daemon")
 
 // hooksEnabled answers `--check`: the hooks run through baum where the hosted
-// service was opted in to (hostedHooksEnabled), or where the user has a baum
-// daemon, whose state directory exists once it ran. Where only the second
-// holds, a hook is local: it does nothing hosted (no bootstrap, no Entire
-// that baum installed), hands the event to Entire exactly as the fall-through
-// command would, and sends the event to the daemon. The daemon's directory is
-// found as the daemon finds it, without contacting it.
+// service was opted in to (hostedHooksEnabled), or where a baum daemon ever
+// ran for the user (daemon.HasRun: its lock file, which only a daemon
+// creates, exists; a hook's spool or `baum daemon stop` does not count).
+// Where only the second holds, a hook is local: it does nothing hosted (no
+// bootstrap, no Entire that baum installed) and sends the event to the
+// daemon; a committed hook hands the event to Entire exactly as the
+// fall-through command would, and a user-wide one runs no Entire at all. The
+// daemon's files are found as the daemon finds them, without contacting it.
 func hooksEnabled(ctx context.Context, dir string) error {
-	if daemonStateExists() {
+	if daemonHasRun() {
 		return nil
 	}
 	return hostedHooksEnabled(ctx, dir)
 }
 
-// daemonStateExists reports whether the user's daemon state directory exists.
-func daemonStateExists() bool {
+// daemonHasRun reports whether a baum daemon ever ran for the user.
+func daemonHasRun() bool {
 	paths, err := hookDaemonPaths()
-	if err != nil {
-		return false
-	}
-	info, err := os.Stat(paths.State)
-	return err == nil && info.IsDir()
+	return err == nil && daemon.HasRun(paths)
 }
 
 // hostedHooksEnabled reports whether the hooks of the clone containing dir

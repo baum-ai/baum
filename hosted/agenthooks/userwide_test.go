@@ -12,7 +12,7 @@ import (
 // makes every user review baum's hooks again.
 func TestUserDispatcherIsFrozen(t *testing.T) {
 	spec, _ := agenthooks.Lookup("claude-code")
-	want := `sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code stop >/dev/null 2>&1; then exec baum hooks agent claude-code stop; fi'`
+	want := `sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code stop >/dev/null 2>&1; then exec baum hooks agent --user claude-code stop; fi'`
 	if got := agenthooks.UserDispatcher(spec, "stop"); got != want {
 		t.Errorf("UserDispatcher = %s\nwant %s", got, want)
 	}

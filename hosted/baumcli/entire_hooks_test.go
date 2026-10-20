@@ -116,6 +116,9 @@ func TestBaumPrePushPropagatesEntireFailure(t *testing.T) {
 	bin := t.TempDir()
 	writeHookTestFile(t, filepath.Join(bin, "entire"), "#!/bin/sh\nexit 17\n")
 	t.Setenv("PATH", bin)
+	// A hosted hook; a local one exits with Entire's status instead
+	// (TestDaemonOnlyPrePushExitsWithEntiresStatus).
+	t.Setenv(tokenEnvVar, "token")
 	_, _, err := runCLI(t, "hooks", "git", "pre-push", "origin", "https://example.test/repo.git")
 	if err == nil || !strings.Contains(err.Error(), "Entire pre-push hook failed") {
 		t.Fatalf("pre-push error = %v", err)

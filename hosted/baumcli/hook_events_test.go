@@ -271,7 +271,7 @@ func TestTopLevelStringsKeepsOnlyNamedTopLevelStrings(t *testing.T) {
 	for chunk := range slices.Chunk([]byte(input), 7) {
 		_, _ = reader.Write(chunk)
 	}
-	want := map[string]string{"id": "outer", "path": `C:\dir\"quoted" é`}
+	want := map[string]string{"id": "second", "path": `C:\dir\"quoted" é`}
 	if !maps.Equal(reader.values, want) {
 		t.Errorf("values = %q, want %q", reader.values, want)
 	}
@@ -289,17 +289,26 @@ func TestTopLevelStringsKeepsOnlyNamedTopLevelStrings(t *testing.T) {
 	}
 }
 
-// makeDaemonState gives the user of the hook world a baum daemon state
-// directory, as running the daemon leaves.
+// markDaemonRan leaves what a daemon that ran for the user leaves: its lock
+// file.
+func markDaemonRan(t *testing.T, paths daemon.Paths) {
+	t.Helper()
+	if err := os.MkdirAll(paths.State, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.LockFile(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// makeDaemonState gives the user of the hook world a baum daemon that ran.
 func makeDaemonState(t *testing.T) daemon.Paths {
 	t.Helper()
 	paths, err := daemon.DefaultPaths()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.MkdirAll(paths.State, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	markDaemonRan(t, paths)
 	return paths
 }
 
@@ -309,9 +318,15 @@ func TestCheckPassesWhereTheUserHasADaemon(t *testing.T) {
 	if _, _, err := runCLI(t, "hooks", "agent", "--check", "claude-code", "stop"); err == nil {
 		t.Fatal("--check passed for a user who never opted in and has no daemon")
 	}
-	if err := os.MkdirAll(paths.State, 0o700); err != nil {
+	// The state directory alone, which a hook's spool creates, does not
+	// count: only a daemon that ran does.
+	if err := os.MkdirAll(hookevents.SpoolDir(paths), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := runCLI(t, "hooks", "agent", "--check", "claude-code", "stop"); err == nil {
+		t.Fatal("--check passed on a state directory no daemon ran in")
+	}
+	markDaemonRan(t, paths)
 	for _, args := range [][]string{
 		{"hooks", "agent", "--check", "claude-code", "stop"},
 		{"hooks", "git", "--check", "post-commit"},
@@ -400,5 +415,61 @@ func TestDaemonOnlyHooksBehaveLikeTheFallThroughAndRecordTheEvent(t *testing.T) 
 	}
 	if n := world.requests.Load(); n != 0 {
 		t.Errorf("hooks sent %d requests to the baum server", n)
+	}
+}
+
+// A pre-push hook of a user who only runs the daemon exits with Entire's
+// status, as the fall-through does, so a refused push stops the same way.
+func TestDaemonOnlyPrePushExitsWithEntiresStatus(t *testing.T) {
+	world := newHookWorld(t)
+	entire, err := exec.LookPath("entire")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, entire, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+world.entireLog+"'\ncat >/dev/null\necho refused\nexit 5\n")
+	hook := filepath.Join(t.TempDir(), "pre-push")
+	writeExecutable(t, hook, gitHookDispatcher("pre-push"))
+	refs := "refs/heads/main 1111111111111111111111111111111111111111 refs/heads/main 2222222222222222222222222222222222222222\n"
+	fallThrough := world.runForContract(t, hook, refs, "origin", "https://github.com/acme/demo.git")
+	makeDaemonState(t)
+	local := world.runForContract(t, hook, refs, "origin", "https://github.com/acme/demo.git")
+	if fallThrough.exit != 5 || local.exit != fallThrough.exit || local.stdout != fallThrough.stdout || !slices.Equal(local.entire, fallThrough.entire) {
+		t.Errorf("with a daemon %+v, fall-through %+v", local, fallThrough)
+	}
+	if len(local.baum) != 2 {
+		t.Errorf("baum calls = %q", local.baum)
+	}
+}
+
+// A user-wide hook admitted only because the user runs the daemon records the
+// event and runs no Entire, as the dispatcher does where --check refuses.
+func TestUserHooksOnlyRecordForADaemonUser(t *testing.T) {
+	world := newHookWorld(t)
+	commitEntireSettings(t, world.repo)
+	paths := makeDaemonState(t)
+	spec, _ := agenthooks.Lookup("claude-code")
+	cmd := exec.Command("sh", "-c", agenthooks.UserDispatcher(spec, "session-start"))
+	cmd.Dir = world.repo
+	cmd.Stdin = strings.NewReader(`{"session_id":"s-5"}`)
+	output, err := cmd.CombinedOutput()
+	if err != nil || len(output) != 0 {
+		t.Fatalf("user-wide hook: %v, output %q", err, output)
+	}
+	baum, entire := world.logs(t)
+	if want := []string{"hooks agent --check --user claude-code session-start", "hooks agent --user claude-code session-start"}; !slices.Equal(baum, want) {
+		t.Errorf("baum calls = %q, want %q", baum, want)
+	}
+	if len(entire) != 0 {
+		t.Errorf("Entire ran: %q", entire)
+	}
+	if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+		t.Errorf("the hook bootstrapped the clone: %v", err)
+	}
+	events, _ := spooledHookEvents(t, paths)
+	if len(events) != 1 || events[0].Session == nil || events[0].Session.ID != "s-5" {
+		t.Errorf("events = %+v", events)
+	}
+	if n := world.requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the baum server", n)
 	}
 }
