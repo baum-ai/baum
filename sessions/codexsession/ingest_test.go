@@ -1,6 +1,7 @@
 package codexsession
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +26,12 @@ func TestFixtureGolden(t *testing.T) {
 
 func fixtureTree(t *testing.T) *codextranscript.Tree {
 	t.Helper()
-	store := filepath.Join("..", "codextranscript", "testdata", "store")
+	return storeTree(t, filepath.Join("..", "codextranscript", "testdata", "store"))
+}
+
+// storeTree decodes the tree of the only root rollout in a Codex store.
+func storeTree(t *testing.T, store string) *codextranscript.Tree {
+	t.Helper()
 	index, _, err := collectcodex.ScanStore(store)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +72,86 @@ func TestBuildMapsCollaborationFixture(t *testing.T) {
 	}
 	if err := session.Validate(graph); err != nil {
 		t.Fatalf("mapped graph is invalid: %v", err)
+	}
+}
+
+// TestBuildMapsCollaborationItemSpawns covers current Codex versions, which
+// report a collaboration spawn_agent's child only as an item_completed
+// SubAgentActivity item and return just the child's task_name: each child
+// resolves to its own spawn call, so the tree maps natively with per-request
+// tokens.
+func TestBuildMapsCollaborationItemSpawns(t *testing.T) {
+	graph, report, err := Build(storeTree(t, filepath.Join("testdata", "collaboration_items")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Records.Balanced() || report.UnsupportedTurns != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	if err := session.Validate(graph); err != nil {
+		t.Fatalf("mapped graph is invalid: %v", err)
+	}
+	tools := map[string]session.ToolUse{}
+	for _, use := range graph.ToolUses {
+		tools[use.ID] = use
+	}
+	wantInput := map[string]int64{"": 6000, "implement": 1300, "review": 1100}
+	sessionTask := map[string]string{}
+	for _, mapped := range graph.Sessions {
+		if mapped.TopLevel() {
+			sessionTask[mapped.ID] = ""
+			continue
+		}
+		spawn, ok := tools[*mapped.SpawnedByToolUseID]
+		if !ok || spawn.Name != "spawn_agent" || spawn.Verb != session.VerbSpawnSubagent || spawn.SessionID != *mapped.ParentSessionID {
+			t.Fatalf("session %s spawned by %+v", mapped.ID, spawn)
+		}
+		var input struct {
+			TaskName string `json:"task_name"`
+		}
+		if err := json.Unmarshal(spawn.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		if _, known := wantInput[input.TaskName]; !known || input.TaskName == "" {
+			t.Fatalf("session %s spawned by task %q", mapped.ID, input.TaskName)
+		}
+		sessionTask[mapped.ID] = input.TaskName
+	}
+	if len(graph.Sessions) != 3 || len(sessionTask) != 3 {
+		t.Fatalf("sessions = %+v", graph.Sessions)
+	}
+	gotInput := map[string]int64{}
+	for _, invocation := range graph.ModelInvocations {
+		gotInput[sessionTask[invocation.SessionID]] += invocation.InputTokens
+	}
+	if fmt.Sprint(gotInput) != fmt.Sprint(wantInput) {
+		t.Fatalf("input tokens by session = %v, want %v", gotInput, wantInput)
+	}
+	for _, use := range graph.ToolUses {
+		if use.Name == "send_message" && use.Verb == session.VerbSpawnSubagent {
+			t.Fatalf("send_message became a spawn: %+v", use)
+		}
+	}
+}
+
+// TestSubAgentActivityReportedTwiceCountsOnce covers a rollout resumed across
+// Codex versions that reports one spawn both as a sub_agent_activity event
+// and as an item_completed item: the copy must not become a second spawn
+// match.
+func TestSubAgentActivityReportedTwiceCountsOnce(t *testing.T) {
+	root := storeTree(t, filepath.Join("testdata", "collaboration_items")).Root
+	state := &threadState{b: &builder{toolByCall: map[string]*toolEvidence{}}, meta: root.Meta}
+	activity := codextranscript.SubAgentActivity{EventID: "call-spawn", Kind: "started", AgentThreadID: "child", AgentPath: "/root/child"}
+	if _, _, err := state.subAgentActivity(codextranscript.Line{Ordinal: 1}, activity); err != nil {
+		t.Fatal(err)
+	}
+	item, _ := json.Marshal(map[string]string{"type": "SubAgentActivity", "id": "call-spawn", "kind": "started", "agent_thread_id": "child", "agent_path": "/root/child"})
+	category, reason, err := state.itemCompleted(codextranscript.Line{Ordinal: 2}, &codextranscript.ItemCompleted{Item: item})
+	if err != nil || category != accountDiscarded || reason != "context/sub_agent_activity_copy" {
+		t.Fatalf("copy = %v, %q, %v", category, reason, err)
+	}
+	if len(state.activities) != 1 {
+		t.Fatalf("activities = %+v", state.activities)
 	}
 }
 
@@ -150,6 +236,40 @@ func TestUnprovableBoundaryFails(t *testing.T) {
 	_, _, err := Build(tree)
 	if err == nil {
 		t.Fatal("Build accepted a child with no provable own-history boundary")
+	}
+}
+
+// TestUnforkedChildWithInheritedHistoryFails keeps a child that names no
+// fork source from owning lines that are really its parent's history.
+func TestUnforkedChildWithInheritedHistoryFails(t *testing.T) {
+	for _, class := range []codextranscript.Class{codextranscript.ClassSessionMeta, codextranscript.ClassEventMsg} {
+		t.Run(string(class), func(t *testing.T) {
+			tree := storeTree(t, filepath.Join("testdata", "collaboration_items"))
+			var child *codextranscript.File
+			for _, candidate := range tree.Children {
+				if candidate.Meta.ForkedFromID == "" {
+					child = candidate
+				}
+			}
+			if child == nil {
+				t.Fatal("fixture has no unforked child")
+			}
+			var inherited codextranscript.Line
+			for _, line := range tree.Root.Lines {
+				if line.Class == class && (class == codextranscript.ClassSessionMeta || line.EventMsg.TaskStarted != nil) {
+					inherited = line
+					break
+				}
+			}
+			inherited.Ordinal = 2
+			child.Lines = append([]codextranscript.Line{child.Lines[0], inherited}, child.Lines[1:]...)
+			for i := range child.Lines[2:] {
+				child.Lines[i+2].Ordinal++
+			}
+			if _, _, err := Build(tree); err == nil || !strings.Contains(err.Error(), "no fork source but repeats") {
+				t.Fatalf("Build error = %v, want inherited-history refusal", err)
+			}
+		})
 	}
 }
 
