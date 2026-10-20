@@ -58,6 +58,12 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     await expect(
       relaunched.getByRole("heading", { name: "Pull requests", exact: true }),
     ).toBeVisible();
+    // The desktop app's first run opens the diagnostics page; the bootstrap
+    // carries only that page over, and the address keeps no token.
+    await relaunched.goto(`${launch}&page=diagnostics`);
+    await expect(relaunched.getByRole("heading", { name: "Check this computer" })).toBeVisible();
+    expect(new URL(relaunched.url()).search).toBe("?page=diagnostics");
+    expect(relaunched.url()).not.toContain("token");
     await relaunched.close();
   }
   // The bootstrap replaces itself with the secret session namespace; the app,

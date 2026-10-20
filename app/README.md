@@ -95,6 +95,14 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) are a
+section of Repositories & settings and a page of their own,
+`?page=diagnostics`, which the desktop app opens after its first-run setup
+(the bootstrap page carries `page=diagnostics` from the launch URL's
+fragment). Each warning and problem shows its fix. The app runs the
+diagnostics once when it opens on any other page and, while they find a
+problem, shows a notice on every page linking to the diagnostics page; the
+settings and diagnostics pages update it when they run the checks again.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.
