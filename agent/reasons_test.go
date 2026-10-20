@@ -55,8 +55,8 @@ func TestErrorStatus(t *testing.T) {
 // and 5xx are outages.
 func TestHTTPErrorStatus(t *testing.T) {
 	for code, want := range map[int]string{
-		400: "invalid_request", 401: "authentication_error", 403: "authentication_error", 404: "invalid_request",
-		408: "", 413: "invalid_request", 422: "invalid_request", 429: "rate_limit",
+		400: "invalid_request", 401: "authentication_error", 403: "authentication_error", 404: "not_found",
+		408: "", 413: "invalid_request", 422: "invalid_request", 426: "upgrade_required", 429: "rate_limit",
 		500: "", 502: "", 529: "provider_overloaded", 0: "", 200: "",
 	} {
 		got := HTTPErrorStatus(code)
@@ -70,14 +70,18 @@ func TestHTTPErrorStatus(t *testing.T) {
 }
 
 func TestProviderFailure(t *testing.T) {
-	for _, status := range []string{"authentication_error", "invalid_schema", "invalid_request"} {
+	for _, status := range []string{"authentication_error", "invalid_schema", "invalid_request", "not_found", "upgrade_required"} {
 		var rejected *RejectedError
-		if err := ProviderFailure("codex", status); !errors.As(err, &rejected) || rejected.Status != status {
+		if err := ProviderFailure("codex", status, true); !errors.As(err, &rejected) || rejected.Status != status {
 			t.Errorf("ProviderFailure(%q) = %v, want a rejection", status, err)
+		}
+		// A class guessed from free text never ends the run.
+		if err := ProviderFailure("codex", status, false); err == nil || err.Error() != ReasonProviderUnavailable {
+			t.Errorf("ProviderFailure(%q, text) = %v, want %q", status, err, ReasonProviderUnavailable)
 		}
 	}
 	for _, status := range []string{"rate_limit", "provider_overloaded", "error", "", "file_not_found"} {
-		if err := ProviderFailure("codex", status); err == nil || err.Error() != ReasonProviderUnavailable {
+		if err := ProviderFailure("codex", status, true); err == nil || err.Error() != ReasonProviderUnavailable {
 			t.Errorf("ProviderFailure(%q) = %v, want %q", status, err, ReasonProviderUnavailable)
 		}
 	}

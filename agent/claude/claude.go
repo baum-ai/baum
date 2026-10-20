@@ -428,12 +428,19 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				break
 			}
 			if event.IsError || event.Subtype != "success" {
+				// Only the provider's status may refuse; the errors' text is
+				// classified for the diagnostics alone.
 				status := agent.HTTPErrorStatus(event.APIErrorStatus)
-				if status == "" {
+				refused := status != ""
+				switch {
+				case refused:
+				case event.APIErrorStatus != 0:
+					status = "error"
+				default:
 					status = agent.ErrorStatus(strings.Join(event.Errors, " "))
 				}
 				record(agent.Event{Kind: "error", Status: status})
-				err = agent.ProviderFailure("claude code", status)
+				err = agent.ProviderFailure("claude code", status, refused)
 				break
 			}
 			result.Document = bytes.TrimSpace(event.Document)

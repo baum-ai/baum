@@ -260,10 +260,13 @@ func TestClaudeClassifiesTheProviderStatusOfAFailedResult(t *testing.T) {
 	}{
 		{"bad request", `{"type":"result","subtype":"success","is_error":true,"api_error_status":400,"result":"API Error: 400 private repository text","terminal_reason":"api_error"}`, "invalid_request", true},
 		{"forbidden", `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 private repository text"}`, "authentication_error", true},
-		{"model not found", `{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"result":"There's an issue with the selected model"}`, "invalid_request", true},
+		{"model not found", `{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"result":"There's an issue with the selected model"}`, "not_found", true},
 		{"overloaded", `{"type":"result","subtype":"success","is_error":true,"api_error_status":529,"result":"API Error: 529 private repository text"}`, "provider_overloaded", false},
 		{"server error", `{"type":"result","subtype":"success","is_error":true,"api_error_status":500,"result":"API Error: 500 private repository text"}`, "error", false},
+		{"server error quoting a refusal", `{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":502,"errors":["authentication 401 invalid_request"]}`, "error", false},
 		{"no status", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["boom"]}`, "error", false},
+		// Text alone is classified for the diagnostics, never a refusal.
+		{"text that reads as a refusal", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 401 authentication failed"]}`, "authentication_error", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			script := filepath.Join(t.TempDir(), "claude")

@@ -288,10 +288,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if message == "" {
 				message = lastError
 			}
-			status := failureStatus(message)
+			status, refused := failureStatus(message)
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status})
 			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
-			err = agent.ProviderFailure("codex", status)
+			err = agent.ProviderFailure("codex", status, refused)
 		}
 		if err == nil && result.Calls > request.MaxCalls {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
@@ -320,7 +320,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	if waitErr != nil {
 		if lastError != "" {
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: failureStatus(lastError)})
+			status, _ := failureStatus(lastError)
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status})
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
@@ -348,20 +349,40 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 // an exhausted 429 ("last status: 429").
 var unexpectedStatus = regexp.MustCompile(`unexpected status (\d{3})\b`)
 
-// failureStatus classifies a failed turn's message by its text when that names
-// a provider error class, and otherwise by the HTTP status it names.
-func failureStatus(message string) string {
-	status := agent.ErrorStatus(message)
-	if agent.IsProviderErrorStatus(status) {
-		return status
-	}
+// bodyMarkers are structured parts of a provider response Codex quotes
+// without naming its status, each with the class it gives.
+var bodyMarkers = []struct {
+	pattern *regexp.Regexp
+	status  string
+}{
+	{regexp.MustCompile(`"code":\s*"invalid_json_schema"`), "invalid_schema"},
+	{regexp.MustCompile(`"type":\s*"invalid_request_error"`), "invalid_request"},
+	{regexp.MustCompile(`last status: 429\b`), "rate_limit"},
+}
+
+// failureStatus classifies a failed turn's message and reports whether the
+// class may end the run as a refusal. A named HTTP status decides alone (a
+// 400 whose body names an invalid schema is invalid_schema), so a 408 or 5xx
+// is never a refusal whatever its body quotes; without one, only a structured
+// marker of the body may refuse. Free text is classified for the diagnostics
+// only: a request ID or a quoted run can hold "400" or "authentication".
+func failureStatus(message string) (string, bool) {
 	if match := unexpectedStatus.FindStringSubmatch(message); match != nil {
 		code, _ := strconv.Atoi(match[1])
-		if classified := agent.HTTPErrorStatus(code); classified != "" {
-			return classified
+		if code == 400 && strings.Contains(message, "invalid_json_schema") {
+			return "invalid_schema", true
+		}
+		if status := agent.HTTPErrorStatus(code); status != "" {
+			return status, true
+		}
+		return "error", false
+	}
+	for _, marker := range bodyMarkers {
+		if marker.pattern.MatchString(message) {
+			return marker.status, true
 		}
 	}
-	return status
+	return agent.ErrorStatus(message), false
 }
 
 // since is how long ago a turn started, or zero when none did.

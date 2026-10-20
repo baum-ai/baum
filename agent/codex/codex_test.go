@@ -177,40 +177,42 @@ func TestCodexFailureDoesNotExposeOutput(t *testing.T) {
 
 // A failed turn keeps the classification of its message, so a request the
 // provider rejects is told apart from an outage: a refusal is not retried. The
-// messages are the shapes Codex 0.156 prints for each provider status.
+// messages are the shapes Codex 0.156 prints for each provider status. Only a
+// named status or a structured part of the body refuses; free text that looks
+// like one, as a request ID or a quoted run may, never does.
 func TestCodexFailedTurnRecordsErrorStatus(t *testing.T) {
-	for _, tt := range []struct{ name, message, want string }{
-		{"rejected schema", `unexpected status 400 Bad Request: {\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema'\",\"code\":\"invalid_json_schema\"}}`, "invalid_schema"},
-		{"bad request body", `{\"error\":{\"message\":\"private repository text\",\"type\":\"invalid_request_error\",\"code\":null,\"param\":null}}`, "invalid_request"},
-		{"unauthorized", `unexpected status 401 Unauthorized: private repository text, url: http://proxy/openai/responses`, "authentication_error"},
-		{"forbidden", `unexpected status 403 Forbidden: permission denied, url: http://proxy/openai/responses`, "authentication_error"},
-		{"not found", `unexpected status 404 Not Found: model not found, url: http://proxy/openai/responses`, "invalid_request"},
-		{"too large", `unexpected status 413 Payload Too Large: private repository text, url: http://proxy/openai/responses`, "invalid_request"},
-		{"unprocessable", `unexpected status 422 Unprocessable Entity: private repository text, url: http://proxy/openai/responses`, "invalid_request"},
-		{"request timeout", `unexpected status 408 Request Timeout: private repository text, url: http://proxy/openai/responses`, ""},
-		{"rate limit", `exceeded retry limit, last status: 429 Too Many Requests`, "rate_limit"},
-		{"server error", `We are currently experiencing high demand, which may cause temporary errors.`, ""},
-		{"bad gateway", `unexpected status 502 Bad Gateway: private repository text, url: http://proxy/openai/responses`, ""},
+	for _, tt := range []struct {
+		name, message, want string
+		rejected            bool
+	}{
+		{"rejected schema", `unexpected status 400 Bad Request: {\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema'\",\"code\":\"invalid_json_schema\"}}`, "invalid_schema", true},
+		{"bad request body", `{\"error\":{\"message\":\"private repository text\",\"type\":\"invalid_request_error\",\"code\":null,\"param\":null}}`, "invalid_request", true},
+		{"spaced bad request body", `{\"error\": {\"message\": \"private repository text\", \"type\": \"invalid_request_error\"}}`, "invalid_request", true},
+		{"unauthorized", `unexpected status 401 Unauthorized: private repository text, url: http://proxy/openai/responses`, "authentication_error", true},
+		{"forbidden", `unexpected status 403 Forbidden: permission denied, url: http://proxy/openai/responses`, "authentication_error", true},
+		{"not found", `unexpected status 404 Not Found: model not found, url: http://proxy/openai/responses`, "not_found", true},
+		{"too large", `unexpected status 413 Payload Too Large: private repository text, url: http://proxy/openai/responses`, "invalid_request", true},
+		{"unprocessable", `unexpected status 422 Unprocessable Entity: private repository text, url: http://proxy/openai/responses`, "invalid_request", true},
+		{"upgrade required", `unexpected status 426 Upgrade Required: use HTTPS, url: http://proxy/openai/responses`, "upgrade_required", true},
+		{"request timeout", `unexpected status 408 Request Timeout: private repository text, url: http://proxy/openai/responses`, "error", false},
+		{"rate limit", `exceeded retry limit, last status: 429 Too Many Requests`, "rate_limit", false},
+		{"server error", `We are currently experiencing high demand, which may cause temporary errors.`, "error", false},
+		{"bad gateway", `unexpected status 502 Bad Gateway: private repository text, url: http://proxy/openai/responses`, "error", false},
+		{"server error quoting a refusal", `unexpected status 503 Service Unavailable: authentication backend down, request req_4001400 \"type\":\"invalid_request_error\", url: http://proxy/openai/responses`, "error", false},
+		{"free text that reads as a refusal", `stream disconnected: authentication handshake 401 failed, request req_400`, "authentication_error", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			script := filepath.Join(t.TempDir(), "codex")
 			checkNoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"turn.failed\",\"error\":{\"message\":\""+tt.message+"\"}}'\nexit 1\n"), 0700))
 			result, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
-			status := agent.LastErrorStatus(result.Events)
-			var rejected *agent.RejectedError
-			if tt.want == "" {
-				if err == nil || err.Error() != agent.ReasonProviderUnavailable || agent.IsRejectedStatus(status) {
-					t.Fatalf("err = %v, status = %q, want %q", err, status, agent.ReasonProviderUnavailable)
-				}
-				return
-			}
-			if status != tt.want {
+			if status := agent.LastErrorStatus(result.Events); status != tt.want {
 				t.Fatalf("status = %q, want %q (events %+v)", status, tt.want, result.Events)
 			}
-			if agent.IsRejectedStatus(tt.want) != errors.As(err, &rejected) || (rejected == nil && err.Error() != agent.ReasonProviderUnavailable) {
-				t.Fatalf("err = %v for status %q", err, tt.want)
+			var rejected *agent.RejectedError
+			if errors.As(err, &rejected) != tt.rejected || (!tt.rejected && (err == nil || err.Error() != agent.ReasonProviderUnavailable)) {
+				t.Fatalf("err = %v, want rejected %t", err, tt.rejected)
 			}
-			if err != nil && strings.Contains(err.Error(), "private") {
+			if strings.Contains(err.Error(), "private") {
 				t.Fatalf("the error exposes the message: %v", err)
 			}
 		})
