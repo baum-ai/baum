@@ -84,10 +84,11 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   Everywhere else the hooks run Entire directly, and baum does nothing at all:
   without a login, an open-source build does not install Entire or its hooks
   in a repository just because the repository's files ask for it, unless the
-  machine still has the hosted install script's marker (below), or you run
-  the baum daemon. Where only the daemon lets the hooks run baum, they do
-  nothing for the hosted service: no Entire install, no Git hooks, Entire
-  called exactly as without baum, and the event recorded by the daemon (below).
+  machine still has the hosted install script's marker (below), or the baum
+  daemon has run for you. Where only the daemon lets the hooks run baum, they
+  do nothing for the hosted service: no Entire install, no Git hooks, Entire
+  called exactly as without baum (and, for the user-wide hooks, not at all),
+  and the event recorded by the daemon (below).
   Uploading, or anything else that contacts a baum server, needs `baum login`
   in every case.
 - Where a hook runs baum, it also reports the run to the baum daemon (below),
@@ -415,9 +416,10 @@ at 1 MiB with two older files kept), the hook event spool, and `hooks.log`,
 where hooks note what they spooled, dropped or started, never an event's
 contents; `stopped-by-user`, while you have stopped the daemon; and
 `started.json`, the time a hook last started one, which keeps hooks from
-starting another for three minutes unless it served. Its existence is also
-what lets agent and Git hooks run baum, locally, for a user who never logged
-in.
+starting another for three minutes unless it served. The daemon's lock file
+(`daemon.lock.sqlite`), which only a daemon creates, is also what lets agent
+and Git hooks run baum, locally, for a user who never logged in; the
+directory alone does not.
 
 The control socket, `$XDG_RUNTIME_DIR/baum/daemon.sock` or `daemon.sock` in
 the state directory, is mode 0600 in a 0700 directory, so other users cannot

@@ -1151,7 +1151,7 @@ format and the protocol constants have one definition on both sides.
   a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
   baum built or installed for the hosted service, in a repository whose
   committed agent settings carry baum's dispatcher; or, without any of those,
-  for a user who has a baum daemon (its state directory exists), where the
+  for a user for whom a baum daemon ran (its lock file exists), where the
   hook is local: no hosted work, Entire called exactly as the fall-through
   would. They read local files only, and the hooks they admit never contact a
   server; they hand their events to the local daemon, which keeps them on the
@@ -1164,8 +1164,10 @@ format and the protocol constants have one definition on both sides.
   repository has Entire enabled, and no other hook the agent runs (project,
   user, managed or system settings; Codex project hooks only where Codex
   trusts them) already runs Entire for the event, so an event is not reported
-  twice. Where it refuses, the hook does nothing. `baum setup` installs them
-  only for a hosted install or a logged-in user.
+  twice. Where it refuses, the hook does nothing. The run carries `--user`
+  too (`baum hooks agent --user AGENT EVENT`): where only a daemon that ran
+  admitted it, it records the event and runs no Entire. `baum setup` installs
+  them only for a hosted install or a logged-in user.
 - Compatibility. A client and a server of different releases agree on an API
   protocol number: requests name the client's, responses the range the server
   serves, and a client outside it stops with an error saying which side to
@@ -1743,32 +1745,36 @@ endpoint.
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
   `hook_event`, `source`, `reason`, read by a streaming scanner from the whole
-  payload; nothing else of it) or `git` (`args` without a pre-push remote URL,
-  and `lines`, the refs or commits Git wrote to the hook). `Event.Bound` cuts
-  fields at character boundaries, then trims Git lines and halves the longest
-  fields until the escaped encoding fits one control line. The daemon ignores
-  fields it does not know and records kinds it does not know, so adding a
-  field keeps `v`; it refuses a higher `v` with `event_version`.
+  payload, the last of a repeated member winning; nothing else of it) or `git`
+  (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
+  wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
+  trims Git lines and halves the longest fields until the escaped encoding fits
+  one control line. The daemon ignores fields it does not know and records
+  kinds it does not know, so adding a field keeps `v`; it refuses a higher `v`
+  with `event_version`.
 - **Sending.** `Sender.Send` never fails a hook and returns within `Budget`
   (300 ms) whatever happens: the request gets 150 ms, and the spool write, the
-  hook log and a daemon start run in a goroutine the budget abandons (a spool
-  write is atomic, so an exit leaves the event whole or absent). When nothing
-  listens it spools the event and starts a daemon with
-  `Client.StartDetached`, unless the user stopped the daemon
-  (`daemon.MarkStopped`, written by `baum daemon stop` and cleared by
-  `Ensure` and a foreground `run`), `BAUM_NO_DAEMON=1` or `CI` is set.
-  `StartDetached` spawns `baum daemon run --detached` under the start lock
-  unless a daemon holds the daemon lock or one was started less than
-  `StartBackoff` (3 min) ago: it records each start in `started.json`, which
-  the daemon removes once it serves, so a daemon that cannot start is not
-  started again by every hook. It does not wait for the daemon, and passes
-  the hook's environment without `TMPDIR`; `Spawn` marks the caller's
-  inherited descriptors close-on-exec first. A daemon that does not answer in
-  time, answers an error, or does not know `event` gets the event through the
-  spool; one older than the hook's baum is sent `stop` with `when_idle` and
-  `respawn`, which makes even an idle daemon start the newer executable and
-  then stop, as a busy one does once idle. A daemon holding the socket but not
-  answering is never replaced by a hook.
+  hook log and a daemon start run in a goroutine on the budget's context. When
+  the budget ends Send returns and cancels it: a spool write under way finishes
+  while the process lives (atomic, so an exit leaves the event whole or
+  absent), and no daemon start begins, since its lock checks fail. When nothing
+  listens it spools the event and starts a daemon with `Client.StartDetached`,
+  unless the user stopped the daemon (`daemon.MarkStopped`, written by `baum
+  daemon stop` and cleared by `Ensure` and a foreground `run`),
+  `BAUM_NO_DAEMON=1` or `CI` is set. `StartDetached` spawns `baum daemon run
+  --detached` under the start lock unless a daemon holds the daemon lock or one
+  was started less than `StartBackoff` (3 min) ago: it records each start in
+  `started.json`, which the daemon removes once it serves, so a daemon that
+  cannot start is not started again by every hook (a start time in the future
+  does not count). It does not wait for the daemon, passes the hook's
+  environment without `TMPDIR`, and passes the socket the hook resolved as
+  `--socket`, so the daemon listens where clients look; `Spawn` marks the
+  caller's inherited descriptors close-on-exec first. A daemon that does not
+  answer in time, answers an error, or does not know `event` gets the event
+  through the spool; one older than the hook's baum is sent `stop` with
+  `when_idle`, as `Ensure` sends it: an idle one stops and the next hook starts
+  the newer version, a busy one restarts as it when its jobs finish. A daemon
+  holding the socket but not answering is never replaced by a hook.
 - **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
   nanosecond it was spooled, written to a temporary file and renamed.
   `MaxSpoolEvents` (1000) and `MaxSpoolBytes` (8 MiB): a hook drops the
