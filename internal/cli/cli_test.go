@@ -65,7 +65,7 @@ func TestHelpGroupsHostedCommands(t *testing.T) {
 	if end := strings.Index(section, "\n\n"); end >= 0 {
 		section = section[:end]
 	}
-	for _, name := range []string{"login", "logout", "whoami", "setup", "upload"} {
+	for _, name := range []string{"login", "logout", "whoami", "setup", "upload", "hooks"} {
 		if !strings.Contains(section, "\n  "+name+" ") {
 			t.Errorf("the hosted section does not list %s:\n%s", name, section)
 		}
@@ -73,8 +73,20 @@ func TestHelpGroupsHostedCommands(t *testing.T) {
 			t.Errorf("%s is listed as a local command", name)
 		}
 	}
-	if strings.Contains(stdout, "\n  hooks ") {
-		t.Errorf("help lists the hidden hooks command:\n%s", stdout)
+	// Users install hooks; agents and Git run them.
+	stdout, _, err = run(t, "hooks", "--help")
+	if err != nil {
+		t.Fatalf("hooks help: %v", err)
+	}
+	for _, name := range []string{"install", "uninstall", "bootstrap"} {
+		if !strings.Contains(stdout, "\n  "+name+" ") {
+			t.Errorf("hooks help does not list %s:\n%s", name, stdout)
+		}
+	}
+	for _, name := range []string{"agent", "git"} {
+		if strings.Contains(stdout, "\n  "+name+" ") {
+			t.Errorf("hooks help lists the internal %s command:\n%s", name, stdout)
+		}
 	}
 }
 

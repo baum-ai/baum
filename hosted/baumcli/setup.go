@@ -33,6 +33,7 @@ func newSetupCommand(stdout, stderr io.Writer) *cobra.Command {
 		all           bool
 		yes           bool
 		skipEntire    bool
+		skipUserHooks bool
 		syncRepo      bool
 		upload        bool
 	)
@@ -45,7 +46,10 @@ sets up the current repository; with PATHs it sets up each checkout. With --all
 it finds checkouts from local agent session metadata and from Git checkouts up
 to three levels below the current directory, then asks once before changing
 anything. Every repository needs a GitHub origin. Setup installs and enables
-Entire for detected coding agents unless --skip-entire is set.
+Entire for detected coding agents unless --skip-entire is set. For a hosted
+install or a logged-in user it also installs baum's user-wide Claude Code and
+Codex hooks (see baum hooks install --user) unless --skip-user-hooks or
+--skip-entire is set.
 
 --sync requests a server-side GitHub repository sync and --upload uploads
 locally recorded agent sessions. Both need credentials: run baum login first.`,
@@ -74,6 +78,9 @@ locally recorded agent sessions. Both need credentials: run baum login first.`,
 			opts := setupRepositoryOptions{
 				yes: yes, skipEntire: skipEntire, sync: syncRepo, upload: upload,
 				previousPaths: previousPaths,
+			}
+			if !skipEntire && !skipUserHooks && setupInstallsUserHooks() {
+				opts.userHooks = &userHooksStep{}
 			}
 			if all {
 				opts.aggregateConfirmed = true
@@ -120,6 +127,7 @@ locally recorded agent sessions. Both need credentials: run baum login first.`,
 	cmd.Flags().StringArrayVar(&previousPaths, "previous-path", nil, "prior filesystem location of the repository, with --upload (repeatable)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&skipEntire, "skip-entire", false, "skip installing and configuring Entire")
+	cmd.Flags().BoolVar(&skipUserHooks, "skip-user-hooks", false, "leave the user-wide Claude Code and Codex settings alone")
 	cmd.Flags().BoolVar(&syncRepo, "sync", false, "request a server-side GitHub repository sync (requires login)")
 	cmd.Flags().BoolVar(&upload, "upload", false, "upload locally recorded agent sessions (requires login)")
 	cmd.MarkFlagsMutuallyExclusive("all", "previous-path")
@@ -137,7 +145,12 @@ type setupRepositoryOptions struct {
 	// synced records repository IDs whose sync was already requested during
 	// one --all run, so duplicate clones request it once.
 	synced map[string]bool
+	// userHooks is set when setup installs the user-wide hooks; every
+	// repository of one run shares it, so they are installed once.
+	userHooks *userHooksStep
 }
+
+type userHooksStep struct{ done bool }
 
 type setupPlanRow struct {
 	repository apiclient.GitHubRepository
@@ -357,9 +370,19 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 			ready++
 		}
 	}
-	if ready == 0 {
+	// User-wide hooks can be missing when every repository is set up, for
+	// example after `baum hooks uninstall --user`, so they count as pending
+	// work before the no-op return.
+	userHooksPending := opts.userHooks != nil && !opts.userHooks.done && userHooksPendingForSetup()
+	if ready == 0 && !userHooksPending {
 		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
 		return nil
+	}
+	if ready == 0 {
+		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
+	}
+	if userHooksPending {
+		writeUserHooksPlan(stdout)
 	}
 	if !opts.yes {
 		confirmed, confirmErr := confirmUpload(in, stdout)
@@ -393,6 +416,12 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 				entry.Roots = append(entry.Roots, root)
 			}
 		}
+	}
+
+	if ready == 0 {
+		opts.userHooks.done = true
+		installUserHooksDuringSetup(stdout, stderr)
+		return nil
 	}
 
 	succeeded, failed := 0, 0
@@ -475,6 +504,10 @@ func setupRepository(ctx context.Context, in io.Reader, client *apiclient.Client
 				}
 			}
 		}
+	}
+	if opts.userHooks != nil && !opts.userHooks.done {
+		opts.userHooks.done = true
+		installUserHooksDuringSetup(stdout, stderr)
 	}
 	if opts.sync && repository.ID == "" {
 		repository, err = client.FindGitHubRepository(ctx, repository.FullName)
