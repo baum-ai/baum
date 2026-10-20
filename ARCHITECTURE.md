@@ -1569,7 +1569,20 @@ a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
 that executable detached on the same port and stops, so no confirmed run is
 interrupted. Of racing clients the newest version is the one it restarts
 as, and a client tells its user about the deferred restart only when it
-first schedules it. A daemon speaking a newer protocol is an
+first schedules it. Because a client may be a sandboxed agent's hook and the
+executable runs unsandboxed with the daemon's environment, the daemon
+records it only from a client newer than itself and only if
+`executablePolicy` (`trust.go`) accepts it, and checks it again just before
+`Respawn` (which gets the resolved path): after `filepath.EvalSymlinks` it
+must be the daemon's own `os.Executable()`, the `baum` that `exec.LookPath`
+finds on the login shell's `PATH`, or one of `daemon.TrustedExecutables`
+(empty; for the desktop app's bundled baum later), a regular executable file
+owned by the user or root and not group- or world-writable, under
+directories up to `/` that pass the same owner and mode test (sticky
+world-writable ones such as `/tmp` fail). On Windows only the allowlist
+applies. A refusal is logged; the daemon keeps running without
+`restart_pending`, and is replaced when a newer client next finds it idle.
+A daemon speaking a newer protocol is an
 `IncompatibleError` naming both versions.
 When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
 the holder starts `baum daemon run --detached` and waits until it answers,

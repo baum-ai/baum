@@ -381,8 +381,22 @@ recorded as interrupted (after at most 20 seconds), and nothing runs until
 something starts it again. `baum daemon status` and `baum doctor` show whether
 it runs, its version, process id and uptime. When a newer baum finds an older
 daemon running jobs, it lets them finish: the daemon then starts the newer
-`baum` executable that asked (a program any process of yours could start) and
-exits. Only a daemon speaking an incompatible protocol is stopped at once.
+`baum` executable that asked and exits. Only a daemon speaking an incompatible
+protocol is stopped at once.
+
+The daemon runs that executable outside any sandbox, with your login shell's
+environment and SSH agent, while the process that named it may be an agent
+hook run from a sandboxed command that can write files in a workspace. So it
+accepts the executable only from a client of a newer version than its own,
+and only when, after resolving symbolic links, the file is the daemon's own
+executable (an upgrade in place) or the `baum` on its login shell's `PATH`;
+it must be a regular, executable file owned by you or root and not group- or
+world-writable, in directories up to `/` that are all the same (none may be
+world-writable, not even sticky like `/tmp`). It checks again just before
+starting it. A refused executable is logged and the daemon keeps running; a
+newer baum then replaces it the next time it finds the daemon idle. On
+Windows, where owners and mode bits do not describe access, only the first
+two rules apply.
 
 Its state directory, `$XDG_STATE_HOME/baum/daemon` (default
 `~/.local/state/baum/daemon`), is mode 0700 and holds the lock, `daemon.json`
