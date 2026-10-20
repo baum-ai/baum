@@ -18,7 +18,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/baum-ai/baum/hosted/baumcli"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/config"
@@ -52,9 +51,11 @@ func newDaemonCommand() *cobra.Command {
 application on 127.0.0.1, keeps GitHub metadata of registered clones fresh, and
 runs the generation jobs you confirm in the app. Unless you turn it off in the
 app, it also generates reviews automatically when a pull request you authored
-or were asked to review gets a new head or review request. The desktop app and agent hooks
-start it with "baum daemon ensure"; it keeps running after they exit, until
-"baum daemon stop".
+or were asked to review gets a new head or review request, and it records the
+events coding-agent and Git hooks send it. The desktop app starts it with
+"baum daemon ensure"; a hook starts it in the background when none is running,
+unless you stopped it with "baum daemon stop", BAUM_NO_DAEMON=1 is set, or CI
+is set. It keeps running after they exit, until "baum daemon stop".
 
 Its state, credential and logs are in $XDG_STATE_HOME/baum/daemon (default
 ~/.local/state/baum/daemon); its control socket is in $XDG_RUNTIME_DIR/baum
@@ -151,6 +152,8 @@ func runDaemonEnsure(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Ensure clears a "stopped by the user" mark, so hooks start the daemon
+	// again.
 	status, err := client.Ensure(cmd.Context())
 	if err != nil {
 		return err
@@ -193,6 +196,11 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	client.StopTimeout, _ = cmd.Flags().GetDuration("timeout")
+	// Hooks leave a daemon the user stopped alone until something starts
+	// it explicitly (ensure, or run in the foreground).
+	if err = daemon.MarkStopped(client.Paths); err != nil {
+		return err
+	}
 	stopped, err := client.Stop(cmd.Context())
 	if err != nil {
 		return err
@@ -214,6 +222,11 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	paths, err := daemonPaths()
 	if err != nil {
 		return err
+	}
+	if !detached {
+		if err = daemon.ClearStopped(paths); err != nil {
+			return err
+		}
 	}
 	// Until it owns the lock the daemon logs to stderr (daemon.out when
 	// detached); only the owner opens and rotates daemon.log.
@@ -337,22 +350,19 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 
 // localApplication builds what the daemon serves: the registry, discovery,
 // review index, background refresh, diagnostics, the generation queue, the
-// automatic generation scheduler, and the record of agent and Git hook events
-// with its forwarding to the hosted service. Hook events are to reach the
-// scheduler through Scheduler.Trigger; none does yet.
+// automatic generation scheduler, and the record of agent and Git hook events.
+// Hook events are to reach the scheduler through Scheduler.Trigger; none does
+// yet.
 func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
 		if err != nil {
 			return daemon.App{}, err
 		}
-		events, err := hookevents.Open(paths, log)
-		if err != nil {
-			return daemon.App{}, err
-		}
+		events := openHookEvents(paths, log)
 		registry, err := repos.Open("")
 		if err != nil {
-			_ = events.Close()
+			events.Close()
 			return daemon.App{}, err
 		}
 		changed := func() { _ = server.Publish("index", struct{}{}) }
@@ -362,7 +372,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		state, err := jobs.Directory()
 		if err != nil {
 			_ = registry.Close()
-			_ = events.Close()
+			events.Close()
 			return daemon.App{}, err
 		}
 		// Queued jobs resume with the price list they were confirmed against,
@@ -392,7 +402,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		})
 		if err != nil {
 			_ = registry.Close()
-			_ = events.Close()
+			events.Close()
 			return daemon.App{}, err
 		}
 		scheduler.Queue = queue
@@ -403,9 +413,6 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
-		// Subscribed before the socket serves, so no event precedes it.
-		forwarded, unsubscribe := events.Store.Subscribe(64, baumcli.Forwarded)
-		forwarder := &baumcli.SessionForwarder{Log: log}
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
@@ -413,7 +420,6 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
-				wg.Go(func() { forwarder.Run(ctx, forwarded) })
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
@@ -431,11 +437,46 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
-				unsubscribe()
-				_ = events.Close()
+				events.Close()
 				_ = registry.Close()
 			},
 		}, nil
+	}
+}
+
+// hookEvents is the daemon's record of hook events, or nothing when it cannot
+// be opened: a broken record must not keep the daemon from starting, or every
+// hook would start another. Hooks then get unknown_method and spool.
+type hookEvents struct{ service *hookevents.Service }
+
+func openHookEvents(paths daemon.Paths, log *slog.Logger) hookEvents {
+	service, err := hookevents.Open(paths, log)
+	if err != nil {
+		log.Error("hook events are not recorded; hooks spool them until the record opens", "error", err)
+		return hookEvents{}
+	}
+	return hookEvents{service: service}
+}
+
+// Methods are the control requests the record serves, if any.
+func (h hookEvents) Methods() map[string]daemon.Method {
+	if h.service == nil {
+		return nil
+	}
+	return h.service.Methods()
+}
+
+// Run drains the spool until ctx ends.
+func (h hookEvents) Run(ctx context.Context) {
+	if h.service != nil {
+		h.service.Run(ctx)
+	}
+}
+
+// Close closes the record.
+func (h hookEvents) Close() {
+	if h.service != nil {
+		_ = h.service.Close()
 	}
 }
 
