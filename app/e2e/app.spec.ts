@@ -301,6 +301,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await toggle.click();
   await expect(toggle).not.toBeChecked();
   await page.reload();
+  // After a reload the section renders once the settings requests answer,
+  // which can take a while on a busy CI runner.
+  await expect(automatic).toBeVisible({ timeout: 15000 });
   await expect(toggle).not.toBeChecked();
   await expect(
     page
