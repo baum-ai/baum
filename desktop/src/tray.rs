@@ -244,6 +244,10 @@ pub fn setup(app: &AppHandle) {
     app.manage(shared.clone());
     autostart::refresh();
     let login = autostart::enabled();
+    // The only menu listener: Tauri gives it the events of every menu, the
+    // window's and the tray's, so no menu registers a second one (a second
+    // would run each click twice, and a toggle would flip back).
+    app.on_menu_event(|app, event| on_menu(app, event.id().as_ref()));
     let menu_login = match install_window_menu(app, login) {
         Ok(item) => Some(item),
         Err(e) => {
@@ -313,13 +317,6 @@ fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry
         window_menu.append(&notifications).map_err(e)?;
     }
     app.set_menu(window_menu).map_err(e)?;
-    app.on_menu_event(|app, event| {
-        if event.id().as_ref() == MENU_LOGIN {
-            toggle_login(app);
-        } else {
-            notifications::on_menu(app, event.id().as_ref());
-        }
-    });
     Ok(item)
 }
 
@@ -333,7 +330,6 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         // Windows opens the window on a left click and keeps the menu for the
         // right one; elsewhere a click shows the menu.
         .show_menu_on_left_click(!cfg!(windows))
-        .on_menu_event(|app, event| on_tray_menu(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             #[cfg(windows)]
             if let tauri::tray::TrayIconEvent::Click {
@@ -396,16 +392,42 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(app, &refs)
 }
 
-fn on_tray_menu(app: &AppHandle, id: &str) {
+/// What a menu id does. Ids are unique across the window and tray menus,
+/// except the notification toggles, which both hold and which mean the same.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    Open,
+    Pause,
+    Login,
+    Quit,
+    QuitStop,
+    Notification,
+    Ignore,
+}
+
+fn route(id: &str) -> Action {
     match id {
-        "open" => lifecycle::show_window(app),
-        "pause" => toggle_pause(app),
-        "login" => toggle_login(app),
-        "quit" => lifecycle::quit(app),
-        "quit-stop" => lifecycle::quit_and_stop(app),
-        _ => {
+        "open" => Action::Open,
+        "pause" => Action::Pause,
+        "login" | MENU_LOGIN => Action::Login,
+        "quit" => Action::Quit,
+        "quit-stop" => Action::QuitStop,
+        _ if notifications::is_menu_id(id) => Action::Notification,
+        _ => Action::Ignore,
+    }
+}
+
+fn on_menu(app: &AppHandle, id: &str) {
+    match route(id) {
+        Action::Open => lifecycle::show_window(app),
+        Action::Pause => toggle_pause(app),
+        Action::Login => toggle_login(app),
+        Action::Quit => lifecycle::quit(app),
+        Action::QuitStop => lifecycle::quit_and_stop(app),
+        Action::Notification => {
             notifications::on_menu(app, id);
         }
+        Action::Ignore => {}
     }
 }
 
@@ -653,6 +675,44 @@ mod tests {
             .filter(|e| e.kind != Kind::Separator)
             .map(|e| e.text.as_str())
             .collect()
+    }
+
+    #[test]
+    fn every_menu_id_has_exactly_one_action() {
+        use crate::notifications;
+        let ids = menu_spec(&View::default(), false)
+            .into_iter()
+            .map(|e| e.id)
+            .chain([MENU_LOGIN.to_string()])
+            .chain(notifications::menu_ids().map(String::from));
+        for id in ids {
+            let action = route(&id);
+            let expected = match id.as_str() {
+                "open" => Action::Open,
+                "pause" => Action::Pause,
+                "login" | MENU_LOGIN => Action::Login,
+                "quit" => Action::Quit,
+                "quit-stop" => Action::QuitStop,
+                _ if id.starts_with("notifications:") => Action::Notification,
+                _ => Action::Ignore,
+            };
+            assert_eq!(action, expected, "{id}");
+        }
+        assert_eq!(route("unknown"), Action::Ignore);
+    }
+
+    /// Tauri hands every menu's events to the app listener, so a listener on
+    /// the tray or a menu as well runs each click twice.
+    #[test]
+    fn one_menu_listener_is_registered() {
+        let source = include_str!("tray.rs");
+        let code = &source[..source.find("#[cfg(test)]").unwrap()];
+        let calls = code
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .filter(|l| l.contains(".on_menu_event("))
+            .count();
+        assert_eq!(calls, 1);
     }
 
     #[test]

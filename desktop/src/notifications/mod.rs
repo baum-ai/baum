@@ -149,6 +149,17 @@ pub fn submenu(app: &AppHandle) -> tauri::Result<Option<Submenu<tauri::Wry>>> {
     Ok(Some(submenu))
 }
 
+/// The menu ids of the notification toggles.
+#[cfg(test)]
+pub fn menu_ids() -> impl Iterator<Item = &'static str> {
+    Kind::ALL.into_iter().map(Kind::menu_id)
+}
+
+/// Whether `id` is one of the notification toggles.
+pub fn is_menu_id(id: &str) -> bool {
+    Kind::from_menu_id(id).is_some()
+}
+
 /// Handles a menu click: flips the kind the item names (from the saved
 /// state, not the item's own check) and brings both menus to it. Returns
 /// whether the id was one of ours.
