@@ -6,7 +6,7 @@ const schema = JSON.parse(
 );
 // Stored documents may still carry tile kinds the shared schema retired.
 const legacy = JSON.parse(
-  await readFile(new URL("../src/legacy-review-tiles.json", import.meta.url), "utf8"),
+  await readFile(new URL("../../schema/legacy-review-tiles.json", import.meta.url), "utf8"),
 );
 const output = new URL("../generated/review-tile-types.d.ts", import.meta.url);
 await mkdir(new URL(".", output), { recursive: true });
