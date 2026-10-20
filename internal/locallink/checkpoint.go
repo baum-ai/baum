@@ -20,9 +20,11 @@ import (
 // in the clone, on the per-checkpoint refs (refs/entire/checkpoints/*) or the
 // checkpoint branch, the sessions those checkpoints record.
 // Trailers are read as the hosted resolver reads them
-// (entirecheckpoint.ParseTrailers): a commit naming several checkpoints links
-// to the union of their sessions, in trailer order, each once, and a malformed
-// value beside valid ones is skipped with a warning.
+// (entirecheckpoint.ParseMessage), from the whole commit message as Entire
+// reads them, so a squash merge's body paragraphs count: a commit naming
+// several checkpoints links to the union of their sessions, in message order,
+// each once, and a malformed value beside valid ones is skipped with a
+// warning.
 //
 // Every such session must be listed with the result, so one that loading did
 // not return (it ran before the sessions read, or only the checkpoint records
@@ -40,7 +42,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 	firstNamedBy := map[string]string{}
 	var ids []string
 	for _, c := range commits {
-		valid, malformed := entirecheckpoint.ParseTrailers(c.Trailers)
+		valid, malformed := entirecheckpoint.ParseMessage(c.Message)
 		if len(valid) == 0 {
 			continue
 		}

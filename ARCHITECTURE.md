@@ -946,11 +946,16 @@ inside the clone and the session store overrides, and does this:
    `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
    agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
    empty, which the branch step reads as unknown.
-6. Reads each commit's `Entire-Checkpoint` trailers with
-   `sessions/entirecheckpoint.ParseTrailers`, the parser the hosted resolver
-   uses: a case-insensitive key, and values that are legacy 12-hex ids or
-   26-character Crockford ULIDs in any case, made canonical (hex lower-case,
-   ULID upper-case) and kept in trailer order, each once. A malformed value
+6. Reads each commit's `Entire-Checkpoint` trailers from its whole message
+   (`git log` `%B`) with `sessions/entirecheckpoint.ParseMessage`, the parser
+   the hosted resolver uses. Entire reads the whole message, so a GitHub
+   squash merge, which copies each squashed commit's trailers into its body
+   paragraphs, names every squashed commit's checkpoint; other trailers are
+   read from git's trailer block alone. It takes every id Entire's own pattern
+   finds, mid-line included, and every line shaped like the trailer: a
+   case-insensitive key at the start of a line, and values that are legacy
+   12-hex ids or 26-character Crockford ULIDs in any case, made canonical (hex
+   lower-case, ULID upper-case) and kept in message order, each once. A malformed value
    beside a valid one is skipped with a warning line; a commit with no valid
    value is left to the heuristics. Each id is looked up in the clone's two
    Entire stores, reading only its metadata in the private repository, and

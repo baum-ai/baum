@@ -148,6 +148,10 @@ func TestResolveFallsBackFromAnUnusableTrailer(t *testing.T) {
 	for _, trailer := range []string{
 		"Entire-Checkpoint: not-a-checkpoint",
 		"Entire-Checkpoint: not-a-checkpoint\nEntire-Checkpoint: 01ARZ3NDEKTSV4RRFFQ69G5FAL",
+		// Only malformed values in a squash merge's body paragraphs.
+		"* feat: one\n\nEntire-Checkpoint: not-a-checkpoint\n\n* feat: two\n\nCo-authored-by: Ada <ada@example.com>",
+		// The key mid-line before prose names nothing.
+		"Explains the Entire-Checkpoint: trailer.",
 		"Entire-Checkpoint: ffffffffffff",
 		// A ULID is valid, but only the git-refs store holds those, and this
 		// clone has only the checkpoint branch.
@@ -206,6 +210,64 @@ func TestResolveSkipsAMalformedValueBesideAValidOne(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), `skipping malformed Entire-Checkpoint value "not-a-checkpoint"`) {
 		t.Errorf("warnings = %q, want the skipped value named", warnings.String())
+	}
+}
+
+// A GitHub squash merge copies each squashed commit's message, trailers
+// included, into its body. The checkpoints those body paragraphs name link
+// beside the one in the trailer block, as Entire reads the whole message, and
+// a malformed body value is skipped with a warning.
+func TestResolveLinksTheCheckpointsOfASquashMergeBody(t *testing.T) {
+	const second, third = "0004a7a444a1", "0004a7a444a2"
+	secondSessions := [2]string{"aaaaaaaa-1111-4000-8000-000000000001", "aaaaaaaa-1111-4000-8000-000000000002"}
+	thirdSessions := [2]string{"aaaaaaaa-2222-4000-8000-000000000001", "aaaaaaaa-2222-4000-8000-000000000002"}
+	f := linktest.NewWithTrailer(t, strings.Join([]string{
+		"* feat: first step",
+		"",
+		linktest.CheckpointTrailer,
+		"",
+		"* feat: second step",
+		"",
+		"Entire-Checkpoint: not-a-checkpoint",
+		"Entire-Checkpoint: " + second,
+		"",
+		"* chore: tidy",
+		"",
+		"---------",
+		"",
+		"Co-authored-by: Ada <ada@example.com>",
+		"Entire-Checkpoint: " + third,
+	}, "\n"))
+	f.AddCheckpointEditing(t, "b.txt")
+	f.AddCheckpointAt(t, second, secondSessions)
+	f.AddCheckpointAt(t, third, thirdSessions)
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	result := resolve(t, req)
+	if !result.Available {
+		t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
+	}
+	want := append(append(slices.Clone(linktest.CheckpointSessions), secondSessions[:]...), thirdSessions[:]...)
+	slices.Sort(want)
+	got := linkedTo(result.Commits[0])
+	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], want) {
+		t.Fatalf("first commit links = %+v, want all three checkpoints' sessions", result.Commits[0].Links)
+	}
+	if !strings.Contains(warnings.String(), `skipping malformed Entire-Checkpoint value "not-a-checkpoint"`) {
+		t.Errorf("warnings = %q, want the skipped body value named", warnings.String())
+	}
+}
+
+// Entire's pattern is not anchored to a line, so a checkpoint id after the key
+// in the middle of a line links as Entire links it.
+func TestResolveLinksACheckpointNamedMidLine(t *testing.T) {
+	f := linktest.NewWithTrailer(t, "Carries over "+linktest.CheckpointTrailer+" from the first attempt.")
+	f.AddCheckpointEditing(t, "b.txt")
+	result := resolve(t, request(f))
+	got := linkedTo(result.Commits[0])
+	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) {
+		t.Fatalf("first commit links = %+v, want the checkpoint's sessions", result.Commits[0].Links)
 	}
 }
 
