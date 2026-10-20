@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 // TestHolderHelper holds the lock named by FILELOCK_HELPER in its own
@@ -39,7 +41,7 @@ func TestHolderHelper(t *testing.T) {
 // A holder probing its own lock must keep it against other processes: on
 // Unix, closing any descriptor of the file would drop the process's locks.
 func TestHolderProbingItsOwnLockKeepsIt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "x.lock")
+	path := filepath.Join(privateDir(t), "x.lock")
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +95,7 @@ func TestHolderProbingItsOwnLockKeepsIt(t *testing.T) {
 }
 
 func TestInProcessLocksExclude(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "x.lock")
+	path := filepath.Join(privateDir(t), "x.lock")
 	first, err := TryLock(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -110,4 +112,15 @@ func TestInProcessLocksExclude(t *testing.T) {
 	if held, err := Held(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil || held {
 		t.Fatal(held, err)
 	}
+}
+
+// privateDir is a directory whose new files pass the private-file check: on
+// Windows that takes the protected current-user DACL, not a mode.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := privatefs.MkdirAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
