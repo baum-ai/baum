@@ -2344,7 +2344,9 @@ window uses. It also owns first-run setup
 (`src/onboarding.rs`, `src/install.rs`, `ui/setup.html`): a bundled screen,
 with its own narrow capability, from which the user installs the bundled
 `baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a
-stable path of the bundled binary; the user `PATH` on Windows) and the
+stable path of the bundled binary; an AppImage and Windows run and link a
+copy in the app's data directory, which Windows adds to the user `PATH`;
+the password prompt only for root-owned system directories) and the
 user-wide agent hooks; after that the window opens the daemon's diagnostics
 page. It records what it installed in `setup.json` in its configuration
 directory and removes only that. See [`desktop/README.md`](desktop/README.md).

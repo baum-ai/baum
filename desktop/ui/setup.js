@@ -32,21 +32,35 @@ function describeCommand(command) {
   const plan = command.plan;
   if (command.unavailable) return { state: command.unavailable, note: "", action: "" };
   if (command.installed) {
-    const found = command.found;
     const by = command.record
       ? "The app installed it and keeps it up to date with the app."
       : "It was installed outside the app (for example by a package), so the app leaves it alone.";
-    const link = found.path === found.resolved ? "" : ` (${found.resolved})`;
-    return { state: `Installed: the hooks run ${found.path}${link}. ${by}`, note: "", action: "" };
+    const found = command.found;
+    const runs = found
+      ? `the hooks run ${found.path}${found.path === found.resolved ? "" : ` (${found.resolved})`}`
+      : `new terminals run ${command.target}`;
+    const shadowed = command.shadowed
+      ? `A different baum still comes first on your PATH: ${command.shadowed.path} (${version(command.shadowed)}). Remove it, or move its directory after the app's in your PATH.`
+      : "";
+    return { state: `Installed: ${runs}. ${by}`, note: shadowed, action: "" };
   }
-  const dir = plan.link.replace(/[\\/][^\\/]*$/, "");
+  // On Windows the plan names a directory to add to the PATH, not a link.
+  const linking = /[\\/]baum$/.test(plan.link);
+  const dir = linking ? plan.link.replace(/[\\/][^\\/]*$/, "") : plan.link;
   const notes = [];
-  if (plan.admin) notes.push(`Changing ${dir} needs an administrator's password.`);
+  if (plan.admin && !plan.blocked) notes.push(`Changing ${dir} needs an administrator's password.`);
   if (!plan.on_path)
     notes.push(
       `${dir} is not on your PATH: add it in your shell's startup file so terminals and agents find baum.`,
     );
   if (command.path_error) notes.push(command.path_error);
+  const found = command.found;
+  if (plan.blocked) {
+    const state = found
+      ? `A different baum comes first on your PATH: ${found.path} (${version(found)}). ${plan.blocked}`
+      : plan.blocked;
+    return { state, note: notes.join(" "), action: "" };
+  }
   if (plan.replaces) {
     const other = plan.replaces;
     return {
@@ -59,12 +73,17 @@ function describeCommand(command) {
       replace: other.path,
     };
   }
-  const found = command.found;
-  const state = command.record
-    ? `The app's link at ${plan.link} no longer runs this app's baum. Updating points it at ${command.target}.`
-    : found
-      ? `${found.path} runs another copy of baum (${version(found)}).`
-      : `Not installed. Installing puts a link to the app's baum (${command.target}) at ${plan.link}.`;
+  let state;
+  if (!linking)
+    state =
+      `Not installed. Installing adds ${dir}, which holds only the app's baum, to the front of ` +
+      `your PATH; new terminals pick it up.` +
+      (found ? ` A different baum is on your PATH now: ${found.path} (${version(found)}).` : "");
+  else if (command.record)
+    state = `The app's link at ${plan.link} no longer runs this app's baum. Updating points it at ${command.target}.`;
+  else if (found) state = `${found.path} runs another copy of baum (${version(found)}).`;
+  else
+    state = `Not installed. Installing puts a link to the app's baum (${command.target}) at ${plan.link}.`;
   return { state, note: notes.join(" "), action: command.record ? "Update" : "Install" };
 }
 

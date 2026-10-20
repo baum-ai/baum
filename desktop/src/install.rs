@@ -2,14 +2,21 @@
 //! name, so the app makes its bundled binary that command: on macOS and Linux
 //! a symbolic link in a directory on the login shell's PATH, pointing at a
 //! stable path of the bundled binary (so updating the app updates the
-//! command); on Windows the bundled directory added to the user's PATH.
+//! command); on Windows a directory holding only the app's `baum.exe`, added
+//! to the user's PATH.
 //!
 //! What is on the PATH comes from the bundled `baum daemon login-path`, which
 //! reads the login shell the way the daemon does. This module only decides
 //! where the link goes and changes it, and only what the app recorded as its
 //! own is ever removed. A different `baum` already on the PATH is replaced
 //! only with the user's confirmation, and moved aside so that uninstalling
-//! puts it back.
+//! puts it back; one a package manager owns is left to it.
+//!
+//! Root acts only on system directories: a password prompt is used only for a
+//! directory outside the home directory, owned by root and reached without
+//! symbolic links, and only for paths that look like what the app installs.
+//! Both checks run in the app and again in the script root runs, so a
+//! tampered `setup.json` cannot point root at anything else.
 
 use std::fs;
 use std::io;
@@ -77,6 +84,8 @@ pub struct Plan {
     /// Whether the directory is on the login shell's PATH. When it is not,
     /// the command works only once the user adds it.
     pub on_path: bool,
+    /// Why the app will not install there, and what the user can do instead.
+    pub blocked: Option<String>,
 }
 
 /// The command's state, for the setup screen.
@@ -88,8 +97,11 @@ pub struct Status {
     pub unavailable: Option<String>,
     /// The baum that the hooks run now, if any.
     pub found: Option<Found>,
-    /// Whether that is the app's own baum.
+    /// Whether the app's baum is installed as the command.
     pub installed: bool,
+    /// Installed, but a different baum still comes first (Windows, where a
+    /// system PATH directory precedes the user's).
+    pub shadowed: Option<Found>,
     /// What the app installed earlier, if it still holds.
     pub record: Option<Record>,
     /// What Install would do, unless the command is installed.
@@ -100,22 +112,37 @@ pub struct Status {
 
 /// Runs a shell script with administrator rights: the password prompt of
 /// the operating system, then `/bin/sh -c script sh args...`. Paths travel
-/// only as arguments, never inside the script.
+/// only as arguments, never inside the script. An error is the message for
+/// the user.
 pub trait Elevate {
     fn run(&self, script: &str, args: &[&Path]) -> Result<(), String>;
 }
 
-/// The stable path the command links to. The binary next to the app's
-/// executable is stable in an installed app bundle, which updates replace in
-/// place. Two places are not: an AppImage runs from a mount that disappears
-/// when it quits, so the app keeps a copy in its data directory and refreshes
-/// it at every launch (`managed`); and a macOS app run from a disk image or
-/// translocated by Gatekeeper must first be moved to Applications.
-pub fn stable_target(bundled: &Path, managed: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(copy) = managed {
-        return Ok(copy.to_path_buf());
+/// The user-facing message for a privileged script that exited with `code`.
+#[cfg(unix)]
+fn script_failure(code: Option<i32>, stderr: &str) -> String {
+    match code {
+        Some(3) => {
+            "The baum command changed since the app installed it, so it was left alone.".into()
+        }
+        Some(4) => {
+            "The paths do not look like a baum command the app installs, so nothing was changed."
+                .into()
+        }
+        _ => format!(
+            "The change needs an administrator and did not succeed: {}",
+            stderr.trim()
+        ),
     }
-    let text = bundled.to_string_lossy();
+}
+
+/// The stable path the command links to: the baum the app runs. In an
+/// installed app bundle that is the binary next to the app's executable,
+/// which updates replace in place; an AppImage and Windows use a copy the app
+/// refreshes at every launch (see `refresh_copy`). A macOS app run from a
+/// disk image or translocated by Gatekeeper must first be moved.
+pub fn stable_target(cli: &Path) -> Result<PathBuf, String> {
+    let text = cli.to_string_lossy();
     if cfg!(target_os = "macos")
         && (text.contains("/AppTranslocation/") || text.starts_with("/Volumes/"))
     {
@@ -124,25 +151,62 @@ pub fn stable_target(bundled: &Path, managed: Option<&Path>) -> Result<PathBuf, 
                 .into(),
         );
     }
-    Ok(bundled.to_path_buf())
+    Ok(cli.to_path_buf())
 }
 
-/// Puts a copy of `source` at `copy` unless an identical one is there, for an
-/// AppImage. The copy and its directory are mode 0755 so that a daemon
-/// trusts it as the baum on its PATH.
+/// Puts a copy of `source` at `copy` unless the one there has the same size
+/// and modification time (which the copy is given), so a launch with an
+/// unchanged app reads neither file. The new file is written beside the copy
+/// and renamed over it: a daemon running the old one keeps its file. Windows
+/// cannot replace a running executable, so there the old one is first renamed
+/// aside. The copy and its directory are mode 0755 on Unix, so that a daemon
+/// trusts it as the baum on its PATH. Returns whether it copied.
 pub fn refresh_copy(source: &Path, copy: &Path) -> io::Result<bool> {
-    let data = fs::read(source)?;
-    if fs::read(copy).is_ok_and(|current| current == data) {
+    let wanted = fs::metadata(source)?;
+    if let Ok(current) = fs::metadata(copy)
+        && current.len() == wanted.len()
+        && current.modified().ok() == wanted.modified().ok()
+        && wanted.modified().is_ok()
+    {
         return Ok(false);
     }
     let dir = copy.parent().ok_or(io::ErrorKind::InvalidInput)?;
     create_dir(dir)?;
-    let temporary = dir.join(format!(".baum-{}", std::process::id()));
-    write_executable(&temporary, &data)?;
-    fs::rename(&temporary, copy).inspect_err(|_| {
+    let name = copy.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let temporary = dir.join(format!(
+        ".{}-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&temporary);
+    let written = write_copy(source, &temporary, &wanted).and_then(|()| replace(&temporary, copy));
+    if written.is_err() {
         let _ = fs::remove_file(&temporary);
-    })?;
-    Ok(true)
+    }
+    written.map(|()| true)
+}
+
+fn write_copy(source: &Path, temporary: &Path, wanted: &fs::Metadata) -> io::Result<()> {
+    let mut from = fs::File::open(source)?;
+    let mut to = new_executable(temporary)?;
+    io::copy(&mut from, &mut to)?;
+    if let Ok(modified) = wanted.modified() {
+        to.set_modified(modified)?;
+    }
+    to.sync_all()
+}
+
+fn replace(temporary: &Path, copy: &Path) -> io::Result<()> {
+    match fs::rename(temporary, copy) {
+        Err(e) if cfg!(windows) && copy.exists() => {
+            // A running baum.exe can be renamed but not replaced.
+            let old = copy.with_extension("exe.old");
+            let _ = fs::remove_file(&old);
+            fs::rename(copy, &old).map_err(|_| e)?;
+            fs::rename(temporary, copy)
+        }
+        result => result,
+    }
 }
 
 #[cfg(unix)]
@@ -160,21 +224,21 @@ fn create_dir(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn write_executable(path: &Path, data: &[u8]) -> io::Result<()> {
-    use std::io::Write;
+fn new_executable(path: &Path) -> io::Result<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
+    fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o755)
-        .open(path)?;
-    file.write_all(data)?;
-    file.sync_all()
+        .open(path)
 }
 
 #[cfg(not(unix))]
-fn write_executable(path: &Path, data: &[u8]) -> io::Result<()> {
-    fs::write(path, data)
+fn new_executable(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 /// Whether two paths name the same file once links are resolved.
@@ -195,6 +259,88 @@ fn holds(record: &Record) -> bool {
     fs::read_link(&record.link).is_ok_and(|target| target == record.target)
 }
 
+/// Whether a record has the shape of what the app installs: a link named
+/// `baum`, and a backup beside it with the backup suffix. The record lives in
+/// a file the user can edit, so anything else is refused before it reaches a
+/// privileged script.
+#[cfg(unix)]
+fn check_shape(record: &Record) -> Result<(), String> {
+    let refused = || {
+        Err(format!(
+            "The app's record of the baum command ({}) is not what the app installs, so it was not used.",
+            record.link.display()
+        ))
+    };
+    if record.link.file_name() != Some(NAME.as_ref()) || !record.link.is_absolute() {
+        return refused();
+    }
+    if let Some(backup) = &record.backup {
+        let name = backup.file_name().map(|n| n.to_string_lossy().into_owned());
+        let base = format!("{NAME}{BACKUP_SUFFIX}");
+        let shaped = name.as_deref().is_some_and(|n| {
+            n == base
+                || n.strip_prefix(&format!("{base}."))
+                    .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+        });
+        if !shaped || backup.parent() != record.link.parent() {
+            return refused();
+        }
+    }
+    Ok(())
+}
+
+/// Whether root may change `dir` for the user: a directory (or the nearest
+/// existing ancestor of one to create) owned by root, reached without
+/// symbolic links, and outside the home directory. Inside the home directory
+/// or through a link, the user or a process of theirs could point root at
+/// something else.
+#[cfg(unix)]
+pub fn may_elevate(dir: &Path, home: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !dir.is_absolute() {
+        return false;
+    }
+    let canonical_home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    if dir.starts_with(home) || dir.starts_with(&canonical_home) {
+        return false;
+    }
+    let mut existing = dir;
+    while fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return false,
+        }
+    }
+    fs::canonicalize(existing).is_ok_and(|c| c == existing)
+        && fs::metadata(existing).is_ok_and(|m| m.is_dir() && m.uid() == 0)
+}
+
+/// Whether a package manager or version manager owns a baum: Homebrew's
+/// cellar, the Nix store, the system's own directories, or a shim directory
+/// (asdf, mise). Replacing it would break that manager's bookkeeping.
+#[cfg(unix)]
+pub fn package_managed(found: &Found) -> bool {
+    let system = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    let dir = found.path.parent().unwrap_or(Path::new(""));
+    let text = |p: &Path| p.to_string_lossy().into_owned();
+    let (path, resolved) = (text(&found.path), text(&found.resolved));
+    system.iter().any(|s| dir == Path::new(s))
+        || [&path, &resolved].iter().any(|p| {
+            p.contains("/Cellar/")
+                || p.starts_with("/nix/store/")
+                || p.contains("/.nix-profile/")
+                || p.contains("/shims/")
+        })
+}
+
+/// The checks `plan` makes of the filesystem, which tests replace.
+#[cfg(unix)]
+struct Rules<'a> {
+    home: &'a Path,
+    writable: &'a dyn Fn(&Path) -> bool,
+    may_elevate: &'a dyn Fn(&Path) -> bool,
+}
+
 /// Works out the command's state. `home` is the user's home directory.
 #[cfg(unix)]
 pub fn status(
@@ -203,15 +349,31 @@ pub fn status(
     record: Option<Record>,
     home: &Path,
 ) -> Status {
-    let record = record.filter(holds);
-    let found = login.baum.clone();
+    let elevate = |dir: &Path| may_elevate(dir, home);
+    let rules = Rules {
+        home,
+        writable: &writable,
+        may_elevate: &elevate,
+    };
+    status_with(target, login, record, &rules)
+}
+
+#[cfg(unix)]
+fn status_with(
+    target: Result<PathBuf, String>,
+    login: &LoginPath,
+    record: Option<Record>,
+    rules: &Rules,
+) -> Status {
+    let record = record.filter(|r| check_shape(r).is_ok() && holds(r));
     let mut status = Status {
         target: None,
         unavailable: None,
         installed: false,
+        shadowed: None,
         plan: None,
         path_error: login.error.clone(),
-        found,
+        found: login.baum.clone(),
         record,
     };
     let target = match target {
@@ -226,42 +388,48 @@ pub fn status(
         .as_ref()
         .is_some_and(|found| same_file(&found.resolved, &target));
     if !status.installed {
-        status.plan = Some(plan(login, status.record.as_ref(), home, writable));
+        status.plan = Some(plan(login, status.record.as_ref(), rules));
     }
     status.target = Some(target);
     status
 }
 
 /// Where the link goes. A different baum first on the PATH is replaced where
-/// it is, so the link takes its place in the PATH order; otherwise the link
-/// goes in the first of `~/.local/bin` and `~/bin` on the PATH, else in
-/// `/usr/local/bin` (with an administrator's password unless it is writable),
-/// else in `~/.local/bin`, which the user then has to add to the PATH.
+/// it is, so the link takes its place in the PATH order, unless a package
+/// manager owns it; otherwise the link goes in the first of `~/.local/bin` and
+/// `~/bin` on the PATH, else in `/usr/local/bin` (with an administrator's
+/// password unless it is writable), else in `~/.local/bin`, which the user
+/// then has to add to the PATH.
 #[cfg(unix)]
-fn plan(
-    login: &LoginPath,
-    record: Option<&Record>,
-    home: &Path,
-    writable: impl Fn(&Path) -> bool,
-) -> Plan {
+fn plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan {
     let on_path = |dir: &Path| login.path.iter().any(|entry| entry == dir);
     if let Some(found) = &login.baum {
         let dir = found.path.parent().unwrap_or(Path::new("/"));
         let ours = record.is_some_and(|r| r.link == found.path);
+        let admin = !(rules.writable)(dir);
+        let blocked = if !ours && package_managed(found) {
+            Some(format!(
+                "{} belongs to a package manager. Remove it with that package manager (for example `brew uninstall baum`), then check again.",
+                found.path.display()
+            ))
+        } else {
+            refuse_elevation(dir, admin, rules)
+        };
         return Plan {
             link: found.path.clone(),
             replaces: (!ours).then(|| found.clone()),
             backup: (!ours).then(|| backup_path(&found.path)),
-            admin: !writable(dir),
+            admin,
             on_path: true,
+            blocked,
         };
     }
-    let personal = [home.join(".local/bin"), home.join("bin")];
+    let personal = [rules.home.join(".local/bin"), rules.home.join("bin")];
     let system = PathBuf::from("/usr/local/bin");
     let dir = login
         .path
         .iter()
-        .find(|entry| personal.contains(entry) && writable(entry))
+        .find(|entry| personal.contains(entry) && (rules.writable)(entry))
         .cloned()
         .or_else(|| on_path(&system).then(|| system.clone()))
         .unwrap_or_else(|| personal[0].clone());
@@ -272,6 +440,7 @@ fn plan(
     let occupied = fs::symlink_metadata(&link).is_ok()
         && fs::metadata(&link).is_ok()
         && !record.is_some_and(|r| r.link == link);
+    let admin = !(rules.writable)(&dir);
     Plan {
         replaces: occupied.then(|| Found {
             path: link.clone(),
@@ -279,10 +448,21 @@ fn plan(
             version: String::new(),
         }),
         backup: occupied.then(|| backup_path(&link)),
-        admin: !writable(&dir),
+        admin,
         on_path: on_path(&dir),
+        blocked: refuse_elevation(&dir, admin, rules),
         link,
     }
+}
+
+#[cfg(unix)]
+fn refuse_elevation(dir: &Path, admin: bool, rules: &Rules) -> Option<String> {
+    (admin && !(rules.may_elevate)(dir)).then(|| {
+        format!(
+            "You cannot write to {}, and the app asks for an administrator's password only for system directories such as /usr/local/bin. Make the directory writable for yourself, or move what is in the way, then check again.",
+            dir.display()
+        )
+    })
 }
 
 /// A free name beside `path` for the baum it replaces.
@@ -329,6 +509,9 @@ pub fn install(
     confirmed: Option<&Path>,
     elevate: &dyn Elevate,
 ) -> Result<Record, String> {
+    if let Some(why) = &plan.blocked {
+        return Err(why.clone());
+    }
     if let Some(replaced) = &plan.replaces
         && confirmed != Some(replaced.path.as_path())
     {
@@ -338,41 +521,59 @@ pub fn install(
         ));
     }
     let dir = plan.link.parent().ok_or("The link has no directory.")?;
-    let backup = plan.replaces.as_ref().and(plan.backup.clone());
+    let record = Record {
+        link: plan.link.clone(),
+        target: target.to_path_buf(),
+        backup: plan.replaces.as_ref().and(plan.backup.clone()),
+        admin: plan.admin,
+    };
+    check_shape(&record)?;
     if plan.admin {
         let none = PathBuf::new();
         elevate.run(
             INSTALL_SCRIPT,
-            &[dir, &plan.link, backup.as_deref().unwrap_or(&none), target],
+            &[
+                dir,
+                &record.link,
+                record.backup.as_deref().unwrap_or(&none),
+                target,
+            ],
         )?;
     } else {
-        link(dir, &plan.link, backup.as_deref(), target).map_err(|e| {
+        link(dir, &record.link, record.backup.as_deref(), target).map_err(|e| {
             format!(
                 "Cannot install the baum command at {}: {e}",
-                plan.link.display()
+                record.link.display()
             )
         })?;
     }
-    Ok(Record {
-        link: plan.link.clone(),
-        target: target.to_path_buf(),
-        backup,
-        admin: plan.admin,
-    })
+    Ok(record)
 }
 
-/// The same steps as `link`, as root: create the directory, move a replaced
-/// baum aside, and put the link in place.
+/// The steps of `link`, as root: create the directory, move a replaced baum
+/// aside, and put the link in place, putting the replaced baum back if that
+/// fails. It refuses (exit 4) a link not named baum in the given directory
+/// and a backup not named as the app names them.
 #[cfg(unix)]
 const INSTALL_SCRIPT: &str = r#"set -e
+case "$2" in */baum) ;; *) exit 4;; esac
+[ "$1" = "${2%/baum}" ] || exit 4
+if [ -n "$3" ]; then
+  case "$3" in "$2".replaced-by-baum-app|"$2".replaced-by-baum-app.[0-9]*) ;; *) exit 4;; esac
+fi
 mkdir -p "$1"
 if [ -n "$3" ]; then mv "$2" "$3"; fi
-ln -sfn "$4" "$2""#;
+ln -sfn "$4" "$2" || { if [ -n "$3" ]; then mv "$3" "$2"; fi; exit 1; }"#;
 
-/// Removes the link only while it still points where the app put it, then
-/// puts a baum it replaced back.
+/// Removes the link only while it still points where the app put it (exit 3
+/// otherwise), then puts a baum it replaced back; the same shape checks as
+/// the install script (exit 4).
 #[cfg(unix)]
 const UNINSTALL_SCRIPT: &str = r#"set -e
+case "$1" in */baum) ;; *) exit 4;; esac
+if [ -n "$3" ]; then
+  case "$3" in "$1".replaced-by-baum-app|"$1".replaced-by-baum-app.[0-9]*) ;; *) exit 4;; esac
+fi
 [ "$(readlink "$1")" = "$2" ] || exit 3
 rm -f "$1"
 if [ -n "$3" ] && { [ -e "$3" ] || [ -L "$3" ]; }; then mv "$3" "$1"; fi"#;
@@ -399,34 +600,60 @@ fn link(dir: &Path, link: &Path, backup: Option<&Path>, target: &Path) -> io::Re
 
 /// Removes what the app installed and nothing else: the link, while it still
 /// points at the recorded target, and puts back a baum it replaced. A link
-/// someone changed since is left alone. Returns what happened, for the user.
+/// someone changed since is left alone. A link in a directory the user cannot
+/// write is removed through the password prompt only when the record is
+/// shaped as the app makes them, names `current` (the app's stable target
+/// now) and the directory is a system one. Returns what happened, for the
+/// user.
 #[cfg(unix)]
-pub fn uninstall(record: &Record, elevate: &dyn Elevate) -> Result<String, String> {
-    uninstall_with(record, elevate, writable)
+pub fn uninstall(
+    record: &Record,
+    current: Option<&Path>,
+    home: &Path,
+    elevate: &dyn Elevate,
+) -> Result<String, String> {
+    let elevate_here = |dir: &Path| may_elevate(dir, home);
+    uninstall_with(record, current, elevate, &writable, &elevate_here)
 }
 
 #[cfg(unix)]
 fn uninstall_with(
     record: &Record,
+    current: Option<&Path>,
     elevate: &dyn Elevate,
-    writable: impl Fn(&Path) -> bool,
+    writable: &dyn Fn(&Path) -> bool,
+    may_elevate: &dyn Fn(&Path) -> bool,
 ) -> Result<String, String> {
-    if !holds(record) {
-        return Ok(format!(
-            "{} no longer points at the app's baum, so it was left alone.",
-            record.link.display()
-        ));
-    }
+    check_shape(record)?;
     let restore = record
         .backup
         .as_deref()
         .filter(|b| fs::symlink_metadata(b).is_ok());
+    if !holds(record) {
+        let mut message = format!(
+            "{} no longer points at the app's baum, so it was left alone.",
+            record.link.display()
+        );
+        if let Some(backup) = restore {
+            message.push_str(&format!(
+                " The baum it had replaced is still at {}.",
+                backup.display()
+            ));
+        }
+        return Ok(message);
+    }
     let dir = record.link.parent().unwrap_or(Path::new("/"));
     if writable(dir) {
         fs::remove_file(&record.link)
             .and_then(|()| restore.map_or(Ok(()), |b| fs::rename(b, &record.link)))
             .map_err(|e| format!("Cannot remove {}: {e}", record.link.display()))?;
     } else {
+        if current != Some(record.target.as_path()) || !may_elevate(dir) {
+            return Err(format!(
+                "The app does not ask for an administrator's password to remove {}: it is not in a system directory or no longer points at this app. Remove it yourself if you no longer want it.",
+                record.link.display()
+            ));
+        }
         let none = PathBuf::new();
         elevate.run(
             UNINSTALL_SCRIPT,
@@ -467,13 +694,17 @@ end run"#;
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("-128") {
+        // "execution error: … (N)": N is the script's exit status, or -128
+        // when the user cancelled the prompt.
+        let code = stderr
+            .trim()
+            .strip_suffix(')')
+            .and_then(|s| s.rsplit('(').next())
+            .and_then(|n| n.parse::<i32>().ok());
+        if code == Some(-128) {
             return Err("Cancelled.".into());
         }
-        Err(format!(
-            "The change needs an administrator and did not succeed: {}",
-            stderr.trim()
-        ))
+        Err(script_failure(code, &stderr))
     }
 }
 
@@ -492,12 +723,14 @@ impl Elevate for SystemPrompt {
             })?;
         match output.status.code() {
             Some(0) => Ok(()),
-            // pkexec: the user dismissed the prompt, or was not authorized.
-            Some(126) | Some(127) => Err("Cancelled.".into()),
-            _ => Err(format!(
-                "The change needs an administrator and did not succeed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )),
+            // pkexec: the user dismissed the prompt or was not authorized.
+            Some(126) => Err("Cancelled.".into()),
+            // pkexec: no authentication agent could ask.
+            Some(127) => Err(
+                "No authorization agent is running to ask for your password, so nothing was changed."
+                    .into(),
+            ),
+            code => Err(script_failure(code, &String::from_utf8_lossy(&output.stderr))),
         }
     }
 }
@@ -509,9 +742,10 @@ impl Elevate for SystemPrompt {
     }
 }
 
-/// Windows has no links on the PATH to place: the app adds the directory of
-/// its bundled `baum.exe` to the front of the user's PATH (new terminals
-/// pick it up) and removes it again on uninstall.
+/// Windows has no links on the PATH to place: the app puts its `baum.exe`
+/// alone in a directory of its data directory (`target`, refreshed at every
+/// launch), adds that directory to the front of the user's PATH (new
+/// terminals pick it up) and removes it again on uninstall.
 #[cfg(windows)]
 pub fn status(
     target: Result<PathBuf, String>,
@@ -523,6 +757,7 @@ pub fn status(
         target: None,
         unavailable: None,
         installed: false,
+        shadowed: None,
         plan: None,
         path_error: login.error.clone(),
         found: login.baum.clone(),
@@ -539,11 +774,11 @@ pub fn status(
     let listed = windows::user_path()
         .map(|entries| entries.iter().any(|e| windows::same_dir(e, &dir)))
         .unwrap_or(false);
-    status.installed = listed
-        || status
-            .found
-            .as_ref()
-            .is_some_and(|found| same_file(&found.resolved, &target));
+    let runs_target = |found: &Found| same_file(&found.resolved, &target);
+    status.installed = listed || status.found.as_ref().is_some_and(runs_target);
+    if status.installed {
+        status.shadowed = status.found.clone().filter(|f| !runs_target(f));
+    }
     status.record = status.record.filter(|r| listed && r.link == dir);
     if !status.installed {
         status.plan = Some(Plan {
@@ -552,6 +787,7 @@ pub fn status(
             backup: None,
             admin: false,
             on_path: true,
+            blocked: None,
         });
     }
     status.target = Some(target);
@@ -575,7 +811,12 @@ pub fn install(
 }
 
 #[cfg(windows)]
-pub fn uninstall(record: &Record, _elevate: &dyn Elevate) -> Result<String, String> {
+pub fn uninstall(
+    record: &Record,
+    _current: Option<&Path>,
+    _home: &Path,
+    _elevate: &dyn Elevate,
+) -> Result<String, String> {
     windows::change_user_path(&record.link, false)?;
     Ok(format!(
         "Removed {} from your PATH. Open a new terminal for it to take effect.",
@@ -588,17 +829,25 @@ mod windows {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    /// Reads and writes the user's PATH in the registry as PowerShell does,
-    /// keeping unexpanded variables, and announces the change so new
-    /// terminals see it. The directory travels in an environment variable.
+    /// Reads and writes the user's PATH in the registry, keeping unexpanded
+    /// variables, and announces the change so new terminals see it. Entries
+    /// are compared with their variables expanded, so `%LOCALAPPDATA%\…`
+    /// counts as the same directory. The directory travels in an environment
+    /// variable, never in the script.
     const SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
 $path = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
-if ($env:BAUM_PATH_ACTION -eq 'read') { Write-Output $path; exit 0 }
+$expand = { param($p) [Environment]::ExpandEnvironmentVariables($p).TrimEnd('\') }
+if ($env:BAUM_PATH_ACTION -eq 'read') {
+  Write-Output ((@($path -split ';' | Where-Object { $_ }) | ForEach-Object { & $expand $_ }) -join ';')
+  exit 0
+}
 $dir = $env:BAUM_PATH_DIR.TrimEnd('\')
-$rest = @($path -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir) })
+$rest = @($path -split ';' | Where-Object { $_ -and ((& $expand $_) -ne $dir) })
 if ($env:BAUM_PATH_ACTION -eq 'add') { $rest = @($dir) + $rest }
-$key.SetValue('Path', ($rest -join ';'), 'ExpandString')
+$new = $rest -join ';'
+if ($new.Length -gt 32000) { throw 'Your PATH is too long to add another directory; remove entries you no longer need.' }
+$key.SetValue('Path', $new, 'ExpandString')
 [Environment]::SetEnvironmentVariable('BAUM_PATH_REFRESH', '1', 'User')
 [Environment]::SetEnvironmentVariable('BAUM_PATH_REFRESH', $null, 'User')"#;
 
@@ -618,6 +867,7 @@ $key.SetValue('Path', ($rest -join ';'), 'ExpandString')
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    /// The user's PATH entries, variables expanded.
     pub fn user_path() -> Result<Vec<PathBuf>, String> {
         Ok(powershell("read", Path::new(""))?
             .split(';')
@@ -646,17 +896,20 @@ mod tests {
     struct Shell;
     impl Elevate for Shell {
         fn run(&self, script: &str, args: &[&Path]) -> Result<(), String> {
-            let status = std::process::Command::new("/bin/sh")
+            let output = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(script)
                 .arg("sh")
                 .args(args)
-                .status()
+                .output()
                 .map_err(|e| e.to_string())?;
-            status
-                .success()
-                .then_some(())
-                .ok_or_else(|| format!("script failed: {status}"))
+            if output.status.success() {
+                return Ok(());
+            }
+            Err(script_failure(
+                output.status.code(),
+                &String::from_utf8_lossy(&output.stderr),
+            ))
         }
     }
 
@@ -707,7 +960,29 @@ mod tests {
         }
 
         fn status(&self, path: &[PathBuf], record: Option<Record>) -> Status {
-            status(Ok(self.app.clone()), &self.login(path), record, &self.home)
+            self.status_for(&self.app, path, record)
+        }
+
+        fn status_for(&self, target: &Path, path: &[PathBuf], record: Option<Record>) -> Status {
+            status(
+                Ok(target.to_path_buf()),
+                &self.login(path),
+                record,
+                &self.home,
+            )
+        }
+
+        /// As `status`, with every directory outside the home one root may
+        /// change, so the administrator scripts can be exercised.
+        fn status_elevating(&self, path: &[PathBuf]) -> Status {
+            let home = self.home.clone();
+            let elevate = move |dir: &Path| !dir.starts_with(&home);
+            let rules = Rules {
+                home: &self.home,
+                writable: &writable,
+                may_elevate: &elevate,
+            };
+            status_with(Ok(self.app.clone()), &self.login(path), None, &rules)
         }
     }
 
@@ -723,6 +998,11 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    fn running_as_root() -> bool {
+        // SAFETY: getuid has no preconditions and cannot fail.
+        unsafe { libc::getuid() == 0 }
+    }
+
     #[test]
     fn installs_into_local_bin_when_no_baum_is_on_the_path() {
         let w = World::new("fresh");
@@ -731,12 +1011,12 @@ mod tests {
         assert!(!before.installed && before.found.is_none());
         let plan = before.plan.unwrap();
         assert_eq!(plan.link, w.local_bin().join("baum"));
-        assert!(plan.replaces.is_none() && !plan.admin && plan.on_path);
+        assert!(plan.replaces.is_none() && !plan.admin && plan.on_path && plan.blocked.is_none());
 
         let record = install(&plan, &w.app, None, &NoPrompt).unwrap();
         assert_eq!(fs::read_link(&record.link).unwrap(), w.app);
         let after = w.status(&path, Some(record.clone()));
-        assert!(after.installed && after.plan.is_none());
+        assert!(after.installed && after.plan.is_none() && after.shadowed.is_none());
         assert_eq!(after.record, Some(record));
     }
 
@@ -763,17 +1043,57 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_this_user_cannot_write_needs_an_administrator() {
-        let w = World::new("admin");
-        let locked = w.root.join("locked");
-        fs::create_dir_all(&locked).unwrap();
-        let other = locked.join("baum");
-        executable(&other, "other");
+    fn root_may_change_only_system_directories() {
+        let w = World::new("elevate");
+        assert!(!may_elevate(&w.local_bin(), &w.home));
+        assert!(!may_elevate(&w.home.join("anything/bin"), &w.home));
+        // Owned by this user, not root (unless the tests run as root).
+        let mine = w.root.join("opt/bin");
+        fs::create_dir_all(&mine).unwrap();
+        assert_eq!(may_elevate(&mine, &w.home), running_as_root());
+        // Reached through a symbolic link.
+        let linked = w.root.join("linked");
+        symlink("/usr", &linked).unwrap();
+        assert!(!may_elevate(&linked.join("bin"), &w.home));
+        assert!(!may_elevate(Path::new("relative/bin"), &w.home));
+        // /usr is root's and canonical on every Unix the app supports.
+        assert!(may_elevate(Path::new("/usr/local/bin"), &w.home));
+    }
+
+    #[test]
+    fn a_home_directory_that_would_need_a_password_is_refused() {
+        if running_as_root() {
+            return;
+        }
+        let w = World::new("home-admin");
+        let locked = w.home.join("tools/bin");
+        executable(&locked.join("baum"), "theirs");
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
         let plan = w.status(std::slice::from_ref(&locked), None).plan.unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(plan.admin, "{plan:?}");
-        // The administrator's script does what the unprivileged path does.
+        assert!(plan.admin);
+        let why = plan.blocked.clone().unwrap();
+        assert!(why.contains("system directories"), "{why}");
+        let refused = install(&plan, &w.app, Some(&locked.join("baum")), &NoPrompt).unwrap_err();
+        assert_eq!(refused, why);
+    }
+
+    #[test]
+    fn the_administrator_scripts_do_what_the_unprivileged_path_does() {
+        if running_as_root() {
+            return;
+        }
+        let w = World::new("admin");
+        let locked = w.root.join("locked");
+        let other = locked.join("baum");
+        executable(&other, "other");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        let plan = w
+            .status_elevating(std::slice::from_ref(&locked))
+            .plan
+            .unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(plan.admin && plan.blocked.is_none(), "{plan:?}");
         let record = install(&plan, &w.app, Some(&other), &Shell).unwrap();
         assert_eq!(fs::read_link(&other).unwrap(), w.app);
         assert!(record.admin);
@@ -782,13 +1102,91 @@ mod tests {
             fs::read_to_string(&backup).unwrap(),
             "#!/bin/sh\necho other\n"
         );
-        let message = uninstall_with(&record, &Shell, |_| false).unwrap();
+        let message = uninstall_with(&record, Some(&w.app), &Shell, &|_| false, &|_| true).unwrap();
         assert!(message.contains("put back"), "{message}");
         assert_eq!(
             fs::read_to_string(&other).unwrap(),
             "#!/bin/sh\necho other\n"
         );
         assert!(fs::symlink_metadata(&backup).is_err());
+    }
+
+    /// The scripts root runs check the paths themselves, whatever the app
+    /// passes them.
+    #[test]
+    fn the_administrator_scripts_refuse_other_paths() {
+        let w = World::new("scripts");
+        let dir = w.root.join("bin");
+        fs::create_dir_all(&dir).unwrap();
+        let victim = w.root.join("victim");
+        fs::write(&victim, "keep").unwrap();
+        let none = PathBuf::new();
+        let run = |script: &str, args: &[&Path]| Shell.run(script, args).unwrap_err();
+        let not_baum = run(INSTALL_SCRIPT, &[&dir, &dir.join("sh"), &none, &w.app]);
+        assert!(not_baum.contains("do not look like"), "{not_baum}");
+        let other_dir = run(INSTALL_SCRIPT, &[&w.root, &dir.join("baum"), &none, &w.app]);
+        assert!(other_dir.contains("do not look like"), "{other_dir}");
+        let backup = run(INSTALL_SCRIPT, &[&dir, &dir.join("baum"), &victim, &w.app]);
+        assert!(backup.contains("do not look like"), "{backup}");
+        assert_eq!(
+            run(UNINSTALL_SCRIPT, &[&victim, &w.app, &none]),
+            script_failure(Some(4), "")
+        );
+        let link = dir.join("baum");
+        symlink("/elsewhere", &link).unwrap();
+        assert_eq!(
+            run(UNINSTALL_SCRIPT, &[&link, &w.app, &none]),
+            script_failure(Some(3), "")
+        );
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(fs::symlink_metadata(&link).is_ok());
+    }
+
+    /// A record edited to name other paths is never acted on.
+    #[test]
+    fn a_tampered_record_is_refused() {
+        let w = World::new("tampered");
+        let path = [w.local_bin()];
+        let record = install(
+            &w.status(&path, None).plan.unwrap(),
+            &w.app,
+            None,
+            &NoPrompt,
+        )
+        .unwrap();
+        let victim = w.root.join("victim");
+        fs::write(&victim, "keep").unwrap();
+        for tampered in [
+            Record {
+                link: victim.clone(),
+                ..record.clone()
+            },
+            Record {
+                backup: Some(victim.clone()),
+                ..record.clone()
+            },
+            Record {
+                backup: Some(w.local_bin().join("baum.replaced-by-baum-app.x")),
+                ..record.clone()
+            },
+        ] {
+            let err = uninstall_with(&tampered, Some(&w.app), &NoPrompt, &writable, &|_| true)
+                .unwrap_err();
+            assert!(err.contains("not what the app installs"), "{err}");
+            assert!(w.status(&path, Some(tampered)).record.is_none());
+        }
+        // A link the user cannot write, for another target: no prompt.
+        let elsewhere = Record {
+            target: w.root.join("other-app/baum"),
+            ..record.clone()
+        };
+        symlink(&elsewhere.target, w.root.join("dangling")).unwrap();
+        fs::remove_file(&record.link).unwrap();
+        symlink(&elsewhere.target, &record.link).unwrap();
+        let err =
+            uninstall_with(&elsewhere, Some(&w.app), &NoPrompt, &|_| false, &|_| true).unwrap_err();
+        assert!(err.contains("Remove it yourself"), "{err}");
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
     }
 
     /// A baum from `go install` comes first on the PATH: it is shown, and
@@ -806,6 +1204,7 @@ mod tests {
         assert_eq!(before.found.as_ref().unwrap().path, theirs);
         let plan = before.plan.unwrap();
         assert_eq!(plan.link, theirs);
+        assert!(plan.blocked.is_none());
         assert_eq!(plan.replaces.as_ref().unwrap().version, "v0.2.9");
         assert_eq!(
             plan.backup.as_deref(),
@@ -822,9 +1221,60 @@ mod tests {
         assert_eq!(fs::read_link(&theirs).unwrap(), w.app);
         assert!(w.status(&path, Some(record.clone())).installed);
 
-        uninstall(&record, &NoPrompt).unwrap();
+        uninstall(&record, Some(&w.app), &w.home, &NoPrompt).unwrap();
         assert_eq!(fs::read_to_string(&theirs).unwrap(), "#!/bin/sh\necho go\n");
         assert!(fs::symlink_metadata(go_bin.join("baum.replaced-by-baum-app")).is_err());
+    }
+
+    /// A baum a package manager owns is not replaced in place: the screen
+    /// says to remove it with that manager.
+    #[test]
+    fn leaves_package_managed_baums_to_their_manager() {
+        let found = |path: &str, resolved: &str| Found {
+            path: path.into(),
+            resolved: resolved.into(),
+            version: String::new(),
+        };
+        for managed in [
+            found(
+                "/opt/homebrew/bin/baum",
+                "/opt/homebrew/Cellar/baum/0.3.0/bin/baum",
+            ),
+            found(
+                "/usr/local/bin/baum",
+                "/usr/local/Cellar/baum/0.3.0/bin/baum",
+            ),
+            found(
+                "/run/current-system/sw/bin/baum",
+                "/nix/store/abc-baum/bin/baum",
+            ),
+            found("/usr/bin/baum", "/usr/bin/baum"),
+            found("/sbin/baum", "/sbin/baum"),
+            found("/opt/u/.asdf/shims/baum", "/opt/u/.asdf/shims/baum"),
+            found(
+                "/opt/u/.local/share/mise/shims/baum",
+                "/opt/u/.local/share/mise/shims/baum",
+            ),
+        ] {
+            assert!(package_managed(&managed), "{managed:?}");
+        }
+        for own in [
+            found("/opt/u/go/bin/baum", "/opt/u/go/bin/baum"),
+            found("/usr/local/bin/baum", "/usr/local/bin/baum"),
+            found("/opt/u/.local/bin/baum", "/opt/baum/baum"),
+        ] {
+            assert!(!package_managed(&own), "{own:?}");
+        }
+
+        let w = World::new("brew");
+        let cellar = w.root.join("homebrew/Cellar/baum/0.3.0/bin/baum");
+        executable(&cellar, "brew");
+        let bin = w.root.join("homebrew/bin");
+        fs::create_dir_all(&bin).unwrap();
+        symlink(&cellar, bin.join("baum")).unwrap();
+        let plan = w.status(std::slice::from_ref(&bin), None).plan.unwrap();
+        let why = plan.blocked.unwrap();
+        assert!(why.contains("brew uninstall baum"), "{why}");
     }
 
     /// After the app is deleted, its link points nowhere: no baum is found,
@@ -845,7 +1295,7 @@ mod tests {
         for record in [Some(record), None] {
             fs::remove_file(&link).unwrap();
             symlink(&w.app, &link).unwrap();
-            let status = status(Ok(moved.clone()), &w.login(&path), record, &w.home);
+            let status = w.status_for(&moved, &path, record);
             assert!(!status.installed && status.found.is_none());
             let plan = status.plan.unwrap();
             assert_eq!(plan.link, link);
@@ -870,7 +1320,7 @@ mod tests {
         .unwrap();
         let newer = w.root.join("New/baum.app/Contents/MacOS/baum");
         executable(&newer, "new");
-        let status = status(Ok(newer.clone()), &w.login(&path), Some(record), &w.home);
+        let status = w.status_for(&newer, &path, Some(record));
         assert!(!status.installed);
         let plan = status.plan.unwrap();
         assert!(plan.replaces.is_none() && plan.link == w.local_bin().join("baum"));
@@ -891,15 +1341,23 @@ mod tests {
             &NoPrompt,
         )
         .unwrap();
-        let message = uninstall(&record, &NoPrompt).unwrap();
+        let message = uninstall(&record, Some(&w.app), &w.home, &NoPrompt).unwrap();
         assert!(message.starts_with("Removed the baum command"), "{message}");
         assert!(fs::symlink_metadata(&record.link).is_err());
         assert!(w.app.exists(), "the bundled binary was touched");
 
-        // Someone replaced the link with their own baum: it stays.
+        // Someone replaced the link with their own baum: it stays, and a
+        // backup the app made is named.
         executable(&record.link, "mine");
-        let message = uninstall(&record, &NoPrompt).unwrap();
+        let backup = w.local_bin().join("baum.replaced-by-baum-app");
+        fs::write(&backup, "old").unwrap();
+        let with_backup = Record {
+            backup: Some(backup.clone()),
+            ..record.clone()
+        };
+        let message = uninstall(&with_backup, Some(&w.app), &w.home, &NoPrompt).unwrap();
         assert!(message.contains("left alone"), "{message}");
+        assert!(message.contains(&backup.display().to_string()), "{message}");
         assert_eq!(
             fs::read_to_string(&record.link).unwrap(),
             "#!/bin/sh\necho mine\n"
@@ -922,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn the_appimage_copy_is_refreshed_only_when_it_changed() {
+    fn the_copy_is_refreshed_only_when_the_app_changed() {
         let w = World::new("copy");
         let copy = w.root.join("data/bin/baum");
         assert!(refresh_copy(&w.app, &copy).unwrap());
@@ -939,11 +1397,26 @@ mod tests {
                 & 0o777,
             0o755
         );
+        // A temporary file a crash left behind does not stop the next copy.
+        let stale = copy.with_file_name(format!(".baum-{}", std::process::id()));
+        fs::write(&stale, "stale").unwrap();
+        // An updated app: a different size, or the same size and a new time.
         executable(&w.app, "updated");
         assert!(refresh_copy(&w.app, &copy).unwrap());
         assert_eq!(fs::read(&copy).unwrap(), fs::read(&w.app).unwrap());
-        assert_eq!(stable_target(&w.app, Some(&copy)).unwrap(), copy);
-        assert_eq!(stable_target(&w.app, None).unwrap(), w.app);
+        assert!(fs::symlink_metadata(&stale).is_err());
+        let same_size = fs::File::options().write(true).open(&w.app).unwrap();
+        same_size
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert!(refresh_copy(&w.app, &copy).unwrap());
+        assert!(!refresh_copy(&w.app, &copy).unwrap());
+        // A running daemon keeps the file it started from.
+        let running = fs::File::open(&copy).unwrap();
+        executable(&w.app, "newer again");
+        assert!(refresh_copy(&w.app, &copy).unwrap());
+        drop(running);
+        assert_eq!(stable_target(&copy).unwrap(), copy);
     }
 
     #[test]

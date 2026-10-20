@@ -134,10 +134,10 @@ fn connect(app: &AppHandle, why: Attach) {
             return;
         };
         // The setup screen stays until the user leaves it, which attaches again.
-        if onboarding::is_open(&app) {
+        let Some(navigated) = onboarding::attach(&app, &window, &launch.url) else {
             return watch(&app, &state, attempt, &launch, why);
-        }
-        if let Err(e) = window.navigate(onboarding::landing(&app, &launch.url)) {
+        };
+        if let Err(e) = navigated {
             let failure = daemon::Failure {
                 message: format!("Cannot open the baum daemon: {e}"),
                 details: Vec::new(),
@@ -299,7 +299,8 @@ fn main() {
                 .visible(!hidden)
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
-                    match navigation::decide(url, daemon.as_ref()) {
+                    let setup = onboarding::is_open(&handle);
+                    match navigation::decide(url, daemon.as_ref(), setup) {
                         Decision::Allow => true,
                         Decision::OpenInBrowser => {
                             open_externally(&handle, url);

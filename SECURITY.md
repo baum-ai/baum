@@ -722,17 +722,25 @@ installs its bundled `baum` as your `baum` command, because agent hooks run
 - On macOS and Linux it creates one symbolic link named `baum` to the bundled
   binary, in `~/.local/bin` or `~/bin` when one is on your login shell's
   `PATH`, else in `/usr/local/bin`. Writing to a directory you cannot write
-  (usually `/usr/local/bin`) goes through the system password prompt
-  (`osascript` on macOS, `pkexec` on Linux), which runs a fixed shell script
-  that takes the paths as arguments. A different `baum` first on your `PATH`
-  is replaced only after you confirm, and is kept beside it as
-  `baum.replaced-by-baum-app`. An AppImage installs a copy of its baum in the
-  app's data directory instead, since its own files vanish when it quits.
-- On Windows it adds the bundled directory to the front of your user `PATH`.
+  goes through the system password prompt (`osascript` on macOS, `pkexec` on
+  Linux) only for a system directory: outside your home directory, owned by
+  root and reached without symbolic links (in practice `/usr/local/bin`).
+  Root then runs a fixed shell script that takes the paths as arguments and
+  refuses any link not named `baum` in that directory and any backup not
+  named as the app names them. A different `baum` first on your `PATH` is
+  replaced only after you confirm, and is kept beside it as
+  `baum.replaced-by-baum-app`; one a package manager owns (Homebrew, Nix,
+  the system directories, asdf or mise shims) is never replaced. An AppImage
+  links to a copy of its baum in the app's data directory, which the app also
+  runs, since its own files vanish when it quits.
+- On Windows it keeps a copy of its `baum.exe` alone in a directory of its
+  data directory and adds that directory to the front of your user `PATH`.
 - It records what it created in `setup.json` in its configuration directory.
   Removing the command deletes only that link, and only while it still points
   at the app's baum, and puts back a baum it replaced; on Windows it removes
-  the `PATH` entry.
+  the `PATH` entry. Since you (and your programs) can edit that file, the app
+  asks for the password to remove a link only when the record has the shape
+  the app writes and names the baum the app runs now.
 
 The user-wide hooks are installed and removed by the bundled `baum hooks
 install --user` and `uninstall --user` (see "Hosted service commands"). To see

@@ -13,7 +13,16 @@ pub enum Decision {
 
 /// Decides a navigation of the main window. `daemon` is the origin of the
 /// daemon the window is attached to, if any.
-pub fn decide(url: &Url, daemon: Option<&Origin>) -> Decision {
+pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision {
+    // The setup screen loads only while the app shows it, never because a
+    // page navigated there.
+    if is_bundled(url) && url.path() == "/setup.html" {
+        return if setup_open {
+            Decision::Allow
+        } else {
+            Decision::Deny
+        };
+    }
     if is_bundled(url) || daemon.is_some_and(|d| &url.origin() == d) {
         return Decision::Allow;
     }
@@ -26,7 +35,7 @@ pub fn decide(url: &Url, daemon: Option<&Origin>) -> Decision {
 /// Requests for a new window (`target="_blank"`, `window.open`) never open
 /// one: web links go to the browser.
 pub fn decide_new_window(url: &Url) -> Decision {
-    match decide(url, None) {
+    match decide(url, None, false) {
         Decision::OpenInBrowser => Decision::OpenInBrowser,
         _ => Decision::Deny,
     }
@@ -81,12 +90,16 @@ mod tests {
     #[test]
     fn allows_the_bundled_screen_and_the_daemon() {
         let daemon = url("http://127.0.0.1:4100/").origin();
-        assert_eq!(decide(&bundled_screen(), None), Decision::Allow);
+        assert_eq!(decide(&bundled_screen(), None, false), Decision::Allow);
         for u in [
             "http://127.0.0.1:4100/#token=x",
             "http://127.0.0.1:4100/s/abc/?page=jobs",
         ] {
-            assert_eq!(decide(&url(u), Some(&daemon)), Decision::Allow, "{u}");
+            assert_eq!(
+                decide(&url(u), Some(&daemon), false),
+                Decision::Allow,
+                "{u}"
+            );
         }
     }
 
@@ -98,7 +111,7 @@ mod tests {
             "http://example.com/",
         ] {
             assert_eq!(
-                decide(&url(u), Some(&daemon)),
+                decide(&url(u), Some(&daemon), false),
                 Decision::OpenInBrowser,
                 "{u}"
             );
@@ -124,13 +137,25 @@ mod tests {
             "tauri://elsewhere/",
             "mailto:someone@example.com",
         ] {
-            assert_eq!(decide(&url(u), Some(&daemon)), Decision::Deny, "{u}");
+            assert_eq!(decide(&url(u), Some(&daemon), false), Decision::Deny, "{u}");
         }
     }
 
     #[test]
+    fn the_setup_screen_loads_only_while_it_shows() {
+        let mut setup = bundled_screen();
+        setup.set_path("/setup.html");
+        assert_eq!(decide(&setup, None, true), Decision::Allow);
+        assert_eq!(decide(&setup, None, false), Decision::Deny);
+        assert_eq!(decide(&bundled_screen(), None, false), Decision::Allow);
+    }
+
+    #[test]
     fn without_a_daemon_loopback_is_refused() {
-        assert_eq!(decide(&url("http://127.0.0.1:4100/"), None), Decision::Deny);
+        assert_eq!(
+            decide(&url("http://127.0.0.1:4100/"), None, false),
+            Decision::Deny
+        );
     }
 
     #[test]

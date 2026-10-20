@@ -86,12 +86,35 @@ impl Failure {
     }
 }
 
-/// The `baum` binary the app runs: the one bundled next to the executable,
-/// or `BAUM_DESKTOP_BAUM` while developing.
+/// The `baum` binary the app runs: `BAUM_DESKTOP_BAUM` while developing, else
+/// the stable copy where the app keeps one, else the one bundled next to the
+/// executable.
 pub fn cli_path() -> Result<PathBuf, Failure> {
     if let Some(path) = std::env::var_os("BAUM_DESKTOP_BAUM") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(copy) = STABLE_CLI.get() {
+        return Ok(copy.clone());
+    }
+    bundled_cli_path()
+}
+
+/// A stable copy of the bundled binary that the app runs instead (an
+/// AppImage's mount vanishes when it quits; see `onboarding::start`). Set
+/// once, at startup, before anything runs baum.
+static STABLE_CLI: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn use_stable_cli(path: PathBuf) {
+    let _ = STABLE_CLI.set(path);
+}
+
+/// Whether `BAUM_DESKTOP_BAUM` names the baum to run (development).
+pub fn cli_overridden() -> bool {
+    std::env::var_os("BAUM_DESKTOP_BAUM").is_some()
+}
+
+/// The binary bundled next to the app's executable.
+pub fn bundled_cli_path() -> Result<PathBuf, Failure> {
     let exe = std::env::current_exe()
         .map_err(|e| Failure::new(format!("Cannot locate the app executable: {e}")))?;
     let name = if cfg!(windows) { "baum.exe" } else { "baum" };

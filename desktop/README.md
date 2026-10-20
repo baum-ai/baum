@@ -77,41 +77,64 @@ status --user --json` reports each agent's hooks.
 
 ### Where the command goes
 
-- **macOS and Linux:** a symbolic link named `baum` to the bundled binary.
-  - If a different `baum` comes first on the `PATH` (`go install`,
-    Homebrew, a release archive), the screen shows its path and version, and
-    replaces it only when the user clicks "Replace <path>": that file is
-    moved aside to `<path>.replaced-by-baum-app` and the link takes its
-    place, so it keeps its position on the `PATH`.
+- **macOS and Linux:** a symbolic link named `baum` to the baum the app runs.
+  - If a different `baum` comes first on the `PATH` (`go install`, a release
+    archive), the screen shows its path and version, and replaces it only
+    when the user clicks "Replace <path>": that file is moved aside to
+    `<path>.replaced-by-baum-app` and the link takes its place, so it keeps
+    its position on the `PATH`. One a package manager owns (Homebrew's
+    `Cellar`, the Nix store, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, or an
+    asdf or mise `shims` directory) is not replaced: the screen says to remove
+    it with that manager (for example `brew uninstall baum`).
   - Otherwise the link goes in the first of `~/.local/bin` and `~/bin` that
     is on the `PATH`, else in `/usr/local/bin`, else in `~/.local/bin` with a
-    note to add it to the `PATH`. A directory the user cannot write
-    (usually `/usr/local/bin`) is changed through the system's password
-    prompt (`osascript` with administrator privileges on macOS, `pkexec` on
-    Linux), which runs a fixed script that receives the paths as arguments.
+    note to add it to the `PATH`.
+  - A directory the user cannot write is changed through the system's
+    password prompt (`osascript` with administrator privileges on macOS,
+    `pkexec` on Linux) only when it is a system directory: outside the home
+    directory, owned by root and reached without symbolic links (in practice
+    `/usr/local/bin`). Anywhere else the screen says what is in the way
+    instead. Root runs a fixed script that receives the paths as arguments
+    and itself refuses a link not named `baum` in that directory, or a backup
+    not named `baum.replaced-by-baum-app[.N]` beside it. If placing the link
+    fails, the script puts the replaced baum back.
   - The link points at a stable path: the binary inside the installed app
     bundle (`baum.app/Contents/MacOS/baum`, or `/usr/bin/baum` from the deb),
-    which updates replace in place. An AppImage runs from a mount that
-    disappears when it quits, so the app keeps a copy in its data directory
-    (`bin/baum`, mode 0755) and refreshes it at every launch. On macOS an app
-    still on its disk image or translocated by Gatekeeper must be moved to
-    Applications first.
+    which updates replace in place. On macOS an app still on its disk image
+    or translocated by Gatekeeper must be moved to Applications first.
+  - An AppImage runs from a mount that disappears when it quits. The app
+    keeps a copy of its baum in its data directory (`bin/baum`, mode 0755),
+    refreshes it at every launch before anything runs baum (when its size or
+    modification time differs; the new file is renamed into place, so a
+    daemon running the old one keeps it), and runs that copy for everything:
+    the daemon, `login-path` and the hooks commands. The link points at the
+    copy, and removing the command leaves the copy. The app counts as an
+    AppImage only when `APPIMAGE` and `APPDIR` are set and its executable is
+    under `APPDIR`, since programs started from an AppImage inherit
+    `APPIMAGE`.
   - The deb's `/usr/bin/baum` already is the app's binary: the screen shows
     it as installed and leaves it to the package manager.
   - A link the app made whose app was since deleted points nowhere; shells
     and the hooks' `command -v baum` skip it, so the hooks do nothing. The
     next install replaces such a broken link without asking, and the app's
     own link to an older copy of the app is updated without asking.
-- **Windows:** the directory of the bundled `baum.exe` is added to the front
-  of the user's `PATH` (the registry value, keeping unexpanded variables);
-  new terminals pick it up. A `baum` in a system `PATH` directory still comes
-  first and is shown.
+- **Windows:** the app keeps a copy of its `baum.exe`, alone in `bin` in its
+  data directory and refreshed at every launch (a running copy is renamed
+  aside first), runs that copy, and adds the directory to the front of the
+  user's `PATH` (the registry value, keeping unexpanded variables, compared
+  with them expanded so `%LOCALAPPDATA%\…` counts as the same directory;
+  refused if the value would pass 32,000 characters). New terminals pick it
+  up. A `baum` in a system `PATH` directory still comes first; the screen
+  says so.
 
-Remove deletes only what the app recorded: the link, while it still points
-where the app put it (a link someone changed since is left alone), and puts
-back a baum it had replaced; on Windows it takes the directory off the user
-`PATH`. Hooks are removed with the bundled `baum hooks uninstall --user`,
-which removes only baum's own entries.
+`setup.json` is the user's file, so before anything reaches the password
+prompt the app checks that its record has this shape and names the baum the
+app runs now. Remove deletes only what the app recorded: the link, while it
+still points where the app put it (a link someone changed since is left
+alone, and the screen names a backup still beside it), and puts back a baum
+it had replaced; on Windows it takes the directory off the user `PATH`.
+Hooks are removed with the bundled `baum hooks uninstall --user`, which
+removes only baum's own entries.
 
 ### Restarts into the app's baum
 
@@ -124,7 +147,8 @@ Installing the link makes the bundled binary the `baum` on the `PATH`, so:
 - Linux deb (`/usr/bin/baum`) and the AppImage's copy in the user's data
   directory are trusted (the copy only while the home directory and
   `~/.local/share` are not group-writable, which a umask of 002 can cause).
-  The binary inside an AppImage's mount (under `/tmp`) never is.
+  The binary inside an AppImage's mount (under `/tmp`) never would be, which
+  is one more reason the app runs the copy.
 - macOS: `/Applications` is `root:admin`, mode 0775. The trust check accepts
   a directory that only the admin group may also write (its members can
   become root anyway), so an app there or in `~/Applications` is trusted, as

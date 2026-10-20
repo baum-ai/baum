@@ -103,17 +103,17 @@ fn save(app: &AppHandle, saved: &Saved) -> Result<(), String> {
 
 /// Prepares setup when the app starts and returns the bundled page the
 /// window opens on: the setup screen on first run, else the connecting
-/// screen. An AppImage's copy of baum is refreshed here, so updating the app
-/// updates the command.
+/// screen. Where the app keeps a stable copy of baum (an AppImage, Windows),
+/// it refreshes it here, before anything runs baum, and runs that copy from
+/// then on, so updating the app updates the command and the daemon.
 pub fn start(app: &AppHandle) -> &'static str {
-    let saved = load(app);
-    if let (Some(copy), Some(record), Ok(cli)) = (managed_copy(app), &saved.command, cli())
-        && record.target == copy
-        && let Err(e) = install::refresh_copy(&cli, &copy)
-    {
-        eprintln!("baum desktop: cannot update {}: {e}", copy.display());
+    if let (Some(copy), Ok(bundled)) = (managed_copy(app), crate::daemon::bundled_cli_path()) {
+        match install::refresh_copy(&bundled, &copy) {
+            Ok(_) => crate::daemon::use_stable_cli(copy),
+            Err(e) => eprintln!("baum desktop: cannot copy baum to {}: {e}", copy.display()),
+        }
     }
-    if saved.onboarded {
+    if load(app).onboarded {
         return CONNECTING_PAGE;
     }
     app.state::<Setup>().open.store(true, Ordering::SeqCst);
@@ -125,16 +125,39 @@ pub fn is_open(app: &AppHandle) -> bool {
     app.state::<Setup>().open.load(Ordering::SeqCst)
 }
 
-/// Opens the setup screen in the main window.
+/// Opens the setup screen in the main window. Runs on the main thread (menu
+/// events), as do `attach`'s decision and `finish_setup`, so where the window
+/// goes is decided in one place at a time.
 pub fn show(app: &AppHandle) {
-    app.state::<Setup>().open.store(true, Ordering::SeqCst);
     let Some(window) = app.get_webview_window(crate::MAIN) else {
         return;
     };
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+    app.state::<Setup>().open.store(true, Ordering::SeqCst);
     let _ = window.navigate(bundled(SETUP_PAGE));
+}
+
+/// Sends the window to the daemon's launch URL unless the setup screen
+/// shows; then it returns None, and leaving the screen attaches again. The
+/// check and the navigation run together on the main thread.
+pub fn attach(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    launch: &url::Url,
+) -> Option<tauri::Result<()>> {
+    let (send, receive) = mpsc::channel();
+    let (handle, window, launch) = (app.clone(), window.clone(), launch.clone());
+    let queued = app.run_on_main_thread(move || {
+        let open = handle.state::<Setup>().open.load(Ordering::SeqCst);
+        let result = (!open).then(|| window.navigate(landing(&handle, &launch)));
+        let _ = send.send(result);
+    });
+    if let Err(e) = queued {
+        return Some(Err(e));
+    }
+    receive.recv().unwrap_or(None)
 }
 
 fn bundled(page: &str) -> url::Url {
@@ -146,7 +169,7 @@ fn bundled(page: &str) -> url::Url {
 /// The URL to load for a launch URL: once after first-run setup, the
 /// daemon's diagnostics page, which the bootstrap page opens for a `page` of
 /// "diagnostics" beside the token.
-pub fn landing(app: &AppHandle, launch: &url::Url) -> url::Url {
+fn landing(app: &AppHandle, launch: &url::Url) -> url::Url {
     if app
         .state::<Setup>()
         .diagnostics_next
@@ -174,10 +197,15 @@ fn cli() -> Result<PathBuf, String> {
     crate::daemon::cli_path().map_err(|f| f.message)
 }
 
-/// Where an AppImage keeps its copy of baum: the binary in the AppImage's
-/// mount changes path at every launch.
+/// Where the app keeps a stable copy of baum, if it does: an AppImage's
+/// files vanish when it quits, so the daemon and the command must not run
+/// them; on Windows the copy sits alone in a directory the user's PATH can
+/// name. `APPIMAGE` alone is not enough, since children of an AppImage (such
+/// as an editor's terminal) inherit it: the app must run from `APPDIR`.
 fn managed_copy(app: &AppHandle) -> Option<PathBuf> {
-    std::env::var_os("APPIMAGE")?;
+    if crate::daemon::cli_overridden() || !(cfg!(windows) || running_as_appimage()) {
+        return None;
+    }
     let dir = app.path().app_data_dir().ok()?;
     Some(
         dir.join("bin")
@@ -185,8 +213,24 @@ fn managed_copy(app: &AppHandle) -> Option<PathBuf> {
     )
 }
 
+fn running_as_appimage() -> bool {
+    let (Some(_), Some(appdir)) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR")) else {
+        return false;
+    };
+    std::env::current_exe().is_ok_and(|exe| !appdir.is_empty() && exe.starts_with(&appdir))
+}
+
+/// The stable path the command links to: the baum the app runs.
 fn target(app: &AppHandle, cli: &Path) -> Result<PathBuf, String> {
-    install::stable_target(cli, managed_copy(app).as_deref())
+    if let Some(copy) = managed_copy(app)
+        && cli != copy
+    {
+        return Err(format!(
+            "The app could not copy its baum to {}, so the command cannot be installed. Restart the app to try again.",
+            copy.display()
+        ));
+    }
+    install::stable_target(cli)
 }
 
 /// What the setup screen shows.
@@ -316,17 +360,14 @@ pub async fn install_command(app: AppHandle, replace: Option<PathBuf>) -> Result
                 .unavailable
                 .unwrap_or_else(|| "The baum command cannot be installed.".into()));
         };
-        if managed_copy(&app).as_deref() == Some(target.as_path()) {
-            install::refresh_copy(&cli, &target)
-                .map_err(|e| format!("Cannot copy baum to {}: {e}", target.display()))?;
-        }
         let record = install::install(&plan, &target, replace.as_deref(), &SystemPrompt)?;
         let mut saved = load(&app);
         let mut lines = installed_lines(&plan, &record);
         // A link the app made elsewhere earlier, which a baum earlier on the
         // PATH hid, is not left behind unrecorded.
         if let Some(previous) = saved.command.take().filter(|p| p.link != record.link) {
-            match install::uninstall(&previous, &SystemPrompt) {
+            let home = app.path().home_dir().unwrap_or_default();
+            match install::uninstall(&previous, Some(target.as_path()), &home, &SystemPrompt) {
                 Ok(message) => lines.push(message),
                 Err(e) => lines.push(format!(
                     "The app's earlier link at {} stays: {e}",
@@ -375,10 +416,10 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
                 lines: vec!["The app has not installed a baum command.".into()],
             });
         };
-        let message = install::uninstall(&record, &SystemPrompt)?;
-        if managed_copy(&app).as_deref() == Some(record.target.as_path()) {
-            let _ = fs::remove_file(&record.target);
-        }
+        // The copy the app runs stays: only the link goes.
+        let current = cli().and_then(|cli| target(&app, &cli)).ok();
+        let home = app.path().home_dir().unwrap_or_default();
+        let message = install::uninstall(&record, current.as_deref(), &home, &SystemPrompt)?;
         saved.command = None;
         save(&app, &saved)?;
         Ok(Outcome {
@@ -413,7 +454,8 @@ async fn change_hooks(app: AppHandle, action: &'static str) -> Result<Outcome, S
     .await
 }
 
-/// Leaves the setup screen: records that first-run setup is done, returns
+/// Leaves the setup screen (a synchronous command, so on the main thread):
+/// records that first-run setup is done, returns
 /// to the connecting screen and attaches to the daemon, opening its
 /// diagnostics page after a first run.
 #[tauri::command]
@@ -550,7 +592,7 @@ mod tests {
     fn the_setup_page_is_bundled() {
         let url = bundled(SETUP_PAGE);
         assert_eq!(
-            crate::navigation::decide(&url, None),
+            crate::navigation::decide(&url, None, true),
             crate::navigation::Decision::Allow
         );
         assert!(url.path().ends_with("/setup.html"));
