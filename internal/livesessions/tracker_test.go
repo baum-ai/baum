@@ -56,7 +56,7 @@ func (s *source) Subscribe(buffer int, _ func(hookevents.Event) bool) (<-chan ho
 func event(id, name string, at time.Time, cwd string) hookevents.Event {
 	e := hookevents.New(hookevents.KindAgent, "claude-code", name, cwd, "test")
 	e.Time = at
-	e.Session = &hookevents.Session{ID: id, Cwd: cwd, TranscriptPath: "/home/someone/.claude/projects/x/" + id + ".jsonl"}
+	e.Session = &hookevents.Session{ID: id, Cwd: cwd, TranscriptPath: "/var/transcripts/" + id + ".jsonl"}
 	return e
 }
 
@@ -322,7 +322,7 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 	if response.Code != 200 || response.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("%d %s", response.Code, body)
 	}
-	for _, leak := range []string{"/work", "/home", "transcript", "jsonl", "cwd", "private"} {
+	for _, leak := range []string{"/work", "/var/transcripts", "transcript", "jsonl", "cwd", "private"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("payload leaks %q: %s", leak, body)
 		}
