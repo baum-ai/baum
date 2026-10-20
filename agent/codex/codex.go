@@ -322,6 +322,12 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if lastError != "" {
 			status, structured := failureStatus(lastError)
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: structured})
+			// A refusal read from the provider ends the run whether or not
+			// Codex reported a failed turn before exiting.
+			var rejected *agent.RejectedError
+			if err := agent.ProviderFailure("codex", status, structured); errors.As(err, &rejected) {
+				return result, err
+			}
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {

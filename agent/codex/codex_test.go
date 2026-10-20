@@ -235,6 +235,7 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 		{"failed turn without message", `{"type":"error","message":"unexpected status 429 Too Many Requests"}
 {"type":"turn.failed"}`, "rate_limit", false},
 		{"nonzero exit", `{"type":"error","message":"unexpected status 401 Unauthorized"}`, "authentication_error", true},
+		{"nonzero exit on an outage", `{"type":"error","message":"unexpected status 502 Bad Gateway"}`, "error", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			script := filepath.Join(t.TempDir(), "codex")
@@ -247,6 +248,11 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 			var rejected *agent.RejectedError
 			if err == nil || (!tt.exit && err.Error() != agent.ReasonProviderUnavailable && !errors.As(err, &rejected)) {
 				t.Fatalf("err = %v", err)
+			}
+			// A refusal read from the provider ends the run on a nonzero
+			// exit too.
+			if tt.exit && (agent.IsRejectedStatus(tt.want) != errors.As(err, &rejected)) {
+				t.Fatalf("err = %v, want a rejection %t", err, agent.IsRejectedStatus(tt.want))
 			}
 			if status := agent.LastErrorStatus(result.Events); status != tt.want || strings.Contains(fmt.Sprintf("%+v", result.Events), "unexpected") {
 				t.Fatalf("status = %q, want %q (events %+v)", status, tt.want, result.Events)
