@@ -276,26 +276,3 @@ func TestStopWithoutAStateDirectoryCreatesNone(t *testing.T) {
 		t.Error("stop made the daemon look as if it ran")
 	}
 }
-
-// The socket a starting client resolved reaches the daemon it starts.
-func TestDaemonRunTakesTheSocketItIsGiven(t *testing.T) {
-	stubDaemon(t)
-	cmd := newDaemonCommand()
-	run, _, err := cmd.Find([]string{"run"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = run.ParseFlags([]string{"--socket", "/run/elsewhere/daemon.sock"}); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := runPaths(run)
-	if err != nil || paths.Socket != "/run/elsewhere/daemon.sock" {
-		t.Fatalf("paths = %+v, %v", paths, err)
-	}
-	if err = run.ParseFlags([]string{"--socket", "relative.sock"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = runPaths(run); err == nil {
-		t.Error("a relative socket was accepted")
-	}
-}

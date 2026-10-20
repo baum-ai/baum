@@ -52,28 +52,84 @@ var CheckpointSessions = []string{"7f85b0e9-4f7a-4a81-a27e-1393aa1e80f6", "d9f72
 // Entire checkpoint branch at CheckpointID, and leaves the clone on main.
 func (f Fixture) AddCheckpoint(t *testing.T) {
 	t.Helper()
-	f.addCheckpoint(t, func(text string) string { return text })
+	f.addCheckpoint(t, CheckpointID, func(text string) string { return text })
 }
 
 // AddCheckpointEditing is AddCheckpoint with the checkpoint's first session
 // editing path, relative to the clone, instead of only reading a file.
 func (f Fixture) AddCheckpointEditing(t *testing.T, path string) {
 	t.Helper()
-	f.addCheckpoint(t, func(text string) string {
+	f.addCheckpoint(t, CheckpointID, func(text string) string {
 		return strings.ReplaceAll(text, `"name":"Read","input":{"file_path":"/repo/parse.go"}`,
 			`"name":"Edit","input":{"file_path":"/repo/`+path+`","old_string":"a","new_string":"b"}`)
 	})
 }
 
-func (f Fixture) addCheckpoint(t *testing.T, edit func(string) string) {
+// AddCheckpointAt commits another copy of the checkpoint fixture at id, a
+// 12-hex checkpoint id, beside any checkpoint already on the branch. Its two
+// sessions are renamed to sessions, which replace CheckpointSessions in order,
+// so two checkpoints can record different sessions.
+func (f Fixture) AddCheckpointAt(t *testing.T, id string, sessions [2]string) {
+	t.Helper()
+	f.addCheckpoint(t, id, func(text string) string {
+		text = strings.ReplaceAll(text, CheckpointID, id)
+		text = strings.ReplaceAll(text, "/"+CheckpointID[:2]+"/"+CheckpointID[2:]+"/", "/"+id[:2]+"/"+id[2:]+"/")
+		for i, session := range CheckpointSessions {
+			text = strings.ReplaceAll(text, session, sessions[i])
+		}
+		return text
+	})
+}
+
+func (f Fixture) addCheckpoint(t *testing.T, id string, edit func(string) string) {
+	t.Helper()
+	if branches := git(t, f.Repo, "branch", "--list", "entire/checkpoints/v1"); branches != "" {
+		git(t, f.Repo, "checkout", "-q", "entire/checkpoints/v1")
+	} else {
+		git(t, f.Repo, "checkout", "-q", "--orphan", "entire/checkpoints/v1")
+		git(t, f.Repo, "rm", "-rqf", ".")
+	}
+	copyCheckpoint(t, filepath.Join(f.Repo, id[:2], id[2:]), edit)
+	git(t, f.Repo, "add", "-A")
+	git(t, f.Repo, "commit", "-q", "-m", "Checkpoint: "+id)
+	git(t, f.Repo, "checkout", "-q", "main")
+}
+
+// AddRefCheckpoint adds the checkpoint fixture to the clone's git-refs store,
+// as Entire writes it: a commit whose root tree is the checkpoint, at
+// refs/entire/checkpoints/<last two characters of id>/<id>. id is a 12-hex or
+// ULID checkpoint id. The checkpoint's two sessions are renamed to sessions,
+// which replace CheckpointSessions in order, and its session paths carry no
+// shard prefix, as in a real ref. The clone is left on main.
+func (f Fixture) AddRefCheckpoint(t *testing.T, id string, sessions [2]string) {
+	t.Helper()
+	const scratch = "linktest-ref-checkpoint"
+	git(t, f.Repo, "checkout", "-q", "--orphan", scratch)
+	git(t, f.Repo, "rm", "-rqf", ".")
+	copyCheckpoint(t, f.Repo, func(text string) string {
+		text = strings.ReplaceAll(text, "/"+CheckpointID[:2]+"/"+CheckpointID[2:]+"/", "/")
+		text = strings.ReplaceAll(text, CheckpointID, id)
+		for i, session := range CheckpointSessions {
+			text = strings.ReplaceAll(text, session, sessions[i])
+		}
+		return text
+	})
+	git(t, f.Repo, "add", "-A")
+	git(t, f.Repo, "commit", "-q", "-m", "Checkpoint: "+id)
+	git(t, f.Repo, "update-ref", "refs/entire/checkpoints/"+id[len(id)-2:]+"/"+id, "HEAD")
+	git(t, f.Repo, "checkout", "-q", "main")
+	git(t, f.Repo, "branch", "-qD", scratch)
+}
+
+// copyCheckpoint writes the checkpoint fixture's files under dst, each text
+// passed through edit.
+func copyCheckpoint(t *testing.T, dst string, edit func(string) string) {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate the checkpoint fixture")
 	}
 	src := filepath.Join(filepath.Dir(file), "..", "..", "..", "sessions", "entirecheckpoint", "testdata", "two_claude")
-	git(t, f.Repo, "checkout", "-q", "--orphan", "entire/checkpoints/v1")
-	git(t, f.Repo, "rm", "-rqf", ".")
 	if err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -86,12 +142,9 @@ func (f Fixture) addCheckpoint(t *testing.T, edit func(string) string) {
 		if err != nil {
 			return err
 		}
-		write(t, filepath.Join(f.Repo, CheckpointID[:2], CheckpointID[2:], rel), edit(string(data)))
+		write(t, filepath.Join(dst, rel), edit(string(data)))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	git(t, f.Repo, "add", "-A")
-	git(t, f.Repo, "commit", "-q", "-m", "Checkpoint: "+CheckpointID)
-	git(t, f.Repo, "checkout", "-q", "main")
 }

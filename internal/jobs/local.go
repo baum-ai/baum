@@ -107,8 +107,12 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), Draft: pr.Draft, EstimateUSD: list.Estimate(selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)}
-	if p.EstimateUSD == nil {
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), Draft: pr.Draft}
+	// A backend billed by its own subscription has no estimate, rather than
+	// one at API rates, and says why; it runs after its own acknowledgement.
+	// An unpriced model is blocked.
+	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
+	if p.EstimateUSD == nil && p.EstimateReason == "" {
 		p.BlockedReason = "unknown_model_price"
 	}
 	return p, list.Version(), nil
@@ -116,7 +120,9 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 
 // confirmed rechecks a job's confirmed inputs. A job confirmed against a newer
 // list than the active one (a restart that has not yet reinstalled it) refreshes
-// the signed list once before deciding.
+// the signed list once before deciding. An automatic job (RefuseDraft) whose
+// pull request is a draft now is refused with ReasonDraft; a confirmed run of
+// a draft is not.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
 	if e == nil && l.RefreshPrices != nil && pricing.CompareVersions(p.PriceVersion, current.PriceVersion) > 0 {
@@ -127,8 +133,11 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	if e != nil {
 		return e
 	}
-	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.EstimateReason != p.EstimateReason || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		return errors.New("generation inputs changed")
+	}
+	if p.RefuseDraft && current.Draft {
+		return &NotAutomaticError{ReasonDraft}
 	}
 	return nil
 }
@@ -181,12 +190,14 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			backend.repairs = pass
 		}
 		backend.report("validating")
-	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 { return list.OutcomeCost(r.Outcome.Model, r.Outcome) })
+	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 {
+		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
+	})
 	backend.repairs = result.Outcome.ValidationRepairs
 	backend.accounting = result.Outcome.Accounting.Clone()
 	backend.redacted = true
 	backend.report("publishing")
-	return list.OutcomeCost(result.Outcome.Model, result.Outcome), e
+	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
 }
 
 type trackedBackend struct {
@@ -221,7 +232,7 @@ func (b *trackedBackend) report(phase string) {
 		if list == nil {
 			list = pricing.Active()
 		}
-		_, reason = list.AccountingCost(b.accounting)
+		_, reason = list.BackendAccountingCost(b.Name(), b.accounting)
 	}
 	safe := b.accounting.Clone()
 	if !b.redacted {

@@ -101,12 +101,17 @@ func (c *Client) socket() string {
 }
 
 // Call sends one request and reads its response. A missing socket or a
-// refused connection is ErrNotRunning.
+// refused connection is ErrNotRunning; a socket in a directory that is not
+// private to the user is refused.
 func (c *Client) Call(ctx context.Context, method string, params any) (Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	socket := c.socket()
+	if err := checkSocketDirectory(socket); err != nil {
+		return Response{}, fmt.Errorf("connect to the baum daemon: %w", err)
+	}
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", c.socket())
+	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || refused(err) {
 			return Response{}, ErrNotRunning
@@ -282,18 +287,32 @@ func (c *Client) Ensure(ctx context.Context) (Status, error) {
 		if lockErr != nil {
 			return Status{}, errors.Join(err, lockErr)
 		}
-		if locked {
-			return c.waitReady(ctx, nil)
+		var exited <-chan struct{}
+		if !locked {
+			spawn := c.Spawn
+			if spawn == nil {
+				spawn = SpawnSelf
+			}
+			if exited, err = spawn(c.Paths, c.Start); err != nil {
+				return Status{}, fmt.Errorf("start the baum daemon: %w", err)
+			}
 		}
-		spawn := c.Spawn
-		if spawn == nil {
-			spawn = SpawnSelf
+		if status, err = c.waitReady(ctx, exited); err != nil {
+			return status, err
 		}
-		exited, err := spawn(c.Paths, c.Start)
-		if err != nil {
-			return Status{}, fmt.Errorf("start the baum daemon: %w", err)
+		// The daemon that became ready need not be the one this client
+		// started: a "baum daemon run" of another version may have won the
+		// daemon lock. It gets the same decision as one found running.
+		if status.Stopping {
+			if err = c.waitExit(ctx); err != nil {
+				return Status{}, err
+			}
+			continue
 		}
-		return c.waitReady(ctx, exited)
+		st, done, err := c.decide(ctx, status)
+		if done {
+			return st, err
+		}
 	}
 	return Status{}, errors.New("the baum daemon kept stopping while it was being started; retry")
 }

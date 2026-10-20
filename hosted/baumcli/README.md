@@ -46,7 +46,14 @@ handshake, in [`apiclient`](../apiclient).
     with the same output and exit status (a failing `pre-push` exits with
     Entire's status, or 128 plus the signal that killed it), and sends the
     event to the daemon (see "Hook events"). A hook run decides this again
-    itself, so a hook is hosted only where the hosted opt-in holds.
+    itself, so a hook is hosted only where the hosted opt-in holds, cheapest
+    check first so a hook that runs only because of the daemon never waits
+    for the committed-settings read (which may take its full five-second
+    timeout in a partial clone): a login or a clone marker makes it hosted;
+    an open-source install, local; with no daemon ever run, hosted (`--check`
+    passed through the opt-in, as before the daemon); otherwise it is local
+    unless an agent settings file in the working tree carries baum's
+    dispatcher, and only then do the committed files decide.
 - A hosted install is a build linked with
   `-X github.com/baum-ai/baum/hosted/baumcli.distribution=hosted`, as the
   hosted release builds it, or a baum the hosted install script installed,
@@ -277,9 +284,9 @@ handshake, in [`apiclient`](../apiclient).
   `baum daemon run`, with `BAUM_NO_DAEMON=1`, or when `CI` is set; the events
   then wait in the spool. A hook starts the daemon with its own environment
   minus `TMPDIR`, which agent sandboxes point at a directory that lasts one
-  session, on the control socket the hook resolved (passed as `--socket`, so a
-  socket under the temporary directory stays where clients look), and with no
-  descriptor but its standard ones. The new daemon drains the spool when it
+  session, and with no descriptor but its standard ones. The socket path never
+  depends on `TMPDIR` (a path too long for a socket falls back to
+  `/tmp/baum-<uid>`), so the daemon listens where the hook looked. The new daemon drains the spool when it
   starts.
 - A daemon that does not answer within the budget, refuses the event or
   predates it (`unknown_method`, `protocol_mismatch`, or `event_version` for

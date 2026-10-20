@@ -1,5 +1,6 @@
 // Package entirecheckpoint reads one Entire checkpoint tree without assigning
-// session-model meaning to its records.
+// session-model meaning to its records, and the checkpoint ids commits name in
+// their Entire-Checkpoint trailers.
 package entirecheckpoint
 
 import (

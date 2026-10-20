@@ -61,7 +61,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			if args[0] == "pre-push" || args[0] == "post-rewrite" {
 				input = newHookInput(cmd.InOrStdin())
 			}
-			hosted := hostedHooksEnabled(cmd.Context(), ".") == nil
+			hosted := hookRunsHosted(cmd.Context(), ".")
 			err := runEntireGitHook(cmd, hosted, args, entireArgs, input, stdout, stderr)
 			event := newHookEvent(hookevents.KindGit, "", args[0])
 			event.Git = gitHookEvent(args, input.payload())
@@ -120,7 +120,7 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				return err
 			}
 			input := newHookInput(cmd.InOrStdin())
-			hosted := hostedHooksEnabled(cmd.Context(), ".") == nil
+			hosted := hookRunsHosted(cmd.Context(), ".")
 			var err error
 			if userWide && !hosted {
 				// A user-wide hook admitted only because the user has a
@@ -285,6 +285,56 @@ func daemonHasRun() bool {
 	return err == nil && daemon.HasRun(paths)
 }
 
+// hookRunsHosted decides whether a hook that runs through baum (its `--check`
+// passed) runs hosted, with the session-start bootstrap and the Entire baum
+// installs, or local (see hooksEnabled). It answers as hostedHooksEnabled
+// would, cheapest check first, and asks git for the committed agent settings
+// (onboardedRepository, which may take up to onboardingReadTimeout) only when
+// nothing cheaper decides, so a hook that runs only because of the daemon
+// does not wait for it before handing off to Entire and sending its event:
+//
+//   - a login, or a clone `baum setup` or a bootstrap marked: hosted;
+//   - an open-source install, which never trusts committed files: local;
+//   - no daemon ever ran: hosted, since `--check` passed only through
+//     hostedHooksEnabled, as every hook ran before the daemon existed;
+//   - otherwise only an onboarded repository makes the hook hosted, and the
+//     agent runs the committed dispatcher from the working tree's settings
+//     files, so where none of those carries it the hook is local without
+//     asking git; where one does, the committed files decide.
+func hookRunsHosted(ctx context.Context, dir string) bool {
+	if loggedIn() || hostedClone(ctx, dir) {
+		return true
+	}
+	if !hostedInstall() {
+		return false
+	}
+	if !daemonHasRun() {
+		return true
+	}
+	return worktreeCarriesDispatcher(dir) && onboardedRepository(ctx, dir)
+}
+
+// worktreeCarriesDispatcher reports whether an agent settings file in the
+// working tree containing dir carries baum's dispatcher. It reads at most
+// one small file per agent and runs no git.
+func worktreeCarriesDispatcher(dir string) bool {
+	start, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	root, ok := enclosingWorktree(start)
+	if !ok {
+		return false
+	}
+	for _, spec := range agenthooks.All() {
+		contents, err := readSmallFile(filepath.Join(root, spec.SettingsFile))
+		if err == nil && agenthooks.ContainsDispatcher(contents) {
+			return true
+		}
+	}
+	return false
+}
+
 // hostedHooksEnabled reports whether the hooks of the clone containing dir
 // should run through baum. They do when the user is logged in (BAUM_TOKEN or
 // stored credentials, for any server), or when this clone was set up by
@@ -362,12 +412,23 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "--batch")
 	// GIT_NO_LAZY_FETCH (git 2.44 and later) keeps a partial clone from
 	// fetching a missing blob. Older git ignores it, so the timeout kills the
-	// whole process group: a fetch git started cannot outlive it or hold the
-	// pipe open.
+	// whole process group on Unix. Where only git itself is killed (Windows) a
+	// fetch child can keep the pipe open, so the read is also abandoned at the
+	// deadline.
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0")
 	proc.Configure(cmd)
 	cmd.WaitDelay = time.Second
-	cmd.Stdin = strings.NewReader(request.String())
+	return readsDispatcherFrom(ctx, cmd, request.String())
+}
+
+// readsDispatcherFrom runs cmd with stdin and reports whether its output
+// carries the dispatcher, returning false once ctx ends. The read happens in
+// a goroutine because a descendant of cmd that outlives it (Windows kills
+// only the process, not its children) can hold the stdout pipe open, and a
+// blocking read would then ignore the deadline. On timeout the process is
+// killed and the read is abandoned; it ends when the pipe closes.
+func readsDispatcherFrom(ctx context.Context, cmd *exec.Cmd, stdin string) bool {
+	cmd.Stdin = strings.NewReader(stdin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false
@@ -375,9 +436,17 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 	if err := cmd.Start(); err != nil {
 		return false
 	}
-	found := readsDispatcher(bufio.NewReader(stdout))
-	cancel()
-	_ = cmd.Wait()
+	result := make(chan bool, 1)
+	go func() { result <- readsDispatcher(bufio.NewReader(stdout)) }()
+	found := false
+	select {
+	case found = <-result:
+	case <-ctx.Done():
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	go func() { _ = cmd.Wait() }()
 	return found
 }
 

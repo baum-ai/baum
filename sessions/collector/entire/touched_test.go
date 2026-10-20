@@ -37,11 +37,11 @@ func TestTouchedDatesEachCheckpointByItsNewestCommit(t *testing.T) {
 	run(when, "checkout", "-q", "main")
 
 	ctx := context.Background()
-	commit, _, err := Resolve(ctx, dir)
+	store, _, err := Resolve(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	touched, err := Touched(ctx, privateRepo(t, dir), commit)
+	touched, err := Touched(ctx, privateRepo(t, dir), store)
 	if err != nil {
 		t.Fatal(err)
 	}

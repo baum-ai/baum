@@ -116,7 +116,8 @@ type Report struct {
 	// Failures are sessions that were found but did not map.
 	Failures []Failure
 	// EntireCommit is the checkpoint branch commit read, empty when the clone
-	// has none.
+	// has none (checkpoints held only in refs/entire/checkpoints/* leave it
+	// empty).
 	EntireCommit string
 }
 
