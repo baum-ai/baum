@@ -555,11 +555,15 @@ executable (an upgrade in place) or the `baum` on its login shell's `PATH`
 (which the desktop app's link makes its bundled baum);
 it must be a regular, executable file owned by you or root and not group- or
 world-writable, in directories up to `/` that are all the same (none may be
-world-writable, not even sticky like `/tmp`). It checks again just before
-starting it. A refused executable is logged and the daemon keeps running; a
-newer baum then replaces it the next time it finds the daemon idle. An app in
-macOS's `/Applications`, which the admin group can write, is refused this
-way, so there a busy daemon is replaced only once idle. On
+world-writable, not even sticky like `/tmp`). On macOS a directory owned by
+root or you that only the admin group may also write (group `admin`, as
+`/Applications` and Intel Homebrew's `/usr/local/bin` are) passes too: admin
+users can become root anyway, so it lets in no one a root-owned file would
+keep out. The staff group, to which every local user belongs, does not count,
+and the executable itself must still be writable by its owner only. It checks
+again just before starting it. A refused executable is logged and the daemon
+keeps running; a newer baum then replaces it the next time it finds the
+daemon idle. On
 Windows, where owners and mode bits do not describe access, only the first
 two rules apply.
 

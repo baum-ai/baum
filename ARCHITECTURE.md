@@ -1811,7 +1811,10 @@ there; see `desktop/README.md` for which install locations pass the checks
 below), or one of `daemon.TrustedExecutables` (empty), a regular executable file
 owned by the user or root and not group- or world-writable, under
 directories up to `/` that pass the same owner and mode test (sticky
-world-writable ones such as `/tmp` fail). On Windows only the allowlist
+world-writable ones such as `/tmp` fail; on macOS a directory group-writable
+only by the admin group, gid 80, such as `/Applications`, passes, since its
+writers can become root, but never the staff group, gid 20, or a file). On
+Windows only the allowlist
 applies. A refusal is logged; the daemon keeps running without
 `restart_pending`, and is replaced when a newer client next finds it idle.
 A daemon speaking a newer protocol is an

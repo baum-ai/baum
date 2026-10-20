@@ -125,11 +125,10 @@ Installing the link makes the bundled binary the `baum` on the `PATH`, so:
   directory are trusted (the copy only while the home directory and
   `~/.local/share` are not group-writable, which a umask of 002 can cause).
   The binary inside an AppImage's mount (under `/tmp`) never is.
-- macOS: `/Applications` is `root:admin`, mode 0775, so an app there is
-  refused, both as the `PATH` baum and as the daemon's own executable. An
-  older busy daemon is then not restarted when its jobs finish; it keeps
-  running and is replaced the next time the app or a hook finds it idle. An
-  app in `~/Applications` is trusted.
+- macOS: `/Applications` is `root:admin`, mode 0775. The trust check accepts
+  a directory that only the admin group may also write (its members can
+  become root anyway), so an app there or in `~/Applications` is trusted, as
+  is Intel Homebrew's `/usr/local/bin`.
 - Windows checks only that the file is the daemon's own or the `PATH` baum,
   which the user `PATH` entry makes it for daemons started after the change.
 
