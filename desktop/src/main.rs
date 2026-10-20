@@ -10,6 +10,7 @@
 
 mod daemon;
 mod navigation;
+mod updater;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -253,6 +254,10 @@ fn main() {
         }))
         // Used only from Rust; no page is granted its commands.
         .plugin(tauri_plugin_opener::init())
+        // Updates, and the questions they ask, are driven from Rust only (see
+        // updater.rs); no page is granted these plugins' commands either.
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![connection, reconnect])
         .setup(move |app| {
@@ -281,6 +286,7 @@ fn main() {
                 })
                 .build()?;
             connect(app.handle(), Attach::First);
+            updater::start(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

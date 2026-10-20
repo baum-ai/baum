@@ -694,5 +694,17 @@ loopback origin. Links to other web hosts open in your default browser; other
 loopback servers, other schemes and new windows are refused. The daemon's
 pages get no Tauri capability, so they cannot call the app's commands or any
 plugin. The bundled screen may only read the connection state and ask to
-reconnect. The app makes no network requests other than loopback requests
-to the daemon. Quitting it leaves the daemon running.
+reconnect. Quitting it leaves the daemon running.
+
+Besides loopback requests to the daemon, the app makes one kind of network
+request: a release build checks GitHub Releases for a newer version of
+baum-ai/baum when it starts and once a day (`BAUM_DESKTOP_UPDATES=0` turns
+this off). The check is a plain HTTPS download of `latest.json`; it carries
+no token or data of yours. The app installs an update only when the
+downloaded bundle carries a minisign signature from the release key built
+into the app, made for the version the manifest announces, so neither a
+changed bundle nor an older signed release served as a newer one is
+installed. It waits while the daemon runs a generation job and restarts only
+after you confirm. The release workflow verifies the same signatures before
+it publishes the manifest; the signing keys are used only by that workflow,
+on version tags.

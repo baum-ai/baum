@@ -332,6 +332,79 @@ pub fn log_tail(state: &Path, max: usize) -> Vec<String> {
     out
 }
 
+/// The most the jobs list may hold before the app stops reading it.
+const MAX_JOBS_RESPONSE: u64 = 8 << 20;
+
+/// How many generation jobs the user's daemon is running, so an update can
+/// wait for them. `baum daemon status` finds the daemon without starting one;
+/// when it reports none, no job can be running and the answer is 0.
+pub fn running_jobs(cli: &Path, timeout: Duration) -> Result<usize, String> {
+    let Ok(output) = run(cli, &["daemon", "status", "--json"], timeout) else {
+        return Ok(0);
+    };
+    let status = parse_status(&output.stdout)?;
+    let launch = read_credential(&status.state)?;
+    let (code, body) = get(&launch, "/api/jobs", timeout)
+        .map_err(|e| format!("Cannot ask the baum daemon for its jobs: {e}"))?;
+    if code != 200 {
+        return Err(format!("The baum daemon answered {code} for its jobs."));
+    }
+    count_running(&body)
+}
+
+fn count_running(body: &[u8]) -> Result<usize, String> {
+    #[derive(Deserialize)]
+    struct Jobs {
+        #[serde(default)]
+        jobs: Vec<Job>,
+    }
+    #[derive(Deserialize)]
+    struct Job {
+        #[serde(default)]
+        state: String,
+    }
+    let jobs: Jobs = serde_json::from_slice(body)
+        .map_err(|e| format!("The baum daemon's jobs are unreadable: {e}"))?;
+    // Queued jobs wait in the daemon's journal and resume after a restart;
+    // only a running one would be interrupted.
+    Ok(jobs.jobs.iter().filter(|j| j.state == "running").count())
+}
+
+/// A GET request to the daemon's app transport with the credential. HTTP/1.0
+/// keeps the response unchunked; the daemon closes the connection after it.
+fn get(launch: &Launch, path: &str, timeout: Duration) -> std::io::Result<(u16, Vec<u8>)> {
+    use std::io::{Error, ErrorKind};
+    let (Some(host), Some(port)) = (launch.url.host_str(), launch.url.port()) else {
+        return Err(Error::new(ErrorKind::InvalidInput, "no daemon address"));
+    };
+    let addr: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "no daemon address"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.0\r\nHost: {host}:{port}\r\nAuthorization: Bearer {}\r\n\r\n",
+        launch.token
+    )?;
+    let mut response = Vec::new();
+    stream.take(MAX_JOBS_RESPONSE).read_to_end(&mut response)?;
+    let invalid = || Error::new(ErrorKind::InvalidData, "not an HTTP response");
+    let end = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(invalid)?;
+    let head = String::from_utf8_lossy(&response[..end]);
+    let code = head
+        .lines()
+        .next()
+        .and_then(|l| l.split(' ').nth(1))
+        .and_then(|c| c.parse().ok())
+        .ok_or_else(invalid)?;
+    Ok((code, response[end + 4..].to_vec()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,6 +562,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_running_jobs_count() {
+        let body = br#"{"available":true,"jobs":[{"id":"a","state":"running"},{"id":"b","state":"queued"},{"id":"c","state":"done"},{"id":"d","state":"running"}]}"#;
+        assert_eq!(count_running(body), Ok(2));
+        assert_eq!(count_running(br#"{"available":true,"jobs":[]}"#), Ok(0));
+        assert!(count_running(b"not json").is_err());
+    }
+
+    #[test]
+    fn jobs_request_sends_the_credential() {
+        let (port, server) = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"jobs\":[{\"state\":\"running\"}]}",
+        );
+        let (code, body) = get(&launch_on(port), "/api/jobs", Duration::from_secs(2)).unwrap();
+        assert_eq!(code, 200);
+        assert_eq!(count_running(&body), Ok(1));
+        let request = server.join().unwrap();
+        assert!(request.starts_with("GET /api/jobs HTTP/1.0\r\n"));
+        assert!(request.contains(&format!("Authorization: Bearer {TOKEN}\r\n")));
+    }
+
     #[cfg(unix)]
     mod cli {
         use super::*;
@@ -583,6 +677,35 @@ echo '{{"app":"http://127.0.0.1:4100","state":"{}"}}'"#,
             let started = Instant::now();
             assert!(ensure(&cli, Duration::from_secs(5)).is_ok());
             assert!(started.elapsed() < Duration::from_secs(5));
+        }
+
+        #[test]
+        fn running_jobs_asks_the_daemon_status_reports() {
+            let (port, server) = serve_once(
+                "HTTP/1.1 200 OK\r\n\r\n{\"jobs\":[{\"state\":\"running\"},{\"state\":\"queued\"}]}",
+            );
+            let dir = temp_dir("jobs");
+            write_private(
+                &dir.join(CREDENTIAL_FILE),
+                &format!(r#"{{"url":"http://127.0.0.1:{port}/#token={TOKEN}"}}"#),
+            );
+            let cli = fake_cli(
+                &dir,
+                &format!(
+                    r#"[ "$*" = "daemon status --json" ] || exit 9
+echo '{{"app":"http://127.0.0.1:{port}","state":"{}"}}'"#,
+                    dir.display()
+                ),
+            );
+            assert_eq!(running_jobs(&cli, Duration::from_secs(5)), Ok(1));
+            server.join().unwrap();
+        }
+
+        #[test]
+        fn no_daemon_means_no_running_jobs() {
+            let dir = temp_dir("jobs-no-daemon");
+            let cli = fake_cli(&dir, "echo 'the baum daemon is not running' >&2; exit 1");
+            assert_eq!(running_jobs(&cli, Duration::from_secs(5)), Ok(0));
         }
 
         #[test]
