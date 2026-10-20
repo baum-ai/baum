@@ -133,23 +133,16 @@ enum Host {
 /// counts as no tray: the window then stays reachable.
 #[cfg(target_os = "linux")]
 fn host_check() -> Host {
-    use std::process::{Command, Stdio};
     const WATCHER: &str = "org.kde.StatusNotifierWatcher";
-    let run = |program: &str, args: &[&str]| {
-        Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-    };
-    if let Ok(out) = run("busctl", &["--user", "status", WATCHER]) {
-        return if out.status.success() {
-            Host::Present
-        } else {
-            Host::Absent
-        };
+    match run_bounded("busctl", &["--user", "status", WATCHER], HOST_CHECK_TIMEOUT) {
+        Bounded::Done { success, .. } => {
+            return if success { Host::Present } else { Host::Absent };
+        }
+        // A stalled bus will not answer gdbus either.
+        Bounded::TimedOut => return Host::Unknown,
+        Bounded::NotRun => {}
     }
-    let gdbus = run(
+    let gdbus = run_bounded(
         "gdbus",
         &[
             "call",
@@ -162,14 +155,69 @@ fn host_check() -> Host {
             "org.freedesktop.DBus.NameHasOwner",
             WATCHER,
         ],
+        HOST_CHECK_TIMEOUT,
     );
     match gdbus {
-        Ok(out) => match parse_name_has_owner(&String::from_utf8_lossy(&out.stdout)) {
+        Bounded::Done { stdout, .. } => match parse_name_has_owner(&stdout) {
             Some(true) => Host::Present,
             Some(false) => Host::Absent,
             None => Host::Unknown,
         },
-        Err(_) => Host::Unknown,
+        Bounded::TimedOut | Bounded::NotRun => Host::Unknown,
+    }
+}
+
+/// How long one bus query may take. The check runs when the window closes,
+/// on the main thread, so a stalled session bus must not hang it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Bounded {
+    Done {
+        success: bool,
+        stdout: String,
+    },
+    TimedOut,
+    /// The program could not be started.
+    NotRun,
+}
+
+/// Runs a program and waits at most `timeout`, killing it after that.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn run_bounded(program: &str, args: &[&str], timeout: Duration) -> Bounded {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Bounded::NotRun;
+    };
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Bounded::TimedOut;
+            }
+        }
+    };
+    // The answers are a few bytes, so they fit the pipe and are there to read.
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    Bounded::Done {
+        success: status.success(),
+        stdout,
     }
 }
 
@@ -678,6 +726,37 @@ mod tests {
         assert_eq!(spec[1].text, "Idle");
         assert_eq!(spec[2].text, "! A diagnostics check reports a problem");
         assert!(!spec[2].enabled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_bus_query_is_cut_off_and_counts_as_unknown() {
+        let started = Instant::now();
+        let result = run_bounded("sleep", &["30"], Duration::from_millis(200));
+        assert_eq!(result, Bounded::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Unknown never lets the window hide.
+        assert!(!tray_usable(true, Host::Unknown));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bounded_query_returns_its_answer_and_status() {
+        assert_eq!(
+            run_bounded("sh", &["-c", "echo '(true,)'"], Duration::from_secs(5)),
+            Bounded::Done {
+                success: true,
+                stdout: "(true,)\n".into()
+            }
+        );
+        assert!(matches!(
+            run_bounded("sh", &["-c", "exit 1"], Duration::from_secs(5)),
+            Bounded::Done { success: false, .. }
+        ));
+        assert_eq!(
+            run_bounded("/nonexistent/busctl", &[], Duration::from_secs(1)),
+            Bounded::NotRun
+        );
     }
 
     #[test]
