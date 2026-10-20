@@ -3,8 +3,12 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,14 +22,20 @@ type fakeExecutor struct {
 	digest     string
 	restricted bool
 	price      *float64
-	started    chan Prepared
-	release    chan struct{}
+	// backend and reason, when set, replace claude and the estimate reason.
+	backend, reason string
+	started         chan Prepared
+	release         chan struct{}
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: "claude", Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
+	backend := f.backend
+	if backend == "" {
+		backend = "claude"
+	}
+	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, EstimateReason: f.reason, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
@@ -202,6 +212,51 @@ func TestUnknownPriceAndChangedHeadAreFailClosed(t *testing.T) {
 		t.Fatal("unknown price accepted")
 	}
 }
+
+// A backend billed outside the price list (cursor-agent) is not blocked: its
+// estimate is unknown with a reason, and it runs once that is acknowledged,
+// on top of the usual confirmations.
+func TestUnpricedBackendRunsAfterAcknowledgement(t *testing.T) {
+	q, f := newQueue(t)
+	f.mu.Lock()
+	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
+	f.mu.Unlock()
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if e.EstimateUSD != nil || e.Items[0].BlockedReason != "" || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
+		t.Fatalf("estimate = %+v", e)
+	}
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err == nil {
+		t.Fatal("an unpriced run was queued without its acknowledgement")
+	}
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Unpriced: true}); err == nil {
+		t.Fatal("an unpriced run was queued without confirming the estimate")
+	}
+	jobs, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true})
+	if err != nil || len(jobs) != 1 || jobs[0].EstimateReason != "billed_by_cursor_subscription" {
+		t.Fatalf("jobs = %+v, err = %v", jobs, err)
+	}
+	<-f.started
+	close(f.release)
+	waitState(t, q, jobs[0].ID, "completed")
+
+	// The fork rules still apply: isolation is confirmed separately.
+	q, f = newQueue(t)
+	f.mu.Lock()
+	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
+	f.mu.Unlock()
+	e = estimate(t, q, "single", Item{"clone", 1})
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true}); err == nil {
+		t.Fatal("a fork run was queued without isolation confirmation")
+	}
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true, Isolation: true}); err != nil {
+		t.Fatal(err)
+	}
+	batch := estimate(t, q, "batch", Item{"clone", 2})
+	if batch.Items[0].BlockedReason != "isolation_confirmation_required" {
+		t.Fatalf("batch = %+v", batch)
+	}
+}
+
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
@@ -226,6 +281,144 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	if e = json.Unmarshal(raw, &jobs); e != nil || jobs[0].State != "interrupted" {
 		t.Fatal("restart not persisted", e)
 	}
+}
+func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
+	q, f := newQueue(t)
+	e := estimate(t, q, "single", Item{"clone", 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	waitState(t, q, jobs[0].ID, "running")
+	if err = q.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(q.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []Job
+	if err = json.Unmarshal(raw, &saved); err != nil || saved[0].State != "interrupted" || saved[0].Reason != "interrupted" {
+		t.Fatalf("journal %s, %v", raw, err)
+	}
+}
+func TestShutdownStopsWaitingAtDeadline(t *testing.T) {
+	stuck := &stuckExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), stuck, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { close(stuck.release); q.Close() })
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if _, err = q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	<-stuck.started
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err = q.Shutdown(ctx); err == nil {
+		t.Fatal("shutdown waited for a backend that ignores cancellation")
+	}
+}
+
+// stuckExecutor ignores cancellation until released.
+type stuckExecutor struct{ started, release chan struct{} }
+
+func (s *stuckExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
+	price := 1.0
+	return Prepared{Item: item, Repository: "org/repo", HeadSHA: "head", Backend: "claude", Model: "m", EstimateUSD: &price}, "v", nil
+}
+func (s *stuckExecutor) Execute(context.Context, Prepared, func(Progress)) (*float64, error) {
+	close(s.started)
+	<-s.release
+	return nil, nil
+}
+func TestOneProcessOwnsTheJournal(t *testing.T) {
+	path := filepath.Join(privateDir(t), "jobs.json")
+	price := 1.0
+	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := time.Now()
+	if second, err := Open(path, &fakeExecutor{price: &price}, 1, nil); err == nil {
+		second.Close()
+		t.Fatal("a second queue opened the same journal")
+	}
+	if time.Since(opened) < lockWait {
+		t.Fatal("gave up before the wait")
+	}
+	if !first.Idle() {
+		t.Fatal("empty queue not idle")
+	}
+	first.Close()
+	again, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal("journal still locked after Close:", err)
+	}
+	again.Close()
+}
+
+// Drain and Submit race: either the job is accepted and Drain reports work
+// pending, or Drain wins and the job is refused, never both or neither.
+func TestDrainAndSubmitNeverBothSucceed(t *testing.T) {
+	for range 50 {
+		q, f := newQueue(t)
+		e := estimate(t, q, "single", Item{"clone", 1})
+		var drained bool
+		var submitted []Job
+		var submitErr error
+		var wg sync.WaitGroup
+		wg.Go(func() { drained = q.Drain() })
+		wg.Go(func() { submitted, submitErr = q.Submit(context.Background(), e.ID, true, false) })
+		wg.Wait()
+		switch {
+		case drained && (submitErr == nil || !errors.Is(submitErr, ErrRestarting) || len(q.List()) != 0):
+			t.Fatalf("drained, yet submit %v, %v, %d jobs", submitted, submitErr, len(q.List()))
+		case !drained && submitErr != nil:
+			t.Fatalf("neither drained nor submitted: %v", submitErr)
+		}
+		if !drained {
+			<-f.started
+			close(f.release)
+		}
+		q.Close()
+	}
+}
+
+func TestSubmitWhileRestartingIsAServiceUnavailableToRetry(t *testing.T) {
+	q, _ := newQueue(t)
+	e := estimate(t, q, "single", Item{"clone", 1})
+	if !q.Drain() {
+		t.Fatal("empty queue not drained")
+	}
+	body := strings.NewReader(`{"estimate_id":"` + e.ID + `","confirm_estimate":true,"confirm_isolation":false}`)
+	w := httptest.NewRecorder()
+	q.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/jobs", body))
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "restarting") {
+		t.Fatalf("%d %q %q", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+	}
+	q.Resume()
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal("not accepted after Resume:", err)
+	}
+}
+
+// A predecessor that holds the journal while it exits is waited for.
+func TestOpenWaitsForThePreviousOwner(t *testing.T) {
+	path := filepath.Join(privateDir(t), "jobs.json")
+	price := 1.0
+	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); first.Close() }()
+	second, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.Close()
 }
 func TestQueuePersistenceFailureDoesNotStartSpend(t *testing.T) {
 	q, f := newQueue(t)

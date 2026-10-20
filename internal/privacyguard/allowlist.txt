@@ -13,3 +13,7 @@ sessions/claudesession/ingest_test.go worktree
 # the layout the path relativization rules strip; not a developer's checkout.
 linkage/sessioncorrelate/paths_test.go worktree
 internal/locallink/sessionevidence_test.go worktree
+
+# The macOS user database path dscl reads the login shell from, not a home
+# directory.
+internal/shellenv/shellenv_unix.go mac-home

@@ -1,10 +1,12 @@
 // Package doctor reports why baum can or cannot find its tools, backend and
 // GitHub token, with a fix for each problem.
 //
-// It runs "<tool> --version" for git, gh and cursor-agent, the same checks
-// "baum generate" runs for claude and codex (including codex's read-only
-// sandbox preflight), "gh auth token" when no token is configured, and at most
-// one network request, for the signed price list. The tools run with the
+// It runs "<tool> --version" for git and gh, the same checks "baum generate"
+// runs for claude, codex (including codex's read-only sandbox preflight) and
+// cursor-agent (its --help and --version), and for anthropic (that
+// ANTHROPIC_API_KEY is set; the key is not tried against the API), "gh auth
+// token" when no token is configured,
+// and at most one network request, for the signed price list. The tools run with the
 // environment their backends give them, never the whole of ours. It never
 // prints a token or an API key, only where one was found.
 package doctor
@@ -98,17 +100,35 @@ type Options struct {
 	// own resolver.
 	GitHubToken func(ctx context.Context, cfg config.Config, host string) (token, source string, err error)
 	// RefreshPrices fetches the signed list; nil uses pricing.Refresh without
-	// storing it, since a diagnostic run must not change baum ui's state.
+	// storing it, since a diagnostic run must not change the daemon's state.
 	RefreshPrices func(ctx context.Context) error
 	// PriceSource describes the active list; nil uses pricing.CurrentSource.
 	PriceSource func() pricing.Source
 	// Registry lists the registered clones of the registry file at path,
 	// which exists. The default opens it read-only.
 	Registry func(ctx context.Context, path string) ([]repos.Clone, error)
-	// InstanceDir is the directory of the per-user "baum ui" instance and its
-	// capability files; nil omits that check. The caller supplies it because
-	// the UI server may itself serve this report.
-	InstanceDir func() (string, error)
+	// Daemon describes the per-user baum daemon; nil omits that check. The
+	// caller supplies it because the daemon itself serves this report.
+	Daemon func(ctx context.Context) Daemon
+}
+
+// Daemon is what the report says about the per-user daemon. It never holds
+// the daemon's credential.
+type Daemon struct {
+	Running  bool
+	Version  string
+	Protocol int
+	PID      int
+	Uptime   time.Duration
+	// State is the daemon's state directory (logs, credential) and Socket its
+	// control socket.
+	State, Socket string
+	// Older is set when this baum would replace the daemon; Incompatible when
+	// it speaks a newer protocol than this baum.
+	Older, Incompatible bool
+	// Err is why the daemon could not be asked, when it holds its lock but
+	// does not answer.
+	Err error
 }
 
 // Timeouts bound every subprocess and network request the report makes.
@@ -245,13 +265,13 @@ func (r *runner) run() {
 				cfg.GitHubToken, cfg.GitHubTokenSource = v, name
 			}
 		}
+		cfg.AnthropicAPIKey = r.opts.Getenv(config.EnvAnthropicAPIKey)
 	}
 	r.cfg, r.cfgErr = cfg, cfgErr
 
 	r.git()
 	r.gh()
 	checked := r.backends()
-	r.cursorAgent()
 	r.selection(checked)
 	clones := r.locations(cfgErr)
 	r.tokens(clones)
@@ -352,8 +372,9 @@ func (r *runner) gh() {
 
 // backendTools names the tool of each backend the checks run.
 var backendTools = map[config.Backend]string{
-	config.BackendClaude: "Claude Code",
-	config.BackendCodex:  "Codex",
+	config.BackendClaude:      "Claude Code",
+	config.BackendCodex:       "Codex",
+	config.BackendCursorAgent: "the Cursor Agent CLI",
 }
 
 // checkResult is what a backend's Check returned.
@@ -362,11 +383,14 @@ type checkResult struct {
 	err     error
 }
 
-// checkedBackends holds the claude and codex results, which selection replays.
-type checkedBackends struct{ claude, codex checkResult }
+// checkedBackends holds the claude, codex, cursor-agent and anthropic
+// results, which selection replays.
+type checkedBackends struct{ claude, codex, cursorAgent, anthropic checkResult }
 
-// backends checks claude and codex with the checks "baum generate" runs, once
-// each; selection replays the results instead of running them again.
+// backends checks claude, codex and cursor-agent with the checks "baum
+// generate" runs, once each, and anthropic's, which only looks for the key and
+// is reported by the key's own check; selection replays the results instead of
+// running them again.
 func (r *runner) backends() checkedBackends {
 	built := r.opts.Backends(r.cfg)
 	var result checkedBackends
@@ -379,6 +403,16 @@ func (r *runner) backends() checkedBackends {
 		result.codex = r.backend(config.BackendCodex, built.Codex(""))
 	} else {
 		result.codex.err = errors.New("no codex backend")
+	}
+	if built.CursorAgent != nil {
+		result.cursorAgent = r.backend(config.BackendCursorAgent, built.CursorAgent(""))
+	} else {
+		result.cursorAgent.err = errors.New("no cursor-agent backend")
+	}
+	if built.Anthropic != nil {
+		result.anthropic.version, result.anthropic.err = built.Anthropic("").Check(r.ctx)
+	} else {
+		result.anthropic.err = errors.New("no anthropic backend")
 	}
 	return result
 }
@@ -393,6 +427,13 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	ctx, cancel := context.WithTimeout(r.ctx, backendTimeout)
 	version, err := backend.Check(ctx)
 	cancel()
+	// The cursor-agent backend falls back to an executable called agent once
+	// its help shows it is the Cursor Agent.
+	if name == config.BackendCursorAgent && explicit == "" && lookErr != nil && err == nil {
+		if agentPath, agentErr := r.opts.LookPath("agent"); agentErr == nil {
+			c.Path, c.Source, lookErr = agentPath, "PATH (as agent)", nil
+		}
+	}
 	// A failed check is a problem only for the backend the user asked for, or
 	// for a path they wrote that does not work; auto needs just one.
 	severity := StatusWarning
@@ -407,12 +448,15 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	case errors.As(err, &explicitErr) || (explicit != "" && lookErr != nil):
 		c.Status, c.Detail, c.Path = StatusProblem, err.Error(), ""
 		c.Fix = fmt.Sprintf("fix backend_paths.%s in %s, or remove it to search PATH", name, r.cfgPath)
+	case lookErr != nil && name == config.BackendCursorAgent && severity != StatusProblem:
+		// Few machines have it, and auto does not need it.
+		c.Status, c.Detail = StatusInfo, "cursor-agent was not found on PATH; it is needed only for the cursor-agent backend (install the Cursor Agent CLI and sign in with cursor-agent login to use it)"
 	case lookErr != nil:
 		c.Status, c.Detail = severity, tool+" was not found on PATH"
 		c.Fix = fmt.Sprintf("install %s and sign in, or set backend_paths.%s to its absolute path in %s (apps started without a shell's PATH need this)", tool, name, r.cfgPath)
 	default:
 		c.Status, c.Detail = severity, err.Error()
-		c.Fix = checkFix(tool, path, err)
+		c.Fix = checkFix(name, tool, path, err)
 		// The tool is not run again: its version is in the message when the check
 		// got far enough to read it.
 		if m := olderPattern.FindStringSubmatch(err.Error()); m != nil {
@@ -423,7 +467,17 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	return checkResult{version, err}
 }
 
-func checkFix(tool, path string, err error) string {
+func checkFix(name config.Backend, tool, path string, err error) string {
+	if name == config.BackendCursorAgent {
+		switch msg := err.Error(); {
+		case strings.Contains(msg, "does not list the options"):
+			// The detail names the update command of the executable it resolved.
+			return "upgrade the Cursor Agent CLI with the update command named above"
+		case strings.Contains(msg, "does not say it is"):
+			return "point backend_paths.cursor-agent at the Cursor Agent CLI, or remove it to search PATH"
+		}
+		return fmt.Sprintf("run `%s --help` and `%s --version` yourself to see why they fail, or reinstall %s", path, path, tool)
+	}
 	switch msg := err.Error(); {
 	case strings.Contains(msg, "older than"):
 		return "upgrade " + tool + " to the version named above or newer"
@@ -431,33 +485,6 @@ func checkFix(tool, path string, err error) string {
 		return "baum runs codex only inside its read-only sandbox; run `" + path + " sandbox -P :read-only -- cat /dev/null` to see why it fails (on Linux it needs user namespaces), or use claude"
 	}
 	return fmt.Sprintf("run `%s --version` yourself to see why it fails, or reinstall %s", path, tool)
-}
-
-func (r *runner) cursorAgent() {
-	const name = "cursor-agent"
-	c := Check{ID: name, Label: name}
-	explicit := r.cfg.BackendPaths[config.BackendCursorAgent]
-	path, source, err := r.tool(name, explicit)
-	c.Source = source
-	if err != nil {
-		if explicit != "" {
-			c.Status, c.Detail = StatusProblem, err.Error()
-			c.Fix = fmt.Sprintf("fix backend_paths.%s in %s, or remove it to search PATH", name, r.cfgPath)
-		} else {
-			c.Status, c.Detail = StatusInfo, "cursor-agent was not found on PATH; the cursor-agent backend is not available in this version of baum"
-		}
-		r.add(c)
-		return
-	}
-	c.Path = path
-	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
-	c.Version = version
-	c.Status = StatusInfo
-	c.Detail = "found, but the cursor-agent backend is not available in this version of baum"
-	if err != nil {
-		c.Detail += fmt.Sprintf(" (running %s --version failed: %v)", path, err)
-	}
-	r.add(c)
 }
 
 // replay is a backend whose Check returns the result already measured.
@@ -482,6 +509,16 @@ func (r *runner) selection(checked checkedBackends) {
 			return replay{CheckedBackend: built.Codex(model), version: checked.codex.version, err: checked.codex.err}
 		}
 	}
+	if built.CursorAgent != nil {
+		replayed.CursorAgent = func(model string) generate.CheckedBackend {
+			return replay{CheckedBackend: built.CursorAgent(model), version: checked.cursorAgent.version, err: checked.cursorAgent.err}
+		}
+	}
+	if built.Anthropic != nil {
+		replayed.Anthropic = func(model string) generate.CheckedBackend {
+			return replay{CheckedBackend: built.Anthropic(model), version: checked.anthropic.version, err: checked.anthropic.err}
+		}
+	}
 
 	var skipped bytes.Buffer
 	selected, err := generate.Select(r.ctx, config.BackendAuto, r.cfg.Model, replayed, &skipped)
@@ -489,10 +526,10 @@ func (r *runner) selection(checked checkedBackends) {
 	reasons := strings.TrimSpace(skipped.String())
 	if err != nil {
 		c.Status, c.Detail = StatusProblem, "auto finds no usable backend: "+err.Error()
-		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s; see the claude and codex checks above", r.cfgPath)
+		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above. auto never picks cursor-agent: set backend = \"cursor-agent\" to use it", r.cfgPath)
 	} else {
 		c.Status, c.Version = StatusOK, selected.Version
-		c.Detail = fmt.Sprintf("auto picks %s, the first of claude and codex that is installed and passes its checks", selected.Backend.Name())
+		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex and anthropic (with ANTHROPIC_API_KEY set) that passes its checks; it never picks cursor-agent, which cannot be held to read-only as reliably and runs only when configured", selected.Backend.Name())
 		if reasons != "" {
 			c.Detail += "\n" + reasons
 		}
@@ -510,7 +547,7 @@ func (r *runner) selection(checked checkedBackends) {
 		}
 		r.add(Check{ID: "backend-configured", Label: "backend: " + name, Status: StatusProblem,
 			Detail: fmt.Sprintf("the configured backend %q is not a known backend", name),
-			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\" or \"codex\" in %s", name, r.cfgPath)})
+			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s", name, r.cfgPath)})
 		return
 	}
 	configured := Check{ID: "backend-configured", Label: "backend: " + string(r.cfg.Backend)}
@@ -518,10 +555,10 @@ func (r *runner) selection(checked checkedBackends) {
 	if err != nil {
 		configured.Status, configured.Detail = StatusProblem, fmt.Sprintf("the configured backend %s cannot run: %v", r.cfg.Backend, err)
 		switch r.cfg.Backend {
-		case config.BackendAnthropic, config.BackendCursorAgent:
-			configured.Fix = fmt.Sprintf("the %s backend is not available in this version; set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+		case config.BackendAnthropic:
+			configured.Fix = fmt.Sprintf("export ANTHROPIC_API_KEY with your Anthropic API key, or set backend = \"auto\", \"claude\", \"codex\" or \"cursor-agent\" in %s (BAUM_BACKEND and --backend override it)", r.cfgPath)
 		default:
-			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
 		}
 	} else {
 		configured.Status, configured.Version = StatusOK, selected.Version
@@ -578,10 +615,10 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 		r.add(c)
 	}
 
-	r.location("jobs", "job queue", jobs.DefaultPath, "created when baum ui runs its first job")
-	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when baum ui first looks for pull requests")
-	if r.opts.InstanceDir != nil {
-		r.location("instance", "baum ui instance directory", r.opts.InstanceDir, "created when baum ui starts")
+	r.location("jobs", "job queue", jobs.DefaultPath, "created when the baum daemon runs its first job")
+	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when the baum daemon first looks for pull requests")
+	if r.opts.Daemon != nil {
+		r.daemon()
 	}
 
 	for _, clone := range clones {
@@ -606,6 +643,33 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 		r.add(c)
 	}
 	return clones
+}
+
+// daemon reports where the daemon lives and whether it runs. It only asks
+// the daemon over its socket; it starts nothing.
+func (r *runner) daemon() {
+	ctx, cancel := context.WithTimeout(r.ctx, versionTimeout)
+	defer cancel()
+	d := r.opts.Daemon(ctx)
+	c := Check{ID: "daemon", Label: "baum daemon", Status: StatusInfo, Path: d.State, Version: d.Version}
+	switch {
+	case d.Err != nil:
+		c.Status, c.Detail = StatusWarning, d.Err.Error()
+		c.Fix = "stop it with `baum daemon stop`, or end the process it names; its logs are in " + d.State
+	case !d.Running:
+		c.Detail = "not running; the desktop app and agent hooks start it (`baum daemon ensure`)"
+	case d.Incompatible:
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("running as process %d for %s, but it speaks control protocol %d, newer than this baum", d.PID, d.Uptime, d.Protocol)
+		c.Fix = "upgrade baum, or stop the daemon with `baum daemon stop`"
+	case d.Older:
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("running as process %d for %s, older than this baum", d.PID, d.Uptime)
+		c.Fix = "run `baum daemon ensure` to replace it with this version"
+	default:
+		c.Detail = fmt.Sprintf("running as process %d for %s, control protocol %d; socket %s", d.PID, d.Uptime, d.Protocol, d.Socket)
+	}
+	r.add(c)
 }
 
 func (r *runner) location(id, label string, resolve func() (string, error), created string) {
@@ -679,11 +743,17 @@ func (r *runner) tokens(clones []repos.Clone) {
 }
 
 func (r *runner) anthropicKey() {
-	c := Check{ID: "anthropic-api-key", Label: "ANTHROPIC_API_KEY", Status: StatusInfo}
-	if r.opts.Getenv(config.EnvAnthropicAPIKey) != "" {
-		c.Detail = "set. The anthropic backend is not available in this version of baum, and the claude and codex backends do not receive the key"
-	} else {
-		c.Detail = "not set. The anthropic backend is not available in this version of baum, so nothing needs it"
+	c := Check{ID: "anthropic-api-key", Label: "ANTHROPIC_API_KEY (anthropic backend)", Status: StatusInfo}
+	switch {
+	case r.opts.Getenv(config.EnvAnthropicAPIKey) != "":
+		c.Status = StatusOK
+		c.Detail = "set, so the anthropic backend is available: it calls the Anthropic API with this key, which is not tried here. auto uses it only when neither claude nor codex can run, and the claude and codex backends do not receive the key"
+	case r.cfg.Backend == config.BackendAnthropic:
+		c.Status = StatusProblem
+		c.Detail = "not set, and the configured backend anthropic needs it"
+		c.Fix = "export ANTHROPIC_API_KEY with your Anthropic API key, or choose another backend"
+	default:
+		c.Detail = "not set, so the anthropic backend is not available and auto skips it"
 	}
 	r.add(c)
 }
@@ -697,7 +767,7 @@ func (r *runner) prices() {
 	}
 	source := r.opts.PriceSource()
 	c := Check{ID: "prices", Label: "price list", Version: source.Version, Source: source.Origin}
-	const scope = "baum generate and the other commands use the embedded list (version %s); baum ui fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
+	const scope = "baum generate and the other commands use the embedded list (version %s); the baum daemon fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
 	when := ""
 	if !source.FetchedAt.IsZero() {
 		when = ", fetched " + source.FetchedAt.UTC().Format(time.RFC3339)
@@ -716,10 +786,10 @@ func (r *runner) prices() {
 		c.Detail = fmt.Sprintf("fetching works: the published list is version %s%s. ", source.Version, when) + fmt.Sprintf(scope, pricing.Embedded().Version())
 	case source.Origin == pricing.OriginCached:
 		c.Status = StatusOK
-		c.Detail = fmt.Sprintf("the signed list version %s that baum ui stored earlier is in use; the published list is no newer. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+		c.Detail = fmt.Sprintf("the signed list version %s that the baum daemon stored earlier is in use; the published list is no newer. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
 		if !r.opts.FetchPrices {
 			c.Status = StatusInfo
-			c.Detail = fmt.Sprintf("not fetched (--offline); the signed list version %s that baum ui stored earlier is in use. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
+			c.Detail = fmt.Sprintf("not fetched (--offline); the signed list version %s that the baum daemon stored earlier is in use. ", source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
 		}
 	case r.opts.FetchPrices:
 		c.Status = StatusOK

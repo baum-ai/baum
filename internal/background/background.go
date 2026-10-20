@@ -1,5 +1,7 @@
 // Package background keeps local GitHub metadata fresh without a generation
-// queue, model backend, checkout export or hosted baum service.
+// queue, model backend, checkout export or hosted baum service. It hands
+// discovery snapshots to Service.Discovered and nothing else: automatic
+// generation is the daemon's separate scheduler.
 package background
 
 import (
@@ -42,17 +44,22 @@ type Service struct {
 	Discovery Discovery
 	// Refresh must only read GitHub/local evidence and CAS-publish the latest
 	// saved review. It must never enqueue or invoke generation.
-	Refresh   func(context.Context, repos.Clone, int) (discovery.Observation, error)
-	Saved     func(context.Context, repos.Clone) ([]int, error)
-	Changed   func()
-	Now       func() time.Time
-	Interval  time.Duration
-	runMu     sync.Mutex
-	mu        sync.Mutex
-	states    map[string]State
-	hostPause map[string]time.Time
-	cursors   map[string]int
-	nextRepo  string
+	Refresh func(context.Context, repos.Clone, int) (discovery.Observation, error)
+	Saved   func(context.Context, repos.Clone) ([]int, error)
+	// Discovered receives every snapshot a discovery poll returned without
+	// error. The daemon passes them to its automatic generation scheduler
+	// (internal/automatic), which alone decides whether to queue a job; this
+	// service never enqueues or invokes generation itself.
+	Discovered func(context.Context, discovery.Snapshot)
+	Changed    func()
+	Now        func() time.Time
+	Interval   time.Duration
+	runMu      sync.Mutex
+	mu         sync.Mutex
+	states     map[string]State
+	hostPause  map[string]time.Time
+	cursors    map[string]int
+	nextRepo   string
 }
 
 func (s *Service) now() time.Time {
@@ -170,6 +177,9 @@ func (s *Service) Sync(ctx context.Context) {
 		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		snapshot, pollErr := s.Discovery.Poll(requestCtx, repo)
 		cancel()
+		if pollErr == nil && s.Discovered != nil {
+			s.Discovered(ctx, snapshot)
+		}
 		next := s.now().Add(s.interval())
 		if pollErr != nil {
 			state.Error = "discovery_unavailable"

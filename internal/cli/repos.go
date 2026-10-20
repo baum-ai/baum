@@ -13,7 +13,7 @@ import (
 func newReposCommand() *cobra.Command {
 	root := &cobra.Command{Use: "repos", Short: "Register existing local GitHub clones and manage repository settings"}
 	open := func() (*repos.Registry, error) { return repos.Open("") }
-	add := &cobra.Command{Use: "add <path>", Short: "Register a local clone (automatic generation defaults off)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	add := &cobra.Command{Use: "add <path>", Short: "Register a local clone (automatic generation follows the global setting, on by default)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		r, e := open()
 		if e != nil {
 			return e
@@ -22,9 +22,16 @@ func newReposCommand() *cobra.Command {
 		if cmd.Flags().Changed("daily-cap") && cmd.Flags().Changed("clear-daily-cap") {
 			return fmt.Errorf("--daily-cap and --clear-daily-cap cannot be combined")
 		}
+		if cmd.Flags().Changed("automatic") && cmd.Flags().Changed("clear-automatic") {
+			return fmt.Errorf("--automatic and --clear-automatic cannot be combined")
+		}
 		c, e := r.AddPatch(cmd.Context(), args[0], func(s repos.Settings) (repos.Settings, error) {
 			if cmd.Flags().Changed("automatic") {
-				s.Automatic, _ = cmd.Flags().GetBool("automatic")
+				v, _ := cmd.Flags().GetBool("automatic")
+				s.Automatic = &v
+			}
+			if clear, _ := cmd.Flags().GetBool("clear-automatic"); clear {
+				s.Automatic = nil
 			}
 			if cmd.Flags().Changed("daily-cap") {
 				v, _ := cmd.Flags().GetFloat64("daily-cap")
@@ -59,7 +66,8 @@ func newReposCommand() *cobra.Command {
 		_, e = fmt.Fprintln(cmd.OutOrStdout(), c.ID)
 		return e
 	}}
-	add.Flags().Bool("automatic", false, "enable future automatic generation for this repository")
+	add.Flags().Bool("automatic", false, "generate reviews of this repository automatically while the global setting is on (--automatic=false turns it off)")
+	add.Flags().Bool("clear-automatic", false, "follow the global automatic generation setting again")
 	add.Flags().Float64("daily-cap", 0, "daily automatic spending cap in USD (zero permits no spend)")
 	add.Flags().Bool("clear-daily-cap", false, "remove the daily cap override so the repository inherits again")
 	add.Flags().String("backend", "", "repository backend override (empty resets to global)")

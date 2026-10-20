@@ -1,4 +1,4 @@
-package uiserver
+package uiserver_test
 
 import (
 	"context"
@@ -10,12 +10,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/generate"
@@ -26,15 +29,33 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/uiserver"
 )
 
-type browserDiscovery struct{ snapshot discovery.Snapshot }
+// browserDiscovery serves fixed pull requests. Once pushed reports true (the
+// browser test writes a marker file), PR 10 has a new head: the push the
+// automatic generation scheduler reacts to.
+type browserDiscovery struct {
+	snapshot discovery.Snapshot
+	pushed   func() bool
+	head     string
+}
 
 func (d browserDiscovery) Cached(_ context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	if repository.String() != "acme/demo" {
 		return discovery.Snapshot{Repository: repository.String(), PullRequests: []discovery.PullRequest{{Repository: repository.String(), Number: 1, Title: "Other repository change", State: "OPEN", TeamMembershipKnown: true}}, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, nil
 	}
-	return d.snapshot, nil
+	snapshot := d.snapshot
+	snapshot.FetchedAt = time.Now()
+	if d.pushed != nil && d.pushed() {
+		snapshot.PullRequests = append([]discovery.PullRequest(nil), snapshot.PullRequests...)
+		for i := range snapshot.PullRequests {
+			if snapshot.PullRequests[i].Number == 10 {
+				snapshot.PullRequests[i].HeadSHA = d.head
+			}
+		}
+	}
+	return snapshot, nil
 }
 func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	return d.Cached(ctx, repository)
@@ -54,9 +75,12 @@ type browserTransport func(*http.Request) (*http.Response, error)
 
 func (f browserTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// TestLocalAppBrowserFixture is an opt-in process used by Playwright. Its HTTP
-// boundary, registry, store, queue, job runner and generation publisher are real;
-// only GitHub and the model backend are synthetic. No developer stores are read.
+// TestLocalAppBrowserFixture is an opt-in process used by Playwright. It runs
+// the real daemon (lock, credential file, control socket and app transport)
+// with a real registry, store, queue, job runner and generation publisher;
+// only GitHub and the model backend are synthetic. No developer stores are
+// read. The browser opens the launch URL from the daemon's credential file in
+// BAUM_APP_STATE_DIR, as the desktop app does.
 func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
@@ -137,8 +161,15 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		previous = next
 	}
 	write := true
-	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
-	disc := browserDiscovery{discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}}
+	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
+	// The browser test pushes PR 10 by writing this marker; a marker left by
+	// an earlier run must not count as already seen.
+	pushMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "push-10")
+	_ = os.Remove(pushMarker)
+	disc := browserDiscovery{snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
+		_, err := os.Stat(pushMarker)
+		return err == nil
+	}}
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
@@ -187,32 +218,51 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		document, e := generatetest.Document(r.Directory, nil)
 		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
 	}}
-	server, err := New(Options{App: localapp.Handler()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
-		_ = server.Publish("progress", map[string]any{"job": job})
-		_ = server.Publish("index", map[string]any{})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runner.Close()
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
-	api := LocalAPI{Registry: registry, Config: cfg, PRs: DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Diagnostics: browserDiagnostics}.Handler()
-	defer api.Close()
-	server.opts.API = api
-	url, err := server.Listen(4167)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(os.Getenv("BAUM_APP_LAUNCH_FILE"), []byte(url), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// The real daemon serves the app: lock, credential file, control socket
+	// and app transport. Only GitHub and the model backend are synthetic.
+	state := os.Getenv("BAUM_APP_STATE_DIR")
+	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err = server.Serve(ctx); err != nil {
+	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(_ context.Context, server *uiserver.Server) (daemon.App, error) {
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
+			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
+			_ = server.Publish("progress", map[string]any{"job": job})
+			_ = server.Publish("index", map[string]any{})
+			if job.Phase == "finished" {
+				scheduler.Wake()
+			}
+		})
+		if err != nil {
+			return daemon.App{}, err
+		}
+		scheduler.Queue = runner
+		runner.SetAutomaticGate(scheduler.Gate)
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close, Drain: runner.Drain, Resume: runner.Resume,
+			// Background discovery's place: hand the scheduler a snapshot
+			// every quarter second, as the daemon does after each poll.
+			Run: func(ctx context.Context) {
+				go scheduler.Run(ctx)
+				ticker := time.NewTicker(250 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					for _, name := range []string{"acme/demo", "acme/other"} {
+						if err := scheduler.Trigger(ctx, name); err != nil && ctx.Err() == nil {
+							t.Log("automatic trigger:", err)
+						}
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}}, nil
+	}})
+	if err != nil {
 		t.Fatal(err)
 	}
 }

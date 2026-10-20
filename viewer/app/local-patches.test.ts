@@ -63,26 +63,26 @@ describe("createPatchSource", () => {
   it("fetches each path once, however often it is asked for", async () => {
     const { fn, calls } = fetcher(() => json({ patch: "@@ -1 +1 @@\n-a\n+b\n" }));
     const source = createPatchSource(3, fn);
-    const [first, again] = await Promise.all([source("a.go", 3), source("a.go", 3)]);
+    const [first, again] = await Promise.all([source("a.go", 3, "h_a"), source("a.go", 3, "h_a")]);
     expect(first).toBe(again);
-    await source("a.go", 3);
-    await source("b.go", 3);
+    await source("a.go", 3, "h_a");
+    await source("b.go", 3, "h_b");
     expect(calls).toEqual(["/api/patch?path=a.go", "/api/patch?path=b.go"]);
   });
 
   it("has no patch for a version other than the document's, without asking", async () => {
     const { fn } = fetcher(() => json({ patch: "@@ -1 +1 @@\n-a\n+b\n" }));
     const source = createPatchSource(3, fn);
-    await expect(source("a.go", 2)).resolves.toBeNull();
-    await expect(source("a.go", 4)).resolves.toBeNull();
+    await expect(source("a.go", 2, "h_a")).resolves.toBeNull();
+    await expect(source("a.go", 4, "h_a")).resolves.toBeNull();
     expect(fn).not.toHaveBeenCalled();
   });
 
   it("keeps a null answer without asking again", async () => {
     const { fn } = fetcher(() => json({ patch: null }));
     const source = createPatchSource(1, fn);
-    await expect(source("a.go", 1)).resolves.toBeNull();
-    await expect(source("a.go", 1)).resolves.toBeNull();
+    await expect(source("a.go", 1, "h_a")).resolves.toBeNull();
+    await expect(source("a.go", 1, "h_a")).resolves.toBeNull();
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
@@ -92,8 +92,8 @@ describe("createPatchSource", () => {
       () => json({ patch: "@@ -1 +1 @@\n-a\n+b\n" }),
     );
     const source = createPatchSource(1, fn);
-    await expect(source("a.go", 1)).rejects.toThrow("offline");
-    await expect(source("a.go", 1)).resolves.toBe("@@ -1 +1 @@\n-a\n+b\n");
+    await expect(source("a.go", 1, "h_a")).rejects.toThrow("offline");
+    await expect(source("a.go", 1, "h_a")).resolves.toBe("@@ -1 +1 @@\n-a\n+b\n");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 });

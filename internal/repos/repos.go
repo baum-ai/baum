@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/url"
 	"os"
@@ -25,10 +26,14 @@ import (
 var ErrNotFound = errors.New("registered clone not found")
 
 // Settings are shared by all clones of a repository. Nil overrides inherit
-// global settings; a nil cap is unset and zero permits no automatic spending.
-// A future scheduler enforces the cap; registration starts no generation.
+// global settings. Automatic is the repository's choice under the global
+// master switch (see AutomaticEnabled): nil follows it, false turns the
+// repository off, true is an explicit on that still stops while the global
+// switch is off. A nil cap is
+// unset (no daily limit) and zero permits no automatic spending; the daemon's
+// automatic scheduler enforces it. Registration itself starts no generation.
 type Settings struct {
-	Automatic bool            `json:"automatic"`
+	Automatic *bool           `json:"automatic"`
 	DailyCap  *float64        `json:"daily_cap,omitempty"`
 	Backend   *config.Backend `json:"backend,omitempty"`
 	Model     *string         `json:"model,omitempty"`
@@ -46,6 +51,31 @@ func (s Settings) Validate() error {
 	}
 	return nil
 }
+
+// AutomaticEnabled reports whether the daemon generates reviews of this
+// repository automatically. The global preference is a master switch: off
+// stops every repository, whatever its choice; on, only an explicit false
+// turns a repository off.
+func (s Settings) AutomaticEnabled(p Preferences) bool {
+	if !p.Automatic {
+		return false
+	}
+	return s.Automatic == nil || *s.Automatic
+}
+
+// Preferences are the registry's global choices, edited in the app.
+type Preferences struct {
+	// Automatic is the default for repositories without an explicit choice.
+	Automatic bool `json:"automatic"`
+	// CursorAgentAcknowledged records the one-time acknowledgement that
+	// cursor-agent runs have no cost estimate; automatic generation uses
+	// cursor-agent only once it is set.
+	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
+}
+
+// DefaultPreferences apply until the user changes them: automatic generation
+// on, cursor-agent not acknowledged.
+func DefaultPreferences() Preferences { return Preferences{Automatic: true} }
 
 // Resolve overlays generation choices without changing credentials or budgets.
 func (s Settings) Resolve(global config.Config) config.Config {
@@ -70,7 +100,17 @@ type Registry struct {
 	db *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
+	// legacy marks a read-only registry not yet migrated to schemaVersion,
+	// whose stored automatic=false only ever meant the old default.
+	legacy bool
+	// noPreferences marks a read-only registry without saved preferences.
+	noPreferences bool
 }
+
+// schemaVersion is the registry's PRAGMA user_version. Version 1 makes a null
+// automatic setting follow the global preference; before it, registration
+// stored automatic=false for every repository.
+const schemaVersion = 1
 
 func Path() (string, error) {
 	p, e := config.Path()
@@ -111,12 +151,84 @@ func Open(path string) (*Registry, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity));`)
+	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
+	if e == nil {
+		e = migrate(context.Background(), db)
+	}
 	if e != nil {
 		_ = db.Close()
 		return nil, e
 	}
 	return &Registry{db: db}, nil
+}
+
+// migrate brings the registry to schemaVersion in one immediate write
+// transaction, so concurrent processes migrate it exactly once. Before
+// version 1 the app had no automatic control and registration stored
+// automatic=false for every repository, so a stored false becomes "follow the
+// global preference"; a stored true was an explicit choice and stays.
+func migrate(ctx context.Context, db *sql.DB) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	var version int
+	if err = conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version < schemaVersion {
+		if err = migrateAutomatic(ctx, conn); err != nil {
+			return err
+		}
+		if _, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
+			return err
+		}
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
+}
+
+func migrateAutomatic(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(ctx, "SELECT identity,settings FROM repositories")
+	if err != nil {
+		return err
+	}
+	updates := map[string]string{}
+	for rows.Next() {
+		var identity, raw string
+		var s Settings
+		if err = rows.Scan(&identity, &raw); err == nil {
+			err = json.Unmarshal([]byte(raw), &s)
+		}
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if s.Automatic != nil && !*s.Automatic {
+			s.Automatic = nil
+			updates[identity] = mustJSON(s)
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for identity, settings := range updates {
+		if _, err = conn.ExecContext(ctx, "UPDATE repositories SET settings=? WHERE identity=?", settings, identity); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func databaseURI(path string) (string, error) {
@@ -155,12 +267,20 @@ func OpenReadOnly(path string) (*Registry, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	var tables int
+	var tables, preferences, version int
 	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
 		_ = db.Close()
 		return nil, e
 	}
-	return &Registry{db: db, noSchema: tables < 2}, nil
+	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='preferences'`).Scan(&preferences); e != nil {
+		_ = db.Close()
+		return nil, e
+	}
+	if e = db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil {
+		_ = db.Close()
+		return nil, e
+	}
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -236,7 +356,7 @@ func (r *Registry) AddPatch(ctx context.Context, path string, edit func(Settings
 	}
 	defer func() { _ = tx.Rollback() }()
 	// Acquire the write lock before reading shared settings.
-	_, e = tx.ExecContext(ctx, "INSERT INTO repositories VALUES (?,?) ON CONFLICT DO NOTHING", c.Repository, `{"automatic":false}`)
+	_, e = tx.ExecContext(ctx, "INSERT INTO repositories VALUES (?,?) ON CONFLICT DO NOTHING", c.Repository, `{"automatic":null}`)
 	if e != nil {
 		return Clone{}, e
 	}
@@ -307,6 +427,9 @@ func (r *Registry) List(ctx context.Context) ([]Clone, error) {
 			_ = rows.Close()
 			return nil, e
 		}
+		if r.legacy && c.Settings.Automatic != nil && !*c.Settings.Automatic {
+			c.Settings.Automatic = nil
+		}
 		result = append(result, c)
 	}
 	e = rows.Err()
@@ -342,4 +465,79 @@ func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
 		return ErrNotFound
 	}
 	return e
+}
+
+// RepositorySettings reads one repository's shared settings without probing
+// its clones; false means no clone of it is registered.
+func (r *Registry) RepositorySettings(ctx context.Context, repository string) (Settings, bool, error) {
+	var s Settings
+	if r.noSchema {
+		return s, false, nil
+	}
+	var raw string
+	e := r.db.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity)`, strings.ToLower(repository)).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return s, false, nil
+	}
+	if e == nil {
+		e = json.Unmarshal([]byte(raw), &s)
+	}
+	if e == nil && r.legacy && s.Automatic != nil && !*s.Automatic {
+		s.Automatic = nil
+	}
+	return s, e == nil, e
+}
+
+const automaticPreferences = "automatic"
+
+// Preferences reads the global preferences: DefaultPreferences until saved.
+func (r *Registry) Preferences(ctx context.Context) (Preferences, error) {
+	p := DefaultPreferences()
+	if r.noSchema || r.noPreferences {
+		return p, nil
+	}
+	var raw string
+	e := r.db.QueryRowContext(ctx, "SELECT value FROM preferences WHERE key=?", automaticPreferences).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return p, nil
+	}
+	if e != nil {
+		return p, e
+	}
+	return p, json.Unmarshal([]byte(raw), &p)
+}
+
+// UpdatePreferences atomically edits the global preferences. The edit runs
+// under the writer transaction and must not call back into the registry.
+func (r *Registry) UpdatePreferences(ctx context.Context, edit func(Preferences) Preferences) (Preferences, error) {
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Preferences{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Take the write lock before reading.
+	if _, e = tx.ExecContext(ctx, "INSERT INTO preferences VALUES (?,?) ON CONFLICT DO NOTHING", automaticPreferences, mustJSON(DefaultPreferences())); e != nil {
+		return Preferences{}, e
+	}
+	var raw string
+	if e = tx.QueryRowContext(ctx, "SELECT value FROM preferences WHERE key=?", automaticPreferences).Scan(&raw); e != nil {
+		return Preferences{}, e
+	}
+	p := DefaultPreferences()
+	if e = json.Unmarshal([]byte(raw), &p); e != nil {
+		return Preferences{}, e
+	}
+	p = edit(p)
+	if _, e = tx.ExecContext(ctx, "UPDATE preferences SET value=? WHERE key=?", mustJSON(p), automaticPreferences); e != nil {
+		return Preferences{}, e
+	}
+	return p, tx.Commit()
+}
+
+func mustJSON(v any) string {
+	data, e := json.Marshal(v)
+	if e != nil {
+		panic(e)
+	}
+	return string(data)
 }

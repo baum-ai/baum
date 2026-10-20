@@ -272,6 +272,85 @@ func TestRepoRoot(t *testing.T) {
 	}
 }
 
+// Uploads exclude a session that ran in an independent clone nested inside the
+// repository; other callers keep it, so the option is opt-in.
+func TestFindSessionsExcludesNestedIndependentClones(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "outer")
+	inner := filepath.Join(repo, "third_party", "inner")
+	innerSub := filepath.Join(inner, "pkg")
+	claudeDir := filepath.Join(base, "claude", "projects")
+	for _, dir := range []string{filepath.Join(repo, ".git"), filepath.Join(inner, ".git"), innerSub} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const outerID = "aaaaaaaa-0000-4000-8000-00000000000a"
+	const innerID = "bbbbbbbb-0000-4000-8000-00000000000b"
+	writeFile(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(repo), outerID+".jsonl"), claudeTranscript(outerID, repo))
+	writeFile(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(innerSub), innerID+".jsonl"), claudeTranscript(innerID, innerSub))
+
+	sessions, _, err := FindSessions(repo, FindOptions{
+		ClaudeProjectsDir: claudeDir,
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+
+		ExcludeNestedClones: true,
+	})
+	if err != nil {
+		t.Fatalf("FindSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].WorkingDir != repo {
+		t.Fatalf("got %+v, want only the session in the outer repository", sessions)
+	}
+	all, _, err := FindSessions(repo, FindOptions{
+		ClaudeProjectsDir: claudeDir,
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+	})
+	if err != nil {
+		t.Fatalf("FindSessions: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("without ExcludeNestedClones got %d sessions, want both", len(all))
+	}
+}
+
+// A submodule's .git is a file like a linked worktree's, but it points into
+// .git/modules, so its sessions belong to the submodule's repository.
+func TestFindSessionsExcludesSubmodulesButKeepsLinkedWorktrees(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "outer")
+	sub := filepath.Join(repo, "vendor", "sub")
+	wt := filepath.Join(repo, ".worktrees", "feature")
+	claudeDir := filepath.Join(base, "claude", "projects")
+	for _, dir := range []string{filepath.Join(repo, ".git"), sub, wt} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/sub\n")
+	writeFile(t, filepath.Join(wt, ".git"), "gitdir: "+filepath.Join(repo, ".git", "worktrees", "feature")+"\n")
+	const subID = "bbbbbbbb-0000-4000-8000-00000000000b"
+	const wtID = "cccccccc-0000-4000-8000-00000000000c"
+	writeFile(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(sub), subID+".jsonl"), claudeTranscript(subID, sub))
+	writeFile(t, filepath.Join(claudeDir, claudecode.EncodeProjectDir(wt), wtID+".jsonl"), claudeTranscript(wtID, wt))
+
+	sessions, _, err := FindSessions(repo, FindOptions{
+		ClaudeProjectsDir: claudeDir,
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+
+		ExcludeNestedClones: true,
+	})
+	if err != nil {
+		t.Fatalf("FindSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].WorkingDir != wt {
+		t.Fatalf("got %+v, want only the linked worktree session", sessions)
+	}
+}
+
 // A session that ran in a git worktree nested inside the checkout has to record
 // the worktree too, because that is the directory it belongs to. A live worktree
 // holds a .git file, so the same walk finds it; a deleted one is found through

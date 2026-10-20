@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -85,6 +86,21 @@ sandbox)
   sh) echo baum-write-blocked;;
   esac;;
 esac`)
+}
+
+// cursorAgentScript answers --help with the options a cursor-agent run needs
+// and --version with a dated version, as cursor-agent 2026.10.16 does.
+func cursorAgentScript(help string) string {
+	return `case "$1" in
+--help) /bin/cat <<'HELP'
+` + help + `HELP
+;;
+--version) echo "2026.10.16-e3cb207";;
+esac`
+}
+
+func (m *machine) cursorAgent() string {
+	return m.install("cursor-agent", cursorAgentScript(generatetest.FakeCursorAgentHelp))
 }
 
 func (m *machine) writeConfig(body string) string {
@@ -163,8 +179,8 @@ func TestEveryProblemAndWarningHasAFix(t *testing.T) {
 func TestReportCoversEveryItem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	report := run(t, Options{InstanceDir: func() (string, error) { return "/instance", nil }})
-	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "instance", "path"} {
+	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state"} }})
+	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "path"} {
 		find(t, report, id)
 	}
 }
@@ -347,14 +363,71 @@ func TestConfiguredBackendThatCannotRunIsAProblem(t *testing.T) {
 	wantStatus(t, find(t, report, "backend-auto"), StatusOK)
 }
 
-func TestConfiguredBackendNotAvailableInThisVersion(t *testing.T) {
+func TestConfiguredCursorAgentBackend(t *testing.T) {
+	t.Run("installed", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		m.cursorAgent()
+		t.Setenv("BAUM_BACKEND", "cursor-agent")
+		c := find(t, run(t, Options{}), "backend-configured")
+		wantStatus(t, c, StatusOK)
+		wantContains(t, "detail", c.Detail, "cursor-agent is usable")
+	})
+	t.Run("missing", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		t.Setenv("BAUM_BACKEND", "cursor-agent")
+		report := run(t, Options{})
+		// Asked for, a missing cursor-agent is a problem, not information.
+		wantStatus(t, find(t, report, "cursor-agent"), StatusProblem)
+		c := find(t, report, "backend-configured")
+		wantStatus(t, c, StatusProblem)
+		wantContains(t, "fix", c.Fix, "fix the cursor-agent check above")
+	})
+}
+
+func TestConfiguredAnthropicBackend(t *testing.T) {
+	t.Run("without a key", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		t.Setenv("BAUM_BACKEND", "anthropic")
+		report := run(t, Options{})
+		configured := find(t, report, "backend-configured")
+		wantStatus(t, configured, StatusProblem)
+		wantContains(t, "detail", configured.Detail, "ANTHROPIC_API_KEY is not set")
+		key := find(t, report, "anthropic-api-key")
+		wantStatus(t, key, StatusProblem)
+		wantContains(t, "key fix", key.Fix, "export ANTHROPIC_API_KEY")
+	})
+	t.Run("with a key", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		t.Setenv("BAUM_BACKEND", "anthropic")
+		t.Setenv("ANTHROPIC_API_KEY", plantedAnthropicAK)
+		report := run(t, Options{})
+		configured := find(t, report, "backend-configured")
+		wantStatus(t, configured, StatusOK)
+		wantContains(t, "detail", configured.Detail, "the configured backend anthropic is usable")
+		wantStatus(t, find(t, report, "anthropic-api-key"), StatusOK)
+	})
+}
+
+func TestAutoFallsBackToTheAnthropicAPIWhenTheKeyIsSet(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
-	t.Setenv("BAUM_BACKEND", "anthropic")
-	c := find(t, run(t, Options{}), "backend-configured")
-	wantStatus(t, c, StatusProblem)
-	wantContains(t, "detail", c.Detail, "not available in this version")
+	t.Setenv("ANTHROPIC_API_KEY", plantedAnthropicAK)
+	t.Setenv("BAUM_MODEL", "claude-sonnet-4-5")
+	report := run(t, Options{})
+	auto := find(t, report, "backend-auto")
+	wantStatus(t, auto, StatusOK)
+	wantContains(t, "auto", auto.Detail, "picks anthropic", "claude skipped", "codex skipped",
+		`the model "claude-sonnet-4-5" was meant for claude; anthropic uses its own default model`)
+	if report.Status == StatusProblem {
+		t.Errorf("a usable anthropic backend left the report a problem: %v", report)
+	}
 }
 
 func TestConfiguredBackendThatRunsIsOK(t *testing.T) {
@@ -416,12 +489,13 @@ func TestExplicitCodexAndCursorAgentPaths(t *testing.T) {
 --version) echo "codex-cli 0.162.1";;
 sandbox) shift 4; case "$1" in cat) /bin/cat "$2";; sh) echo baum-write-blocked;; esac;;
 esac`)
-	cursorPath := m.script(dir, "cursor-custom", `echo "2025.01.01-abc"`)
+	cursorPath := m.script(dir, "cursor-custom", cursorAgentScript(generatetest.FakeCursorAgentHelp))
 	m.writeConfig("[backend_paths]\ncodex = '" + codexPath + "'\ncursor-agent = '" + cursorPath + "'\n")
 	report := run(t, Options{})
 	wantStatus(t, find(t, report, "codex"), StatusOK)
 	cursor := find(t, report, "cursor-agent")
-	if cursor.Path != cursorPath || cursor.Version != "2025.01.01" {
+	wantStatus(t, cursor, StatusOK)
+	if cursor.Path != cursorPath || cursor.Version != "2026.10.16" || !strings.Contains(cursor.Source, "backend_paths.cursor-agent") {
 		t.Errorf("%+v", cursor)
 	}
 }
@@ -432,21 +506,41 @@ func TestCursorAgent(t *testing.T) {
 		m.git()
 		c := find(t, run(t, Options{}), "cursor-agent")
 		wantStatus(t, c, StatusInfo)
-		wantContains(t, "detail", c.Detail, "not available in this version")
+		wantContains(t, "detail", c.Detail, "needed only for the cursor-agent backend")
 	})
-	t.Run("present but not available", func(t *testing.T) {
+	t.Run("installed, but never picked by auto", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		path := m.install("cursor-agent", `echo "2025.01.01-abc"`)
+		path := m.cursorAgent()
 		report := run(t, Options{})
 		c := find(t, report, "cursor-agent")
-		wantStatus(t, c, StatusInfo)
-		wantContains(t, "detail", c.Detail, "not available in this version")
-		if c.Path != path || c.Version != "2025.01.01" {
+		wantStatus(t, c, StatusOK)
+		wantContains(t, "detail", c.Detail, "the Cursor Agent CLI is installed and passes baum's checks")
+		if c.Path != path || c.Version != "2026.10.16" || c.Source != "PATH" {
 			t.Errorf("%+v", c)
 		}
-		// Auto never picks it.
-		wantStatus(t, find(t, report, "backend-auto"), StatusProblem)
+		auto := find(t, report, "backend-auto")
+		wantStatus(t, auto, StatusProblem)
+		wantContains(t, "auto fix", auto.Fix, "auto never picks cursor-agent", `backend = "cursor-agent"`)
+	})
+	t.Run("installed as agent", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		path := m.install("agent", cursorAgentScript(generatetest.FakeCursorAgentHelp))
+		c := find(t, run(t, Options{}), "cursor-agent")
+		wantStatus(t, c, StatusOK)
+		if c.Path != path || c.Source != "PATH (as agent)" {
+			t.Errorf("%+v", c)
+		}
+	})
+	t.Run("too old for the options a run needs", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.install("cursor-agent", cursorAgentScript(strings.ReplaceAll(generatetest.FakeCursorAgentHelp, `"ask"`, `"agent"`)))
+		c := find(t, run(t, Options{}), "cursor-agent")
+		wantStatus(t, c, StatusWarning)
+		wantContains(t, "detail", c.Detail, "does not list the options baum needs (ask)")
+		wantContains(t, "fix", c.Fix, "update")
 	})
 	t.Run("explicit path to a missing file", func(t *testing.T) {
 		m := newMachine(t)
@@ -617,7 +711,7 @@ func TestNoSecretAppearsInTheReport(t *testing.T) {
 			}
 		}
 		wantStatus(t, find(t, report, "github-token-github.com"), StatusOK)
-		wantContains(t, "key", find(t, report, "anthropic-api-key").Detail, "set", "not available in this version", "do not receive")
+		wantContains(t, "key", find(t, report, "anthropic-api-key").Detail, "set", "anthropic backend is available", "do not receive")
 	}
 
 	// With no other source the keyring token is used, and still not shown.
@@ -636,7 +730,7 @@ func TestAnthropicAPIKeyNotSet(t *testing.T) {
 	newMachine(t)
 	c := find(t, run(t, Options{}), "anthropic-api-key")
 	wantStatus(t, c, StatusInfo)
-	wantContains(t, "detail", c.Detail, "not set")
+	wantContains(t, "detail", c.Detail, "not set", "auto skips it")
 }
 
 func TestPriceList(t *testing.T) {
@@ -741,7 +835,9 @@ func TestConfigErrorIsAProblemAndTheReportContinues(t *testing.T) {
 func TestDoctorCreatesNothing(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	run(t, Options{InstanceDir: func() (string, error) { return filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum"), nil }})
+	run(t, Options{Daemon: func(context.Context) Daemon {
+		return Daemon{State: filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "daemon")}
+	}})
 	home := os.Getenv("HOME")
 	var created []string
 	_ = filepath.WalkDir(home, func(path string, _ os.DirEntry, _ error) error {
@@ -762,7 +858,7 @@ func TestLocations(t *testing.T) {
 	m := newMachine(t)
 	m.git()
 	cfgPath := m.writeConfig("backend = 'auto'\n")
-	report := run(t, Options{InstanceDir: func() (string, error) { return "/run/user/1/baum", nil }})
+	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state/baum/daemon"} }})
 	cfg := find(t, report, "config")
 	if cfg.Path != cfgPath || cfg.Status != StatusInfo || !strings.Contains(cfg.Detail, "read from") {
 		t.Errorf("%+v", cfg)
@@ -781,8 +877,34 @@ func TestLocations(t *testing.T) {
 	if got := find(t, report, "registry").Path; got != filepath.Join(m.config, "baum", "repos.sqlite") {
 		t.Errorf("registry path = %q", got)
 	}
-	if got := find(t, report, "instance").Path; got != "/run/user/1/baum" {
-		t.Errorf("instance path = %q", got)
+	if got := find(t, report, "daemon").Path; got != "/state/baum/daemon" {
+		t.Errorf("daemon path = %q", got)
+	}
+}
+
+func TestDaemon(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	for _, tc := range []struct {
+		name   string
+		daemon Daemon
+		status Status
+		want   []string
+	}{
+		{"not running", Daemon{State: "/s"}, StatusInfo, []string{"not running", "baum daemon ensure"}},
+		{"running", Daemon{Running: true, PID: 42, Uptime: 90 * time.Minute, Protocol: 1, Version: "v1.0.0", Socket: "/run/d.sock", State: "/s"}, StatusInfo, []string{"process 42", "1h30m0s", "/run/d.sock"}},
+		{"older", Daemon{Running: true, PID: 42, Older: true}, StatusWarning, []string{"older than this baum"}},
+		{"incompatible", Daemon{Running: true, PID: 42, Protocol: 9, Incompatible: true}, StatusWarning, []string{"protocol 9"}},
+		{"unresponsive", Daemon{State: "/s", Err: errors.New("a baum daemon holds the lock but does not answer; its process id is 7")}, StatusWarning, []string{"process id is 7"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := find(t, run(t, Options{Daemon: func(context.Context) Daemon { return tc.daemon }}), "daemon")
+			wantStatus(t, c, tc.status)
+			wantContains(t, "detail", c.Detail, tc.want...)
+			if c.Status == StatusWarning && c.Fix == "" {
+				t.Error("warning without a fix")
+			}
+		})
 	}
 }
 

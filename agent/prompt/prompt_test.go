@@ -32,9 +32,10 @@ func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
 		}
 	}
 	cases := map[string]string{
-		agent.BackendClaude:    "submit-claude.md",
-		agent.BackendAnthropic: "submit-claude.md",
-		agent.BackendCodex:     "submit-codex.md",
+		agent.BackendClaude:      "submit-claude.md",
+		agent.BackendAnthropic:   "submit-claude.md",
+		agent.BackendCodex:       "submit-codex.md",
+		agent.BackendCursorAgent: "submit-cursor.md",
 	}
 	for backend, file := range cases {
 		got, err := (prompt.Prompts{}).Instructions(context.Background(), backend)
@@ -65,7 +66,7 @@ func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
 }
 
 func TestUnknownBackendIsAnError(t *testing.T) {
-	for _, backend := range []string{"", "cursor-agent", "nope"} {
+	for _, backend := range []string{"", "cursor", "nope"} {
 		if _, err := (prompt.Prompts{}).Instructions(context.Background(), backend); err == nil {
 			t.Fatalf("%q: want an error", backend)
 		}

@@ -4,8 +4,10 @@
 
 baum is local-first, but generating a review requires a model. When you
 run `baum generate`, the following is sent to the **model provider you
-configure** (the `claude` or `codex` CLI, each of which talks to its own
-provider under your own account):
+configure** (the `claude`, `codex` or `cursor-agent` CLI, each of which talks
+to its own provider under your own account, Cursor to the model it routes the
+run to, or the Anthropic API, which the `anthropic` backend calls with your
+`ANTHROPIC_API_KEY`):
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -38,12 +40,14 @@ credentials, and only these hosts are contacted: `github.com`
 `github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
 any other host is refused, and an image hosted elsewhere is not downloaded.
 
-baum sends no telemetry. Besides GitHub and the configured provider, it
-contacts only `static.usebaum.com`, to download the public price list used
-for cost estimates. That request is a plain download: it carries no token,
+baum sends no telemetry. Unless you run `baum login`, nothing leaves the
+machine except calls to GitHub, the configured model provider and
+`static.usebaum.com`, from which it downloads the public price list used for
+cost estimates. That request is a plain download: it carries no token,
 repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
-verified, baum uses a copy embedded at release. Tokens are read from the
+verified, baum uses a copy embedded at release. The hosted service commands
+are described [below](#hosted-service-commands). Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else. Local inbox discovery also reads GitHub's REST API using that
 same token and derived host, without redirects or extra scopes. Its private
@@ -52,23 +56,92 @@ fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
 
+## Hosted service commands
+
+`baum login`, `logout`, `whoami`, `setup`, `upload` and `hooks`
+connect this machine to a hosted baum server. They are opt-in: nothing is sent
+to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
+
+- `baum login` runs a device-authorization flow with the server you name
+  (`--server` or `BAUM_SERVER`, default `https://usebaum.com/api`) and stores
+  the token it issues in `~/.config/baum/credentials.json` (mode 0600, or under
+  `XDG_CONFIG_HOME`). The token is sent only to that server.
+- After that, `baum upload` and `baum setup --upload` send the coding-agent
+  sessions recorded for a repository to the server you logged in to, as an
+  archive in which goredact masked the secrets it detected, on this machine.
+  Redaction is best effort, as above, and repository and worktree paths are
+  sent as they are. `setup --sync` asks that server to synchronize the
+  repository. Each request also names this baum's version and API protocol.
+- `baum setup` without those flags contacts no baum server. It may download
+  the pinned release of the [Entire](https://docs.entire.io) CLI from GitHub,
+  checked against a SHA-256 built into the binary, and installs Entire's
+  hooks and baum's in the repository.
+- Agent and Git hooks contact no baum server. The hook commands committed to
+  repositories run baum only for a logged-in user or in a clone set up with
+  `baum setup`, and, for a baum built or installed for the hosted service,
+  also in a repository whose committed agent hook settings dispatch through
+  baum (as the hosted service's onboarding pull request and `baum setup` write
+  them). There a hook may install the pinned Entire release from GitHub and
+  the clone's Git hook dispatchers, then hands the event to Entire.
+  Everywhere else the hooks run Entire directly, and baum does nothing at all:
+  without a login, an open-source build does not install Entire or its hooks
+  in a repository just because the repository's files ask for it, unless the
+  machine still has the hosted install script's marker (below). Uploading, or
+  anything else that contacts a baum server, needs `baum login` in every case.
+- `baum hooks install --user` adds baum's hooks to your user-wide agent
+  settings: `~/.claude/settings.json` for Claude Code and
+  `~/.codex/hooks.json` for Codex. `baum setup` does the same for a hosted
+  install or a logged-in user, unless `--skip-user-hooks` or `--skip-entire`,
+  and its `--all` plan names those files first. The hooks run in every
+  directory an agent works in, so they run baum only in a Git repository with
+  Entire enabled where no other hook the agent runs (the repository's, yours,
+  managed policy's, `/etc/codex`'s; not plugins') already hands the event to
+  Entire, and there only under the rules above; everywhere else they do
+  nothing. They read local files only. Nothing else in the files changes; the
+  previous version is kept in `~/.local/state/baum/backups/` (or under
+  `$XDG_STATE_HOME`), a file baum cannot parse is left alone, and root is
+  refused in another user's home. `baum hooks uninstall --user` removes
+  exactly those hooks (or delete the entries whose command contains
+  `baum hooks agent --check --user`). Codex runs them only after you trust
+  them with `/hooks`, and trusts hooks by position: when a removal moves
+  hooks of yours, the command lists them for you to trust again.
+- Once installed, Entire's own hooks record agent sessions as checkpoints and
+  push them, transcripts included, with `git push` to the checkpoint branch of
+  the repository's remote (or the checkpoint remote its settings name). That
+  is Entire's behaviour, not baum's; whoever can read that remote can read
+  them.
+- A baum counts as installed for the hosted service when its release build
+  says so, or when the hosted install script left the file `hosted-install`
+  beside the credentials (`~/.config/baum/`, or under `XDG_CONFIG_HOME`). The
+  marker outlives the binary that came with it: an open-source baum installed
+  later on the same machine also sets up onboarded repositories without a
+  login. Delete the file (`rm ~/.config/baum/hosted-install`) to stop that.
+- `baum logout` revokes and removes the stored token but leaves the markers
+  `baum setup` and the hook bootstrap write in a clone's `.git/baum`
+  directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep
+  running through baum for that local work; without a login they send
+  nothing to a baum server.
+
 ## What `baum doctor` runs and prints
 
 `baum doctor` diagnoses the machine and starts no model. It runs
-`<tool> --version` for `git`, `gh` and `cursor-agent`, each with a timeout, in
+`<tool> --version` for `git` and `gh`, each with a timeout, in
 a process group that is killed whole when the timeout passes, and with the
 filtered environment of the local backends, which drops provider keys and
 GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
 path comes from `backend_paths`, `GH_PATH` or `PATH`;
-the same checks `baum generate` runs for `claude` and `codex`, which include
-codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
-temporary directory it removes); and, only when no token comes from the
+the same checks `baum generate` runs for `claude`, `codex` and `cursor-agent`,
+which include codex's read-only sandbox preflight (a sandboxed `cat` and a
+blocked write in a temporary directory it removes) and `cursor-agent --help`
+and `--version`, and for `anthropic`, which only looks at
+whether `ANTHROPIC_API_KEY` is set and sends it nowhere; and, only when no token comes from the
 environment, the config file or `gh`'s own files, `gh auth token
 --secure-storage --hostname <host>`. Its one network contact is the signed price
 list described above, skipped with `--offline`; nothing else leaves the machine.
 It creates no files of its own: it opens the registry read-only (SQLite
 `mode=ro`, so no journal, table or file mode changes) and only when it exists,
-and does not create a review store. A config file that does not parse is shown
+and does not create a review store. It asks a running baum daemon for its
+version, process id and uptime over the daemon's socket, and never starts one. A config file that does not parse is shown
 by position, and by key for a wrong type or value, and never by its text. Asking
 gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
 its own configuration, as `baum generate` does.
@@ -98,7 +171,8 @@ address, which stops other websites in your browser from reading it, but any
 other user or process on the same machine can request the port while it runs
 and read everything it serves, transcripts included, even without permission
 to read your `~/.claude` or other session stores. Do not run `baum view` on a
-shared machine. `baum ui` adds the separate authenticated boundary described below.
+shared machine. The baum daemon, which serves the local application, adds the
+separate authenticated boundary described below.
 
 ## Reading your clone without downloading anything
 
@@ -121,15 +195,21 @@ or runs a program. Because whoever made the clone controls that bookkeeping,
 an entry is used only when the worktree's own `.git` file points back at this
 repository (or its directory is gone), and never when it is the file system
 root, your home directory, or a directory containing the repository, so a
-planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
-the checkpoint branch already in your clone, in the private repository; a
-checkpoint you have not fetched is not fetched for it.
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up in the
+Entire checkpoints already in your clone: the per-checkpoint refs
+`refs/entire/checkpoints/*` and the checkpoint branch `entire/checkpoints/v1`,
+both read in the private repository. A checkpoint you have not fetched is not
+fetched for it; the warning says so and names the command you can run yourself,
+`git fetch <remote> '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'` (and, for a
+12-hex id, `git fetch <remote> entire/checkpoints/v1`), with `<remote>` the clone's
+remote for the repository when it is known.
 
 ## Agent isolation
 
-The `claude` and `codex` backends run on your machine under
+The `claude`, `codex` and `cursor-agent` backends run on your machine under
 your user account, each in its own read-only mode, inside a temporary
-checkout of the pull request. baum adds no container or sandbox of its own,
+checkout of the pull request. **`cursor-agent` cannot be held to read-only as
+reliably as the other two**; see [below](#the-cursor-agent-backend). baum adds no container or sandbox of its own,
 so isolation is only as strong as that tool's read-only mode. Repository
 content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
@@ -220,16 +300,134 @@ The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 
+### The cursor-agent backend
+
+**baum cannot make the Cursor Agent CLI reliably read-only.** It uses every
+restriction the CLI offers, and stops a run that strays, but several of
+Cursor's own features stay on and its read-only mode is enforced by Cursor,
+not by baum. Use it only on pull requests you are prepared to have an agent
+read, and possibly act on, under your account. Choose `claude`, `codex` or
+`anthropic` where that matters. For the same reason `auto` never picks
+`cursor-agent`: it runs only when you set `backend = "cursor-agent"` or pass
+`--backend cursor-agent`.
+
+What baum does (checked against the help of cursor-agent 2026.10.16-e3cb207;
+the CLI's behaviour behind the flags was read from that release, not tested
+against a model):
+
+- It runs `cursor-agent --print --output-format stream-json --mode ask
+  --sandbox enabled --workspace <run directory> --trust` in the run directory.
+  Ask mode is the CLI's read-only mode ("Q&A style for explanations and
+  questions (read-only)"), and a headless run cannot switch out of it.
+  `--sandbox enabled` runs any command the agent still starts in Cursor's
+  sandbox, which confines writes to the workspace (the temporary run
+  directory, not your clone), and the CLI exits rather than run unsandboxed
+  where the sandbox cannot start. `--trust` only answers the workspace trust
+  prompt for the run directory; baum never passes `--force`, `--yolo`,
+  `--auto-review` or `--approve-mcps`, so commands and MCP servers are not
+  approved by baum.
+- It stops the run, kills the CLI's process group and fails the attempt
+  (`disallowed_tool`) as soon as the CLI reports any tool call other than
+  reading, listing or searching files or updating its to-do list: shell
+  commands, edits, deletes, MCP tools, web search and fetch, subagents, mode
+  switches and any tool baum does not know. Detection fails closed: it is an
+  allowlist of the event types, subtypes and text content the CLI writes in a
+  run that only reads, and any other event, or one baum cannot decode, stops
+  the run too. The
+  attempt is not retried, so a pull request that steers the model into such
+  a call gets no second try. The CLI reports a call as it starts, so this
+  limits what a stray call can do; it does not prevent it.
+- The process gets the same environment allowlist as the `claude` backend, plus
+  `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` and `AGENT_CLI_CREDENTIAL_STORE` when
+  you set them. `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN` and the other provider,
+  cloud and GitHub credentials are removed: it uses your own `cursor-agent
+  login`. baum gives it no endpoint or key of its own.
+- It runs only an executable whose `--help` names the Cursor Agent and lists
+  every option above (an executable called `agent` is used only then), so an
+  older CLI that would ignore or reject one is refused.
+
+What remains for `cursor-agent`:
+
+- **Reads are not confined to the checkout** by anything baum controls. The
+  read tools ask mode offers may read any file your account can, such as
+  `~/.ssh` or `~/.aws`, and what the model reads is sent to Cursor and the
+  model provider it routes to.
+- **Your Cursor configuration applies.** No flag turns off hooks: user, team
+  and enterprise hooks (`~/.cursor/hooks.json`, `/etc/cursor/hooks.json` and
+  the like) and the Claude Code user hooks Cursor also loads run during the
+  review, as you. Rules, `AGENTS.md` files and skills in the checkout or your
+  home directory may be read as instructions. The pull request's own
+  `.cursor/hooks.json`, `.cursor/cli.json` and `.cursor/mcp.json` (and its
+  `.claude` settings) are inactive only because baum unpacks the checkout
+  under `head/` and `merge-base/` in the run directory, not at its root, which
+  is the workspace `--trust` covers; a test fails if that layout changes. MCP servers you approved before
+  may start, though calling one stops the run. If your Cursor CLI config sets
+  the approval mode to run everything, or allow-lists commands, the CLI may
+  run a command without asking; it runs in the sandbox, and baum stops the run
+  when it sees the call.
+- **The run is kept in Cursor's own chat history** (under `~/.cursor` or
+  `$XDG_CONFIG_HOME/cursor`), with the prompt and bundle, and the run
+  directory may be recorded as a trusted workspace; there is no flag to turn
+  either off. baum's own session discovery reads Cursor's editor store, not
+  these CLI chats, and the prompt starts with the generation-run marker, so
+  the run is never used as evidence.
+- Only environment variables are filtered, not files, the network or other
+  processes running as you, as for the other CLI backends.
+- Usage is the run total the CLI reports at the end, so the token budget is
+  checked only then; a call that is not reported is not counted. The cost is
+  billed by Cursor and recorded as unknown.
+
+### The anthropic backend
+
+The `anthropic` backend (`agent/anthropic`) runs no agent process. baum itself
+calls the Anthropic Messages API (`https://api.anthropic.com/v1/messages`) and
+runs the model's tool calls in-process:
+
+- The model gets four tools: `Read`, `Glob` and `Grep`, which read the
+  temporary run directory, and `StructuredOutput`, which submits the document.
+  There is no tool that writes, runs a command or reaches the network, and a
+  call to any other tool name is refused.
+- Every path is relative to the run directory. An absolute path, a `..`
+  element or a backslash is refused before any file is opened, and the
+  directory is opened as an `os.Root`, so a symbolic link whose target is
+  outside it cannot be read; listing and searching never follow a link at all.
+- Reads are bounded: a file over 4 MiB is not read, `Read` returns at most
+  2,000 lines of 2,000 characters, a search returns at most 500 paths or 200
+  matching lines, skips files over 4 MiB and binary files, and visits at most
+  200,000 entries, and no text tool result exceeds 64 KiB. `Grep` uses Go's
+  RE2 expressions and globs are matched in time proportional to the pattern
+  and path lengths (with at most eight `**` segments), so neither can be made
+  to run for long.
+- `Read` sends a PNG, JPEG or GIF file as an image only when the standard
+  library decodes its header, it is at most 2,000 pixels a side and 1 MiB, and
+  the run has sent fewer than 10 images and 5 MiB of them; otherwise the
+  model gets a short note instead. Other image formats are treated as binary.
+- What the model reads is sent to the Anthropic API as part of the
+  conversation, as it is, unredacted, like the checkout files the other
+  backends read. Nothing outside the run directory is.
+- The key comes only from `ANTHROPIC_API_KEY` (or, for a host, the endpoint it
+  configures). It is sent only in the `x-api-key` header to the API's own
+  address; redirects are not followed, so it never reaches another host. It is
+  never written to the config file, the run directory, the diagnostics or the
+  logs, and any error text that would contain it has it replaced.
+- Diagnostic events record tool names, sizes, statuses and token counts, and
+  a path only when it named an existing file or directory in the run
+  directory (otherwise `(refused path)`), never file contents, search
+  patterns or other model text.
+
 ## Local repository registry
 
 `baum repos` stores clone paths, git common directories, normalized GitHub
 identities and generation preferences in a 0600 SQLite database beside the XDG
 config file. Remote URLs and their credentials are never persisted or returned.
 Registration and availability checks read local git metadata only; they do not
-resolve tokens, clone, fetch or contact GitHub/model providers. Automatic
-preferences default off and registration does not start any background work.
+resolve tokens, clone, fetch or contact GitHub/model providers. Registration
+starts nothing by itself, but automatic generation is on by default: once the
+daemon has seen a registered repository's open pull requests, later new heads
+and review requests can start paid runs (see "The baum daemon"). The registry
+also holds the global preferences that control this.
 
-The registry HTTP handler is mounted by `baum ui` behind its authenticated
+The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, remove records
 and change settings. `baum view` exposes none of these routes.
 
@@ -253,9 +451,116 @@ exposed while triggering the issue, treat it as compromised and rotate it.
 This policy covers the baum repository. It does not cover the model
 providers, GitHub, or the coding-agent tools whose sessions baum reads.
 
+## The baum daemon
+
+The local application (the desktop app, or `baum ui` in a browser) is served
+by the baum daemon, one process per user that keeps running in the background
+after whatever started it exits. The desktop app and agent hooks start it with
+`baum daemon ensure`; `baum ui` does too.
+
+What it runs while it is up:
+
+- the local application's server on `127.0.0.1` (described below) and a
+  control socket only your user can open;
+- every minute or so, free GitHub reads with your token for registered clones:
+  open pull requests, the authenticated user and teams, author permissions,
+  and the latest saved review's checks, conversation and head, with
+  conditional requests and backoff (see "What baum sends where");
+- once when it starts, the signed price list download;
+- generation jobs, the only thing that spends money: each runs the configured
+  backend under your account, within the configured budgets, as
+  `baum generate` does. Some you confirmed in the app with their price
+  estimate; the others it starts by itself, unattended (below).
+
+Automatic generation is on by default and runs without anyone watching. It
+starts a job when a pull request in a registered repository that you authored,
+or whose review is requested from you or one of your teams, gets a new head, a
+new review request or is marked ready for review after automatic generation
+was enabled for that repository; pull requests already open then, and drafts,
+are left alone. It never starts
+one for a pull request from a fork or by an author without known write access:
+those run the agent on someone else's content and always need your
+confirmation in the app. Each automatic job is prepared exactly like a
+confirmed one (same backend, model, budgets, price list and recheck of the head
+before any model call, which also stops it if the pull request was converted to
+a draft while it waited), and a model without a known price is never run
+automatically. What it can spend: up to the configured per-run budget for each
+new head (twice when a daemon stop or restart interrupts the first run, which
+is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which
+pauses that repository's automatic generation until the next day once reached.
+The cap is checked when a job is queued and again, against the current cap and
+the cost already reported that day, right before a queued job starts; a job
+over it is stopped before any model call and waits for the pause to end.
+cursor-agent, which baum cannot estimate or cap, runs automatically only after
+you acknowledge that in the app. Turning the global switch off (in Repositories
+& settings, or pausing automatic generation from the desktop app) stops it in
+every repository, including those set to "On"; while it is on, single
+repositories can be turned off. Turning off (or withdrawing the cursor-agent
+acknowledgement) also cancels that scope's automatic jobs that are queued but
+not started, and the queue checks the current settings again before starting
+each one; only a job already running finishes, within its budget. Raising or
+removing a repository's daily cap ends its pause.
+The daemon keeps doing this after the app window closes, and the desktop app
+can quit without stopping it; only "Quit and stop background reviews" (or
+`baum daemon stop`) stops it.
+
+It never contacts a baum server. To stop it, quit the desktop app with "stop
+background reviews" or run `baum daemon stop`: running jobs are cancelled and
+recorded as interrupted (after at most 20 seconds), and nothing runs until
+something starts it again. `baum daemon status` and `baum doctor` show whether
+it runs, its version, process id and uptime. When a newer baum finds an older
+daemon running jobs, it lets them finish: the daemon then starts the newer
+`baum` executable that asked and exits. Only a daemon speaking an incompatible
+protocol is stopped at once.
+
+The daemon runs that executable outside any sandbox, with your login shell's
+environment and SSH agent, while the process that named it may be an agent
+hook run from a sandboxed command that can write files in a workspace. So it
+accepts the executable only from a client of a newer version than its own,
+and only when, after resolving symbolic links, the file is the daemon's own
+executable (an upgrade in place) or the `baum` on its login shell's `PATH`;
+it must be a regular, executable file owned by you or root and not group- or
+world-writable, in directories up to `/` that are all the same (none may be
+world-writable, not even sticky like `/tmp`). It checks again just before
+starting it. A refused executable is logged and the daemon keeps running; a
+newer baum then replaces it the next time it finds the daemon idle. On
+Windows, where owners and mode bits do not describe access, only the first
+two rules apply.
+
+Its state directory, `$XDG_STATE_HOME/baum/daemon` (default
+`~/.local/state/baum/daemon`), is mode 0700 and holds the lock, `daemon.json`
+(version, process id, start time, app address), the app credential and the
+logs, which are rotated at 1 MiB with two older files kept. The logs hold
+events, addresses and paths, never tokens, credentials or environment values.
+
+The control socket, `$XDG_RUNTIME_DIR/baum/daemon.sock` or `daemon.sock` in
+the state directory, is mode 0600 in a 0700 directory, so other users cannot
+connect; Windows uses the same `AF_UNIX` socket, protected by the state
+directory's current-user DACL. Any process running as you can connect, ask
+for the daemon's status and stop it. The socket accepts no other requests yet.
+
+The daemon does not use the environment of whatever started it. It runs your
+login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
+with only session variables and reads the environment your startup files set,
+then keeps only `PATH`, locale, proxy and certificate settings, the SSH agent
+socket and ssh command git uses, the desktop session bus and display,
+GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
+`GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
+environment is therefore not used. Your home, XDG and temporary directories
+come only from the starting environment, never from the shell, because they
+decide which state directory, lock and job journal the daemon uses. The SSH
+agent socket is the starting environment's, else the shell's; it is used only
+to fetch a missing pull request commit from your clone's remote, as `baum
+generate` would, never given to an agent backend, and dropped when it no longer
+exists. The daemon's fetches never prompt: git's terminal prompts and SSH's
+askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout, so
+a key that needs a passphrase or an unknown host key fails the run with git's
+error. An ssh command you configured runs as you wrote it.
+
 ## Authenticated local application
 
-`baum ui` accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
+The daemon's application server accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
 local data; every API requires the random private launch capability or an
 HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
 browser receives the capability in a URL fragment, removes it from history,
@@ -265,14 +570,17 @@ every port of a host, so the cookie is scoped to a second random secret path,
 loopback port never receives it, and the cookie authorizes nothing outside
 that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
-authentication. No route enables CORS. The capability is valid only while the
-instance runs; keep the printed URL and its mode-0600 instance file private.
-Processes running as your user can read that file and access the API.
+authentication. No route enables CORS. The capability is the daemon's app
+credential: it is written to `credential.json` (mode 0600) in the daemon's
+state directory, where the desktop app reads it, stays valid for repeated
+exchanges while that daemon runs, and is replaced when a new daemon starts.
+Keep the URL `baum ui` prints and that file private. Processes running as your
+user can read that file and access the API.
 
-The per-user instance directory must be mode 0700 on Unix; Windows uses a protected current-user DACL. A second invocation verifies
-the existing instance using its capability before opening it, without sending
-that capability to a redirect, proxy, non-loopback host or baum server. SQLite
-OS locking prevents concurrent owners and releases locks after process exit.
+The state directory must be mode 0700 and owned by you on Unix; Windows uses a
+protected current-user DACL. Clients never send the capability anywhere: they
+read it from the file and open it on the loopback address it names. SQLite OS
+locking keeps one daemon per user and releases the lock after process exit.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum view`; file patches are
@@ -296,8 +604,9 @@ process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. The stored copy of a downloaded
-price list is trusted only after its signature verifies again on load. A second `baum ui` invocation
-cannot open a second queue because it reuses the existing instance first.
+price list is trusted only after its signature verifies again on load. Only
+the daemon that owns the per-user lock opens the queue, so there is never a
+second one.
 
 The server's bootstrap page exchanges the fragment token and clears it from
 history before the embedded local application loads; the application's files

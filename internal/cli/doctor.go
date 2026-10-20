@@ -7,13 +7,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/doctor"
-	"github.com/baum-ai/baum/internal/uiserver"
 )
 
 // doctorOptions builds the report's options; tests replace it to stand in for
 // the machine.
 var doctorOptions = func(fetchPrices bool) doctor.Options {
-	return doctor.Options{FetchPrices: fetchPrices, InstanceDir: uiserver.StateDirectory}
+	return doctor.Options{FetchPrices: fetchPrices, Daemon: daemonReport}
 }
 
 // problemsError is returned by "baum doctor" when the report has a problem, so
@@ -39,10 +38,10 @@ list comes from; and where the config file, repository registry, job queue,
 discovery cache and review stores live. Every problem and warning has a fix
 line, for example setting backend_paths.claude in the config file.
 
-It runs --version on git, gh and cursor-agent, the same checks "baum generate"
-runs for claude and codex (including codex's read-only sandbox check, which
-makes and removes a temporary directory) and, when no token is configured,
-"gh auth token". It creates no files of its own and opens the registry
+It runs --version on git and gh, the same checks "baum generate" runs for
+claude, codex (including codex's read-only sandbox check, which makes and
+removes a temporary directory) and cursor-agent (its --help and --version)
+and, when no token is configured, "gh auth token". It creates no files of its own and opens the registry
 read-only. Its one network request is the signed price list; --offline skips
 it.
 

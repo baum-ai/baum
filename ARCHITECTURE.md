@@ -7,10 +7,19 @@ support every field in the schema; they differ only in where evidence comes
 from and what they do with the result.
 
 The dependency runs one way. The hosted service imports these packages, but
-the `baum` binary never uses hosted baum data and never contacts a baum server:
-everything it reads comes from the user's machine, GitHub (with the user's own
-token) or the model provider the user configures. The one other contact is the
-public, signed price list described under "Running locally".
+the review commands of the `baum` binary never use hosted baum data and never
+contact a baum server: everything they read comes from the user's machine,
+GitHub (with the user's own token) or the model provider the user configures.
+The one other contact is the public, signed price list described under
+"Running locally".
+
+The same binary also carries the hosted service's client commands (`login`,
+`logout`, `whoami`, `setup`, `upload` and the `hooks` dispatchers), listed
+under "Hosted service" in `--help`. They are opt-in: nothing reaches a baum
+server before `baum login`, and the hook commands committed to repositories
+run baum only for a logged-in user, in a clone set up for the hosted service,
+or, for a hosted install, in a repository onboarded to it; for everyone else
+they fall through to Entire. See "Hosted service client" below.
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
@@ -57,8 +66,10 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
+| `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
+| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `userhooks`, which edits the user-wide Claude Code and Codex settings |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
 store, the `doctor` diagnostics) stays under `internal/`.
@@ -439,14 +450,14 @@ stay, so a child can still read credentials kept in files under them. Backends:
 
 | Backend | Runs |
 | --- | --- |
-| `anthropic` | planned: the Anthropic API directly, with read-only file tools over the checkout |
+| `anthropic` | the Anthropic Messages API directly, with read-only file tools over the run directory, submitting through a `StructuredOutput` tool (`agent/anthropic`) |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
-| `cursor-agent` | planned: `cursor-agent` confined to the checkout |
+| `cursor-agent` | `cursor-agent -p` in Cursor's read-only ask mode with its sandbox enabled, the schema carried in the prompt (`agent/cursor`) |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
-leaves open.
+leaves open, which for `cursor-agent` is more than for the others.
 
 `agent/claude` has two profiles over the same read-only flags, which are not
 configurable. `User`, the zero value, is for local runs: the child gets
@@ -479,6 +490,107 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
 
+`agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
+one profile and refuses a request with an `Endpoint`. Before its first run a
+`Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
+else `agent` when its help names the Cursor Agent) and checks `--help` for every
+option and value a run passes, since Cursor's dated releases give no version
+to compare; a missing one asks for `cursor-agent update`. A run is
+`cursor-agent --print --output-format stream-json --mode ask --sandbox enabled
+--workspace <run> --trust [--model M]` in the run directory, with
+`LocalEnvironment` plus `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` and
+`AGENT_CLI_CREDENTIAL_STORE` (never `CURSOR_API_KEY`) and `NO_OPEN_BROWSER=1`.
+The prompt goes on stdin with the model schema appended under an "Output
+schema" heading, because the CLI has no structured output. The document is the
+final message (every assistant text after the last tool call, retry or user
+turn, joined, since the CLI may split it, and at most the document bound; the
+result's text when that holds no JSON value): one
+JSON object is kept, a fenced one or one with prose around it is unwrapped, and anything else goes to the validator as it is, so the loop
+rejects and repairs it. Any tool call other than reading, listing and
+searching files and the to-do list (`readToolCall`, `grepToolCall`,
+`globToolCall`, `lsToolCall`, `semSearchToolCall`, `readLintsToolCall`,
+`readTodosToolCall`, `updateTodosToolCall`) stops the run with the
+`disallowed_tool` status, as does any event off the allowlist of event types,
+subtypes and content blocks a reading run writes (`system` init, `user`,
+`assistant` text, `tool_call` started and completed, `thinking`, `result`,
+`retry`, `connection`, and `interaction_query` only for a question) or one that
+does not decode: detection fails closed; the stream reports a call as it
+starts, so this detects rather than prevents. These failures, a missing option,
+an unavailable sandbox and a missing login are not retried: each unwraps to an
+`agent.RejectedError` for the loop, but its own text names cursor-agent
+("cursor-agent cannot run: ..." or "cursor-agent run stopped: ...") rather than
+the model provider. Model calls are the distinct `model_call_id`s of
+the stream plus the final answer, checked against `MaxCalls` as they appear.
+Usage is the result event's run total (`inputTokens` already excludes cache
+reads and writes), checked against `MaxTokens` when it arrives; a result
+without it marks the usage `Unreported`. `Result.Model` is the configured model
+(`configured`) or the display name the CLI's init event reports
+(`cli_reported`); neither is a provider model ID and no speed or cache TTL is
+reported. Cursor bills the run through the user's subscription, so
+`pricing.List.BackendEstimate`, `BackendOutcomeCost` and
+`BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
+this backend whatever its model is called: the recorded cost is unknown, and a
+generation-queue job in the daemon carries it as `Prepared.EstimateReason` with a nil estimate
+instead of an estimate at API rates. Such a job is not blocked: `Queue.SubmitConfirmed`
+queues it only with `Confirmation.Unpriced` (`confirm_unpriced`) on top of the
+estimate and any isolation confirmation. A failed process is classified
+from its stderr (`unsupported_option`, `sandbox_unavailable`,
+`authentication_error`); none is retried, as every attempt would fail the same
+way until the user acts.
+
+`agent/anthropic` is not a CLI: baum runs the model call loop itself, over
+`net/http` rather than the official SDK (one endpoint, retries that must count
+against the run's deadline, and no new dependency in this published module).
+Each call sends the system prompt, four tools in a fixed order (`Read`, `Glob`,
+`Grep`, and `StructuredOutput`, whose input schema is the request's schema),
+the prompt as the first user message with a cache breakpoint after it, and
+top-level automatic caching for the growing conversation, both with the
+5-minute TTL. Each call is streamed (server-sent events read with the
+standard library) and the message is assembled from its events; assistant
+turns, thinking blocks and their signatures included, are sent back with the
+content the stream delivered. The tools are confined to the run directory through an `os.Root`
+(absolute paths, `..` elements and escaping links are refused; listing and
+searching never follow a link) and bounded in file size, matches, images and
+output bytes; globs are matched by dynamic programming with at most eight
+`**` segments, so a pattern cannot make a walk run long. A `StructuredOutput` input that does not match the schema goes back to
+the model as a tool error and counts as a structured output rejection; a turn
+that ends without one is nudged twice before the run fails. The key and base
+URL come from the request's `Endpoint`, else the `Backend`'s own (the local
+host sets the key from `ANTHROPIC_API_KEY`). The default model is
+`claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+
+Every request sent is one call, charged before the next is made: a call the
+request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
+`max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
+per-call report in disjoint buckets (message_start's, updated by
+message_delta's cumulative counts), with the 1-hour share of cache writes
+(zero when unreported, since only the 5-minute TTL is requested), the speed
+(standard unless reported) and each call's prompt size, so `Accounting` prices
+it per call. A request that was sent without a complete, usable response marks
+the usage `Unreported`. Before any response, 429, 529, other 5xx and 408
+responses, failed connections and a response that does not start within two
+minutes are retried four times, honouring `retry-after` (at most a minute) or
+backing off exponentially, and a wait that would outlast the context's
+deadline ends the call instead. Once a 200 response has started it is never
+retried: a stream that ends early, carries an error event or is silent for
+ten minutes (the SDKs' read timeout; a healthy stream can be silent for
+minutes while the API buffers a tool input or the model thinks without
+displaying it) fails the call. Such a call is billed with unknown usage, so
+the run's cost becomes unknown, and the generate-and-repair loop then retries
+the whole run within `MaxProviderAttempts`, sending the conversation again.
+A tool input or block a `max_tokens` or `refusal` stop leaves incomplete is
+not malformed: the stop reason decides, so a truncated call is answered as not
+run and a refusal stays a refusal; an incomplete one under any other stop
+reason, or a stream line over 8 MiB, is `malformed_response`. Failures are an `*anthropic.Error` with a fixed
+`Category` (`authentication_error`, `rate_limit`, `provider_overloaded`,
+`provider_error`, `transport_error`, `invalid_request`, `malformed_response`,
+`refusal`, `context_window_exceeded`, `no_document`), which is also the status
+of the run's error event; a spent budget is the loop's budget reason. The
+first, `invalid_request`, `refusal` and `context_window_exceeded` come wrapped
+in an `agent.RejectedError`, which the generate-and-repair loop does not retry
+and whose text starts with `agent.ProviderRejectedReason(status)`. No error
+text, event or log line holds the key.
+
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
 Session discovery skips sessions recorded under a path element with that
@@ -507,7 +619,9 @@ type Prompt struct {
 The module ships and maintains its own public prompt in `agent/prompt`:
 `review-public-v2.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
-and anthropic, and `submit-codex.md`), embedded with `go:embed`.
+and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
+schema the cursor-agent backend appends and lists the tools that stop a run),
+embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
 `Version` to `review-public-v2` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
@@ -523,9 +637,10 @@ The loop owns the rest of what a run sends:
   only.
 - **Repair text.** `agent.RepairText(backend)` returns the text that opens and
   closes a repair prompt. A backend that submits through a `StructuredOutput`
-  tool (`claude`, `anthropic`) is told to call it again; `codex`, which answers
-  in its final message, is told to reply with the entire corrected document
-  there and to use its file tools when a finding needs the file. A prompt's
+  tool (`claude`, `anthropic`) is told to call it again; `codex` and
+  `cursor-agent`, which answer in their final message, are told to reply with
+  the entire corrected document there and to use their file tools when a
+  finding needs the file. A prompt's
   `Repair` and `RepairEnding`, when not empty, replace that text, for a host
   whose instructions name the tools differently. They are not part of the
   prompt's JSON encoding.
@@ -555,7 +670,34 @@ identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
 (instructions, tile guidance, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
-`1<<min(n,4)` seconds). The document goes through `review`: the validator
+`1<<min(n,4)` seconds), except a spent budget and an `agent.RejectedError` (a
+rejected key, a refused request, a declined prompt, a conversation over the
+context window), which end the run with their own reason.
+
+A stall watchdog bounds each attempt when the budgets set `StallTimeout` or
+`ToolTimeout` (zero disables each). Backends report to the request's
+`Activity`: every harness event is progress, and each tool runs from its start
+to its end: Codex's `item.started` and `item.completed` for commands, file
+changes, MCP calls and web searches, and Claude Code's `tool_use` and matching
+`tool_result`. With an `Endpoint`, the attempt reaches the provider through a
+loopback forwarder that passes requests and streamed responses through
+unchanged and counts the requests open, so a long model call is never idle.
+An attempt is stalled when one tool runs past `ToolTimeout`, or when no model
+request is open, no tool runs and nothing has progressed for `StallTimeout`.
+Without an `Endpoint` the loop cannot see model calls, so only `ToolTimeout`
+applies. An open request is never idle, however long it is silent: a stream
+that stops mid-response is left to the harness's own stream timeout and the
+run's wall clock. A stalled attempt is cancelled, logged (`review agent
+stalled`, with the cause, `tool_timeout` or `idle`, and the tool and its item
+ID) and recorded as a `stalled` diagnostic, and retried at once; it counts as
+a provider attempt but does not use up `MaxProviderAttempts`. A second stall
+anywhere in the run, repairs included, ends it with `ReasonStalled`. An
+attempt that returned its result is kept even if the watchdog fired as it
+did. The Codex backend logs each
+turn and each tool with its command (at most 512 bytes), duration, exit code
+and status, never its output.
+
+The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
 bundle, the rejected document and the findings, without source excerpts, as a
 repair, up to `MaxRepairAttempts` (at least one), and a repair does not
@@ -567,8 +709,8 @@ repairs: the run is rejected whatever a repair returns. After the last repair,
 or at once on a secret, a run still rejected ends with
 `ReasonValidationRejected` and the last rejected document in the outcome (at
 most `MaxRetainedDocumentBytes`, and only when it is JSON). A run that fails
-otherwise returns an error: a spent budget, `ReasonProviderUnavailable`, or the
-cancelled context.
+otherwise returns an error: a spent budget, `ReasonProviderUnavailable`,
+`ReasonStalled`, or the cancelled context.
 
 `Outcome` is what the loop reports besides the document: the model, the schema
 revision, the failure reason, the findings, the rejected document, the
@@ -765,13 +907,18 @@ inside the clone and the session store overrides, and does this:
    blobs, so a rename lists both paths). A head or start the clone lacks is
    `commits_missing`; a partial clone that has the commits but not the trees
    is `partial_clone`. It never fetches: every read of objects, including the
-   Entire checkpoint branch, runs in the private repository `gitlocal` makes,
+   Entire checkpoint stores, runs in the private repository `gitlocal` makes,
    which has no remote and no promisor configuration, with
    `GIT_NO_LAZY_FETCH=1`, so even a partial clone cannot download an object;
-   a checkpoint whose objects are missing is skipped with a warning. Only the
+   a checkpoint whose objects are missing is skipped with a warning. Entire
+   keeps checkpoints in two stores, read alike (see step 6), and clones usually
+   lack the git-refs one, since a clone does not fetch it; fetching it is the
+   user's to do (`git fetch <remote>
+   '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`; the `+` lets a
+   rewritten ref update), never baum's. Only the
    remotes' URLs are read from configuration, never contacted.
 4. Loads the sessions with `sessions.Load`, only those last modified within
-   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history so older ones are skipped unread.
+   `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history, or, for a ref, its commit's date, so older ones are skipped unread.
    `sessions.Load` finds a session recorded in any working tree of the clone:
    it lists them with `gitlocal.Worktrees` (`git worktree list --porcelain
    -z`, run against the clone's repository directory with the read
@@ -799,12 +946,28 @@ inside the clone and the session store overrides, and does this:
    `AncestorOID`, more than one parent as `IsMerge`, the changed files, and the
    agents named by `Co-Authored-By` trailer addresses. `BranchNames` is left
    empty, which the branch step reads as unknown.
-6. Reads each commit's `Entire-Checkpoint` trailer as the hosted resolver
-   does: one 12-hex id, case-insensitive key, repeated ids allowed; a malformed
-   value or two distinct ids is unusable. A usable id is looked up on the
-   clone's checkpoint branch (the local branch, else a remote-tracking copy),
-   reading only its metadata in the private repository, and maps to the
-   sessions the checkpoint records. Such a commit is linked to those sessions
+6. Reads each commit's `Entire-Checkpoint` trailers with
+   `sessions/entirecheckpoint.ParseTrailers`, the parser the hosted resolver
+   uses: a case-insensitive key, and values that are legacy 12-hex ids or
+   26-character Crockford ULIDs in any case, made canonical (hex lower-case,
+   ULID upper-case) and kept in trailer order, each once. A malformed value
+   beside a valid one is skipped with a warning line; a commit with no valid
+   value is left to the heuristics. Each id is looked up in the clone's two
+   Entire stores, reading only its metadata in the private repository, and
+   maps to the sessions the checkpoint records; a commit naming several
+   checkpoints maps to the union of their sessions. The stores are:
+   the git-refs store, one ref `refs/entire/checkpoints/<shard>/<id>` per
+   checkpoint, named exactly `refs/entire/checkpoints/` + the last two
+   characters of the canonical id + `/` + the canonical id (hex lower-case,
+   ULID upper-case), as the platform mirror reads them; any other spelling,
+   shard, extra path segment or invalid id is ignored, so a case variant cannot
+   shadow the real ref and the ref's commit has the checkpoint as its root tree
+   (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
+   (the local branch, else a remote-tracking copy), which keeps a 12-hex
+   checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
+   A 12-hex id in both stores (a clone migrated with `entire migrate`) is read
+   from its ref, which wins; the session paths in a ref's metadata carry no
+   shard prefix, and the parser reads them either way. Such a commit is linked to those sessions
    with `method` `entire_checkpoint` and confidence 1, as the hosted
    `entireEdges` writes them, and then goes through step 7 with those sessions
    already linked and the files they edited already explained. The
@@ -813,8 +976,20 @@ inside the clone and the session store overrides, and does this:
    outside the window, or only Entire holds it), it is mapped from that
    checkpoint. A session that already came from a home-directory store under
    the same id is listed once, from that store, since its transcript is the
-   fuller record. An unusable trailer, a checkpoint the clone does not hold,
-   or one whose sessions cannot be mapped leaves the commit to the heuristics.
+   fuller record. Trailers with no valid id, checkpoints the clone does not
+   hold, or ones whose sessions cannot be mapped leave the commit to the
+   heuristics. A checkpoint in neither store is named in one warning line for the run, with the command
+   that fetches the git-refs store (`git fetch <remote>
+   '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`) and, when one of
+   the ids is 12-hex, the one that fetches the legacy branch (`git fetch
+   <remote> entire/checkpoints/v1`); nothing is fetched. `<remote>` is the
+   first remote whose URL is the document's repository, which need not be
+   `origin`; where the repository is not known (bundle assembly), it stays a
+   `<remote>` placeholder. A checkpoint the clone
+   holds but cannot read (malformed or oversized metadata, or objects a partial
+   clone never downloaded) gets a "cannot be read" line of its own and no
+   fetch hint. An id in both stores is dated for the `SessionWindow` by the
+   branch, since a migrated ref's commit dates from the migration.
 7. Matches each commit the way the hosted resolver does, with the default
    config and `steps.Default`. As its `matchRemaining` does,
    `linkage.MatchCommit` runs over the sessions not yet linked, and runs
@@ -1125,6 +1300,41 @@ authentication extends it without changing these
 rules; its handlers sit behind the host check and the headers. Cancelling the
 context ends the event streams and shuts the server down.
 
+## Hosted service client
+
+`hosted/baumcli` adds the hosted commands to the root command in
+`internal/cli`; `cmd/baum` builds the one binary, which the hosted service also
+ships to its users until the public release replaces that path. The hosted
+service imports `hosted/agenthooks`, `hosted/traceupload` and
+`hosted/apiclient` from this module, so the hook strings, the upload archive
+format and the protocol constants have one definition on both sides.
+
+- Opt-in. Commands that need the server read a token from `BAUM_TOKEN` or the
+  credentials `baum login` stored, and stop with a login hint before any
+  request without one. `baum hooks agent --check` and `baum hooks git --check`,
+  which gate every committed dispatcher, succeed only for a logged-in user, in
+  a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
+  baum built or installed for the hosted service, in a repository whose
+  committed agent settings carry baum's dispatcher. They read local files
+  only, and the hooks they admit never contact a server. The rules are in
+  [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
+- User-wide hooks. `baum hooks install --user` puts a dispatcher in
+  `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
+  edits them as text, touching only its own handlers). It calls
+  `--check --user`, which adds two conditions to the rules above: the
+  repository has Entire enabled, and no other hook the agent runs (project,
+  user, managed or system settings; Codex project hooks only where Codex
+  trusts them) already runs Entire for the event, so an event is not reported
+  twice. Where it refuses, the hook does nothing. `baum setup` installs them
+  only for a hosted install or a logged-in user.
+- Compatibility. A client and a server of different releases agree on an API
+  protocol number: requests name the client's, responses the range the server
+  serves, and a client outside it stops with an error saying which side to
+  update. A server that predates the handshake counts as protocol 1.
+- Session discovery for uploads uses `sessions/collector`, with
+  `ExcludeNestedClones` so a session in an independent clone nested inside the
+  repository is uploaded only for its own repository.
+
 ## Running locally
 
 `baum generate --pr N`:
@@ -1150,13 +1360,17 @@ context ends the event streams and shuts the server down.
 repository/PR version, and passes `review.PreviousVersionOf` into
 `assemble.Request.Previous`. After resolving the pull request and recording its
 run, it selects and checks the backend before assembling (`claude.Backend.Check`,
-`codex.Backend.Check`; `auto`
-tries claude, then codex), assembles with `Request.Checkout` and `Attachments`
+`codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
+only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
+anthropic, and never cursor-agent, which runs only when named because it cannot
+be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
 bundle's own caps, and runs `agent.Generator` with the `claude.User` or
-`codex.Local` profile, never `Isolated` or `Container` (a test guards this). The
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this),
+with `cursor.Backend`, or with `anthropic.Backend` and the key from
+`ANTHROPIC_API_KEY`. The
 wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
@@ -1277,19 +1491,22 @@ code that makes the decisions instead of guessing at them: the real backends'
 `Check` (built by `generate.DefaultBackendsFor`, run once and replayed into
 `generate.Select` to say what `auto` picks and why), `gitlocal`'s git version
 rule, `config.Config.ResolveGitHubTokenSource` for where a token comes from,
-and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
-`uiserver`. Every outside dependency (environment, `PATH` lookup, command
-runner, backends, token lookup, price refresh and registry) is an `Options`
-field, so tests use fake executables and stubs. It creates nothing (the
-registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
-`cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
-reruns a failed claude or codex check, and bounds every subprocess with a
+and the default-path helpers of `config`, `repos`, `jobs` and `discovery`.
+Every outside dependency (environment, `PATH` lookup, command runner, backends,
+token lookup, price refresh, registry and daemon) is an `Options` field, so
+tests use fake executables and stubs. It creates nothing (the registry is opened
+with `repos.OpenReadOnly`), runs `git` and `gh` in `agent.LocalEnvironment`'s
+filtered environment and never reruns a failed claude, codex or cursor-agent
+check (a missing cursor-agent is information unless it is the configured
+backend), and bounds every subprocess with a
 timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
 column, and the key for a type or value error, never the text. A host that `github.IsGitHubHost` refuses is a problem
-without a token lookup. It does not import `uiserver`, which may
-serve the report: the instance directory is passed in.
+without a token lookup. It does not import `daemon`, which serves the
+report: the command line passes `Options.Daemon`, which asks the daemon over
+its control socket (never starting it or creating its state directory) for
+its version, process id and uptime, and whether this baum would replace it.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
 and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
@@ -1312,6 +1529,22 @@ Transactions serialize registration and settings edits across processes; a list
 reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
+A repository's `automatic` setting is `null` (follow the global preference) or
+an explicit `true`/`false`. The global preference is a master switch
+(`Settings.AutomaticEnabled`): off disables every repository, `true` included;
+on, only an explicit `false` disables one. The `preferences` table holds the
+global preferences as one JSON row: `automatic` (true until changed) and
+`cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
+`null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
+transaction, turning the `automatic: false` every earlier registration stored
+into `null`, and keeping a stored `true` (only `baum repos add --automatic`
+could set it). `OpenReadOnly` reads an unmigrated file the same way without
+writing it. An older baum that registers a repository after the migration
+still stores `automatic: false`, which now reads as an explicit off: that
+repository stays off until changed in the app, which fails safe.
+`PUT /api/repos/{id}/settings` replaces the whole object and requires the
+`automatic` and `daily_cap` fields, so removing either is an explicit `null`.
+
 `internal/cli` and the reusable `Registry.Handler` use the same service. The
 handler exposes registry operations only; `internal/uiserver` owns listening,
 instance lifecycle, authentication and host/origin validation and mounts the
@@ -1329,11 +1562,9 @@ run behind the same middleware. `LocalAPI` composes the registry, read-only
 version store and existing `viewserver` linkage/transcript/patch handlers.
 Document selectors resolve registered clone IDs, never request-provided paths.
 The server makes no baum-server requests. Discovery and index are separate
-providers; the generation runner is mounted only after acquiring the single-instance lock.
-
-A private SQLite write lock keeps one process per user, with an authenticated
-health probe before another invocation trusts the private capability file.
-Cleanup removes that file before releasing the lock. SSE has a bounded
+providers. The server is hosted only by the daemon (see "Local daemon"),
+which builds every provider, the generation runner included, once it owns
+the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index.
 
@@ -1376,14 +1607,53 @@ snapshots; it never treats missing PRs in an open-only snapshot as closed.
 ### Persistent generation jobs
 
 `internal/jobs` serializes queue mutations in a private atomic JSON journal,
-without duplicating review documents. Workers use the same `generate.Publish`
+without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
+until its workers stop, so two processes never run one queue; it waits up to
+10 s for a predecessor whose shutdown timed out and that is exiting.
+`Queue.Drain` refuses new jobs and reports true only when none is queued or
+running, under the mutex `Submit` checks, so a restart never cuts a confirmed
+job short: one confirmed during it gets `503` with `Retry-After` and is
+estimated and confirmed again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+A confirmation covers the estimate, isolation for a fork or an author without
+known write access, and, for a subscription-billed backend, that its cost is
+unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
+server, never trusted from the browser.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 The runner has no subprocess invocation of baum itself. Only the existing
 read-only agent backends run child processes, cancelled through their context.
+
+`Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
+generation") queues a job nobody confirmed. It prepares the item like an
+estimate, so the job has the same budgets, price list, recheck before running
+and isolation as a confirmed one, and refuses for good
+(`NotAutomaticError`) what a person would have to confirm: a fork or an author
+without known write access, a blocked (unpriced) model, and cursor-agent or
+another unestimated backend without the acknowledgement. Under the queue mutex
+it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
+queued or running job (it never joins or supersedes one), `ErrDuplicate` when
+any job, manual or automatic, already exists for that head (except a single
+automatic job a daemon stop or restart interrupted, which `Interrupted` lists
+and which may run once more; failed and cancelled jobs are final), and
+`ErrDailyCap` when the repository's automatic jobs created that day (actual
+cost when reported, else the estimate; a job cancelled before calling a model
+counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
+`automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
+`retry`). Before a queued automatic job starts, the worker checks the cap again
+under the same mutex, against the current `daily_cap` the gate returns and the
+spending of the jobs that day that already started or finished (reported cost
+replacing the estimate) plus this job's estimate; over it, the job is cancelled
+with reason `daily_cap` before any model call. The executor's recheck of the
+confirmed inputs, before any model call, also refuses an automatic job whose
+pull request GitHub now reports as a draft (the queue marks its inputs
+`RefuseDraft`; confirmed jobs run drafts); it is cancelled with reason
+`draft`. Neither job counts as its head's job: `ErrDuplicate` and
+`Interrupted` ignore it, and `Refused` lists it while it is the latest job for
+its head.
 
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
@@ -1391,15 +1661,20 @@ retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
-`baum ui` re-verifies and installs it before opening the queue, so recovered
+The daemon re-verifies and installs it before opening the queue, so recovered
 jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
-a different priced model. Unknown actual usage remains null.
+a different priced model, and an item whose model has no price is blocked. The
+one exception is a backend billed outside the list (cursor-agent): its item has
+a nil estimate with an `estimate_reason`, the total is unknown, and
+`Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
+acknowledgement. Unknown actual usage remains null.
 
 ### Local application presentation
 
 `app/` builds into the committed `internal/localapp/dist` embed.
-`localapp.Handler` is `uiserver`'s `Options.App`, so the application's files
+`localapp.Handler` is the daemon's `App.Assets`, mounted as `uiserver`'s
+`Options.App`, so the application's files
 are served only under the authenticated `/s/<namespace>/` path; the public
 bootstrap stays the server's own `/` and `/launch.js`. The app resolves its
 API, SSE and asset URLs relative to that path and routes with query strings on
@@ -1412,9 +1687,12 @@ viewer build/freshness scripts include both embedded applications.
 
 ### Free background synchronization
 
-`internal/background` runs one cancellable worker after the local instance lock
-is acquired. It has registry/discovery/metadata capabilities only; the generation
-queue and model backends are not dependencies. It polls immediately without
+`internal/background` runs one cancellable worker in the daemon, once it owns
+its lock. It has registry/discovery/metadata capabilities only; the generation
+queue and model backends are not dependencies, and it never enqueues
+generation. `Service.Discovered` receives each snapshot a poll returned without
+error; the daemon passes them to the automatic scheduler, which alone decides
+about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
 Per-repository target cursors and repository rotation prevent a small renewed
@@ -1438,6 +1716,301 @@ accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports; missing pricing dimensions leave a
 nullable cost and a fixed reason. The local SPA renders both job accounting
 and selected-version provenance without changing the review document schema.
+
+## Local daemon
+
+`internal/daemon` runs one long-lived local server per user, shared by the
+desktop app and coding-agent hooks; the `baum` command line is how both reach
+it. It owns the authenticated app server above and everything that used to run
+inside `baum ui`: registry, discovery, review index, background refresh,
+diagnostics and the generation queue, and the automatic generation scheduler. `baum ui` only ensures the daemon and
+opens its launch URL, so there is one server implementation.
+
+### Lifecycle
+
+`daemon.Run` takes an SQLite write lock (`daemon.lock.sqlite`) in the private
+state directory and holds it for its whole life. The operating system releases
+it however the process exits, so a lock is never stale; the new owner deletes
+the socket, credential and status files a crashed daemon left. A second
+`Run` returns `ErrRunning` at once when the holder answers and is not
+stopping; otherwise (it is starting, or stopping and giving its jobs up to
+the 20 s shutdown timeout) it waits up to 35 s for the lock. Once it owns the lock it runs `Options.Prepare` (the command line
+resolves the login shell environment there), builds the application with
+`Options.Start`, listens on loopback, writes the credential and the status
+file, and listens on the control socket last, so a daemon that answers on
+the socket serves the app.
+
+Locks are `internal/filelock`: an existing lock file is opened only through
+SQLite, never with a plain descriptor, because on Unix closing any descriptor
+of a file drops every POSIX lock the process holds on it. Code inside the
+daemon reports on it through `daemon.Self` rather than probing its own lock or
+socket.
+
+`Client.Ensure` (`baum daemon ensure`) says hello on the socket. A daemon of
+this version or newer is kept. One speaking an older protocol is stopped at
+once (its running jobs are interrupted) and replaced. One with the same
+protocol but an older version (an older release by semver; a development
+build is older than any release, and two development builds are left alone)
+is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
+baum>}`: an idle daemon stops at once and the client starts its own version;
+a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
+that executable detached on the same port and stops, so no confirmed run is
+interrupted. Of racing clients the newest version is the one it restarts
+as, and a client tells its user about the deferred restart only when it
+first schedules it. Because a client may be a sandboxed agent's hook and the
+executable runs unsandboxed with the daemon's environment, the daemon
+records it only from a client newer than itself and only if
+`executablePolicy` (`trust.go`) accepts it, and checks it again just before
+`Respawn` (which gets the resolved path): after `filepath.EvalSymlinks` it
+must be the daemon's own `os.Executable()`, the `baum` that `exec.LookPath`
+finds on the login shell's `PATH`, or one of `daemon.TrustedExecutables`
+(empty; for the desktop app's bundled baum later), a regular executable file
+owned by the user or root and not group- or world-writable, under
+directories up to `/` that pass the same owner and mode test (sticky
+world-writable ones such as `/tmp` fail). On Windows only the allowlist
+applies. A refusal is logged; the daemon keeps running without
+`restart_pending`, and is replaced when a newer client next finds it idle.
+A daemon speaking a newer protocol is an
+`IncompatibleError` naming both versions.
+When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
+the holder starts `baum daemon run --detached` and waits until it answers,
+and every other caller finds it running once it gets the lock, so concurrent
+calls start exactly one daemon. The daemon that answers may not be the one
+the holder started (a direct `baum daemon run` of another version can win the
+daemon lock), so it gets the same version and protocol decision as one found
+running. A daemon that holds the lock but never
+answers is reported with its process id from `daemon.json`, not killed.
+
+A detached daemon runs in its own session (Unix `setsid`; Windows
+`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, breaking away from the
+caller's job object when the job allows it), in the home directory, with no
+standard input and its standard output and error in `daemon.out` (the
+previous start's in `daemon.out.1`). It outlives every client.
+
+`baum daemon stop` (and the version restart) sends `stop`; while a daemon
+holds the lock but does not answer yet (it is starting), the client keeps
+asking until it does. The daemon marks itself stopping before it answers
+(under the same lock as the idle check of a `when_idle` stop or the idle
+restart, so any later hello reports it and `ensure` waits for it to exit
+rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
+cancel running jobs, which are recorded as interrupted (a backend that does
+not return in time leaves its job running in the journal, and the next start
+records it as interrupted), stops background work and the app server, removes
+its files and releases the lock. The client waits until the lock is free.
+SIGINT and SIGTERM stop it the same way.
+
+### Environment
+
+Whatever started it (an agent hook with the agent's environment, the desktop
+app with a bare launcher `PATH`, a terminal), the daemon replaces its
+environment before building anything. `internal/shellenv` runs `$SHELL` (else
+the user database's shell) as `-i -l -c` (csh: `-i -c`) in a new session with
+no terminal and a 10 s timeout after which its process group is killed. The
+shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
+`LANG`, `LC_*`, `TZ`, the XDG directories, `SSH_AUTH_SOCK`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`), a default `PATH`
+and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
+which prints the environment as JSON between two copies of a random marker,
+so whatever startup files print is ignored; once it has, whatever is left of
+the shell's process group is killed. `shellenv.Merge` then keeps only:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
+the XDG directories, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
+`WAYLAND_DISPLAY`, proxy and CA variables, `GITHUB_TOKEN`, `GH_TOKEN`,
+`GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
+`GH_PATH`, `ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `BAUM_*`
+and, on Windows, the system variables programs need. `SSH_AUTH_SOCK` comes
+from the starting process when it has one (launchd's agent for an app started
+from Finder) and from the login shell otherwise, so the daemon can fetch a
+pull request commit missing from a clone with an SSH remote. A socket goes
+stale when its session ends: before each fetch `shellenv.Agent` checks that it
+still exists, and only when a socket it had has gone stale asks the login
+shell again (one shared run, remembered when the shell has none, retried a
+minute after a failure) or drops it; it is asked only for SSH remotes. The
+daemon installs a `gitlocal.Background`, so its fetches never wait for an
+answer: `GIT_TERMINAL_PROMPT=0`, `SSH_ASKPASS_REQUIRE=never`, the fetch
+timeout, and `ssh -o BatchMode=yes` when no ssh command is configured; a
+configured `GIT_SSH_COMMAND`, `core.sshCommand` or `GIT_SSH` (plink, a
+wrapper) runs as written. A missing key or unknown host is a git error. The backends never receive the agent or any `GIT_` variable. The
+locations, `HOME`, the XDG
+directories, `TMPDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, only ever
+come from the starting process and stay unset when it lacks them: the daemon
+resolved its lock and socket from them before reading the shell, and a state
+directory only the shell named would let a second daemon share its job
+journal. Every other kept variable comes from a resolved shell environment,
+so a token only the agent's environment had is dropped. When the shell is
+slow, fails or prints nothing,
+the kept variables come from the inherited environment. Windows has no login
+shell and always uses the inherited one. The log records the shell, the
+outcome and the kept variable names, never values. `backend_paths` remains the
+way to name a backend executable explicitly.
+
+### Automatic generation
+
+`internal/automatic.Scheduler`, built by `localApplication` and run beside
+background refresh, turns pull request changes into jobs on the same queue as
+confirmed runs. It has no backend or GitHub client of its own: discovery feeds
+it and `Queue.SubmitAutomatic` decides each job.
+
+- **Enabled** per repository: the global preference (on by default) is a
+  master switch, which the desktop tray's pause turns off; while it is on, a
+  repository is enabled unless its `automatic` is `false`. Disabling a
+  repository (or the switch), or unregistering it,
+  forgets its state.
+- **Turning off.** `Scheduler.Gate`, installed with
+  `Queue.SetAutomaticGate`, reads the current preferences and repository
+  settings from the registry. The queue asks it under its mutex when an
+  automatic job is submitted and again before the worker starts one, so a pass
+  that read the settings before an off cannot queue after it, and a queued job
+  never starts once its scope is off. Until the gate is installed (right after
+  `jobs.Open`) workers leave queued automatic jobs alone, so a journaled job
+  cannot start on restart before the settings are checked.
+  `Queue.CancelDisallowedAutomatic` cancels
+  queued automatic jobs the gate refuses, with its reason (`automatic_off`,
+  `repository_automatic_off`, `repository_removed`,
+  `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
+  runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
+  running.
+- **Daily cap at start.** The gate also returns the repository's current
+  `daily_cap` and the scheduler clock's day; the queue checks it itself (the
+  gate never calls the queue or takes the scheduler's lock), so a cap lowered
+  while a job waited, or cost an earlier job reported, stops a queued job
+  before it starts (`daily_cap`). Each pass asks `Queue.Refused` for such jobs
+  (and those stopped as drafts) made after the baseline and puts each one's
+  head back as pending once (`refused` records the job) if the PR is still
+  open, eligible and at that head; the same pass submits it, `ErrDailyCap`
+  pauses the repository as below, and the head runs once the pause ends.
+- **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
+  first snapshot `Observe` gets that was fetched at or after that time records
+  each open PR's head, whether the user's review is requested, whether team
+  membership was readable and whether it is a draft, and queues nothing: PRs
+  open at first launch, registration or re-enabling are not caught up. An older
+  (cached) snapshot is not a baseline; the next poll's is.
+- **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
+  new PR included), whose review request turned on (not merely because team
+  membership became readable), or that was marked ready for review, gets a
+  pending head if it is eligible: the user's review is requested or the user
+  authored it, it is not a draft, it is not from a fork, and its author has
+  known write access. Drafts get no automatic review, so pushes to a draft
+  wait for "ready for review"; manual generation of a draft still works. A
+  queued automatic job whose PR turned draft before it started is cancelled
+  (`draft`) by the recheck before any model call, and its head is pending
+  again (trigger `ready_for_review`) once a snapshot shows the PR eligible at
+  that head. A PR
+  that closes, moves to another head while ineligible, or stops being eligible
+  loses its pending head.
+- **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
+  a daemon stop or restart cut short that are the only job for their head; if
+  the PR is still open at that head and eligible, the head is pending again
+  with trigger `retry`, once (`retried` records it). The retry goes through
+  the same pass, so Drain, the cap and the switches apply. Failed and
+  cancelled runs are never retried; the next push triggers as usual. A run
+  interrupted before a repository's baseline (turned off, then on again) is not
+  retried: the baseline marks its heads as already retried.
+- **State.** `automatic.json` in the job state directory (0700) holds each
+  enabled repository's PRs (recorded head, request and draft flags,
+  eligibility, pending head and trigger, last head handled, retried head,
+  last cap- or draft-stopped job put back),
+  its pause and its notice. It is rewritten
+  atomically on every change, so a restart neither forgets pending heads nor
+  treats recorded ones as new; an unreadable file starts over with new
+  baselines.
+- **Passes** run at start, every 30 s, when a snapshot leaves pending work,
+  when settings change and when a job finishes. A pass submits due pending
+  heads in order unless the daemon is stopping or has a restart pending
+  (`daemon.Self`), so the queue can drain. A head whose latest saved review
+  already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
+  head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
+  pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
+  head); `ErrDailyCap` pauses the repository until local midnight with the
+  `daily_cap` notice, or until its cap is raised above or cleared from the
+  amount that caused the pause; a `NotAllowedError` (turned off meanwhile)
+  leaves the head for the next pass, which forgets it if the repository stays
+  off; a `NotAutomaticError` (a draft, a fork, an unpriced model, cursor-agent
+  not acknowledged) drops it with its reason as the notice; other errors retry
+  with backoff, five times.
+- **Spending.** No default cap. Each job keeps the configured run budgets, and
+  `daily_cap` is enforced per repository and calendar day, when a job is
+  queued and again before it starts. cursor-agent runs
+  automatically only after `cursor_agent_acknowledged`, checked by
+  `SubmitAutomatic` from the stored preference, never from a request.
+- **Interfaces.** `GET /api/automatic` returns the preferences and each
+  repository's effective state, cap, today's automatic spend, pause, notice
+  and pending count; `PUT /api/automatic` changes the preferences. A changed
+  pause or notice, and every repository's status after a `PUT`, is published
+  as an `automatic` SSE event for other app windows and the desktop app's
+  notifications. `Trigger(ctx, repository)` polls discovery for one
+  repository (within discovery's own poll deadline and rate budget) and passes
+  the snapshot to `Observe`. Agent hook events (a session ending, a push) are
+  to use it rather than a separate path; no hook calls it yet.
+
+### Transports and control protocol
+
+The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
+`--port`), unchanged: launch-token exchange, the cookie scoped to the secret
+`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+the credential file instead of being printed by a foreground process.
+
+The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
+`$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
+directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
+under the system temporary directory. That is where a daemon listens; clients
+dial the `socket` the running daemon recorded in `daemon.json` in the state
+directory, so one with a different `XDG_RUNTIME_DIR` (ssh, su, a sandbox)
+still reaches it. Windows 10 1803 and later have
+`AF_UNIX` sockets, so Windows uses the same socket in the state directory,
+protected by that directory's current-user DACL, instead of a named pipe
+(which would need a new dependency for overlapped I/O). Each request is one
+JSON line, `{"protocol":1,"method":"hello","client":"<version>"}`, answered by
+one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
+"message":…}}`; a connection may carry several, and lines are limited to
+64 KiB. `hello` and `stop` work in every protocol version, so any client can
+identify and replace any daemon. `ping` and every method registered in
+`Options.Methods` require the client's protocol to equal the daemon's, and
+answer `protocol_mismatch` with the daemon's status otherwise. Increment
+`daemon.Protocol` for any incompatible change. Hook ingestion
+will add methods through `Options.Methods`; a hook event that should look for
+new heads will call the automatic scheduler's `Trigger` (see "Automatic
+generation"). Remote attach would be another transport beside
+these two; none exists.
+
+### Desktop app interface
+
+The desktop app talks to the daemon only through the bundled `baum` binary
+and two files:
+
+1. `baum daemon ensure --json` starts the daemon if needed (replacing an older
+   one), waits until it serves, and prints one JSON line on stdout:
+   `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
+   `stopping` appears only while it shuts down, and `restart_pending` when an
+   older daemon was kept because it is running jobs and will restart as this
+   version once they finish (see Lifecycle). On failure it exits non-zero
+   with the reason on stderr. `--port` and `--concurrency` apply only when it
+   starts the daemon.
+2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
+   `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
+   Loading it runs the bootstrap page, which exchanges the fragment for the
+   session cookie. The token stays valid for any number of exchanges for the
+   daemon's whole life, so the app can be relaunched against one daemon; a new
+   daemon writes a new token atomically, and the old one then gets 401 (or no
+   answer, if the port changed). The token also works as
+   `Authorization: Bearer` on `/api/` routes.
+3. `<state>/daemon.log` is the daemon's log (it rotates at 1 MiB, keeping
+   `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
+   wrote before its log opened, or a crash.
+4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
+   ("Quit and stop background reviews"). `baum daemon status [--json]` prints
+   the same status, or exits non-zero when none runs.
+
+`<state>` is `$XDG_STATE_HOME/baum/daemon`, by default
+`~/.local/state/baum/daemon` on every platform, and is reported in `state`.
+
+### Diagnostics
+
+`baum doctor` reports the daemon (`daemon` check): its state directory, and
+when it runs its version, process id, uptime, protocol and socket; a warning
+when it is older than the doctor's baum, speaks a newer protocol, or holds the
+lock without answering.
 
 ## Desktop app
 

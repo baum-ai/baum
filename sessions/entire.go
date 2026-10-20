@@ -51,19 +51,19 @@ func mapAll(ctx context.Context, found []collector.Session) ([]mapped, error) {
 	return out, ctx.Err()
 }
 
-// checkpointStore is the clone's checkpoint branch, read in a private
-// repository with no remote, so a partial clone's missing objects are
-// reported, never downloaded.
+// checkpointStore is the clone's checkpoints, in the per-checkpoint refs and
+// the checkpoint branch, read in a private repository with no remote, so a
+// partial clone's missing objects are reported, never downloaded.
 type checkpointStore struct {
 	repo    *gitlocal.Repo
 	objects string
-	commit  string
+	store   entire.Store
 }
 
-// openCheckpoints opens the checkpoint branch of the clone at root; ok is
-// false when it has none. The caller closes a store it got.
+// openCheckpoints opens the checkpoints of the clone at root; ok is false when
+// it has neither refs nor branch. The caller closes a store it got.
 func openCheckpoints(ctx context.Context, root string) (store *checkpointStore, ok bool, err error) {
-	commit, ok, err := entire.Resolve(ctx, root)
+	resolved, ok, err := entire.Resolve(ctx, root)
 	if err != nil || !ok {
 		return nil, false, err
 	}
@@ -71,7 +71,7 @@ func openCheckpoints(ctx context.Context, root string) (store *checkpointStore, 
 	if err != nil {
 		return nil, false, fmt.Errorf("opening the clone to read Entire checkpoints: %w", err)
 	}
-	return &checkpointStore{repo: repo, objects: repo.PrivateDir(), commit: commit}, true, nil
+	return &checkpointStore{repo: repo, objects: repo.PrivateDir(), store: resolved}, true, nil
 }
 
 func (s *checkpointStore) Close() { _ = s.repo.Close() }
@@ -84,7 +84,7 @@ type readOutcome struct {
 
 // read reads one checkpoint whole and maps every session it records.
 func (s *checkpointStore) read(ctx context.Context, id string) readOutcome {
-	fsys, err := entire.Read(ctx, s.objects, s.commit, id)
+	fsys, err := entire.Read(ctx, s.objects, s.store, id)
 	if err != nil {
 		return readOutcome{err: err}
 	}
@@ -129,7 +129,7 @@ type pick struct {
 	at         time.Time
 }
 
-// loadEntire returns the sessions the clone's checkpoint branch records, each
+// loadEntire returns the sessions the clone's checkpoints record, each
 // once. A checkpoint usually holds the whole transcript of every session it
 // records as it stood when the checkpoint was written, so a long session
 // appears in many checkpoints, and reading them is the slow part. Only the
@@ -147,8 +147,8 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 		return nil, "", nil, err
 	}
 	defer store.Close()
-	commit := store.commit
-	checkpoints, err := entire.List(ctx, store.objects, commit)
+	commit := store.store.Branch
+	checkpoints, err := entire.List(ctx, store.objects, store.store)
 	if err != nil {
 		return nil, commit, nil, err
 	}
@@ -157,7 +157,7 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	// cannot be dated, all are considered.
 	var written map[string]time.Time
 	if !opts.Since.IsZero() {
-		if written, err = entire.Touched(ctx, store.objects, commit); err != nil {
+		if written, err = entire.Touched(ctx, store.objects, store.store); err != nil {
 			written = nil
 		}
 	}
@@ -168,7 +168,7 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 		}
 		ids = append(ids, checkpoint.ID)
 	}
-	known, err := entire.Sessions(ctx, store.objects, commit, ids)
+	known, err := entire.Sessions(ctx, store.objects, store.store, ids)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, commit, nil, ctx.Err()
@@ -287,15 +287,18 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	return sessions, commit, failures, nil
 }
 
-// Checkpoints is the checkpoint branch of a clone, opened once for several
-// lookups. It reads from the local branch or a remote-tracking copy of it, in
-// a private repository, and never fetches. Close releases it.
+// Checkpoints is the checkpoints of a clone, opened once for several lookups.
+// It reads the per-checkpoint refs (refs/entire/checkpoints/*) and the local
+// checkpoint branch or a remote-tracking copy of it, a checkpoint in both
+// being read from its ref, in a private repository, and never fetches. Close
+// releases it.
 type Checkpoints struct {
 	store *checkpointStore
 }
 
-// OpenCheckpoints opens the checkpoint branch of the clone containing dir. It
-// returns nil and no error when the clone has none.
+// OpenCheckpoints opens the checkpoints of the clone containing dir. It
+// returns nil and no error when the clone has neither checkpoint refs nor a
+// checkpoint branch.
 func OpenCheckpoints(ctx context.Context, dir string) (*Checkpoints, error) {
 	root, err := collector.RepoRoot(dir)
 	if err != nil {
@@ -311,12 +314,13 @@ func OpenCheckpoints(ctx context.Context, dir string) (*Checkpoints, error) {
 // Close releases the private repository.
 func (c *Checkpoints) Close() { c.store.Close() }
 
-// Sessions returns, for each of ids that is a checkpoint on the branch, the
-// ids of the sessions it records, each once, in the order it lists them. It
-// reads checkpoint metadata only. A checkpoint the branch does not hold, or
-// whose metadata cannot be read, is absent from the result.
+// Sessions returns, for each of ids that is a checkpoint in the clone, keyed
+// by its canonical id (entirecheckpoint.CanonicalID), the ids of the sessions
+// it records, each once, in the order it lists them. It reads checkpoint
+// metadata only. A checkpoint the clone does not hold, or whose metadata
+// cannot be read, is absent from the result.
 func (c *Checkpoints) Sessions(ctx context.Context, ids []string) (map[string][]string, error) {
-	known, err := entire.Sessions(ctx, c.store.objects, c.store.commit, ids)
+	known, err := entire.Sessions(ctx, c.store.objects, c.store.store, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -335,11 +339,23 @@ func (c *Checkpoints) Sessions(ctx context.Context, ids []string) (map[string][]
 	return out, nil
 }
 
-// Load maps the sessions one checkpoint on the branch records, as Load maps
+// Located reports which of ids the clone holds, by canonical id, whether or
+// not its metadata can be read: a checkpoint Sessions leaves out that Located
+// reports is unreadable, and one it does not report is not in the clone.
+func (c *Checkpoints) Located(ctx context.Context, ids []string) (map[string]bool, error) {
+	return entire.Located(ctx, c.store.objects, c.store.store, ids)
+}
+
+// Load maps the sessions one checkpoint in the clone records, as Load maps
 // an Entire session, with no Since applied. A session that cannot be mapped
 // is a Failure; an error is a checkpoint that could not be read at all.
 func (c *Checkpoints) Load(ctx context.Context, id string) ([]Session, []Failure, error) {
-	outcome := c.store.read(ctx, strings.ToLower(id))
+	canonical, ok := entirecheckpoint.CanonicalID(id)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid Entire checkpoint id %q", id)
+	}
+	id = canonical
+	outcome := c.store.read(ctx, id)
 	if outcome.err != nil {
 		return nil, nil, outcome.err
 	}

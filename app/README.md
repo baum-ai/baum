@@ -1,7 +1,9 @@
 # Local application
 
-`baum ui` serves this React single-page app from its embedded assets. It uses
-only the authenticated local server: no hosted baum API, account or login.
+The baum daemon serves this React single-page app from its embedded assets;
+the desktop app and `baum ui` open it from the launch URL in the daemon's
+`credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
+authenticated local server: no hosted baum API, account or login.
 The server's own bootstrap page at `/` removes the launch capability from the
 address, exchanges it for an HttpOnly cookie scoped to a secret
 `/s/<namespace>/` path, and replaces itself with that path. The app is served
@@ -39,7 +41,13 @@ Stale discovery and unknown team membership/cost remain explicit. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
 restricted fork/author entries are excluded from batches and require explicit
 isolation confirmation when generated individually. Generation confirms an
-approximate price and configured model; unknown prices cannot start a run.
+approximate price and configured model; an unknown model price cannot start a
+run. The exception is the `cursor-agent` backend, which Cursor bills through
+the user's subscription: its item shows "cost unknown" with that reason in
+words instead of a price, the total is unknown, and the run starts only after a
+separate acknowledgement that baum cannot estimate it. The app sends it as
+`confirm_unpriced`, and the server refuses such a run without it. Exclusion and
+estimate reasons are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs can be cancelled. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that
@@ -50,27 +58,62 @@ updates the page through SSE. Repository settings share backend and model overri
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
-rate-limited and failed refreshes are visible and retried with backoff. Model
-calls only run after an explicit generation request and spend confirmation.
-Legacy automatic/cap settings are retained for compatibility but never schedule
-paid work and have no controls in this app.
+rate-limited and failed refreshes are visible and retried with backoff.
+
+Automatic reviews are on by default. Repositories & settings has the global
+"Generate reviews automatically" switch and the one-time "Allow automatic
+reviews with cursor-agent" acknowledgement (`GET`/`PUT api/automatic`, kept by
+the daemon, which enforces both). The global switch is a master switch (the
+desktop tray's pause sets it): off stops automatic generation everywhere. Each
+repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
+`true`, `false`); only "Off" differs while the global switch is on, and while
+it is off a repository set to "On" is shown as paused by the global switch.
+Turning automatic generation off, for everything or one repository, or
+withdrawing the cursor-agent acknowledgement cancels the affected automatic
+jobs that have not started (the jobs list shows the reason); a running job
+finishes. Each repository also has a daily automatic cap in USD (0 permits no
+automatic spending) or an explicit "No daily cap" checkbox; an empty,
+negative or unreadable amount is an error and is not saved, never read as no
+cap. It shows today's automatic spend, how many triggered pull requests wait
+to start and the latest notice: a daily-cap pause until the next day or until
+the cap is raised or removed (also a banner on every page), cursor-agent not
+acknowledged, an unpriced model, or GitHub unavailable. The jobs list and the PR page mark an automatic job "Started
+automatically because new commits were pushed" (or "because your review was
+requested", "because the pull request was marked ready for review", or
+"Started automatically again" for the one retry of a run a daemon stop or
+restart interrupted); it is cancelled like any other. Drafts get no automatic
+review, but Generate works on them as usual. `automatic` SSE events (a pause,
+its end, a notice, and every repository's status after a settings change in
+any window) reload the page and are what the desktop app can notify on.
+The daemon keeps generating after the app closes, until "Quit and stop
+background reviews" or `baum daemon stop`. Every other model call runs only
+after an explicit generation request and spend confirmation.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 `pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes committed assets
 to `../internal/localapp/dist`; the common `viewer-build` / `viewer-fresh` recipes
 also build/check this bundle, so `go install` needs no Node.js.
 
-Browser tests use an actual `uiserver.Server`, registry, version stores, queue,
-`jobs.Local` and generation publisher. A temporary fixture git clone and fake
+Browser tests run the actual daemon (`daemon.Run`, with its lock, credential
+file and control socket in a temporary directory) serving a `uiserver.Server`,
+registry, version stores, queue, `jobs.Local` and generation publisher. The
+suite reads the launch URL from the daemon's `credential.json`, as the desktop
+app does, and opens it a second time in a fresh browser context to check that
+the credential survives relaunches. A temporary fixture git clone and fake
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.
 The suite verifies bootstrap into the namespace (every app request stays under
 it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
 viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. Unit tests cover
+generation/progress and repository settings. The fixture also runs the
+automatic generation scheduler, fed a discovery snapshot every quarter second;
+a second test writes `push-10` in the state directory to give PR 10 a new head
+and follows the automatic review it starts on the PR page and in the jobs list,
+then turns the global switch off and on. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters.
+unknown costs, selection and filters, automatic settings and pause notices,
+and the automatic job labels.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call

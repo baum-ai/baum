@@ -2,6 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,7 +22,7 @@ func TestNoCommandPrintsUsageAndFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error without a command")
 	}
-	if !strings.Contains(stderr, "Available Commands") {
+	if !strings.Contains(stderr, "Local commands:") {
 		t.Errorf("stderr should carry usage, got %q", stderr)
 	}
 }
@@ -28,7 +32,7 @@ func TestUnknownCommandPrintsUsage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an unknown command")
 	}
-	if !strings.Contains(stderr, "Available Commands") {
+	if !strings.Contains(stderr, "Local commands:") {
 		t.Errorf("stderr should carry usage, got %q", stderr)
 	}
 }
@@ -42,6 +46,67 @@ func TestHelpListsEveryCommand(t *testing.T) {
 		if !strings.Contains(stdout, "\n  "+name) {
 			t.Errorf("help does not list %s:\n%s", name, stdout)
 		}
+	}
+}
+
+// The hosted service commands sit in a section of their own, and the hook
+// dispatchers agents and Git call stay out of the listing.
+func TestHelpGroupsHostedCommands(t *testing.T) {
+	stdout, _, err := run(t, "--help")
+	if err != nil {
+		t.Fatalf("help: %v", err)
+	}
+	local := strings.Index(stdout, "Local commands:")
+	hosted := strings.Index(stdout, "Hosted service")
+	if local < 0 || hosted < local {
+		t.Fatalf("help has no local section followed by a hosted one:\n%s", stdout)
+	}
+	section := stdout[hosted:]
+	if end := strings.Index(section, "\n\n"); end >= 0 {
+		section = section[:end]
+	}
+	for _, name := range []string{"login", "logout", "whoami", "setup", "upload", "hooks"} {
+		if !strings.Contains(section, "\n  "+name+" ") {
+			t.Errorf("the hosted section does not list %s:\n%s", name, section)
+		}
+		if strings.Contains(stdout[local:hosted], "\n  "+name+" ") {
+			t.Errorf("%s is listed as a local command", name)
+		}
+	}
+	// Users install hooks; agents and Git run them.
+	stdout, _, err = run(t, "hooks", "--help")
+	if err != nil {
+		t.Fatalf("hooks help: %v", err)
+	}
+	for _, name := range []string{"install", "uninstall", "bootstrap"} {
+		if !strings.Contains(stdout, "\n  "+name+" ") {
+			t.Errorf("hooks help does not list %s:\n%s", name, stdout)
+		}
+	}
+	for _, name := range []string{"agent", "git"} {
+		if strings.Contains(stdout, "\n  "+name+" ") {
+			t.Errorf("hooks help lists the internal %s command:\n%s", name, stdout)
+		}
+	}
+}
+
+// A delegated agent hook's exit status is the process's, and nothing about it
+// is printed: the agent reads the hook's output.
+func TestAgentHookExitStatusPassesThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in for Entire is a shell script")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "entire"), []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, _, err := run(t, "hooks", "agent", "claude-code", "stop")
+	if ExitCode(err) != 7 || !Quiet(err) {
+		t.Fatalf("err = %v: exit code %d, quiet %v", err, ExitCode(err), Quiet(err))
+	}
+	if Quiet(errors.New("other")) {
+		t.Error("an ordinary failure is quiet")
 	}
 }
 
