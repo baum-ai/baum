@@ -82,7 +82,7 @@ func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 
 // A registry written before automatic generation stored automatic=false for
 // every repository; those rows follow the new default after migration, while
-// an explicit true (only reachable with `baum repos add --automatic`) stays.
+// an explicit true (only reachable with `baum internal repos add --automatic`) stays.
 func TestLegacyAutomaticFalseFollowsTheDefault(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "repos.sqlite")
@@ -133,7 +133,7 @@ func TestLegacyAutomaticFalseFollowsTheDefault(t *testing.T) {
 			t.Fatalf("preferences %#v %v", prefs, e)
 		}
 	}
-	// A read-only registry (baum doctor) reads the legacy file the same way
+	// A read-only registry (baum internal doctor) reads the legacy file the same way
 	// without migrating it.
 	ro, e := OpenReadOnly(path)
 	if e != nil {

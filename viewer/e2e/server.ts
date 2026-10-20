@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 
-/** A stand-in for `baum view`: it serves the built standalone app and the
+/** A stand-in for `baum internal view`: it serves the built standalone app and the
  *  endpoints the app reads, from fixtures, with the same security headers.
  *  Specs replace any answer for one page with `page.route`. */
 

@@ -468,7 +468,7 @@ func TestBuildSessionEvidenceAttributesASubagent(t *testing.T) {
 	}
 }
 
-// baum view's /api/sessions leaves baum's own generation runs out too, so it
+// baum internal view's /api/sessions leaves baum's own generation runs out too, so it
 // links the same sessions the bundle does.
 func TestResolveExcludesGenerationRuns(t *testing.T) {
 	f := linktest.New(t)

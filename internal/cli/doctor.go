@@ -15,7 +15,7 @@ var doctorOptions = func(fetchPrices bool) doctor.Options {
 	return doctor.Options{FetchPrices: fetchPrices, Daemon: daemonReport}
 }
 
-// problemsError is returned by "baum doctor" when the report has a problem, so
+// problemsError is returned by "baum internal doctor" when the report has a problem, so
 // the command exits with ExitDiagnostics after printing the report.
 type problemsError struct{ problems int }
 
@@ -38,7 +38,7 @@ list comes from; and where the config file, repository registry, job queue,
 discovery cache and review stores live. Every problem and warning has a fix
 line, for example setting backend_paths.claude in the config file.
 
-It runs --version on git and gh, the same checks "baum generate" runs for
+It runs --version on git and gh, the same checks "baum internal generate" runs for
 claude, codex (including codex's read-only sandbox check, which makes and
 removes a temporary directory) and cursor-agent (its --help and --version)
 and, when no token is configured, "gh auth token". It creates no files of its own and opens the registry

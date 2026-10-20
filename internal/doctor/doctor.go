@@ -1,7 +1,7 @@
 // Package doctor reports why baum can or cannot find its tools, backend and
 // GitHub token, with a fix for each problem.
 //
-// It runs "<tool> --version" for git and gh, the same checks "baum generate"
+// It runs "<tool> --version" for git and gh, the same checks "baum internal generate"
 // runs for claude, codex (including codex's read-only sandbox preflight) and
 // cursor-agent (its --help and --version), and for anthropic (that
 // ANTHROPIC_API_KEY is set; the key is not tried against the API), "gh auth
@@ -94,7 +94,7 @@ type Options struct {
 	// under ctx. The report decides env per tool and never passes our own.
 	Run func(ctx context.Context, env []string, path string, args ...string) (string, error)
 	// Backends builds the backends to check; nil builds the real ones from
-	// the configuration, as "baum generate" does.
+	// the configuration, as "baum internal generate" does.
 	Backends func(config.Config) generate.Backends
 	// GitHubToken resolves the token for host; nil uses the configuration's
 	// own resolver.
@@ -599,7 +599,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 	default:
 		c := Check{ID: "registry", Label: "repository registry", Path: registryPath, Status: StatusInfo}
 		if _, statErr := os.Stat(registryPath); statErr != nil {
-			c.Detail = "not created yet; no clones are registered (baum repos add <path>)"
+			c.Detail = "not created yet; no clones are registered (baum internal repos add <path>)"
 		} else {
 			ctx, cancel := context.WithTimeout(r.ctx, registryTime)
 			var listErr error
@@ -607,7 +607,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 			cancel()
 			if listErr != nil {
 				c.Status, c.Detail = StatusWarning, "cannot read the registry: "+listErr.Error()
-				c.Fix = "check that " + registryPath + " is a baum registry that you can read and that no other process holds locked; `baum repos list` shows the same error"
+				c.Fix = "check that " + registryPath + " is a baum registry that you can read and that no other process holds locked; `baum internal repos list` shows the same error"
 			} else {
 				c.Detail = fmt.Sprintf("%d registered %s", len(clones), plural(len(clones), "clone", "clones"))
 			}
@@ -626,7 +626,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 		if !clone.Available {
 			r.add(Check{ID: "store-" + clone.ID, Label: label, Path: clone.Path, Status: StatusWarning,
 				Detail: "the clone is not available at its registered path, so its store is not read",
-				Fix:    fmt.Sprintf("restore the clone at %s, or run `baum repos remove %s`", clone.Path, clone.ID)})
+				Fix:    fmt.Sprintf("restore the clone at %s, or run `baum internal repos remove %s`", clone.Path, clone.ID)})
 			continue
 		}
 		s, err := store.Open(clone.CommonDir, "", false)
@@ -767,7 +767,7 @@ func (r *runner) prices() {
 	}
 	source := r.opts.PriceSource()
 	c := Check{ID: "prices", Label: "price list", Version: source.Version, Source: source.Origin}
-	const scope = "baum generate and the other commands use the embedded list (version %s); the baum daemon fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
+	const scope = "baum internal generate and the other commands use the embedded list (version %s); the baum daemon fetches the signed list when it starts and keeps the newest one in its state directory so queued jobs can resume. This check only shows whether fetching works and which version is published"
 	when := ""
 	if !source.FetchedAt.IsZero() {
 		when = ", fetched " + source.FetchedAt.UTC().Format(time.RFC3339)
@@ -780,7 +780,7 @@ func (r *runner) prices() {
 		}
 		c.Status = StatusWarning
 		c.Detail = fmt.Sprintf("fetching the signed price list failed: %s. The %s list (version %s) stays in use. ", reason, source.Origin, source.Version) + fmt.Sprintf(scope, pricing.Embedded().Version())
-		c.Fix = "check your network connection and run baum doctor again; until then costs use the " + source.Origin + " list"
+		c.Fix = "check your network connection and run baum internal doctor again; until then costs use the " + source.Origin + " list"
 	case source.Origin == pricing.OriginFetched:
 		c.Status = StatusOK
 		c.Detail = fmt.Sprintf("fetching works: the published list is version %s%s. ", source.Version, when) + fmt.Sprintf(scope, pricing.Embedded().Version())

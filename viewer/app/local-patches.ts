@@ -1,7 +1,7 @@
 import type { HunkPatchSource } from "../src/components/hunk-evidence";
 
 /** Reads the code excerpts a review document left out from `GET /api/patch`,
- *  which `baum view` answers from the clone on this machine that holds the pull
+ *  which `baum internal view` answers from the clone on this machine that holds the pull
  *  request's commits. */
 
 /** A file's patch from the response body: its text, or null when the body says

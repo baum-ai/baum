@@ -137,7 +137,7 @@ jobs:
         run: pnpm check
 
       # Builds the standalone app from source and drives it in Chromium, with
-      # fixtures standing in for what `baum view` serves.
+      # fixtures standing in for what `baum internal view` serves.
       - name: Install Chromium
         id: chromium
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -203,7 +203,7 @@ jobs:
 
   clean-install:
     # What a user runs: go install from a module zip of the committed files,
-    # with no Node.js on PATH, then a smoke test of baum view.
+    # with no Node.js on PATH, then a smoke test of baum internal view.
     name: Clean install (${{ matrix.os }})
     strategy:
       fail-fast: false

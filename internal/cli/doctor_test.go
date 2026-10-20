@@ -43,7 +43,7 @@ func fakeTool(t *testing.T, dir, name, body string) {
 
 func TestDoctorExitsNonZeroOnAProblemAndPrintsTheFix(t *testing.T) {
 	doctorMachine(t) // no git, claude or codex
-	stdout, _, err := run(t, "doctor", "--offline")
+	stdout, _, err := run(t, "internal", "doctor", "--offline")
 	if err == nil || ExitCode(err) != ExitDiagnostics {
 		t.Fatalf("err = %v, exit %d, want exit %d", err, ExitCode(err), ExitDiagnostics)
 	}
@@ -59,7 +59,7 @@ func TestDoctorExitsZeroWithWarningsOnly(t *testing.T) {
 	fakeTool(t, bin, "git", `echo "git version 2.43.0"`)
 	fakeTool(t, bin, "claude", `echo "2.1.7 (Claude Code)"`)
 	t.Setenv("GITHUB_TOKEN", "ghp_PLANTEDclitoken0000000000000000000000")
-	stdout, _, err := run(t, "doctor", "--offline")
+	stdout, _, err := run(t, "internal", "doctor", "--offline")
 	if err != nil || ExitCode(err) != 0 {
 		t.Fatalf("err = %v\n%s", err, stdout)
 	}
@@ -78,7 +78,7 @@ func TestDoctorJSONShape(t *testing.T) {
 	// claude is configured but not installed, so there is a problem; auto
 	// would use the Anthropic API.
 	t.Setenv("BAUM_BACKEND", "claude")
-	stdout, _, err := run(t, "doctor", "--json", "--offline")
+	stdout, _, err := run(t, "internal", "doctor", "--json", "--offline")
 	if ExitCode(err) != ExitDiagnostics {
 		t.Fatalf("err = %v (the configured backend is not installed, so there is a problem)", err)
 	}
@@ -131,8 +131,8 @@ func TestDoctorFetchesPricesUnlessOffline(t *testing.T) {
 		opts.RefreshPrices = func(context.Context) error { fetched = append(fetched, true); return nil }
 		return opts
 	}
-	_, _, _ = run(t, "doctor")
-	_, _, _ = run(t, "doctor", "--offline")
+	_, _, _ = run(t, "internal", "doctor")
+	_, _, _ = run(t, "internal", "doctor", "--offline")
 	if len(fetched) != 1 {
 		t.Errorf("price refresh ran %d times over a default and an --offline run, want 1", len(fetched))
 	}
@@ -140,7 +140,7 @@ func TestDoctorFetchesPricesUnlessOffline(t *testing.T) {
 
 func TestDoctorRejectsArguments(t *testing.T) {
 	doctorMachine(t)
-	if _, _, err := run(t, "doctor", "extra"); err == nil {
+	if _, _, err := run(t, "internal", "doctor", "extra"); err == nil {
 		t.Error("doctor accepted an argument")
 	}
 }
