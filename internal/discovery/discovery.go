@@ -28,7 +28,7 @@ type PullRequest struct {
 	// HeadRef is the head branch's name, which links a local session on that
 	// branch to the pull request. It is empty in a snapshot cached before it
 	// was kept, until the next poll.
-	HeadRef               string `json:"head_ref,omitempty"`
+	HeadRef               string `json:"head_ref"`
 	Title                 string `json:"title"`
 	URL                   string `json:"url"`
 	Author                string `json:"author"`
@@ -77,21 +77,20 @@ type Snapshot struct {
 type cachedResponse struct {
 	ETag string
 	Body json.RawMessage
-	// Fields is the version of the inbox fields Body keeps. A response kept
-	// with fewer fields is requested again without its ETag, so a 304 does
-	// not keep serving them.
-	Fields int
 }
-
-// responseFields is the current cachedResponse.Fields: 2 added the head
-// branch.
-const responseFields = 2
-
 type diskCache struct {
+	// Format is cacheFormat when the cache was written; a cache of an older
+	// format drops its conditional responses, so they are read in full once.
+	Format    int `json:",omitempty"`
 	Snapshot  Snapshot
 	Responses map[string]cachedResponse
 	Interval  time.Duration
 }
+
+// cacheFormat changes when the minimal responses keep more fields: 1 added
+// the pull requests' head branch. A 304 answer reuses the stored body, which
+// would otherwise never gain the new fields.
+const cacheFormat = 1
 
 // Budget files are shared by service instances, alongside repository caches.
 // Serialize in-process polls so a newly exhausted budget is visible before the
@@ -217,9 +216,6 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		return errRateLimit
 	}
 	old := p.cache.Responses[path]
-	if old.Fields < responseFields {
-		old = cachedResponse{}
-	}
 	status, headers, body, err := p.reader.Read(ctx, path, old.ETag)
 	if err != nil {
 		return err
@@ -263,7 +259,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		if string(minimal) != string(old.Body) {
 			p.unchanged = false
 		}
-		p.cache.Responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal, Fields: responseFields}
+		p.cache.Responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal}
 	}
 	return nil
 }
@@ -342,6 +338,10 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return Snapshot{}, loadErr
 	}
+	if cache.Format < cacheFormat {
+		cache.Responses = nil
+	}
+	cache.Format = cacheFormat
 	budgetPath, err := s.path(reader.CacheIdentity(), "")
 	if err != nil {
 		return Snapshot{}, err
