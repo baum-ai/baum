@@ -82,9 +82,51 @@ func TestDaemonCommands(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Stopped") {
 		t.Fatal(out, err)
 	}
+	// Hooks leave a daemon the user stopped alone until an explicit start.
+	if !daemon.StoppedByUser(paths) {
+		t.Error("stop did not mark the daemon stopped by the user")
+	}
 	out, _, err = run(t, "daemon", "stop")
 	if err != nil || !strings.Contains(out, "not running") {
 		t.Fatal(out, err)
+	}
+	// Ensure, an explicit start, clears it even when the start fails.
+	client := &daemon.Client{Paths: paths, Spawn: func(daemon.Paths, daemon.StartOptions) (<-chan struct{}, error) {
+		return nil, errors.New("test: no daemon")
+	}}
+	if _, err = client.Ensure(t.Context()); err == nil {
+		t.Fatal("ensure succeeded without a daemon")
+	}
+	if daemon.StoppedByUser(paths) {
+		t.Error("ensure left the stopped mark")
+	}
+}
+
+// A record that cannot be opened leaves the daemon running without it: hooks
+// get unknown_method and spool, rather than start a daemon on every call.
+func TestDaemonRunsWithoutAHookEventRecordItCannotOpen(t *testing.T) {
+	dir, err := os.MkdirTemp("", "bce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	paths := daemon.Paths{State: dir, Socket: filepath.Join(dir, "d.sock")}
+	// Readable by others: not private.
+	if err = os.MkdirAll(filepath.Join(dir, "events"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod(filepath.Join(dir, "events"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var log strings.Builder
+	events := openHookEvents(paths, slog.New(slog.NewTextHandler(&log, nil)))
+	if events.service != nil || events.Methods() != nil {
+		t.Fatal("a record in a shared directory was opened")
+	}
+	events.Run(t.Context())
+	events.Close()
+	if !strings.Contains(log.String(), "hook events are not recorded") {
+		t.Errorf("log = %s", log.String())
 	}
 }
 
@@ -203,6 +245,21 @@ func TestApplyLoginEnvironment(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Stopping a daemon that never ran leaves no trace a hook would read as one
+// that ran.
+func TestStopWithoutAStateDirectoryCreatesNone(t *testing.T) {
+	paths := stubDaemon(t)
+	if out, _, err := run(t, "daemon", "stop"); err != nil || !strings.Contains(out, "not running") {
+		t.Fatal(out, err)
+	}
+	if _, err := os.Stat(paths.State); !os.IsNotExist(err) {
+		t.Errorf("stop created the state directory: %v", err)
+	}
+	if daemon.HasRun(paths) {
+		t.Error("stop made the daemon look as if it ran")
 	}
 }
 

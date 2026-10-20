@@ -80,7 +80,7 @@ func TestUserHooksRunThroughBaumWhenLoggedIn(t *testing.T) {
 		for _, event := range spec.Events {
 			world.runUserDispatcher(t, world.repo, spec, event)
 			baum, entire := world.logs(t)
-			want := []string{"hooks agent --check --user " + spec.Slug + " " + event, "hooks agent " + spec.Slug + " " + event}
+			want := []string{"hooks agent --check --user " + spec.Slug + " " + event, "hooks agent --user " + spec.Slug + " " + event}
 			if strings.Join(baum, "|") != strings.Join(want, "|") {
 				t.Errorf("%s %s: baum calls = %q, want %q", spec.Slug, event, baum, want)
 			}
@@ -212,7 +212,7 @@ func (w hookWorld) expectUserHook(t *testing.T, spec agenthooks.Spec, runs bool)
 	t.Helper()
 	w.runUserDispatcher(t, w.repo, spec, "stop")
 	baum, entire := w.logs(t)
-	ran := len(baum) == 2 && baum[1] == "hooks agent "+spec.Slug+" stop"
+	ran := len(baum) == 2 && baum[1] == "hooks agent --user "+spec.Slug+" stop"
 	if ran != runs || len(entire) != map[bool]int{true: 1, false: 0}[runs] {
 		t.Errorf("user-wide %s stop hook: baum calls = %q, entire calls = %q, want it to run: %v", spec.Slug, baum, entire, runs)
 	}

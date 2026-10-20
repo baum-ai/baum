@@ -43,11 +43,18 @@ type Paths struct {
 // bytes on macOS, 108 on Linux and Windows).
 const maxSocketPath = 100
 
+// socketFallbackBase is where a socket path too long for the platform moves,
+// into a private baum-<uid> directory. It is fixed, never os.TempDir: every
+// process of the user (the desktop app, a terminal, an agent's sandboxed hook
+// whose TMPDIR is a session's directory) must compute the same socket, and
+// one that outlives the session that computed it. Windows never falls back.
+const socketFallbackBase = "/tmp"
+
 // DefaultPaths are the daemon's state directory, $XDG_STATE_HOME/baum/daemon
 // (default ~/.local/state/baum/daemon), and its socket in $XDG_RUNTIME_DIR/baum
 // or, without one, in the state directory. A socket path too long for the
-// platform moves to a private baum-<uid> directory under the system temporary
-// directory.
+// platform moves to /tmp/baum-<uid>, whatever TMPDIR is; the daemon creates
+// that directory private to the user and refuses one another user owns.
 func DefaultPaths() (Paths, error) {
 	root := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(root) {
@@ -64,7 +71,7 @@ func DefaultPaths() (Paths, error) {
 	}
 	p.Socket = filepath.Join(socketDir, "daemon.sock")
 	if len(p.Socket) > maxSocketPath && runtime.GOOS != "windows" {
-		p.Socket = filepath.Join(os.TempDir(), "baum-"+strconv.Itoa(os.Getuid()), "daemon.sock")
+		p.Socket = filepath.Join(socketFallbackBase, "baum-"+strconv.Itoa(os.Getuid()), "daemon.sock")
 	}
 	if len(p.Socket) > maxSocketPath {
 		return Paths{}, errors.New("the daemon socket path is too long: " + p.Socket)
@@ -72,11 +79,53 @@ func DefaultPaths() (Paths, error) {
 	return p, nil
 }
 
-func (p Paths) lockFile() string { return filepath.Join(p.State, "daemon.lock.sqlite") }
+// LockFile is the SQLite file whose write lock a running daemon holds. Only
+// a daemon creates it; clients only look for it.
+func (p Paths) LockFile() string { return filepath.Join(p.State, "daemon.lock.sqlite") }
 func (p Paths) startFile() string {
 	return filepath.Join(p.State, "start.lock.sqlite")
 }
 func (p Paths) statusFile() string { return filepath.Join(p.State, "daemon.json") }
+
+// startedFile records when StartDetached last started a daemon; the daemon
+// removes it once it serves.
+func (p Paths) startedFile() string { return filepath.Join(p.State, "started.json") }
+
+// StoppedFile marks a daemon the user stopped (`baum daemon stop`, which the
+// desktop app's "Quit and stop background reviews" runs). Hooks do not start
+// a daemon while it exists; Ensure and a foreground run remove it.
+func (p Paths) StoppedFile() string { return filepath.Join(p.State, "stopped-by-user") }
+
+// MarkStopped records that the user stopped the daemon. Without a state
+// directory no daemon ever ran here, and nothing is marked.
+func MarkStopped(p Paths) error {
+	if _, err := os.Lstat(p.State); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return writePrivate(p.StoppedFile(), time.Now().UTC())
+}
+
+// HasRun reports whether a daemon ever started for these paths: its lock
+// file, which only a daemon creates (clients only look for it), exists.
+func HasRun(p Paths) bool {
+	info, err := os.Lstat(p.LockFile())
+	return err == nil && info.Mode().IsRegular()
+}
+
+// ClearStopped removes the mark MarkStopped wrote.
+func ClearStopped(p Paths) error {
+	if err := os.Remove(p.StoppedFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// StoppedByUser reports whether the user stopped the daemon and nothing
+// started it explicitly since.
+func StoppedByUser(p Paths) bool {
+	_, err := os.Lstat(p.StoppedFile())
+	return err == nil
+}
 
 // CredentialFile is the private file holding the app transport's address and
 // credential while a daemon runs.

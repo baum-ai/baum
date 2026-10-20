@@ -587,3 +587,23 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(contents)
 }
+
+// The dispatcher before the run carried --user is baum's too: an install
+// replaces it with the current form.
+func TestInstallUpgradesThePreviousDispatcher(t *testing.T) {
+	spec, _ := agenthooks.Lookup("codex")
+	previous := strings.Replace(agenthooks.UserDispatcher(spec, "stop"), "exec baum hooks agent --user ", "exec baum hooks agent ", 1)
+	if previous == agenthooks.UserDispatcher(spec, "stop") {
+		t.Fatal("the previous form equals the current one")
+	}
+	encoded, _ := json.Marshal(previous)
+	settings := `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": ` + string(encoded) + `, "timeout": 30}]}]}}`
+	installed, err := userhooks.InstallSettings([]byte(settings), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInstalled(t, "codex", installed)
+	if strings.Contains(string(installed), strings.TrimSuffix(strings.TrimPrefix(string(encoded), `"`), `"`)) {
+		t.Errorf("the previous form survived:\n%s", installed)
+	}
+}

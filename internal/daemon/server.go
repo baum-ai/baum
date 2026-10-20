@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -40,7 +41,8 @@ const (
 var ErrRunning = errors.New("another baum daemon is already running")
 
 // Method handles one control request kind. Its params are the request's
-// Params; its result is encoded as the response's Result.
+// Params; its result is encoded as the response's Result. An *Error it
+// returns is answered with its code; any other error with CodeFailed.
 type Method func(ctx context.Context, params json.RawMessage) (any, error)
 
 // App is what the daemon serves and runs. Every field may be nil.
@@ -65,6 +67,9 @@ type App struct {
 	Drain func() bool
 	// Resume accepts paid work again after a Drain that led nowhere.
 	Resume func()
+	// Methods registers further control requests the application serves,
+	// beside Options.Methods; they require the client's protocol to match.
+	Methods map[string]Method
 }
 
 // Options configure Run.
@@ -100,6 +105,8 @@ type Options struct {
 	Logger      *slog.Logger
 	// trust replaces trustedExecutable in tests.
 	trust func(path string) (string, error)
+	// socketCheck replaces socketCheckInterval in tests.
+	socketCheck time.Duration
 }
 
 // Run is the daemon. It returns ErrRunning when another daemon holds the
@@ -191,18 +198,21 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer func() { _ = os.Remove(paths.statusFile()) }()
-	listener, err := listenControl(paths.Socket)
+	listener, err := newControlListener(paths.Socket)
 	if err != nil {
 		shutdownApp()
 		return err
 	}
 	stopCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	methods := map[string]Method{}
+	maps.Copy(methods, opts.Methods)
+	maps.Copy(methods, app.Methods)
 	trust := opts.trust
 	if trust == nil {
 		trust = trustedExecutable
 	}
-	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
+	control := &controller{status: status, stop: stop, methods: methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
 	self.Store(control)
 	defer self.Store(nil)
 	runCtx, cancelRun := context.WithCancel(context.Background())
@@ -218,8 +228,17 @@ func Run(ctx context.Context, opts Options) error {
 	go func() { httpDone <- server.Serve(httpCtx) }()
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); control.serve(listener) }()
+	// It served: a client that started it may start the next one at once.
+	_ = os.Remove(paths.startedFile())
 	log.Info("daemon ready", "app", status.App, "socket", paths.Socket)
 	running.Go(func() { control.restartWhenIdle(runCtx) })
+	socketCheck := opts.socketCheck
+	if socketCheck <= 0 {
+		socketCheck = socketCheckInterval
+	}
+	running.Go(func() {
+		listener.watch(runCtx, socketCheck, log, func() { _ = os.Remove(paths.startedFile()) })
+	})
 
 	var serveErr error
 	select {
@@ -249,7 +268,7 @@ func acquire(ctx context.Context, paths Paths, timeout time.Duration) (*filelock
 	deadline := time.Now().Add(timeout)
 	probe := &Client{Paths: paths}
 	for {
-		lock, err := tryLock(ctx, paths.lockFile())
+		lock, err := tryLock(ctx, paths.LockFile())
 		if !errors.Is(err, errLocked) {
 			return lock, err
 		}
@@ -514,6 +533,10 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 	defer cancel()
 	result, err := method(ctx, req.Params)
 	if err != nil {
+		// A method names its own code with an *Error.
+		if coded, ok := errors.AsType[*Error](err); ok {
+			return Response{Error: coded}, false
+		}
 		return Response{Error: &Error{Code: CodeFailed, Message: err.Error()}}, false
 	}
 	data, err := json.Marshal(result)

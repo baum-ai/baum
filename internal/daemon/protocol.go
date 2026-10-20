@@ -16,11 +16,12 @@ import (
 //   - "stop" (any protocol) asks the daemon to stop gracefully; it answers
 //     before it begins.
 //   - "ping" answers ok.
+//   - "event" records one coding-agent or Git hook event (internal/hookevents).
 //
 // Every other method requires the client's protocol to equal the daemon's;
 // otherwise the answer is the error code "protocol_mismatch" together with
-// the daemon's Status. Methods added later (event ingestion from hooks) are
-// registered through Options.Methods.
+// the daemon's Status. Methods are registered through Options.Methods and
+// App.Methods.
 type Request struct {
 	Protocol int             `json:"protocol"`
 	Method   string          `json:"method"`
@@ -63,6 +64,6 @@ type IncompatibleError struct {
 }
 
 func (e *IncompatibleError) Error() string {
-	return fmt.Sprintf("the running baum daemon (version %s, pid %d) speaks control protocol %d, but this baum (version %s) speaks protocol %d; upgrade baum, or stop the daemon with `baum daemon stop`",
+	return fmt.Sprintf("the running baum daemon (version %s, pid %d) speaks control protocol %d, but this baum (version %s) speaks protocol %d; upgrade baum, or stop the daemon with `baum daemon stop`; agent hooks do not start it again until `baum daemon ensure` (or the app) runs",
 		e.Daemon.Version, e.Daemon.PID, e.Daemon.Protocol, e.Client, Protocol)
 }
