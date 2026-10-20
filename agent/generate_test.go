@@ -157,6 +157,25 @@ func TestGenerateSendsTheOfferedTilesAfterTheBody(t *testing.T) {
 	}
 }
 
+func TestGenerateOffersCandidateTileEntriesInsteadOfTheShippedOnes(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.TileKinds = []string{"database-schema"}
+	candidates, err := tilecatalogue.ParseEntries([]byte(`[{"kind":"database-schema","use_when":"candidate guidance"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.TileEntries, err = tilecatalogue.WithCandidates(run.TileKinds, candidates); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := generator.Generate(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	prompt := backend.calls[0].Prompt
+	if !strings.Contains(prompt, "candidate guidance") || strings.Contains(prompt, "Explain table, column, index or relationship changes.") {
+		t.Fatalf("prompt does not carry the candidate entry instead of the shipped one: %.400s", prompt)
+	}
+}
+
 func TestGenerateRepairsAnInvalidDocument(t *testing.T) {
 	generator, run, backend := loopFixture(t, nil)
 	backend.run = func(_ context.Context, request Request, n int) (Result, error) {

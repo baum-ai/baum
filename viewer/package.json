@@ -95,6 +95,7 @@
     "generate:validators": "node scripts/generate-review-tile-validators.mjs",
     "typecheck": "pnpm generate && tsc --noEmit",
     "build:app": "pnpm generate && vite build --config vite.app.config.ts",
+    "gallery": "pnpm generate && vite --config vite.gallery.config.ts",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives .",
     "format": "biome format --write .",
     "format:check": "biome format .",

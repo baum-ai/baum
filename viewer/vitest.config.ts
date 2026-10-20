@@ -11,7 +11,7 @@ export default defineConfig({
     // More workers make the DOM stress tests compete for resources.
     maxWorkers: 2,
     environment: "node",
-    include: ["src/**/*.test.{ts,tsx}", "app/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "app/**/*.test.{ts,tsx}", "gallery/**/*.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
