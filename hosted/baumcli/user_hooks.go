@@ -1,6 +1,7 @@
 package baumcli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -92,6 +93,99 @@ hook to its position: hooks of yours that move are listed, to trust again with
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
+}
+
+// userHooksStatus is one agent's line of `baum hooks status --user`.
+type userHooksStatus struct {
+	Agent string `json:"agent"`
+	Name  string `json:"name"`
+	// Detected reports that the agent was found on this machine, so install
+	// without --agent includes it.
+	Detected bool `json:"detected"`
+	// Settings is the user-wide settings file.
+	Settings string `json:"settings"`
+	// Installed reports that baum's hooks are in it and up to date, so an
+	// install would change nothing.
+	Installed bool `json:"installed"`
+	// Error is why the file cannot be read or edited.
+	Error string `json:"error,omitempty"`
+}
+
+func newUserHooksStatusCommand(stdout io.Writer) *cobra.Command {
+	var (
+		user   bool
+		asJSON bool
+	)
+	cmd := &cobra.Command{
+		Use:   "status --user [--json]",
+		Short: "Show whether baum's hooks are in your user-wide Claude Code and Codex settings",
+		Long: `Shows, for each coding agent that has user-wide hooks, whether it was found on
+this machine, its settings file, and whether baum's hooks are installed there
+and up to date. It reads the files and changes nothing.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !user {
+				return errors.New("pass --user: this reports on your user-wide agent settings")
+			}
+			statuses, err := userHooksStatuses()
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return json.NewEncoder(stdout).Encode(struct {
+					Agents []userHooksStatus `json:"agents"`
+				}{statuses})
+			}
+			for _, s := range statuses {
+				state := "not installed"
+				switch {
+				case s.Error != "":
+					state = "error: " + s.Error
+				case s.Installed:
+					state = "installed"
+				}
+				found := "found"
+				if !s.Detected {
+					found = "not found"
+				}
+				_, _ = fmt.Fprintf(stdout, "%s (%s): %s in %s\n", s.Name, found, state, homeRelative(s.Settings))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&user, "user", false, "report on your user-wide agent settings")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the status as one JSON line")
+	cmd.SetOut(stdout)
+	return cmd
+}
+
+func userHooksStatuses() ([]userHooksStatus, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("find the home directory: %w", err)
+	}
+	detected := detectedUserHookAgents()
+	statuses := []userHooksStatus{}
+	for _, agent := range userhooks.Agents() {
+		settings, ok := agenthooks.LookupUserWide(agent)
+		if !ok {
+			return nil, fmt.Errorf("%s has no user-wide hooks", agent)
+		}
+		status := userHooksStatus{
+			Agent:    agent,
+			Name:     agentDisplayName(agent),
+			Detected: slices.Contains(detected, agent),
+			Settings: filepath.Join(home, filepath.FromSlash(settings.SettingsFile)),
+		}
+		pending, err := userhooks.Pending(home, agent)
+		if err != nil {
+			status.Error = err.Error()
+		} else {
+			status.Installed = !pending
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses, nil
 }
 
 // changeUserHooks installs or uninstalls for each agent. One agent's failure,

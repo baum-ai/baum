@@ -41,13 +41,32 @@ pub struct Status {
 }
 
 /// A daemon the window can load.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Launch {
     pub status: Status,
     /// The launch URL, holding the credential in its fragment. Never log it.
     pub url: Url,
     pub origin: url::Origin,
     token: String,
+}
+
+/// Never prints the launch URL or token, so a stray `{:?}` cannot leak them.
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launch")
+            .field("status", &self.status)
+            .field("origin", &self.origin.ascii_serialization())
+            .field("credential", &"<redacted>")
+            .finish()
+    }
+}
+
+impl Launch {
+    /// The launch capability, which the daemon also accepts as a bearer token
+    /// on its `/api/` routes. Never log it.
+    pub fn bearer(&self) -> &str {
+        &self.token
+    }
 }
 
 /// Why the app could not reach a daemon, with whatever the user needs to see.
@@ -67,12 +86,39 @@ impl Failure {
     }
 }
 
-/// The `baum` binary the app runs: the one bundled next to the executable,
-/// or `BAUM_DESKTOP_BAUM` while developing.
+/// The `baum` binary the app runs: `BAUM_DESKTOP_BAUM` while developing, else
+/// the stable copy where the app keeps one, else the one bundled next to the
+/// executable.
 pub fn cli_path() -> Result<PathBuf, Failure> {
     if let Some(path) = std::env::var_os("BAUM_DESKTOP_BAUM") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(stable) = STABLE_CLI.get() {
+        return stable().map_err(Failure::new);
+    }
+    bundled_cli_path()
+}
+
+/// Where the app keeps a stable copy of the bundled binary (an AppImage's
+/// mount vanishes when it quits; see `onboarding::start`), a function that
+/// refreshes the copy if needed and returns it. Every run of baum goes
+/// through it, so a copy that could not be made is an error the connecting
+/// screen shows and Retry tries again, never a fall back to the binary that
+/// would vanish. Set once, at startup, before anything runs baum.
+type StableCli = Box<dyn Fn() -> Result<PathBuf, String> + Send + Sync>;
+static STABLE_CLI: std::sync::OnceLock<StableCli> = std::sync::OnceLock::new();
+
+pub fn use_stable_cli(stable: impl Fn() -> Result<PathBuf, String> + Send + Sync + 'static) {
+    let _ = STABLE_CLI.set(Box::new(stable));
+}
+
+/// Whether `BAUM_DESKTOP_BAUM` names the baum to run (development).
+pub fn cli_overridden() -> bool {
+    std::env::var_os("BAUM_DESKTOP_BAUM").is_some()
+}
+
+/// The binary bundled next to the app's executable.
+pub fn bundled_cli_path() -> Result<PathBuf, Failure> {
     let exe = std::env::current_exe()
         .map_err(|e| Failure::new(format!("Cannot locate the app executable: {e}")))?;
     let name = if cfg!(windows) { "baum.exe" } else { "baum" };
@@ -338,77 +384,58 @@ pub fn log_tail(state: &Path, max: usize) -> Vec<String> {
     out
 }
 
-/// The most the jobs list may hold before the app stops reading it.
-const MAX_JOBS_RESPONSE: u64 = 8 << 20;
-
 /// How many generation jobs the user's daemon is running, so an update can
 /// wait for them. `baum daemon status` finds the daemon without starting one;
-/// when it reports none, no job can be running and the answer is 0.
+/// when it reports none, no job can be running and the answer is 0. Queued
+/// jobs wait in the daemon's journal and resume after a restart; only a
+/// running one would be interrupted.
 pub fn running_jobs(cli: &Path, timeout: Duration) -> Result<usize, String> {
     let Ok(output) = run(cli, &["daemon", "status", "--json"], timeout) else {
         return Ok(0);
     };
     let status = parse_status(&output.stdout)?;
     let launch = read_credential(&status.state)?;
-    let (code, body) = get(&launch, "/api/jobs", timeout)
-        .map_err(|e| format!("Cannot ask the baum daemon for its jobs: {e}"))?;
-    if code != 200 {
-        return Err(format!("The baum daemon answered {code} for its jobs."));
-    }
-    count_running(&body)
+    let body = crate::client::jobs(&launch)?;
+    Ok(crate::status::parse_jobs(&body)?.running)
 }
 
-fn count_running(body: &[u8]) -> Result<usize, String> {
-    #[derive(Deserialize)]
-    struct Jobs {
-        #[serde(default)]
-        jobs: Vec<Job>,
+/// A launch on a local test server, for other modules' tests.
+#[cfg(test)]
+pub fn test_launch(port: u16) -> Launch {
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+    let (url, token) = launch_url(&format!("http://127.0.0.1:{port}/#token={token}")).unwrap();
+    Launch {
+        status: Status {
+            version: String::new(),
+            pid: 0,
+            app: None,
+            state: PathBuf::from("/s"),
+        },
+        origin: url.origin(),
+        url,
+        token,
     }
-    #[derive(Deserialize)]
-    struct Job {
-        #[serde(default)]
-        state: String,
-    }
-    let jobs: Jobs = serde_json::from_slice(body)
-        .map_err(|e| format!("The baum daemon's jobs are unreadable: {e}"))?;
-    // Queued jobs wait in the daemon's journal and resume after a restart;
-    // only a running one would be interrupted.
-    Ok(jobs.jobs.iter().filter(|j| j.state == "running").count())
 }
 
-/// A GET request to the daemon's app transport with the credential. HTTP/1.0
-/// keeps the response unchunked; the daemon closes the connection after it.
-fn get(launch: &Launch, path: &str, timeout: Duration) -> std::io::Result<(u16, Vec<u8>)> {
-    use std::io::{Error, ErrorKind};
-    let (Some(host), Some(port)) = (launch.url.host_str(), launch.url.port()) else {
-        return Err(Error::new(ErrorKind::InvalidInput, "no daemon address"));
-    };
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .map_err(|_| Error::new(ErrorKind::InvalidInput, "no daemon address"))?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    write!(
-        stream,
-        "GET {path} HTTP/1.0\r\nHost: {host}:{port}\r\nAuthorization: Bearer {}\r\n\r\n",
-        launch.token
-    )?;
-    let mut response = Vec::new();
-    stream.take(MAX_JOBS_RESPONSE).read_to_end(&mut response)?;
-    let invalid = || Error::new(ErrorKind::InvalidData, "not an HTTP response");
-    let end = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(invalid)?;
-    let head = String::from_utf8_lossy(&response[..end]);
-    let code = head
-        .lines()
-        .next()
-        .and_then(|l| l.split(' ').nth(1))
-        .and_then(|c| c.parse().ok())
-        .ok_or_else(invalid)?;
-    Ok((code, response[end + 4..].to_vec()))
+/// A stand-in for the bundled baum in tests, running `script` with sh. It is
+/// written under another name and copied into place by `cp`: a file this
+/// process held open for writing could still be open in a child another test
+/// thread forks at that moment, and running it would then fail with ETXTBSY
+/// (renaming would not help; the inode stays the same).
+#[cfg(all(test, unix))]
+pub fn fake_cli(dir: &Path, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let source = dir.join("baum.source");
+    fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = dir.join("baum");
+    let copied = Command::new("cp")
+        .arg("-p")
+        .arg(&source)
+        .arg(&path)
+        .status();
+    assert!(copied.unwrap().success());
+    path
 }
 
 #[cfg(test)]
@@ -491,6 +518,13 @@ mod tests {
     }
 
     #[test]
+    fn debug_output_never_holds_the_credential() {
+        let shown = format!("{:?}", launch_on(4100));
+        assert!(!shown.contains(TOKEN), "{shown}");
+        assert!(!shown.contains("token="), "{shown}");
+    }
+
+    #[test]
     fn log_tail_keeps_the_newest_lines() {
         let dir = temp_dir("logs");
         fs::write(dir.join("daemon.log"), "one\ntwo\nthree\n").unwrap();
@@ -568,47 +602,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_running_jobs_count() {
-        let body = br#"{"available":true,"jobs":[{"id":"a","state":"running"},{"id":"b","state":"queued"},{"id":"c","state":"done"},{"id":"d","state":"running"}]}"#;
-        assert_eq!(count_running(body), Ok(2));
-        assert_eq!(count_running(br#"{"available":true,"jobs":[]}"#), Ok(0));
-        assert!(count_running(b"not json").is_err());
-    }
-
-    #[test]
-    fn jobs_request_sends_the_credential() {
-        let (port, server) = serve_once(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"jobs\":[{\"state\":\"running\"}]}",
-        );
-        let (code, body) = get(&launch_on(port), "/api/jobs", Duration::from_secs(2)).unwrap();
-        assert_eq!(code, 200);
-        assert_eq!(count_running(&body), Ok(1));
-        let request = server.join().unwrap();
-        assert!(request.starts_with("GET /api/jobs HTTP/1.0\r\n"));
-        assert!(request.contains(&format!("Authorization: Bearer {TOKEN}\r\n")));
-    }
-
     #[cfg(unix)]
     mod cli {
         use super::*;
-        use std::os::unix::fs::PermissionsExt;
-
-        /// A stand-in for the bundled baum binary.
-        /// The script is written to a temporary file and copied into place
-        /// by a child process. A file this process had open for writing
-        /// could still be open in a child another test thread was forking
-        /// at that moment, and running it would then fail with ETXTBSY;
-        /// renaming would not help, as the inode stays the same.
-        fn fake_cli(dir: &Path, script: &str) -> PathBuf {
-            let path = dir.join("baum");
-            let source = dir.join("baum.script");
-            fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
-            let copied = Command::new("cp").arg(&source).arg(&path).status().unwrap();
-            assert!(copied.success());
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-            path
-        }
 
         #[test]
         fn ensure_loads_the_running_daemon() {

@@ -5,11 +5,20 @@
 //! adds no review features; the daemon serves the application. The window
 //! starts on a bundled connecting screen, attaches to the daemon (starting it
 //! if needed) and loads it, and returns to that screen with the daemon's
-//! recent log when the daemon cannot be reached. Quitting the app leaves the
-//! daemon running.
+//! recent log when the daemon cannot be reached. Closing the window hides it
+//! into the tray (`tray`, `lifecycle`) and quitting the app leaves the daemon
+//! running; `autostart` starts the app hidden at login.
 
+mod autostart;
+mod client;
 mod daemon;
+mod install;
+mod lifecycle;
 mod navigation;
+mod notifications;
+mod onboarding;
+mod status;
+mod tray;
 mod updater;
 
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -22,7 +31,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use navigation::Decision;
 
-const MAIN: &str = "main";
+pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
 /// row count as the daemon having gone away.
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
@@ -99,6 +108,7 @@ fn connect(app: &AppHandle, why: Attach) {
         shared.daemon = None;
         shared.attempt
     };
+    tray::connecting(app);
     show_screen(app);
     let app = app.clone();
     thread::spawn(move || {
@@ -120,16 +130,23 @@ fn connect(app: &AppHandle, why: Attach) {
             "baum desktop: attached to baum daemon {} (pid {})",
             launch.status.version, launch.status.pid
         );
+        tray::attached(&app, &launch);
         let Some(window) = app.get_webview_window(MAIN) else {
             return;
         };
-        if let Err(e) = window.navigate(launch.url.clone()) {
+        // The setup screen stays until the user leaves it, which attaches again.
+        let Some(navigated) = onboarding::attach(&app, &window, &launch.url) else {
+            return watch(&app, &state, attempt, &launch, why);
+        };
+        if let Err(e) = navigated {
             let failure = daemon::Failure {
                 message: format!("Cannot open the baum daemon: {e}"),
                 details: Vec::new(),
             };
             return fail(&app, &state, attempt, failure);
         }
+        let current = state.clone();
+        notifications::attach(&app, &launch, move || current.lock().attempt != attempt);
         watch(&app, &state, attempt, &launch, why);
     });
 }
@@ -183,8 +200,9 @@ fn watch(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch, 
 }
 
 /// While the error screen shows a daemon that stopped, waits for another
-/// client (a coding-agent hook runs `baum daemon ensure` on every event) to
-/// start a new one, and attaches to it. The app itself starts nothing; the
+/// client (a coding-agent hook that finds no daemon starts one in the
+/// background, except after `baum daemon stop`) to start a new one, and
+/// attaches to it. The app itself starts nothing; the
 /// wait ends when the user restarts the daemon from the screen.
 fn await_replacement(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch) {
     loop {
@@ -220,6 +238,7 @@ fn fail(app: &AppHandle, state: &State, attempt: u64, failure: daemon::Failure) 
         };
         shared.daemon = None;
     }
+    tray::detached(app);
     show_screen(app);
 }
 
@@ -243,33 +262,48 @@ fn open_externally(app: &AppHandle, url: &url::Url) {
 
 fn main() {
     let state = State::default();
-    tauri::Builder::default()
+    // Start at login runs the app with this flag: the app attaches to the
+    // daemon (starting it) without showing the window.
+    let hidden = std::env::args().any(|a| a == autostart::HIDDEN_FLAG);
+    let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses this window and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window(MAIN) {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            lifecycle::show_window(app);
         }))
-        // Used only from Rust; no page is granted its commands.
+        // Used only from Rust; no page is granted their commands.
         .plugin(tauri_plugin_opener::init())
-        // Updates, and the questions they ask, are driven from Rust only (see
-        // updater.rs); no page is granted these plugins' commands either.
         .plugin(tauri_plugin_dialog::init())
+        // Updates are driven from Rust only (see updater.rs).
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![connection, reconnect])
+        .manage(onboarding::Setup::default())
+        .invoke_handler(tauri::generate_handler![
+            connection,
+            reconnect,
+            onboarding::setup_state,
+            onboarding::install_command,
+            onboarding::uninstall_command,
+            onboarding::install_hooks,
+            onboarding::uninstall_hooks,
+            onboarding::finish_setup,
+        ])
+        .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
-            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+            // Before the tray, whose menus hold the notification toggles.
+            notifications::install(app.handle())?;
+            tray::setup(app.handle());
+            let page = onboarding::start(app.handle());
+            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App(page.into()))
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
+                .visible(!hidden)
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
-                    match navigation::decide(url, daemon.as_ref()) {
+                    let setup = onboarding::is_open(&handle);
+                    match navigation::decide(url, daemon.as_ref(), setup) {
                         Decision::Allow => true,
                         Decision::OpenInBrowser => {
                             open_externally(&handle, url);
@@ -285,41 +319,64 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // A hidden start shows the window after all if no tray appears.
+            tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
             updater::start(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the baum desktop app");
+        .build(tauri::generate_context!())
+        .expect("error while building the baum desktop app");
+    app.run(|app, event| {
+        // Clicking the Dock icon with the window hidden reopens it.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            lifecycle::show_window(app);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }
 
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They must get no capability,
-    /// so the only one is the bundled screen's, with exactly its two commands.
+    /// so the only ones are the bundled screens', with exactly their commands
+    /// and no remote URL.
     #[test]
-    fn only_the_bundled_screen_has_a_capability() {
-        let entries: Vec<_> =
-            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .collect();
-        assert_eq!(entries.len(), 1, "{entries:?}");
-        let capability: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&entries[0]).unwrap()).unwrap();
-        assert_eq!(capability["identifier"], "connecting-screen");
-        assert!(capability.get("remote").is_none());
-        assert_eq!(
-            capability["permissions"],
-            serde_json::json!(["allow-connection", "allow-reconnect"])
-        );
+    fn only_the_bundled_screens_have_capabilities() {
+        let expected = serde_json::json!({
+            "connecting-screen": ["allow-connection", "allow-reconnect"],
+            "setup-screen": [
+                "allow-setup-state",
+                "allow-install-command",
+                "allow-uninstall-command",
+                "allow-install-hooks",
+                "allow-uninstall-hooks",
+                "allow-finish-setup"
+            ],
+        });
+        let mut found = serde_json::Map::new();
+        for entry in
+            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities")).unwrap()
+        {
+            let capability: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
+            assert!(capability.get("remote").is_none(), "{capability}");
+            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            found.insert(
+                capability["identifier"].as_str().unwrap().to_string(),
+                capability["permissions"].clone(),
+            );
+        }
+        assert_eq!(serde_json::Value::Object(found), expected);
         let config: serde_json::Value = serde_json::from_slice(
             &std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen"])
+            serde_json::json!(["connecting-screen", "setup-screen"])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

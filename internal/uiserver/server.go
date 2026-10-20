@@ -280,7 +280,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" {
+	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" && kind != "notice" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
@@ -367,8 +367,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 const bootstrapHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="/launch.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`
 
 // The bootstrap exchanges the fragment capability, then replaces itself with
-// the application at the namespace path the exchange returns.
-const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(!token)throw Error('Open this page from the baum desktop app.');const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');const {path}=await response.json();if(typeof path!=='string'||!path.startsWith('/s/'))throw Error('Launch authorization failed.');location.replace(path);}catch(error){status.textContent=error.message;}})();`
+// the application at the namespace path the exchange returns. A `page` of
+// "diagnostics" beside the token (the desktop app's first run) opens that
+// page; no other value is carried over.
+const bootstrapJS = `(async()=>{const params=new URLSearchParams(location.hash.slice(1));const token=params.get('token');const page=params.get('page')==='diagnostics'?'?page=diagnostics':'';history.replaceState(null,'',location.pathname);const status=document.getElementById('status');try{if(!token)throw Error('Open this page from the baum desktop app.');const response=await fetch('/api/auth/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error('Launch authorization failed.');const {path}=await response.json();if(typeof path!=='string'||!path.startsWith('/s/'))throw Error('Launch authorization failed.');location.replace(path+page);}catch(error){status.textContent=error.message;}})();`
 
 // The default application page resolves API paths relative to its namespace.
 const appHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>baum local</title><script src="app.js" defer></script></head><body><h1>baum local</h1><p id="status">Connecting to the local application…</p></body></html>`

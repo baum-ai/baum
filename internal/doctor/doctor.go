@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -110,6 +111,9 @@ type Options struct {
 	// Daemon describes the per-user baum daemon; nil omits that check. The
 	// caller supplies it because the daemon itself serves this report.
 	Daemon func(ctx context.Context) Daemon
+	// Executable is this baum's executable, compared with the baum on PATH;
+	// nil is os.Executable.
+	Executable func() (string, error)
 }
 
 // Daemon is what the report says about the per-user daemon. It never holds
@@ -204,6 +208,9 @@ func (r *runner) defaults() {
 	if o.Registry == nil {
 		o.Registry = listClones
 	}
+	if o.Executable == nil {
+		o.Executable = os.Executable
+	}
 }
 
 func runCommand(ctx context.Context, env []string, path string, args ...string) (string, error) {
@@ -277,6 +284,7 @@ func (r *runner) run() {
 	r.tokens(clones)
 	r.anthropicKey()
 	r.prices()
+	r.command()
 	r.environment()
 }
 
@@ -799,6 +807,53 @@ func (r *runner) prices() {
 		c.Detail = "not fetched (--offline); the embedded list is in use here. " + fmt.Sprintf(scope, pricing.Embedded().Version())
 	}
 	r.add(c)
+}
+
+// command reports the baum that coding-agent hooks run: the user-wide and
+// committed hook commands call baum by name, so it is the first one on PATH
+// (in the daemon, the login shell's PATH). It should be this baum, so that the
+// hooks and the daemon they talk to are one version.
+func (r *runner) command() {
+	c := Check{ID: "baum-command", Label: "baum command", Source: "PATH"}
+	path, err := r.opts.LookPath("baum")
+	if err != nil {
+		c.Status, c.Detail = StatusWarning, "baum is not on PATH, so coding-agent hooks cannot run it"
+		c.Fix = "install the command from the desktop app (Command Line and Hooks… in its menu), or put the baum executable in a directory on your PATH"
+		r.add(c)
+		return
+	}
+	c.Path = path
+	resolved, resolveErr := filepath.EvalSymlinks(path)
+	self, selfErr := r.opts.Executable()
+	if selfErr == nil {
+		self, selfErr = filepath.EvalSymlinks(self)
+	}
+	if resolveErr == nil && selfErr == nil && samePath(resolved, self) {
+		c.Status, c.Detail = StatusOK, "coding-agent hooks run this baum"
+		if resolved != path {
+			c.Detail += " (" + resolved + ")"
+		}
+		r.add(c)
+		return
+	}
+	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
+	if err == nil {
+		c.Version = version
+	}
+	c.Status = StatusWarning
+	c.Detail = "coding-agent hooks run " + path + ", a different baum from this one"
+	if selfErr == nil {
+		c.Detail += " (" + self + ")"
+	}
+	c.Fix = "replace it with the desktop app's baum (Command Line and Hooks… in its menu), or put this baum first on PATH, so that the hooks and the daemon run one version"
+	r.add(c)
+}
+
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (r *runner) environment() {

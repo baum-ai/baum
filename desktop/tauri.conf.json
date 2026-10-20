@@ -16,9 +16,10 @@
         "script-src": "'self'",
         "style-src": "'self'",
         "img-src": "'self'",
-        "connect-src": "ipc: http://ipc.localhost"
+        "connect-src": "ipc: http://ipc.localhost",
+        "frame-ancestors": "'none'"
       },
-      "capabilities": ["connecting-screen"]
+      "capabilities": ["connecting-screen", "setup-screen"]
     }
   },
   "bundle": {

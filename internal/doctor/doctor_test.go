@@ -180,7 +180,7 @@ func TestReportCoversEveryItem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
 	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state"} }})
-	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "path"} {
+	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "baum-command", "path"} {
 		find(t, report, id)
 	}
 }
@@ -906,6 +906,40 @@ func TestDaemon(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBaumCommand(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	self := filepath.Join(t.TempDir(), "baum")
+	executable := func() (string, error) { return self, nil }
+
+	c := find(t, run(t, Options{Executable: executable}), "baum-command")
+	wantStatus(t, c, StatusWarning)
+	wantContains(t, "detail", c.Detail, "not on PATH")
+	wantContains(t, "fix", c.Fix, "Command Line and Hooks")
+
+	other := m.install("baum", `echo "baum version v0.2.9"`)
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c = find(t, run(t, Options{Executable: executable}), "baum-command")
+	wantStatus(t, c, StatusWarning)
+	wantContains(t, "detail", c.Detail, other, "different baum", self)
+	if c.Version != "0.2.9" || c.Path != other {
+		t.Errorf("check = %+v", c)
+	}
+
+	// A link on PATH to this baum, as the desktop app installs it.
+	if err := os.Remove(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(self, other); err != nil {
+		t.Fatal(err)
+	}
+	c = find(t, run(t, Options{Executable: executable}), "baum-command")
+	wantStatus(t, c, StatusOK)
+	wantContains(t, "detail", c.Detail, "hooks run this baum", self)
 }
 
 func TestPathEntries(t *testing.T) {

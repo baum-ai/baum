@@ -1578,6 +1578,21 @@ the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index.
 
+The stream also carries `notice` events for the desktop app's notifications
+(`internal/notices`), which the web app ignores: `{"kind","repository","pr",
+"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?}` with `kind` one of
+`review_finished`, `review_failed`, `review_automatic` (an automatic review
+finished) and `review_requested`. They are published when a job finishes or
+fails (not when it is cancelled, interrupted or superseded) and when a
+discovery snapshot shows a pull request newly review-requested from the user
+(a repository's first snapshot after the daemon starts is only a baseline).
+The title is GitHub's, trimmed to 200 characters; `risk` (1 to 5) is the
+stored review's score, with `risk_status` `lower_bound` when incomplete
+coverage may hide a higher one; `reason` is the job's failure category and
+nothing free-form. A notice never holds review text, paths or error messages.
+A client that wants no history sends a `Last-Event-ID` beyond the latest
+event: it gets a `reset` and then only new events.
+
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.
 `generate` returns copies from the original, hash-checked assembly archive,
@@ -1791,11 +1806,15 @@ records it only from a client newer than itself and only if
 `executablePolicy` (`trust.go`) accepts it, and checks it again just before
 `Respawn` (which gets the resolved path): after `filepath.EvalSymlinks` it
 must be the daemon's own `os.Executable()`, the `baum` that `exec.LookPath`
-finds on the login shell's `PATH`, or one of `daemon.TrustedExecutables`
-(empty; for the desktop app's bundled baum later), a regular executable file
+finds on the login shell's `PATH` (the desktop app links its bundled baum
+there; see `desktop/README.md` for which install locations pass the checks
+below), or one of `daemon.TrustedExecutables` (empty), a regular executable file
 owned by the user or root and not group- or world-writable, under
 directories up to `/` that pass the same owner and mode test (sticky
-world-writable ones such as `/tmp` fail). On Windows only the allowlist
+world-writable ones such as `/tmp` fail; on macOS a directory group-writable
+only by the admin group, gid 80, such as `/Applications`, passes, since its
+writers can become root, but never the staff group, gid 20, or a file). On
+Windows only the allowlist
 applies. A refusal is logged; the daemon keeps running without
 `restart_pending`, and is replaced when a newer client next finds it idle.
 A daemon speaking a newer protocol is an
@@ -2269,7 +2288,10 @@ and two files:
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the
-   session cookie. The token stays valid for any number of exchanges for the
+   session cookie. A `page=diagnostics` member beside the token
+   (`#token=…&page=diagnostics`, which the app adds after first-run setup)
+   opens `?page=diagnostics` under the namespace; no other value is carried
+   over. The token stays valid for any number of exchanges for the
    daemon's whole life, so the app can be relaunched against one daemon; a new
    daemon writes a new token atomically, and the old one then gets 401 (or no
    answer, if the port changed). The token also works as
@@ -2277,7 +2299,19 @@ and two files:
 3. `<state>/daemon.log` is the daemon's log (it rotates at 1 MiB, keeping
    `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
    wrote before its log opened, or a crash.
-4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
+4. The setup screen reads two reports, neither of which changes anything:
+   `baum daemon login-path --json` (hidden) resolves the login shell's
+   environment as a starting daemon does (`shellenv.Resolve`, then
+   `shellenv.Merge` over the inherited one) and prints
+   `{"shell","login_shell","error","path":[…],"baum":{"path","resolved","version","self"}|null}`,
+   `baum` being the first executable `baum` on that `PATH` (relative entries
+   skipped), with its links resolved and its `--version` (5 s timeout; its
+   own version when it is this executable). `baum hooks status --user --json`
+   prints `{"agents":[{"agent","name","detected","settings","installed","error"}]}`
+   for each agent with user-wide hooks, `installed` meaning an install would
+   change nothing (`userhooks.Pending`). It installs and removes the hooks
+   with `baum hooks install --user` and `uninstall --user`.
+5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
    ("Quit and stop background reviews"), and marks it stopped by the user, so
    hooks do not start it again until `baum daemon ensure`. `baum daemon
    status [--json]` prints the same status, or exits non-zero when none runs.
@@ -2290,7 +2324,12 @@ and two files:
 `baum internal doctor` reports the daemon (`daemon` check): its state directory, and
 when it runs its version, process id, uptime, protocol and socket; a warning
 when it is older than the doctor's baum, speaks a newer protocol, or holds the
-lock without answering.
+lock without answering. The `baum-command` check looks up `baum` on `PATH`
+(in the daemon, the login shell's), which is what the agent hooks run: OK when
+it resolves to the reporting executable (`Options.Executable`), a warning
+naming its path and `--version` when it is a different baum, and a warning
+when there is none; both fixes point at the desktop app's "Command Line and
+Hooks…".
 
 ## Desktop app
 
@@ -2298,5 +2337,19 @@ lock without answering.
 packages. It bundles the release `baum` binary and depends on it only through
 `baum daemon ensure --json` and the daemon's private credential file.
 Everything that knows where the daemon lives stays in Go. The shell owns the
-window, its navigation policy and the reconnect screen; the daemon serves
-`app/` to it like any loopback client. See [`desktop/README.md`](desktop/README.md).
+window, its navigation policy and the reconnect screen, the tray (job counts,
+pause of automatic generation, an icon that shows idle, running or attention),
+the window's close and quit behaviour and start at login; the daemon serves
+`app/` to it like any loopback client. Besides `ensure` and `stop`, the tray
+reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
+`PUT /api/automatic` with the launch token as a bearer, over the app API the
+window uses. It also owns first-run setup
+(`src/onboarding.rs`, `src/install.rs`, `ui/setup.html`): a bundled screen,
+with its own narrow capability, from which the user installs the bundled
+`baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a
+stable path of the bundled binary; an AppImage and Windows run and link a
+copy in the app's data directory, which Windows adds to the user `PATH`;
+the password prompt only for root-owned system directories) and the
+user-wide agent hooks; after that the window opens the daemon's diagnostics
+page. It records what it installed in `setup.json` in its configuration
+directory and removes only that. See [`desktop/README.md`](desktop/README.md).

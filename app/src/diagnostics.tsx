@@ -33,20 +33,58 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** How many checks of a report are problems: what stops baum from working. */
+export function problemCount(report: DiagnosticReport | null | undefined) {
+  return report ? report.checks.filter((c) => c.status === "problem").length : 0;
+}
+
+/** Runs the diagnostics once, when `enabled` first holds, and keeps the number
+ * of problems found, so every page can point at them. A page that runs them
+ * itself reports newer results through `update`. A failed run shows nothing. */
+export function useDiagnosticProblems(enabled: boolean) {
+  const [problems, setProblems] = useState(0);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!enabled || started.current) return;
+    started.current = true;
+    request<Partial<Diagnostics>>("api/diagnostics").then(
+      (body) => setProblems(problemCount(body.report)),
+      () => undefined,
+    );
+  }, [enabled]);
+  const update = useCallback((report: DiagnosticReport | null) => {
+    started.current = true;
+    setProblems(problemCount(report));
+  }, []);
+  return { problems, update };
+}
+
 /** The report `baum internal doctor` prints, as the local server computes it. It never
  * fetches the price list; "Check again" re-inspects this machine. */
-export function DiagnosticsSection() {
+export function DiagnosticsSection({
+  onReport,
+}: {
+  onReport?: (report: DiagnosticReport | null) => void;
+} = {}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const sequence = useRef(0);
+  // A new callback from the parent must not rerun the checks.
+  const reported = useRef(onReport);
+  useEffect(() => {
+    reported.current = onReport;
+  });
   const run = useCallback(async () => {
     const mine = ++sequence.current;
     setRunning(true);
     setError("");
     try {
       const body = await request<Diagnostics>("api/diagnostics");
-      if (mine === sequence.current) setReport(body.report);
+      if (mine === sequence.current) {
+        setReport(body.report);
+        reported.current?.(body.report);
+      }
     } catch (e) {
       if (mine === sequence.current)
         setError(e instanceof Error ? e.message : "Local request failed.");

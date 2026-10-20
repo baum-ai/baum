@@ -551,12 +551,19 @@ environment and SSH agent, while the process that named it may be an agent
 hook run from a sandboxed command that can write files in a workspace. So it
 accepts the executable only from a client of a newer version than its own,
 and only when, after resolving symbolic links, the file is the daemon's own
-executable (an upgrade in place) or the `baum` on its login shell's `PATH`;
+executable (an upgrade in place) or the `baum` on its login shell's `PATH`
+(which the desktop app's link makes its bundled baum);
 it must be a regular, executable file owned by you or root and not group- or
 world-writable, in directories up to `/` that are all the same (none may be
-world-writable, not even sticky like `/tmp`). It checks again just before
-starting it. A refused executable is logged and the daemon keeps running; a
-newer baum then replaces it the next time it finds the daemon idle. On
+world-writable, not even sticky like `/tmp`). On macOS a directory owned by
+root or you that only the admin group may also write (group `admin`, as
+`/Applications` and Intel Homebrew's `/usr/local/bin` are) passes too: admin
+users can become root anyway, so it lets in no one a root-owned file would
+keep out. The staff group, to which every local user belongs, does not count,
+and the executable itself must still be writable by its owner only. It checks
+again just before starting it. A refused executable is logged and the daemon
+keeps running; a newer baum then replaces it the next time it finds the
+daemon idle. On
 Windows, where owners and mode bits do not describe access, only the first
 two rules apply.
 
@@ -689,12 +696,69 @@ daemon's launch URL from a credential file in the daemon's state directory.
 It accepts the file only when it is private to you and names a
 `127.0.0.1` launch URL for that daemon, and it never logs that URL.
 
-The window loads only its bundled connecting screen and the attached daemon's
+The window loads only its bundled screens and the attached daemon's
 loopback origin. Links to other web hosts open in your default browser; other
 loopback servers, other schemes and new windows are refused. The daemon's
 pages get no Tauri capability, so they cannot call the app's commands or any
-plugin. The bundled screen may only read the connection state and ask to
-reconnect. Quitting it leaves the daemon running.
+plugin. The bundled connecting screen may only read the connection state and
+ask to reconnect. The bundled setup screen may also read what is installed and
+install or remove the `baum` command and the user-wide agent hooks; it does
+so only when you click the button for that change, and a change that would
+replace a different `baum` needs you to confirm that file's path first. The
+app makes no network requests other than loopback requests to the daemon
+and the update check described below.
+Quitting it leaves the daemon running, and so does closing
+its window, which hides it into the tray. The tray reads the daemon's job
+list, automatic generation status and diagnostics, and can pause automatic
+generation, with the same launch capability the window uses, sent as a bearer
+token to the loopback API and nowhere else. "Quit and stop background reviews"
+runs `baum daemon stop` after asking when a review is running. Start at login
+is off until you turn it on; it adds one per-user entry (an XDG autostart file,
+a LaunchAgent or a Run key value) that starts the app hidden, which starts
+your daemon. Turn it off in the tray or the window's Background menu, which
+removes the entry.
+
+On first run, and from "Command Line and Hooks…" in its menu, the app
+installs its bundled `baum` as your `baum` command, because agent hooks run
+`baum` by name:
+
+- On macOS and Linux it creates one symbolic link named `baum` to the bundled
+  binary, in `~/.local/bin` or `~/bin` when one is on your login shell's
+  `PATH`, else in `/usr/local/bin`. Writing to a directory you cannot write
+  goes through the system password prompt (`osascript` on macOS, `pkexec` on
+  Linux) only for a system directory: outside your home directory, reached
+  without symbolic links, owned by root and writable by no one else, below
+  directories that are root's and not writable by others (in practice
+  `/usr/local/bin`), and only for a link to a baum outside your home
+  directory (a baum in your home directory gets a link in `~/.local/bin`
+  instead). Root then runs a fixed shell script that takes the paths as
+  arguments, refuses any link not named `baum` in that directory and any
+  backup not named as the app names them, and checks the directory again
+  from inside it before it changes anything, so a directory swapped in while
+  the prompt shows is refused. A password-prompted link to an app in
+  `/Applications` (as other developer tools install their commands) puts
+  that app's binary on every user's `PATH` and on sudo's `secure_path`; it
+  is only as safe as the app bundle, which on macOS the admin group can
+  rewrite. A different `baum` first on your `PATH` is
+  replaced only after you confirm, and is kept beside it as
+  `baum.replaced-by-baum-app`; one a package manager owns (Homebrew, Nix,
+  the system directories, asdf or mise shims) is never replaced. An AppImage
+  links to a copy of its baum in the app's data directory, which the app also
+  runs, since its own files vanish when it quits.
+- On Windows it keeps a copy of its `baum.exe` alone in a directory of its
+  data directory and adds that directory to the front of your user `PATH`.
+- It records what it created in `setup.json` in its configuration directory.
+  Removing the command deletes only that link, and only while it still points
+  at the app's baum, and puts back a baum it replaced; on Windows it removes
+  the `PATH` entry. Since you (and your programs) can edit that file, the app
+  asks for the password to remove a link only when the record has the shape
+  the app writes and names the baum the app runs now.
+
+The user-wide hooks are installed and removed by the bundled `baum hooks
+install --user` and `uninstall --user` (see "Hosted service commands"). To see
+what is on your `PATH`, the app runs the bundled `baum daemon login-path`,
+which starts your login shell the way the daemon does and runs the first
+`baum` it finds with `--version`.
 
 Besides loopback requests to the daemon, the app makes one kind of network
 request: a release build checks GitHub Releases for a newer version of

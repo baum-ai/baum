@@ -249,11 +249,17 @@ impl Session {
         }
         // A job may have started while the question was open.
         wait_until_idle(running_jobs, thread::sleep);
-        // Windows cannot replace the bundled baum.exe while the daemon runs
-        // from it. Stopping marks the daemon as stopped by the user, so hooks
-        // leave it alone; the updated app's `baum daemon ensure` starts it
-        // again and clears that mark. The installer's pre-install hook stops
-        // it too (windows/installer-hooks.nsh).
+        // Windows: the installer closes the app and the updated app starts
+        // the daemon, so stop it now rather than leave the old version
+        // running from the app's copy of baum.exe (or, for installs from
+        // before that copy, from the installed one, which the installer could
+        // then not replace). Stopping marks the daemon as stopped by the
+        // user, so hooks leave it alone; the updated app's `baum daemon
+        // ensure` starts it and clears that mark. The installer's pre-install
+        // hook stops it too (windows/installer-hooks.nsh). Elsewhere nothing
+        // is stopped: the AppImage's copy of baum is refreshed by renaming a
+        // new file into place, so the running daemon keeps its binary until
+        // the updated app's `ensure` replaces it, as after any upgrade.
         #[cfg(windows)]
         stop_daemon();
         if let Err(e) = update.install(&bytes) {

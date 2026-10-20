@@ -33,9 +33,9 @@ bundle version="0.0.0": sidecar
 updater-test:
     {{ heavy }} desktop-test scripts/updater-manifest-test.sh
 
-# Regenerate icons/ from icons/source.svg
+# Regenerate icons/ from icons/source.svg, and the tray icons from icons/tray/*.svg
 icons:
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 icons/source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png'
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 icons/source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 icons/tray/$s.svg -o icons/tray/$s.png; done'
 
 # Run the app on this Wayland display, with the container's own home and daemon
 run: sidecar
