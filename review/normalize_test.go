@@ -336,6 +336,26 @@ func TestExcerptDerivationRejectsHolesInsideOnePatchHunk(t *testing.T) {
 	}
 }
 
+// A provider that cannot enforce the model schema, such as Cursor, may still
+// write an attention reference without its prefix; normalization resolves it
+// to the section's item.
+func TestNormalizationResolvesUnprefixedAttentionReferences(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	doc, err := decodeObject(authoredFixture(), "candidate")
+	checkNoError(t, err)
+	section := doc["sections"].([]any)[0].(map[string]any)
+	section["risks"] = []any{map[string]any{"id": "rsk_bad_input", "tier": "medium", "category": "robustness", "source": "model", "text": "Malformed input aborts.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}
+	section["attention"] = map[string]any{"text": "Check the risk.", "refs": []any{"Bad Input"}}
+	prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+	checkEqual(t, "", findings)
+	var stored map[string]any
+	checkNoError(t, json.Unmarshal(prepared, &stored))
+	attention := stored["sections"].([]any)[0].(map[string]any)["attention"]
+	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), tileJSON(t, attention))
+}
+
 // What normalization must leave for the model: a risk without anchors, a
 // reference naming no item and a new section with no hunks at all.
 func TestNormalizationLeavesRejectionsForRiskAnchorsReferencesAndEmptySections(t *testing.T) {

@@ -84,8 +84,9 @@ func TestCodexOutputSchemaLimitsAttentionReferencesToItemKinds(t *testing.T) {
 	if !ok {
 		t.Fatalf("section attention refs have no pattern: %v", refs)
 	}
-	// OpenAI strict mode supports patterns but not flags or lookarounds.
-	for _, unsupported := range []string{"(?", "\\b", "\\d", "\\w"} {
+	// OpenAI strict mode supports patterns, including non-capturing groups,
+	// but not inline flags or lookarounds; keep to plain classes as well.
+	for _, unsupported := range []string{"(?i", "(?=", "(?!", "(?<", "\\b", "\\d", "\\w"} {
 		if strings.Contains(pattern, unsupported) {
 			t.Errorf("pattern %q uses %s", pattern, unsupported)
 		}
