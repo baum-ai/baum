@@ -404,6 +404,13 @@ mod tests {
         let served = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let head = request(&mut socket);
+            // Read the request body too: closing a socket with unread data
+            // resets the connection, which can reach the client before the
+            // response does.
+            socket
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let _ = socket.read(&mut [0; 4096]);
             let body = br#"{"path":"/s/secret_ns/"}"#;
             socket
                 .write_all(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n")
