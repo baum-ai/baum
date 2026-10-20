@@ -22,9 +22,13 @@ import (
 )
 
 type PullRequest struct {
-	Repository            string `json:"repository"`
-	Number                int    `json:"number"`
-	HeadSHA               string `json:"head_sha"`
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	HeadSHA    string `json:"head_sha"`
+	// HeadRef is the head branch's name, which links a local session on that
+	// branch to the pull request. It is empty in a snapshot cached before it
+	// was kept, until the next poll.
+	HeadRef               string `json:"head_ref"`
 	Title                 string `json:"title"`
 	URL                   string `json:"url"`
 	Author                string `json:"author"`
@@ -75,10 +79,18 @@ type cachedResponse struct {
 	Body json.RawMessage
 }
 type diskCache struct {
+	// Format is cacheFormat when the cache was written; a cache of an older
+	// format drops its conditional responses, so they are read in full once.
+	Format    int `json:",omitempty"`
 	Snapshot  Snapshot
 	Responses map[string]cachedResponse
 	Interval  time.Duration
 }
+
+// cacheFormat changes when the minimal responses keep more fields: 1 added
+// the pull requests' head branch. A 304 answer reuses the stored body, which
+// would otherwise never gain the new fields.
+const cacheFormat = 1
 
 // Budget files are shared by service instances, alongside repository caches.
 // Serialize in-process polls so a newly exhausted budget is visible before the
@@ -271,6 +283,7 @@ type apiPR struct {
 	User   actor  `json:"user"`
 	Head   struct {
 		SHA  string `json:"sha"`
+		Ref  string `json:"ref"`
 		Repo *struct {
 			ID       int64  `json:"id"`
 			FullName string `json:"full_name"`
@@ -309,6 +322,18 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 // Callers schedule NextPoll; unchanged results back off from 30s to 15m.
 // Failure returns the last complete snapshot, explicitly stale, and an error.
 func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.poll(ctx, repository, false)
+}
+
+// PollNow is Poll without waiting for NextPoll: something local (a push, an
+// agent session ending) says the pull requests changed. It still honors the
+// shared rate budget and its conditional requests, so an unchanged inbox
+// costs only 304 answers.
+func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.poll(ctx, repository, true)
+}
+
+func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	budgetMu.Lock()
@@ -325,6 +350,10 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return Snapshot{}, loadErr
 	}
+	if cache.Format < cacheFormat {
+		cache.Responses = nil
+	}
+	cache.Format = cacheFormat
 	budgetPath, err := s.path(reader.CacheIdentity(), "")
 	if err != nil {
 		return Snapshot{}, err
@@ -346,7 +375,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 		snapshot.NextPoll = maxTime(snapshot.NextPoll, deadline)
 		return snapshot, errRateLimit
 	}
-	if now.Before(cache.Snapshot.NextPoll) {
+	if !force && now.Before(cache.Snapshot.NextPoll) {
 		return cache.Snapshot, nil
 	}
 	if cache.Responses == nil {
@@ -416,7 +445,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
 		for _, user := range pr.RequestedReviewers {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.ReviewRequestedFromMe = true

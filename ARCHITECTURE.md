@@ -1319,8 +1319,16 @@ format and the protocol constants have one definition on both sides.
   which gate every committed dispatcher, succeed only for a logged-in user, in
   a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
   baum built or installed for the hosted service, in a repository whose
-  committed agent settings carry baum's dispatcher. They read local files
-  only, and the hooks they admit never contact a server. The rules are in
+  committed agent settings carry baum's dispatcher; or, without any of those,
+  for a user for whom a baum daemon ran (its lock file exists), where the
+  hook is local: no hosted work, Entire called exactly as the fall-through
+  would. The hook run decides hosted or local again, cheapest check first: it
+  reads the committed settings (`git cat-file`, up to 5 s) only for a daemon
+  user of a hosted install whose working tree settings carry the dispatcher,
+  so a hook admitted by the daemon alone hands off to Entire and sends its
+  event without waiting for git. They read local files only, and the hooks they admit never contact a
+  server; they hand their events to the local daemon, which keeps them on the
+  machine (see "Hook events" under "Local daemon"). The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
 - User-wide hooks. `baum hooks install --user` puts a dispatcher in
   `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
@@ -1329,8 +1337,10 @@ format and the protocol constants have one definition on both sides.
   repository has Entire enabled, and no other hook the agent runs (project,
   user, managed or system settings; Codex project hooks only where Codex
   trusts them) already runs Entire for the event, so an event is not reported
-  twice. Where it refuses, the hook does nothing. `baum setup` installs them
-  only for a hosted install or a logged-in user.
+  twice. Where it refuses, the hook does nothing. The run carries `--user`
+  too (`baum hooks agent --user AGENT EVENT`): where only a daemon that ran
+  admitted it, it records the event and runs no Entire. `baum setup` installs
+  them only for a hosted install or a logged-in user.
 - Compatibility. A client and a server of different releases agree on an API
   protocol number: requests name the client's, responses the range the server
   serves, and a client outside it stops with an error saying which side to
@@ -1607,6 +1617,12 @@ team or permission failures keep their fields unknown. Snapshots and minimal
 conditional response bodies are atomically replaced in private cache files,
 partitioned by host/credential fingerprint/repository. The index consumes these
 snapshots; it never treats missing PRs in an open-only snapshot as closed.
+Each pull request keeps its head branch (`head_ref`). A cache records its
+`Format`; one of an older format drops its conditional responses and reads
+them in full once, since a 304 would keep a stored body without the newer
+fields. `Service.PollNow` is `Poll` without waiting for the next deadline, for
+the automatic scheduler's `Trigger`; it still honors the shared rate budget
+and sends conditional requests, so an unchanged inbox costs only 304 answers.
 
 ### Persistent generation jobs
 
@@ -1703,6 +1719,9 @@ Per-repository target cursors and repository rotation prevent a small renewed
 GitHub budget from perpetually serving only the first PRs. Linked worktrees are
 deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+`Service.RefreshNow` refreshes named PRs of one clone the same way outside
+that schedule (see "Refresh on hook events"); it shares the per-host rate
+pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -1729,7 +1748,8 @@ it. It owns the authenticated app server above, and runs the registry,
 discovery, review index, background refresh, diagnostics, the generation queue
 and the automatic generation scheduler. There is one server implementation and
 no command opens it in a browser: the desktop app reads the launch URL from the
-daemon's `credential.json`.
+daemon's `credential.json`. It also keeps the record of the events agent
+and Git hooks send it.
 
 The top-level `baum --help` lists only what users run: `hooks`, `daemon` and
 the hosted service commands. The engine commands (`generate`, `bundle`, `view`,
@@ -1952,9 +1972,247 @@ it and `Queue.SubmitAutomatic` decides each job.
   pause or notice, and every repository's status after a `PUT`, is published
   as an `automatic` SSE event for other app windows and the desktop app's
   notifications. `Trigger(ctx, repository)` polls discovery for one
-  repository (within discovery's own poll deadline and rate budget) and passes
-  the snapshot to `Observe`. Agent hook events (a session ending, a push) are
-  to use it rather than a separate path; no hook calls it yet.
+  repository (`PollNow`: before discovery's poll deadline, within its rate
+  budget) and passes the snapshot to `Observe`. Hook events reach the
+  scheduler only this way (see "Refresh on hook events").
+
+### Hook events
+
+`internal/hookevents` carries what `baum hooks agent` and `baum hooks git`
+report to the daemon; the hook side is in `hosted/baumcli` (rules in its
+[README](hosted/baumcli/README.md), "Hook events"). Nothing of it goes to a
+baum server: forwarding to the hosted service waits for a hosted event
+endpoint.
+
+- **Event.** One JSON object per hook run, sent as the params of the `event`
+  control request: `v` (the event format, `hookevents.Version`, 1), a random
+  `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
+  Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
+  `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
+  `hook_event`, `source`, `reason`, read by a streaming scanner from the whole
+  payload, the last of a repeated member winning; nothing else of it) or `git`
+  (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
+  wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
+  trims Git lines and halves the longest fields until the escaped encoding fits
+  one control line. The daemon ignores fields it does not know and records
+  kinds it does not know, so adding a field keeps `v`; it refuses a higher `v`
+  with `event_version`.
+- **Sending.** `Sender.Send` never fails a hook and returns within `Budget`
+  (300 ms) whatever happens: the request gets 150 ms, and the spool write, the
+  hook log and a daemon start run in a goroutine on the budget's context. When
+  the budget ends Send returns and cancels it: a spool write under way finishes
+  while the process lives (atomic, so an exit leaves the event whole or
+  absent), and no daemon start begins, since its lock checks fail. When nothing
+  listens it spools the event and starts a daemon with `Client.StartDetached`,
+  unless the user stopped the daemon (`daemon.MarkStopped`, written by `baum
+  daemon stop` and cleared by `Ensure` and a foreground `run`),
+  `BAUM_NO_DAEMON=1` or `CI` is set. `StartDetached` spawns `baum daemon run
+  --detached` under the start lock unless a daemon holds the daemon lock or one
+  was started less than `StartBackoff` (3 min) ago: it records each start in
+  `started.json`, which the daemon removes once it serves, so a daemon that
+  cannot start is not started again by every hook (a start time in the future
+  does not count). It does not wait for the daemon and passes the hook's
+  environment without `TMPDIR`; the socket path never depends on `TMPDIR`, so
+  the daemon resolves the socket the hook looked for. `Spawn` marks the
+  caller's inherited descriptors close-on-exec first. A daemon that does not
+  answer in time, answers an error, or does not know `event` gets the event
+  through the spool; one older than the hook's baum is sent `stop` with
+  `when_idle`, as `Ensure` sends it: an idle one stops and the next hook starts
+  the newer version, a busy one restarts as it when its jobs finish. A daemon
+  holding the socket but not answering is never replaced by a hook.
+- **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
+  nanosecond it was spooled, written to a temporary file and renamed.
+  `MaxSpoolEvents` (1000) and `MaxSpoolBytes` (8 MiB): a hook drops the
+  oldest first and logs each drop; hooks spooling at once can each pass the
+  bound by one, and the next `Put` restores it. The daemon drains it when it
+  starts and every 30 s, oldest first, removing a file once recorded; a file
+  that is not a small private file or not an event is removed and logged,
+  and an event of a newer `v` is left for a newer daemon. Hooks log what they
+  spool, drop and start to `<state>/hooks.log` (0600, 256 KiB, one older
+  file), never an event's contents.
+- **Record.** `hookevents.Store`, opened by the daemon that holds the lock:
+  JSON lines `{"received","via","event"}` in `<state>/events/events.jsonl`
+  (0600 in a 0700 directory), rotated at 1 MiB with two older files kept, a few
+  thousand events. Lines that are too long or not records are skipped. An
+  event id is recorded once however often it arrives (a late answer and the
+  spool can both deliver it), within the last 4096 ids, across restarts;
+  readers dedupe by id beyond that. A record that cannot be opened (a shared
+  directory, an unreadable file) is logged and the daemon runs without the
+  `event` method, so hooks spool rather than start a daemon on every call.
+  `Store.Recent(n)` reads the latest records, oldest first; spooled events
+  arrive late, so readers order by `event.time`. `Store.Subscribe(buffer,
+  match)` delivers new records matching a filter; a subscriber that falls
+  behind misses records (logged) and can reread `Recent`; `SubscribeCounted`
+  also reports how many it missed, so it rereads only after a miss. This is the
+  interface the live features (in-progress sessions, refresh on session end
+  or push, decision capture) build on. In-progress sessions (see "Live
+  sessions") and refresh on session end or push (see "Refresh on hook
+  events") do; decision capture is not built yet.
+
+### Refresh on hook events
+
+`internal/hookrefresh` refreshes pull requests as soon as a hook says they may
+have changed, rather than at background synchronization's next pass. The
+daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
+`Match`) while it builds the application, before the spool drains or the
+socket serves, and runs it beside background refresh, one worker in all.
+
+- **Events.** An agent's `session-end` (Claude Code, Codex and Cursor send
+  it) and a `pre-push` Git went on with (exit 0). Not `stop`, which ends a
+  turn, nor `post-rewrite`: a rewrite changes nothing on GitHub until it is
+  pushed, and the push's pre-push reports it. An event older than `MaxAge`
+  (10 min), which the spool delivered late, is left to the periodic refresh.
+- **Never blocking.** `Store.Add` hands a record to the subscription without
+  waiting; while the worker is busy, what does not fit the buffer is dropped,
+  and the record logs it. The worker collects events for `Debounce` (3 s, at
+  most 256; more are dropped and logged), then maps them together.
+- **Mapping.** An event's directory (the agent's `cwd`, else the hook's
+  `dir`) must lie in an available registered clone, the longest registered
+  path containing it; any other directory is ignored without running git, so
+  with nothing registered (a hosted-only user whose hooks started the daemon)
+  an event costs one registry read per `Window` and nothing else. The registry
+  is listed at most once per `Window` (30 s). git then reports the working
+  tree's common directory, which must be the clone's (a linked worktree inside
+  the clone counts, a repository nested in it does not). For a session end it
+  reports the work checked out (`prlink.Local`: branch, the branch its
+  upstream names in the same repository, commit), which maps to one pull
+  request of the discovery cache (`Cached`, no network) exactly as live
+  sessions link it (`prlink.Find`, see "Live sessions"). For a push it reports
+  the repository the named remote fetches from, which must be the clone's: a
+  push to a fork is ignored, and so is a push to a URL that names no remote
+  (Git passes the URL as the name; the hook drops it, and an argument that
+  reads as a URL, scp-style address or path runs no git). A push names each
+  branch it updates or creates, never a deletion or a tag, and maps to the
+  non-fork PRs whose `head_ref` is that branch and to the PR whose head is the
+  head the push replaces. A linked worktree outside every registered path is
+  ignored. A PR the cache does not have yet waits for discovery.
+- **Timing.** A session end's PRs are refreshed after the debounce, a push's
+  `PushDelay` (10 s) after its hook ran, since pre-push runs before the push
+  reaches GitHub. When that refresh does not show the pushed head, the PR is
+  refreshed once more `Recheck` (30 s) later (`MaxChecks`, 2), then left to the
+  periodic refresh. A PR is refreshed at most once per `Window` (30 s); later
+  events postpone a scheduled refresh by at most 60 s in all. A burst of any
+  size costs, per window, one refresh of each PR it names (two when the pushed
+  head is late), one git inspection per directory and remote, and at most one
+  discovery poll per repository.
+- **Refresh.** `background.Service.RefreshNow` refreshes the due PRs of one
+  clone's store (a repository's clones with different common directories keep
+  separate saved reviews, each refreshed) as `Sync` does: metadata for a PR without a saved review, and
+  metadata and evidence (`refresh.Refresher`, CAS publication) for one with.
+  It shares the per-host rate pause with `Sync`, and an event whose
+  repository's cached rate budget is exhausted is skipped. A failed refresh is
+  not retried here.
+- **Automatic generation.** When a refresh shows a head other than the one
+  the cache had, the cached PR could get an automatic job (the user authored
+  it or is asked to review it, it is not from a fork, its author has write
+  access, and the refresh shows it open and not a draft), and automatic
+  generation is on globally and for the repository, the worker calls
+  `Scheduler.Trigger` for the repository, at most once per `Window`. Trigger
+  polls discovery and passes the snapshot to `Observe`, the only path to a
+  job, so the scheduler's baseline, eligibility, dedupe, hold, gate, daily cap
+  and no-catch-up rules apply unchanged, and a head it already saw queues
+  nothing. Since background refresh and Trigger observe from two goroutines,
+  `Observe` ignores a snapshot fetched before the newest one it took for the
+  repository. The worker never queues or runs generation.
+- **Stopping.** The worker stops with the daemon's run context, cancelling a
+  refresh or poll under way. Its schedule is in memory only: a restart drops
+  pending refreshes, which the periodic refresh covers.
+
+### Live sessions
+
+`internal/livesessions` tracks the agent sessions running on this machine
+from the agent hook events in the record, and serves them to the app. It adds
+to reading session files from disk (see "Session transcripts"), which stays
+the full history and the answer for a session that has ended; it does not
+replace it.
+
+- **Events.** `Tracker.Run` subscribes to `Store.Subscribe` (agent events whose
+  name it knows), rebuilds from `Store.Recent` (every record, filtered to the
+  last two hours and applied in `event.time` order, since a spooled event is
+  recorded late), and follows new events. An event counts when it has an
+  agent, a session id, a time and a directory (`session.cwd`, else `dir`). The
+  agents share baum's event names, which map to a normalised kind:
+  `session-start` to `start`; `user-prompt-submit` and `before-submit-prompt`
+  to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
+  `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
+  agent has, so Claude Code reports subagent and todo activity, Codex tool
+  runs, and Cursor prompts and compaction); `stop` to `stop`; `session-end` to
+  `end`. Other names are ignored. A session is keyed by agent and id; an id
+  over 128 bytes or an agent over 32 is not a session baum's hooks describe and
+  is ignored. An event id is applied once (the last 4096 are remembered).
+- **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
+  is full. The event loop therefore never waits for git: it applies the event
+  at once, and a new session is hidden until a background worker looks up its
+  link (`ResolvePending`; a directory in no registered clone is dropped then).
+  Each sweep (30 s) checks the subscription's drop count
+  (`Store.SubscribeCounted`) and, only when it missed events since the last
+  reconcile, runs `Reconcile`, which rereads `Store.Recent` and applies the
+  events not yet applied, so a dropped `session-end` is found within 30
+  seconds rather than leaving a session waiting until it times out. Without a
+  drop the record is not read, since reading it takes the store's lock, which
+  every hook's event needs too.
+- **States.** `running` after a start, prompt or tool event. `idle` after a
+  `stop`, which agents send at the end of every turn (waiting for the user),
+  and for a running session silent longer than `IdleAfter` (10 minutes): an
+  agent that crashed sends nothing, and one thinking for long reports nothing
+  either. `ended` after `end`. Any later work event makes an idle session
+  running again; an event after the end, newer than it, starts a new run (a
+  resumed session: `started_at` restarts), and an event older than the end is
+  ignored. A late-delivered older event never moves `last_activity_at` back,
+  but an older start can move `started_at` earlier. A session silent for
+  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (10 minutes) after
+  its end, which leaves the app time to see the end. At most `MaxSessions`
+  (32) are held: a new one evicts an ended session, else the least recently
+  active. The clock is injected (`Tracker.Now`); `Sweep` applies the timeouts
+  every 30 seconds and the tracker keeps nothing on disk.
+- **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
+  discovery already have. The directory's repository is found with
+  `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
+  git directory is matched against the registered clones' `common_dir`;
+  a directory in no registered clone, or one whose clone is unavailable, is
+  not tracked at all. The branch is `Repo.CurrentBranch` (empty when
+  detached). The pull request (`prlink.Find`, shared with refresh on hook
+  events) is the open one in the discovery cache
+  (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
+  cache, which refetches responses cached without it) is the branch and that
+  is not a fork's (a fork's branch of the same name is another branch); the
+  newest when several. When no head has the branch's name, the head branch
+  named by the branch's upstream (`branch.<name>.merge`, when its remote is the
+  same repository) is tried, then the pull request whose head commit is the
+  commit checked out, which covers a detached HEAD and a push to a branch of
+  another name. Without one the session is still tracked against its
+  repository and branch, and only a PR page it does not match omits it. The
+  clone list is read at most every 30 seconds and a directory that fails to
+  link is not looked up again for a minute, since listing and opening a clone
+  run git. A session is looked up when it is new and at most every 30 seconds
+  after, since the branch changes while it runs and a pull request appears
+  once pushed; a lookup that fails keeps the last link. Failing to list the
+  registered clones is not retried for 30 seconds either.
+- **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
+  same auth as every application route; a daemon with no record answers
+  `{"available":false,"code":"live_sessions_unavailable"}`) answers
+  `{"sessions":[…]}`, the most recently active first, each
+  `{"agent","session_id","state","started_at","last_activity_at","last_event",
+  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
+  `last_event` is `start`, `prompt`, `tool`, `stop` or `end`, `repository` is
+  `owner/name` in lower case, `branch` is absent when detached and `pr` when
+  the branch has no pull request. The working directory and transcript path
+  stay inside the tracker.
+- **Stream.** The tracker publishes a `live` event with no data (like `index`,
+  a notification the app answers by reading the endpoint) when what the app
+  sees changes, at most once a second, and on a `reset` the app rereads like
+  everything else. A change that only moves `last_activity_at` by less than 30
+  seconds is not one (the endpoint still serves the fresh value), so a session
+  working steadily costs the app a request every 30 seconds or at a state
+  change, not one a second. The app keeps the list it has when a read fails.
+- **App.** The app rereads the list on `live` (and `open` and `reset`). An
+  inbox row shows "Agent running" or "Agent idle" (a count when several) for
+  sessions of its pull request, matched by repository and number across
+  clones; the PR page lists them in a "Sessions in progress" panel, with their
+  agent, state, branch, start and last activity, above the review. Ended
+  sessions are not shown: when one leaves the list the page reads the session
+  list from disk again, where the finished session now is (the existing
+  sessions UI), so nothing is lost if the files were not complete earlier.
 
 ### Transports and control protocol
 
@@ -1965,11 +2223,20 @@ the credential file instead of being printed by a foreground process.
 
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
 `$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
-directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
-under the system temporary directory. That is where a daemon listens; clients
-dial the `socket` the running daemon recorded in `daemon.json` in the state
-directory, so one with a different `XDG_RUNTIME_DIR` (ssh, su, a sandbox)
-still reaches it. Windows 10 1803 and later have
+directory, else (a path too long for `sun_path`) `/tmp/baum-<uid>/daemon.sock`.
+That fallback is fixed rather than under `TMPDIR`: an agent sandbox points
+`TMPDIR` at a directory that lasts one session, and the app, a terminal and a
+sandboxed hook must all compute the same socket, one that outlives the session.
+The daemon creates the directory 0700 and refuses one that is not private or
+not the user's, and clients refuse to dial a socket in such a directory, so
+another user who creates `/tmp/baum-<uid>` first can only keep the daemon from
+starting. That is where a daemon listens; clients dial the `socket` the
+running daemon recorded in `daemon.json` in the state directory, so one with a
+different `XDG_RUNTIME_DIR` (ssh, su, a sandbox) still reaches it. The daemon
+checks every 5 s that its socket file exists; when something removed it (a
+`/tmp` cleaner, a user tidying up) it creates the directory again and listens
+anew on the same path, since clients would otherwise find no socket and no
+replacement could take the lock it holds. Windows 10 1803 and later have
 `AF_UNIX` sockets, so Windows uses the same socket in the state directory,
 protected by that directory's current-user DACL, instead of a named pipe
 (which would need a new dependency for overlapped I/O). Each request is one
@@ -1980,11 +2247,12 @@ one JSON line, `{"ok":true,"status":{…}}` or `{"ok":false,"error":{"code":…,
 identify and replace any daemon. `ping` and every method registered in
 `Options.Methods` require the client's protocol to equal the daemon's, and
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
-`daemon.Protocol` for any incompatible change. Hook ingestion
-will add methods through `Options.Methods`; a hook event that should look for
-new heads will call the automatic scheduler's `Trigger` (see "Automatic
-generation"). Remote attach would be another transport beside
-these two; none exists.
+`daemon.Protocol` for any incompatible change. The application registers its
+methods through `App.Methods`; a method answers with its own error code by
+returning a `daemon.Error`. `event` is the one it has (see "Hook events");
+hook events that may move a head reach the automatic scheduler through its
+`Trigger` (see "Refresh on hook events"). Remote attach would be
+another transport beside these two; none exists.
 
 ### Desktop app interface
 
@@ -2011,8 +2279,9 @@ and two files:
    `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
    wrote before its log opened, or a crash.
 4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
-   ("Quit and stop background reviews"). `baum daemon status [--json]` prints
-   the same status, or exits non-zero when none runs.
+   ("Quit and stop background reviews"), and marks it stopped by the user, so
+   hooks do not start it again until `baum daemon ensure`. `baum daemon
+   status [--json]` prints the same status, or exits non-zero when none runs.
 
 `<state>` is `$XDG_STATE_HOME/baum/daemon`, by default
 `~/.local/state/baum/daemon` on every platform, and is reported in `state`.

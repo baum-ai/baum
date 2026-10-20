@@ -16,7 +16,8 @@ import {
 } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL, cost, rowKey, type Entry } from "./api";
+import { appURL, cost, liveFor, rowKey, type Entry, type LiveSession } from "./api";
+import { LiveBadge } from "./live";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
 /** Discovery flags describe these groups; none infer approval or merge readiness. */
@@ -69,12 +70,15 @@ export function Inbox({
   selection,
   setSelection,
   Link,
+  live = [],
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
   selection: Set<string>;
   setSelection: Dispatch<SetStateAction<Set<string>>>;
   Link: ComponentType<ViewerLinkProps>;
+  /** Agent sessions in progress; a row shows those of its pull request. */
+  live?: LiveSession[];
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const groups = inboxGroups(rows);
@@ -135,6 +139,7 @@ export function Inbox({
               selected={selection.has(rowKey(entry))}
               toggle={(checked) => toggle(rowKey(entry), checked)}
               Link={Link}
+              live={liveFor(live, entry.pull_request)}
             />
           ))}
         </Bucket>
@@ -230,12 +235,14 @@ function InboxRow({
   selected,
   toggle,
   Link,
+  live,
 }: {
   entry: Entry;
   clone: string;
   selected: boolean;
   toggle: (checked: boolean) => void;
   Link: ComponentType<ViewerLinkProps>;
+  live: LiveSession[];
 }) {
   const pr = entry.pull_request;
   const score = entry.risk_score?.score;
@@ -295,6 +302,7 @@ function InboxRow({
           </Link>
           {pr.draft ? <Badge size="compact">Draft</Badge> : null}
           {pr.fork ? <Badge size="compact">Fork</Badge> : null}
+          <LiveBadge sessions={live} />
         </div>
         <p title={metadata.join(" · ")} className="inbox-meta text-xs text-(--text-tertiary)">
           {metadata.join(" · ")}

@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
+	"testing"
 
 	"github.com/baum-ai/baum/internal/privatefs"
 )
@@ -13,10 +15,24 @@ import (
 // (Windows), with no standard input and its output in OutputFile. The daemon
 // resolves its own environment, so the caller's is passed unchanged.
 func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
+	// A test binary started as "daemon run" would run its tests again,
+	// each of which might start another; tests start daemons through Spawn.
+	if testing.Testing() {
+		return nil, errors.New("a test binary does not start itself as the baum daemon")
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
+	cmd := exec.Command(self, spawnArgs(start)...)
+	cmd.Env = start.Env
+	return Spawn(paths, cmd)
+}
+
+// spawnArgs are the arguments SpawnSelf runs this executable with. They name
+// no socket: DefaultPaths never depends on TMPDIR, which a hook drops from
+// the daemon's environment, so the daemon resolves the socket its client did.
+func spawnArgs(start StartOptions) []string {
 	args := []string{"daemon", "run", "--detached"}
 	if start.Port != 0 {
 		args = append(args, "--port", strconv.Itoa(start.Port))
@@ -24,7 +40,7 @@ func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
 	if start.Concurrency != 0 {
 		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
-	return Spawn(paths, exec.Command(self, args...))
+	return args
 }
 
 // Spawn starts cmd as a detached daemon process with its output in
@@ -48,6 +64,7 @@ func Spawn(paths Paths, cmd *exec.Cmd) (<-chan struct{}, error) {
 		cmd.Dir = home()
 	}
 	detach(cmd)
+	closeInherited()
 	if cmd, err = startDetached(cmd); err != nil {
 		return nil, err
 	}

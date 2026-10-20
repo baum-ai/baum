@@ -76,11 +76,13 @@ func LookupUserWide(agent string) (UserWide, bool) {
 // through to Entire: a repository whose own settings run Entire for the
 // event already gets it from them, and one without them never asked for it.
 // Without baum, or with a baum too old to know `--user`, it does nothing.
+// The run carries `--user` too, so a hook admitted only because the user has
+// a baum daemon records its event and runs no Entire.
 //
 // Agents remember a user's trust in a hook by the exact command (Codex), so
 // keep this string stable and change what the hook does in the binary.
 func UserDispatcher(spec Spec, event string) string {
-	return userPrefix(spec.Slug, event) + `>/dev/null 2>&1; then exec baum hooks agent ` + spec.Slug + " " + event + `; fi'`
+	return userPrefix(spec.Slug, event) + `>/dev/null 2>&1; then exec baum hooks agent --user ` + spec.Slug + " " + event + `; fi'`
 }
 
 func userPrefix(agent, event string) string {

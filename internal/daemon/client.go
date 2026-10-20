@@ -34,7 +34,19 @@ const (
 type StartOptions struct {
 	Port        int
 	Concurrency int
+	// Env, when not nil, is the environment the daemon process starts with;
+	// nil passes the caller's.
+	Env []string
 }
+
+// StartBackoff is how long StartDetached waits after starting a daemon
+// before it starts another, unless that daemon served meanwhile: a daemon
+// that cannot start must not be started again by every hook.
+const StartBackoff = 3 * time.Minute
+
+// ErrStartBackoff means StartDetached started a daemon less than
+// StartBackoff ago that has not served yet.
+var ErrStartBackoff = errors.New("a baum daemon was started moments ago and has not served yet")
 
 // Spawner starts a detached daemon process. done is closed when the process
 // exits (it never is for a daemon that keeps running).
@@ -89,12 +101,17 @@ func (c *Client) socket() string {
 }
 
 // Call sends one request and reads its response. A missing socket or a
-// refused connection is ErrNotRunning.
+// refused connection is ErrNotRunning; a socket in a directory that is not
+// private to the user is refused.
 func (c *Client) Call(ctx context.Context, method string, params any) (Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	socket := c.socket()
+	if err := checkSocketDirectory(socket); err != nil {
+		return Response{}, fmt.Errorf("connect to the baum daemon: %w", err)
+	}
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", c.socket())
+	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || refused(err) {
 			return Response{}, ErrNotRunning
@@ -226,6 +243,10 @@ func (c *Client) waitExit(ctx context.Context) error {
 // calls start exactly one daemon. A daemon newer than this client is kept;
 // one speaking a newer protocol is an IncompatibleError.
 func (c *Client) Ensure(ctx context.Context) (Status, error) {
+	// An explicit start ends a stop the user asked for.
+	if err := ClearStopped(c.Paths); err != nil {
+		return Status{}, err
+	}
 	status, err := c.Hello(ctx)
 	if err == nil && !status.Stopping {
 		if st, done, err := c.decide(ctx, status); done {
@@ -294,6 +315,50 @@ func (c *Client) Ensure(ctx context.Context) (Status, error) {
 		}
 	}
 	return Status{}, errors.New("the baum daemon kept stopping while it was being started; retry")
+}
+
+// StartDetached starts a daemon without waiting for it to serve, for callers
+// that must not wait, such as hooks; Ensure waits. It starts none while a
+// daemon holds the daemon lock (one is starting, stopping or not answering),
+// another client is starting one, or it started one less than StartBackoff
+// ago that has not served yet (ErrStartBackoff); it reports whether it
+// started one. The start is recorded in a file the daemon removes once it
+// serves, so callers racing it see it rather than start a second one.
+func (c *Client) StartDetached(ctx context.Context) (bool, error) {
+	if locked, err := c.locked(ctx); err != nil || locked {
+		return false, err
+	}
+	if err := privatefs.MkdirAll(c.Paths.State); err != nil {
+		return false, err
+	}
+	start, err := tryLock(ctx, c.Paths.startFile())
+	if errors.Is(err, errLocked) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = start.Release() }()
+	if locked, err := c.locked(ctx); err != nil || locked {
+		return false, err
+	}
+	if info, err := os.Stat(c.Paths.startedFile()); err == nil {
+		// A time in the future (a clock set back) does not count.
+		if age := time.Since(info.ModTime()); age >= 0 && age < StartBackoff {
+			return false, ErrStartBackoff
+		}
+	}
+	if err = writePrivate(c.Paths.startedFile(), time.Now().UTC()); err != nil {
+		return false, err
+	}
+	spawn := c.Spawn
+	if spawn == nil {
+		spawn = SpawnSelf
+	}
+	if _, err = spawn(c.Paths, c.Start); err != nil {
+		return false, fmt.Errorf("start the baum daemon: %w", err)
+	}
+	return true, nil
 }
 
 // decide keeps a compatible daemon (done), replaces an older one (not done,
@@ -396,10 +461,10 @@ func (c *Client) waitReady(ctx context.Context, exited <-chan struct{}) (Status,
 }
 
 func (c *Client) locked(ctx context.Context) (bool, error) {
-	if _, err := os.Stat(c.Paths.lockFile()); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(c.Paths.LockFile()); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	return held(ctx, c.Paths.lockFile())
+	return held(ctx, c.Paths.LockFile())
 }
 
 func (c *Client) unresponsive(cause error) error {

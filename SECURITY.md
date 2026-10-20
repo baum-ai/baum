@@ -76,18 +76,35 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   the pinned release of the [Entire](https://docs.entire.io) CLI from GitHub,
   checked against a SHA-256 built into the binary, and installs Entire's
   hooks and baum's in the repository.
-- Agent and Git hooks contact no baum server. The hook commands committed to
-  repositories run baum only for a logged-in user or in a clone set up with
-  `baum setup`, and, for a baum built or installed for the hosted service,
-  also in a repository whose committed agent hook settings dispatch through
-  baum (as the hosted service's onboarding pull request and `baum setup` write
-  them). There a hook may install the pinned Entire release from GitHub and
-  the clone's Git hook dispatchers, then hands the event to Entire.
+- Agent and Git hooks contact no baum server. The hook commands
+  committed to repositories run baum only for a logged-in user or in a clone
+  set up with `baum setup`, and, for a baum built or installed for the hosted
+  service, also in a repository whose committed agent hook settings dispatch
+  through baum (as the hosted service's onboarding pull request and `baum
+  setup` write them). There a hook may install the pinned Entire release from
+  GitHub and the clone's Git hook dispatchers, then hands the event to Entire.
   Everywhere else the hooks run Entire directly, and baum does nothing at all:
   without a login, an open-source build does not install Entire or its hooks
   in a repository just because the repository's files ask for it, unless the
-  machine still has the hosted install script's marker (below). Uploading, or
-  anything else that contacts a baum server, needs `baum login` in every case.
+  machine still has the hosted install script's marker (below), or the baum
+  daemon has run for you. Where only the daemon lets the hooks run baum, they
+  do nothing for the hosted service: no Entire install, no Git hooks, Entire
+  called exactly as without baum (and, for the user-wide hooks, not at all),
+  and the event recorded by the daemon (below).
+  Uploading, or anything else that contacts a baum server, needs `baum login`
+  in every case.
+- Where a hook runs baum, it also reports the run to the baum daemon (below),
+  starting it if none runs, unless you stopped it with `baum daemon stop`,
+  set `BAUM_NO_DAEMON=1`, or `CI` is set: the agent and event or Git hook,
+  the working directory and exit status, and from the agent's payload only
+  its session id, transcript path, working directory, event name, start
+  source and end reason, never prompts or tool input and output. A Git
+  `pre-push` event never keeps the remote URL, which can carry credentials,
+  and keeps the refs being pushed. When the daemon cannot take it within
+  300 ms, the event waits in a private spool (`spool/` in the daemon's state
+  directory, mode 0700, one 0600 file per event, about 1000 events and 8 MiB,
+  oldest dropped first). The daemon keeps these events on your machine; none
+  is sent to a baum server.
 - `baum hooks install --user` adds baum's hooks to your user-wide agent
   settings: `~/.claude/settings.json` for Claude Code and
   `~/.codex/hooks.json` for Codex. `baum setup` does the same for a hosted
@@ -455,8 +472,9 @@ providers, GitHub, or the coding-agent tools whose sessions baum reads.
 
 The local application (the desktop app) is served
 by the baum daemon, one process per user that keeps running in the background
-after whatever started it exits. The desktop app and agent hooks start it with
-`baum daemon ensure`.
+after whatever started it exits. The desktop app starts it with `baum daemon
+ensure`; an agent or Git hook that runs baum starts it when it is not
+running.
 
 What it runs while it is up:
 
@@ -467,6 +485,17 @@ What it runs while it is up:
   and the latest saved review's checks, conversation and head, with
   conditional requests and backoff (see "What baum sends where");
 - once when it starts, the signed price list download;
+- the record of the events agent and Git hooks report (above), from which it
+  also tracks the agent sessions in progress for the app (below);
+- when a coding-agent session ends or Git pushes in a registered clone, the
+  same free GitHub reads for the pull requests of that branch (for a push,
+  about 10 seconds later and once more 30 seconds after that if GitHub does
+  not show the pushed head yet), at most once per pull request every 30
+  seconds, and, when a head moved, one poll of the repository's open pull
+  requests for automatic generation, at most every 30 seconds. They are
+  skipped, not postponed, while GitHub's rate limit is exhausted; the periodic
+  reads resume after the reset. Events from directories outside
+  registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
   `baum internal generate` does. Some you confirmed in the app with their price
@@ -477,7 +506,8 @@ starts a job when a pull request in a registered repository that you authored,
 or whose review is requested from you or one of your teams, gets a new head, a
 new review request or is marked ready for review after automatic generation
 was enabled for that repository; pull requests already open then, and drafts,
-are left alone. It never starts
+are left alone. A push or a session ending only makes the daemon look sooner:
+it decides by the same rules, and starts nothing the periodic check would not. It never starts
 one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
@@ -507,11 +537,14 @@ can quit without stopping it; only "Quit and stop background reviews" (or
 It never contacts a baum server. To stop it, quit the desktop app with "stop
 background reviews" or run `baum daemon stop`: running jobs are cancelled and
 recorded as interrupted (after at most 20 seconds), and nothing runs until
-something starts it again. `baum daemon status` and `baum internal doctor` show whether
-it runs, its version, process id and uptime. When a newer baum finds an older
-daemon running jobs, it lets them finish: the daemon then starts the newer
-`baum` executable that asked and exits. Only a daemon speaking an incompatible
-protocol is stopped at once.
+something starts it again. Hooks do not start a daemon you stopped this way;
+the desktop app or `baum daemon ensure` does. `baum daemon status` and `baum
+internal doctor` show whether it runs, its version, process id and uptime. When a
+newer baum finds an older daemon running jobs, it lets them finish: the
+daemon then starts the newer `baum` executable that asked and exits. A hook
+of a newer baum only asks an idle older daemon to stop; the next hook starts
+the newer version. Only a daemon speaking an incompatible protocol is stopped
+at once.
 
 The daemon runs that executable outside any sandbox, with your login shell's
 environment and SSH agent, while the process that named it may be an agent
@@ -532,12 +565,26 @@ Its state directory, `$XDG_STATE_HOME/baum/daemon` (default
 (version, process id, start time, app address), the app credential and the
 logs, which are rotated at 1 MiB with two older files kept. The logs hold
 events, addresses and paths, never tokens, credentials or environment values.
+It also holds the record of hook events (`events/events.jsonl`, 0600, rotated
+at 1 MiB with two older files kept), the hook event spool, and `hooks.log`,
+where hooks note what they spooled, dropped or started, never an event's
+contents; `stopped-by-user`, while you have stopped the daemon; and
+`started.json`, the time a hook last started one, which keeps hooks from
+starting another for three minutes unless it served. The daemon's lock file
+(`daemon.lock.sqlite`), which only a daemon creates, is also what lets agent
+and Git hooks run baum, locally, for a user who never logged in; the
+directory alone does not.
 
 The control socket, `$XDG_RUNTIME_DIR/baum/daemon.sock` or `daemon.sock` in
-the state directory, is mode 0600 in a 0700 directory, so other users cannot
-connect; Windows uses the same `AF_UNIX` socket, protected by the state
+the state directory (or `/tmp/baum-<uid>/daemon.sock` when that path is too
+long for a socket, whatever `TMPDIR` is), is mode 0600 in a 0700 directory, so
+other users cannot connect. The daemon refuses a socket directory that is not
+private or not yours, and clients refuse to connect through one, so another
+user who creates `/tmp/baum-<uid>` first cannot receive your requests; Windows uses the same `AF_UNIX` socket, protected by the state
 directory's current-user DACL. Any process running as you can connect, ask
-for the daemon's status and stop it. The socket accepts no other requests yet.
+for the daemon's status and stop it. It can also send hook events, which the
+daemon records; a session end or push naming a registered clone makes it run
+the bounded GitHub reads above, never a job by itself.
 
 The daemon does not use the environment of whatever started it. It runs your
 login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
@@ -581,6 +628,22 @@ The state directory must be mode 0700 and owned by you on Unix; Windows uses a
 protected current-user DACL. Clients never send the capability anywhere: they
 read it from the file and open it on the loopback address it names. SQLite OS
 locking keeps one daemon per user and releases the lock after process exit.
+
+`GET /api/live-sessions` and the `live` event on the events stream show the
+agent sessions in progress, tracked from hook events, behind the same
+authentication, Origin and Host checks, and are limited to `GET`. A session is
+tracked only when its working directory is inside a registered clone, and the
+app receives only: the agent, the session id, the state (running, idle or
+ended), when it started and was last active, the kind of the last event
+(start, prompt, tool, stop or end), and the repository, branch and pull
+request number it links to. The working directory, the transcript path, and
+anything of a prompt or a tool, which hook events never carry, stay out of it,
+and the `live` event carries no data at all: the app reads the list. At most
+32 sessions are held, in memory only, and rebuilt from the local record of
+hook events when the daemon starts; a session silent for two hours is dropped.
+Nothing of it goes to a baum server. A finished session's content is still
+read from the session files on disk, through the redacted transcript routes
+below.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are

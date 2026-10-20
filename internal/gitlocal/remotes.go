@@ -124,10 +124,42 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "refs/heads/"), nil
 }
 
+// HeadCommit is the id of the commit HEAD names, whether it is on a branch or
+// detached; "" when HEAD is unborn.
+func (r *Repo) HeadCommit(ctx context.Context) (string, error) {
+	done, err := r.begin()
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 8 << 10, timeout: r.opts.CommandTimeout},
+		"rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", nil // unborn
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RemoteFetchURL is the URL git fetches the named remote from, with the
 // user's url.<base>.insteadOf rewrites applied, or "" when the clone has no
 // such remote. It reads configuration only and never contacts the remote.
 func (r *Repo) RemoteFetchURL(ctx context.Context, name string) (string, error) {
+	return r.remoteURL(ctx, name, false)
+}
+
+// RemotePushURL is the URL git pushes to the named remote with: its pushurl
+// when it has one, else its fetch URL, with url.<base>.insteadOf and
+// pushInsteadOf rewrites applied. It is "" when the clone has no such remote.
+// It reads configuration only and never contacts the remote.
+func (r *Repo) RemotePushURL(ctx context.Context, name string) (string, error) {
+	return r.remoteURL(ctx, name, true)
+}
+
+func (r *Repo) remoteURL(ctx context.Context, name string, push bool) (string, error) {
 	if !validRemoteName(name) {
 		return "", nil
 	}
@@ -136,8 +168,12 @@ func (r *Repo) RemoteFetchURL(ctx context.Context, name string) (string, error) 
 		return "", err
 	}
 	defer done()
+	args := []string{"remote", "get-url"}
+	if push {
+		args = append(args, "--push")
+	}
 	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 8 << 10, timeout: r.opts.CommandTimeout},
-		"remote", "get-url", name)
+		append(args, name)...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {

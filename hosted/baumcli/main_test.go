@@ -56,6 +56,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = os.Setenv("HOME", home)
+	// Hooks reach the daemon through a socket in the runtime directory; a
+	// short one of the tests' own keeps them from the developer's daemon.
+	runtimeDir, err := os.MkdirTemp("", "bcr")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_ = os.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	_ = os.Setenv(testClaudeManagedDirEnv, home+"/claude-managed")
 	_ = os.Setenv(testCodexSystemDirEnv, home+"/codex-system")
 	useTestSystemDirs()
@@ -66,6 +74,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	_ = os.RemoveAll(config)
 	_ = os.RemoveAll(home)
+	_ = os.RemoveAll(runtimeDir)
 	os.Exit(code)
 }
 

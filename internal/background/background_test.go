@@ -199,3 +199,39 @@ func TestRateBudgetEventuallyReachesEveryPRAndRepository(t *testing.T) {
 		})
 	}
 }
+
+// RefreshNow shares the host's rate pause with Sync in both directions.
+func TestRefreshNowSharesTheRatePause(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	var calls []int
+	limited := false
+	reset := now.Add(time.Hour)
+	changed := 0
+	clone := repos.Clone{Repository: "acme/app", CommonDir: "one", Available: true}
+	s := &Service{Registry: registry{clone}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Changed: func() { changed++ }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		calls = append(calls, n)
+		if limited {
+			return discovery.Observation{}, &github.RateLimitedError{ResumeAt: reset, Err: errors.New("limited")}
+		}
+		return discovery.Observation{Number: n, HeadSHA: "new"}, nil
+	}}
+	observations, err := s.RefreshNow(context.Background(), clone, []int{3, 4})
+	if err != nil || len(observations) != 2 || len(d.observations) != 2 || changed != 1 {
+		t.Fatalf("refresh now %v %v observed=%d changed=%d", observations, err, len(d.observations), changed)
+	}
+	limited = true
+	calls = nil
+	if _, err := s.RefreshNow(context.Background(), clone, []int{3, 4}); !errors.As(err, new(*github.RateLimitedError)) || len(calls) != 1 {
+		t.Fatalf("rate limit did not stop: %v calls=%v", err, calls)
+	}
+	limited = false
+	calls = nil
+	if _, err := s.RefreshNow(context.Background(), clone, []int{3}); !errors.As(err, new(*github.RateLimitedError)) || len(calls) != 0 {
+		t.Fatalf("paused host refreshed: %v calls=%v", err, calls)
+	}
+	s.Sync(context.Background())
+	if state := s.state("acme/app"); state.Error != "rate_limited" || state.NextRefresh.Before(reset) || len(calls) != 0 {
+		t.Fatalf("sync ignored the pause: %+v calls=%v", state, calls)
+	}
+}

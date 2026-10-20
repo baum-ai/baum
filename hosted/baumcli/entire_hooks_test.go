@@ -98,6 +98,8 @@ func TestBaumGitHookCommandDelegatesToEntireAndIgnoresInformationalFailure(t *te
 // a Git hook still has to reach the binary the session start put there.
 func TestBaumGitHookFindsEntireOutsideThePath(t *testing.T) {
 	withoutEntire(t)
+	// Only a hosted hook uses the Entire baum installed.
+	t.Setenv(tokenEnvVar, "token")
 	log := filepath.Join(t.TempDir(), "entire.log")
 	writeExecutable(t, filepath.Join(entireInstallDir, "entire"), "#!/bin/sh\nprintf '%s' \"$*\" > \""+log+"\"\n")
 
@@ -114,6 +116,9 @@ func TestBaumPrePushPropagatesEntireFailure(t *testing.T) {
 	bin := t.TempDir()
 	writeHookTestFile(t, filepath.Join(bin, "entire"), "#!/bin/sh\nexit 17\n")
 	t.Setenv("PATH", bin)
+	// A hosted hook; a local one exits with Entire's status instead
+	// (TestDaemonOnlyPrePushExitsWithEntiresStatus).
+	t.Setenv(tokenEnvVar, "token")
 	_, _, err := runCLI(t, "hooks", "git", "pre-push", "origin", "https://example.test/repo.git")
 	if err == nil || !strings.Contains(err.Error(), "Entire pre-push hook failed") {
 		t.Fatalf("pre-push error = %v", err)

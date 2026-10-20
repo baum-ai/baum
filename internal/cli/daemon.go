@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,7 +27,10 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
@@ -50,13 +54,16 @@ func newDaemonCommand() *cobra.Command {
 application on 127.0.0.1, keeps GitHub metadata of registered clones fresh, and
 runs the generation jobs you confirm in the app. Unless you turn it off in the
 app, it also generates reviews automatically when a pull request you authored
-or were asked to review gets a new head or review request. The desktop app and agent hooks
-start it with "baum daemon ensure"; it keeps running after they exit, until
-"baum daemon stop".
+or were asked to review gets a new head or review request, and it records the
+events coding-agent and Git hooks send it. The desktop app starts it with
+"baum daemon ensure"; a hook starts it in the background when none is running,
+unless you stopped it with "baum daemon stop", BAUM_NO_DAEMON=1 is set, or CI
+is set. It keeps running after they exit, until "baum daemon stop".
 
 Its state, credential and logs are in $XDG_STATE_HOME/baum/daemon (default
 ~/.local/state/baum/daemon); its control socket is in $XDG_RUNTIME_DIR/baum
-when that is set, else in the state directory.`,
+when that is set, else in the state directory, or in /tmp/baum-<uid> when
+that path is too long for a socket. TMPDIR never changes where it is.`,
 		Args: cobra.NoArgs,
 	}
 	ensure := &cobra.Command{
@@ -149,6 +156,8 @@ func runDaemonEnsure(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Ensure clears a "stopped by the user" mark, so hooks start the daemon
+	// again.
 	status, err := client.Ensure(cmd.Context())
 	if err != nil {
 		return err
@@ -191,6 +200,11 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	client.StopTimeout, _ = cmd.Flags().GetDuration("timeout")
+	// Hooks leave a daemon the user stopped alone until something starts
+	// it explicitly (ensure, or run in the foreground).
+	if err = daemon.MarkStopped(client.Paths); err != nil {
+		return err
+	}
 	stopped, err := client.Stop(cmd.Context())
 	if err != nil {
 		return err
@@ -212,6 +226,11 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	paths, err := daemonPaths()
 	if err != nil {
 		return err
+	}
+	if !detached {
+		if err = daemon.ClearStopped(paths); err != nil {
+			return err
+		}
 	}
 	// Until it owns the lock the daemon logs to stderr (daemon.out when
 	// detached); only the owner opens and rotates daemon.log.
@@ -248,7 +267,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
-			return localApplication(concurrency, logger)(ctx, server)
+			return localApplication(paths, concurrency, logger)(ctx, server)
 		},
 		Respawn: func(executable string, status daemon.Status) error {
 			return respawnDaemon(paths, executable, status, start)
@@ -329,17 +348,21 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 }
 
 // localApplication builds what the daemon serves: the registry, discovery,
-// review index, background refresh, diagnostics, the generation queue and
-// the automatic generation scheduler. Agent hook events are to reach the
-// scheduler through Scheduler.Trigger; no hook calls it yet.
-func localApplication(concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
+// review index, background refresh, diagnostics, the generation queue, the
+// automatic generation scheduler, and the record of agent and Git hook events.
+// A session ending or a push in a registered clone refreshes its pull requests
+// at once (hookrefresh), and reaches the scheduler only through
+// Scheduler.Trigger.
+func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
 		if err != nil {
 			return daemon.App{}, err
 		}
+		events := openHookEvents(paths, log)
 		registry, err := repos.Open("")
 		if err != nil {
+			events.Close()
 			return daemon.App{}, err
 		}
 		changed := func() { _ = server.Publish("index", struct{}{}) }
@@ -349,6 +372,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		state, err := jobs.Directory()
 		if err != nil {
 			_ = registry.Close()
+			events.Close()
 			return daemon.App{}, err
 		}
 		// Queued jobs resume with the price list they were confirmed against,
@@ -360,7 +384,7 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.Poll, Log: log,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Log: log,
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -378,21 +402,36 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 		})
 		if err != nil {
 			_ = registry.Close()
+			events.Close()
 			return daemon.App{}, err
 		}
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
+		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
+		// Subscribed before the spool drains or the socket serves, so no
+		// event arrives unseen.
+		refreshEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Changed: settingsChanged,
+		live := events.liveSessions(registry, discover, server, log)
+		var liveAPI http.Handler
+		if live != nil {
+			liveAPI = live.Handler()
+		}
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
-			API:    api,
-			Assets: localapp.Handler(),
+			API:     api,
+			Assets:  localapp.Handler(),
+			Methods: events.Methods(),
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
+				wg.Go(func() { events.Run(ctx) })
+				if refreshEvents != nil {
+					wg.Go(func() { hookRefresh.Run(ctx, refreshEvents) })
+				}
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
@@ -400,6 +439,9 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 				})
 				wg.Go(func() { worker.Run(ctx) })
 				wg.Go(func() { scheduler.Run(ctx) })
+				if live != nil {
+					wg.Go(func() { live.Run(ctx) })
+				}
 				wg.Go(func() {
 					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
 				})
@@ -410,9 +452,71 @@ func localApplication(concurrency int, log *slog.Logger) func(context.Context, *
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
+				unsubscribe()
+				events.Close()
 				_ = registry.Close()
 			},
 		}, nil
+	}
+}
+
+// hookEvents is the daemon's record of hook events, or nothing when it cannot
+// be opened: a broken record must not keep the daemon from starting, or every
+// hook would start another. Hooks then get unknown_method and spool.
+type hookEvents struct{ service *hookevents.Service }
+
+func openHookEvents(paths daemon.Paths, log *slog.Logger) hookEvents {
+	service, err := hookevents.Open(paths, log)
+	if err != nil {
+		log.Error("hook events are not recorded; hooks spool them until the record opens", "error", err)
+		return hookEvents{}
+	}
+	return hookEvents{service: service}
+}
+
+// Methods are the control requests the record serves, if any.
+func (h hookEvents) Methods() map[string]daemon.Method {
+	if h.service == nil {
+		return nil
+	}
+	return h.service.Methods()
+}
+
+// liveSessions tracks the agent sessions the record's events show, or nothing
+// when the record is not open. It tells the app over the events stream when
+// they change.
+func (h hookEvents) liveSessions(registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
+	if h.service == nil {
+		return nil
+	}
+	return &livesessions.Tracker{
+		Source: h.service.Store,
+		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
+		Notify: func() { _ = server.Publish("live", struct{}{}) },
+		Log:    log,
+	}
+}
+
+// Run drains the spool until ctx ends.
+func (h hookEvents) Run(ctx context.Context) {
+	if h.service != nil {
+		h.service.Run(ctx)
+	}
+}
+
+// Subscribe delivers the events match accepts from now on, until the
+// returned function ends it; without a record the channel is nil.
+func (h hookEvents) Subscribe(buffer int, match func(hookevents.Event) bool) (<-chan hookevents.Record, func()) {
+	if h.service == nil {
+		return nil, func() {}
+	}
+	return h.service.Store.Subscribe(buffer, match)
+}
+
+// Close closes the record.
+func (h hookEvents) Close() {
+	if h.service != nil {
+		_ = h.service.Close()
 	}
 }
 

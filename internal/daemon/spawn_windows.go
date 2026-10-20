@@ -52,6 +52,10 @@ func openOutput(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
+// closeInherited does nothing: Go hands a Windows child only its standard
+// handles and ExtraFiles.
+func closeInherited() {}
+
 // refused reports a dial error meaning nothing listens on the socket.
 func refused(err error) bool {
 	return errors.Is(err, windows.WSAECONNREFUSED) || errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)

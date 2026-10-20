@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -21,6 +22,21 @@ func startDetached(cmd *exec.Cmd) (*exec.Cmd, error) { return cmd, cmd.Start() }
 // openOutput creates a daemon's output file, replacing an older one.
 func openOutput(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+}
+
+// closeInherited marks every descriptor above standard error close-on-exec.
+// Go opens its own that way, but a hook inherits whatever the agent or Git
+// left open, and a long-lived daemon must not keep their pipes open.
+func closeInherited() {
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if fd, err := strconv.Atoi(entry.Name()); err == nil && fd > 2 {
+			syscall.CloseOnExec(fd)
+		}
+	}
 }
 
 // refused reports a dial error meaning nothing listens on the socket.

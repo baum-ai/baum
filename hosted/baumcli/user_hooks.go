@@ -33,8 +33,10 @@ edits made to baum's own entries.
 The hooks run baum only in a Git repository with Entire enabled where no other
 hook the agent runs already hands the event to Entire, and only where the
 committed hooks would run baum: after baum login, in a clone set up with baum
-setup, or, for a hosted install, in an onboarded repository. Everywhere else
-they do nothing. They never contact a baum server.
+setup, or, for a hosted install, in an onboarded repository, where they hand
+the event to Entire; or where you run the baum daemon, where they only record
+the event locally. Everywhere else they do nothing. They never contact a baum
+server. Hooks an earlier baum installed are updated when you run this again.
 
 Without --agent, it installs for the coding agents found on this machine.
 Codex runs a new or changed hook only after you trust it with /hooks.`,
