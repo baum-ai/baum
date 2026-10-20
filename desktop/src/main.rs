@@ -268,13 +268,12 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
-            // Nothing could reopen a hidden window without a tray.
-            let tray = tray::setup(app.handle());
+            tray::setup(app.handle());
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
-                .visible(!(hidden && tray))
+                .visible(!hidden)
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
                     match navigation::decide(url, daemon.as_ref()) {
@@ -293,6 +292,8 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // A hidden start shows the window after all if no tray appears.
+            tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
             Ok(())
         })

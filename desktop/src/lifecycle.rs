@@ -8,6 +8,7 @@
 //! tray is available (some Linux desktops) nothing could reopen a hidden
 //! window, so closing it quits the app after a confirmation.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -18,6 +19,15 @@ use crate::{daemon, tray};
 
 /// `baum daemon stop` waits for the daemon's own 20 s shutdown, plus a margin.
 const STOP_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Set while a confirmation is showing, so repeated clicks of the close
+/// button or the tray item do not stack dialogs.
+static PROMPT_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Claims the one confirmation slot; false when a dialog is already up.
+fn claim_prompt(flag: &AtomicBool) -> bool {
+    !flag.swap(true, Ordering::SeqCst)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CloseAction {
@@ -58,6 +68,19 @@ pub fn stop_prompt(running: usize, queued: usize) -> Option<String> {
         if running == 1 { "review" } else { "reviews" },
         if running == 1 { "it" } else { "them" }
     ))
+}
+
+/// The error shown when the daemon will not stop. The daemon keeps running,
+/// and says so, because quitting the app was not what the user asked for.
+fn stop_failure_text(message: &str, details: &[String]) -> String {
+    let mut text = format!(
+        "{message}\n\nThe daemon may still be running. Hooks will not restart a daemon you stopped until `baum daemon ensure` or the baum app starts it."
+    );
+    if !details.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(&details.join("\n"));
+    }
+    text
 }
 
 /// The window's close button and focus.
@@ -124,7 +147,7 @@ fn stop_and_exit(app: &AppHandle) {
             Err(failure) => message(
                 &app,
                 "Cannot stop background reviews",
-                &format!("{}\n{}", failure.message, failure.details.join("\n")),
+                &stop_failure_text(&failure.message, &failure.details),
             ),
         }
     });
@@ -138,6 +161,9 @@ pub fn confirm(
     yes: &str,
     then: impl FnOnce(&AppHandle) + Send + 'static,
 ) {
+    if !claim_prompt(&PROMPT_OPEN) {
+        return;
+    }
     let handle = app.clone();
     app.dialog()
         .message(text)
@@ -148,6 +174,7 @@ pub fn confirm(
             "Cancel".to_string(),
         ))
         .show(move |confirmed| {
+            PROMPT_OPEN.store(false, Ordering::SeqCst);
             if confirmed {
                 then(&handle);
             }
@@ -172,6 +199,26 @@ mod tests {
     fn closing_hides_the_window_when_a_tray_can_reopen_it() {
         assert_eq!(close_action(true), CloseAction::Hide);
         assert_eq!(close_action(false), CloseAction::ConfirmQuit);
+    }
+
+    #[test]
+    fn only_one_confirmation_shows_at_a_time() {
+        let flag = AtomicBool::new(false);
+        assert!(claim_prompt(&flag));
+        assert!(!claim_prompt(&flag));
+        flag.store(false, Ordering::SeqCst);
+        assert!(claim_prompt(&flag));
+    }
+
+    #[test]
+    fn a_failed_stop_says_hooks_will_not_restart_the_daemon() {
+        let text = stop_failure_text(
+            "baum daemon stop failed (exit status: 1).",
+            &["timeout".into()],
+        );
+        assert!(text.contains("Hooks will not restart"), "{text}");
+        assert!(text.contains("baum daemon ensure"), "{text}");
+        assert!(text.ends_with("timeout"), "{text}");
     }
 
     #[test]

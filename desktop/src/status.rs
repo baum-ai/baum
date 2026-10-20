@@ -63,6 +63,8 @@ struct AutomaticBody {
 #[derive(Deserialize)]
 struct RepositoryRow {
     #[serde(default)]
+    repository: String,
+    #[serde(default)]
     enabled: bool,
     #[serde(default)]
     notice: String,
@@ -76,7 +78,7 @@ pub struct Automatic {
     /// The global switch.
     pub enabled: bool,
     /// Repositories whose daily cap paused automatic generation.
-    pub capped: usize,
+    pub capped: Vec<String>,
 }
 
 /// `GET /api/automatic`. `None` when the daemon has no scheduler.
@@ -90,7 +92,8 @@ pub fn parse_automatic(body: &[u8]) -> Result<Option<Automatic>, String> {
         .repositories
         .iter()
         .filter(|r| r.enabled && (r.paused_until.is_some() || r.notice == "daily_cap"))
-        .count();
+        .map(|r| r.repository.clone())
+        .collect();
     Ok(Some(Automatic { enabled, capped }))
 }
 
@@ -103,13 +106,37 @@ struct DiagnosticsBody {
 struct ReportRow {
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    checks: Vec<CheckRow>,
 }
 
-/// Whether `GET /api/diagnostics` reports a problem (warnings do not count).
-pub fn parse_diagnostics(body: &[u8]) -> Result<bool, String> {
+#[derive(Deserialize)]
+struct CheckRow {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    status: String,
+}
+
+/// The ids of the checks `GET /api/diagnostics` reports as problems
+/// (warnings do not count). A report that is a problem without naming a check
+/// counts as one problem named "report".
+pub fn parse_diagnostics(body: &[u8]) -> Result<Vec<String>, String> {
     let body: DiagnosticsBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable diagnostics: {e}"))?;
-    Ok(body.report.is_some_and(|r| r.status == "problem"))
+    let Some(report) = body.report else {
+        return Ok(Vec::new());
+    };
+    let mut problems: Vec<String> = report
+        .checks
+        .into_iter()
+        .filter(|c| c.status == "problem")
+        .map(|c| c.id)
+        .collect();
+    if problems.is_empty() && report.status == "problem" {
+        problems.push("report".to_string());
+    }
+    Ok(problems)
 }
 
 /// The body of the request that sets the global automatic switch.
@@ -132,7 +159,8 @@ pub struct Observed {
     pub link: Link,
     pub jobs: Option<Jobs>,
     pub automatic: Option<Automatic>,
-    pub diagnostics_problem: bool,
+    /// Ids of the checks reporting a problem; `None` until diagnostics ran.
+    pub diagnostics: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,18 +212,20 @@ impl Tracker {
                 self.seeded = true;
             }
         }
-        if seen
-            .automatic
-            .as_ref()
-            .is_some_and(|a| a.enabled && a.capped > 0)
-        {
-            keys.insert("cap".to_string());
+        if let Some(automatic) = seen.automatic.as_ref().filter(|a| a.enabled) {
+            keys.extend(automatic.capped.iter().map(|r| format!("cap:{r}")));
         }
-        if seen.diagnostics_problem {
-            keys.insert("diagnostics".to_string());
+        if let Some(problems) = &seen.diagnostics {
+            keys.extend(problems.iter().map(|id| format!("diagnostics:{id}")));
         }
-        // Anything that went away and comes back is new again.
-        self.acknowledged.retain(|k| keys.contains(k));
+        // Anything that went away and comes back is new again. What a report
+        // we do not have (a failed poll) would have said is not forgotten.
+        self.acknowledged.retain(|k| {
+            keys.contains(k)
+                || (k.starts_with("failed:") && seen.jobs.is_none())
+                || (k.starts_with("cap:") && seen.automatic.is_none())
+                || (k.starts_with("diagnostics:") && seen.diagnostics.is_none())
+        });
         let unseen: Vec<&String> = keys
             .iter()
             .filter(|k| !self.acknowledged.contains(*k))
@@ -203,15 +233,22 @@ impl Tracker {
         self.current = keys.clone();
 
         let mut attention = Vec::new();
-        let failed = unseen.iter().filter(|k| k.starts_with("failed:")).count();
+        let count = |prefix: &str| unseen.iter().filter(|k| k.starts_with(prefix)).count();
+        let failed = count("failed:");
         if failed > 0 {
             attention.push(count_label(failed, "review failed", "reviews failed"));
         }
-        if unseen.iter().any(|k| *k == "cap") {
-            attention.push("Daily cap reached; automatic reviews paused".to_string());
+        match count("cap:") {
+            0 => {}
+            1 => attention.push("Daily cap reached; automatic reviews paused".to_string()),
+            n => attention.push(format!(
+                "Daily cap reached in {n} repositories; automatic reviews paused"
+            )),
         }
-        if unseen.iter().any(|k| *k == "diagnostics") {
-            attention.push("A diagnostics check reports a problem".to_string());
+        match count("diagnostics:") {
+            0 => {}
+            1 => attention.push("A diagnostics check reports a problem".to_string()),
+            n => attention.push(format!("{n} diagnostics checks report a problem")),
         }
 
         let (icon, summary) = match seen.link {
@@ -221,6 +258,9 @@ impl Tracker {
                 "Background reviews are not running".to_string(),
             ),
             Link::Up if !attention.is_empty() => (Icon::Attention, summary(running, queued)),
+            Link::Up if seen.jobs.is_none() => {
+                (Icon::Idle, "Checking background reviews".to_string())
+            }
             Link::Up if running + queued > 0 => (Icon::Running, summary(running, queued)),
             Link::Up => (Icon::Idle, summary(running, queued)),
         };
@@ -285,9 +325,9 @@ mod tests {
             jobs: Some(jobs),
             automatic: Some(Automatic {
                 enabled: true,
-                capped: 0,
+                capped: Vec::new(),
             }),
-            diagnostics_problem: false,
+            diagnostics: Some(Vec::new()),
         }
     }
 
@@ -316,7 +356,7 @@ mod tests {
             parse_automatic(body).unwrap(),
             Some(Automatic {
                 enabled: false,
-                capped: 1
+                capped: vec!["a/b".to_string()]
             })
         );
         assert_eq!(
@@ -328,10 +368,28 @@ mod tests {
     #[test]
     fn only_a_problem_counts_as_a_diagnostics_problem() {
         let report = |s| format!(r#"{{"local":true,"report":{{"status":"{s}","checks":[]}}}}"#);
-        assert!(parse_diagnostics(report("problem").as_bytes()).unwrap());
-        assert!(!parse_diagnostics(report("warning").as_bytes()).unwrap());
-        assert!(!parse_diagnostics(report("ok").as_bytes()).unwrap());
-        assert!(!parse_diagnostics(br#"{"local":true,"report":null}"#).unwrap());
+        assert_eq!(
+            parse_diagnostics(report("problem").as_bytes()).unwrap(),
+            vec!["report"]
+        );
+        assert!(
+            parse_diagnostics(report("warning").as_bytes())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_diagnostics(report("ok").as_bytes())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_diagnostics(br#"{"local":true,"report":null}"#)
+                .unwrap()
+                .is_empty()
+        );
+        let checks = br#"{"report":{"status":"problem","checks":[
+            {"id":"git","status":"problem"},{"id":"gh","status":"warning"},{"id":"agent","status":"problem"}]}}"#;
+        assert_eq!(parse_diagnostics(checks).unwrap(), vec!["git", "agent"]);
     }
 
     #[test]
@@ -391,7 +449,7 @@ mod tests {
         let mut seen = up(jobs(0, 0, &[]));
         seen.automatic = Some(Automatic {
             enabled: true,
-            capped: 2,
+            capped: vec!["a/b".into()],
         });
         let view = tracker.update(&seen);
         assert_eq!(view.icon, Icon::Attention);
@@ -401,22 +459,64 @@ mod tests {
         );
         seen.automatic = Some(Automatic {
             enabled: false,
-            capped: 2,
+            capped: vec!["a/b".into()],
         });
         assert_eq!(tracker.update(&seen).icon, Icon::Idle);
+    }
+
+    #[test]
+    fn each_capped_repository_and_each_problem_is_its_own_attention() {
+        let mut tracker = Tracker::default();
+        let mut seen = up(jobs(0, 0, &[]));
+        seen.automatic = Some(Automatic {
+            enabled: true,
+            capped: vec!["a/b".into()],
+        });
+        seen.diagnostics = Some(vec!["git".into()]);
+        tracker.update(&seen);
+        tracker.acknowledge();
+        assert_eq!(tracker.update(&seen).icon, Icon::Idle);
+        // A second repository and a second problem are new.
+        seen.automatic = Some(Automatic {
+            enabled: true,
+            capped: vec!["a/b".into(), "a/c".into()],
+        });
+        seen.diagnostics = Some(vec!["git".into(), "gh".into()]);
+        let view = tracker.update(&seen);
+        assert_eq!(
+            view.attention,
+            vec![
+                "Daily cap reached; automatic reviews paused",
+                "A diagnostics check reports a problem"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_poll_does_not_make_old_failures_new() {
+        let mut tracker = Tracker::default();
+        tracker.update(&up(jobs(0, 0, &["old"])));
+        let mut gap = up(jobs(0, 0, &[]));
+        gap.jobs = None;
+        gap.automatic = None;
+        let view = tracker.update(&gap);
+        assert_eq!(view.summary, "Checking background reviews");
+        assert_eq!(view.automatic, None);
+        let view = tracker.update(&up(jobs(0, 0, &["old"])));
+        assert_eq!(view.icon, Icon::Idle);
     }
 
     #[test]
     fn a_diagnostics_problem_needs_attention_and_returns_after_it_clears() {
         let mut tracker = Tracker::default();
         let mut seen = up(jobs(0, 0, &[]));
-        seen.diagnostics_problem = true;
+        seen.diagnostics = Some(vec!["git".into()]);
         assert_eq!(tracker.update(&seen).icon, Icon::Attention);
         tracker.acknowledge();
         assert_eq!(tracker.update(&seen).icon, Icon::Idle);
-        seen.diagnostics_problem = false;
+        seen.diagnostics = Some(Vec::new());
         tracker.update(&seen);
-        seen.diagnostics_problem = true;
+        seen.diagnostics = Some(vec!["git".into()]);
         assert_eq!(tracker.update(&seen).icon, Icon::Attention);
     }
 

@@ -117,12 +117,22 @@ fn parse_name_has_owner(output: &str) -> Option<bool> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Host {
+    Present,
+    Absent,
+    /// Neither `busctl` nor `gdbus` could ask.
+    Unknown,
+}
+
 /// Whether something on this desktop shows tray icons. Linux icons need a
 /// StatusNotifier watcher on the session bus (GNOME has none without an
 /// extension); the icon builder succeeds without one and nothing appears.
-/// When neither `busctl` nor `gdbus` can ask, assume there is one.
+/// When neither `busctl` nor `gdbus` can ask, the answer is Unknown, which
+/// counts as no tray: the window then stays reachable.
 #[cfg(target_os = "linux")]
-fn host_present() -> bool {
+fn host_check() -> Host {
     use std::process::{Command, Stdio};
     const WATCHER: &str = "org.kde.StatusNotifierWatcher";
     let run = |program: &str, args: &[&str]| {
@@ -133,7 +143,11 @@ fn host_present() -> bool {
             .output()
     };
     if let Ok(out) = run("busctl", &["--user", "status", WATCHER]) {
-        return out.status.success();
+        return if out.status.success() {
+            Host::Present
+        } else {
+            Host::Absent
+        };
     }
     let gdbus = run(
         "gdbus",
@@ -150,25 +164,41 @@ fn host_present() -> bool {
         ],
     );
     match gdbus {
-        Ok(out) => parse_name_has_owner(&String::from_utf8_lossy(&out.stdout)).unwrap_or(true),
-        Err(_) => true,
+        Ok(out) => match parse_name_has_owner(&String::from_utf8_lossy(&out.stdout)) {
+            Some(true) => Host::Present,
+            Some(false) => Host::Absent,
+            None => Host::Unknown,
+        },
+        Err(_) => Host::Unknown,
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn host_present() -> bool {
-    true
+fn host_check() -> Host {
+    Host::Present
 }
 
+fn host_present() -> bool {
+    host_check() == Host::Present
+}
+
+/// How long a hidden start at login waits for the desktop's tray host, which
+/// may start after the app does.
+const HOST_WAIT: Duration = Duration::from_secs(10);
+
 struct Ui {
-    tray: TrayIcon,
+    tray: Option<TrayIcon>,
     /// The window menu's start at login item, kept in step with the tray's.
-    menu_login: CheckMenuItem<Wry>,
+    menu_login: Option<CheckMenuItem<Wry>>,
 }
 
 #[derive(Default)]
 struct Inner {
-    available: AtomicBool,
+    /// A tray icon was created; whether the desktop shows it is asked again
+    /// when it matters.
+    has_tray: AtomicBool,
+    /// The last answer to whether the desktop shows it.
+    hosted: AtomicBool,
     /// Counts attachments, so diagnostics run again for a new daemon.
     generation: AtomicU64,
     launch: Mutex<Option<Launch>>,
@@ -190,43 +220,93 @@ fn shared(app: &AppHandle) -> Option<Shared> {
     app.try_state::<Shared>().map(|s| s.inner().clone())
 }
 
-/// Whether a tray icon is showing, so the window may hide into it.
+/// Whether a tray icon is showing, so the window may hide into it. Asked
+/// again each time it has not been, since the host can appear after the app.
 pub fn available(app: &AppHandle) -> bool {
-    shared(app).is_some_and(|s| s.0.available.load(Ordering::Relaxed))
+    let Some(shared) = shared(app) else {
+        return false;
+    };
+    if !shared.0.has_tray.load(Ordering::Relaxed) {
+        return false;
+    }
+    if shared.0.hosted.load(Ordering::Relaxed) {
+        return true;
+    }
+    let now = host_present();
+    shared.0.hosted.store(now, Ordering::Relaxed);
+    now
 }
 
 /// Creates the tray and the window menu, and starts the poll threads. Runs on
-/// the main thread, from `setup`. Returns whether a tray is showing.
-pub fn setup(app: &AppHandle) -> bool {
+/// the main thread, from `setup`.
+pub fn setup(app: &AppHandle) {
     let shared = Shared::default();
     app.manage(shared.clone());
     autostart::refresh();
     let login = autostart::enabled();
-    let ui = match build(app, login) {
-        Ok(ui) => Some(ui),
+    let menu_login = match install_window_menu(app, login) {
+        Ok(item) => Some(item),
         Err(e) => {
-            eprintln!("baum desktop: no tray icon: {e}");
+            eprintln!("baum desktop: no window menu: {e}");
             None
         }
     };
-    let available = ui.is_some() && host_present();
-    shared.0.available.store(available, Ordering::Relaxed);
-    if !available {
-        eprintln!("baum desktop: this desktop shows no tray icons");
-    }
-    *lock(&shared.0.ui) = ui;
+    // A missing libayatana-appindicator panics in the tray library; the app
+    // runs on without a tray instead of crashing.
+    let tray =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_tray(app, login))) {
+            Ok(Ok(tray)) => Some(tray),
+            Ok(Err(e)) => {
+                eprintln!("baum desktop: no tray icon: {e}");
+                None
+            }
+            Err(_) => {
+                eprintln!("baum desktop: no tray icon: the tray library failed to load");
+                None
+            }
+        };
+    shared.0.has_tray.store(tray.is_some(), Ordering::Relaxed);
+    *lock(&shared.0.ui) = Some(Ui { tray, menu_login });
     spawn_polls(app, &shared);
-    available
 }
 
-fn build(app: &AppHandle, login: bool) -> Result<Ui, String> {
+/// Once the window exists: waits (on a hidden start at login, up to
+/// `HOST_WAIT`) for the desktop to show tray icons, and shows the window when
+/// none will, since nothing else could.
+pub fn watch_host(app: &AppHandle, hidden: bool) {
+    let app = app.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + if hidden { HOST_WAIT } else { Duration::ZERO };
+        while !available(&app) {
+            if Instant::now() >= deadline {
+                eprintln!("baum desktop: this desktop shows no tray icons");
+                if hidden {
+                    lifecycle::show_window(&app);
+                }
+                return;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
+/// The Background submenu: start at login, with its item. Self-contained so
+/// the menu bar can assemble it with other submenus.
+pub fn background_submenu(
+    app: &AppHandle,
+    login: bool,
+) -> tauri::Result<(Submenu<Wry>, CheckMenuItem<Wry>)> {
+    let item =
+        CheckMenuItem::with_id(app, MENU_LOGIN, "Start at login", true, login, None::<&str>)?;
+    let submenu = Submenu::with_items(app, "Background", true, &[&item])?;
+    Ok((submenu, item))
+}
+
+/// Sets the window's menu bar: the platform default plus Background.
+fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry>, String> {
     let e = |e: tauri::Error| e.to_string();
-    let view = View::default();
-    let menu_login =
-        CheckMenuItem::with_id(app, MENU_LOGIN, "Start at login", true, login, None::<&str>)
-            .map_err(e)?;
+    let (background, item) = background_submenu(app, login).map_err(e)?;
     let window_menu = Menu::default(app).map_err(e)?;
-    let background = Submenu::with_items(app, "Background", true, &[&menu_login]).map_err(e)?;
     window_menu.append(&background).map_err(e)?;
     app.set_menu(window_menu).map_err(e)?;
     app.on_menu_event(|app, event| {
@@ -234,14 +314,35 @@ fn build(app: &AppHandle, login: bool) -> Result<Ui, String> {
             toggle_login(app);
         }
     });
-    let tray = TrayIconBuilder::with_id(TRAY_ID)
+    Ok(item)
+}
+
+fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
+    let e = |e: tauri::Error| e.to_string();
+    let view = View::default();
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon(Icon::Idle)?)
         .tooltip(format!("baum: {}", view.summary))
         .menu(&build_menu(app, &menu_spec(&view, login)).map_err(e)?)
+        // Windows opens the window on a left click and keeps the menu for the
+        // right one; elsewhere a click shows the menu.
+        .show_menu_on_left_click(!cfg!(windows))
         .on_menu_event(|app, event| on_tray_menu(app, event.id().as_ref()))
+        .on_tray_icon_event(|tray, event| {
+            #[cfg(windows)]
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                lifecycle::show_window(tray.app_handle());
+            }
+            #[cfg(not(windows))]
+            let _ = (tray, event);
+        })
         .build(app)
-        .map_err(e)?;
-    Ok(Ui { tray, menu_login })
+        .map_err(e)
 }
 
 fn icon(state: Icon) -> Result<Image<'static>, String> {
@@ -325,7 +426,15 @@ fn toggle_pause(app: &AppHandle) {
 pub fn attached(app: &AppHandle, launch: &Launch) {
     let Some(shared) = shared(app) else { return };
     *lock(&shared.0.launch) = Some(launch.clone());
-    lock(&shared.0.observed).link = Link::Up;
+    {
+        // A new attachment may be a replacement daemon: what the last one
+        // said is stale.
+        let mut observed = lock(&shared.0.observed);
+        *observed = Observed {
+            link: Link::Up,
+            ..Observed::default()
+        };
+    }
     shared.0.generation.fetch_add(1, Ordering::Relaxed);
     render(app, &shared, false);
     wake(&shared);
@@ -373,27 +482,61 @@ fn wake(shared: &Shared) {
     }
 }
 
-/// Recomputes the view and updates the icon, tooltip and menu when it
+/// Whether a computed view needs showing, and records it as shown.
+fn next_view(rendered: &mut Option<View>, view: View, force: bool) -> Option<View> {
+    if !force && rendered.as_ref() == Some(&view) {
+        return None;
+    }
+    *rendered = Some(view.clone());
+    Some(view)
+}
+
+/// Recomputes the view and queues the icon, tooltip and menu update when it
 /// changed (or `force`, after start at login changed).
+///
+/// The Tauri menu and tray calls wait for the main thread, and several
+/// callers of this function are the main thread (focus, Open, menu clicks).
+/// So no lock is ever held across such a call: the update is queued with the
+/// non-blocking `run_on_main_thread`, from under the `rendered` lock only so
+/// that updates reach the main thread in the order they were computed, and
+/// `apply` runs with no lock at all.
 fn render(app: &AppHandle, shared: &Shared, force: bool) {
     let observed = lock(&shared.0.observed).clone();
     let view = lock(&shared.0.tracker).update(&observed);
-    let mut rendered = lock(&shared.0.rendered);
-    if !force && rendered.as_ref() == Some(&view) {
-        return;
-    }
     let login = autostart::enabled();
-    if let Some(ui) = lock(&shared.0.ui).as_ref() {
-        let _ = ui.menu_login.set_checked(login);
-        if let Ok(image) = icon(view.icon) {
-            let _ = ui.tray.set_icon(Some(image));
-        }
-        let _ = ui.tray.set_tooltip(Some(format!("baum: {}", view.summary)));
-        if let Ok(menu) = build_menu(app, &menu_spec(&view, login)) {
-            let _ = ui.tray.set_menu(Some(menu));
-        }
+    let ui = lock(&shared.0.ui)
+        .as_ref()
+        .map(|ui| (ui.tray.clone(), ui.menu_login.clone()));
+    let mut rendered = lock(&shared.0.rendered);
+    let Some(view) = next_view(&mut rendered, view, force) else {
+        return;
+    };
+    let Some((tray, menu_login)) = ui else {
+        return;
+    };
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || apply(&handle, tray, menu_login, &view, login));
+}
+
+/// Updates the tray and menu items. Runs on the main thread, holding no lock.
+fn apply(
+    app: &AppHandle,
+    tray: Option<TrayIcon>,
+    menu_login: Option<CheckMenuItem<Wry>>,
+    view: &View,
+    login: bool,
+) {
+    if let Some(item) = menu_login {
+        let _ = item.set_checked(login);
     }
-    *rendered = Some(view);
+    let Some(tray) = tray else { return };
+    if let Ok(image) = icon(view.icon) {
+        let _ = tray.set_icon(Some(image));
+    }
+    let _ = tray.set_tooltip(Some(format!("baum: {}", view.summary)));
+    if let Ok(menu) = build_menu(app, &menu_spec(view, login)) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }
 
 fn spawn_polls(app: &AppHandle, shared: &Shared) {
@@ -422,18 +565,19 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
             };
             checked = Some((generation, Instant::now()));
             // A failed or timed-out run leaves the last answer standing.
-            if let Ok(problem) =
+            if let Ok(problems) =
                 client::diagnostics(&launch).and_then(|b| status::parse_diagnostics(&b))
             {
-                lock(&diag_shared.0.observed).diagnostics_problem = problem;
+                lock(&diag_shared.0.observed).diagnostics = Some(problems);
                 render(&diag_app, &diag_shared, false);
             }
         }
     });
 }
 
-/// One look at the daemon. A failed request leaves the last answer standing:
-/// the connection watch in `main` decides when the daemon has gone.
+/// One look at the daemon. A failed request forgets that answer, so the menu
+/// does not show counts it cannot vouch for; the connection watch in `main`
+/// decides when the daemon has gone.
 fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
     let launch = lock(&shared.0.launch).clone();
     let Some(launch) = launch else {
@@ -443,12 +587,8 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
     let automatic = client::automatic(&launch).and_then(|b| status::parse_automatic(&b));
     {
         let mut observed = lock(&shared.0.observed);
-        if let Ok(jobs) = jobs {
-            observed.jobs = Some(jobs);
-        }
-        if let Ok(automatic) = automatic {
-            observed.automatic = automatic;
-        }
+        observed.jobs = jobs.ok();
+        observed.automatic = automatic.ok().flatten();
     }
     render(app, shared, false);
     let busy = lock(&shared.0.observed)
@@ -476,9 +616,9 @@ mod tests {
             }),
             automatic: Some(Automatic {
                 enabled: automatic,
-                capped: 0,
+                capped: Vec::new(),
             }),
-            diagnostics_problem: false,
+            diagnostics: Some(Vec::new()),
         }
     }
 
@@ -541,11 +681,25 @@ mod tests {
     #[test]
     fn attention_lines_appear_under_the_summary() {
         let mut observed = up(0, true);
-        observed.diagnostics_problem = true;
+        observed.diagnostics = Some(vec!["git".into()]);
         let spec = menu_spec(&view(observed), false);
         assert_eq!(spec[1].text, "Idle");
         assert_eq!(spec[2].text, "! A diagnostics check reports a problem");
         assert!(!spec[2].enabled);
+    }
+
+    #[test]
+    fn an_unchanged_view_is_not_shown_again_unless_forced() {
+        let mut rendered = None;
+        let idle = View::default();
+        assert_eq!(
+            next_view(&mut rendered, idle.clone(), false),
+            Some(idle.clone())
+        );
+        assert_eq!(next_view(&mut rendered, idle.clone(), false), None);
+        assert_eq!(next_view(&mut rendered, idle.clone(), true), Some(idle));
+        let busy = view(up(1, true));
+        assert_eq!(next_view(&mut rendered, busy.clone(), false), Some(busy));
     }
 
     #[test]

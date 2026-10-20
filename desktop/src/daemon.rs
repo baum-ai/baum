@@ -41,13 +41,24 @@ pub struct Status {
 }
 
 /// A daemon the window can load.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Launch {
     pub status: Status,
     /// The launch URL, holding the credential in its fragment. Never log it.
     pub url: Url,
     pub origin: url::Origin,
     token: String,
+}
+
+/// Never prints the launch URL or token, so a stray `{:?}` cannot leak them.
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launch")
+            .field("status", &self.status)
+            .field("origin", &self.origin.ascii_serialization())
+            .field("credential", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Launch {
@@ -120,18 +131,24 @@ pub struct Output {
 /// threads, so a detached daemon that kept a copy of a pipe cannot hold the
 /// app up once the command itself has exited.
 pub fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
-    let mut child = Command::new(cli)
+    let mut command = Command::new(cli);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            Failure::new(format!(
-                "Cannot run the bundled baum command ({}): {e}",
-                cli.display()
-            ))
-        })?;
+        .stderr(Stdio::piped());
+    // No console window flashing next to the app.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().map_err(|e| {
+        Failure::new(format!(
+            "Cannot run the bundled baum command ({}): {e}",
+            cli.display()
+        ))
+    })?;
     let stdout = lines(child.stdout.take());
     let stderr = lines(child.stderr.take());
     let deadline = Instant::now() + timeout;
@@ -435,6 +452,13 @@ mod tests {
         assert!(parse_status(&[r#"{"state":"relative"}"#.into()]).is_err());
         assert!(parse_status(&[]).is_err());
         assert!(parse_status(&["not json".into()]).is_err());
+    }
+
+    #[test]
+    fn debug_output_never_holds_the_credential() {
+        let shown = format!("{:?}", launch_on(4100));
+        assert!(!shown.contains(TOKEN), "{shown}");
+        assert!(!shown.contains("token="), "{shown}");
     }
 
     #[test]

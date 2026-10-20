@@ -47,9 +47,14 @@ The daemon outlives the app, so the app's presence is a tray icon.
   (tray Open, a second launch, the Dock icon on macOS) shows it as it was; it
   does not reconnect.
 - **Where no tray is available** (some Linux desktops, which have no
-  StatusNotifier host; the app asks the session bus with `busctl` or `gdbus`
-  and assumes one when neither exists), nothing could reopen a hidden window,
-  so closing it asks "Quit baum?" and quits the app, leaving the daemon running.
+  StatusNotifier host), nothing could reopen a hidden window, so closing it
+  asks "Quit baum?" and quits the app, leaving the daemon running. The app asks
+  the session bus with `busctl` or `gdbus` each time it matters, so a host that
+  starts after the app counts; when neither tool exists it assumes no tray and
+  keeps the window reachable. A start at login waits up to 10 seconds for the
+  host before it shows the window after all. The deb depends on
+  `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
+  tray library that fails to load leaves the app running without a tray.
 - **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
   1 queued"); anything needing attention; Pause or Resume automatic reviews;
   Start at login; Quit; Quit and stop background reviews.
@@ -117,9 +122,22 @@ turning start at login on asks for.
 | macOS | LaunchAgent `~/Library/LaunchAgents/com.usebaum.desktop.plist` with `RunAtLoad` |
 | Windows | Per-user Run key value `baum` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, set with `reg.exe` |
 
-The entry names the running executable (for an AppImage, its own path) and is
-rewritten on every start while enabled, so moving or updating the app keeps it
-working. Turning it off removes the entry.
+The entry names the running executable (for an AppImage, its own path; a
+trailing " (deleted)" that Linux adds to a replaced executable is dropped). An
+enabled entry is rewritten on every start of an installed build, so moving or
+updating the app keeps it working; development builds, `BAUM_DESKTOP_BAUM` runs
+and binaries under `target/debug` or `target/release` never write one. On macOS
+an app run from a quarantined download (App Translocation) cannot turn it on:
+the app says to move it to Applications first. Turning it off removes the entry.
+
+An entry the desktop environment turned off counts as off and is never
+re-enabled by the app: on Linux `Hidden=true` or
+`X-GNOME-Autostart-enabled=false`, on Windows a disabled StartupApproved value
+(Task Manager's Startup tab). Turning it on from the app clears that disable
+and, on Linux, rewrites only `Exec` and the enabled flag, keeping any other keys.
+
+The macOS LaunchAgent is temporary: once the app is signed (ENG-749),
+SMAppService login items replace it.
 
 ## What pages may do
 
