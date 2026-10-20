@@ -2,7 +2,9 @@ package review
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"math"
 	"os"
@@ -120,12 +122,8 @@ func summaryContext(root map[string]any, directory string) {
 	if !ok {
 		return
 	}
-	trees := openCheckoutTrees(directory)
-	defer func() {
-		for _, tree := range trees {
-			tree.Close()
-		}
-	}()
+	checkout := openCheckout(directory, os.OpenRoot)
+	defer checkout.close()
 	for _, name := range contextParts {
 		part, ok := context[name].(map[string]any)
 		if !ok {
@@ -141,7 +139,7 @@ func summaryContext(root map[string]any, directory string) {
 			continue
 		}
 		refs, _ := part["refs"].([]any)
-		part["refs"] = cleanContextRefs(refs, trees)
+		part["refs"] = cleanContextRefs(refs, checkout)
 	}
 }
 
@@ -151,9 +149,9 @@ const maxContextRefs = 8
 
 // cleanContextRefs makes each reference's path repository-relative and drops
 // a reference that is malformed, leaves the repository or repeats an earlier
-// one. With checkout trees it also drops a path no tree holds, so a reference
+// one. With a checkout it also drops a path no tree holds, so a reference
 // never names an invented file. It keeps at most maxContextRefs.
-func cleanContextRefs(refs []any, trees []*os.Root) []any {
+func cleanContextRefs(refs []any, checkout checkout) []any {
 	kept := []any{}
 	type key struct {
 		path   string
@@ -166,7 +164,7 @@ func cleanContextRefs(refs []any, trees []*os.Root) []any {
 			continue
 		}
 		written, _ := ref["path"].(string)
-		path, ok := contextRefPath(written, trees)
+		path, ok := contextRefPath(written, checkout)
 		if !ok {
 			continue
 		}
@@ -188,11 +186,11 @@ func cleanContextRefs(refs []any, trees []*os.Root) []any {
 
 // contextRefPath tidies a reference path: trimmed, without a leading "./" or
 // "/", cleaned, inside the repository and not the repository itself. Without
-// checkout trees the tidied path is kept as written. With them it is kept
-// when a tree holds it; otherwise the model may have written it from the run
-// directory (head/api/handler.go), so a leading tree name is stripped and the
-// rest kept when a tree holds that.
-func contextRefPath(path string, trees []*os.Root) (string, bool) {
+// a checkout the tidied path is kept as written. With one it is kept when a
+// tree holds it; otherwise the model may have written it from the run
+// directory (head/api/handler.go), so a leading tree name is stripped from the
+// cleaned path and the rest kept when a tree holds that.
+func contextRefPath(path string, checkout checkout) (string, bool) {
 	path = strings.TrimSpace(path)
 	for {
 		trimmed := strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
@@ -201,17 +199,16 @@ func contextRefPath(path string, trees []*os.Root) (string, bool) {
 		}
 		path = trimmed
 	}
-	if len(trees) == 0 {
-		return localRefPath(path)
+	local, ok := localRefPath(path)
+	if !ok || !checkout.present {
+		return local, ok
 	}
-	if local, ok := localRefPath(path); ok && treesHold(trees, local) {
+	if checkout.holds(local) {
 		return local, true
 	}
 	for _, tree := range checkoutTrees {
-		if rest, ok := strings.CutPrefix(path, tree+"/"); ok {
-			if local, ok := localRefPath(rest); ok && treesHold(trees, local) {
-				return local, true
-			}
+		if rest, ok := strings.CutPrefix(local, tree+"/"); ok && checkout.holds(rest) {
+			return rest, true
 		}
 	}
 	return "", false
@@ -231,26 +228,45 @@ func localRefPath(path string) (string, bool) {
 // reads them.
 var checkoutTrees = []string{"head", "merge-base"}
 
-// openCheckoutTrees opens the run directory's checkout trees that exist. A
-// stack review's directory, for one, holds none.
-func openCheckoutTrees(directory string) []*os.Root {
-	if directory == "" {
-		return nil
-	}
-	var trees []*os.Root
-	for _, tree := range checkoutTrees {
-		if root, err := os.OpenRoot(filepath.Join(directory, tree)); err == nil {
-			trees = append(trees, root)
-		}
-	}
-	return trees
+// checkout is the run directory's checkout: present when a checkout tree
+// exists, with the trees that opened. A tree that exists but failed to open
+// holds nothing, so references are still checked rather than kept unverified.
+type checkout struct {
+	present bool
+	trees   []*os.Root
 }
 
-// treesHold reports whether a checkout tree has a file or directory at the
+// openCheckout opens the run directory's checkout trees with open. A stack
+// review's directory, for one, holds none, so its checkout is not present.
+func openCheckout(directory string, open func(string) (*os.Root, error)) checkout {
+	var opened checkout
+	if directory == "" {
+		return opened
+	}
+	for _, tree := range checkoutTrees {
+		root, err := open(filepath.Join(directory, tree))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		opened.present = true
+		if err == nil {
+			opened.trees = append(opened.trees, root)
+		}
+	}
+	return opened
+}
+
+func (c checkout) close() {
+	for _, tree := range c.trees {
+		tree.Close()
+	}
+}
+
+// holds reports whether a checkout tree has a file or directory at the
 // repository-relative path. The trees are roots, so a symbolic link that
 // leads out of its tree holds nothing.
-func treesHold(trees []*os.Root, path string) bool {
-	for _, tree := range trees {
+func (c checkout) holds(path string) bool {
+	for _, tree := range c.trees {
 		if info, err := tree.Stat(filepath.FromSlash(path)); err == nil && (info.Mode().IsRegular() || info.IsDir()) {
 			return true
 		}

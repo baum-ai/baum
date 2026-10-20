@@ -3,10 +3,12 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -115,12 +117,17 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 		}},
 		"reached_by": map[string]any{"text": " \n ", "refs": []any{ref("api/handler.go", nil)}},
 		"contracts":  nil,
-		"related":    map[string]any{"text": "The worker drains it."},
+		// A tree name is stripped after cleaning, however the path spells it.
+		"related": map[string]any{"text": "The worker drains it.", "refs": []any{
+			ref("head//api/handler.go", "Serve"),
+			ref("head/../head/api/handler.go", "Route"),
+		}},
 	}
 	for _, tc := range []struct {
 		name      string
 		directory string
 		area      []any
+		related   []any
 	}{
 		{"with a checkout", checkout, []any{
 			ref("api/handler.go", "Handler"),
@@ -130,6 +137,9 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 			// The repository has its own head directory, holding index.js.
 			ref("head", nil),
 			ref("head/index.js", nil),
+		}, []any{
+			ref("api/handler.go", "Serve"),
+			ref("api/handler.go", "Route"),
 		}},
 		// A stack review's directory holds no checkout: paths are only tidied,
 		// and a leading tree name is the repository's own directory.
@@ -141,6 +151,9 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 			ref("api/missing.go", nil),
 			ref("head", nil),
 			ref("head/index.js", nil),
+		}, []any{
+			ref("head/api/handler.go", "Serve"),
+			ref("head/api/handler.go", "Route"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,12 +168,38 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 			got := out["summary"].(map[string]any)["context"].(map[string]any)
 			want := map[string]any{
 				"area":    map[string]any{"text": "The API serves the queue.", "refs": tc.area},
-				"related": map[string]any{"text": "The worker drains it.", "refs": []any{}},
+				"related": map[string]any{"text": "The worker drains it.", "refs": tc.related},
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("context = %v\nwant %v", got, want)
 			}
 		})
+	}
+}
+
+// A checkout tree that exists but cannot be opened still makes the checkout
+// present: it holds nothing, so references are dropped rather than kept
+// unverified. Only a missing tree is absent.
+func TestOpenCheckoutTreatsOnlyAMissingTreeAsAbsent(t *testing.T) {
+	directory := t.TempDir()
+	failing := func(err error) func(string) (*os.Root, error) {
+		return func(string) (*os.Root, error) { return nil, &fs.PathError{Op: "openat", Path: directory, Err: err} }
+	}
+	missing := openCheckout(directory, failing(fs.ErrNotExist))
+	if missing.present {
+		t.Fatal("a checkout whose trees are missing is present")
+	}
+	if path, ok := contextRefPath("api/handler.go", missing); !ok || path != "api/handler.go" {
+		t.Fatalf("without a checkout = %q, %v; want the path kept", path, ok)
+	}
+	for _, err := range []error{fs.ErrPermission, syscall.EMFILE} {
+		unopenable := openCheckout(directory, failing(err))
+		if !unopenable.present || len(unopenable.trees) != 0 {
+			t.Fatalf("%v: checkout = %+v, want present without trees", err, unopenable)
+		}
+		if path, ok := contextRefPath("api/handler.go", unopenable); ok {
+			t.Fatalf("%v: kept %q from a checkout that holds nothing", err, path)
+		}
 	}
 }
 
