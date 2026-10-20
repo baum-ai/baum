@@ -187,6 +187,59 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 		t.Fatal("exhausted rate limit retried early")
 	}
 }
+
+// A cache written before pull requests kept their head branch reads every
+// response in full once, so a 304 cannot keep the branch unknown.
+func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
+	f := recordedFixture()
+	s, now := service(t, f)
+	first, err := s.Poll(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PullRequests[0].HeadRef != "my-draft" || first.PullRequests[1].HeadRef != "" {
+		t.Fatalf("head branches %#v", first.PullRequests)
+	}
+	path := repositoryCachePath(t, s)
+	cache, err := load(path)
+	if err != nil || cache.Format != cacheFormat {
+		t.Fatalf("format %d %v", cache.Format, err)
+	}
+	cache.Format = 0
+	for key, response := range cache.Responses {
+		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"my-draft",`, ""))
+		cache.Responses[key] = response
+	}
+	if err := save(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	f.conditional = true
+	*now = first.NextPoll
+	before := len(f.requests)
+	got, err := s.Poll(context.Background(), testRepo)
+	if err != nil || got.PullRequests[0].HeadRef != "my-draft" {
+		t.Fatalf("upgraded poll %#v %v", got, err)
+	}
+	for _, request := range f.requests[before:] {
+		if request.Header.Get("If-None-Match") != "" {
+			t.Errorf("older format reused %s", request.URL)
+		}
+	}
+	*now = got.NextPoll
+	before = len(f.requests)
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	conditional := 0
+	for _, request := range f.requests[before:] {
+		if request.Header.Get("If-None-Match") != "" {
+			conditional++
+		}
+	}
+	if conditional == 0 {
+		t.Fatal("upgraded cache not conditional")
+	}
+}
 func TestMissingTeamScopeDoesNotHideDirectRequest(t *testing.T) {
 	f := recordedFixture()
 	f.status["/user/teams"] = 403
@@ -467,55 +520,5 @@ func TestPollNowSkipsTheDeadlineButNotTheBudget(t *testing.T) {
 	before = len(f.requests)
 	if _, err := s.PollNow(context.Background(), testRepo); !errors.Is(err, errRateLimit) || len(f.requests) != before {
 		t.Fatalf("exhausted budget polled again: %v requests=%d", err, len(f.requests)-before)
-	}
-}
-
-// A cache written before pull requests kept their head branch reads every
-// response in full once, so a 304 cannot keep the branch unknown.
-func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
-	f := recordedFixture()
-	s, now := service(t, f)
-	first, err := s.Poll(context.Background(), testRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := repositoryCachePath(t, s)
-	cache, err := load(path)
-	if err != nil || cache.Format != cacheFormat {
-		t.Fatalf("format %d %v", cache.Format, err)
-	}
-	cache.Format = 0
-	for key, response := range cache.Responses {
-		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"my-draft",`, ""))
-		cache.Responses[key] = response
-	}
-	if err := save(path, cache); err != nil {
-		t.Fatal(err)
-	}
-	f.conditional = true
-	*now = first.NextPoll
-	before := len(f.requests)
-	got, err := s.Poll(context.Background(), testRepo)
-	if err != nil || got.PullRequests[0].HeadRef != "my-draft" {
-		t.Fatalf("upgraded poll %#v %v", got, err)
-	}
-	for _, request := range f.requests[before:] {
-		if request.Header.Get("If-None-Match") != "" {
-			t.Errorf("older format reused %s", request.URL)
-		}
-	}
-	*now = got.NextPoll
-	before = len(f.requests)
-	if _, err := s.Poll(context.Background(), testRepo); err != nil {
-		t.Fatal(err)
-	}
-	conditional := 0
-	for _, request := range f.requests[before:] {
-		if request.Header.Get("If-None-Match") != "" {
-			conditional++
-		}
-	}
-	if conditional == 0 {
-		t.Fatal("upgraded cache not conditional")
 	}
 }

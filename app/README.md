@@ -79,6 +79,16 @@ restart interrupted); it is cancelled like any other. Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a pause,
 its end, a notice, and every repository's status after a settings change in
 any window) reload the page and are what the desktop app can notify on.
+Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
+hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
+running" or "Agent idle" marker on the inbox rows of their pull request and as
+a "Sessions in progress" panel (agent, working or waiting, branch, start and
+last activity) on its PR page, updated by the `live` event, which carries no
+data: the app rereads the list. Only the agent, session id, state, times, last
+event kind, repository, branch and PR number reach the app, never a path or
+transcript. When a session ends the panel goes and the page reads its sessions
+from disk again, where the full session is. A daemon without the record serves
+none.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.
@@ -100,7 +110,10 @@ Before the browser suite build its Linux test helper in `oss-test`:
 The suite verifies bootstrap into the namespace (every app request stays under
 it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
 viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. The fixture also runs the
+generation/progress and repository settings. The fixture also runs a live
+session tracker over a real hook event record, fed from a marker file in the
+state directory, and a test follows that session from the inbox and the PR page
+through running, idle and ended. The fixture also runs the
 automatic generation scheduler, fed a discovery snapshot every quarter second;
 a second test writes `push-10` in the state directory to give PR 10 a new head
 and follows the automatic review it starts on the PR page and in the jobs list,

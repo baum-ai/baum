@@ -22,9 +22,12 @@ import (
 )
 
 type PullRequest struct {
-	Repository            string `json:"repository"`
-	Number                int    `json:"number"`
-	HeadSHA               string `json:"head_sha"`
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	HeadSHA    string `json:"head_sha"`
+	// HeadRef is the head branch's name, which links a local session on that
+	// branch to the pull request. It is empty in a snapshot cached before it
+	// was kept, until the next poll.
 	HeadRef               string `json:"head_ref"`
 	Title                 string `json:"title"`
 	URL                   string `json:"url"`

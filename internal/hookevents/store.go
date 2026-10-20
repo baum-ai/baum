@@ -54,7 +54,7 @@ type Store struct {
 	file  *daemon.RotatingFile
 	ids   map[string]bool
 	order []string
-	subs  map[chan Record]func(Event) bool
+	subs  map[chan Record]*subscription
 	log   *slog.Logger
 }
 
@@ -71,7 +71,7 @@ func OpenStore(dir string, log *slog.Logger) (*Store, error) {
 	if err := privatefs.MkdirAll(dir); err != nil {
 		return nil, err
 	}
-	s := &Store{path: filepath.Join(dir, "events.jsonl"), ids: map[string]bool{}, subs: map[chan Record]func(Event) bool{}, log: log}
+	s := &Store{path: filepath.Join(dir, "events.jsonl"), ids: map[string]bool{}, subs: map[chan Record]*subscription{}, log: log}
 	records, err := s.read()
 	if err != nil {
 		return nil, err
@@ -117,13 +117,14 @@ func (s *Store) Add(e Event, via string) (bool, error) {
 		return false, err
 	}
 	s.remember(e.ID)
-	for sub, match := range s.subs {
-		if match != nil && !match(e) {
+	for ch, sub := range s.subs {
+		if sub.match != nil && !sub.match(e) {
 			continue
 		}
 		select {
-		case sub <- record:
+		case ch <- record:
 		default:
+			sub.dropped++
 			s.log.Warn("a hook event subscriber fell behind and missed an event", "kind", e.Kind, "name", e.Name)
 		}
 	}
@@ -209,24 +210,43 @@ func readBoundedLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err
 	}
 }
 
+// subscription is one subscriber's filter and the records it missed.
+type subscription struct {
+	match   func(Event) bool
+	dropped uint64
+}
+
 // Subscribe returns a channel that receives every record added from now on
 // whose event match accepts (nil accepts all), and a function that ends the
 // subscription. A subscriber that lets buffer records pile up misses later
 // ones (the store logs it); Recent stays complete.
 func (s *Store) Subscribe(buffer int, match func(Event) bool) (<-chan Record, func()) {
+	ch, cancel, _ := s.SubscribeCounted(buffer, match)
+	return ch, cancel
+}
+
+// SubscribeCounted is Subscribe that also returns a function reporting how
+// many records the subscription missed so far, so a subscriber can reread
+// Recent only when it did.
+func (s *Store) SubscribeCounted(buffer int, match func(Event) bool) (<-chan Record, func(), func() uint64) {
 	ch := make(chan Record, buffer)
+	sub := &subscription{match: match}
 	s.mu.Lock()
-	s.subs[ch] = match
+	s.subs[ch] = sub
 	s.mu.Unlock()
 	var once sync.Once
 	return ch, func() {
-		once.Do(func() {
+			once.Do(func() {
+				s.mu.Lock()
+				delete(s.subs, ch)
+				s.mu.Unlock()
+				close(ch)
+			})
+		}, func() uint64 {
 			s.mu.Lock()
-			delete(s.subs, ch)
-			s.mu.Unlock()
-			close(ch)
-		})
-	}
+			defer s.mu.Unlock()
+			return sub.dropped
+		}
 }
 
 // Close closes the record file.

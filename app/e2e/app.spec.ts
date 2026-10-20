@@ -312,3 +312,30 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(toggle).toBeChecked();
   expect(errors).toEqual([]);
 });
+
+test("a running agent session shows in the inbox and on the PR page until it ends", async ({
+  page,
+}) => {
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-session");
+  await page.goto(await launchURL());
+  const row = page.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Agent running")).toHaveCount(0);
+  // The fixture turns the marker into agent hook events of one session.
+  await writeFile(marker, "running");
+  await expect(row.getByText("Agent running")).toBeVisible({ timeout: 10000 });
+  await page.screenshot({ path: "test-results/live-inbox.png", animations: "disabled" });
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  const live = page.getByRole("region", { name: "Sessions in progress", exact: true });
+  await expect(live.getByText("Claude Code")).toBeVisible();
+  await expect(live.getByText("Working")).toBeVisible();
+  await expect(live.getByText("feature")).toBeVisible();
+  await page.screenshot({ path: "test-results/live-pr.png", animations: "disabled" });
+  await writeFile(marker, "idle");
+  await expect(live.getByText("Waiting for you")).toBeVisible({ timeout: 10000 });
+  await writeFile(marker, "ended");
+  await expect(live).toHaveCount(0, { timeout: 10000 });
+  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Agent")).toHaveCount(0);
+});

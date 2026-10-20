@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ import (
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
@@ -424,15 +426,20 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
-		live := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
+		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
-		liveEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
+		refreshEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Changed: settingsChanged,
+		live := events.liveSessions(registry, discover, server, log)
+		var liveAPI http.Handler
+		if live != nil {
+			liveAPI = live.Handler()
+		}
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -441,8 +448,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
-				if liveEvents != nil {
-					wg.Go(func() { live.Run(ctx, liveEvents) })
+				if refreshEvents != nil {
+					wg.Go(func() { hookRefresh.Run(ctx, refreshEvents) })
 				}
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
@@ -451,6 +458,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				})
 				wg.Go(func() { worker.Run(ctx) })
 				wg.Go(func() { scheduler.Run(ctx) })
+				if live != nil {
+					wg.Go(func() { live.Run(ctx) })
+				}
 				wg.Go(func() {
 					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
 				})
@@ -489,6 +499,21 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 		return nil
 	}
 	return h.service.Methods()
+}
+
+// liveSessions tracks the agent sessions the record's events show, or nothing
+// when the record is not open. It tells the app over the events stream when
+// they change.
+func (h hookEvents) liveSessions(registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
+	if h.service == nil {
+		return nil
+	}
+	return &livesessions.Tracker{
+		Source: h.service.Store,
+		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
+		Notify: func() { _ = server.Publish("live", struct{}{}) },
+		Log:    log,
+	}
 }
 
 // Run drains the spool until ctx ends.
