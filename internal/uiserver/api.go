@@ -29,7 +29,9 @@ type LocalAPI struct {
 	// Automatic serves /api/automatic: the automatic generation preferences
 	// and per-repository status.
 	Automatic http.Handler
-	Changed   func()
+	// Live serves /api/live-sessions: the agent sessions in progress.
+	Live    http.Handler
+	Changed func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -81,6 +83,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
+	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
 	mux.Handle("/api/jobs", provider(a.Jobs, "runner_unavailable"))
 	mux.Handle("/api/jobs/", provider(a.Jobs, "runner_unavailable"))

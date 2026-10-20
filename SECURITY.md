@@ -485,7 +485,8 @@ What it runs while it is up:
   and the latest saved review's checks, conversation and head, with
   conditional requests and backoff (see "What baum sends where");
 - once when it starts, the signed price list download;
-- the record of the events agent and Git hooks report (above);
+- the record of the events agent and Git hooks report (above), from which it
+  also tracks the agent sessions in progress for the app (below);
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
   `baum internal generate` does. Some you confirmed in the app with their price
@@ -616,6 +617,22 @@ The state directory must be mode 0700 and owned by you on Unix; Windows uses a
 protected current-user DACL. Clients never send the capability anywhere: they
 read it from the file and open it on the loopback address it names. SQLite OS
 locking keeps one daemon per user and releases the lock after process exit.
+
+`GET /api/live-sessions` and the `live` event on the events stream show the
+agent sessions in progress, tracked from hook events, behind the same
+authentication, Origin and Host checks, and are limited to `GET`. A session is
+tracked only when its working directory is inside a registered clone, and the
+app receives only: the agent, the session id, the state (running, idle or
+ended), when it started and was last active, the kind of the last event
+(start, prompt, tool, stop or end), and the repository, branch and pull
+request number it links to. The working directory, the transcript path, and
+anything of a prompt or a tool, which hook events never carry, stay out of it,
+and the `live` event carries no data at all: the app reads the list. At most
+32 sessions are held, in memory only, and rebuilt from the local record of
+hook events when the daemon starts; a session silent for two hours is dropped.
+Nothing of it goes to a baum server. A finished session's content is still
+read from the session files on disk, through the redacted transcript routes
+below.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are

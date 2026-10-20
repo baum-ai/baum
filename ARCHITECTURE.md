@@ -2029,9 +2029,106 @@ endpoint.
   `Store.Recent(n)` reads the latest records, oldest first; spooled events
   arrive late, so readers order by `event.time`. `Store.Subscribe(buffer,
   match)` delivers new records matching a filter; a subscriber that falls
-  behind misses records (logged) and can reread `Recent`. This is the
+  behind misses records (logged) and can reread `Recent`; `SubscribeCounted`
+  also reports how many it missed, so it rereads only after a miss. This is the
   interface the live features (in-progress sessions, refresh on session end
-  or push, decision capture) are to build on; none does yet.
+  or push, decision capture) build on. In-progress sessions do (see "Live
+  sessions"); the others are not built yet.
+
+### Live sessions
+
+`internal/livesessions` tracks the agent sessions running on this machine
+from the agent hook events in the record, and serves them to the app. It adds
+to reading session files from disk (see "Session transcripts"), which stays
+the full history and the answer for a session that has ended; it does not
+replace it.
+
+- **Events.** `Tracker.Run` subscribes to `Store.Subscribe` (agent events whose
+  name it knows), rebuilds from `Store.Recent` (every record, filtered to the
+  last two hours and applied in `event.time` order, since a spooled event is
+  recorded late), and follows new events. An event counts when it has an
+  agent, a session id, a time and a directory (`session.cwd`, else `dir`). The
+  agents share baum's event names, which map to a normalised kind:
+  `session-start` to `start`; `user-prompt-submit` and `before-submit-prompt`
+  to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
+  `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
+  agent has, so Claude Code reports subagent and todo activity, Codex tool
+  runs, and Cursor prompts and compaction); `stop` to `stop`; `session-end` to
+  `end`. Other names are ignored. A session is keyed by agent and id; an id
+  over 128 bytes or an agent over 32 is not a session baum's hooks describe and
+  is ignored. An event id is applied once (the last 4096 are remembered).
+- **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
+  is full. The event loop therefore never waits for git: it applies the event
+  at once, and a new session is hidden until a background worker looks up its
+  link (`ResolvePending`; a directory in no registered clone is dropped then).
+  Each sweep (30 s) checks the subscription's drop count
+  (`Store.SubscribeCounted`) and, only when it missed events since the last
+  reconcile, runs `Reconcile`, which rereads `Store.Recent` and applies the
+  events not yet applied, so a dropped `session-end` is found within 30
+  seconds rather than leaving a session waiting until it times out. Without a
+  drop the record is not read, since reading it takes the store's lock, which
+  every hook's event needs too.
+- **States.** `running` after a start, prompt or tool event. `idle` after a
+  `stop`, which agents send at the end of every turn (waiting for the user),
+  and for a running session silent longer than `IdleAfter` (10 minutes): an
+  agent that crashed sends nothing, and one thinking for long reports nothing
+  either. `ended` after `end`. Any later work event makes an idle session
+  running again; an event after the end, newer than it, starts a new run (a
+  resumed session: `started_at` restarts), and an event older than the end is
+  ignored. A late-delivered older event never moves `last_activity_at` back,
+  but an older start can move `started_at` earlier. A session silent for
+  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (10 minutes) after
+  its end, which leaves the app time to see the end. At most `MaxSessions`
+  (32) are held: a new one evicts an ended session, else the least recently
+  active. The clock is injected (`Tracker.Now`); `Sweep` applies the timeouts
+  every 30 seconds and the tracker keeps nothing on disk.
+- **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
+  discovery already have. The directory's repository is found with
+  `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
+  git directory is matched against the registered clones' `common_dir`;
+  a directory in no registered clone, or one whose clone is unavailable, is
+  not tracked at all. The branch is `Repo.CurrentBranch` (empty when
+  detached). The pull request is the open one in the discovery cache
+  (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
+  cache, which refetches responses cached without it) is the branch and that
+  is not a fork's (a fork's branch of the same name is another branch); the
+  newest when several. When no head has the branch's name, the head branch
+  named by the branch's upstream (`branch.<name>.merge`, when its remote is the
+  same repository) is tried, then the pull request whose head commit is the
+  commit checked out, which covers a detached HEAD and a push to a branch of
+  another name. Without one the session is still tracked against its
+  repository and branch, and only a PR page it does not match omits it. The
+  clone list is read at most every 30 seconds and a directory that fails to
+  link is not looked up again for a minute, since listing and opening a clone
+  run git. A session is looked up when it is new and at most every 30 seconds
+  after, since the branch changes while it runs and a pull request appears
+  once pushed; a lookup that fails keeps the last link. Failing to list the
+  registered clones is not retried for 30 seconds either.
+- **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
+  same auth as every application route; a daemon with no record answers
+  `{"available":false,"code":"live_sessions_unavailable"}`) answers
+  `{"sessions":[…]}`, the most recently active first, each
+  `{"agent","session_id","state","started_at","last_activity_at","last_event",
+  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
+  `last_event` is `start`, `prompt`, `tool`, `stop` or `end`, `repository` is
+  `owner/name` in lower case, `branch` is absent when detached and `pr` when
+  the branch has no pull request. The working directory and transcript path
+  stay inside the tracker.
+- **Stream.** The tracker publishes a `live` event with no data (like `index`,
+  a notification the app answers by reading the endpoint) when what the app
+  sees changes, at most once a second, and on a `reset` the app rereads like
+  everything else. A change that only moves `last_activity_at` by less than 30
+  seconds is not one (the endpoint still serves the fresh value), so a session
+  working steadily costs the app a request every 30 seconds or at a state
+  change, not one a second. The app keeps the list it has when a read fails.
+- **App.** The app rereads the list on `live` (and `open` and `reset`). An
+  inbox row shows "Agent running" or "Agent idle" (a count when several) for
+  sessions of its pull request, matched by repository and number across
+  clones; the PR page lists them in a "Sessions in progress" panel, with their
+  agent, state, branch, start and last activity, above the review. Ended
+  sessions are not shown: when one leaves the list the page reads the session
+  list from disk again, where the finished session now is (the existing
+  sessions UI), so nothing is lost if the files were not complete earlier.
 
 ### Transports and control protocol
 

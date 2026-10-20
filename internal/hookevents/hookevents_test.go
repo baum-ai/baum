@@ -765,3 +765,23 @@ func TestHooksStartTheDaemonWithoutTheirTMPDIR(t *testing.T) {
 		}
 	}
 }
+
+func TestSubscribeCountedReportsMissedRecords(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "events"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	_, cancel, dropped := store.SubscribeCounted(1, nil)
+	defer cancel()
+	other, cancelOther, otherDropped := store.SubscribeCounted(8, nil)
+	defer cancelOther()
+	for range 3 {
+		if _, err := store.Add(New(KindAgent, "claude-code", "stop", "/x", "t"), ViaSocket); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if dropped() != 2 || otherDropped() != 0 || len(other) != 3 {
+		t.Fatalf("missed %d and %d, buffered %d", dropped(), otherDropped(), len(other))
+	}
+}
