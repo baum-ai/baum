@@ -110,16 +110,22 @@ func reviewMinutes(root map[string]any) {
 const minReviewMinutes, maxReviewMinutes = 1, 240
 
 // summaryContext tidies the model's summary context so that references never
-// cost a repair: an optional part without text is dropped, and each part's
-// references are cleaned (cleanContextRefs). A missing context or area stays
-// for validation to report.
+// cost a repair: an optional part without text is dropped, references that
+// are not a list become an empty one, and each part's references are cleaned
+// (cleanContextRefs). A missing context or area stays for validation to
+// report.
 func summaryContext(root map[string]any, directory string) {
 	summary, _ := root["summary"].(map[string]any)
 	context, ok := summary["context"].(map[string]any)
 	if !ok {
 		return
 	}
-	checkout := hasCheckout(directory)
+	trees := openCheckoutTrees(directory)
+	defer func() {
+		for _, tree := range trees {
+			tree.Close()
+		}
+	}()
 	for _, name := range contextParts {
 		part, ok := context[name].(map[string]any)
 		if !ok {
@@ -134,9 +140,8 @@ func summaryContext(root map[string]any, directory string) {
 			delete(context, name)
 			continue
 		}
-		if refs, ok := part["refs"].([]any); ok {
-			part["refs"] = cleanContextRefs(refs, directory, checkout)
-		}
+		refs, _ := part["refs"].([]any)
+		part["refs"] = cleanContextRefs(refs, trees)
 	}
 }
 
@@ -144,12 +149,11 @@ var contextParts = []string{"area", "reached_by", "contracts", "related"}
 
 const maxContextRefs = 8
 
-// cleanContextRefs makes each reference's path repository-relative, as the
-// model may write it from the run directory (./head/api/handler.go), and
-// drops a reference that is malformed, leaves the repository or repeats an
-// earlier one. With a checkout it also drops a path neither tree holds, so a
-// reference never names an invented file. It keeps at most maxContextRefs.
-func cleanContextRefs(refs []any, directory string, checkout bool) []any {
+// cleanContextRefs makes each reference's path repository-relative and drops
+// a reference that is malformed, leaves the repository or repeats an earlier
+// one. With checkout trees it also drops a path no tree holds, so a reference
+// never names an invented file. It keeps at most maxContextRefs.
+func cleanContextRefs(refs []any, trees []*os.Root) []any {
 	kept := []any{}
 	type key struct {
 		path   string
@@ -161,13 +165,9 @@ func cleanContextRefs(refs []any, directory string, checkout bool) []any {
 		if !ok {
 			continue
 		}
-		path, _ := ref["path"].(string)
-		path = contextRefPath(path)
-		if path == "" || !filepath.IsLocal(path) || strings.Contains(path, "\\") {
-			continue
-		}
-		path = filepath.ToSlash(filepath.Clean(path))
-		if checkout && !checkoutHolds(directory, path) {
+		written, _ := ref["path"].(string)
+		path, ok := contextRefPath(written, trees)
+		if !ok {
 			continue
 		}
 		var symbol any
@@ -186,9 +186,13 @@ func cleanContextRefs(refs []any, directory string, checkout bool) []any {
 	return kept
 }
 
-// contextRefPath trims a reference path and strips a leading "./" or "/",
-// then a leading checkout tree name when a path remains after it.
-func contextRefPath(path string) string {
+// contextRefPath tidies a reference path: trimmed, without a leading "./" or
+// "/", cleaned, inside the repository and not the repository itself. Without
+// checkout trees the tidied path is kept as written. With them it is kept
+// when a tree holds it; otherwise the model may have written it from the run
+// directory (head/api/handler.go), so a leading tree name is stripped and the
+// rest kept when a tree holds that.
+func contextRefPath(path string, trees []*os.Root) (string, bool) {
 	path = strings.TrimSpace(path)
 	for {
 		trimmed := strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
@@ -197,37 +201,57 @@ func contextRefPath(path string) string {
 		}
 		path = trimmed
 	}
+	if len(trees) == 0 {
+		return localRefPath(path)
+	}
+	if local, ok := localRefPath(path); ok && treesHold(trees, local) {
+		return local, true
+	}
 	for _, tree := range checkoutTrees {
-		if rest, ok := strings.CutPrefix(path, tree+"/"); ok && rest != "" {
-			return rest
+		if rest, ok := strings.CutPrefix(path, tree+"/"); ok {
+			if local, ok := localRefPath(rest); ok && treesHold(trees, local) {
+				return local, true
+			}
 		}
 	}
-	return path
+	return "", false
+}
+
+// localRefPath cleans a repository-relative path, refusing one that is empty,
+// leaves the repository, uses a backslash or names the repository itself.
+func localRefPath(path string) (string, bool) {
+	if path == "" || !filepath.IsLocal(path) || strings.Contains(path, "\\") {
+		return "", false
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	return path, path != "."
 }
 
 // checkoutTrees are the run directory's checkout trees, as agent.sourceContext
 // reads them.
 var checkoutTrees = []string{"head", "merge-base"}
 
-// hasCheckout reports whether the run directory holds a checkout tree. A
+// openCheckoutTrees opens the run directory's checkout trees that exist. A
 // stack review's directory, for one, holds none.
-func hasCheckout(directory string) bool {
+func openCheckoutTrees(directory string) []*os.Root {
 	if directory == "" {
-		return false
+		return nil
 	}
+	var trees []*os.Root
 	for _, tree := range checkoutTrees {
-		if info, err := os.Stat(filepath.Join(directory, tree)); err == nil && info.IsDir() {
-			return true
+		if root, err := os.OpenRoot(filepath.Join(directory, tree)); err == nil {
+			trees = append(trees, root)
 		}
 	}
-	return false
+	return trees
 }
 
-// checkoutHolds reports whether either checkout tree has a file or directory
-// at the repository-relative path.
-func checkoutHolds(directory, path string) bool {
-	for _, tree := range checkoutTrees {
-		if info, err := os.Stat(filepath.Join(directory, tree, path)); err == nil && (info.Mode().IsRegular() || info.IsDir()) {
+// treesHold reports whether a checkout tree has a file or directory at the
+// repository-relative path. The trees are roots, so a symbolic link that
+// leads out of its tree holds nothing.
+func treesHold(trees []*os.Root, path string) bool {
+	for _, tree := range trees {
+		if info, err := tree.Stat(filepath.FromSlash(path)); err == nil && (info.Mode().IsRegular() || info.IsDir()) {
 			return true
 		}
 	}

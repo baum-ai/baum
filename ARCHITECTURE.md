@@ -287,8 +287,9 @@ The stored contract stays strict; leniency exists only in derived views.
   generated before it existed, and required in the strict authored contract,
   so its absence is a repair finding. Normalisation drops optional parts
   without text and makes reference paths repository-relative; with a
-  checkout in the run directory it drops paths neither tree holds, and it
-  never spends a repair on a reference.
+  checkout in the run directory it drops paths that are neither a file nor
+  a directory inside either tree, and it never spends a repair on a
+  reference.
 
 ### History
 

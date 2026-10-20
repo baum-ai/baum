@@ -88,7 +88,7 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
 	checkout := t.TempDir()
-	for _, file := range []string{"head/api/handler.go", "merge-base/queue/legacy.go"} {
+	for _, file := range []string{"head/api/handler.go", "merge-base/queue/legacy.go", "head/head/index.js"} {
 		path := filepath.Join(checkout, file)
 		checkNoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		checkNoError(t, os.WriteFile(path, []byte("package x\n"), 0o644))
@@ -106,6 +106,10 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 			ref("../secret.txt", nil),
 			ref("head/../../secret.txt", nil),
 			ref("head/", nil),
+			ref("head/index.js", nil),
+			ref(".", nil),
+			ref("api/..", nil),
+			ref("head/.", nil),
 			map[string]any{"symbol": "NoPath"},
 			"api/handler.go",
 		}},
@@ -123,15 +127,20 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 			ref("api/handler.go", nil),
 			ref("queue/legacy.go", nil),
 			ref("api", nil),
+			// The repository has its own head directory, holding index.js.
+			ref("head", nil),
+			ref("head/index.js", nil),
 		}},
-		// A stack review's directory holds no checkout: paths are only tidied.
+		// A stack review's directory holds no checkout: paths are only tidied,
+		// and a leading tree name is the repository's own directory.
 		{"without a checkout", "", []any{
 			ref("api/handler.go", "Handler"),
-			ref("api/handler.go", nil),
-			ref("queue/legacy.go", nil),
+			ref("head/api/handler.go", nil),
+			ref("merge-base/queue/legacy.go", nil),
 			ref("api", nil),
 			ref("api/missing.go", nil),
 			ref("head", nil),
+			ref("head/index.js", nil),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,6 +161,49 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 				t.Fatalf("context = %v\nwant %v", got, want)
 			}
 		})
+	}
+}
+
+// A symbolic link counts only while it stays inside its checkout tree.
+func TestSummaryContextRefsStayInsideTheCheckout(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	checkout := t.TempDir()
+	checkNoError(t, os.MkdirAll(filepath.Join(checkout, "head", "api"), 0o755))
+	checkNoError(t, os.WriteFile(filepath.Join(checkout, "head", "api", "handler.go"), []byte("package api\n"), 0o644))
+	checkNoError(t, os.WriteFile(filepath.Join(checkout, "secret.txt"), []byte("outside"), 0o644))
+	for link, target := range map[string]string{"inside": "api", "escape": filepath.Join("..", "secret.txt"), "absolute": filepath.Join(checkout, "secret.txt")} {
+		if err := os.Symlink(target, filepath.Join(checkout, "head", link)); err != nil {
+			t.Skipf("symbolic links are unavailable: %v", err)
+		}
+	}
+	ref := func(path string) map[string]any { return map[string]any{"path": path, "symbol": nil} }
+	context := map[string]any{"area": map[string]any{"text": "The API.", "refs": []any{
+		ref("inside"), ref("inside/handler.go"), ref("escape"), ref("head/escape"), ref("absolute"),
+	}}}
+	prepared, findings := v.Prepare(withContext(t, context), contextBundle(), checkout)
+	checkEqual(t, "", findings)
+	out, err := decodeObject(prepared, "prepared")
+	checkNoError(t, err)
+	kept := out["summary"].(map[string]any)["context"].(map[string]any)["area"].(map[string]any)["refs"].([]any)
+	checkEqual(t, []any{ref("inside"), ref("inside/handler.go")}, kept)
+}
+
+// References that are not a list are emptied rather than repaired.
+func TestSummaryContextReplacesRefsThatAreNotAList(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	context := map[string]any{
+		"area":      map[string]any{"text": "The API.", "refs": "api/handler.go"},
+		"contracts": map[string]any{"text": "The handler's response.", "refs": map[string]any{"path": "api/handler.go"}},
+	}
+	prepared, findings := v.Prepare(withContext(t, context), contextBundle(), "")
+	checkEqual(t, "", findings)
+	out, err := decodeObject(prepared, "prepared")
+	checkNoError(t, err)
+	got := out["summary"].(map[string]any)["context"].(map[string]any)
+	for _, name := range []string{"area", "contracts"} {
+		checkEqual(t, []any{}, got[name].(map[string]any)["refs"])
 	}
 }
 
