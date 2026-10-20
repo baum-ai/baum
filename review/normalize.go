@@ -258,7 +258,7 @@ func openCheckout(directory string, open func(string) (*os.Root, error)) checkou
 
 func (c checkout) close() {
 	for _, tree := range c.trees {
-		tree.Close()
+		_ = tree.Close()
 	}
 }
 
