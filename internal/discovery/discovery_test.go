@@ -78,7 +78,7 @@ func recordedFixture() *fixture {
 		"/user":                           `{"login":"viewer"}`,
 		"/user/teams?per_page=100&page=1": `[{"id":42}]`,
 		"/repos/acme/app/pulls?state=open&per_page=100&page=1": `[
- {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
+ {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
  {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
  {"number":4,"title":"Unknown permissions","user":{"login":"unknown"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
@@ -110,7 +110,7 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		t.Fatalf("snapshot %#v", snapshot)
 	}
 	prs := snapshot.PullRequests
-	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
+	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
 		t.Fatalf("authored flags %#v", prs[0])
 	}
 	if !prs[1].ReviewRequestedFromMe || !prs[1].Fork || prs[1].AuthorHasWrite == nil || !*prs[1].AuthorHasWrite {
@@ -439,5 +439,83 @@ func TestCachedNeverWaitsForNetworkPoll(t *testing.T) {
 		close(release)
 		<-done
 		t.Fatal("cached inbox blocked on network poll")
+	}
+}
+
+func TestPollNowSkipsTheDeadlineButNotTheBudget(t *testing.T) {
+	f := recordedFixture()
+	s, _ := service(t, f)
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	f.conditional = true
+	before := len(f.requests)
+	got, err := s.PollNow(context.Background(), testRepo)
+	if err != nil || len(f.requests) == before || len(got.PullRequests) != 4 || got.Stale {
+		t.Fatalf("poll now %#v %v requests=%d", got, err, len(f.requests)-before)
+	}
+	for _, request := range f.requests[before:] {
+		if request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
+			t.Errorf("unconditional %s", request.URL)
+		}
+	}
+	f.conditional = false
+	f.limited = true
+	if _, err := s.PollNow(context.Background(), testRepo); !errors.Is(err, errRateLimit) {
+		t.Fatalf("limited poll: %v", err)
+	}
+	before = len(f.requests)
+	if _, err := s.PollNow(context.Background(), testRepo); !errors.Is(err, errRateLimit) || len(f.requests) != before {
+		t.Fatalf("exhausted budget polled again: %v requests=%d", err, len(f.requests)-before)
+	}
+}
+
+// A cache written before pull requests kept their head branch reads every
+// response in full once, so a 304 cannot keep the branch unknown.
+func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
+	f := recordedFixture()
+	s, now := service(t, f)
+	first, err := s.Poll(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := repositoryCachePath(t, s)
+	cache, err := load(path)
+	if err != nil || cache.Format != cacheFormat {
+		t.Fatalf("format %d %v", cache.Format, err)
+	}
+	cache.Format = 0
+	for key, response := range cache.Responses {
+		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"my-draft",`, ""))
+		cache.Responses[key] = response
+	}
+	if err := save(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	f.conditional = true
+	*now = first.NextPoll
+	before := len(f.requests)
+	got, err := s.Poll(context.Background(), testRepo)
+	if err != nil || got.PullRequests[0].HeadRef != "my-draft" {
+		t.Fatalf("upgraded poll %#v %v", got, err)
+	}
+	for _, request := range f.requests[before:] {
+		if request.Header.Get("If-None-Match") != "" {
+			t.Errorf("older format reused %s", request.URL)
+		}
+	}
+	*now = got.NextPoll
+	before = len(f.requests)
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	conditional := 0
+	for _, request := range f.requests[before:] {
+		if request.Header.Get("If-None-Match") != "" {
+			conditional++
+		}
+	}
+	if conditional == 0 {
+		t.Fatal("upgraded cache not conditional")
 	}
 }
