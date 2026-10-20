@@ -68,8 +68,14 @@ function selectedHunk(hunk: IndexedHunk, lines?: [number, number]): CodeDiffHunk
 }
 
 /** Loads one changed path's patch as a stored review version compared it,
- *  or null when that version changed no such text file. */
-export type HunkPatchSource = (path: string, version: number) => Promise<string | null>;
+ *  or null when that version changed no such text file. `hunk` is the cited
+ *  hunk's id, for a source that reads it from the review holding it, as a
+ *  stack review's member does. */
+export type HunkPatchSource = (
+  path: string,
+  version: number,
+  hunk: string,
+) => Promise<string | null>;
 
 const HunkPatchContext = createContext<HunkPatchSource | null>(null);
 
@@ -135,7 +141,7 @@ export function HunkEvidence({
     hunk?: IndexedHunk;
     diff?: CodeDiffHunk;
     historical: boolean;
-    patch?: { key: string; path: string; version: number; state?: LoadedPatch };
+    patch?: { key: string; path: string; version: number; hunk: string; state?: LoadedPatch };
   }> = [];
   for (const anchor of anchors) {
     if (anchor.type !== "hunk") continue;
@@ -150,7 +156,12 @@ export function HunkEvidence({
     const version = historicalHunk ? historicalVersion : document.review.version;
     const patch =
       hunk && !hunk.diff && patchSource && version !== undefined
-        ? { key: `${documentKey}:${version}:${hunk.path}`, path: hunk.path, version }
+        ? {
+            key: `${documentKey}:${version}:${hunk.path}:${hunk.id}`,
+            path: hunk.path,
+            version,
+            hunk: hunk.id,
+          }
         : undefined;
     const state = patch ? patches[patch.key] : undefined;
     const loaded =
@@ -190,7 +201,7 @@ export function HunkEvidence({
       return next;
     });
     for (const item of pending) {
-      void patchSource(item.path, item.version).then(
+      void patchSource(item.path, item.version, item.hunk).then(
         (patch) =>
           setPatches((current) => ({ ...current, [item.key]: { status: "ready", patch } })),
         () => setPatches((current) => ({ ...current, [item.key]: { status: "failed" } })),

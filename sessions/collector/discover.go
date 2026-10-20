@@ -46,6 +46,10 @@ type FindOptions struct {
 	// Since skips Claude Code transcripts last modified before it without
 	// opening them. Zero keeps every transcript.
 	Since time.Time
+	// ExcludeNestedClones drops sessions that ran in an independent clone
+	// nested inside one of the roots: they belong to that clone's own
+	// repository. Uploads set it, so a session is sent to one repository only.
+	ExcludeNestedClones bool
 }
 
 // FindSessions returns the local Claude Code, Codex, and Cursor sessions relevant to
@@ -116,9 +120,16 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	for _, root := range roots {
 		worktrees = append(worktrees, rememberedWorktrees(root)...)
 	}
-	for i := range sessions {
-		sessions[i].RepoRoot, sessions[i].WorktreeRoot = sessionRoots(sessions[i].WorkingDir, roots, worktrees)
+	kept := sessions[:0]
+	for _, session := range sessions {
+		repoRoot, worktreeRoot := sessionRoots(session.WorkingDir, roots, worktrees)
+		if opts.ExcludeNestedClones && inNestedClone(session.WorkingDir, worktreeRoot) {
+			continue
+		}
+		session.RepoRoot, session.WorktreeRoot = repoRoot, worktreeRoot
+		kept = append(kept, session)
 	}
+	sessions = kept
 	sort.Slice(sessions, func(i, j int) bool {
 		if !sessions[i].ModifiedAt.Equal(sessions[j].ModifiedAt) {
 			return sessions[i].ModifiedAt.Before(sessions[j].ModifiedAt)
@@ -160,6 +171,39 @@ func sessionRoots(workingDir string, roots, worktrees []string) (repoRoot, workt
 		return root, ""
 	}
 	return "", ""
+}
+
+// inNestedClone reports whether a session ran inside an independent clone that
+// sits within a root: a live directory whose nearest checkout is below the root
+// and is its own repository. It has a .git directory, or a .git file pointing
+// outside any worktrees/ administrative directory, as a submodule's does
+// (gitdir: ../.git/modules/x); a linked worktree's .git file points into
+// <common>/worktrees/<name>. A directory that is gone cannot be told apart from
+// a worktree git forgot, so it stays with the outer checkout.
+func inNestedClone(workingDir, nearest string) bool {
+	if nearest == "" {
+		return false
+	}
+	if _, err := os.Stat(workingDir); err != nil {
+		return false
+	}
+	gitPath := filepath.Join(nearest, ".git")
+	info, err := os.Lstat(gitPath)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return true
+	}
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return false
+	}
+	gitdir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return false
+	}
+	return filepath.Base(filepath.Dir(filepath.Clean(strings.TrimSpace(gitdir)))) != "worktrees"
 }
 
 // rememberedWorktrees is where root's git worktrees lived, deleted ones
