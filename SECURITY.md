@@ -123,9 +123,14 @@ or runs a program. Because whoever made the clone controls that bookkeeping,
 an entry is used only when the worktree's own `.git` file points back at this
 repository (or its directory is gone), and never when it is the file system
 root, your home directory, or a directory containing the repository, so a
-planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
-the checkpoint branch already in your clone, in the private repository; a
-checkpoint you have not fetched is not fetched for it.
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up in the
+Entire checkpoints already in your clone: the per-checkpoint refs
+`refs/entire/checkpoints/*` and the checkpoint branch `entire/checkpoints/v1`,
+both read in the private repository. A checkpoint you have not fetched is not
+fetched for it; the warning says so and names the command you can run yourself,
+`git fetch <remote> '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'` (and, for a
+12-hex id, `git fetch <remote> entire/checkpoints/v1`), with `<remote>` the clone's
+remote for the repository when it is known.
 
 ## Agent isolation
 
