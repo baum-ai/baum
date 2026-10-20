@@ -58,9 +58,26 @@ struct Saved {
     /// The user finished first-run setup, whatever they chose.
     #[serde(default)]
     onboarded: bool,
-    /// The command the app installed.
+    /// Every link the app installed and has not removed yet: usually one,
+    /// more when removing an earlier one failed (a cancelled password
+    /// prompt), so that Remove can try it again.
     #[serde(default)]
+    commands: Vec<Record>,
+    /// Where `setup.json` files of the first release kept their one record;
+    /// read, moved into `commands` and not written again.
+    #[serde(default, skip_serializing)]
     command: Option<Record>,
+}
+
+impl Saved {
+    fn migrate(mut self) -> Saved {
+        if let Some(record) = self.command.take()
+            && !self.commands.contains(&record)
+        {
+            self.commands.insert(0, record);
+        }
+        self
+    }
 }
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -74,8 +91,54 @@ fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
 fn load_from(path: &Path) -> Saved {
     fs::read(path)
         .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
+        .and_then(|data| serde_json::from_slice::<Saved>(&data).ok())
+        .map(Saved::migrate)
         .unwrap_or_default()
+}
+
+/// After installing `new`, removes the app's other recorded links (`remove`
+/// is `install::uninstall`) and returns the records to keep, `new` first,
+/// with what happened. A link that could not be removed stays recorded.
+fn after_install(
+    previous: Vec<Record>,
+    new: Record,
+    remove: impl Fn(&Record) -> Result<String, String>,
+) -> (Vec<Record>, Vec<String>) {
+    let mut kept = vec![new.clone()];
+    let mut lines = Vec::new();
+    for record in previous.into_iter().filter(|r| r.link != new.link) {
+        match remove(&record) {
+            Ok(message) => lines.push(message),
+            Err(e) => {
+                lines.push(format!(
+                    "The app's earlier link at {} stays ({e}); Remove tries it again.",
+                    record.link.display()
+                ));
+                kept.push(record);
+            }
+        }
+    }
+    (kept, lines)
+}
+
+/// Removes every recorded link; returns those that could not be removed,
+/// which stay recorded, with what happened.
+fn remove_all(
+    records: Vec<Record>,
+    remove: impl Fn(&Record) -> Result<String, String>,
+) -> (Vec<Record>, Vec<String>) {
+    let mut left = Vec::new();
+    let mut lines = Vec::new();
+    for record in records {
+        match remove(&record) {
+            Ok(message) => lines.push(message),
+            Err(e) => {
+                lines.push(format!("{} stays: {e}", record.link.display()));
+                left.push(record);
+            }
+        }
+    }
+    (left, lines)
 }
 
 fn save_to(path: &Path, saved: &Saved) -> Result<(), String> {
@@ -283,7 +346,7 @@ pub struct Outcome {
 fn command_status(app: &AppHandle, cli: &Path) -> install::Status {
     let login = login_path(cli);
     let home = app.path().home_dir().unwrap_or_default();
-    install::status(target(app, cli), &login, load(app).command, &home)
+    install::status(target(app, cli), &login, load(app).commands, &home)
 }
 
 /// The login shell's PATH and the baum on it, as the bundled baum reads it.
@@ -373,19 +436,14 @@ pub async fn install_command(app: AppHandle, replace: Option<PathBuf>) -> Result
         let record = install::install(&plan, &target, replace.as_deref(), &SystemPrompt)?;
         let mut saved = load(&app);
         let mut lines = installed_lines(&plan, &record);
-        // A link the app made elsewhere earlier, which a baum earlier on the
-        // PATH hid, is not left behind unrecorded.
-        if let Some(previous) = saved.command.take().filter(|p| p.link != record.link) {
-            let home = app.path().home_dir().unwrap_or_default();
-            match install::uninstall(&previous, Some(target.as_path()), &home, &SystemPrompt) {
-                Ok(message) => lines.push(message),
-                Err(e) => lines.push(format!(
-                    "The app's earlier link at {} stays: {e}",
-                    previous.link.display()
-                )),
-            }
-        }
-        saved.command = Some(record);
+        // Links the app made elsewhere earlier (a baum earlier on the PATH
+        // hid them) are removed, and stay recorded if that fails.
+        let home = app.path().home_dir().unwrap_or_default();
+        let (kept, removed) = after_install(std::mem::take(&mut saved.commands), record, |r| {
+            install::uninstall(r, Some(target.as_path()), &home, &SystemPrompt)
+        });
+        lines.extend(removed);
+        saved.commands = kept;
         save(&app, &saved)?;
         Ok(Outcome { ok: true, lines })
     })
@@ -420,22 +478,22 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
         let mut saved = load(&app);
-        let Some(record) = saved.command.clone() else {
+        if saved.commands.is_empty() {
             return Ok(Outcome {
                 ok: true,
                 lines: vec!["The app has not installed a baum command.".into()],
             });
-        };
-        // The copy the app runs stays: only the link goes.
+        }
+        // The copy the app runs stays: only the links go.
         let current = cli().and_then(|cli| target(&app, &cli)).ok();
         let home = app.path().home_dir().unwrap_or_default();
-        let message = install::uninstall(&record, current.as_deref(), &home, &SystemPrompt)?;
-        saved.command = None;
+        let (left, lines) = remove_all(std::mem::take(&mut saved.commands), |r| {
+            install::uninstall(r, current.as_deref(), &home, &SystemPrompt)
+        });
+        let ok = left.is_empty();
+        saved.commands = left;
         save(&app, &saved)?;
-        Ok(Outcome {
-            ok: true,
-            lines: vec![message],
-        })
+        Ok(Outcome { ok, lines })
     })
     .await
 }
@@ -564,12 +622,8 @@ mod tests {
         assert_eq!(load_from(&path), Saved::default());
         let saved = Saved {
             onboarded: true,
-            command: Some(Record {
-                link: "/home/user/.local/bin/baum".into(),
-                target: "/Applications/baum.app/Contents/MacOS/baum".into(),
-                backup: None,
-                admin: false,
-            }),
+            commands: vec![record("/home/user/.local/bin/baum")],
+            command: None,
         };
         save_to(&path, &saved).unwrap();
         assert_eq!(load_from(&path), saved);
@@ -581,6 +635,77 @@ mod tests {
         }
         fs::write(&path, "not json").unwrap();
         assert_eq!(load_from(&path), Saved::default());
+    }
+
+    fn record(link: &str) -> Record {
+        Record {
+            link: link.into(),
+            target: "/Applications/baum.app/Contents/MacOS/baum".into(),
+            backup: None,
+            admin: false,
+        }
+    }
+
+    /// A setup.json of the first release, with one `command`, reads as a
+    /// list and is written back as one.
+    #[test]
+    fn an_older_setup_file_is_migrated() {
+        let path = temp_dir("migrate").join("setup.json");
+        fs::write(
+            &path,
+            r#"{"onboarded":true,"command":{"link":"/usr/local/bin/baum","target":"/Applications/baum.app/Contents/MacOS/baum","backup":"/usr/local/bin/baum.replaced-by-baum-app","admin":true}}"#,
+        )
+        .unwrap();
+        let saved = load_from(&path);
+        assert!(saved.onboarded && saved.command.is_none());
+        assert_eq!(saved.commands.len(), 1);
+        assert_eq!(saved.commands[0].link, PathBuf::from("/usr/local/bin/baum"));
+        assert!(saved.commands[0].admin && saved.commands[0].backup.is_some());
+        save_to(&path, &saved).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("\"commands\"") && !written.contains("\"command\""),
+            "{written}"
+        );
+        assert_eq!(load_from(&path), saved);
+    }
+
+    /// An earlier link that cannot be removed (a cancelled password prompt)
+    /// stays recorded beside the new one, and Remove tries every one.
+    #[test]
+    fn earlier_links_stay_recorded_until_they_are_removed() {
+        let old = record("/usr/local/bin/baum");
+        let other = record("/opt/tools/bin/baum");
+        let new = record("/home/user/.local/bin/baum");
+        let cancelled = |r: &Record| {
+            if r.link == old.link {
+                Err("Cancelled.".to_string())
+            } else {
+                Ok(format!("Removed {}.", r.link.display()))
+            }
+        };
+        let (kept, lines) = after_install(
+            vec![old.clone(), other.clone(), new.clone()],
+            new.clone(),
+            cancelled,
+        );
+        assert_eq!(kept, vec![new.clone(), old.clone()]);
+        assert!(
+            lines.iter().any(
+                |l| l.contains("/usr/local/bin/baum stays (Cancelled.); Remove tries it again")
+            ),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l == "Removed /opt/tools/bin/baum."),
+            "{lines:?}"
+        );
+
+        let (left, lines) = remove_all(kept.clone(), cancelled);
+        assert_eq!(left, vec![old.clone()]);
+        assert_eq!(lines.len(), 2);
+        let (left, _) = remove_all(left, |_| Ok(String::new()));
+        assert!(left.is_empty());
     }
 
     #[test]

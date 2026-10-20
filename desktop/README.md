@@ -158,6 +158,12 @@ a link only when the record names the baum the app runs now. Remove deletes only
 still points where the app put it (a link someone changed since is left
 alone, and the screen names a backup still beside it), and puts back a baum
 it had replaced; on Windows it takes the directory off the user `PATH`.
+`setup.json` lists every link the app made and has not removed: installing
+in a new place removes the earlier one, and one that cannot be removed (a
+cancelled password prompt) stays listed, shown on the screen, until Remove
+succeeds for it. Updating the app's own link keeps the backup of the baum it
+replaced, so Remove still puts that back. (A `setup.json` of the first
+release, with a single `command`, is read as a one-item list.)
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only baum's own entries.
 

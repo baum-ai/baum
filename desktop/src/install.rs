@@ -92,6 +92,9 @@ pub struct Plan {
     pub on_path: bool,
     /// Why the app will not install there, and what the user can do instead.
     pub blocked: Option<String>,
+    /// Updating the app's own link keeps the backup of the baum it replaced
+    /// back then, so that removing the command still puts that one back.
+    pub kept_backup: Option<PathBuf>,
 }
 
 /// The command's state, for the setup screen.
@@ -499,7 +502,7 @@ struct Rules<'a> {
 pub fn status(
     target: Result<PathBuf, String>,
     login: &LoginPath,
-    record: Option<Record>,
+    records: Vec<Record>,
     home: &Path,
 ) -> Status {
     let elevate = |dir: &Path| may_elevate(dir, home);
@@ -510,17 +513,27 @@ pub fn status(
         writable: &writable,
         may_elevate: &elevate,
     };
-    status_with(target, login, record, &rules)
+    status_with(target, login, records, &rules)
 }
 
 #[cfg(unix)]
 fn status_with(
     target: Result<PathBuf, String>,
     login: &LoginPath,
-    record: Option<Record>,
+    records: Vec<Record>,
     rules: &Rules,
 ) -> Status {
-    let record = record.filter(|r| check_shape(r).is_ok() && holds(r));
+    let records: Vec<Record> = records
+        .into_iter()
+        .filter(|r| check_shape(r).is_ok() && holds(r))
+        .collect();
+    // The record of the baum the hooks run, else any.
+    let record = login
+        .baum
+        .as_ref()
+        .and_then(|found| records.iter().find(|r| r.link == found.path))
+        .or(records.first())
+        .cloned();
     let mut status = Status {
         target: None,
         unavailable: None,
@@ -543,7 +556,7 @@ fn status_with(
         .as_ref()
         .is_some_and(|found| same_file(&found.resolved, &target));
     if !status.installed {
-        status.plan = Some(plan(login, status.record.as_ref(), rules));
+        status.plan = Some(plan(login, &records, rules));
     }
     status.target = Some(target);
     status
@@ -559,13 +572,13 @@ fn status_with(
 /// user could rewrite it, and it would then run for every user and under
 /// sudo. Such a link goes in `~/.local/bin` instead.
 #[cfg(unix)]
-fn plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan {
-    let candidate = first_plan(login, record, rules);
+fn plan(login: &LoginPath, records: &[Record], rules: &Rules) -> Plan {
+    let candidate = first_plan(login, records, rules);
     if !candidate.admin || !under(rules.target, rules.home) {
         return candidate;
     }
     let local = rules.home.join(".local/bin");
-    let mut plan = plan_in(&local, login, record, rules);
+    let mut plan = plan_in(&local, login, records, rules);
     if let Some(found) = &login.baum {
         let position = |dir: &Path| login.path.iter().position(|e| e == dir);
         let found_dir = found.path.parent().unwrap_or(Path::new("/"));
@@ -582,12 +595,14 @@ fn plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan {
 }
 
 #[cfg(unix)]
-fn first_plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan {
+fn first_plan(login: &LoginPath, records: &[Record], rules: &Rules) -> Plan {
     if let Some(found) = &login.baum {
         let dir = found.path.parent().unwrap_or(Path::new("/"));
         let managed = package_managed(found);
         // The app's own earlier link is updated without asking.
-        let ours = !managed && record.is_some_and(|r| r.link == found.path);
+        let ours = (!managed)
+            .then(|| records.iter().find(|r| r.link == found.path))
+            .flatten();
         let admin = !(rules.writable)(dir);
         let blocked = if managed {
             Some(format!(
@@ -599,11 +614,12 @@ fn first_plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan
         };
         return Plan {
             link: found.path.clone(),
-            replaces: (!ours).then(|| found.clone()),
-            backup: (!ours).then(|| backup_path(&found.path)),
+            replaces: ours.is_none().then(|| found.clone()),
+            backup: ours.is_none().then(|| backup_path(&found.path)),
             admin,
             on_path: true,
             blocked,
+            kept_backup: ours.and_then(|r| r.backup.clone()),
         };
     }
     let personal = [rules.home.join(".local/bin"), rules.home.join("bin")];
@@ -616,19 +632,19 @@ fn first_plan(login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan
         .cloned()
         .or_else(|| on_path(&system).then(|| system.clone()))
         .unwrap_or_else(|| personal[0].clone());
-    plan_in(&dir, login, record, rules)
+    plan_in(&dir, login, records, rules)
 }
 
 /// A link in `dir`.
 #[cfg(unix)]
-fn plan_in(dir: &Path, login: &LoginPath, record: Option<&Record>, rules: &Rules) -> Plan {
+fn plan_in(dir: &Path, login: &LoginPath, records: &[Record], rules: &Rules) -> Plan {
     let link = dir.join(NAME);
+    let ours = records.iter().find(|r| r.link == link);
     // Something already there that is not on the PATH as a working baum: a
     // broken link (the app it pointed into was deleted) is replaced, anything
     // else only after confirmation.
-    let occupied = fs::symlink_metadata(&link).is_ok()
-        && fs::metadata(&link).is_ok()
-        && !record.is_some_and(|r| r.link == link);
+    let occupied =
+        fs::symlink_metadata(&link).is_ok() && fs::metadata(&link).is_ok() && ours.is_none();
     let admin = !(rules.writable)(dir);
     Plan {
         replaces: occupied.then(|| Found {
@@ -640,6 +656,7 @@ fn plan_in(dir: &Path, login: &LoginPath, record: Option<&Record>, rules: &Rules
         admin,
         on_path: login.path.iter().any(|entry| entry == dir),
         blocked: refuse_elevation(dir, admin, rules),
+        kept_backup: ours.and_then(|r| r.backup.clone()),
         link,
     }
 }
@@ -719,10 +736,13 @@ pub fn install(
         ));
     }
     let dir = plan.link.parent().ok_or("The link has no directory.")?;
+    // A baum this install moves aside now, or the one the app's own link
+    // replaced before and still keeps.
+    let moving = plan.replaces.as_ref().and(plan.backup.clone());
     let record = Record {
         link: plan.link.clone(),
         target: target.to_path_buf(),
-        backup: plan.replaces.as_ref().and(plan.backup.clone()),
+        backup: moving.clone().or_else(|| plan.kept_backup.clone()),
         admin: plan.admin,
     };
     check_shape(&record)?;
@@ -733,12 +753,12 @@ pub fn install(
             &[
                 dir,
                 &record.link,
-                record.backup.as_deref().unwrap_or(&none),
+                moving.as_deref().unwrap_or(&none),
                 target,
             ],
         )?;
     } else {
-        link(dir, &record.link, record.backup.as_deref(), target).map_err(|e| {
+        link(dir, &record.link, moving.as_deref(), target).map_err(|e| {
             format!(
                 "Cannot install the baum command at {}: {e}",
                 record.link.display()
@@ -970,7 +990,7 @@ impl Elevate for SystemPrompt {
 pub fn status(
     target: Result<PathBuf, String>,
     login: &LoginPath,
-    record: Option<Record>,
+    records: Vec<Record>,
     _home: &Path,
 ) -> Status {
     let mut status = Status {
@@ -981,7 +1001,7 @@ pub fn status(
         plan: None,
         path_error: login.error.clone(),
         found: login.baum.clone(),
-        record,
+        record: None,
     };
     let target = match target {
         Ok(target) => target,
@@ -999,7 +1019,7 @@ pub fn status(
     if status.installed {
         status.shadowed = status.found.clone().filter(|f| !runs_target(f));
     }
-    status.record = status.record.filter(|r| listed && r.link == dir);
+    status.record = records.into_iter().find(|r| listed && r.link == dir);
     if !status.installed {
         status.plan = Some(Plan {
             link: dir,
@@ -1008,6 +1028,7 @@ pub fn status(
             admin: false,
             on_path: true,
             blocked: None,
+            kept_backup: None,
         });
     }
     status.target = Some(target);
@@ -1187,7 +1208,7 @@ mod tests {
             status(
                 Ok(target.to_path_buf()),
                 &self.login(path),
-                record,
+                record.into_iter().collect(),
                 &self.home,
             )
         }
@@ -1203,7 +1224,7 @@ mod tests {
                 writable: &writable,
                 may_elevate: &elevate,
             };
-            status_with(Ok(self.app.clone()), &self.login(path), None, &rules)
+            status_with(Ok(self.app.clone()), &self.login(path), Vec::new(), &rules)
         }
     }
 
@@ -1600,6 +1621,36 @@ mod tests {
         }
     }
 
+    /// After the app replaced a go-installed baum and then moved, updating
+    /// its link keeps the backup, so removing the command still puts the
+    /// original back.
+    #[test]
+    fn updating_the_apps_link_keeps_the_backup_of_what_it_replaced() {
+        let w = World::new("keep-backup");
+        let go_bin = w.home.join("go/bin");
+        let theirs = go_bin.join("baum");
+        executable(&theirs, "go");
+        let path = [go_bin.clone()];
+        let plan = w.status(&path, None).plan.unwrap();
+        let first = install(&plan, &w.app, Some(&theirs), &NoPrompt).unwrap();
+        let backup = first.backup.clone().unwrap();
+
+        let moved = w.root.join("Moved/baum.app/Contents/MacOS/baum");
+        executable(&moved, "moved");
+        let status = w.status_for(&moved, &path, Some(first));
+        let plan = status.plan.unwrap();
+        assert!(plan.replaces.is_none() && plan.backup.is_none(), "{plan:?}");
+        assert_eq!(plan.kept_backup.as_ref(), Some(&backup));
+        let updated = install(&plan, &moved, None, &NoPrompt).unwrap();
+        assert_eq!(updated.backup.as_ref(), Some(&backup));
+        assert_eq!(fs::read_link(&theirs).unwrap(), moved);
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "#!/bin/sh\necho go\n");
+
+        uninstall(&updated, Some(&moved), &w.home, &NoPrompt).unwrap();
+        assert_eq!(fs::read_to_string(&theirs).unwrap(), "#!/bin/sh\necho go\n");
+        assert!(fs::symlink_metadata(&backup).is_err());
+    }
+
     /// The app's own link to an older copy of the app is updated in place
     /// without confirmation.
     #[test]
@@ -1762,7 +1813,7 @@ mod tests {
                 baum,
                 error: None,
             };
-            status_with(Ok(copy.clone()), &login, None, &rules)
+            status_with(Ok(copy.clone()), &login, Vec::new(), &rules)
         };
         // Only /usr/local/bin on the PATH: ~/.local/bin, not on the PATH.
         let plan = status(&[PathBuf::from("/usr/local/bin")], None)
