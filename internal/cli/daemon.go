@@ -110,7 +110,7 @@ is already running.`,
 			return shellenv.PrintEnv(cmd.OutOrStdout(), args[0])
 		},
 	}
-	cmd.AddCommand(ensure, status, stop, run, printEnv)
+	cmd.AddCommand(ensure, status, stop, run, printEnv, newLoginPathCommand())
 	return cmd
 }
 

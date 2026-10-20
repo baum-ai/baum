@@ -163,8 +163,13 @@ handshake, in [`apiclient`](../apiclient).
   `config.toml`, which baum leaves alone), for the detected agents or those
   named with `--agent`; `uninstall --user` removes them. The editing lives in
   [`userhooks`](../userhooks/userhooks.go), the events, matchers, timeouts and
-  command in [`agenthooks`](../agenthooks/userwide.go). The desktop app's
-  onboarding is meant to call the same command.
+  command in [`agenthooks`](../agenthooks/userwide.go). `baum hooks status
+  --user [--json]` changes nothing and reports, for each of those agents,
+  whether it was found on this machine, its settings file, and whether baum's
+  hooks there are installed and up to date (an install would change nothing)
+  or why the file cannot be edited. The desktop app's setup screen runs these
+  three commands, and installs the bundled baum as the `baum` command the
+  hooks call.
 - The files belong to the user. Only handlers whose command is baum's
   user-wide dispatcher are added, rewritten or removed; every other byte
   stays, CRLF line endings included. An install with nothing to change writes
