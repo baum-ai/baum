@@ -50,11 +50,15 @@ type DiffLimits struct {
 }
 
 // redactionMargin is how many bytes of a hunk past its line cap parsing
-// keeps for redaction to read. A secret that starts before the cut ends
-// within it: no redaction rule reads further past where a secret starts.
+// keeps for redaction to read. A secret that starts before the cut is
+// confirmed within it: no redaction rule reads further past its trigger to
+// decide. A secret's mask can run further: a private key is masked to its
+// end marker however long it is, and a key the margin cuts off is masked to
+// the end of the kept text, so the lines the cap keeps are masked as in the
+// whole patch.
 //
 // It is measured, not derived: goredact does not export its rules'
-// lookahead. In goredact v0.2.0 the longest is 16384 bytes, for the
+// lookahead. In goredact v0.3.0 the longest is 16384 bytes, for the
 // pem-private-key and putty-private-key rules (jwt and
 // supabase-service-role-key read 8192). Re-measure it on every goredact
 // upgrade: TestRedactionMarginCoversTheEngine fails until it is.
