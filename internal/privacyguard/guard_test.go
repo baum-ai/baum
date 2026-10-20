@@ -190,6 +190,11 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
+// desktopBuildOutput is the desktop app's git-ignored build output: gigabytes
+// of Rust build files and the bundled binary, which the walk below would
+// otherwise scan.
+var desktopBuildOutput = map[string]bool{"desktop/target": true, "desktop/binaries": true, "desktop/gen": true}
+
 // trackedFiles returns the git-tracked files below root, slash-separated and
 // relative to root. Outside a git checkout it walks the directory instead.
 func trackedFiles(t *testing.T, root string) []string {
@@ -221,13 +226,16 @@ func trackedFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" {
+			if d.Name() == ".git" || d.Name() == "node_modules" || desktopBuildOutput[filepath.ToSlash(rel)] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(root, path)
 		files = append(files, filepath.ToSlash(rel))
 		return err
 	})

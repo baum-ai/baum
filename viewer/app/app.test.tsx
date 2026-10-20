@@ -970,7 +970,7 @@ describe("AppLink", () => {
 
 describe("App code excerpts", () => {
   const CITED = "h_141757b19901";
-  const MARK = "served by baum view";
+  const MARK = "served by baum internal view";
 
   /** The example with the cited hunk's stored excerpt left out, as a review
    *  generated under a budget leaves it. */

@@ -1,4 +1,4 @@
-// Package generate is the pipeline behind "baum generate": it assembles the
+// Package generate is the pipeline behind "baum internal generate": it assembles the
 // generation bundle for a pull request, unpacks the checkout into a private
 // run directory, runs the shared generate-and-repair loop (agent.Generator)
 // with a model backend, and finishes the document the way the hosted worker

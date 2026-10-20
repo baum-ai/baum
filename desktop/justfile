@@ -1,0 +1,35 @@
+dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
+heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --no-deps"
+cargo := heavy + " desktop-test cargo"
+
+# Format check, lints and unit tests
+check: sidecar
+    {{ cargo }} fmt --check
+    {{ cargo }} clippy --locked --all-targets -- -D warnings
+    {{ cargo }} test --locked
+
+fmt:
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test cargo fmt
+
+test *args: sidecar
+    {{ cargo }} test --locked {{ args }}
+
+# Build the bundled baum binary for this platform into binaries/
+sidecar:
+    {{ heavy }} oss-test sh desktop/scripts/sidecar.sh
+
+# Build the Linux bundles into target/release/bundle (default: deb)
+build bundles="deb": sidecar
+    {{ heavy }} desktop-test cargo tauri build --bundles {{ bundles }}
+
+# Regenerate icons/ from icons/source.svg
+icons:
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 icons/source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png'
+
+# Run the app on this Wayland display, with the container's own home and daemon
+run: sidecar
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps \
+        -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
+        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
+        -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+        desktop-test cargo run --locked

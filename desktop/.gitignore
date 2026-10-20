@@ -1,0 +1,4 @@
+/target/
+/gen/
+# Built by scripts/sidecar.sh.
+/binaries/

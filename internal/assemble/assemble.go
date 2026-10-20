@@ -8,7 +8,7 @@
 //
 // The sources are small interfaces, so a test builds a complete bundle
 // without a network. Assemble also writes the checkout archive and the
-// description image archive that "baum generate" hands to its agent; "baum
+// description image archive that "baum internal generate" hands to its agent; "baum
 // bundle" discards them. The checkout export matters to the bundle itself,
 // since a file the checkout budget omits makes its hunks textless.
 package assemble
@@ -87,9 +87,9 @@ type Request struct {
 	Limits     Limits
 	// Previous is the pull request's current document, in the form the
 	// hosted builder carries it into the next version's bundle; nil when
-	// there is none, as for "baum bundle".
+	// there is none, as for "baum internal bundle".
 	Previous *bundle.PreviousVersion
-	// Checkout, when not nil, receives the checkout archive "baum generate"
+	// Checkout, when not nil, receives the checkout archive "baum internal generate"
 	// reads: a gzip-compressed tar holding the head/ and merge-base/ trees,
 	// as bundle.UnpackCheckout unpacks it. Nil exports the same trees to
 	// nowhere, since what the budget omits still shapes the bundle.
@@ -247,7 +247,7 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	b.ReviewConfig = reviewConfig
 	b.Sources["review_md"] = reviewConfig.Present
-	// The previous version is the caller's: "baum bundle" has none.
+	// The previous version is the caller's: "baum internal bundle" has none.
 	b.Previous = req.Previous
 	b.Sources["previous_version"] = b.Previous != nil
 

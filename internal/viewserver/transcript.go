@@ -35,7 +35,7 @@ type transcriptJob struct {
 
 // handleTranscript serves GET /api/sessions/{id}: one session of the
 // /api/sessions answer, shaped and bounded by package transcript, redacted
-// with the engine "baum sessions --dump" uses, with the user's home directory
+// with the engine "baum internal sessions --dump" uses, with the user's home directory
 // written as ~. A session the answer does not list is not found, whatever
 // this machine holds.
 func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {

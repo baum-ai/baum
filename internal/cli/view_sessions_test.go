@@ -13,14 +13,14 @@ import (
 	"github.com/baum-ai/baum/schema"
 )
 
-// startView runs "baum view" with args until the test ends and returns its URL.
+// startView runs "baum internal view" with args until the test ends and returns its URL.
 func startView(t *testing.T, args ...string) string {
 	t.Helper()
 	_, stop := stubViewSeams(t)
 	var out, errOut lockedBuffer
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Run(append([]string{"view", "--no-open"}, args...), strings.NewReader(""), &out, &errOut)
+		finished <- Run(append([]string{"internal", "view", "--no-open"}, args...), strings.NewReader(""), &out, &errOut)
 	}()
 	t.Cleanup(func() {
 		stop()
