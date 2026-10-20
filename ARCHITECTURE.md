@@ -1850,17 +1850,19 @@ socket serves, and runs it beside background refresh, one worker in all.
   an event costs one registry read per `Window` and nothing else. The registry
   is listed at most once per `Window` (30 s). git then reports the working
   tree's common directory, which must be the clone's (a linked worktree inside
-  the clone counts, a repository nested in it does not), its current branch
-  and, for a push, the repository the named remote fetches from, which must be
-  the clone's: a push to a fork is ignored, and so is a push to a URL that
-  names no remote (Git passes the URL as the name; the hook drops it, and an
-  argument that reads as a URL, scp-style address or path runs no git).
-  A linked worktree outside every registered path is ignored too. A session end
-  names the current branch (nothing when detached); a push names each branch it
-  updates or creates, never a deletion or a tag. Branches map to pull requests
-  through the discovery cache (`Cached`, no network): a non-fork PR whose
-  `head_ref` is the branch, or, for a push, a PR whose head is the head the
-  push replaces. A PR the cache does not have yet waits for discovery.
+  the clone counts, a repository nested in it does not). For a session end it
+  reports the work checked out (`prlink.Local`: branch, the branch its
+  upstream names in the same repository, commit), which maps to one pull
+  request of the discovery cache (`Cached`, no network) exactly as live
+  sessions link it (`prlink.Find`, see "Live sessions"). For a push it reports
+  the repository the named remote fetches from, which must be the clone's: a
+  push to a fork is ignored, and so is a push to a URL that names no remote
+  (Git passes the URL as the name; the hook drops it, and an argument that
+  reads as a URL, scp-style address or path runs no git). A push names each
+  branch it updates or creates, never a deletion or a tag, and maps to the
+  non-fork PRs whose `head_ref` is that branch and to the PR whose head is the
+  head the push replaces. A linked worktree outside every registered path is
+  ignored. A PR the cache does not have yet waits for discovery.
 - **Timing.** A session end's PRs are refreshed after the debounce, a push's
   `PushDelay` (10 s) after its hook ran, since pre-push runs before the push
   reaches GitHub. When that refresh does not show the pushed head, the PR is
@@ -1946,7 +1948,8 @@ replace it.
   git directory is matched against the registered clones' `common_dir`;
   a directory in no registered clone, or one whose clone is unavailable, is
   not tracked at all. The branch is `Repo.CurrentBranch` (empty when
-  detached). The pull request is the open one in the discovery cache
+  detached). The pull request (`prlink.Find`, shared with refresh on hook
+  events) is the open one in the discovery cache
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the

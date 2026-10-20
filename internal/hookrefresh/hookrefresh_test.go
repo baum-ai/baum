@@ -16,6 +16,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/prlink"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -199,7 +200,7 @@ func newUnobservedHarness(t *testing.T) *harness {
 			8: {Repository: repoName, Number: 8, HeadSHA: strings.Repeat("c", 40), HeadRef: "other", State: "OPEN", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true},
 		}},
 		worktrees: map[string]Worktree{
-			clonePath: {CommonDir: commonDir, Branch: "feature", Pushed: repoName},
+			clonePath: {CommonDir: commonDir, Work: prlink.Work{Branch: "feature"}, Pushed: repoName},
 		},
 	}
 	queue, err := jobs.Open(filepath.Join(dir, "jobs.json"), &executor{gh: h.gh}, 1, nil)
@@ -246,7 +247,10 @@ func newUnobservedHarness(t *testing.T) *harness {
 			return out, nil
 		},
 		Trigger: h.scheduler.Trigger,
-		Git: func(_ context.Context, dir, remote string) (Worktree, error) {
+		Git: func(_ context.Context, dir, repository, remote string) (Worktree, error) {
+			if repository != repoName {
+				t.Fatalf("inspected %s as %s", dir, repository)
+			}
 			h.gitCalls++
 			w, ok := h.worktrees[dir]
 			if !ok {
@@ -345,12 +349,29 @@ func TestSessionEndRefreshesTheBranchPullRequest(t *testing.T) {
 	h.wantJobs()
 }
 
-func TestDetachedSessionRefreshesNothing(t *testing.T) {
-	h := newHarness(t)
-	h.worktrees[clonePath] = Worktree{CommonDir: commonDir}
-	h.sessionEnd(clonePath)
-	h.run(time.Minute)
-	h.wantRefreshes(7, 0)
+// A session end links its pull request as live sessions do: by the branch's
+// name, then the head branch its upstream names, then the commit checked
+// out.
+func TestSessionEndFindsThePullRequestByUpstreamOrCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		work prlink.Work
+		want int
+	}{
+		{"upstream name", prlink.Work{Branch: "local-name", Upstream: "feature"}, 1},
+		{"detached at the head", prlink.Work{Head: oldHead}, 1},
+		{"detached elsewhere", prlink.Work{Head: newHead}, 0},
+		{"unknown branch", prlink.Work{Branch: "local-name", Head: newHead}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.worktrees[clonePath] = Worktree{CommonDir: commonDir, Work: tc.work}
+			h.sessionEnd(clonePath)
+			h.run(time.Minute)
+			h.wantRefreshes(7, tc.want)
+			h.wantRefreshes(8, 0)
+		})
+	}
 }
 
 func TestPrePushWaitsAndRechecksOnceWhileTheHeadIsNotVisible(t *testing.T) {
@@ -482,7 +503,7 @@ func TestEveryCloneOfARepositoryIsRefreshedInItsOwnStore(t *testing.T) {
 	h := newHarness(t)
 	second := repos.Clone{ID: "second", Path: "/work/app2", CommonDir: "/work/app2/.git", Repository: repoName, Available: true}
 	h.registry.edit(func(r *registry) { r.clones = append(r.clones, second) })
-	h.worktrees[second.Path] = Worktree{CommonDir: second.CommonDir, Branch: "feature", Pushed: repoName}
+	h.worktrees[second.Path] = Worktree{CommonDir: second.CommonDir, Work: prlink.Work{Branch: "feature"}, Pushed: repoName}
 	h.sessionEnd(clonePath)
 	h.sessionEnd(second.Path)
 	h.run(time.Minute)
@@ -512,7 +533,7 @@ func TestTriggerBeforeTheBaselineCatchesNothingUp(t *testing.T) {
 
 func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
 	h := newHarness(t)
-	h.worktrees["/work/app/vendor/lib"] = Worktree{CommonDir: "/work/app/vendor/lib/.git", Branch: "feature", Pushed: repoName}
+	h.worktrees["/work/app/vendor/lib"] = Worktree{CommonDir: "/work/app/vendor/lib/.git", Work: prlink.Work{Branch: "feature"}, Pushed: repoName}
 	// Not registered: no git runs.
 	h.sessionEnd("/elsewhere/app")
 	// A nested repository inside the clone is not the clone.
@@ -608,8 +629,8 @@ func TestEventHandlerNeverBlocksAndShutdownIsClean(t *testing.T) {
 			now = now.Add(time.Minute)
 			return now
 		},
-		Git: func(context.Context, string, string) (Worktree, error) {
-			return Worktree{CommonDir: commonDir, Branch: "feature"}, nil
+		Git: func(context.Context, string, string, string) (Worktree, error) {
+			return Worktree{CommonDir: commonDir, Work: prlink.Work{Branch: "feature"}}, nil
 		},
 		Cached: func(context.Context, github.Repository) (discovery.Snapshot, error) {
 			return discovery.Snapshot{Repository: repoName, PullRequests: []discovery.PullRequest{{Number: 7, HeadSHA: oldHead, HeadRef: "feature", AuthoredByMe: true, AuthorHasWrite: &write}}}, nil

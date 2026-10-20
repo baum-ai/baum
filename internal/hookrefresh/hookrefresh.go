@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/internal/prlink"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -85,8 +86,8 @@ type Registry interface {
 type Worktree struct {
 	// CommonDir is the shared git directory, the same for linked worktrees.
 	CommonDir string
-	// Branch is the current branch, "" when HEAD is detached.
-	Branch string
+	// Work is what is checked out, read only when no remote was asked for.
+	Work prlink.Work
 	// Pushed is the repository the asked-for remote fetches from, as the
 	// registry names repositories; "" when there is no such remote or it is
 	// not on GitHub.
@@ -106,9 +107,11 @@ type Service struct {
 	// Trigger has the automatic scheduler poll one repository and observe
 	// the result: automatic.Scheduler.Trigger.
 	Trigger func(context.Context, string) error
-	// Git inspects the working tree containing dir and, when remote is set,
-	// that remote. Nil runs git (LocalGit).
-	Git func(ctx context.Context, dir, remote string) (Worktree, error)
+	// Git inspects the working tree containing dir, a working tree of
+	// repository: its common directory and, with remote, the repository that
+	// remote fetches from, else the work checked out. Nil runs git
+	// (LocalGit).
+	Git func(ctx context.Context, dir, repository, remote string) (Worktree, error)
 	// Changed tells the app that discovery changed after a trigger.
 	Changed func()
 	Now     func() time.Time
@@ -244,8 +247,7 @@ func (s *Service) Step(ctx context.Context) {
 	s.forget()
 }
 
-// push is one branch a hook names: a pushed ref, or the branch an agent
-// session ended on.
+// push is one branch a pre-push hook names.
 type push struct {
 	branch string
 	// old is the head GitHub had before a push, new the pushed one.
@@ -290,33 +292,19 @@ func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
 		at := [2]string{dir, remote}
 		result, seen := inspected[at]
 		if !seen {
-			result.worktree, result.err = s.git()(ctx, dir, remote)
+			result.worktree, result.err = s.git()(ctx, dir, strings.ToLower(clone.Repository), remote)
 			inspected[at] = result
 		}
 		// A repository nested in the clone's directory is not the clone.
 		if result.err != nil || result.worktree.CommonDir != clone.CommonDir {
 			continue
 		}
-		var pushes []push
-		due := now
-		switch e.Kind {
-		case hookevents.KindAgent:
-			if result.worktree.Branch == "" {
-				continue
-			}
-			pushes = []push{{branch: result.worktree.Branch}}
-		case hookevents.KindGit:
-			// A push to another repository (a fork) changes none of this
-			// one's pull requests.
-			if result.worktree.Pushed != strings.ToLower(clone.Repository) {
-				continue
-			}
-			pushes = pushedRefs(e.Git.Lines)
-			// A hook's clock ahead of the daemon's must not hold the
-			// refresh back.
-			due = minTime(maxTime(now, e.Time.Add(PushDelay)), now.Add(PushDelay))
-		}
 		name := strings.ToLower(clone.Repository)
+		// A push to another repository (a fork) changes none of this one's
+		// pull requests.
+		if e.Kind == hookevents.KindGit && result.worktree.Pushed != name {
+			continue
+		}
 		snapshot, seen := snapshots[name]
 		if !seen {
 			snapshot = s.cached(ctx, name, now)
@@ -325,6 +313,22 @@ func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
 		if snapshot == nil {
 			continue
 		}
+		if e.Kind == hookevents.KindAgent {
+			// The pull request holding the session's work, as live sessions
+			// show it.
+			if number := prlink.Find(*snapshot, result.worktree.Work); number > 0 {
+				for _, pr := range snapshot.PullRequests {
+					if pr.Number == number {
+						s.add(clone, pr, "", e.Time, now)
+					}
+				}
+			}
+			continue
+		}
+		pushes := pushedRefs(e.Git.Lines)
+		// A hook's clock ahead of the daemon's must not hold the refresh
+		// back.
+		due := minTime(maxTime(now, e.Time.Add(PushDelay)), now.Add(PushDelay))
 		for _, pr := range snapshot.PullRequests {
 			for _, p := range pushes {
 				// A fork's branch of the same name is another branch.
@@ -373,7 +377,7 @@ func (s *Service) registered(ctx context.Context) ([]repos.Clone, error) {
 	return clones, nil
 }
 
-func (s *Service) git() func(context.Context, string, string) (Worktree, error) {
+func (s *Service) git() func(context.Context, string, string, string) (Worktree, error) {
 	if s.Git != nil {
 		return s.Git
 	}
@@ -647,9 +651,10 @@ func (s *Service) forget() {
 }
 
 // LocalGit inspects the working tree containing dir with git: its common
-// directory, its current branch and, when remote is set, the repository that
-// remote fetches from. It reads configuration only and contacts no remote.
-func LocalGit(ctx context.Context, dir, remote string) (Worktree, error) {
+// directory and, when remote is set, the repository that remote fetches from,
+// else the work checked out (prlink.Local). It reads configuration only and
+// contacts no remote.
+func LocalGit(ctx context.Context, dir, repository, remote string) (Worktree, error) {
 	repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
 	if err != nil {
 		return Worktree{}, err
@@ -659,19 +664,17 @@ func LocalGit(ctx context.Context, dir, remote string) (Worktree, error) {
 	if err != nil {
 		return Worktree{}, err
 	}
-	branch, err := repo.CurrentBranch(ctx)
+	w := Worktree{CommonDir: common}
+	if remote == "" {
+		w.Work = prlink.Local(ctx, repo, repository)
+		return w, nil
+	}
+	url, err := repo.RemoteFetchURL(ctx, remote)
 	if err != nil {
 		return Worktree{}, err
 	}
-	w := Worktree{CommonDir: common, Branch: branch}
-	if remote != "" {
-		url, err := repo.RemoteFetchURL(ctx, remote)
-		if err != nil {
-			return Worktree{}, err
-		}
-		if gh, err := github.RepositoryFromRemote(url); url != "" && err == nil {
-			w.Pushed = strings.ToLower(gh.String())
-		}
+	if gh, err := github.RepositoryFromRemote(url); url != "" && err == nil {
+		w.Pushed = strings.ToLower(gh.String())
 	}
 	return w, nil
 }

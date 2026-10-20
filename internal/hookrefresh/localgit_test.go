@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/prlink"
 )
 
 func requireGit(t *testing.T) {
@@ -57,30 +59,40 @@ func TestLocalGitReadsTheWorkingTreeTheHookRanIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	git(t, nested, "init", "-q", "-b", "main")
+	// The linked worktree's branch is pushed under another name; main's
+	// upstream is in the fork, another repository.
+	git(t, clone, "config", "branch.feature.remote", "origin")
+	git(t, clone, "config", "branch.feature.merge", "refs/heads/pr-head")
+	git(t, clone, "config", "branch.main.remote", "fork")
+	git(t, clone, "config", "branch.main.merge", "refs/heads/main-fork")
 	ctx := context.Background()
 	common := filepath.Join(clone, ".git")
+	work, err := LocalGit(ctx, clone, "acme/app", "")
+	if err != nil || work.Work.Branch != "main" || work.Work.Upstream != "" {
+		t.Fatalf("clone work %+v %v", work, err)
+	}
 
-	top, err := LocalGit(ctx, clone, "origin")
-	if err != nil || top.CommonDir != common || top.Branch != "main" || top.Pushed != "acme/app" {
+	top, err := LocalGit(ctx, clone, "acme/app", "origin")
+	if err != nil || top.CommonDir != common || top.Pushed != "acme/app" || top.Work != (prlink.Work{}) {
 		t.Fatalf("clone %+v %v", top, err)
 	}
-	linked, err := LocalGit(ctx, filepath.Join(clone, ".agents", "worktrees", "feature"), "")
-	if err != nil || linked.CommonDir != common || linked.Branch != "feature" || linked.Pushed != "" {
+	linked, err := LocalGit(ctx, filepath.Join(clone, ".agents", "worktrees", "feature"), "acme/app", "")
+	if err != nil || linked.CommonDir != common || linked.Work.Branch != "feature" || linked.Work.Upstream != "pr-head" || len(linked.Work.Head) != 40 || linked.Pushed != "" {
 		t.Fatalf("linked worktree %+v %v", linked, err)
 	}
-	inner, err := LocalGit(ctx, nested, "")
+	inner, err := LocalGit(ctx, nested, "acme/app", "")
 	if err != nil || inner.CommonDir == common {
 		t.Fatalf("nested repository %+v %v", inner, err)
 	}
-	fork, err := LocalGit(ctx, clone, "fork")
+	fork, err := LocalGit(ctx, clone, "acme/app", "fork")
 	if err != nil || fork.Pushed != "someone/app" {
 		t.Fatalf("fork remote %+v %v", fork, err)
 	}
-	url, err := LocalGit(ctx, clone, "https://github.com/acme/app.git")
+	url, err := LocalGit(ctx, clone, "acme/app", "https://github.com/acme/app.git")
 	if err != nil || url.Pushed != "" {
 		t.Fatalf("URL argument %+v %v", url, err)
 	}
-	missing, err := LocalGit(ctx, clone, "nowhere")
+	missing, err := LocalGit(ctx, clone, "acme/app", "nowhere")
 	if err != nil || missing.Pushed != "" {
 		t.Fatalf("missing remote %+v %v", missing, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/prlink"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -130,20 +131,15 @@ func (r *Resolver) link(ctx context.Context, cwd string) (Link, bool) {
 		return Link{}, false
 	}
 	link := Link{Repository: strings.ToLower(clone.Repository)}
-	if link.Branch, err = repo.CurrentBranch(ctx); err != nil {
-		link.Branch = ""
-	}
-	link.PR = r.pullRequest(ctx, link.Repository, link.Branch, repo)
+	work := prlink.Local(ctx, repo, link.Repository)
+	link.Branch = work.Branch
+	link.PR = r.pullRequest(ctx, link.Repository, work)
 	return link, true
 }
 
-// pullRequest is the open pull request of repository whose head is the
-// session's work, in the repository itself (a fork's branch of the same name
-// is another branch), the newest when several; 0 when the cache has none. It
-// follows the branch's name, then the head branch the branch's upstream names
-// (a branch pushed under another name), then the commit checked out (a
-// detached HEAD, or a push to a branch of another name without an upstream).
-func (r *Resolver) pullRequest(ctx context.Context, repository, branch string, repo *gitlocal.Repo) int {
+// pullRequest is the open pull request of repository holding the session's
+// work (prlink.Find), 0 when the discovery cache has none.
+func (r *Resolver) pullRequest(ctx context.Context, repository string, work prlink.Work) int {
 	if r.Discovery == nil {
 		return 0
 	}
@@ -155,49 +151,5 @@ func (r *Resolver) pullRequest(ctx context.Context, repository, branch string, r
 	if err != nil {
 		return 0
 	}
-	find := func(match func(discovery.PullRequest) bool) int {
-		number := 0
-		for _, pr := range snapshot.PullRequests {
-			if !pr.Fork && match(pr) && pr.Number > number {
-				number = pr.Number
-			}
-		}
-		return number
-	}
-	if branch != "" {
-		if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == branch }); number > 0 {
-			return number
-		}
-		if name := r.upstreamBranch(ctx, repo, repository, branch); name != "" && name != branch {
-			if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == name }); number > 0 {
-				return number
-			}
-		}
-	}
-	head, err := repo.HeadCommit(ctx)
-	if err != nil || head == "" {
-		return 0
-	}
-	return find(func(pr discovery.PullRequest) bool { return strings.EqualFold(pr.HeadSHA, head) })
-}
-
-// upstreamBranch is the name of the branch of repository that branch's
-// upstream is, "" when it has none there.
-func (r *Resolver) upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository, branch string) string {
-	remote, merge, err := repo.BranchUpstream(ctx, branch)
-	name, ok := strings.CutPrefix(merge, "refs/heads/")
-	if err != nil || !ok || name == "" || remote == "" || remote == "." {
-		return ""
-	}
-	url, err := repo.RemoteFetchURL(ctx, remote)
-	if err != nil {
-		return ""
-	}
-	if url == "" {
-		url = remote
-	}
-	if !gitlocal.SameRepository(url, repository) {
-		return ""
-	}
-	return name
+	return prlink.Find(snapshot, work)
 }
