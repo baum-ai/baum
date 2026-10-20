@@ -1829,7 +1829,8 @@ endpoint.
 `internal/hookrefresh` refreshes pull requests as soon as a hook says they may
 have changed, rather than at background synchronization's next pass. The
 daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
-`Match`) and runs it beside background refresh, one worker in all.
+`Match`) while it builds the application, before the spool drains or the
+socket serves, and runs it beside background refresh, one worker in all.
 
 - **Events.** An agent's `session-end` (Claude Code, Codex and Cursor send
   it) and a `pre-push` Git went on with (exit 0). Not `stop`, which ends a
@@ -1849,7 +1850,9 @@ daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
   tree's common directory, which must be the clone's (a linked worktree inside
   the clone counts, a repository nested in it does not), its current branch
   and, for a push, the repository the named remote fetches from, which must be
-  the clone's: a push to a fork, or to a URL that names no remote, is ignored.
+  the clone's: a push to a fork is ignored, and so is a push to a URL that
+  names no remote (Git passes the URL as the name; the hook drops it, and an
+  argument that reads as a URL, scp-style address or path runs no git).
   A linked worktree outside every registered path is ignored too. A session end
   names the current branch (nothing when detached); a push names each branch it
   updates or creates, never a deletion or a tag. Branches map to pull requests
@@ -1866,7 +1869,8 @@ daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
   head is late), one git inspection per directory and remote, and at most one
   discovery poll per repository.
 - **Refresh.** `background.Service.RefreshNow` refreshes the due PRs of one
-  repository as `Sync` does: metadata for a PR without a saved review, and
+  clone's store (a repository's clones with different common directories keep
+  separate saved reviews, each refreshed) as `Sync` does: metadata for a PR without a saved review, and
   metadata and evidence (`refresh.Refresher`, CAS publication) for one with.
   It shares the per-host rate pause with `Sync`, and an event whose
   repository's cached rate budget is exhausted is skipped. A failed refresh is
@@ -1880,7 +1884,9 @@ daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
   polls discovery and passes the snapshot to `Observe`, the only path to a
   job, so the scheduler's baseline, eligibility, dedupe, hold, gate, daily cap
   and no-catch-up rules apply unchanged, and a head it already saw queues
-  nothing. The worker never queues or runs generation.
+  nothing. Since background refresh and Trigger observe from two goroutines,
+  `Observe` ignores a snapshot fetched before the newest one it took for the
+  repository. The worker never queues or runs generation.
 - **Stopping.** The worker stops with the daemon's run context, cancelling a
   refresh or poll under way. Its schedule is in memory only: a restart drops
   pending refreshes, which the periodic refresh covers.

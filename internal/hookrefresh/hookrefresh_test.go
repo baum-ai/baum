@@ -160,12 +160,28 @@ type harness struct {
 	cache     discovery.Snapshot
 	worktrees map[string]Worktree
 	gitCalls  int
+	// refreshed lists each refresh as clone path and PR numbers.
+	refreshed []string
 	queue     *jobs.Queue
 	scheduler *automatic.Scheduler
 	service   *Service
 }
 
 func newHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newUnobservedHarness(t)
+	// Automatic generation records its baseline from the first poll after
+	// enabling; the discovery cache is that poll.
+	if err := h.scheduler.Trigger(context.Background(), repoName); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.polls = 0
+	return h
+}
+
+// newUnobservedHarness has automatic generation enabled but no poll since:
+// the scheduler awaits its baseline. The discovery cache predates enabling.
+func newUnobservedHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -218,6 +234,7 @@ func newHarness(t *testing.T) *harness {
 			if clone.Repository != repoName {
 				t.Fatalf("refreshed %s", clone.Repository)
 			}
+			h.refreshed = append(h.refreshed, clone.Path+":"+joinInts(numbers))
 			var out []discovery.Observation
 			for _, n := range numbers {
 				h.gh.mu.Lock()
@@ -241,14 +258,18 @@ func newHarness(t *testing.T) *harness {
 			return w, nil
 		},
 	}
-	// Automatic generation records its baseline from the first poll after
-	// enabling; the discovery cache is that poll.
+	h.cache = h.gh.snapshot(h.now.Add(-time.Minute))
+	h.now = h.now.Add(time.Second)
 	h.scheduler.Pass(context.Background())
-	if err := h.scheduler.Trigger(context.Background(), repoName); err != nil {
-		t.Fatal(err)
-	}
-	h.gh.polls = 0
 	return h
+}
+
+func joinInts(numbers []int) string {
+	parts := make([]string, len(numbers))
+	for i, n := range numbers {
+		parts[i] = strconv.Itoa(n)
+	}
+	return strings.Join(parts, ",")
 }
 
 func (h *harness) advance(d time.Duration) {
@@ -448,9 +469,45 @@ func TestBurstOfEventsCausesBoundedRefreshes(t *testing.T) {
 		h.advance(2 * time.Second)
 	}
 	h.run(time.Minute)
-	if got, most := h.gh.refreshCount(7), int(10*time.Minute/Window)+2; got > most || got < 2 {
-		t.Fatalf("PR 7 refreshed %d times in ten minutes, at most %d", got, most)
+	// The first refresh follows the debounce, then one per Window while
+	// events keep coming.
+	if got, want := h.gh.refreshCount(7), int(10*time.Minute/Window)+1; got != want {
+		t.Fatalf("PR 7 refreshed %d times in ten minutes, want %d", got, want)
 	}
+}
+
+// Each registered clone keeps its own saved reviews, so a PR is refreshed in
+// the store of every clone a hook names, not only the first.
+func TestEveryCloneOfARepositoryIsRefreshedInItsOwnStore(t *testing.T) {
+	h := newHarness(t)
+	second := repos.Clone{ID: "second", Path: "/work/app2", CommonDir: "/work/app2/.git", Repository: repoName, Available: true}
+	h.registry.edit(func(r *registry) { r.clones = append(r.clones, second) })
+	h.worktrees[second.Path] = Worktree{CommonDir: second.CommonDir, Branch: "feature", Pushed: repoName}
+	h.sessionEnd(clonePath)
+	h.sessionEnd(second.Path)
+	h.run(time.Minute)
+	if got := strings.Join(h.refreshed, " "); got != "/work/app:7 /work/app2:7" {
+		t.Fatalf("refreshes %s", got)
+	}
+}
+
+// A hook's poll while the scheduler awaits its baseline becomes the baseline:
+// pull requests already open then are not caught up.
+func TestTriggerBeforeTheBaselineCatchesNothingUp(t *testing.T) {
+	h := newUnobservedHarness(t)
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.HeadSHA = newHead })
+	h.prePush("origin", pushLine("feature", newHead, oldHead))
+	h.run(time.Minute)
+	if h.gh.pollCount() != 1 {
+		t.Fatalf("discovery polled %d times", h.gh.pollCount())
+	}
+	h.wantJobs()
+	// The next push is new.
+	next := strings.Repeat("e", 40)
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.HeadSHA = next })
+	h.prePush("origin", pushLine("feature", next, newHead))
+	h.run(time.Minute)
+	h.wantJobs("acme/app#7@e:new_head")
 }
 
 func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
@@ -462,7 +519,10 @@ func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
 	h.sessionEnd("/work/app/vendor/lib")
 	// A push to another remote (a fork) changes nothing here.
 	h.prePush("fork", pushLine("feature", newHead, oldHead))
-	// A push to a URL that names no remote.
+	// A push to a URL that names no remote: Git passes the URL as the name.
+	h.prePush("https://github.com/acme/app.git", pushLine("feature", newHead, oldHead))
+	h.prePush("git@github.com:acme/app.git", pushLine("feature", newHead, oldHead))
+	h.prePush("../app-mirror", pushLine("feature", newHead, oldHead))
 	h.prePush("", pushLine("feature", newHead, oldHead))
 	// Deleting the branch moves no head.
 	h.prePush("origin", "(delete) "+zeroOID+" refs/heads/feature "+oldHead)
@@ -470,6 +530,18 @@ func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
 	h.wantRefreshes(7, 0)
 	if h.gitCalls != 3 {
 		t.Fatalf("git ran %d times", h.gitCalls)
+	}
+}
+
+func TestRemoteName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"origin": true, "upstream/team": true, "": false,
+		"https://github.com/acme/app.git": false, "git@github.com:acme/app.git": false,
+		"github.com:acme/app": false, "/srv/git/app.git": false, "../app": false, `C:\repos\app`: false, "-x": false,
+	} {
+		if got := remoteName(name); got != want {
+			t.Errorf("remoteName(%q) = %t", name, got)
+		}
 	}
 }
 

@@ -425,6 +425,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		live := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
+		// Subscribed before the spool drains or the socket serves, so no
+		// event arrives unseen.
+		liveEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
@@ -438,7 +441,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
-				wg.Go(func() { events.Subscribe(ctx, hookrefresh.Buffer, hookrefresh.Match, live.Run) })
+				if liveEvents != nil {
+					wg.Go(func() { live.Run(ctx, liveEvents) })
+				}
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
@@ -456,6 +461,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
+				unsubscribe()
 				events.Close()
 				_ = registry.Close()
 			},
@@ -492,15 +498,13 @@ func (h hookEvents) Run(ctx context.Context) {
 	}
 }
 
-// Subscribe runs run with the new events match accepts until ctx ends;
-// without a record it returns at once.
-func (h hookEvents) Subscribe(ctx context.Context, buffer int, match func(hookevents.Event) bool, run func(context.Context, <-chan hookevents.Record)) {
+// Subscribe delivers the events match accepts from now on, until the
+// returned function ends it; without a record the channel is nil.
+func (h hookEvents) Subscribe(buffer int, match func(hookevents.Event) bool) (<-chan hookevents.Record, func()) {
 	if h.service == nil {
-		return
+		return nil, func() {}
 	}
-	records, cancel := h.service.Store.Subscribe(buffer, match)
-	defer cancel()
-	run(ctx, records)
+	return h.service.Store.Subscribe(buffer, match)
 }
 
 // Close closes the record.

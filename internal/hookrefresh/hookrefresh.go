@@ -124,9 +124,17 @@ type Service struct {
 	triggered map[string]time.Time
 }
 
+// key is a pull request as one clone's version store holds it: two clones of
+// a repository keep separate saved reviews, each refreshed in its own store.
 type key struct {
+	group
+	number int
+}
+
+type group struct {
 	repository string
-	number     int
+	// store is the clone's common git directory, where its reviews are kept.
+	store string
 }
 
 // task is a pull request waiting for a refresh.
@@ -270,9 +278,11 @@ func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
 		}
 		remote := ""
 		if e.Kind == hookevents.KindGit {
-			// A push to a URL that names no remote keeps no remote name;
-			// where it went is unknown.
-			if len(e.Git.Args) == 0 || e.Git.Args[0] == "" {
+			// Git passes a push to a URL that names no remote the URL as the
+			// remote's name; baum's hook drops it, and anything left that
+			// reads as a URL, an scp-style address or a path names no remote
+			// either: where it went is unknown, and no git runs for it.
+			if len(e.Git.Args) == 0 || !remoteName(e.Git.Args[0]) {
 				continue
 			}
 			remote = e.Git.Args[0]
@@ -431,6 +441,13 @@ func pushedRefs(lines []string) []push {
 	return pushes
 }
 
+// remoteName reports whether a pre-push hook's first argument can be a
+// remote's name rather than a URL, an scp-style address or a path.
+func remoteName(name string) bool {
+	return name != "" && !strings.Contains(name, "://") && !strings.ContainsAny(name, ":@\\") &&
+		!strings.HasPrefix(name, "/") && !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "-")
+}
+
 func validOID(s string) bool {
 	if len(s) != 40 && len(s) != 64 {
 		return false
@@ -451,7 +468,7 @@ func (s *Service) add(clone repos.Clone, pr discovery.PullRequest, want string, 
 	if s.tasks == nil {
 		s.tasks = map[key]*task{}
 	}
-	k := key{strings.ToLower(clone.Repository), pr.Number}
+	k := key{group{strings.ToLower(clone.Repository), clone.CommonDir}, pr.Number}
 	if last, ok := s.refreshed[k]; ok {
 		due = maxTime(due, last.Add(Window))
 	}
@@ -470,31 +487,38 @@ func (s *Service) add(clone repos.Clone, pr discovery.PullRequest, want string, 
 	}
 }
 
-// refreshDue refreshes the pull requests that are due, one repository at a
-// time. A pushed head GitHub does not show yet is checked once more after
-// Recheck; a refresh that failed is left to the periodic refresh.
+// refreshDue refreshes the pull requests that are due, one clone's store of
+// a repository at a time. A pushed head GitHub does not show yet is checked
+// once more after Recheck; a refresh that failed is left to the periodic
+// refresh.
 func (s *Service) refreshDue(ctx context.Context) {
 	now := s.now()
-	due := map[string][]int{}
+	due := map[group][]int{}
 	for k, t := range s.tasks {
 		if !now.Before(t.due) {
-			due[k.repository] = append(due[k.repository], k.number)
+			due[k.group] = append(due[k.group], k.number)
 		}
 	}
-	names := make([]string, 0, len(due))
-	for name := range due {
-		names = append(names, name)
+	groups := make([]group, 0, len(due))
+	for g := range due {
+		groups = append(groups, g)
 	}
-	sort.Strings(names)
-	for _, name := range names {
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].repository != groups[j].repository {
+			return groups[i].repository < groups[j].repository
+		}
+		return groups[i].store < groups[j].store
+	})
+	for _, g := range groups {
 		if ctx.Err() != nil {
 			return
 		}
-		numbers := due[name]
+		name := g.repository
+		numbers := due[g]
 		sort.Ints(numbers)
 		tasks := map[int]*task{}
 		for _, number := range numbers {
-			k := key{name, number}
+			k := key{g, number}
 			tasks[number] = s.tasks[k]
 			delete(s.tasks, k)
 		}
@@ -510,7 +534,7 @@ func (s *Service) refreshDue(ctx context.Context) {
 			s.refreshed = map[key]time.Time{}
 		}
 		for _, number := range numbers {
-			s.refreshed[key{name, number}] = now
+			s.refreshed[key{g, number}] = now
 		}
 		moved := false
 		for _, o := range observations {
@@ -522,7 +546,7 @@ func (s *Service) refreshDue(ctx context.Context) {
 				t.checks++
 				t.due = now.Add(Recheck)
 				t.limit = t.due
-				s.tasks[key{name, o.Number}] = t
+				s.tasks[key{g, o.Number}] = t
 			}
 			if o.HeadSHA != t.known && candidate(t.pr, o) {
 				moved = true

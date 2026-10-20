@@ -366,8 +366,9 @@ What it runs while it is up:
   about 10 seconds later and once more 30 seconds after that if GitHub does
   not show the pushed head yet), at most once per pull request every 30
   seconds, and, when a head moved, one poll of the repository's open pull
-  requests for automatic generation, at most every 30 seconds. They wait while
-  GitHub's rate limit is exhausted. Events from directories outside
+  requests for automatic generation, at most every 30 seconds. They are
+  skipped, not postponed, while GitHub's rate limit is exhausted; the periodic
+  reads resume after the reset. Events from directories outside
   registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as

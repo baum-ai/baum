@@ -1,0 +1,87 @@
+package hookrefresh
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_AUTHOR_NAME", "Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestLocalGitReadsTheWorkingTreeTheHookRanIn(t *testing.T) {
+	requireGit(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gitlocal refuses a temporary directory inside the repository.
+	t.Setenv("TMPDIR", filepath.Join(root, "tmp"))
+	if err := os.Mkdir(filepath.Join(root, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clone := filepath.Join(root, "app")
+	if err := os.Mkdir(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, clone, "init", "-q", "-b", "main")
+	git(t, clone, "commit", "-q", "--allow-empty", "-m", "first")
+	git(t, clone, "remote", "add", "origin", "https://github.com/acme/app.git")
+	git(t, clone, "remote", "add", "fork", "git@github.com:someone/app.git")
+	// A linked worktree inside the clone, as agents create them.
+	git(t, clone, "worktree", "add", "-q", "-b", "feature", filepath.Join(clone, ".agents", "worktrees", "feature"))
+	// A repository of its own nested in the clone's directory.
+	nested := filepath.Join(clone, "vendor", "lib")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, nested, "init", "-q", "-b", "main")
+	ctx := context.Background()
+	common := filepath.Join(clone, ".git")
+
+	top, err := LocalGit(ctx, clone, "origin")
+	if err != nil || top.CommonDir != common || top.Branch != "main" || top.Pushed != "acme/app" {
+		t.Fatalf("clone %+v %v", top, err)
+	}
+	linked, err := LocalGit(ctx, filepath.Join(clone, ".agents", "worktrees", "feature"), "")
+	if err != nil || linked.CommonDir != common || linked.Branch != "feature" || linked.Pushed != "" {
+		t.Fatalf("linked worktree %+v %v", linked, err)
+	}
+	inner, err := LocalGit(ctx, nested, "")
+	if err != nil || inner.CommonDir == common {
+		t.Fatalf("nested repository %+v %v", inner, err)
+	}
+	fork, err := LocalGit(ctx, clone, "fork")
+	if err != nil || fork.Pushed != "someone/app" {
+		t.Fatalf("fork remote %+v %v", fork, err)
+	}
+	url, err := LocalGit(ctx, clone, "https://github.com/acme/app.git")
+	if err != nil || url.Pushed != "" {
+		t.Fatalf("URL argument %+v %v", url, err)
+	}
+	missing, err := LocalGit(ctx, clone, "nowhere")
+	if err != nil || missing.Pushed != "" {
+		t.Fatalf("missing remote %+v %v", missing, err)
+	}
+}
