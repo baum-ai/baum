@@ -1150,10 +1150,12 @@ format and the protocol constants have one definition on both sides.
   which gate every committed dispatcher, succeed only for a logged-in user, in
   a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
   baum built or installed for the hosted service, in a repository whose
-  committed agent settings carry baum's dispatcher. They read local files
-  only, and the hooks they admit never contact a server themselves: they hand
-  their events to the local daemon, which forwards an ended session only for
-  a logged-in user (see "Hook events" under "Local daemon"). The rules are in
+  committed agent settings carry baum's dispatcher; or, without any of those,
+  for a user who has a baum daemon (its state directory exists), where the
+  hook is local: no hosted work, Entire called exactly as the fall-through
+  would. They read local files only, and the hooks they admit never contact a
+  server; they hand their events to the local daemon, which keeps them on the
+  machine (see "Hook events" under "Local daemon"). The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
 - User-wide hooks. `baum hooks install --user` puts a dispatcher in
   `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
@@ -1731,51 +1733,67 @@ it and `Queue.SubmitAutomatic` decides each job.
 
 `internal/hookevents` carries what `baum hooks agent` and `baum hooks git`
 report to the daemon; the hook side is in `hosted/baumcli` (rules in its
-[README](hosted/baumcli/README.md), "Hook events").
+[README](hosted/baumcli/README.md), "Hook events"). Nothing of it goes to a
+baum server: forwarding to the hosted service waits for a hosted event
+endpoint.
 
 - **Event.** One JSON object per hook run, sent as the params of the `event`
   control request: `v` (the event format, `hookevents.Version`, 1), a random
   `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
-  `session` (an agent payload's `id`, `transcript_path`, `cwd`, `hook_event`,
-  `source`, `reason`; nothing else of the payload) or `git` (`args` without a
-  pre-push remote URL, and `lines`, the refs or commits Git wrote to the
-  hook). Fields are cut to fit one control line. The daemon ignores fields it
-  does not know and records kinds it does not know, so adding a field keeps
-  `v`; it refuses a higher `v` with `event_version`.
-- **Sending.** `Sender.Send` never fails a hook and adds at most `Budget`
-  (300 ms): the request gets 150 ms. When nothing listens it spools the event
-  and starts a daemon with `Client.StartDetached`, which spawns `baum daemon
-  run --detached` under the start lock unless a daemon holds the daemon lock,
-  and returns once the new process holds it or the budget ends, without
-  waiting for it to serve. A daemon that does not answer in time, answers an
-  error, or does not know `event` gets the event through the spool; one older
-  than the hook's baum is sent `stop` with `when_idle`, as `Ensure` would. A
-  daemon holding the socket but not answering is never replaced by a hook.
+  `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
+  `hook_event`, `source`, `reason`, read by a streaming scanner from the whole
+  payload; nothing else of it) or `git` (`args` without a pre-push remote URL,
+  and `lines`, the refs or commits Git wrote to the hook). `Event.Bound` cuts
+  fields at character boundaries, then trims Git lines and halves the longest
+  fields until the escaped encoding fits one control line. The daemon ignores
+  fields it does not know and records kinds it does not know, so adding a
+  field keeps `v`; it refuses a higher `v` with `event_version`.
+- **Sending.** `Sender.Send` never fails a hook and returns within `Budget`
+  (300 ms) whatever happens: the request gets 150 ms, and the spool write, the
+  hook log and a daemon start run in a goroutine the budget abandons (a spool
+  write is atomic, so an exit leaves the event whole or absent). When nothing
+  listens it spools the event and starts a daemon with
+  `Client.StartDetached`, unless the user stopped the daemon
+  (`daemon.MarkStopped`, written by `baum daemon stop` and cleared by
+  `Ensure` and a foreground `run`), `BAUM_NO_DAEMON=1` or `CI` is set.
+  `StartDetached` spawns `baum daemon run --detached` under the start lock
+  unless a daemon holds the daemon lock or one was started less than
+  `StartBackoff` (3 min) ago: it records each start in `started.json`, which
+  the daemon removes once it serves, so a daemon that cannot start is not
+  started again by every hook. It does not wait for the daemon, and passes
+  the hook's environment without `TMPDIR`; `Spawn` marks the caller's
+  inherited descriptors close-on-exec first. A daemon that does not answer in
+  time, answers an error, or does not know `event` gets the event through the
+  spool; one older than the hook's baum is sent `stop` with `when_idle` and
+  `respawn`, which makes even an idle daemon start the newer executable and
+  then stop, as a busy one does once idle. A daemon holding the socket but not
+  answering is never replaced by a hook.
 - **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
-  nanosecond it was spooled, written to a temporary file and renamed. At most
-  `MaxSpoolEvents` (1000) and `MaxSpoolBytes` (8 MiB): a hook drops the oldest
-  first and logs each drop. The daemon drains it when it starts and every 30 s,
-  oldest first, removing a file once recorded; a file that is not a small
-  private file or not an event is removed and logged, and an event of a newer
-  `v` is left for a newer daemon. Hooks log what they spool, drop and start to
-  `<state>/hooks.log` (0600, 256 KiB, one older file), never an event's
-  contents.
+  nanosecond it was spooled, written to a temporary file and renamed.
+  `MaxSpoolEvents` (1000) and `MaxSpoolBytes` (8 MiB): a hook drops the
+  oldest first and logs each drop; hooks spooling at once can each pass the
+  bound by one, and the next `Put` restores it. The daemon drains it when it
+  starts and every 30 s, oldest first, removing a file once recorded; a file
+  that is not a small private file or not an event is removed and logged,
+  and an event of a newer `v` is left for a newer daemon. Hooks log what they
+  spool, drop and start to `<state>/hooks.log` (0600, 256 KiB, one older
+  file), never an event's contents.
 - **Record.** `hookevents.Store`, opened by the daemon that holds the lock:
   JSON lines `{"received","via","event"}` in `<state>/events/events.jsonl`
   (0600 in a 0700 directory), rotated at 1 MiB with two older files kept, a few
-  thousand events. An event id is recorded once, across restarts, however
-  often it arrives (a late answer and the spool can both deliver it).
+  thousand events. Lines that are too long or not records are skipped. An
+  event id is recorded once however often it arrives (a late answer and the
+  spool can both deliver it), within the last 4096 ids, across restarts;
+  readers dedupe by id beyond that. A record that cannot be opened (a shared
+  directory, an unreadable file) is logged and the daemon runs without the
+  `event` method, so hooks spool rather than start a daemon on every call.
   `Store.Recent(n)` reads the latest records, oldest first; spooled events
   arrive late, so readers order by `event.time`. `Store.Subscribe(buffer,
   match)` delivers new records matching a filter; a subscriber that falls
   behind misses records (logged) and can reread `Recent`. This is the
   interface the live features (in-progress sessions, refresh on session end
   or push, decision capture) are to build on; none does yet.
-- **Forwarding.** `baumcli.SessionForwarder` subscribes to `session-end`
-  events and, for a user logged in to a hosted server, uploads the ended
-  session exactly as `baum upload` does (one session, no root inventory, one
-  attempt). Without a login nothing leaves the machine.
 
 ### Transports and control protocol
 
@@ -1833,8 +1851,9 @@ and two files:
    `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
    wrote before its log opened, or a crash.
 4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
-   ("Quit and stop background reviews"). `baum daemon status [--json]` prints
-   the same status, or exits non-zero when none runs.
+   ("Quit and stop background reviews"), and marks it stopped by the user, so
+   hooks do not start it again until `baum daemon ensure`. `baum daemon
+   status [--json]` prints the same status, or exits non-zero when none runs.
 
 `<state>` is `$XDG_STATE_HOME/baum/daemon`, by default
 `~/.local/state/baum/daemon` on every platform, and is reported in `state`.
