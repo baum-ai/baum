@@ -1611,11 +1611,17 @@ function encodeSegments(value: string): string {
 }
 
 /** Where a context reference's file or directory reads on GitHub: at the
- *  reviewed head, or at the merge base when the pull request deletes it. */
+ *  reviewed head, or at the merge base when the pull request deletes it. A
+ *  path counts as deleted when hunks touch it or anything under it and every
+ *  one of them removes a file, so a directory the pull request deletes whole
+ *  links at the merge base, while a path one stack member removes and a later
+ *  member adds back still exists at head. A renamed file's old path links at
+ *  head: hunks name only the new path. */
 export function contextRefUrl(document: ReviewDocument, path: string): string {
-  const deleted = document.index.hunks.some(
-    (hunk) => hunk.path === path && hunk.change === "removed",
+  const touching = document.index.hunks.filter(
+    (hunk) => hunk.path === path || hunk.path.startsWith(`${path}/`),
   );
+  const deleted = touching.length > 0 && touching.every((hunk) => hunk.change === "removed");
   const { repository, head, merge_base } = document.review;
   return githubBlobUrl(repository, deleted ? merge_base : head, path);
 }

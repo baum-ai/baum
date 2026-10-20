@@ -29,6 +29,7 @@ import {
   reviewThreadStatus,
   type ReviewExchangeFacts,
   combineExchangeFacts,
+  contextRefUrl,
   riskEvidenceReviewVersion,
   riskLifecycleLabel,
   riskLifecycleTone,
@@ -381,6 +382,58 @@ describe("sectionHunks", () => {
     expect(groups.map((group) => group.path)).toEqual(["pkg/a.go", "pkg/a_test.go"]);
     expect(groups[0]).toMatchObject({ additions: 10, deletions: 2 });
     expect(groups[0]!.hunks.map((hunk) => hunk.id)).toEqual(["h_1", "h_2"]);
+  });
+});
+
+describe("contextRefUrl", () => {
+  const head = `https://github.com/acme/widgets/blob/${"a".repeat(40)}`;
+  const mergeBase = `https://github.com/acme/widgets/blob/${"b".repeat(40)}`;
+  const withHunks = (...hunks: [string, "added" | "modified" | "removed"][]): ReviewDocument => {
+    const template = document.index.hunks[0]!;
+    return {
+      ...document,
+      index: {
+        ...document.index,
+        hunks: hunks.map(([path, change], index) => ({
+          ...template,
+          id: `h_${index}`,
+          path,
+          change,
+        })),
+      },
+    };
+  };
+
+  it("links a path the pull request does not touch, or modifies, at head", () => {
+    const doc = withHunks(["pkg/a.go", "modified"]);
+    expect(contextRefUrl(doc, "pkg/other.go")).toBe(`${head}/pkg/other.go`);
+    expect(contextRefUrl(doc, "pkg/a.go")).toBe(`${head}/pkg/a.go`);
+    expect(contextRefUrl(doc, "pkg")).toBe(`${head}/pkg`);
+  });
+
+  it("links a deleted file, and a directory deleted whole, at the merge base", () => {
+    const doc = withHunks(
+      ["legacy/a.go", "removed"],
+      ["legacy/sub/b.go", "removed"],
+      ["pkg/a.go", "modified"],
+    );
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${mergeBase}/legacy/a.go`);
+    expect(contextRefUrl(doc, "legacy")).toBe(`${mergeBase}/legacy`);
+    expect(contextRefUrl(doc, "legacy/sub")).toBe(`${mergeBase}/legacy/sub`);
+    // A sibling sharing the prefix is not inside the directory.
+    expect(contextRefUrl(doc, "leg")).toBe(`${head}/leg`);
+  });
+
+  it("links at head a path that is removed and added back, or a directory partly deleted", () => {
+    const doc = withHunks(
+      ["queue/worker.go", "removed"],
+      ["queue/worker.go", "added"],
+      ["store/old.go", "removed"],
+      ["store/new.go", "added"],
+    );
+    expect(contextRefUrl(doc, "queue/worker.go")).toBe(`${head}/queue/worker.go`);
+    expect(contextRefUrl(doc, "store")).toBe(`${head}/store`);
+    expect(contextRefUrl(doc, "store/old.go")).toBe(`${mergeBase}/store/old.go`);
   });
 });
 

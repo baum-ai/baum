@@ -141,9 +141,10 @@ holds is labelled, in order Area, How it's reached, Contracts and Related
 code, with its Markdown text and its references as chips (the path, then
 `· symbol` when one is named). A chip opens the review's file view when the
 pull request changes the file, and otherwise GitHub at the reviewed head, or
-at the merge base for a file the pull request deletes. A document without a
-context, generated before it existed, shows no Context part. Stack reviews
-show theirs the same way.
+at the merge base for a file or directory the pull request deletes: every
+hunk on or under the path removes a file. A document without a context,
+generated before it existed, shows no Context part. Stack reviews show theirs
+the same way.
 
 Attention uses a flat callout with evidence directly below its risks. For a
 single referenced risk, its explanation replaces the overlapping attention
