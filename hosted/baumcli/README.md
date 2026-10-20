@@ -46,7 +46,14 @@ handshake, in [`apiclient`](../apiclient).
     with the same output and exit status (a failing `pre-push` exits with
     Entire's status, or 128 plus the signal that killed it), and sends the
     event to the daemon (see "Hook events"). A hook run decides this again
-    itself, so a hook is hosted only where the hosted opt-in holds.
+    itself, so a hook is hosted only where the hosted opt-in holds, cheapest
+    check first so a hook that runs only because of the daemon never waits
+    for the committed-settings read (which may take its full five-second
+    timeout in a partial clone): a login or a clone marker makes it hosted;
+    an open-source install, local; with no daemon ever run, hosted (`--check`
+    passed through the opt-in, as before the daemon); otherwise it is local
+    unless an agent settings file in the working tree carries baum's
+    dispatcher, and only then do the committed files decide.
 - A hosted install is a build linked with
   `-X github.com/baum-ai/baum/hosted/baumcli.distribution=hosted`, as the
   hosted release builds it, or a baum the hosted install script installed,

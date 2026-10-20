@@ -473,3 +473,141 @@ func TestUserHooksOnlyRecordForADaemonUser(t *testing.T) {
 		t.Errorf("%d requests reached the baum server", n)
 	}
 }
+
+// slowOnboardingProbe puts a git first on the PATH that logs every `git
+// cat-file` (the onboarding probe) to the returned file and, while the
+// returned flag file exists, hangs there far longer than
+// onboardingReadTimeout. Every other git command runs the real git.
+func slowOnboardingProbe(t *testing.T) (log, flag string) {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, dir := t.TempDir(), t.TempDir()
+	log, flag = filepath.Join(dir, "cat-file.log"), filepath.Join(dir, "slow")
+	writeExecutable(t, filepath.Join(bin, "git"), "#!/bin/sh\nfor arg; do\n  if [ \"$arg\" = cat-file ]; then\n"+
+		"    echo cat-file >> '"+log+"'\n    if [ -e '"+flag+"' ]; then sleep 30; fi\n    break\n  fi\ndone\nexec '"+git+"' \"$@\"\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log, flag
+}
+
+// A hook that runs only because the user runs the daemon never waits for the
+// onboarding probe, even in a hosted install where it may take the full
+// onboardingReadTimeout: the hook hands off to Entire and spools its event
+// within the event budget.
+func TestDaemonOnlyHookDoesNotWaitForTheOnboardingProbe(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	markDaemonRan(t, paths)
+	original := distribution
+	distribution = hostedDistribution
+	t.Cleanup(func() { distribution = original })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv(tokenEnvVar, "")
+	repo := initHookTestRepo(t)
+	entireLog := filepath.Join(t.TempDir(), "entire.log")
+	stubEntireBinary(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+entireLog+"'\ncat >/dev/null\n")
+	probes, flag := slowOnboardingProbe(t)
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	for _, args := range [][]string{
+		{"hooks", "agent", "claude-code", "session-start"},
+		{"hooks", "agent", "claude-code", "stop"},
+		{"hooks", "git", "post-commit"},
+	} {
+		start := time.Now()
+		stdout, _, err := runCLIWithInput(t, `{"session_id":"s-6"}`, args...)
+		elapsed := time.Since(start)
+		if err != nil || stdout != "" {
+			t.Fatalf("%v: %q, %v", args, stdout, err)
+		}
+		if limit := hookevents.Budget + 100*time.Millisecond; elapsed > limit {
+			t.Errorf("%v took %s, over %s", args, elapsed, limit)
+		}
+	}
+	if data, err := os.ReadFile(probes); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the hooks ran the onboarding probe: %q, %v", data, err)
+	}
+	data, err := os.ReadFile(entireLog)
+	if want := "hooks claude-code session-start\nhooks claude-code stop\nhooks git post-commit\n"; err != nil || string(data) != want {
+		t.Errorf("Entire calls %q, %v; want %q", data, err, want)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git", "baum")); !os.IsNotExist(err) {
+		t.Errorf("the session start bootstrapped the clone: %v", err)
+	}
+	if events, _ := spooledHookEvents(t, paths); len(events) != 3 {
+		t.Errorf("events = %+v", events)
+	}
+}
+
+// The committed dispatchers of a daemon-only user in a hosted install give
+// the agent and Git exactly what the fall-through gives, without the time
+// the onboarding probe can take.
+func TestDaemonOnlyHostedHooksBehaveLikeTheFallThroughWithASlowProbe(t *testing.T) {
+	world := newHookWorld(t)
+	asHostedInstall(t, "build")
+	commitFile(t, world.repo, "README.md", "demo\n")
+	entire, err := exec.LookPath("entire")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, entire, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+world.entireLog+"'\ncat\nexit 3\n")
+	probes, flag := slowOnboardingProbe(t)
+	spec, _ := agenthooks.Lookup("claude-code")
+	gitPath := filepath.Join(t.TempDir(), "post-commit")
+	writeExecutable(t, gitPath, gitHookDispatcher("post-commit"))
+	payload := `{"session_id":"s-7","source":"startup"}`
+	hooks := []string{agenthooks.Dispatcher(spec, agenthooks.SessionStartEvent), agenthooks.Dispatcher(spec, "stop"), gitPath}
+
+	var fallThrough []dispatcherRun
+	for _, hook := range hooks {
+		fallThrough = append(fallThrough, world.runForContract(t, hook, payload))
+	}
+	paths := makeDaemonState(t)
+	_ = os.Remove(probes)
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i, hook := range hooks {
+		start := time.Now()
+		local := world.runForContract(t, hook, payload)
+		// Two baum processes start; the probe alone would take 5 s.
+		if elapsed := time.Since(start); elapsed > onboardingReadTimeout/2 {
+			t.Errorf("hook %d took %s", i, elapsed)
+		}
+		if local.stdout != fallThrough[i].stdout || local.exit != fallThrough[i].exit || !slices.Equal(local.entire, fallThrough[i].entire) {
+			t.Errorf("hook %d: with a daemon %+v, fall-through %+v", i, local, fallThrough[i])
+		}
+		if len(local.baum) != 2 {
+			t.Errorf("hook %d: baum calls = %q", i, local.baum)
+		}
+	}
+	if data, err := os.ReadFile(probes); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the hooks ran the onboarding probe: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+		t.Errorf("the session start bootstrapped the clone: %v", err)
+	}
+	if events, _ := spooledHookEvents(t, paths); len(events) != len(hooks) {
+		t.Errorf("events = %+v", events)
+	}
+}
+
+// A hosted install still bootstraps an onboarded repository for a teammate
+// who never logged in but runs the daemon: the working tree carries the
+// dispatcher, so the committed files decide, as without a daemon.
+func TestHostedInstallWithADaemonBootstrapsAnOnboardedRepository(t *testing.T) {
+	world := onboardedWorld(t)
+	asHostedInstall(t, "build")
+	makeDaemonState(t)
+	if !world.sessionStartBootstraps(t) {
+		t.Fatal("a hosted install with a daemon did not bootstrap the onboarded repository")
+	}
+	if n := world.requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the baum server", n)
+	}
+}

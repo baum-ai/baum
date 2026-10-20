@@ -1153,7 +1153,11 @@ format and the protocol constants have one definition on both sides.
   committed agent settings carry baum's dispatcher; or, without any of those,
   for a user for whom a baum daemon ran (its lock file exists), where the
   hook is local: no hosted work, Entire called exactly as the fall-through
-  would. They read local files only, and the hooks they admit never contact a
+  would. The hook run decides hosted or local again, cheapest check first: it
+  reads the committed settings (`git cat-file`, up to 5 s) only for a daemon
+  user of a hosted install whose working tree settings carry the dispatcher,
+  so a hook admitted by the daemon alone hands off to Entire and sends its
+  event without waiting for git. They read local files only, and the hooks they admit never contact a
   server; they hand their events to the local daemon, which keeps them on the
   machine (see "Hook events" under "Local daemon"). The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
