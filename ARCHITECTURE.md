@@ -1834,7 +1834,16 @@ replace it.
   `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
   runs, and Cursor prompts and compaction); `stop` to `stop`; `session-end` to
-  `end`. Other names are ignored. A session is keyed by agent and id.
+  `end`. Other names are ignored. A session is keyed by agent and id; an id
+  over 128 bytes or an agent over 32 is not a session baum's hooks describe and
+  is ignored. An event id is applied once (the last 4096 are remembered).
+- **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
+  is full. The event loop therefore never waits for git: it applies the event
+  at once, and a new session is hidden until a background worker looks up its
+  link (`ResolvePending`; a directory in no registered clone is dropped then).
+  Every sweep (30 s) also runs `Reconcile`, which rereads `Store.Recent` and
+  applies the events not yet applied, so a dropped `session-end` is found
+  within 30 seconds rather than leaving a session waiting until it times out.
 - **States.** `running` after a start, prompt or tool event. `idle` after a
   `stop`, which agents send at the end of every turn (waiting for the user),
   and for a running session silent longer than `IdleAfter` (10 minutes): an
@@ -1859,13 +1868,18 @@ replace it.
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
-  newest when several. Without one the session is still tracked against its
+  newest when several. When no head has the branch's name, the head branch
+  named by the branch's upstream (`branch.<name>.merge`, when its remote is the
+  same repository) is tried, then the pull request whose head commit is the
+  commit checked out, which covers a detached HEAD and a push to a branch of
+  another name. Without one the session is still tracked against its
   repository and branch, and only a PR page it does not match omits it. The
   clone list is read at most every 30 seconds and a directory that fails to
   link is not looked up again for a minute, since listing and opening a clone
   run git. A session is looked up when it is new and at most every 30 seconds
   after, since the branch changes while it runs and a pull request appears
-  once pushed; a lookup that fails keeps the last link.
+  once pushed; a lookup that fails keeps the last link. Failing to list the
+  registered clones is not retried for 30 seconds either.
 - **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers
@@ -1878,9 +1892,11 @@ replace it.
   stay inside the tracker.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
-  sees changes, at most once a second; also once when it starts, and on a
-  `reset` the app rereads like everything else. A running session working
-  steadily therefore costs the app one small request a second.
+  sees changes, at most once a second, and on a `reset` the app rereads like
+  everything else. A change that only moves `last_activity_at` by less than 30
+  seconds is not one (the endpoint still serves the fresh value), so a session
+  working steadily costs the app a request every 30 seconds or at a state
+  change, not one a second. The app keeps the list it has when a read fails.
 - **App.** The app rereads the list on `live` (and `open` and `reset`). An
   inbox row shows "Agent running" or "Agent idle" (a count when several) for
   sessions of its pull request, matched by repository and number across

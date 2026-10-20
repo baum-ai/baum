@@ -56,11 +56,13 @@ const session = (over: Partial<LiveSession> = {}): LiveSession => ({
 
 let root: Root, node: HTMLDivElement;
 let liveBody: unknown;
+let liveFails = false;
 const streams: EventTarget[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   liveBody = { sessions: [] };
+  liveFails = false;
   streams.length = 0;
   node = document.createElement("div");
   document.body.append(node);
@@ -79,7 +81,9 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (path: string) =>
       path === "/s/test-ns/api/live-sessions"
-        ? Response.json(liveBody)
+        ? liveFails
+          ? new Response("failed", { status: 500 })
+          : Response.json(liveBody)
         : path === "/s/test-ns/api/health"
           ? Response.json({})
           : path.startsWith("/s/test-ns/api/document")
@@ -163,6 +167,15 @@ it("shows the inbox indicator from the live-sessions request and its live event"
   liveBody = { sessions: [session({ state: "ended" })] };
   await act(async () => streams[0]!.dispatchEvent(new Event("live")));
   expect(node.textContent).not.toContain("Agent");
+});
+
+it("keeps the sessions shown when rereading them fails", async () => {
+  liveBody = { sessions: [session()] };
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Agent running");
+  liveFails = true;
+  await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+  expect(node.textContent).toContain("Agent running");
 });
 
 async function renderReview(live: LiveSession[]) {

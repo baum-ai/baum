@@ -62,6 +62,17 @@ const (
 	RelinkEvery = 30 * time.Second
 	// NotifyEvery coalesces the notifications of a busy session.
 	NotifyEvery = time.Second
+	// ActivityNotifyEvery is how far last_activity_at must move, with nothing
+	// else changed, for the app to be told: a busy agent's tool events would
+	// otherwise make every open window read the list once a second.
+	ActivityNotifyEvery = 30 * time.Second
+	// Bounds on the identifiers a session is keyed by; an event with longer
+	// ones is not a session baum's hooks describe.
+	maxID    = 128
+	maxAgent = 32
+	// rememberedEvents is how many applied event ids are kept, so applying
+	// an event twice (the subscription and a reconcile) changes nothing.
+	rememberedEvents = 4096
 )
 
 // Session is what the application is told of a tracked session.
@@ -116,9 +127,20 @@ type Tracker struct {
 	Log    *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// Buffer is the subscription's size; zero is 256. A subscriber that falls
+	// behind misses events, which Reconcile applies from the record.
+	Buffer int
 
+	ready    sync.Once
 	mu       sync.Mutex
 	sessions map[key]*entry
+	// pending are the sessions waiting for a link lookup, which runs off the
+	// event loop: it runs git, and the loop must keep up with the hooks.
+	pending map[key]bool
+	seen    map[string]bool
+	order   []string
+	wake    chan struct{}
+	kick    chan struct{}
 }
 
 type key struct{ agent, id string }
@@ -132,9 +154,16 @@ type entry struct {
 	ended    bool
 	endedAt  time.Time
 	linkedAt time.Time
-	// unlinked is a session recreated by rebuild whose link is yet to be
-	// looked up.
+	// unlinked is a session whose link is yet to be looked up: it is not
+	// shown, and is dropped when its directory is in no registered clone.
 	unlinked bool
+}
+
+func (t *Tracker) init() {
+	t.ready.Do(func() {
+		t.sessions, t.pending, t.seen = map[key]*entry{}, map[key]bool{}, map[string]bool{}
+		t.wake, t.kick = make(chan struct{}, 1), make(chan struct{}, 1)
+	})
 }
 
 func (t *Tracker) now() time.Time {
@@ -190,10 +219,26 @@ func matchAgent(e hookevents.Event) bool {
 // Run rebuilds the sessions from the record, then follows new events until
 // ctx ends.
 func (t *Tracker) Run(ctx context.Context) {
-	events, cancel := t.Source.Subscribe(256, matchAgent)
+	t.init()
+	buffer := t.Buffer
+	if buffer <= 0 {
+		buffer = 256
+	}
+	events, cancel := t.Source.Subscribe(buffer, matchAgent)
 	defer cancel()
 	t.Rebuild(ctx)
-	t.notify()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.wake:
+				if t.ResolvePending(ctx) {
+					t.signal()
+				}
+			}
+		}
+	}()
 	var flush <-chan time.Time
 	changed := func() {
 		if flush == nil {
@@ -213,14 +258,24 @@ func (t *Tracker) Run(ctx context.Context) {
 			if t.Apply(ctx, record.Event) {
 				changed()
 			}
+		case <-t.kick:
+			changed()
 		case <-sweep.C:
-			if t.Sweep() {
+			swept, reconciled := t.Sweep(), t.Reconcile(ctx)
+			if swept || reconciled {
 				changed()
 			}
 		case <-flush:
 			flush = nil
 			t.notify()
 		}
+	}
+}
+
+func (t *Tracker) signal() {
+	select {
+	case t.kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -237,16 +292,12 @@ func (t *Tracker) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// Rebuild replaces the sessions with those the record's events within
-// DropAfter show: a daemon that restarts keeps showing the sessions that
-// were running. Events are applied in the order of their time, since a
-// spooled event is recorded after later ones. Run is the only caller, so no
-// event is applied while the directories are looked up.
-func (t *Tracker) Rebuild(ctx context.Context) {
+// events are the record's agent events within DropAfter, in the order of
+// their time: a spooled event is recorded after later ones.
+func (t *Tracker) events() ([]hookevents.Event, error) {
 	records, err := t.Source.Recent(0)
 	if err != nil {
-		t.logger().Warn("live sessions not rebuilt from the hook event record", "error", err)
-		return
+		return nil, err
 	}
 	events := make([]hookevents.Event, 0, len(records))
 	for _, record := range records {
@@ -255,34 +306,50 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 		}
 	}
 	slices.SortStableFunc(events, func(a, b hookevents.Event) int { return a.Time.Compare(b.Time) })
+	return events, nil
+}
+
+// Rebuild replaces the sessions with those the record's events show, so a
+// daemon that restarts keeps showing the sessions that were running. Their
+// links are looked up afterwards, off the caller's goroutine when Run is the
+// caller; ResolvePending does it for a caller without one.
+func (t *Tracker) Rebuild(ctx context.Context) {
+	t.init()
+	events, err := t.events()
+	if err != nil {
+		t.logger().Warn("live sessions not rebuilt from the hook event record", "error", err)
+		return
+	}
 	now := t.now()
 	t.mu.Lock()
-	t.sessions = map[key]*entry{}
+	defer t.mu.Unlock()
+	t.sessions, t.pending, t.seen, t.order = map[key]*entry{}, map[key]bool{}, map[string]bool{}, nil
 	for _, e := range events {
-		t.applyEvent(e, now, Link{}, false, false)
+		t.applyLocked(e, now)
 	}
-	pending := map[key]string{}
-	for k, s := range t.sessions {
-		pending[k] = s.cwd
+}
+
+// Reconcile applies the events of the record that the subscription did not
+// deliver (a full buffer drops them) and reports whether what the application
+// sees changed. Applying an event twice changes nothing, so it can run at any
+// time.
+func (t *Tracker) Reconcile(ctx context.Context) bool {
+	t.init()
+	events, err := t.events()
+	if err != nil {
+		t.logger().Warn("live sessions not reconciled with the hook event record", "error", err)
+		return false
 	}
-	t.mu.Unlock()
-	links := map[key]Link{}
-	for k, cwd := range pending {
-		if link, ok := t.Linker.Link(ctx, cwd); ok {
-			links[k] = link
-		}
-	}
+	now := t.now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for k, s := range t.sessions {
-		link, ok := links[k]
-		if !ok {
-			delete(t.sessions, k)
-			continue
+	changed := false
+	for _, e := range events {
+		if t.applyLocked(e, now) {
+			changed = true
 		}
-		s.setLink(link, now)
-		s.unlinked = false
 	}
+	return changed
 }
 
 func (e *entry) setLink(link Link, now time.Time) {
@@ -298,40 +365,78 @@ func cwdOf(e hookevents.Event) string {
 }
 
 // Apply updates the sessions with a hook event and reports whether what the
-// application sees changed. Events of a directory in no registered clone, and
-// ones that carry no session id, change nothing.
-func (t *Tracker) Apply(ctx context.Context, e hookevents.Event) bool {
-	if !matchAgent(e) || e.Session == nil || e.Session.ID == "" {
-		return false
-	}
+// application sees changed enough to tell it. It never waits for git: a new
+// session is hidden until ResolvePending links it.
+func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
+	t.init()
 	now := t.now()
-	k := key{e.Agent, e.Session.ID}
-	// Linking runs git, so it runs without the lock, and only for a new
-	// session or one not looked up for RelinkEvery.
-	var link Link
-	var linked bool
-	t.mu.Lock()
-	s := t.sessions[k]
-	need := s == nil || s.ended || now.Sub(s.linkedAt) >= RelinkEvery
-	t.mu.Unlock()
-	if cwd := cwdOf(e); need && cwd != "" {
-		link, linked = t.Linker.Link(ctx, cwd)
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.sessions == nil {
-		t.sessions = map[key]*entry{}
-	}
-	before, existed := t.view(k, now)
-	t.applyEvent(e, now, link, linked, need)
-	after, exists := t.view(k, now)
-	return existed != exists || before != after
+	return t.applyLocked(e, now)
 }
 
-// view is the session as the application sees it.
+// ResolvePending looks up the link of each session waiting for one and
+// reports whether what the application sees changed. Run does it in the
+// background after every event that needs it.
+func (t *Tracker) ResolvePending(ctx context.Context) bool {
+	t.init()
+	type request struct {
+		k   key
+		s   *entry
+		cwd string
+	}
+	t.mu.Lock()
+	var todo []request
+	for k := range t.pending {
+		if s := t.sessions[k]; s != nil {
+			todo = append(todo, request{k, s, s.cwd})
+		} else {
+			delete(t.pending, k)
+		}
+	}
+	t.mu.Unlock()
+	changed := false
+	for _, r := range todo {
+		link, ok := t.Linker.Link(ctx, r.cwd)
+		now := t.now()
+		t.mu.Lock()
+		delete(t.pending, r.k)
+		if t.sessions[r.k] == r.s {
+			before, existed := t.view(r.k, now)
+			switch {
+			case ok:
+				r.s.setLink(link, now)
+				r.s.unlinked = false
+			case r.s.unlinked:
+				delete(t.sessions, r.k)
+			default:
+				// A directory that no longer resolves keeps the last link.
+				r.s.linkedAt = now
+			}
+			after, exists := t.view(r.k, now)
+			if significant(before, after, existed, exists) {
+				changed = true
+			}
+		}
+		t.mu.Unlock()
+	}
+	return changed
+}
+
+// queue asks for a link lookup of the session.
+func (t *Tracker) queue(k key) {
+	t.pending[k] = true
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+// view is the session as the application sees it; a session not yet linked
+// is not seen.
 func (t *Tracker) view(k key, now time.Time) (Session, bool) {
 	s := t.sessions[k]
-	if s == nil {
+	if s == nil || s.unlinked {
 		return Session{}, false
 	}
 	out := s.Session
@@ -339,10 +444,50 @@ func (t *Tracker) view(k key, now time.Time) (Session, bool) {
 	return out, true
 }
 
-// applyEvent is the state machine. lookedUp says the caller resolved e's
-// directory and linked is its result; Rebuild passes false and links later.
-func (t *Tracker) applyEvent(e hookevents.Event, now time.Time, link Link, linked, lookedUp bool) {
+// significant reports whether the application should be told of the change
+// from before to after: not one that only moves last_activity_at by less than
+// ActivityNotifyEvery. The endpoint always serves the fresh values.
+func significant(before, after Session, existed, exists bool) bool {
+	if existed != exists {
+		return true
+	}
+	if !exists {
+		return false
+	}
+	if after.LastActivityAt.Sub(before.LastActivityAt) >= ActivityNotifyEvery {
+		return true
+	}
+	before.LastActivityAt, before.LastEvent = after.LastActivityAt, after.LastEvent
+	return before != after
+}
+
+// applyLocked applies e once, and reports whether the change is worth a
+// notification.
+func (t *Tracker) applyLocked(e hookevents.Event, now time.Time) bool {
 	if !matchAgent(e) || e.Session == nil || e.Session.ID == "" || e.Agent == "" || e.Time.IsZero() {
+		return false
+	}
+	if e.ID != "" {
+		if t.seen[e.ID] {
+			return false
+		}
+		t.seen[e.ID] = true
+		t.order = append(t.order, e.ID)
+		if len(t.order) > rememberedEvents {
+			delete(t.seen, t.order[0])
+			t.order = t.order[1:]
+		}
+	}
+	k := key{e.Agent, e.Session.ID}
+	before, existed := t.view(k, now)
+	t.applyEvent(e, now)
+	after, exists := t.view(k, now)
+	return significant(before, after, existed, exists)
+}
+
+// applyEvent is the state machine.
+func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
+	if len(e.Session.ID) > maxID || len(e.Agent) > maxAgent {
 		return
 	}
 	kind, _ := normalise(e.Name)
@@ -367,21 +512,22 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time, link Link, linke
 		// An ended session that sends events again (a resumed one) is a
 		// new run of it.
 		delete(t.sessions, k)
+		delete(t.pending, k)
 		s = nil
 	}
+	cwd := cwdOf(e)
 	if s == nil {
-		cwd := cwdOf(e)
-		if kind == EventEnd || cwd == "" || (lookedUp && !linked) {
+		if kind == EventEnd || cwd == "" {
 			return
 		}
 		t.makeRoom()
-		s = &entry{Session: Session{Agent: e.Agent, ID: e.Session.ID, StartedAt: at, LastActivityAt: at}, cwd: cwd, unlinked: !lookedUp}
+		s = &entry{Session: Session{Agent: e.Agent, ID: e.Session.ID, StartedAt: at, LastActivityAt: at}, cwd: cwd, unlinked: true}
 		t.sessions[k] = s
+		t.queue(k)
+	} else if cwd != "" && !s.unlinked && !t.pending[k] && now.Sub(s.linkedAt) >= RelinkEvery {
+		t.queue(k)
 	}
-	if lookedUp && linked {
-		s.setLink(link, now)
-	}
-	if cwd := cwdOf(e); cwd != "" {
+	if cwd != "" {
 		s.cwd = cwd
 	}
 	if kind == EventStart && at.Before(s.StartedAt) {
@@ -415,11 +561,13 @@ func (t *Tracker) makeRoom() {
 		}
 	}
 	delete(t.sessions, key{victim.Agent, victim.ID})
+	delete(t.pending, key{victim.Agent, victim.ID})
 }
 
 // Sweep drops the sessions that expired and reports whether what the
 // application sees changed, by that or by a running session going idle.
 func (t *Tracker) Sweep() bool {
+	t.init()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
@@ -428,10 +576,11 @@ func (t *Tracker) Sweep() bool {
 		switch {
 		case s.expired(now):
 			delete(t.sessions, k)
-			changed = true
+			delete(t.pending, k)
+			changed = changed || !s.unlinked
 		case s.State != s.state(now):
 			s.State = s.state(now)
-			changed = true
+			changed = changed || !s.unlinked
 		}
 	}
 	return changed
@@ -439,16 +588,18 @@ func (t *Tracker) Sweep() bool {
 
 // Sessions returns the tracked sessions, the most recently active first.
 func (t *Tracker) Sessions() []Session {
+	t.init()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	out := make([]Session, 0, len(t.sessions))
 	for k, s := range t.sessions {
-		if s.expired(now) || s.unlinked {
+		if s.expired(now) {
 			continue
 		}
-		session, _ := t.view(k, now)
-		out = append(out, session)
+		if session, ok := t.view(k, now); ok {
+			out = append(out, session)
+		}
 	}
 	slices.SortFunc(out, func(a, b Session) int {
 		if c := b.LastActivityAt.Compare(a.LastActivityAt); c != 0 {

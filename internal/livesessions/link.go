@@ -45,9 +45,12 @@ type Resolver struct {
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
-	mu       sync.Mutex
-	clones   []repos.Clone
-	loaded   time.Time
+	mu     sync.Mutex
+	clones []repos.Clone
+	loaded time.Time
+	// failed is when listing the clones last failed, so a failing registry
+	// is asked again only after clonesFor, not by every lookup.
+	failed   time.Time
 	unlinked map[string]time.Time
 }
 
@@ -63,12 +66,17 @@ func (r *Resolver) now() time.Time {
 func (r *Resolver) registered(ctx context.Context) []repos.Clone {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if now := r.now(); r.loaded.IsZero() || now.Sub(r.loaded) >= clonesFor {
+	now := r.now()
+	if !r.failed.IsZero() && now.Sub(r.failed) < clonesFor {
+		return r.clones
+	}
+	if r.loaded.IsZero() || now.Sub(r.loaded) >= clonesFor {
 		clones, err := r.Registry.List(ctx)
 		if err != nil {
+			r.failed = now
 			return r.clones
 		}
-		r.clones, r.loaded = clones, now
+		r.clones, r.loaded, r.failed = clones, now, time.Time{}
 	}
 	return r.clones
 }
@@ -125,15 +133,18 @@ func (r *Resolver) link(ctx context.Context, cwd string) (Link, bool) {
 	if link.Branch, err = repo.CurrentBranch(ctx); err != nil {
 		link.Branch = ""
 	}
-	link.PR = r.pullRequest(ctx, link.Repository, link.Branch)
+	link.PR = r.pullRequest(ctx, link.Repository, link.Branch, repo)
 	return link, true
 }
 
-// pullRequest is the open pull request of repository whose head is branch in
-// the repository itself (a fork's branch of the same name is another branch),
-// the newest when several have it; 0 when the cache has none.
-func (r *Resolver) pullRequest(ctx context.Context, repository, branch string) int {
-	if branch == "" || r.Discovery == nil {
+// pullRequest is the open pull request of repository whose head is the
+// session's work, in the repository itself (a fork's branch of the same name
+// is another branch), the newest when several; 0 when the cache has none. It
+// follows the branch's name, then the head branch the branch's upstream names
+// (a branch pushed under another name), then the commit checked out (a
+// detached HEAD, or a push to a branch of another name without an upstream).
+func (r *Resolver) pullRequest(ctx context.Context, repository, branch string, repo *gitlocal.Repo) int {
+	if r.Discovery == nil {
 		return 0
 	}
 	parsed, err := github.ParseRepository(repository)
@@ -144,11 +155,49 @@ func (r *Resolver) pullRequest(ctx context.Context, repository, branch string) i
 	if err != nil {
 		return 0
 	}
-	number := 0
-	for _, pr := range snapshot.PullRequests {
-		if pr.HeadRef == branch && !pr.Fork && pr.Number > number {
-			number = pr.Number
+	find := func(match func(discovery.PullRequest) bool) int {
+		number := 0
+		for _, pr := range snapshot.PullRequests {
+			if !pr.Fork && match(pr) && pr.Number > number {
+				number = pr.Number
+			}
+		}
+		return number
+	}
+	if branch != "" {
+		if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == branch }); number > 0 {
+			return number
+		}
+		if name := r.upstreamBranch(ctx, repo, repository, branch); name != "" && name != branch {
+			if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == name }); number > 0 {
+				return number
+			}
 		}
 	}
-	return number
+	head, err := repo.HeadCommit(ctx)
+	if err != nil || head == "" {
+		return 0
+	}
+	return find(func(pr discovery.PullRequest) bool { return strings.EqualFold(pr.HeadSHA, head) })
+}
+
+// upstreamBranch is the name of the branch of repository that branch's
+// upstream is, "" when it has none there.
+func (r *Resolver) upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository, branch string) string {
+	remote, merge, err := repo.BranchUpstream(ctx, branch)
+	name, ok := strings.CutPrefix(merge, "refs/heads/")
+	if err != nil || !ok || name == "" || remote == "" || remote == "." {
+		return ""
+	}
+	url, err := repo.RemoteFetchURL(ctx, remote)
+	if err != nil {
+		return ""
+	}
+	if url == "" {
+		url = remote
+	}
+	if !gitlocal.SameRepository(url, repository) {
+		return ""
+	}
+	return name
 }

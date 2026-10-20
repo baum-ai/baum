@@ -159,8 +159,9 @@ function Workspace({ url }: { url: UrlState }) {
   // event rereads only them. A daemon without them serves none.
   const reloadLive = useCallback(async () => {
     const sequence = ++lastLive.current;
-    const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => []);
-    if (sequence === lastLive.current) setLive(sessions);
+    // A failed read keeps what the page shows: it is not the end of every session.
+    const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => null);
+    if (sessions && sequence === lastLive.current) setLive(sessions);
   }, []);
   const lastReload = useRef(0);
   const reload = useCallback(async () => {

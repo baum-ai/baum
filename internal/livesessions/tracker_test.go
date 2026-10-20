@@ -45,11 +45,27 @@ func newLinker() *linker {
 type source struct {
 	records []hookevents.Record
 	ch      chan hookevents.Record
+	// ready, when set, is closed once something subscribed.
+	ready chan struct{}
+}
+
+// add records e and hands it to the subscriber as the store does: a full
+// buffer drops it.
+func (s *source) add(e hookevents.Event) {
+	r := record(e)
+	s.records = append(s.records, r)
+	select {
+	case s.ch <- r:
+	default:
+	}
 }
 
 func (s *source) Recent(int) ([]hookevents.Record, error) { return s.records, nil }
 func (s *source) Subscribe(buffer int, _ func(hookevents.Event) bool) (<-chan hookevents.Record, func()) {
 	s.ch = make(chan hookevents.Record, buffer)
+	if s.ready != nil {
+		close(s.ready)
+	}
 	return s.ch, func() {}
 }
 
@@ -60,6 +76,14 @@ func event(id, name string, at time.Time, cwd string) hookevents.Event {
 	return e
 }
 
+// apply applies the event and looks up the link it needs, as Run does in the
+// background, and reports whether either changed what the app sees.
+func apply(tr *Tracker, e hookevents.Event) bool {
+	applied := tr.Apply(context.Background(), e)
+	resolved := tr.ResolvePending(context.Background())
+	return applied || resolved
+}
+
 func newTracker(c *clock, l Linker) *Tracker {
 	return &Tracker{Source: &source{}, Linker: l, Now: c.Now}
 }
@@ -67,7 +91,6 @@ func newTracker(c *clock, l Linker) *Tracker {
 func TestSessionLifecycle(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
-	ctx := context.Background()
 	steps := []struct {
 		name  string
 		after time.Duration
@@ -83,7 +106,7 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	for _, step := range steps {
 		c.advance(step.after)
-		if !tr.Apply(ctx, event("s1", step.name, c.now, "/work/demo")) {
+		if !apply(tr, event("s1", step.name, c.now, "/work/demo")) {
 			t.Fatalf("%s did not change the sessions", step.name)
 		}
 		got := tr.Sessions()
@@ -105,8 +128,7 @@ func TestSessionLifecycle(t *testing.T) {
 func TestIdleAndDropTimeouts(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
-	ctx := context.Background()
-	tr.Apply(ctx, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
 	c.advance(IdleAfter)
 	if tr.Sweep() || tr.Sessions()[0].State != StateRunning {
 		t.Fatal("a session silent for exactly IdleAfter is still running")
@@ -127,17 +149,16 @@ func TestIdleAndDropTimeouts(t *testing.T) {
 func TestResumedSessionStartsANewRun(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
-	ctx := context.Background()
-	tr.Apply(ctx, event("s1", "session-start", c.now, "/work/demo"))
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
 	c.advance(time.Minute)
-	tr.Apply(ctx, event("s1", "session-end", c.now, "/work/demo"))
+	apply(tr, event("s1", "session-end", c.now, "/work/demo"))
 	// A late copy of an event from before the end changes nothing.
-	if tr.Apply(ctx, event("s1", "post-task", t0.Add(30*time.Second), "/work/demo")) {
+	if apply(tr, event("s1", "post-task", t0.Add(30*time.Second), "/work/demo")) {
 		t.Fatal("an event older than the end revived the session")
 	}
 	c.advance(time.Minute)
 	resumed := c.now
-	tr.Apply(ctx, event("s1", "session-start", resumed, "/work/demo"))
+	apply(tr, event("s1", "session-start", resumed, "/work/demo"))
 	got := tr.Sessions()
 	if len(got) != 1 || got[0].State != StateRunning || !got[0].StartedAt.Equal(resumed) {
 		t.Fatalf("resumed session = %+v", got)
@@ -147,7 +168,6 @@ func TestResumedSessionStartsANewRun(t *testing.T) {
 func TestUnregisteredDirectoryAndIncompleteEventsAreIgnored(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
-	ctx := context.Background()
 	other := event("s1", "session-start", c.now, "/elsewhere")
 	noID := event("", "session-start", c.now, "/work/demo")
 	noCwd := event("s2", "session-start", c.now, "")
@@ -155,7 +175,7 @@ func TestUnregisteredDirectoryAndIncompleteEventsAreIgnored(t *testing.T) {
 	unknown := event("s3", "notification", c.now, "/work/demo")
 	endOnly := event("s4", "session-end", c.now, "/work/demo")
 	for name, e := range map[string]hookevents.Event{"unregistered": other, "no id": noID, "no cwd": noCwd, "git": git, "unknown name": unknown, "end of unseen": endOnly} {
-		if tr.Apply(ctx, e) {
+		if apply(tr, e) {
 			t.Errorf("%s changed the sessions", name)
 		}
 	}
@@ -169,7 +189,7 @@ func TestEventDirectoryServesWhenThePayloadHasNone(t *testing.T) {
 	tr := newTracker(c, newLinker())
 	e := event("s1", "session-start", c.now, "")
 	e.Dir = "/work/demo/sub"
-	if !tr.Apply(context.Background(), e) || len(tr.Sessions()) != 1 {
+	if !apply(tr, e) || len(tr.Sessions()) != 1 {
 		t.Fatalf("sessions = %+v", tr.Sessions())
 	}
 }
@@ -178,10 +198,9 @@ func TestBranchFollowsTheSessionButLookupsAreThrottled(t *testing.T) {
 	c := &clock{t0}
 	l := newLinker()
 	tr := newTracker(c, l)
-	ctx := context.Background()
-	tr.Apply(ctx, event("s1", "session-start", c.now, "/work/demo"))
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
 	c.advance(time.Second)
-	tr.Apply(ctx, event("s1", "post-task", c.now, "/work/demo"))
+	apply(tr, event("s1", "post-task", c.now, "/work/demo"))
 	if l.calls != 1 {
 		t.Fatalf("lookups = %d, want 1 within RelinkEvery", l.calls)
 	}
@@ -189,7 +208,7 @@ func TestBranchFollowsTheSessionButLookupsAreThrottled(t *testing.T) {
 	l.links["/work/demo"] = Link{Repository: "acme/demo", Branch: "other", PR: 9}
 	l.mu.Unlock()
 	c.advance(RelinkEvery)
-	if !tr.Apply(ctx, event("s1", "post-task", c.now, "/work/demo")) {
+	if !apply(tr, event("s1", "post-task", c.now, "/work/demo")) {
 		t.Fatal("a new branch is a change")
 	}
 	if got := tr.Sessions()[0]; got.Branch != "other" || got.PR != 9 {
@@ -200,7 +219,7 @@ func TestBranchFollowsTheSessionButLookupsAreThrottled(t *testing.T) {
 	delete(l.links, "/work/demo")
 	l.mu.Unlock()
 	c.advance(RelinkEvery)
-	tr.Apply(ctx, event("s1", "post-task", c.now, "/work/demo"))
+	apply(tr, event("s1", "post-task", c.now, "/work/demo"))
 	if got := tr.Sessions()[0]; got.Branch != "other" {
 		t.Fatalf("session = %+v", got)
 	}
@@ -210,7 +229,7 @@ func TestSessionWithoutPullRequestIsStillTracked(t *testing.T) {
 	c := &clock{t0}
 	l := &linker{links: map[string]Link{"/work/demo": {Repository: "acme/demo", Branch: "wip"}}}
 	tr := newTracker(c, l)
-	tr.Apply(context.Background(), event("s1", "session-start", c.now, "/work/demo"))
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
 	got := tr.Sessions()
 	if len(got) != 1 || got[0].PR != 0 || got[0].Branch != "wip" {
 		t.Fatalf("sessions = %+v", got)
@@ -220,10 +239,9 @@ func TestSessionWithoutPullRequestIsStillTracked(t *testing.T) {
 func TestBound(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
-	ctx := context.Background()
 	for i := range MaxSessions + 8 {
 		c.advance(time.Second)
-		tr.Apply(ctx, event(fmt.Sprintf("s%02d", i), "user-prompt-submit", c.now, "/work/demo"))
+		apply(tr, event(fmt.Sprintf("s%02d", i), "user-prompt-submit", c.now, "/work/demo"))
 	}
 	got := tr.Sessions()
 	if len(got) != MaxSessions {
@@ -235,9 +253,9 @@ func TestBound(t *testing.T) {
 	}
 	// An ended session is evicted before a running one.
 	c.advance(time.Second)
-	tr.Apply(ctx, event("s39", "session-end", c.now, "/work/demo"))
+	apply(tr, event("s39", "session-end", c.now, "/work/demo"))
 	c.advance(time.Second)
-	tr.Apply(ctx, event("new", "session-start", c.now, "/work/demo"))
+	apply(tr, event("new", "session-start", c.now, "/work/demo"))
 	for _, s := range tr.Sessions() {
 		if s.ID == "s39" {
 			t.Fatal("the ended session was kept over older running ones")
@@ -270,6 +288,7 @@ func TestRebuildFromTheRecord(t *testing.T) {
 	}
 	tr := &Tracker{Source: src, Linker: newLinker(), Now: c.Now}
 	tr.Rebuild(context.Background())
+	tr.ResolvePending(context.Background())
 	got := map[string]Session{}
 	for _, s := range tr.Sessions() {
 		got[s.ID] = s
@@ -286,18 +305,14 @@ func TestRebuildFromTheRecord(t *testing.T) {
 }
 
 func TestRunFollowsEventsAndNotifies(t *testing.T) {
-	src := &source{}
+	src := &source{ready: make(chan struct{})}
 	notified := make(chan struct{}, 16)
 	tr := &Tracker{Source: src, Linker: newLinker(), Notify: func() { notified <- struct{}{} }}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { tr.Run(ctx); close(done) }()
 	defer func() { cancel(); <-done }()
-	select {
-	case <-notified:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no notification after the rebuild")
-	}
+	<-src.ready
 	src.ch <- record(event("s1", "session-start", time.Now(), "/work/demo"))
 	select {
 	case <-notified:
@@ -314,7 +329,7 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 	tr := newTracker(c, newLinker())
 	e := event("s1", "user-prompt-submit", c.now, "/work/demo")
 	e.Session.Reason, e.Session.Source = "private reason", "private source"
-	tr.Apply(context.Background(), e)
+	apply(tr, e)
 	h := tr.Handler()
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, httptest.NewRequest("GET", "/api/live-sessions", nil))
@@ -350,5 +365,85 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 	newTracker(c, newLinker()).Handler().ServeHTTP(empty, httptest.NewRequest("GET", "/api/live-sessions", nil))
 	if strings.TrimSpace(empty.Body.String()) != `{"sessions":[]}` {
 		t.Fatalf("empty = %s", empty.Body.String())
+	}
+}
+
+func TestApplyNeverWaitsForTheLinker(t *testing.T) {
+	c := &clock{t0}
+	l := newLinker()
+	tr := newTracker(c, l)
+	if tr.Apply(context.Background(), event("s1", "session-start", c.now, "/work/demo")) || l.calls != 0 || len(tr.Sessions()) != 0 {
+		t.Fatalf("a session shows before it is linked (lookups %d)", l.calls)
+	}
+	if !tr.ResolvePending(context.Background()) || l.calls != 1 || len(tr.Sessions()) != 1 {
+		t.Fatalf("the link was not looked up: %d %+v", l.calls, tr.Sessions())
+	}
+}
+
+func TestBusySessionsDoNotNotifyForActivityAlone(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	for range 5 {
+		c.advance(time.Second)
+		if apply(tr, event("s1", "post-task", c.now, "/work/demo")) {
+			t.Fatal("tool activity alone is a notification")
+		}
+	}
+	if got := tr.Sessions()[0]; got.LastActivityAt.Sub(t0) != 5*time.Second || got.LastEvent != EventTool {
+		t.Fatalf("the endpoint is stale: %+v", got)
+	}
+	c.advance(ActivityNotifyEvery)
+	if !apply(tr, event("s1", "post-task", c.now, "/work/demo")) {
+		t.Fatal("a long gap is a change")
+	}
+	c.advance(time.Second)
+	if !apply(tr, event("s1", "stop", c.now, "/work/demo")) {
+		t.Fatal("a state change is a change")
+	}
+}
+
+func TestOversizeIdentifiersAreIgnored(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	if apply(tr, event(strings.Repeat("x", maxID+1), "session-start", c.now, "/work/demo")) {
+		t.Fatal("a long session id was tracked")
+	}
+	e := event("s1", "session-start", c.now, "/work/demo")
+	e.Agent = strings.Repeat("a", maxAgent+1)
+	if apply(tr, e) || len(tr.Sessions()) != 0 {
+		t.Fatal("a long agent was tracked")
+	}
+	if !apply(tr, event(strings.Repeat("x", maxID), "session-start", c.now, "/work/demo")) {
+		t.Fatal("an id of the largest size is refused")
+	}
+}
+
+func TestReconcileAppliesEventsTheSubscriptionDropped(t *testing.T) {
+	c := &clock{t0}
+	src := &source{}
+	tr := &Tracker{Source: src, Linker: newLinker(), Now: c.Now}
+	ch, _ := func() (<-chan hookevents.Record, func()) { return src.Subscribe(1, nil) }()
+	src.add(event("s1", "session-start", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	src.add(event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	src.add(event("s1", "session-end", c.now, "/work/demo"))
+	if len(ch) != 1 {
+		t.Fatalf("buffered %d records, want the buffer's one", len(ch))
+	}
+	// The subscriber handles what it was given; the prompt and the end were dropped.
+	apply(tr, (<-ch).Event)
+	if got := tr.Sessions(); len(got) != 1 || got[0].State != StateRunning || got[0].LastEvent != EventStart {
+		t.Fatalf("before reconciling: %+v", got)
+	}
+	if !tr.Reconcile(context.Background()) {
+		t.Fatal("reconciling found nothing")
+	}
+	if got := tr.Sessions(); len(got) != 1 || got[0].State != StateEnded {
+		t.Fatalf("after reconciling: %+v", got)
+	}
+	if tr.Reconcile(context.Background()) {
+		t.Fatal("reconciling twice changed something")
 	}
 }
