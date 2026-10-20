@@ -476,7 +476,7 @@ func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 func (r *Repo) fetch(ctx context.Context, refspecs []string) error {
 	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-prune", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", r.opts.Remote}
 	_, err := run(ctx, runSpec{
-		dir: r.dir, env: userEnv(), timeout: r.opts.FetchTimeout,
+		dir: r.dir, env: r.fetchEnv(ctx), timeout: r.opts.FetchTimeout,
 		config: []string{
 			"core.hooksPath=" + filepath.Join(r.mirror, "hooks"), "protocol.ext.allow=never", "gc.auto=0",
 			"maintenance.auto=false", "fetch.recurseSubmodules=false", "fetch.writeCommitGraph=false",

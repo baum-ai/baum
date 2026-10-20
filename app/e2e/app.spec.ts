@@ -1,5 +1,23 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+
+// The fixture runs the real daemon, which publishes its launch URL in a private
+// credential file once it serves; the desktop app reads the same file.
+async function launchURL(): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      const path = join(process.env.BAUM_APP_STATE_DIR ?? "", "credential.json");
+      const { url } = JSON.parse(await readFile(path, "utf8"));
+      if (typeof url === "string") return url;
+    } catch {
+      // Not written yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("the daemon did not publish its credential");
+}
+
 test("local inbox, reused PR viewer, versions, generation and settings", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -28,9 +46,20 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     if (!r.url().startsWith("http://127.0.0.1:4167")) foreign.push(r.url());
     else local.push(new URL(r.url()).pathname);
   });
-  await page.goto((await readFile("e2e/launch-url", "utf8")).trim());
+  const launch = await launchURL();
+  await page.goto(launch);
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
+  // The app is relaunched against a long-lived daemon: the same credential
+  // authorizes another browser session.
+  const relaunched = await page.context().browser()?.newPage();
+  if (relaunched) {
+    await relaunched.goto(launch);
+    await expect(
+      relaunched.getByRole("heading", { name: "Pull requests", exact: true }),
+    ).toBeVisible();
+    await relaunched.close();
+  }
   // The bootstrap replaces itself with the secret session namespace; the app,
   // its assets, API and event stream all live under it.
   const base = new URL(page.url()).pathname;

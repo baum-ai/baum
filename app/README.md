@@ -1,7 +1,9 @@
 # Local application
 
-`baum ui` serves this React single-page app from its embedded assets. It uses
-only the authenticated local server: no hosted baum API, account or login.
+The baum daemon serves this React single-page app from its embedded assets;
+the desktop app and `baum ui` open it from the launch URL in the daemon's
+`credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
+authenticated local server: no hosted baum API, account or login.
 The server's own bootstrap page at `/` removes the launch capability from the
 address, exchanges it for an HttpOnly cookie scoped to a secret
 `/s/<namespace>/` path, and replaces itself with that path. The app is served
@@ -66,8 +68,12 @@ Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 to `../internal/localapp/dist`; the common `viewer-build` / `viewer-fresh` recipes
 also build/check this bundle, so `go install` needs no Node.js.
 
-Browser tests use an actual `uiserver.Server`, registry, version stores, queue,
-`jobs.Local` and generation publisher. A temporary fixture git clone and fake
+Browser tests run the actual daemon (`daemon.Run`, with its lock, credential
+file and control socket in a temporary directory) serving a `uiserver.Server`,
+registry, version stores, queue, `jobs.Local` and generation publisher. The
+suite reads the launch URL from the daemon's `credential.json`, as the desktop
+app does, and opens it a second time in a fresh browser context to check that
+the credential survives relaunches. A temporary fixture git clone and fake
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.

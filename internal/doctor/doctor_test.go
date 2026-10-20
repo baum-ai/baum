@@ -179,8 +179,8 @@ func TestEveryProblemAndWarningHasAFix(t *testing.T) {
 func TestReportCoversEveryItem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	report := run(t, Options{InstanceDir: func() (string, error) { return "/instance", nil }})
-	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "instance", "path"} {
+	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state"} }})
+	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "path"} {
 		find(t, report, id)
 	}
 }
@@ -835,7 +835,9 @@ func TestConfigErrorIsAProblemAndTheReportContinues(t *testing.T) {
 func TestDoctorCreatesNothing(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	run(t, Options{InstanceDir: func() (string, error) { return filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum"), nil }})
+	run(t, Options{Daemon: func(context.Context) Daemon {
+		return Daemon{State: filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "daemon")}
+	}})
 	home := os.Getenv("HOME")
 	var created []string
 	_ = filepath.WalkDir(home, func(path string, _ os.DirEntry, _ error) error {
@@ -856,7 +858,7 @@ func TestLocations(t *testing.T) {
 	m := newMachine(t)
 	m.git()
 	cfgPath := m.writeConfig("backend = 'auto'\n")
-	report := run(t, Options{InstanceDir: func() (string, error) { return "/run/user/1/baum", nil }})
+	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state/baum/daemon"} }})
 	cfg := find(t, report, "config")
 	if cfg.Path != cfgPath || cfg.Status != StatusInfo || !strings.Contains(cfg.Detail, "read from") {
 		t.Errorf("%+v", cfg)
@@ -875,8 +877,34 @@ func TestLocations(t *testing.T) {
 	if got := find(t, report, "registry").Path; got != filepath.Join(m.config, "baum", "repos.sqlite") {
 		t.Errorf("registry path = %q", got)
 	}
-	if got := find(t, report, "instance").Path; got != "/run/user/1/baum" {
-		t.Errorf("instance path = %q", got)
+	if got := find(t, report, "daemon").Path; got != "/state/baum/daemon" {
+		t.Errorf("daemon path = %q", got)
+	}
+}
+
+func TestDaemon(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	for _, tc := range []struct {
+		name   string
+		daemon Daemon
+		status Status
+		want   []string
+	}{
+		{"not running", Daemon{State: "/s"}, StatusInfo, []string{"not running", "baum daemon ensure"}},
+		{"running", Daemon{Running: true, PID: 42, Uptime: 90 * time.Minute, Protocol: 1, Version: "v1.0.0", Socket: "/run/d.sock", State: "/s"}, StatusInfo, []string{"process 42", "1h30m0s", "/run/d.sock"}},
+		{"older", Daemon{Running: true, PID: 42, Older: true}, StatusWarning, []string{"older than this baum"}},
+		{"incompatible", Daemon{Running: true, PID: 42, Protocol: 9, Incompatible: true}, StatusWarning, []string{"protocol 9"}},
+		{"unresponsive", Daemon{State: "/s", Err: errors.New("a baum daemon holds the lock but does not answer; its process id is 7")}, StatusWarning, []string{"process id is 7"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := find(t, run(t, Options{Daemon: func(context.Context) Daemon { return tc.daemon }}), "daemon")
+			wantStatus(t, c, tc.status)
+			wantContains(t, "detail", c.Detail, tc.want...)
+			if c.Status == StatusWarning && c.Fix == "" {
+				t.Error("warning without a fix")
+			}
+		})
 	}
 }
 

@@ -1,4 +1,4 @@
-package uiserver
+package privatefs
 
 import (
 	"os"
@@ -47,7 +47,7 @@ func TestPrivateFileInheritsProtectedDirectory(t *testing.T) {
 	if err := os.Mkdir(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := protectDirectory(directory); err != nil {
+	if err := ProtectDirectory(directory); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, "lock")
@@ -58,7 +58,7 @@ func TestPrivateFileInheritsProtectedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !privateFile(path, info) {
+	if !PrivateFile(path, info) {
 		t.Fatal("rejected file inheriting the current-user-only DACL")
 	}
 }

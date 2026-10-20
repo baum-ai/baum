@@ -235,7 +235,7 @@ func TestPriceDetailSaysWhoUsesWhichList(t *testing.T) {
 		RefreshPrices: func(context.Context) error { return nil },
 		PriceSource:   func() pricing.Source { return pricing.Source{Origin: pricing.OriginFetched, Version: "2099-01-01"} },
 	}), "prices")
-	wantContains(t, "detail", c.Detail, "baum generate", "embedded list (version "+pricing.Embedded().Version()+")", "baum ui fetches", "only shows whether fetching works", "2099-01-01")
+	wantContains(t, "detail", c.Detail, "baum generate", "embedded list (version "+pricing.Embedded().Version()+")", "the baum daemon fetches", "only shows whether fetching works", "2099-01-01")
 }
 
 func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {

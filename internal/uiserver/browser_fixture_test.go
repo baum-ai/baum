@@ -1,4 +1,4 @@
-package uiserver
+package uiserver_test
 
 import (
 	"context"
@@ -10,12 +10,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/generate"
@@ -26,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/uiserver"
 )
 
 type browserDiscovery struct{ snapshot discovery.Snapshot }
@@ -54,9 +57,12 @@ type browserTransport func(*http.Request) (*http.Response, error)
 
 func (f browserTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// TestLocalAppBrowserFixture is an opt-in process used by Playwright. Its HTTP
-// boundary, registry, store, queue, job runner and generation publisher are real;
-// only GitHub and the model backend are synthetic. No developer stores are read.
+// TestLocalAppBrowserFixture is an opt-in process used by Playwright. It runs
+// the real daemon (lock, credential file, control socket and app transport)
+// with a real registry, store, queue, job runner and generation publisher;
+// only GitHub and the model backend are synthetic. No developer stores are
+// read. The browser opens the launch URL from the daemon's credential file in
+// BAUM_APP_STATE_DIR, as the desktop app does.
 func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
@@ -187,32 +193,25 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		document, e := generatetest.Document(r.Directory, nil)
 		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
 	}}
-	server, err := New(Options{App: localapp.Handler()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
-		_ = server.Publish("progress", map[string]any{"job": job})
-		_ = server.Publish("index", map[string]any{})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runner.Close()
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
-	api := LocalAPI{Registry: registry, Config: cfg, PRs: DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Diagnostics: browserDiagnostics}.Handler()
-	defer api.Close()
-	server.opts.API = api
-	url, err := server.Listen(4167)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(os.Getenv("BAUM_APP_LAUNCH_FILE"), []byte(url), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// The real daemon serves the app: lock, credential file, control socket
+	// and app transport. Only GitHub and the model backend are synthetic.
+	state := os.Getenv("BAUM_APP_STATE_DIR")
+	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err = server.Serve(ctx); err != nil {
+	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(_ context.Context, server *uiserver.Server) (daemon.App, error) {
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
+			_ = server.Publish("progress", map[string]any{"job": job})
+			_ = server.Publish("index", map[string]any{})
+		})
+		if err != nil {
+			return daemon.App{}, err
+		}
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Diagnostics: browserDiagnostics}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close}, nil
+	}})
+	if err != nil {
 		t.Fatal(err)
 	}
 }

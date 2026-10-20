@@ -57,6 +57,11 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		v, e := q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation, Unpriced: request.ConfirmUnpriced})
+		if errors.Is(e, ErrRestarting) {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		if e != nil {
 			http.Error(w, "estimate expired, generation inputs changed, confirmation missing, or job already running", http.StatusConflict)
 			return
