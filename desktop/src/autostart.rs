@@ -535,8 +535,8 @@ mod tests {
     fn exec_quoting_follows_the_desktop_entry_specification() {
         assert_eq!(desktop_exec_quote("/usr/bin/baum"), "/usr/bin/baum");
         assert_eq!(
-            desktop_exec_quote("/home/a b/baum.AppImage"),
-            "\"/home/a b/baum.AppImage\""
+            desktop_exec_quote("/opt/a b/baum.AppImage"),
+            "\"/opt/a b/baum.AppImage\""
         );
         assert_eq!(desktop_exec_quote("/opt/100%/baum"), "/opt/100%%/baum");
         assert_eq!(desktop_exec_quote("/o/$x/b"), "\"/o/\\\\$x/b\"");
@@ -714,17 +714,17 @@ mod tests {
         use std::ffi::OsString;
         let os = |s: &str| Some(OsString::from(s));
         assert_eq!(
-            entry_path_in(os("/cfg"), os("/home/u")),
+            entry_path_in(os("/cfg"), os("/srv/u")),
             Some(PathBuf::from("/cfg/autostart/baum.desktop"))
         );
         assert_eq!(
-            entry_path_in(None, os("/home/u")),
-            Some(PathBuf::from("/home/u/.config/autostart/baum.desktop"))
+            entry_path_in(None, os("/srv/u")),
+            Some(PathBuf::from("/srv/u/.config/autostart/baum.desktop"))
         );
         // A relative XDG_CONFIG_HOME is ignored, as the specification says.
         assert_eq!(
-            entry_path_in(os("cfg"), os("/home/u")),
-            Some(PathBuf::from("/home/u/.config/autostart/baum.desktop"))
+            entry_path_in(os("cfg"), os("/srv/u")),
+            Some(PathBuf::from("/srv/u/.config/autostart/baum.desktop"))
         );
         assert_eq!(entry_path_in(None, None), None);
     }

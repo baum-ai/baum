@@ -136,7 +136,7 @@ re-enabled by the app: on Linux `Hidden=true` or
 (Task Manager's Startup tab). Turning it on from the app clears that disable
 and, on Linux, rewrites only `Exec` and the enabled flag, keeping any other keys.
 
-The macOS LaunchAgent is temporary: once the app is signed (ENG-749),
+The macOS LaunchAgent is temporary: once the app is signed (release work),
 SMAppService login items replace it.
 
 ## What pages may do
