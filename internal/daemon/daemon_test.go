@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -892,5 +893,53 @@ func TestRestartTargetsTheNewestClientAndNoticesOnce(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("never restarted")
+	}
+}
+
+// A stop the daemon acts on marks its status stopping before the answer is
+// written, so a hello answered while it shuts down never reports it usable.
+func TestStopMarksTheDaemonStoppingBeforeAnswering(t *testing.T) {
+	for name, line := range map[string]string{
+		"plain":     `{"method":"stop"}`,
+		"when idle": `{"method":"stop","params":{"when_idle":true}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := &controller{status: Status{Version: "v1.0.0"}, log: slog.New(slog.DiscardHandler), drain: func() bool { return true }}
+			response, stop := c.dispatch([]byte(line))
+			if !stop || !response.OK || response.Status == nil || !response.Status.Stopping {
+				t.Fatalf("%+v %v", response, stop)
+			}
+			if !c.current().Stopping {
+				t.Fatal("the answer said stopping but a hello would not")
+			}
+		})
+	}
+}
+
+// The idle restart marks the daemon stopping in the step that finds it idle:
+// a hello that arrives while the queue drains already sees it stopping.
+func TestIdleRestartMarksStoppingWhileDraining(t *testing.T) {
+	seen := make(chan Status, 1)
+	stopped := make(chan struct{})
+	c := &controller{status: Status{Version: "v1.0.0", RestartPending: true}, log: slog.New(slog.DiscardHandler), restartInto: "/opt/baum-next", restartVersion: "v2.0.0"}
+	c.drain = func() bool {
+		go func() { seen <- c.current() }()
+		// Give the hello every chance to be answered before drain returns.
+		time.Sleep(50 * time.Millisecond)
+		return true
+	}
+	c.trust = func(path string) (string, error) { return path, nil }
+	c.respawn = func(string, Status) error { return nil }
+	c.stop = func() { close(stopped) }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c.restartWhenIdle(ctx)
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("did not stop")
+	}
+	if status := <-seen; !status.Stopping {
+		t.Fatalf("a hello during the drain saw %+v", status)
 	}
 }
