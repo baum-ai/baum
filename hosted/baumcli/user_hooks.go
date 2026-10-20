@@ -167,7 +167,10 @@ func userHooksStatuses() ([]userHooksStatus, error) {
 	detected := detectedUserHookAgents()
 	statuses := []userHooksStatus{}
 	for _, agent := range userhooks.Agents() {
-		settings, _ := agenthooks.LookupUserWide(agent)
+		settings, ok := agenthooks.LookupUserWide(agent)
+		if !ok {
+			return nil, fmt.Errorf("%s has no user-wide hooks", agent)
+		}
 		status := userHooksStatus{
 			Agent:    agent,
 			Name:     agentDisplayName(agent),
