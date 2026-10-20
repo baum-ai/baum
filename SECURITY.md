@@ -294,6 +294,9 @@ automatically. What it can spend: up to the configured per-run budget for each
 new head (twice when a daemon stop or restart interrupts the first run, which
 is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which
 pauses that repository's automatic generation until the next day once reached.
+The cap is checked when a job is queued and again, against the current cap and
+the cost already reported that day, right before a queued job starts; a job
+over it is stopped before any model call and waits for the pause to end.
 cursor-agent, which baum cannot estimate or cap, runs automatically only after
 you acknowledge that in the app. Turning the global switch off (in Repositories
 & settings, or pausing automatic generation from the desktop app) stops it in

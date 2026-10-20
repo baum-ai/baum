@@ -51,6 +51,9 @@ type Queue interface {
 	// Interrupted lists automatic jobs a daemon stop or restart cut short
 	// that may be retried once.
 	Interrupted() []jobs.Job
+	// Refused lists automatic jobs cancelled before they started without
+	// using up their head (the daily cap reached at start).
+	Refused() []jobs.Job
 	// CancelDisallowedAutomatic cancels queued automatic jobs the gate
 	// (Scheduler.Gate) now refuses.
 	CancelDisallowedAutomatic() []jobs.Job
@@ -146,6 +149,9 @@ type prState struct {
 	// Retried is the head whose interrupted automatic run was already
 	// put back as pending, so it is retried at most once.
 	Retried string `json:"retried,omitempty"`
+	// Refused is the ID of the last job refused before it started (Queue
+	// Refused) whose head was put back as pending, so each is put back once.
+	Refused string `json:"refused,omitempty"`
 }
 
 func (s *Scheduler) init() {
@@ -432,6 +438,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	var due []work
 	var notices []Status
 	interrupted := s.Queue.Interrupted()
+	refused := s.Queue.Refused()
 	s.mu.Lock()
 	state := s.load()
 	changed := s.prune(v)
@@ -455,6 +462,23 @@ func (s *Scheduler) Pass(ctx context.Context) {
 			continue
 		}
 		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = j.HeadSHA, jobs.TriggerRetry, j.HeadSHA, 0, time.Time{}
+		changed = true
+	}
+	// A queued job the daily cap stopped before it started did not use up
+	// its head: the head is pending again, so this pass submits it and the cap
+	// pauses the repository as it does at submission, and the head runs once
+	// the pause ends. Jobs from before the repository's baseline are not
+	// caught up.
+	for _, j := range refused {
+		rs := state.Repositories[strings.ToLower(j.Repository)]
+		if rs == nil || j.CreatedAt.Before(rs.Since) {
+			continue
+		}
+		pr := rs.PRs[j.PR]
+		if pr == nil || pr.Head != j.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Refused == j.ID {
+			continue
+		}
+		pr.Pending, pr.Trigger, pr.Refused, pr.Attempts, pr.RetryAt = j.HeadSHA, j.Trigger, j.ID, 0, time.Time{}
 		changed = true
 	}
 	names := make([]string, 0, len(state.Repositories))
@@ -665,28 +689,31 @@ const (
 // jobs.Queue.SetAutomaticGate: the queue asks it when the job is submitted
 // and again before it starts, so turning generation off (globally, for the
 // repository, or withdrawing the cursor-agent acknowledgement) stops jobs
-// that are queued but not started. It reads only the registry database.
-func (s *Scheduler) Gate(j jobs.Job) string {
+// that are queued but not started, and a job that would take the repository
+// past its current daily cap on the scheduler clock's day does not start. It
+// reads only the registry database and the clock, never the scheduler's state
+// or the queue: the queue's mutex is held.
+func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	prefs, err := s.Registry.Preferences(ctx)
 	if err != nil {
-		return GateUnreadable
+		return jobs.Admission{Reason: GateUnreadable}
 	}
 	settings, registered, err := s.Registry.RepositorySettings(ctx, j.Repository)
 	switch {
 	case err != nil:
-		return GateUnreadable
+		return jobs.Admission{Reason: GateUnreadable}
 	case !prefs.Automatic:
-		return GateOff
+		return jobs.Admission{Reason: GateOff}
 	case !registered:
-		return GateRepositoryRemoved
+		return jobs.Admission{Reason: GateRepositoryRemoved}
 	case !settings.AutomaticEnabled(prefs):
-		return GateRepositoryOff
+		return jobs.Admission{Reason: GateRepositoryOff}
 	case (j.Backend == agent.BackendCursorAgent || (j.EstimateUSD == nil && j.BlockedReason == "")) && !prefs.CursorAgentAcknowledged:
-		return jobs.ReasonCursorAgentConsent
+		return jobs.Admission{Reason: jobs.ReasonCursorAgentConsent}
 	}
-	return ""
+	return jobs.Admission{DailyCap: settings.DailyCap, Day: startOfDay(s.now())}
 }
 
 // SavedHead is the head of the PR's latest saved review in the clone's

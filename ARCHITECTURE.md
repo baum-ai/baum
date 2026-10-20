@@ -1424,7 +1424,13 @@ and which may run once more; failed and cancelled jobs are final), and
 cost when reported, else the estimate; a job cancelled before calling a model
 counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
 `automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
-`retry`).
+`retry`). Before a queued automatic job starts, the worker checks the cap again
+under the same mutex, against the current `daily_cap` the gate returns and the
+spending of the jobs that day that already started or finished (reported cost
+replacing the estimate) plus this job's estimate; over it, the job is cancelled
+with reason `daily_cap` before any model call. Such a job does not count as
+its head's job: `ErrDuplicate` and `Interrupted` ignore it, and `Refused` lists
+it while it is the latest job for its head.
 
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
@@ -1634,6 +1640,15 @@ it and `Queue.SubmitAutomatic` decides each job.
   `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
   runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
   running.
+- **Daily cap at start.** The gate also returns the repository's current
+  `daily_cap` and the scheduler clock's day; the queue checks it itself (the
+  gate never calls the queue or takes the scheduler's lock), so a cap lowered
+  while a job waited, or cost an earlier job reported, stops a queued job
+  before it starts (`daily_cap`). Each pass asks `Queue.Refused` for such jobs
+  made after the baseline and puts each one's head back as pending once
+  (`refused` records the job) if the PR is still open, eligible and at that
+  head; the same pass submits it, `ErrDailyCap` pauses the repository as
+  below, and the head runs once the pause ends.
 - **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
@@ -1659,7 +1674,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   retried: the baseline marks its heads as already retried.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
-  eligibility, pending head and trigger, last head handled, retried head),
+  eligibility, pending head and trigger, last head handled, retried head,
+  last cap-stopped job put back),
   its pause and its notice. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new
@@ -1679,7 +1695,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   not acknowledged) drops it with its reason as the notice; other errors retry
   with backoff, five times.
 - **Spending.** No default cap. Each job keeps the configured run budgets, and
-  `daily_cap` is enforced per repository and calendar day. cursor-agent runs
+  `daily_cap` is enforced per repository and calendar day, when a job is
+  queued and again before it starts. cursor-agent runs
   automatically only after `cursor_agent_acknowledged`, checked by
   `SubmitAutomatic` from the stored preference, never from a request.
 - **Interfaces.** `GET /api/automatic` returns the preferences and each

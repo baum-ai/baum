@@ -786,14 +786,14 @@ func TestGateReadsEachRepositoryOwnSettings(t *testing.T) {
 	job := func(repository string) jobs.Job {
 		return jobs.Job{Prepared: jobs.Prepared{Repository: repository, EstimateUSD: &price}}
 	}
-	if reason := h.scheduler.Gate(job("org/repo")); reason != "" {
-		t.Fatalf("org/repo gated: %q", reason)
+	if a := h.scheduler.Gate(job("org/repo")); a.Reason != "" {
+		t.Fatalf("org/repo gated: %q", a.Reason)
 	}
-	if reason := h.scheduler.Gate(job("Org/Other")); reason != GateRepositoryOff {
-		t.Fatalf("org/other gated: %q", reason)
+	if a := h.scheduler.Gate(job("Org/Other")); a.Reason != GateRepositoryOff {
+		t.Fatalf("org/other gated: %q", a.Reason)
 	}
-	if reason := h.scheduler.Gate(job("org/unknown")); reason != GateRepositoryRemoved {
-		t.Fatalf("org/unknown gated: %q", reason)
+	if a := h.scheduler.Gate(job("org/unknown")); a.Reason != GateRepositoryRemoved {
+		t.Fatalf("org/unknown gated: %q", a.Reason)
 	}
 }
 
@@ -825,4 +825,58 @@ func TestUnreadableSettingsDoNotConsumeTheHead(t *testing.T) {
 	h.pass()
 	h.waitIdle()
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:retry")
+}
+
+// A queued job the daily cap stops before it starts (here the cap was lowered
+// while it waited) pauses the repository with the daily cap notice and keeps
+// its head pending; raising the cap runs it.
+func TestDailyCapReachedWhileQueuedPausesAndKeepsTheHead(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(10.0) })
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	<-h.exec.started
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(0.0) })
+	close(h.exec.block)
+	h.waitIdle()
+	select {
+	case <-h.exec.started:
+		t.Fatal("a job started over the lowered cap")
+	default:
+	}
+	states := map[int]jobs.Job{}
+	for _, j := range h.queue.List() {
+		states[j.PR] = j
+	}
+	if states[1].State != "completed" || states[2].State != "cancelled" || states[2].Reason != jobs.ReasonDailyCap {
+		t.Fatalf("states %+v", states)
+	}
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	last := h.notices[len(h.notices)-1]
+	if last.Notice != NoticeDailyCap || last.PausedUntil == nil || !last.PausedUntil.Equal(time.Date(2026, 10, 20, 0, 0, 0, 0, time.Local)) || last.Pending != 1 {
+		t.Fatalf("pause notice %+v", h.notices)
+	}
+	// Still paused: nothing is submitted, and the head is put back only once.
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(10.0) })
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:new_head")
+	h.waitIdle()
+	completed := 0
+	for _, j := range h.queue.List() {
+		if j.PR == 2 && j.State == "completed" {
+			completed++
+		}
+	}
+	if completed != 1 {
+		t.Fatalf("head not run after the cap was raised: %+v", h.queue.List())
+	}
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:new_head")
 }

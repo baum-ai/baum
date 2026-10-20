@@ -34,6 +34,13 @@ const (
 // retry an interrupted automatic run gets.
 const ReasonSettingsUnreadable = "settings_unreadable"
 
+// ReasonDailyCap is why a queued automatic job was cancelled before it
+// started: the repository's automatic spending that day, with this job's
+// estimate, would exceed its current daily cap. The job never ran, so it does
+// not use up its head: Refused lists it, and the scheduler makes the head
+// pending again, where the cap pauses the repository as it does at submission.
+const ReasonDailyCap = "daily_cap"
+
 var (
 	// ErrBusy: a job for the pull request is queued or running. Retry once it
 	// finishes; one PR never has two jobs at a time.
@@ -131,8 +138,8 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	// CancelDisallowedAutomatic hold, so a pass that read them before an off
 	// cannot queue after it.
 	if q.gate != nil {
-		if reason := q.gate(j); reason != "" {
-			return Job{}, &NotAllowedError{reason}
+		if a := q.gate(j); a.Reason != "" {
+			return Job{}, &NotAllowedError{a.Reason}
 		}
 	}
 	if r.DailyCap != nil {
@@ -157,29 +164,50 @@ type NotAllowedError struct{ Reason string }
 
 func (e *NotAllowedError) Error() string { return "automatic generation not allowed: " + e.Reason }
 
+// Admission is the automatic gate's answer for one job, from the current
+// settings.
+type Admission struct {
+	// Reason is why the job may not run now (automatic generation turned off
+	// globally or for its repository, cursor-agent no longer acknowledged),
+	// or "" when it may.
+	Reason string
+	// DailyCap is the repository's current daily cap, nil for none. Before
+	// a queued job starts, the queue checks it against the automatic spending
+	// of the calendar day that starts at Day.
+	DailyCap *float64
+	Day      time.Time
+}
+
 // SetAutomaticGate installs the check of current settings that every
-// automatic job passes when it is submitted and again before it starts: it
-// returns why the job may not run (automatic generation turned off globally
-// or for its repository, cursor-agent no longer acknowledged), or "". It is
-// called with the queue's mutex held and must not call the queue. Until a
-// gate is installed no automatic job starts, so a journaled one cannot run
-// between Open and this call; confirmed jobs are not held.
-func (q *Queue) SetAutomaticGate(gate func(Job) string) {
+// automatic job passes when it is submitted and again before it starts. It is
+// called with the queue's mutex held and must not call the queue. Before a
+// job starts, the queue also checks the returned daily cap itself, under the
+// same mutex, so spending reported or a cap lowered while the job waited
+// stops it (ReasonDailyCap). Until a gate is installed no automatic job
+// starts, so a journaled one cannot run between Open and this call; confirmed
+// jobs are not held.
+func (q *Queue) SetAutomaticGate(gate func(Job) Admission) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.gate = gate
 	q.signal()
 }
 
-// refuseAutomatic cancels (or, for an unreadable gate, interrupts) the queued job at i if it is automatic and the gate
-// refuses it, recording the reason. Called with mu held; the caller
-// publishes the returned job after unlocking.
+// refuseAutomatic cancels (or, for an unreadable gate, interrupts) the
+// queued job at i if it is automatic and the gate refuses it or its start
+// would take the repository past its current daily cap, recording the
+// reason. Called with mu held; the caller publishes the returned job after
+// unlocking.
 func (q *Queue) refuseAutomatic(i int) (Job, bool) {
 	j := &q.jobs[i]
 	if !j.Automatic || j.State != "queued" || q.gate == nil {
 		return Job{}, false
 	}
-	reason := q.gate(*j)
+	a := q.gate(*j)
+	reason := a.Reason
+	if reason == "" && a.DailyCap != nil && !q.startWithinCap(*j, *a.DailyCap, a.Day) {
+		reason = ReasonDailyCap
+	}
 	if reason == "" {
 		return Job{}, false
 	}
@@ -195,8 +223,23 @@ func (q *Queue) refuseAutomatic(i int) (Job, bool) {
 	return *j, true
 }
 
+// startWithinCap reports whether starting the queued job j keeps its
+// repository's automatic spending on the day starting at day within limit:
+// the jobs that already started or finished that day (actual cost when
+// reported, else the estimate) plus j's estimate. Other queued jobs are not
+// counted; each is checked when its turn comes. An unknown amount is over
+// the cap, as at submission. Called with mu held.
+func (q *Queue) startWithinCap(j Job, limit float64, day time.Time) bool {
+	if j.EstimateUSD == nil {
+		return false
+	}
+	spent, known := q.spend(j.Repository, day, func(o Job) bool { return o.State == "queued" })
+	return known && spent+*j.EstimateUSD <= limit+1e-9
+}
+
 // CancelDisallowedAutomatic cancels every queued, not yet started automatic
-// job the gate now refuses, with its reason. Running jobs keep running.
+// job the gate, or the daily cap, now refuses, with its reason. Running jobs
+// keep running.
 func (q *Queue) CancelDisallowedAutomatic() []Job {
 	q.mu.Lock()
 	var out []Job
@@ -229,7 +272,7 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 		if j.State == "queued" || j.State == "running" {
 			return ErrBusy
 		}
-		if j.HeadSHA == head {
+		if j.HeadSHA == head && !unsettled(j) {
 			sameHead++
 			retryable = j.Automatic && j.State == "interrupted"
 		}
@@ -242,19 +285,52 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 	return nil
 }
 
+// unsettled: an automatic job cancelled before it started for a reason that
+// says nothing about its head (ReasonDailyCap). It does not count as the
+// head's job.
+func unsettled(j Job) bool {
+	return j.Automatic && j.State == "cancelled" && j.Reason == ReasonDailyCap
+}
+
+// headKey identifies a pull request head, case-insensitively by repository.
+func headKey(j Job) string {
+	return strings.ToLower(j.Repository) + "#" + strconv.Itoa(j.PR) + "@" + j.HeadSHA
+}
+
+// Refused lists automatic jobs cancelled before they started for a reason
+// that does not use up their head (ReasonDailyCap), when that is the latest
+// job for the head; the scheduler makes such a head pending again.
+func (q *Queue) Refused() []Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	latest := map[string]int{}
+	for i, j := range q.jobs {
+		latest[headKey(j)] = i
+	}
+	var out []Job
+	for i, j := range q.jobs {
+		if unsettled(j) && latest[headKey(j)] == i {
+			j.Accounting = j.Accounting.Clone()
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
 // Interrupted lists automatic jobs that a daemon stop or restart interrupted
 // and that may be retried once: the only job ever recorded for their head.
 func (q *Queue) Interrupted() []Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	count := map[string]int{}
-	key := func(j Job) string { return strings.ToLower(j.Repository) + "#" + strconv.Itoa(j.PR) + "@" + j.HeadSHA }
 	for _, j := range q.jobs {
-		count[key(j)]++
+		if !unsettled(j) {
+			count[headKey(j)]++
+		}
 	}
 	var out []Job
 	for _, j := range q.jobs {
-		if j.Automatic && j.State == "interrupted" && count[key(j)] == 1 {
+		if j.Automatic && j.State == "interrupted" && count[headKey(j)] == 1 {
 			j.Accounting = j.Accounting.Clone()
 			out = append(out, j)
 		}
@@ -272,10 +348,16 @@ func (q *Queue) AutomaticSpend(repository string, day time.Time) (float64, bool)
 }
 
 func (q *Queue) automaticSpend(repository string, day time.Time) (float64, bool) {
+	return q.spend(repository, day, nil)
+}
+
+// spend is automaticSpend leaving out the jobs skip selects. Called with mu
+// held.
+func (q *Queue) spend(repository string, day time.Time, skip func(Job) bool) (float64, bool) {
 	end := day.AddDate(0, 0, 1)
 	total, known := 0.0, true
 	for _, j := range q.jobs {
-		if !j.Automatic || !strings.EqualFold(j.Repository, repository) || j.CreatedAt.Before(day) || !j.CreatedAt.Before(end) {
+		if !j.Automatic || !strings.EqualFold(j.Repository, repository) || j.CreatedAt.Before(day) || !j.CreatedAt.Before(end) || (skip != nil && skip(j)) {
 			continue
 		}
 		switch {

@@ -109,9 +109,9 @@ type Queue struct {
 	releaseOnce sync.Once
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
-	// gate, when set, says why an automatic job may not run now ("" when
-	// it may); see SetAutomaticGate.
-	gate func(Job) string
+	// gate, when set, answers whether an automatic job may run now (and
+	// under which daily cap); see SetAutomaticGate.
+	gate func(Job) Admission
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
