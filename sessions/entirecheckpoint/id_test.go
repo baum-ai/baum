@@ -166,6 +166,11 @@ func TestParseMessage(t *testing.T) {
 			message: "docs: explain the Entire-Checkpoint: trailer\n\nRead Entire-Checkpoint: lines anywhere.",
 		},
 		{
+			name:      "a trailer-shaped body line in prose is a malformed value",
+			message:   "fix: x\n\n* feat: y\n\nEntire-Checkpoint: see the docs\n\n* feat: z",
+			malformed: []string{"see the docs"},
+		},
+		{
 			name:    "a key not followed by its colon is not a trailer",
 			message: "fix: x\n\nEntire-Checkpoint " + testHexID + "\nEntire-Checkpoints: " + testHexID,
 		},
