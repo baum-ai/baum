@@ -73,6 +73,7 @@ func (r *fakeRegistry) set(f func(*repos.Preferences, *repos.Settings)) {
 type executor struct {
 	mu      sync.Mutex
 	heads   map[int]string
+	drafts  map[int]bool
 	backend string
 	block   chan struct{}
 	started chan struct{}
@@ -89,7 +90,15 @@ func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, st
 	}
 	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: "org/repo", HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
 }
-func (e *executor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
+func (e *executor) Execute(ctx context.Context, p jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
+	// Like jobs.Local's recheck: an automatic job of a PR now a draft is
+	// refused before any model call.
+	e.mu.Lock()
+	draft := e.drafts[p.PR]
+	e.mu.Unlock()
+	if p.RefuseDraft && draft {
+		return nil, &jobs.NotAutomaticError{Reason: jobs.ReasonDraft}
+	}
 	if e.started != nil {
 		e.started <- struct{}{}
 	}
@@ -102,10 +111,14 @@ func (e *executor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Pro
 	}
 	return nil, e.fail
 }
-func (e *executor) setHead(pr int, head string) {
+func (e *executor) setHead(pr int, head string, draft bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.heads[pr] = head
+	if e.drafts == nil {
+		e.drafts = map[int]bool{}
+	}
+	e.drafts[pr] = draft
 }
 
 type harness struct {
@@ -179,7 +192,7 @@ func (h *harness) observe(prs ...pr) {
 		if p.teamKnown != nil {
 			team = *p.teamKnown
 		}
-		h.exec.setHead(p.number, p.head)
+		h.exec.setHead(p.number, p.head, p.draft)
 		snapshot.PullRequests = append(snapshot.PullRequests, discovery.PullRequest{Repository: "org/repo", Number: p.number, HeadSHA: p.head, State: "OPEN", Fork: p.fork, Draft: p.draft, AuthoredByMe: p.authored, ReviewRequestedFromMe: p.requested, AuthorHasWrite: write, TeamMembershipKnown: team})
 	}
 	h.scheduler.Observe(context.Background(), snapshot)
@@ -477,7 +490,7 @@ func TestStalePassCannotQueueAfterOff(t *testing.T) {
 	h := newHarness(t)
 	h.observe(pr{number: 1, head: "a1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true})
-	h.exec.setHead(1, "a2")
+	h.exec.setHead(1, "a2", false)
 	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.Automatic = false })
 	v := view{prefs: repos.Preferences{Automatic: true}, repos: map[string]repository{"org/repo": {clone: repos.Clone{ID: "clone", Repository: "org/repo", Available: true}, enabled: true}}}
 	h.scheduler.submit(context.Background(), v, work{name: "org/repo", repo: v.repos["org/repo"], number: 1, head: "a2", trigger: jobs.TriggerNewHead}, h.now)
@@ -599,7 +612,7 @@ func TestTriggerFeedsTheSameScheduler(t *testing.T) {
 	heads := map[string]string{"1": "a1"}
 	h.scheduler.Discover = func(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 		write := true
-		h.exec.setHead(1, heads["1"])
+		h.exec.setHead(1, heads["1"], false)
 		return discovery.Snapshot{Repository: repo.String(), FetchedAt: h.now, PullRequests: []discovery.PullRequest{{Repository: repo.String(), Number: 1, HeadSHA: heads["1"], AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}}, nil
 	}
 	if err := h.scheduler.Trigger(context.Background(), "org/repo"); err != nil {
@@ -879,4 +892,39 @@ func TestDailyCapReachedWhileQueuedPausesAndKeepsTheHead(t *testing.T) {
 	}
 	h.pass()
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:new_head")
+}
+
+// A PR converted back to draft while its automatic job waited gets no model
+// call; marked ready for review again at the same head, it runs.
+func TestPRTurnedDraftWhileQueuedRunsWhenReadyAgain(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	<-h.exec.started
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true, draft: true})
+	close(h.exec.block)
+	h.waitIdle()
+	select {
+	case <-h.exec.started:
+		t.Fatal("the draft's job started")
+	default:
+	}
+	for _, j := range h.queue.List() {
+		if j.PR == 2 && (j.State != "cancelled" || j.Reason != jobs.ReasonDraft) {
+			t.Fatalf("draft job %+v", j)
+		}
+	}
+	// Still a draft: nothing.
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:ready_for_review")
+	h.waitIdle()
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:ready_for_review")
 }

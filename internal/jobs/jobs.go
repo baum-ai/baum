@@ -40,6 +40,10 @@ type Prepared struct {
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
 	// a confirmed run does not.
 	Draft bool `json:"draft,omitempty"`
+	// RefuseDraft is set by the queue, never stored, on the inputs of an
+	// automatic job it executes: the executor refuses the run with
+	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
+	RefuseDraft bool `json:"-"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -542,7 +546,9 @@ func (q *Queue) worker() {
 			q.mu.Unlock()
 			q.signal()
 			q.notify(j)
-			cost, err := q.executor.Execute(ctx, j.Prepared, func(p Progress) {
+			inputs := j.Prepared
+			inputs.RefuseDraft = j.Automatic
+			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
 				q.jobs[i].Phase = p.Phase
 				q.jobs[i].Calls = p.Calls
@@ -572,7 +578,14 @@ func (q *Queue) worker() {
 			current.Phase = "finished"
 			current.UpdatedAt = time.Now().UTC()
 			current.State = "completed"
-			if err != nil {
+			var refused *NotAutomaticError
+			switch {
+			case err != nil && current.Automatic && errors.As(err, &refused):
+				// The recheck found what automatic generation skips (a PR
+				// turned draft) before any model call.
+				current.State = "cancelled"
+				current.Reason = refused.Reason
+			case err != nil:
 				current.State = "failed"
 				current.Reason = string(generate.CategoryOf(err))
 				if current.Reason == "" {

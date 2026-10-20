@@ -51,8 +51,9 @@ type Queue interface {
 	// Interrupted lists automatic jobs a daemon stop or restart cut short
 	// that may be retried once.
 	Interrupted() []jobs.Job
-	// Refused lists automatic jobs cancelled before they started without
-	// using up their head (the daily cap reached at start).
+	// Refused lists automatic jobs cancelled before any model call without
+	// using up their head (the daily cap reached at start, or the PR turned
+	// draft).
 	Refused() []jobs.Job
 	// CancelDisallowedAutomatic cancels queued automatic jobs the gate
 	// (Scheduler.Gate) now refuses.
@@ -467,8 +468,9 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	// A queued job the daily cap stopped before it started did not use up
 	// its head: the head is pending again, so this pass submits it and the cap
 	// pauses the repository as it does at submission, and the head runs once
-	// the pause ends. Jobs from before the repository's baseline are not
-	// caught up.
+	// the pause ends. A job stopped because its PR turned draft waits until
+	// the PR is eligible (ready for review) again. Jobs from before the
+	// repository's baseline are not caught up.
 	for _, j := range refused {
 		rs := state.Repositories[strings.ToLower(j.Repository)]
 		if rs == nil || j.CreatedAt.Before(rs.Since) {
@@ -478,7 +480,11 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		if pr == nil || pr.Head != j.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Refused == j.ID {
 			continue
 		}
-		pr.Pending, pr.Trigger, pr.Refused, pr.Attempts, pr.RetryAt = j.HeadSHA, j.Trigger, j.ID, 0, time.Time{}
+		trigger := j.Trigger
+		if j.Reason == jobs.ReasonDraft {
+			trigger = jobs.TriggerReadyForReview
+		}
+		pr.Pending, pr.Trigger, pr.Refused, pr.Attempts, pr.RetryAt = j.HeadSHA, trigger, j.ID, 0, time.Time{}
 		changed = true
 	}
 	names := make([]string, 0, len(state.Repositories))

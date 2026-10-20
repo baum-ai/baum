@@ -39,6 +39,9 @@ const ReasonSettingsUnreadable = "settings_unreadable"
 // estimate, would exceed its current daily cap. The job never ran, so it does
 // not use up its head: Refused lists it, and the scheduler makes the head
 // pending again, where the cap pauses the repository as it does at submission.
+// A job whose pull request turned draft while it waited is cancelled the same
+// way with ReasonDraft, by the recheck before any model call; its head is
+// pending again once the PR is ready for review.
 const ReasonDailyCap = "daily_cap"
 
 var (
@@ -285,11 +288,11 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 	return nil
 }
 
-// unsettled: an automatic job cancelled before it started for a reason that
-// says nothing about its head (ReasonDailyCap). It does not count as the
-// head's job.
+// unsettled: an automatic job cancelled before any model call for a reason
+// that says nothing about its head (ReasonDailyCap, ReasonDraft). It does not
+// count as the head's job.
 func unsettled(j Job) bool {
-	return j.Automatic && j.State == "cancelled" && j.Reason == ReasonDailyCap
+	return j.Automatic && j.State == "cancelled" && (j.Reason == ReasonDailyCap || j.Reason == ReasonDraft)
 }
 
 // headKey identifies a pull request head, case-insensitively by repository.
@@ -297,9 +300,10 @@ func headKey(j Job) string {
 	return strings.ToLower(j.Repository) + "#" + strconv.Itoa(j.PR) + "@" + j.HeadSHA
 }
 
-// Refused lists automatic jobs cancelled before they started for a reason
-// that does not use up their head (ReasonDailyCap), when that is the latest
-// job for the head; the scheduler makes such a head pending again.
+// Refused lists automatic jobs cancelled before any model call for a reason
+// that does not use up their head (ReasonDailyCap, ReasonDraft), when that is
+// the latest job for the head; the scheduler makes such a head pending again
+// while the PR is eligible.
 func (q *Queue) Refused() []Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()

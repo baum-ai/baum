@@ -1428,9 +1428,13 @@ counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
 under the same mutex, against the current `daily_cap` the gate returns and the
 spending of the jobs that day that already started or finished (reported cost
 replacing the estimate) plus this job's estimate; over it, the job is cancelled
-with reason `daily_cap` before any model call. Such a job does not count as
-its head's job: `ErrDuplicate` and `Interrupted` ignore it, and `Refused` lists
-it while it is the latest job for its head.
+with reason `daily_cap` before any model call. The executor's recheck of the
+confirmed inputs, before any model call, also refuses an automatic job whose
+pull request GitHub now reports as a draft (the queue marks its inputs
+`RefuseDraft`; confirmed jobs run drafts); it is cancelled with reason
+`draft`. Neither job counts as its head's job: `ErrDuplicate` and
+`Interrupted` ignore it, and `Refused` lists it while it is the latest job for
+its head.
 
 `internal/pricing` ports the platform's pure pricing implementation and baseline
 into the independent OSS module; its signature, tier and normalization tests are
@@ -1645,10 +1649,10 @@ it and `Queue.SubmitAutomatic` decides each job.
   gate never calls the queue or takes the scheduler's lock), so a cap lowered
   while a job waited, or cost an earlier job reported, stops a queued job
   before it starts (`daily_cap`). Each pass asks `Queue.Refused` for such jobs
-  made after the baseline and puts each one's head back as pending once
-  (`refused` records the job) if the PR is still open, eligible and at that
-  head; the same pass submits it, `ErrDailyCap` pauses the repository as
-  below, and the head runs once the pause ends.
+  (and those stopped as drafts) made after the baseline and puts each one's
+  head back as pending once (`refused` records the job) if the PR is still
+  open, eligible and at that head; the same pass submits it, `ErrDailyCap`
+  pauses the repository as below, and the head runs once the pause ends.
 - **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
@@ -1661,7 +1665,11 @@ it and `Queue.SubmitAutomatic` decides each job.
   pending head if it is eligible: the user's review is requested or the user
   authored it, it is not a draft, it is not from a fork, and its author has
   known write access. Drafts get no automatic review, so pushes to a draft
-  wait for "ready for review"; manual generation of a draft still works. A PR
+  wait for "ready for review"; manual generation of a draft still works. A
+  queued automatic job whose PR turned draft before it started is cancelled
+  (`draft`) by the recheck before any model call, and its head is pending
+  again (trigger `ready_for_review`) once a snapshot shows the PR eligible at
+  that head. A PR
   that closes, moves to another head while ineligible, or stops being eligible
   loses its pending head.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
@@ -1675,7 +1683,7 @@ it and `Queue.SubmitAutomatic` decides each job.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
-  last cap-stopped job put back),
+  last cap- or draft-stopped job put back),
   its pause and its notice. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new

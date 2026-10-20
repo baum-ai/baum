@@ -116,7 +116,9 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 
 // confirmed rechecks a job's confirmed inputs. A job confirmed against a newer
 // list than the active one (a restart that has not yet reinstalled it) refreshes
-// the signed list once before deciding.
+// the signed list once before deciding. An automatic job (RefuseDraft) whose
+// pull request is a draft now is refused with ReasonDraft; a confirmed run of
+// a draft is not.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
 	if e == nil && l.RefreshPrices != nil && pricing.CompareVersions(p.PriceVersion, current.PriceVersion) > 0 {
@@ -129,6 +131,9 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	}
 	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		return errors.New("generation inputs changed")
+	}
+	if p.RefuseDraft && current.Draft {
+		return &NotAutomaticError{ReasonDraft}
 	}
 	return nil
 }

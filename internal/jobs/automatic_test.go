@@ -40,6 +40,13 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 }
 
 func (f *autoExecutor) Execute(ctx context.Context, p Prepared, _ func(Progress)) (*float64, error) {
+	// Like Local's recheck: an automatic job of a PR now a draft is refused.
+	f.mu.Lock()
+	draft := f.draft
+	f.mu.Unlock()
+	if p.RefuseDraft && draft {
+		return nil, &NotAutomaticError{ReasonDraft}
+	}
 	f.started <- p
 	select {
 	case <-ctx.Done():
@@ -608,4 +615,61 @@ func TestAutomaticReportedCostStopsTheNextQueuedJob(t *testing.T) {
 		t.Fatalf("second job %+v", got)
 	}
 	noStart(t, f, "over the cap after a reported cost")
+}
+
+// A PR converted back to draft while its automatic job waited is not run:
+// the recheck before any model call cancels the job with ReasonDraft, which
+// does not use up its head. A confirmed run of a draft still runs.
+func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
+	q, f := newAutoQueue(t)
+	ctx := context.Background()
+	setDraft := func(draft bool) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.draft = draft
+	}
+	running, err := q.SubmitAutomatic(ctx, auto(1, "a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := <-f.started; !p.RefuseDraft {
+		t.Fatalf("automatic job executed without the draft recheck %+v", p)
+	}
+	waiting, err := q.SubmitAutomatic(ctx, auto(2, "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDraft(true)
+	f.release <- struct{}{}
+	waitState(t, q, running.ID, "completed")
+	if got := waitState(t, q, waiting.ID, "cancelled"); got.Reason != ReasonDraft || got.Calls != 0 {
+		t.Fatalf("draft job %+v", got)
+	}
+	noStart(t, f, "PR turned draft")
+	if spent, known := q.AutomaticSpend("org/repo", time.Now().Add(-time.Hour)); spent != 1.5 || !known {
+		t.Fatalf("spend %v %v", spent, known)
+	}
+	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != waiting.ID {
+		t.Fatalf("refused %+v", refused)
+	}
+	// A confirmed run of the draft is not rechecked for it.
+	e := estimate(t, q, "single", Item{"clone", 3})
+	manual, err := q.Submit(ctx, e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := <-f.started; p.RefuseDraft {
+		t.Fatalf("confirmed job executed with the draft recheck %+v", p)
+	}
+	f.release <- struct{}{}
+	waitState(t, q, manual[0].ID, "completed")
+	// Ready again at the same head: not a duplicate.
+	setDraft(false)
+	again, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{"clone", 2}, Repository: "org/repo", Head: "b1", Trigger: TriggerReadyForReview})
+	if err != nil {
+		t.Fatalf("head stopped as a draft: %v", err)
+	}
+	<-f.started
+	f.release <- struct{}{}
+	waitState(t, q, again.ID, "completed")
 }

@@ -289,7 +289,8 @@ one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
 confirmed one (same backend, model, budgets, price list and recheck of the head
-before any model call), and a model without a known price is never run
+before any model call, which also stops it if the pull request was converted to
+a draft while it waited), and a model without a known price is never run
 automatically. What it can spend: up to the configured per-run budget for each
 new head (twice when a daemon stop or restart interrupts the first run, which
 is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which

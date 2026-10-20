@@ -2,12 +2,14 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -193,5 +195,51 @@ func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
 	stale.PriceVersion = pricing.Embedded().Version()
 	if e = local.confirmed(ctx, stale); e == nil || refreshes != 1 {
 		t.Fatal("job confirmed against an older list ran or refreshed", e)
+	}
+}
+
+// The execution-time recheck refuses an automatic job whose PR GitHub now
+// reports as a draft, before any model call; a confirmed job runs a draft.
+func TestLocalRecheckRefusesAnAutomaticJobOfADraft(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
+	draft := false
+	cfg := config.Default()
+	cfg.Backend = config.BackendClaude
+	cfg.Model = "claude-sonnet-4-5"
+	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"open","draft":` + strconv.FormatBool(draft) + `,"head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	calls := 0
+	local := &Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend {
+		return &generatetest.Backend{Version: "9.9.9", RunFunc: func(context.Context, agent.Request, int) (agent.Result, error) {
+			calls++
+			return agent.Result{}, errors.New("no model calls in this test")
+		}}
+	}}}
+	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	if e != nil || p.Draft {
+		t.Fatal(p, e)
+	}
+	automatic := p
+	automatic.RefuseDraft = true
+	if e = local.confirmed(ctx, automatic); e != nil {
+		t.Fatalf("ready PR refused: %v", e)
+	}
+	// Converted back to draft while the job waited.
+	draft = true
+	var refused *NotAutomaticError
+	if _, e = local.Execute(ctx, automatic, func(Progress) {}); !errors.As(e, &refused) || refused.Reason != ReasonDraft {
+		t.Fatalf("automatic job of a draft: %v", e)
+	}
+	if calls != 0 {
+		t.Fatalf("model called %d times for a draft", calls)
+	}
+	if e = local.confirmed(ctx, p); e != nil {
+		t.Fatalf("confirmed job of a draft refused: %v", e)
 	}
 }
