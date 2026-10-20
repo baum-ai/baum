@@ -4,22 +4,26 @@
 #   scripts/updater-manifest.sh write VERSION DIR
 #   scripts/updater-manifest.sh verify DIR
 #
-# write reads the signed updater bundles scripts/bundle.sh left in DIR (their
-# .sig files next to them), writes DIR/latest.json, and verifies it. The macOS
-# universal app, the Linux x86_64 AppImage and the Windows x86_64 installer
-# are required; the Linux arm64 AppImage is listed when it is there.
+# write reads the signed updater bundles in DIR (each FILE with its FILE.sig
+# from scripts/updater-sign.sh), writes DIR/latest.json and verifies it. The
+# macOS universal app, the Linux x86_64 AppImage and the Windows x86_64
+# installer are required; the Linux arm64 AppImage is listed when it is there.
 #
 # verify checks every platform of DIR/latest.json the way the app does before
-# it installs anything: the bundle the URL names is in DIR, its signature was
-# made by the release key in tauri.conf.json (minisign), and the signature's
-# trusted comment names the version the manifest announces. Any mismatch
-# fails, so a tampered bundle, a swapped signature, a signature from another
-# key or an announced version the bundles were not signed for is never
-# published.
+# it installs anything, and more:
+#   - the platform is one the release ships, and the URL is exactly
+#     https://github.com/baum-ai/baum/releases/download/vVERSION/ followed by
+#     that platform's bundle name (no other host, tag or file);
+#   - that bundle is in DIR, and its signature was made by the release key in
+#     tauri.conf.json (minisign);
+#   - the signature's trusted comment names the version the manifest
+#     announces.
+# So a tampered bundle, a swapped signature, a signature from another key, a
+# bundle served for the wrong platform or an announced version the bundles
+# were not signed for is never published.
 #
-# UPDATER_PUBKEY and UPDATER_BASE_URL override the configured key and the
-# release download URL (https://github.com/baum-ai/baum/releases/download/vVERSION).
-# Needs jq, minisign and base64.
+# UPDATER_PUBKEY overrides the configured key (tests). Needs jq, minisign
+# (MINISIGN names another binary) and base64.
 set -euo pipefail
 
 usage() {
@@ -28,18 +32,32 @@ usage() {
 }
 
 here=$(cd "$(dirname "$0")/.." && pwd)
+minisign=${MINISIGN:-minisign}
 pubkey=${UPDATER_PUBKEY:-$(jq -er '.plugins.updater.pubkey' "$here/tauri.conf.json")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-printf '%s' "$pubkey" | base64 -d >"$work/key.pub"
+printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
+
+releases=https://github.com/baum-ai/baum/releases/download
+
+# The bundle name an updater platform may point at (an extended regular
+# expression), or nothing for a platform the release does not ship.
+bundle_for() {
+  case "$1" in
+    darwin-aarch64 | darwin-x86_64) echo 'baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.app\.tar\.gz' ;;
+    linux-x86_64) echo 'baum-desktop-linux-amd64\.AppImage' ;;
+    linux-aarch64) echo 'baum-desktop-linux-arm64\.AppImage' ;;
+    windows-x86_64) echo 'baum-desktop-windows-amd64(-unsigned)?-setup\.exe' ;;
+  esac
+}
 
 # Checks one bundle against its signature (Tauri's .sig format: the minisign
 # signature file, base64 encoded) and the version it must be signed for.
 check() {
   local file=$1 signature=$2 version=$3
-  printf '%s' "$signature" | base64 -d >"$work/bundle.minisig"
+  printf '%s' "$signature" | base64 --decode >"$work/bundle.minisig"
   local comment
-  if ! comment=$(minisign -V -Q -p "$work/key.pub" -m "$file" -x "$work/bundle.minisig" 2>"$work/error"); then
+  if ! comment=$("$minisign" -V -Q -p "$work/key.pub" -m "$file" -x "$work/bundle.minisig" 2>"$work/error"); then
     echo "FAIL $(basename "$file"): the signature does not verify with the release key: $(cat "$work/error")" >&2
     return 1
   fi
@@ -55,6 +73,7 @@ verify() {
   local manifest=$dir/latest.json
   local version
   version=$(jq -er '.version | strings' "$manifest")
+  local base=$releases/v$version
   local status=0
   local platforms
   platforms=$(jq -er '.platforms | keys[]' "$manifest")
@@ -64,40 +83,43 @@ verify() {
       status=1
     fi
   done
-  local platform url signature file
+  local platform url signature file expected
   for platform in $platforms; do
+    expected=$(bundle_for "$platform")
+    if [ -z "$expected" ]; then
+      echo "FAIL $platform is not a platform the release ships" >&2
+      status=1
+      continue
+    fi
     url=$(jq -er --arg p "$platform" '.platforms[$p].url | strings' "$manifest")
     signature=$(jq -er --arg p "$platform" '.platforms[$p].signature | strings' "$manifest")
-    case "$url" in
-      https://*) ;;
-      *)
-        echo "FAIL $platform: $url is not an https URL" >&2
-        status=1
-        continue
-        ;;
-    esac
-    file=$dir/${url##*/}
-    if [ ! -f "$file" ]; then
-      echo "FAIL $platform: ${url##*/} is not in $dir" >&2
+    file=${url#"$base/"}
+    if [ "$file" = "$url" ] || ! [[ $file =~ ^$expected$ ]]; then
+      echo "FAIL $platform: $url is not $base/ followed by its bundle" >&2
+      status=1
+      continue
+    fi
+    if [ ! -f "$dir/$file" ]; then
+      echo "FAIL $platform: $file is not in $dir" >&2
       status=1
       continue
     fi
     printf '%s: ' "$platform"
-    check "$file" "$signature" "$version" || status=1
+    check "$dir/$file" "$signature" "$version" || status=1
   done
   return "$status"
 }
 
 write() {
   local version=$1 dir=$2
-  local base=${UPDATER_BASE_URL:-https://github.com/baum-ai/baum/releases/download/v$version}
+  local base=$releases/v$version
   local platforms='{}'
   local found key keys file
   # updater target(s), then the bundle that serves them
   for entry in \
     "darwin-aarch64,darwin-x86_64 baum-desktop-darwin-universal*.app.tar.gz" \
-    "linux-x86_64 baum-desktop-linux-amd64*.AppImage" \
-    "linux-aarch64 baum-desktop-linux-arm64*.AppImage" \
+    "linux-x86_64 baum-desktop-linux-amd64.AppImage" \
+    "linux-aarch64 baum-desktop-linux-arm64.AppImage" \
     "windows-x86_64 baum-desktop-windows-amd64*-setup.exe"; do
     found=()
     for file in "$dir"/${entry#* }; do

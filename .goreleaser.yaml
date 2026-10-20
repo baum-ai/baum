@@ -54,17 +54,16 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
 
+# Commit subjects are not release notes (and may name internal tracking
+# identifiers); a person writes the notes on the draft release.
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude:
-      - "^chore"
-      - "^ci"
+  disable: true
 
 release:
   github:
     owner: baum-ai
     name: baum
-  draft: false
+  # The release workflow attaches the desktop app and then publishes the
+  # draft, so nobody sees a release without it.
+  draft: true
   prerelease: auto

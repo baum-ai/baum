@@ -705,6 +705,17 @@ downloaded bundle carries a minisign signature from the release key built
 into the app, made for the version the manifest announces, so neither a
 changed bundle nor an older signed release served as a newer one is
 installed. It waits while the daemon runs a generation job and restarts only
-after you confirm. The release workflow verifies the same signatures before
-it publishes the manifest; the signing keys are used only by that workflow,
-on version tags.
+after you confirm.
+
+The signing keys (the updater key, and Apple's and Windows' code signing
+credentials once they exist) are secrets of the `release` environment of
+baum-ai/baum, not of the repository. GitHub releases them only to a job of
+the release workflow that names that environment, only for a `v*` tag (the
+environment's deployment policy), and only after a required reviewer
+approves that run. The release workflow also stops unless the tagged commit
+is on `main`. The jobs that use the environment build nothing: they sign
+bundles that an earlier job compiled without any secret, using Apple's and
+Microsoft's signing tools and a minisign binary pinned by checksum. The
+release workflow verifies every updater signature, version and download URL
+before it publishes the manifest, and the release stays a draft until it
+has. See `desktop/README.md` for the jobs.

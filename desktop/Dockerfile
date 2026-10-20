@@ -2,9 +2,10 @@
 # and GTK development packages Tauri links against, and the Tauri CLI.
 # Bookworm keeps the WebKitGTK and glibc baseline older than current
 # distributions, so a Linux build from it runs on them too. The release
-# workflow builds the Linux bundles in this image. jq and minisign write and
-# check the updater manifest (scripts/updater-manifest.sh).
-FROM rust:1.99.1-bookworm
+# workflow builds the Linux bundles in this image. jq and minisign run the
+# updater signing and manifest tests (scripts/updater-manifest-test.sh).
+# The image index digest pins every architecture's image.
+FROM rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
