@@ -43,7 +43,9 @@ A second launch focuses the existing window instead of opening another one.
 
 The app turns daemon events into operating system notifications. It reads the
 daemon's `GET /api/events` stream itself (`src/notifications/`), so they
-arrive while the window is closed or hidden. Pages the daemon serves are not
+arrive while the window is hidden or minimised. The app runs only while its
+window exists (closing the window quits it until the tray lands), and a click
+needs that window. Pages the daemon serves are not
 involved and get no capability.
 
 | Notification | Daemon event |
@@ -81,7 +83,8 @@ title is not interpreted.
   kind on again in the menu asks once more.
 - **Settings.** Each kind is on by default. The app menu has a
   "Notifications" submenu with one check item per kind. The choices and the
-  permission answer are saved in `notifications.json` in the app's config
+  permission answer, and the daily-cap pauses already announced (so a restart or a replaced daemon
+  does not announce one again), are saved in `notifications.json` in the app's config
   directory (`~/.config/com.usebaum.desktop/` on Linux). The menu is the
   smallest native surface that needs no page capability; the tray menu is a
   natural home for the same items.

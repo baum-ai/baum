@@ -36,6 +36,7 @@ pub struct Os;
 /// cannot pile up threads.
 const MAX_WAITING: usize = 32;
 static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn supports_markup() -> bool {
@@ -81,6 +82,11 @@ impl Platform for Os {
             .show()
             .map_err(|e| ShowError::Failed(e.to_string()))?;
         if WAITING.load(Ordering::Relaxed) >= MAX_WAITING {
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "baum desktop: {MAX_WAITING} notifications are unread; clicks on newer ones will not open the app"
+                );
+            }
             return Ok(());
         }
         WAITING.fetch_add(1, Ordering::Relaxed);

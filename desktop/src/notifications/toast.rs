@@ -228,11 +228,23 @@ fn from_automatic(a: Automatic) -> Option<Toast> {
     })
 }
 
-/// Control characters become spaces and runs of whitespace one space; the
+/// Unicode format characters (category Cf): bidirectional overrides and
+/// isolates, zero-width characters, the byte order mark and tag characters.
+/// They render nothing but can reorder or hide the text around them.
+fn is_format(c: char) -> bool {
+    matches!(u32::from(c),
+        0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x890..=0x891 | 0x8E2 | 0x180E
+        | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF
+        | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F | 0x1BCA0..=0x1BCA3
+        | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
+}
+
+/// Format characters are dropped, control characters become spaces and runs of whitespace one space; the
 /// result is at most `max` characters.
 fn clean(text: &str, max: usize) -> String {
     let spaced: String = text
         .chars()
+        .filter(|c| !is_format(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let joined = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -329,6 +341,17 @@ mod tests {
         assert!(title.starts_with("a [31m b xxx"), "{title}");
         assert_eq!(title.chars().count(), MAX_TITLE);
         assert!(t.body.chars().all(|c| c == '\n' || !c.is_control()));
+    }
+
+    #[test]
+    fn format_characters_are_stripped() {
+        let data = serde_json::json!({
+            "kind": "review_finished", "repository": "acme/widgets", "pr": 1, "clone": "c",
+            "title": "safe\u{202e}gnp.exe\u{200b}\u{2066}x\u{feff}",
+        })
+        .to_string();
+        let t = from_event("notice", &data).unwrap();
+        assert_eq!(t.body.lines().next().unwrap(), "safegnp.exex");
     }
 
     #[test]

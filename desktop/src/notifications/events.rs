@@ -55,8 +55,13 @@ impl Endpoint {
 
     fn new(host: &str, port: u16, token: String) -> Option<Endpoint> {
         let authority = format!("{host}:{port}");
+        let addr: SocketAddr = authority.parse().ok()?;
+        // The credential is only ever sent to this machine.
+        if !addr.ip().is_loopback() {
+            return None;
+        }
         Some(Endpoint {
-            addr: authority.parse().ok()?,
+            addr,
             authority,
             token,
         })
@@ -136,15 +141,22 @@ fn stream(
         endpoint.authority, endpoint.token, last
     )?;
     let mut reader = BufReader::new(socket);
-    let mut line = String::new();
+    // Bytes of the line being read: a timeout can leave half a line (or half
+    // a multibyte character) here, and only a complete line is decoded.
+    let mut buf: Vec<u8> = Vec::new();
     let mut idle = Duration::ZERO;
     let mut in_headers = true;
     let mut seen_status = false;
     let (mut id, mut name, mut data) = (None, String::new(), String::new());
     loop {
-        match reader.read_line(&mut line) {
+        // A peer that never sends a newline cannot grow the buffer past this.
+        let room = MAX_LINE.saturating_sub(buf.len());
+        if room == 0 {
+            return Err(invalid("event line too long"));
+        }
+        match (&mut reader).take(room as u64).read_until(b'\n', &mut buf) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(_) if !line.ends_with('\n') => continue,
+            Ok(_) if buf.last() != Some(&b'\n') => continue,
             Ok(_) => idle = Duration::ZERO,
             Err(e)
                 if matches!(
@@ -159,18 +171,14 @@ fn stream(
                 if idle >= IDLE_LIMIT {
                     return Err(io::ErrorKind::TimedOut.into());
                 }
-                if line.len() > MAX_LINE {
-                    return Err(invalid("event line too long"));
-                }
                 continue;
             }
             Err(e) => return Err(e),
         }
-        if line.len() > MAX_LINE {
-            return Err(invalid("event line too long"));
-        }
-        let text = line.trim_end_matches(['\r', '\n']).to_string();
-        line.clear();
+        let text = String::from_utf8_lossy(&buf)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        buf.clear();
         if in_headers {
             if !seen_status {
                 seen_status = true;
@@ -229,7 +237,7 @@ struct Exchanged {
 /// session cookie is scoped to it; the exchange hands out the path again and
 /// changes nothing else.
 pub fn app_url(endpoint: &Endpoint) -> io::Result<Url> {
-    let body = format!(r#"{{"token":"{}"}}"#, endpoint.token);
+    let body = serde_json::json!({ "token": endpoint.token }).to_string();
     let mut socket = TcpStream::connect_timeout(&endpoint.addr, CONNECT_TIMEOUT)?;
     socket.set_read_timeout(Some(CONNECT_TIMEOUT))?;
     socket.set_write_timeout(Some(CONNECT_TIMEOUT))?;
@@ -428,6 +436,53 @@ mod tests {
             });
             assert!(app_url(&endpoint).is_err());
         }
+    }
+
+    #[test]
+    fn a_peer_that_never_sends_a_newline_is_cut_off() {
+        let (listener, endpoint) = server();
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            request(&mut socket);
+            let _ = socket.write_all(b"HTTP/1.0 200 OK\r\n\r\ndata: ");
+            let chunk = vec![b'x'; 8192];
+            while socket.write_all(&chunk).is_ok() {}
+        });
+        let mut last = NO_HISTORY;
+        let error = stream(&endpoint, &mut last, &|| false, &mut |_| {
+            panic!("no events")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("too long"), "{error}");
+    }
+
+    #[test]
+    fn a_character_split_by_a_pause_is_not_lost() {
+        let (listener, endpoint) = server();
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            request(&mut socket);
+            let bytes = "event: notice\ndata: caf\u{e9}\n\n".as_bytes();
+            let (head, tail) = bytes.split_at(bytes.len() - 3);
+            socket.write_all(b"HTTP/1.0 200 OK\r\n\r\n").unwrap();
+            socket.write_all(head).unwrap();
+            socket.flush().unwrap();
+            thread::sleep(POLL + Duration::from_millis(500));
+            socket.write_all(tail).unwrap();
+        });
+        let mut got = Vec::new();
+        let mut last = NO_HISTORY;
+        let _ = stream(&endpoint, &mut last, &|| false, &mut |e| {
+            got.push(e.data.clone())
+        });
+        assert_eq!(got, ["caf\u{e9}"]);
+    }
+
+    #[test]
+    fn only_loopback_endpoints_are_accepted() {
+        assert!(Endpoint::new("127.0.0.1", 4100, TOKEN.into()).is_some());
+        assert!(Endpoint::new("192.0.2.1", 4100, TOKEN.into()).is_none());
+        assert!(Endpoint::new("localhost", 4100, TOKEN.into()).is_none());
     }
 
     #[test]

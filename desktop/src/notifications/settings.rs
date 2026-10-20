@@ -67,11 +67,15 @@ impl Kinds {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub kinds: Kinds,
     pub permission: Permission,
+    /// Keys of the notifications that repeat while their condition lasts (the
+    /// daily cap, one key per repository and pause) already shown, oldest
+    /// first, so a restart or a replaced daemon does not announce one again.
+    pub announced: Vec<String>,
 }
 
 /// Where the settings live; `None` keeps them in memory only.

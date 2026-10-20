@@ -1,6 +1,5 @@
 //! The decisions: whether a toast is shown at all, and what a click does.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::platform::{Platform, ShowError};
@@ -41,9 +40,11 @@ pub struct Notifier {
     state: Mutex<State>,
 }
 
+/// Only the settings live behind the lock. It is never held across a call
+/// into the window (which runs on the main thread, as does the menu handler
+/// that takes this lock) or the operating system.
 struct State {
     settings: Settings,
-    seen: VecDeque<String>,
 }
 
 impl Notifier {
@@ -53,10 +54,7 @@ impl Notifier {
             host,
             platform,
             store,
-            state: Mutex::new(State {
-                settings,
-                seen: VecDeque::new(),
-            }),
+            state: Mutex::new(State { settings }),
         }
     }
 
@@ -67,7 +65,7 @@ impl Notifier {
     }
 
     pub fn settings(&self) -> Settings {
-        self.state().settings
+        self.state().settings.clone()
     }
 
     /// Turns one kind on or off and keeps the choice. Turning one on after a
@@ -93,37 +91,35 @@ impl Notifier {
     }
 
     pub fn deliver(&self, toast: &Toast) -> Outcome {
+        // Decide from a snapshot; the lock is taken again only to record.
+        let settings = self.settings();
+        if !settings.kinds.get(toast.kind) {
+            return Outcome::Off;
+        }
+        if settings.permission == Permission::Denied {
+            return Outcome::Denied;
+        }
+        if let Some((clone, number)) = toast.route.pr()
+            && self.host.focused_pr() == Some((clone.to_string(), number))
         {
+            return Outcome::Focused;
+        }
+        if let Some(key) = &toast.dedupe
+            && settings.announced.contains(key)
+        {
+            return Outcome::Duplicate;
+        }
+        // The first notification is the first use: only now is the operating
+        // system asked.
+        if settings.permission == Permission::Unknown {
+            let answer = self.platform.request_permission();
             let mut state = self.state();
-            if !state.settings.kinds.get(toast.kind) {
-                return Outcome::Off;
+            if state.settings.permission == Permission::Unknown {
+                state.settings.permission = answer;
+                self.save(&state.settings);
             }
             if state.settings.permission == Permission::Denied {
                 return Outcome::Denied;
-            }
-            if let (Some((clone, number)), Some(focused)) =
-                (toast.route.pr(), self.host.focused_pr())
-                && focused == (clone.to_string(), number)
-            {
-                return Outcome::Focused;
-            }
-            if let Some(key) = &toast.dedupe {
-                if state.seen.contains(key) {
-                    return Outcome::Duplicate;
-                }
-                state.seen.push_back(key.clone());
-                if state.seen.len() > SEEN {
-                    state.seen.pop_front();
-                }
-            }
-            // The first notification is the first use: only now is the
-            // operating system asked.
-            if state.settings.permission == Permission::Unknown {
-                state.settings.permission = self.platform.request_permission();
-                self.save(&state.settings);
-                if state.settings.permission == Permission::Denied {
-                    return Outcome::Denied;
-                }
             }
         }
         let host = self.host.clone();
@@ -132,7 +128,16 @@ impl Notifier {
             .platform
             .show(toast, Box::new(move || host.open(&route)))
         {
-            Ok(()) => Outcome::Shown,
+            Ok(()) => {
+                if let Some(key) = &toast.dedupe {
+                    let mut state = self.state();
+                    state.settings.announced.push(key.clone());
+                    let excess = state.settings.announced.len().saturating_sub(SEEN);
+                    state.settings.announced.drain(..excess);
+                    self.save(&state.settings);
+                }
+                Outcome::Shown
+            }
             Err(ShowError::Denied) => {
                 let mut state = self.state();
                 state.settings.permission = Permission::Denied;
@@ -433,6 +438,146 @@ mod tests {
         assert_eq!(notifier.settings().permission, Permission::Unknown);
         notifier.handle_event("notice", &finished);
         assert_eq!(platform.asked.load(Ordering::SeqCst), 2);
+    }
+
+    /// A fake host whose window call waits until `set_kind` (the menu handler,
+    /// on another thread) has returned; it deadlocks if `deliver` holds the
+    /// settings lock across the call.
+    struct BlockingHost {
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        released: AtomicUsize,
+    }
+
+    impl Host for BlockingHost {
+        fn focused_pr(&self) -> Option<(String, u64)> {
+            let release = self.release.lock().unwrap().take();
+            if let Some(release) = release
+                && release
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_ok()
+            {
+                self.released.fetch_add(1, Ordering::SeqCst);
+            }
+            None
+        }
+        fn open(&self, _: &Route) {}
+    }
+
+    #[test]
+    fn the_menu_can_change_a_kind_while_a_window_call_is_pending() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let host = Arc::new(BlockingHost {
+            release: Mutex::new(Some(wait)),
+            released: AtomicUsize::new(0),
+        });
+        let platform = FakePlatform::new(Permission::Granted);
+        let notifier = Arc::new(Notifier::new(host.clone(), platform, Store::in_memory()));
+        let delivering = notifier.clone();
+        let worker = std::thread::spawn(move || {
+            delivering.handle_event("notice", &notice("review_finished", ""))
+        });
+        // Let the worker reach the window call, then act like the menu.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        notifier.set_kind(Kind::Failed, false);
+        release.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), Some(Outcome::Shown));
+        assert_eq!(
+            host.released.load(Ordering::SeqCst),
+            1,
+            "set_kind waited for deliver"
+        );
+    }
+
+    /// The same for the permission request, which can block on a system
+    /// prompt.
+    struct BlockingPlatform {
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        released: AtomicUsize,
+    }
+
+    impl Platform for BlockingPlatform {
+        fn request_permission(&self) -> Permission {
+            let release = self.release.lock().unwrap().take();
+            if let Some(release) = release
+                && release
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_ok()
+            {
+                self.released.fetch_add(1, Ordering::SeqCst);
+            }
+            Permission::Granted
+        }
+        fn show(&self, _: &Toast, _: Box<dyn FnOnce() + Send>) -> Result<(), ShowError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_menu_can_change_a_kind_while_permission_is_being_asked() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let platform = Arc::new(BlockingPlatform {
+            release: Mutex::new(Some(wait)),
+            released: AtomicUsize::new(0),
+        });
+        let notifier = Arc::new(Notifier::new(
+            Arc::new(FakeHost::default()),
+            platform.clone(),
+            Store::in_memory(),
+        ));
+        let delivering = notifier.clone();
+        let worker = std::thread::spawn(move || {
+            delivering.handle_event("notice", &notice("review_finished", ""))
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        notifier.set_kind(Kind::Failed, false);
+        release.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), Some(Outcome::Shown));
+        assert_eq!(
+            platform.released.load(Ordering::SeqCst),
+            1,
+            "set_kind waited for the request"
+        );
+    }
+
+    #[test]
+    fn a_dedupe_key_is_used_up_only_by_a_toast_that_was_shown() {
+        let (notifier, _, platform) = setup(Permission::Denied);
+        assert_eq!(
+            notifier.handle_event("automatic", CAP),
+            Some(Outcome::Denied)
+        );
+        assert!(notifier.settings().announced.is_empty());
+        assert!(platform.shown.lock().unwrap().is_empty());
+        // Allowed later, the same pause is still news.
+        let granted = FakePlatform::new(Permission::Granted);
+        let again = Notifier::new(Arc::new(FakeHost::default()), granted, Store::in_memory());
+        assert_eq!(again.handle_event("automatic", CAP), Some(Outcome::Shown));
+        assert_eq!(again.settings().announced.len(), 1);
+    }
+
+    #[test]
+    fn a_pause_is_announced_once_across_restarts() {
+        let dir =
+            std::env::temp_dir().join(format!("baum-desktop-announced-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = FakePlatform::new(Permission::Granted);
+        let n = Notifier::new(
+            Arc::new(FakeHost::default()),
+            first.clone(),
+            Store::in_dir(dir.clone()),
+        );
+        assert_eq!(n.handle_event("automatic", CAP), Some(Outcome::Shown));
+        let second = FakePlatform::new(Permission::Granted);
+        let n = Notifier::new(
+            Arc::new(FakeHost::default()),
+            second.clone(),
+            Store::in_dir(dir.clone()),
+        );
+        assert_eq!(n.handle_event("automatic", CAP), Some(Outcome::Duplicate));
+        assert!(second.shown.lock().unwrap().is_empty());
+        let next_day = CAP.replace("2026-10-21", "2026-10-22");
+        assert_eq!(n.handle_event("automatic", &next_day), Some(Outcome::Shown));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

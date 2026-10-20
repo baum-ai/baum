@@ -1,7 +1,9 @@
 //! Native notifications from the daemon's events.
 //!
 //! The app subscribes to the daemon's events stream itself (`events`), so a
-//! closed or hidden window does not stop notifications. `toast` turns the
+//! hidden or minimised window does not stop them. The app runs only while its
+//! window exists (until the tray lands, closing the window quits it), and a
+//! click needs that window. `toast` turns the
 //! events that matter into text: a `notice` event (review finished or failed,
 //! review requested from the user, review generated automatically) and an
 //! `automatic` event reporting the daily cost cap. `notifier` applies the
@@ -126,7 +128,22 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Adds the Notifications submenu to the app menu. All of the menu code is
+/// `submenu`, so the submenu can be placed in another menu.
 fn install_menu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<()> {
+    let submenu = submenu(app, notifier)?;
+    let menu = match app.menu() {
+        Some(menu) => menu,
+        None => Menu::new(app)?,
+    };
+    menu.append(&submenu)?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
+/// The "Notifications" submenu: one check item per kind, each saved as it is
+/// toggled. Registers the menu event handler that does so.
+pub fn submenu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<Submenu<tauri::Wry>> {
     let kinds = notifier.settings().kinds;
     let items = Kind::ALL
         .into_iter()
@@ -145,12 +162,6 @@ fn install_menu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<()> 
     for item in &items {
         submenu.append(item)?;
     }
-    let menu = match app.menu() {
-        Some(menu) => menu,
-        None => Menu::new(app)?,
-    };
-    menu.append(&submenu)?;
-    app.set_menu(menu)?;
     let notifier = notifier.clone();
     app.on_menu_event(move |_, event: MenuEvent| {
         let Some(kind) = Kind::from_menu_id(event.id().as_ref()) else {
@@ -163,7 +174,7 @@ fn install_menu(app: &AppHandle, notifier: &Arc<Notifier>) -> tauri::Result<()> 
             }
         }
     });
-    Ok(())
+    Ok(submenu)
 }
 
 /// Starts reading the attached daemon's events until `stop` returns true (the
