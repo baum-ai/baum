@@ -65,6 +65,9 @@ func TestResolveCommitAmbiguous(t *testing.T) {
 	if _, err := r.ResolveCommit(context.Background(), shared); !errors.Is(err, ErrAmbiguous) {
 		t.Errorf("ResolveCommit(%q) err = %v, want ErrAmbiguous", shared, err)
 	}
+	if _, err := r.ValidationCommit(context.Background(), shared); err == nil {
+		t.Errorf("ValidationCommit(%q) accepted an ambiguous object prefix", shared)
+	}
 }
 
 func TestCommitsInAPartialCloneNeedNoBlobs(t *testing.T) {

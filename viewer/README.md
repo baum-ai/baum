@@ -53,7 +53,7 @@ A host connects it through props and context:
 | document source | yes | the `document` prop, and `loadVersion` (`LoadReviewVersion`), which answers a `ReviewVersionState` for an earlier version |
 | navigation | yes, for `ReviewViewer` and the selection and version hooks | `UrlStateProvider` with the URL's search params and a writer; `ViewerLinkProvider` with an in-app link component, which `ViewerLink` renders (a plain anchor without one), such as the head's back link |
 | attachment URL | no | `AttachmentUrlProvider` resolves an attachment id to an address; without it `images` blocks draw nothing |
-| hunk patch source | no | `HunkPatchProvider` loads a file's patch for cited code whose stored excerpt was omitted |
+| hunk patch source | no | `HunkPatchProvider` loads a file's patch for cited code whose stored excerpt was omitted, given its path, the review version and the cited hunk's id |
 | file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
