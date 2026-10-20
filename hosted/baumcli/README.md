@@ -277,9 +277,9 @@ handshake, in [`apiclient`](../apiclient).
   `baum daemon run`, with `BAUM_NO_DAEMON=1`, or when `CI` is set; the events
   then wait in the spool. A hook starts the daemon with its own environment
   minus `TMPDIR`, which agent sandboxes point at a directory that lasts one
-  session, on the control socket the hook resolved (passed as `--socket`, so a
-  socket under the temporary directory stays where clients look), and with no
-  descriptor but its standard ones. The new daemon drains the spool when it
+  session, and with no descriptor but its standard ones. The socket path never
+  depends on `TMPDIR` (a path too long for a socket falls back to
+  `/tmp/baum-<uid>`), so the daemon listens where the hook looked. The new daemon drains the spool when it
   starts.
 - A daemon that does not answer within the budget, refuses the event or
   predates it (`unknown_method`, `protocol_mismatch`, or `event_version` for

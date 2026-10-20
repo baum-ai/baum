@@ -436,8 +436,11 @@ and Git hooks run baum, locally, for a user who never logged in; the
 directory alone does not.
 
 The control socket, `$XDG_RUNTIME_DIR/baum/daemon.sock` or `daemon.sock` in
-the state directory, is mode 0600 in a 0700 directory, so other users cannot
-connect; Windows uses the same `AF_UNIX` socket, protected by the state
+the state directory (or `/tmp/baum-<uid>/daemon.sock` when that path is too
+long for a socket, whatever `TMPDIR` is), is mode 0600 in a 0700 directory, so
+other users cannot connect. The daemon refuses a socket directory that is not
+private or not yours, and clients refuse to connect through one, so another
+user who creates `/tmp/baum-<uid>` first cannot receive your requests; Windows uses the same `AF_UNIX` socket, protected by the state
 directory's current-user DACL. Any process running as you can connect, ask
 for the daemon's status and stop it. It can also send hook events, which the
 daemon only records.

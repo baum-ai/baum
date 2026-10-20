@@ -24,16 +24,16 @@ func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(self, spawnArgs(paths, start)...)
+	cmd := exec.Command(self, spawnArgs(start)...)
 	cmd.Env = start.Env
 	return Spawn(paths, cmd)
 }
 
-// spawnArgs are the arguments SpawnSelf runs this executable with. The
-// socket is passed as the caller resolved it: a daemon started with another
-// environment (a hook passes no TMPDIR) could otherwise resolve another one.
-func spawnArgs(paths Paths, start StartOptions) []string {
-	args := []string{"daemon", "run", "--detached", "--socket", paths.Socket}
+// spawnArgs are the arguments SpawnSelf runs this executable with. They name
+// no socket: DefaultPaths never depends on TMPDIR, which a hook drops from
+// the daemon's environment, so the daemon resolves the socket its client did.
+func spawnArgs(start StartOptions) []string {
+	args := []string{"daemon", "run", "--detached"}
 	if start.Port != 0 {
 		args = append(args, "--port", strconv.Itoa(start.Port))
 	}

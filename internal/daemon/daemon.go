@@ -43,11 +43,18 @@ type Paths struct {
 // bytes on macOS, 108 on Linux and Windows).
 const maxSocketPath = 100
 
+// socketFallbackBase is where a socket path too long for the platform moves,
+// into a private baum-<uid> directory. It is fixed, never os.TempDir: every
+// process of the user (the desktop app, a terminal, an agent's sandboxed hook
+// whose TMPDIR is a session's directory) must compute the same socket, and
+// one that outlives the session that computed it. Windows never falls back.
+const socketFallbackBase = "/tmp"
+
 // DefaultPaths are the daemon's state directory, $XDG_STATE_HOME/baum/daemon
 // (default ~/.local/state/baum/daemon), and its socket in $XDG_RUNTIME_DIR/baum
 // or, without one, in the state directory. A socket path too long for the
-// platform moves to a private baum-<uid> directory under the system temporary
-// directory.
+// platform moves to /tmp/baum-<uid>, whatever TMPDIR is; the daemon creates
+// that directory private to the user and refuses one another user owns.
 func DefaultPaths() (Paths, error) {
 	root := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(root) {
@@ -64,7 +71,7 @@ func DefaultPaths() (Paths, error) {
 	}
 	p.Socket = filepath.Join(socketDir, "daemon.sock")
 	if len(p.Socket) > maxSocketPath && runtime.GOOS != "windows" {
-		p.Socket = filepath.Join(os.TempDir(), "baum-"+strconv.Itoa(os.Getuid()), "daemon.sock")
+		p.Socket = filepath.Join(socketFallbackBase, "baum-"+strconv.Itoa(os.Getuid()), "daemon.sock")
 	}
 	if len(p.Socket) > maxSocketPath {
 		return Paths{}, errors.New("the daemon socket path is too long: " + p.Socket)

@@ -101,12 +101,17 @@ func (c *Client) socket() string {
 }
 
 // Call sends one request and reads its response. A missing socket or a
-// refused connection is ErrNotRunning.
+// refused connection is ErrNotRunning; a socket in a directory that is not
+// private to the user is refused.
 func (c *Client) Call(ctx context.Context, method string, params any) (Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	socket := c.socket()
+	if err := checkSocketDirectory(socket); err != nil {
+		return Response{}, fmt.Errorf("connect to the baum daemon: %w", err)
+	}
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", c.socket())
+	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || refused(err) {
 			return Response{}, ErrNotRunning

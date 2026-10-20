@@ -105,6 +105,8 @@ type Options struct {
 	Logger      *slog.Logger
 	// trust replaces trustedExecutable in tests.
 	trust func(path string) (string, error)
+	// socketCheck replaces socketCheckInterval in tests.
+	socketCheck time.Duration
 }
 
 // Run is the daemon. It returns ErrRunning when another daemon holds the
@@ -196,7 +198,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer func() { _ = os.Remove(paths.statusFile()) }()
-	listener, err := listenControl(paths.Socket)
+	listener, err := newControlListener(paths.Socket)
 	if err != nil {
 		shutdownApp()
 		return err
@@ -230,6 +232,13 @@ func Run(ctx context.Context, opts Options) error {
 	_ = os.Remove(paths.startedFile())
 	log.Info("daemon ready", "app", status.App, "socket", paths.Socket)
 	running.Go(func() { control.restartWhenIdle(runCtx) })
+	socketCheck := opts.socketCheck
+	if socketCheck <= 0 {
+		socketCheck = socketCheckInterval
+	}
+	running.Go(func() {
+		listener.watch(runCtx, socketCheck, log, func() { _ = os.Remove(paths.startedFile()) })
+	})
 
 	var serveErr error
 	select {

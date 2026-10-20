@@ -59,7 +59,8 @@ is set. It keeps running after they exit, until "baum daemon stop".
 
 Its state, credential and logs are in $XDG_STATE_HOME/baum/daemon (default
 ~/.local/state/baum/daemon); its control socket is in $XDG_RUNTIME_DIR/baum
-when that is set, else in the state directory.`,
+when that is set, else in the state directory, or in /tmp/baum-<uid> when
+that path is too long for a socket. TMPDIR never changes where it is.`,
 		Args: cobra.NoArgs,
 	}
 	ensure := &cobra.Command{
@@ -97,8 +98,6 @@ is already running.`,
 	startFlags(run)
 	run.Flags().Bool("detached", false, "log only to the log file (used by ensure)")
 	_ = run.Flags().MarkHidden("detached")
-	run.Flags().String("socket", "", "listen on this control socket (used by the client that starts the daemon)")
-	_ = run.Flags().MarkHidden("socket")
 	printEnv := &cobra.Command{
 		Use:    "print-env MARKER",
 		Short:  "Print the environment between markers (used to read the login shell's)",
@@ -221,7 +220,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	detached, _ := cmd.Flags().GetBool("detached")
-	paths, err := runPaths(cmd)
+	paths, err := daemonPaths()
 	if err != nil {
 		return err
 	}
@@ -281,24 +280,6 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		logger.Error("daemon failed", "error", err)
 	}
 	return err
-}
-
-// runPaths are the daemon's paths, with the control socket the starting
-// client resolved when it passed one: a hook starts the daemon without its
-// TMPDIR, so the daemon could resolve another socket than the one clients
-// look for.
-func runPaths(cmd *cobra.Command) (daemon.Paths, error) {
-	paths, err := daemonPaths()
-	if err != nil {
-		return daemon.Paths{}, err
-	}
-	if socket, _ := cmd.Flags().GetString("socket"); socket != "" {
-		if !filepath.IsAbs(socket) {
-			return daemon.Paths{}, fmt.Errorf("--socket %s is not an absolute path", socket)
-		}
-		paths.Socket = socket
-	}
-	return paths, nil
 }
 
 // respawnDaemon starts executable (the newer baum a client named) as a

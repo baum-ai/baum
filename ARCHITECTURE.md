@@ -1779,9 +1779,9 @@ endpoint.
   was started less than `StartBackoff` (3 min) ago: it records each start in
   `started.json`, which the daemon removes once it serves, so a daemon that
   cannot start is not started again by every hook (a start time in the future
-  does not count). It does not wait for the daemon, passes the hook's
-  environment without `TMPDIR`, and passes the socket the hook resolved as
-  `--socket`, so the daemon listens where clients look; `Spawn` marks the
+  does not count). It does not wait for the daemon and passes the hook's
+  environment without `TMPDIR`; the socket path never depends on `TMPDIR`, so
+  the daemon resolves the socket the hook looked for. `Spawn` marks the
   caller's inherited descriptors close-on-exec first. A daemon that does not
   answer in time, answers an error, or does not know `event` gets the event
   through the spool; one older than the hook's baum is sent `stop` with
@@ -1823,11 +1823,20 @@ the credential file instead of being printed by a foreground process.
 
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
 `$XDG_RUNTIME_DIR/baum/daemon.sock`, else `daemon.sock` in the state
-directory, else (a path too long for `sun_path`) `baum-<uid>/daemon.sock`
-under the system temporary directory. That is where a daemon listens; clients
-dial the `socket` the running daemon recorded in `daemon.json` in the state
-directory, so one with a different `XDG_RUNTIME_DIR` (ssh, su, a sandbox)
-still reaches it. Windows 10 1803 and later have
+directory, else (a path too long for `sun_path`) `/tmp/baum-<uid>/daemon.sock`.
+That fallback is fixed rather than under `TMPDIR`: an agent sandbox points
+`TMPDIR` at a directory that lasts one session, and the app, a terminal and a
+sandboxed hook must all compute the same socket, one that outlives the session.
+The daemon creates the directory 0700 and refuses one that is not private or
+not the user's, and clients refuse to dial a socket in such a directory, so
+another user who creates `/tmp/baum-<uid>` first can only keep the daemon from
+starting. That is where a daemon listens; clients dial the `socket` the
+running daemon recorded in `daemon.json` in the state directory, so one with a
+different `XDG_RUNTIME_DIR` (ssh, su, a sandbox) still reaches it. The daemon
+checks every 5 s that its socket file exists; when something removed it (a
+`/tmp` cleaner, a user tidying up) it creates the directory again and listens
+anew on the same path, since clients would otherwise find no socket and no
+replacement could take the lock it holds. Windows 10 1803 and later have
 `AF_UNIX` sockets, so Windows uses the same socket in the state directory,
 protected by that directory's current-user DACL, instead of a named pipe
 (which would need a new dependency for overlapped I/O). Each request is one

@@ -617,9 +617,153 @@ func TestDefaultPaths(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" {
 		t.Setenv("XDG_STATE_HOME", "/"+strings.Repeat("long/", 30))
-		if p, err = DefaultPaths(); err != nil || p.Socket != filepath.Join(os.TempDir(), "baum-"+strconv.Itoa(os.Getuid()), "daemon.sock") {
-			t.Fatal(p, err)
+		want := "/tmp/baum-" + strconv.Itoa(os.Getuid()) + "/daemon.sock"
+		for _, tmp := range []string{"", t.TempDir(), "/private/var/folders/session/T/"} {
+			t.Setenv("TMPDIR", tmp)
+			if p, err = DefaultPaths(); err != nil || p.Socket != want {
+				t.Fatalf("TMPDIR=%q: %+v %v, want socket %s", tmp, p, err, want)
+			}
 		}
+	}
+}
+
+// TestPathsHelper prints DefaultPaths' socket, for a process started with
+// another environment than the test's.
+func TestPathsHelper(t *testing.T) {
+	if os.Getenv("BAUM_PATHS_HELPER") != "1" {
+		t.Skip("paths process")
+	}
+	p, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("socket=" + p.Socket)
+}
+
+// Two processes of the user whose TMPDIR differs (the app and an agent's
+// sandboxed hook) find the daemon on the same socket.
+func TestFallbackSocketIgnoresTMPDIR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no fallback socket directory")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sockets []string
+	for _, tmp := range []string{t.TempDir(), t.TempDir()} {
+		cmd := exec.Command(self, "-test.run=^TestPathsHelper$", "-test.v")
+		cmd.Env = append(os.Environ(), "BAUM_PATHS_HELPER=1", "XDG_RUNTIME_DIR=", "XDG_STATE_HOME=/"+strings.Repeat("long/", 30), "TMPDIR="+tmp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatal(string(out), err)
+		}
+		_, after, ok := strings.Cut(string(out), "socket=")
+		if !ok {
+			t.Fatalf("no socket in %s", out)
+		}
+		socket, _, _ := strings.Cut(after, "\n")
+		sockets = append(sockets, socket)
+	}
+	want := "/tmp/baum-" + strconv.Itoa(os.Getuid()) + "/daemon.sock"
+	if sockets[0] != want || sockets[1] != want {
+		t.Fatalf("sockets %q, want both %s", sockets, want)
+	}
+}
+
+// A daemon whose socket file is removed listens again, so clients reach it
+// instead of finding no socket and a lock they cannot take.
+func TestDaemonListensAgainWhenItsSocketIsRemoved(t *testing.T) {
+	paths := testPaths(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{Paths: paths, Version: "v1.0.0", socketCheck: 20 * time.Millisecond})
+	}()
+	c := &Client{Paths: paths, Version: "v1.0.0", Spawn: func(Paths, StartOptions) (<-chan struct{}, error) {
+		t.Error("started a daemon while one runs")
+		return nil, errors.New("no")
+	}}
+	reachable := func() Status {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			status, err := c.Hello(context.Background())
+			if err == nil {
+				return status
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("daemon unreachable: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	first := reachable()
+	// A connection open before the removal keeps working.
+	conn, err := net.Dial("unix", paths.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	for _, remove := range []string{paths.Socket, filepath.Dir(paths.Socket)} {
+		if err = os.RemoveAll(remove); err != nil {
+			t.Fatal(err)
+		}
+		if again := reachable(); again.PID != first.PID || again.StartedAt != first.StartedAt {
+			t.Fatalf("reached %+v, want %+v", again, first)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if got := mode(t, filepath.Dir(paths.Socket)); got != 0o700 {
+			t.Errorf("socket directory mode %o", got)
+		}
+		if got := mode(t, paths.Socket); got != 0o600 {
+			t.Errorf("socket mode %o", got)
+		}
+	}
+	if _, err = conn.Write([]byte(`{"protocol":1,"method":"ping"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := bufio.NewReader(conn).ReadString('\n'); err != nil || !strings.Contains(line, `"ok":true`) {
+		t.Fatalf("old connection: %q %v", line, err)
+	}
+	if status, err := c.Ensure(context.Background()); err != nil || status.PID != first.PID {
+		t.Fatalf("ensure %+v %v", status, err)
+	}
+	cancel()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("daemon did not stop")
+	}
+	if _, err = os.Lstat(paths.Socket); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("socket left behind: %v", err)
+	}
+}
+
+// A client refuses a socket in a directory another user could have made: the
+// /tmp fallback has a predictable name.
+func TestClientRefusesSocketInSharedDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permissions")
+	}
+	paths := testPaths(t)
+	fakeControl(t, paths, func(Request) Response { return Response{OK: true, Status: &Status{}} })
+	if err := os.Chmod(filepath.Dir(paths.Socket), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Paths: paths}
+	if _, err := c.Hello(context.Background()); err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("hello through a shared directory: %v", err)
+	}
+	if err := os.Chmod(filepath.Dir(paths.Socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Hello(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -895,10 +1039,11 @@ func TestRestartTargetsTheNewestClientAndNoticesOnce(t *testing.T) {
 	}
 }
 
-func TestSpawnPassesTheResolvedSocket(t *testing.T) {
-	paths := Paths{State: "/state", Socket: "/tmp/baum-1000/daemon.sock"}
-	args := spawnArgs(paths, StartOptions{Port: 8080})
-	want := []string{"daemon", "run", "--detached", "--socket", "/tmp/baum-1000/daemon.sock", "--port", "8080"}
+// A spawned daemon resolves its own socket: the paths never depend on the
+// TMPDIR a hook drops from its environment.
+func TestSpawnArgs(t *testing.T) {
+	args := spawnArgs(StartOptions{Port: 8080})
+	want := []string{"daemon", "run", "--detached", "--port", "8080"}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Errorf("args = %q, want %q", args, want)
 	}
