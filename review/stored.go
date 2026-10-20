@@ -163,14 +163,22 @@ var storedSchema = sync.OnceValues(func() (map[string]any, error) {
 // contracts derive from the review schema alone, so generation never offers
 // or accepts a retired kind.
 var storedDocumentSchema = sync.OnceValues(func() ([]byte, error) {
+	return withRetiredTiles(reviewSchema, reviewschema.LegacyTiles)
+})
+
+// withRetiredTiles adds the retired tile definitions to a review schema and
+// accepts $defs/legacyTile wherever it accepts $defs/tile. A definition both
+// files name is an error: a kind brought back into the schema must leave the
+// retired definitions.
+func withRetiredTiles(schema, retired []byte) ([]byte, error) {
 	var root map[string]any
-	if err := json.Unmarshal(reviewSchema, &root); err != nil {
+	if err := json.Unmarshal(schema, &root); err != nil {
 		return nil, err
 	}
 	var legacy struct {
 		Defs map[string]any `json:"$defs"`
 	}
-	if err := json.Unmarshal(reviewschema.LegacyTiles, &legacy); err != nil {
+	if err := json.Unmarshal(retired, &legacy); err != nil {
 		return nil, fmt.Errorf("retired tile definitions: %w", err)
 	}
 	defs, _ := root["$defs"].(map[string]any)
@@ -185,7 +193,7 @@ var storedDocumentSchema = sync.OnceValues(func() ([]byte, error) {
 	}
 	defs["tile"] = map[string]any{"anyOf": []any{defs["tile"], map[string]any{"$ref": "#/$defs/legacyTile"}}}
 	return json.Marshal(root)
-})
+}
 
 // storedTileSchema accepts a tile the stored-document schema accepts: one of
 // a current kind that the review schema accepts, or one of a retired kind
@@ -221,9 +229,12 @@ var retiredTileFields = map[string][]string{"architecture": {"context", "deploym
 // storedTileSchema accepts, removes the retired fields of one it accepts
 // without them, and drops any other: a tile of a kind or shape that neither
 // the current schema nor a retired kind the viewer renders accepts, which only
-// a release before a tile kind changed in place could have stored. Nothing
-// outside a tile refers to it, so dropping one leaves every reference intact.
-// It reports whether it changed any tile.
+// a release before a tile kind changed in place could have stored. A tile is
+// kept only when it also passes the document's own tile rules
+// (validateTileReferences): its internal references resolve, which removing
+// a retired field can break, and no tile kept before it in the same owner has
+// its ID. Nothing outside a tile refers to it, so dropping one leaves every
+// other reference intact. It reports whether it changed any tile.
 func repairStoredTiles(document map[string]any) (bool, error) {
 	schema, err := storedTileSchema()
 	if err != nil {
@@ -249,16 +260,20 @@ func repairStoredTiles(document map[string]any) (bool, error) {
 				continue
 			}
 			kept := make([]any, 0, len(tiles))
+			ids := map[string]bool{}
 			repaired := false
 			for _, tile := range tiles {
-				if schema.Validate(tile) == nil {
-					kept = append(kept, tile)
+				candidate := storedTile(tile, schema)
+				if candidate == nil || ids[candidate.ID] || !validTileReferences(candidate.reviewTile) {
+					repaired = true
 					continue
 				}
-				repaired = true
-				if stripped := withoutRetiredTileFields(tile); stripped != nil && schema.Validate(stripped) == nil {
-					kept = append(kept, stripped)
+				ids[candidate.ID] = true
+				if candidate.value != nil {
+					repaired = true
+					tile = candidate.value
 				}
+				kept = append(kept, tile)
 			}
 			if repaired {
 				owner["tiles"], changed = kept, true
@@ -266,6 +281,35 @@ func repairStoredTiles(document map[string]any) (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+// repairedTile is a stored tile the tile rule may keep, projected for the
+// document's tile rules; value is its rewrite, nil when it is kept as stored.
+type repairedTile struct {
+	reviewTile
+	value map[string]any
+}
+
+// storedTile returns a tile as the tile rule may keep it, without its retired
+// fields when schema accepts it only without them, or nil when schema rejects
+// it either way.
+func storedTile(tile any, schema *jsonschema.Resolved) *repairedTile {
+	var value map[string]any
+	if schema.Validate(tile) != nil {
+		if value = withoutRetiredTileFields(tile); value == nil || schema.Validate(value) != nil {
+			return nil
+		}
+		tile = value
+	}
+	encoded, err := json.Marshal(tile)
+	if err != nil {
+		return nil
+	}
+	repaired := &repairedTile{value: value}
+	if json.Unmarshal(encoded, &repaired.reviewTile) != nil {
+		return nil
+	}
+	return repaired
 }
 
 // withoutRetiredTileFields returns a copy of a tile without the retired

@@ -193,25 +193,92 @@ func TestRefreshStoredDocumentWithUnrenderableTiles(t *testing.T) {
 	}
 }
 
+// The previous version a generation carries has the tiles a refresh would
+// store: retired fields removed, and unrenderable tiles dropped from the
+// section and its risks alike.
 func TestPreviousVersionOfDropsUnrenderableTiles(t *testing.T) {
 	previous, err := PreviousVersionOf(encodeJSON(t, storedTilesDocument(t, true)), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var content struct {
-		Tiles []struct {
-			ID string `json:"id"`
-		} `json:"tiles"`
+		Tiles []any `json:"tiles"`
+		Risks []struct {
+			Tiles []any `json:"tiles"`
+		} `json:"risks"`
 	}
 	if err := json.Unmarshal(previous.Sections[0].Content, &content); err != nil {
 		t.Fatal(err)
 	}
-	var ids []string
-	for _, tile := range content.Tiles {
-		ids = append(ids, tile.ID)
+	want := decodedJSON(t, encodeJSON(t, firstSection(storedTilesDocument(t, false)))).(map[string]any)
+	if !reflect.DeepEqual(content.Tiles, want["tiles"]) {
+		t.Fatalf("previous section tiles = %v, want %v", content.Tiles, want["tiles"])
 	}
-	if want := []string{"tile_retry_architecture", "tile_retry_flow"}; !slices.Equal(ids, want) {
-		t.Fatalf("previous section tiles = %v, want %v", ids, want)
+	if !reflect.DeepEqual(content.Risks[0].Tiles, want["risks"].([]any)[0].(map[string]any)["tiles"]) {
+		t.Fatalf("previous risk tiles = %v", content.Risks[0].Tiles)
+	}
+}
+
+// A tile is kept only when it also passes the document's own tile rules: one
+// whose references removing a retired field breaks, one with retired fields
+// and another fault, and a second tile with an owner's tile ID are dropped,
+// and the result passes stored validation.
+func TestStoredTilesDropTilesTheDocumentRulesReject(t *testing.T) {
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := storedExample(t)
+	section := firstSection(doc)
+	architecture := section["tiles"].([]any)[0].(map[string]any)
+	node := map[string]any{"id": "outside", "label": "Outside world", "kind": "external"}
+	clone := func(id string) map[string]any {
+		tile := decodedJSON(t, encodeJSON(t, architecture)).(map[string]any)
+		tile["id"] = id
+		data := tile["data"].(map[string]any)
+		data["context"], data["deployment"] = []any{node}, []any{node}
+		return tile
+	}
+	// The worker reaches the outside node, which only the retired context
+	// field defined.
+	dangling := clone("tile_retry_outside")
+	sequence := dangling["data"].(map[string]any)["sequences"].([]any)[0].(map[string]any)
+	sequence["steps"] = append(sequence["steps"].([]any), map[string]any{"from": "worker", "message": "Report", "to": "outside"})
+	faulty := clone("tile_retry_faulty")
+	delete(faulty["data"].(map[string]any), "product")
+	duplicate := retiredWorkflowTile()
+	duplicate["id"] = "tile_retry_architecture"
+	section["tiles"] = append(section["tiles"].([]any), dangling, faulty, duplicate)
+	stored := encodeJSON(t, doc)
+	if findings := validator.ValidateStored(stored, nil); findings != nil {
+		t.Fatalf("stored document rejected: %q", findings)
+	}
+	value, normalized, err := decodeStored(stored, "stored review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := decodedJSON(t, encodeJSON(t, storedExample(t))); !reflect.DeepEqual(decodedJSON(t, normalized), want) {
+		t.Fatalf("tiles = %v, want only the example's", storedTileIDs(firstSection(value)["tiles"]))
+	}
+	if _, again, err := decodeStored(normalized, "stored review"); err != nil || !bytes.Equal(again, normalized) {
+		t.Fatalf("normalizing again changed the document (%v)", err)
+	}
+}
+
+// A kind brought back into the schema must leave the retired definitions:
+// the stored schema refuses a definition both files name.
+func TestRetiredTileDefinitionsMayNotRedefineTheSchema(t *testing.T) {
+	if _, err := withRetiredTiles(reviewSchema, reviewschema.LegacyTiles); err != nil {
+		t.Fatal(err)
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(reviewschema.LegacyTiles, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy["$defs"].(map[string]any)["tileData_bug-fix"] = map[string]any{"type": "object"}
+	_, err := withRetiredTiles(reviewSchema, encodeJSON(t, legacy))
+	if err == nil || !strings.Contains(err.Error(), "tileData_bug-fix") {
+		t.Fatalf("error = %v, want one naming the redefined tileData_bug-fix", err)
 	}
 }
 

@@ -21,7 +21,11 @@ when it starts. The document model is described in
   rendering stored tiles of, list it in `retiredTileFields`
   ([`stored.go`](../stored.go)) and `withoutRetiredTileFields`
   (`oss/viewer/src/review-tiles.ts`). A stored tile neither file accepts
-  after that is dropped on read.
+  after that, or whose references removing a field breaks, is dropped on read.
+- To bring a retired kind back, also remove its definitions from
+  `legacy-review-tiles.json`. The `review` package refuses a definition both
+  files name, so `NewDocumentValidator` and every stored-document read fail;
+  the viewer would silently let the retired definition win.
 
 ## Allow-list
 

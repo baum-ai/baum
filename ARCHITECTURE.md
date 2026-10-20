@@ -334,9 +334,12 @@ mentions one. Generation still
   (`schema.LegacyTiles`) defines those kinds, and the stored schema accepts
   them. A field the schema removed from a current kind, which the viewer
   ignores (an architecture tile's `context` and `deployment`), is removed.
-  Any other tile of a section or risk is dropped; nothing outside a tile
-  refers to it. The rule runs after the identifier rule, so a tile whose
-  only fault is a long identifier is kept. Generation never offers a retired
+  Any other tile of a section or risk is dropped, and so is one the
+  document's own tile rules reject: its internal references must resolve,
+  which removing a retired field can break, and a tile kept before it in the
+  same section or risk must not have its ID. Nothing outside a tile refers to
+  it. The rule runs after the identifier rule, so a tile whose only fault is
+  a long identifier is kept. Generation never offers a retired
   kind: the authored and model-facing contracts derive from `review-1.json`
   alone.
 
