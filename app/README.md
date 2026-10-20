@@ -1,7 +1,7 @@
 # Local application
 
 The baum daemon serves this React single-page app from its embedded assets;
-the desktop app and `baum ui` open it from the launch URL in the daemon's
+the desktop app opens it from the launch URL in the daemon's
 `credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
 authenticated local server: no hosted baum API, account or login.
 The server's own bootstrap page at `/` removes the launch capability from the

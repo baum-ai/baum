@@ -9,7 +9,7 @@ import (
 	"github.com/baum-ai/baum/sessions/session"
 )
 
-// Row is one session as "baum sessions" lists it, and the JSON shape of its
+// Row is one session as "baum internal sessions" lists it, and the JSON shape of its
 // --json output. Its text is redacted.
 type Row struct {
 	Source      string              `json:"source"`

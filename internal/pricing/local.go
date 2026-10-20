@@ -22,7 +22,7 @@ import (
 
 // Source says where the active price list came from: compiled in, fetched by
 // Refresh in this process, or loaded by LoadPersisted from the list an earlier
-// baum ui run stored.
+// daemon run stored.
 type Source struct {
 	// Origin is "embedded", "fetched" or "cached".
 	Origin  string

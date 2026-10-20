@@ -142,7 +142,7 @@ for _ in 1 2 3 4 5; do
   candidate=$((20000 + RANDOM % 40000))
   : >"$work/stdout"
   : >"$work/stderr"
-  "$binary" view --sample --no-open --port "$candidate" >"$work/stdout" 2>"$work/stderr" &
+  "$binary" internal view --sample --no-open --port "$candidate" >"$work/stdout" 2>"$work/stderr" &
   server_pid=$!
   # The URL is printed alone on stdout once the server listens; an early exit
   # means the port was taken.
@@ -159,7 +159,7 @@ for _ in 1 2 3 4 5; do
 done
 if [ -z "$port" ]; then
   cat "$work/stderr" >&2
-  fail "baum view did not start"
+  fail "baum internal view did not start"
 fi
 url=$(head -n 1 "$work/stdout" | tr -d '\r')
 url=${url%/}
@@ -193,9 +193,9 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 if kill -0 "$server_pid" 2>/dev/null; then
-  fail "baum view is still running after kill"
+  fail "baum internal view is still running after kill"
 fi
 server_pid=
-echo "baum view exited"
+echo "baum internal view exited"
 
 printf '\nclean-install: ok\n'

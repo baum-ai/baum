@@ -38,7 +38,7 @@ func newGenerateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate the review document for a pull request",
-		Long: `Generate assembles the generation bundle of a pull request, as "baum bundle"
+		Long: `Generate assembles the generation bundle of a pull request, as "baum internal bundle"
 does, and has a coding agent installed on this machine (Claude Code, Codex or
 the Cursor Agent CLI, under your own login), or the Anthropic API with your
 ANTHROPIC_API_KEY, read the bundle and a read-only checkout of the pull request
@@ -246,7 +246,7 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		return err
 	}
 
-	hint := fmt.Sprintf("baum view --pr %d --repo %q", target.Number, target.Repository.String())
+	hint := fmt.Sprintf("baum internal view --pr %d --repo %q", target.Number, target.Repository.String())
 	if storePath != "" {
 		hint += fmt.Sprintf(" --store %q", storePath)
 	}
@@ -259,12 +259,12 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		if _, err := cmd.OutOrStdout().Write(document); err != nil {
 			return fmt.Errorf("writing the document: %w", err)
 		}
-		_, _ = fmt.Fprintln(stderr, "the document went to stdout; save it with -o review.json, then view it with: baum view review.json")
+		_, _ = fmt.Fprintln(stderr, "the document went to stdout; save it with -o review.json, then view it with: baum internal view review.json")
 		return nil
 	}
 	if err := generate.WriteFileAtomic(output, document); err != nil {
 		return fmt.Errorf("writing the document: %w", err)
 	}
-	_, _ = fmt.Fprintf(stderr, "wrote %s\nview it with: baum view %s\n", output, output)
+	_, _ = fmt.Fprintf(stderr, "wrote %s\nview it with: baum internal view %s\n", output, output)
 	return nil
 }

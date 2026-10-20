@@ -3,7 +3,7 @@ import type { CommitListState, CommitView } from "../src/components/commit-list"
 import type { SessionListState, SessionView } from "../src/components/session-list";
 import type { ReviewDocument } from "../src/review-document";
 
-/** What `baum view` knows about this pull request's sessions and commits on
+/** What `baum internal view` knows about this pull request's sessions and commits on
  *  the user's machine: the answer of `GET /api/sessions`, checked. */
 
 export type LocalSession = {

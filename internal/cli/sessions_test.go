@@ -51,7 +51,7 @@ func sessionsFixtureOnBranch(t *testing.T, branch string) (repo string, storeFla
 
 func TestSessionsTable(t *testing.T) {
 	repo, flags := sessionsFixture(t)
-	stdout, stderr, err := run(t, append([]string{"sessions", repo}, flags...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "sessions", repo}, flags...)...)
 	if err != nil {
 		t.Fatalf("sessions: %v\n%s", err, stderr)
 	}
@@ -65,7 +65,7 @@ func TestSessionsTable(t *testing.T) {
 
 func TestSessionsJSONRedactsText(t *testing.T) {
 	repo, flags := sessionsFixture(t)
-	stdout, _, err := run(t, append([]string{"sessions", "--json", repo}, flags...)...)
+	stdout, _, err := run(t, append([]string{"internal", "sessions", "--json", repo}, flags...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSessionsJSONRedactsText(t *testing.T) {
 
 func TestSessionsDumpIsRedacted(t *testing.T) {
 	repo, flags := sessionsFixture(t)
-	stdout, _, err := run(t, append([]string{"sessions", "--dump", "aaaaaaaa-0000-4000-8000-000000000001", repo}, flags...)...)
+	stdout, _, err := run(t, append([]string{"internal", "sessions", "--dump", "aaaaaaaa-0000-4000-8000-000000000001", repo}, flags...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,24 +93,24 @@ func TestSessionsDumpIsRedacted(t *testing.T) {
 	if strings.Contains(stdout, "ada.lovelace") || strings.Contains(stdout, "example.com") {
 		t.Errorf("dump must be redacted:\n%s", stdout)
 	}
-	if _, _, err := run(t, append([]string{"sessions", "--dump", "nope", repo}, flags...)...); err == nil {
+	if _, _, err := run(t, append([]string{"internal", "sessions", "--dump", "nope", repo}, flags...)...); err == nil {
 		t.Error("unknown session id must fail")
 	}
 }
 
 func TestSessionsFiltersAndErrors(t *testing.T) {
 	repo, flags := sessionsFixture(t)
-	stdout, _, err := run(t, append([]string{"sessions", "--vendor", "codex", repo}, flags...)...)
+	stdout, _, err := run(t, append([]string{"internal", "sessions", "--vendor", "codex", repo}, flags...)...)
 	if err != nil || !strings.Contains(stdout, "no sessions recorded") {
 		t.Errorf("vendor filter: %v\n%s", err, stdout)
 	}
-	if _, _, err := run(t, append([]string{"sessions", "--vendor", "copilot", repo}, flags...)...); err == nil {
+	if _, _, err := run(t, append([]string{"internal", "sessions", "--vendor", "copilot", repo}, flags...)...); err == nil {
 		t.Error("unknown vendor must fail")
 	}
-	if _, _, err := run(t, append([]string{"sessions", "--since", "yesterday", repo}, flags...)...); err == nil {
+	if _, _, err := run(t, append([]string{"internal", "sessions", "--since", "yesterday", repo}, flags...)...); err == nil {
 		t.Error("bad --since must fail")
 	}
-	if _, _, err := run(t, "sessions", t.TempDir()); err == nil {
+	if _, _, err := run(t, "internal", "sessions", t.TempDir()); err == nil {
 		t.Error("a directory outside a git repository must fail")
 	}
 }
@@ -133,7 +133,7 @@ func TestParseSince(t *testing.T) {
 
 func TestSessionsRedactsBranch(t *testing.T) {
 	repo, flags := sessionsFixtureOnBranch(t, "fix/ada.lovelace@example.com")
-	for _, args := range [][]string{{"sessions", repo}, {"sessions", "--json", repo}} {
+	for _, args := range [][]string{{"internal", "sessions", repo}, {"internal", "sessions", "--json", repo}} {
 		stdout, stderr, err := run(t, append(args, flags...)...)
 		if err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, stderr)

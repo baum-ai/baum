@@ -5,7 +5,7 @@ import { formatCompact, formatCount } from "./components/format";
 /** A session as its card and transcript draw it, and the pure parts of
  *  drawing it, which `components/session-card.tsx` and
  *  `components/transcript.tsx` render. Plain data: the host decides where it
- *  comes from (the hosted service's API, or `baum view`'s local transcript),
+ *  comes from (the hosted service's API, or `baum internal view`'s local transcript),
  *  and a host's own types need only carry these fields. */
 
 /** What one prompt, or the whole session, caused. */

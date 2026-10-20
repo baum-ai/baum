@@ -64,7 +64,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
 | `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, output redaction, the tile catalogue |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
-| `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum view` embeds |
+| `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
@@ -107,7 +107,7 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` is the GraphQL client `baum bundle` reads GitHub with, and
+`internal/github` is the GraphQL client `baum internal bundle` reads GitHub with, and
 the bounded read-only REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
 aliases and tokens as the GitHub CLI does, through its library go-gh
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
@@ -333,7 +333,7 @@ mentions one. Generation still
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
 document without a model call, after the stored-document rules; both the
-platform and `baum refresh` use it. It
+platform and `baum internal refresh` use it. It
 rebuilds the session index from the bundle and carries over, for each readable session the
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
@@ -645,7 +645,7 @@ The loop owns the rest of what a run sends:
   whose instructions name the tools differently. They are not part of the
   prompt's JSON encoding.
 
-Local generation (`baum generate`, in `internal/generate`) starts every prompt
+Local generation (`baum internal generate`, in `internal/generate`) starts every prompt
 it sends, repairs included, with `sessions.GenerationRunMarker`; its `Prompts`
 wrapper prepends the marker to the body. That is the contract session
 evidence relies on: a CLI backend records its run in the same session stores
@@ -733,13 +733,13 @@ the local CLI (not yet wired); today only the hosted worker calls them.
 `viewer` is a pnpm package of React components that render a document: the
 summary, sections and their blocks, risks, tiles, hunk evidence, images,
 checks, sessions and the version history with comparison. It also builds a
-standalone single-page app, which the `baum` binary embeds and `baum view`
+standalone single-page app, which the `baum` binary embeds and `baum internal view`
 serves on localhost.
 
 The viewer reads only the document and its versions. A host connects it
 through props and context:
 
-| Seam | Required | `baum view` | Notes |
+| Seam | Required | `baum internal view` | Notes |
 | --- | --- | --- | --- |
 | document source | yes | the file given, and versions from the local store | the current document, a version list and a loader for one version |
 | attachment URL | no | served from the local cache | resolves an image ID to a URL; without it, image blocks draw nothing |
@@ -765,7 +765,7 @@ package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
 built output is committed.
 
-`baum view`'s app fills the `sessions` and `commits` slots from
+`baum internal view`'s app fills the `sessions` and `commits` slots from
 `GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
 view models and never fetch. The app asks once when the page opens, and again
 on each `document` event (the server recomputes when the head changes), and
@@ -794,9 +794,9 @@ keeps the last answer on screen while it does.
   parameter is cleared with the selection. The document's own sessions have
   no transcript.
 
-### How `baum view` serves it
+### How `baum internal view` serves it
 
-`internal/viewserver` is the host. `baum view` loads one document file (or the
+`internal/viewserver` is the host. `baum internal view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
 or a free one, and prints the URL. It never contacts a server or fetches
 anything. The server has six API routes and an asset fallback:
@@ -880,8 +880,8 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 ### Local session linkage
 
 `internal/locallink` links the sessions on this machine to a pull request's
-commits using only this machine; `baum view` serves it, and the session
-evidence that `baum bundle` collects reuses its loading and matching (see
+commits using only this machine; `baum internal view` serves it, and the session
+evidence that `baum internal bundle` collects reuses its loading and matching (see
 "Local session evidence"). `Resolve`
 takes the pull request's `owner/name`, head and base commit ids, a directory
 inside the clone and the session store overrides, and does this:
@@ -1005,7 +1005,7 @@ inside the clone and the session store overrides, and does this:
    than once under one id is matched once, as its best reading: one with a
    transcript, then the newest.
 
-The result is redacted with the engine and the row summary that `baum sessions`
+The result is redacted with the engine and the row summary that `baum internal sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
 address or session store path; a linked session's transcript is its own route
 (see "Session transcripts" below).
@@ -1079,14 +1079,14 @@ allowed.
 ### Local session evidence
 
 `locallink.BuildSessionEvidence` is the bundle's sessions source on this
-machine; `baum bundle` calls it through `internal/assemble`. It
+machine; `baum internal bundle` calls it through `internal/assemble`. It
 takes the pull request's commits as the clone holds them (`gitlocal.Commits`
 from the merge base to the head), a directory in the clone, the session store
 overrides with the `--previous-path` directories the repository used to live
 at, and the bundle caps `MaxPromptsPerSession` and
 `MaxCommandEventsPerSession`. It loads and matches sessions exactly as steps 4
 to 7 of "Local session linkage" do. Loading leaves out baum's own generation
-runs, for `baum view` too: a session whose top-level session has a prompt
+runs, for `baum internal view` too: a session whose top-level session has a prompt
 starting with `sessions.GenerationRunMarker` is neither linked nor allowed to
 take a link from another session, and is dropped from an Entire checkpoint's
 ground truth. Each session linked to at least one commit becomes one bundle
@@ -1180,7 +1180,7 @@ redacted after, so nothing past the limits below is ever redacted or held:
    limit and passed through the redaction engine before it is cut, so a
    secret that the cut runs through is still recognised and masked.
 2. The encoded transcript is redacted as a whole with the engine
-   `baum sessions --dump` uses (`redact.Engine.RedactJSON`, which `--dump`
+   `baum internal sessions --dump` uses (`redact.Engine.RedactJSON`, which `--dump`
    reaches through `locallink.RedactGraph`): secrets and e-mail addresses are
    found over the encoded text, so a key and its value in separate strings are
    caught together, and in every string value and object key as decoded, so a
@@ -1347,7 +1347,7 @@ format and the protocol constants have one definition on both sides.
 
 ## Running locally
 
-`baum generate --pr N`:
+`baum internal generate --pr N`:
 
 1. resolves the pull request with the user's GitHub token;
 2. exports the head and merge-base trees with `git archive` from a private
@@ -1365,7 +1365,7 @@ format and the protocol constants have one definition on both sides.
 7. validates, derives and redacts the document, and stores it as the next
    version.
 
-`baum generate` is `internal/generate` (the pipeline) and
+`baum internal generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
 repository/PR version, and passes `review.PreviousVersionOf` into
 `assemble.Request.Previous`. After resolving the pull request and recording its
@@ -1442,7 +1442,7 @@ fetches it under `refs/baum/`, with the user's git configuration and no
 hooks. A partial clone missing the pull request's objects is reported, not
 fetched from on demand.
 
-`baum bundle` stops after step 5, and never fetches: a pull request commit
+`baum internal bundle` stops after step 5, and never fetches: a pull request commit
 the clone lacks fails the command with the `git fetch` to run, so it reads
 git objects only and leaves refs, index, working tree and configuration
 alone. It is `internal/assemble`, which follows the hosted assembler's order
@@ -1461,23 +1461,23 @@ cancellation is an error. Image downloads carry no credentials: the user's
 token only reads the rendered body, in which GitHub has signed each image
 URL, and only GitHub's upload hosts are contacted (see SECURITY.md). A
 previous document can be given in `Request.Previous`, as `generate` will;
-`baum bundle` leaves it nil. The
+`baum internal bundle` leaves it nil. The
 bundle is written as `json.Marshal` encodes it plus a newline, so its digest
 is the SHA-256 of the output without that newline, and it holds no timestamp
 of its own: the same inputs produce the same bytes. `Assemble` can also
 write the checkout (a gzip tar read by `bundle.UnpackCheckout`) and the
 attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
-`Request`, for `baum generate`; `baum bundle` discards both. The checkout is
+`Request`, for `baum internal generate`; `baum internal bundle` discards both. The checkout is
 exported either way, since a file the checkout budget omits makes its hunks
-textless. `baum validate`  checks a stored document with
+textless. `baum internal validate`  checks a stored document with
 `review.DocumentValidator.ValidateStored`, after the stored-document rules,
 against its bundle when one is given,
-and `baum refresh` uses `internal/refresh` to fetch current GitHub metadata
+and `baum internal refresh` uses `internal/refresh` to fetch current GitHub metadata
 with checks pinned to the saved head, re-link local sessions against the saved
 merge-base/head range and redact bounded evidence before calling
 `DocumentValidator.Refresh`. It exports no checkout, downloads no images and
 imports no model backend. Currency requires both saved head and base to match;
-command failures leave the existing document unchanged. `baum view`
+command failures leave the existing document unchanged. `baum internal view`
 serves the viewer, the selected document, and the sessions and commits linked
 to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the
@@ -1493,7 +1493,7 @@ version, when it was fetched and why the last refresh failed.
 
 ## Diagnostics
 
-`internal/doctor` builds the report behind `baum doctor`: `Run(ctx, Options)`
+`internal/doctor` builds the report behind `baum internal doctor`: `Run(ctx, Options)`
 returns an ordered list of checks, each with an `id`, `label`, `status` (`ok`,
 `warning`, `problem` or `info`) and `detail`, and, where they apply, `path`,
 `version`, `source` and `fix`, plus the worst status overall. It reuses the
@@ -1524,7 +1524,7 @@ explicit executable of a backend. `generate.DefaultBackendsFor(cfg)` passes it
 to the backend as its `Binary`, which is looked up by `exec.LookPath` as given,
 so an absolute path replaces the `PATH` search; a path that cannot be run fails
 the backend's `Check` with `generate.ExplicitPathError` naming
-`backend_paths.<name>`, without trying `PATH`. `baum generate` and the job
+`backend_paths.<name>`, without trying `PATH`. `baum internal generate` and the job
 runner both build their backends from the resolved configuration, and
 per-repository settings do not override the paths.
 
@@ -1547,7 +1547,7 @@ global preferences as one JSON row: `automatic` (true until changed) and
 `cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
-into `null`, and keeping a stored `true` (only `baum repos add --automatic`
+into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
 could set it). `OpenReadOnly` reads an unmigrated file the same way without
 writing it. An older baum that registers a repository after the migration
 still stores `automatic: false`, which now reads as an explicit off: that
@@ -1740,11 +1740,19 @@ and selected-version provenance without changing the review document schema.
 
 `internal/daemon` runs one long-lived local server per user, shared by the
 desktop app and coding-agent hooks; the `baum` command line is how both reach
-it. It owns the authenticated app server above and everything that used to run
-inside `baum ui`: registry, discovery, review index, background refresh,
-diagnostics and the generation queue, and the automatic generation scheduler. `baum ui` only ensures the daemon and
-opens its launch URL, so there is one server implementation. It also keeps
-the record of the events agent and Git hooks send it.
+it. It owns the authenticated app server above, and runs the registry,
+discovery, review index, background refresh, diagnostics, the generation queue
+and the automatic generation scheduler. There is one server implementation and
+no command opens it in a browser: the desktop app reads the launch URL from the
+daemon's `credential.json`. It also keeps the record of the events agent
+and Git hooks send it.
+
+The top-level `baum --help` lists only what users run: `hooks`, `daemon` and
+the hosted service commands. The engine commands (`generate`, `bundle`, `view`,
+`validate`, `refresh`, `repos`, `sessions` and `doctor`) live under the hidden
+`baum internal` parent, which `baum internal --help` lists. They are debugging
+and diagnostic tools that run the same engine by hand, and there are no
+top-level aliases for them.
 
 ### Lifecycle
 
@@ -2276,7 +2284,16 @@ and two files:
 
 ### Diagnostics
 
-`baum doctor` reports the daemon (`daemon` check): its state directory, and
+`baum internal doctor` reports the daemon (`daemon` check): its state directory, and
 when it runs its version, process id, uptime, protocol and socket; a warning
 when it is older than the doctor's baum, speaks a newer protocol, or holds the
 lock without answering.
+
+## Desktop app
+
+`desktop/` is a Tauri v2 shell, a Rust crate outside the Go module's
+packages. It bundles the release `baum` binary and depends on it only through
+`baum daemon ensure --json` and the daemon's private credential file.
+Everything that knows where the daemon lives stays in Go. The shell owns the
+window, its navigation policy and the reconnect screen; the daemon serves
+`app/` to it like any loopback client. See [`desktop/README.md`](desktop/README.md).

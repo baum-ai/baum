@@ -16,7 +16,7 @@ import (
 func TestRefreshCommandUpdatesLatestWithoutCallingModel(t *testing.T) {
 	backend, sessions := generateEnv(t)
 	root := filepath.Join(t.TempDir(), "reviews")
-	args := append([]string{"generate", "--pr", "7", "--store", root}, sessions...)
+	args := append([]string{"internal", "generate", "--pr", "7", "--store", root}, sessions...)
 	for range 2 {
 		if _, stderr, err := run(t, args...); err != nil {
 			t.Fatalf("generate: %v %s", err, stderr)
@@ -39,7 +39,7 @@ func TestRefreshCommandUpdatesLatestWithoutCallingModel(t *testing.T) {
 	calls := len(backend.Requests)
 	fake := newGitHub(config.Config{}).(*fakeGitHub)
 	fake.Evidence.PullRequest.HeadSHA = "aaaaaaa"
-	stdout, stderr, err := run(t, append([]string{"refresh", "--pr", "7", "--store", root, "--repo", "acme/demo"}, sessions...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "refresh", "--pr", "7", "--store", root, "--repo", "acme/demo"}, sessions...)...)
 	if err != nil {
 		t.Fatalf("refresh: %v %s", err, stderr)
 	}
@@ -65,7 +65,7 @@ func TestRefreshCommandUpdatesLatestWithoutCallingModel(t *testing.T) {
 		t.Fatal("refresh created version")
 	}
 	fake.Err = errors.New("offline")
-	if _, _, err := run(t, append([]string{"refresh", "--pr", "7", "--store", root}, sessions...)...); err == nil {
+	if _, _, err := run(t, append([]string{"internal", "refresh", "--pr", "7", "--store", root}, sessions...)...); err == nil {
 		t.Fatal("accepted source failure")
 	}
 	unchanged, err := versions.Latest(ctx, key)
@@ -77,7 +77,7 @@ func TestRefreshCommandUpdatesLatestWithoutCallingModel(t *testing.T) {
 func TestRefreshMissingDocumentDoesNotGenerateOrCreateStore(t *testing.T) {
 	backend, sessions := generateEnv(t)
 	root := filepath.Join(t.TempDir(), "absent")
-	_, _, err := run(t, append([]string{"refresh", "--pr", "7", "--store", root}, sessions...)...)
+	_, _, err := run(t, append([]string{"internal", "refresh", "--pr", "7", "--store", root}, sessions...)...)
 	if _, statErr := os.Stat(root); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("created missing store: %v", statErr)
 	}
@@ -87,7 +87,7 @@ func TestRefreshMissingDocumentDoesNotGenerateOrCreateStore(t *testing.T) {
 }
 
 func TestRefreshRejectsHistoricalVersionSelector(t *testing.T) {
-	if _, _, err := run(t, "refresh", "--pr", "7", "--version", "1"); err == nil {
+	if _, _, err := run(t, "internal", "refresh", "--pr", "7", "--version", "1"); err == nil {
 		t.Fatal("accepted historical refresh")
 	}
 }
@@ -97,10 +97,10 @@ func TestRefreshEnterpriseReviewKeepsHostScopedHistory(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "reviews")
 	repository := "acme.ghe.com/acme/demo"
 	flags := append([]string{"--pr", "7", "--repo", repository, "--store", root}, sessions...)
-	if _, stderr, err := run(t, append([]string{"generate"}, flags...)...); err != nil {
+	if _, stderr, err := run(t, append([]string{"internal", "generate"}, flags...)...); err != nil {
 		t.Fatalf("generate: %v\n%s", err, stderr)
 	}
-	if _, stderr, err := run(t, append([]string{"refresh"}, flags...)...); err != nil {
+	if _, stderr, err := run(t, append([]string{"internal", "refresh"}, flags...)...); err != nil {
 		t.Fatalf("refresh: %v\n%s", err, stderr)
 	}
 	versions, err := store.Open("", root, false)
@@ -111,7 +111,7 @@ func TestRefreshEnterpriseReviewKeepsHostScopedHistory(t *testing.T) {
 	if err != nil || len(all) != 1 {
 		t.Fatalf("Enterprise history: %+v %v", all, err)
 	}
-	if _, _, err := run(t, "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
+	if _, _, err := run(t, "internal", "validate", "--pr", "7", "--repo", repository, "--store", root); err != nil {
 		t.Fatal(err)
 	}
 }

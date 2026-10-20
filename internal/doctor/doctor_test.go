@@ -652,7 +652,7 @@ func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 	wantStatus(t, find(t, report, "store-a"), StatusInfo)
 	gone := find(t, report, "store-c")
 	wantStatus(t, gone, StatusWarning)
-	wantContains(t, "fix", gone.Fix, "/work/gone", "baum repos remove c")
+	wantContains(t, "fix", gone.Fix, "/work/gone", "baum internal repos remove c")
 	wantContains(t, "registry", find(t, report, "registry").Detail, "3 registered clones")
 }
 
@@ -750,7 +750,7 @@ func TestPriceList(t *testing.T) {
 		}
 		wantContains(t, "detail", c.Detail, "embedded", "keeps the newest one in its state directory")
 	})
-	t.Run("cached by baum ui", func(t *testing.T) {
+	t.Run("cached by the daemon", func(t *testing.T) {
 		newMachine(t)
 		c := find(t, run(t, Options{
 			FetchPrices:   true,

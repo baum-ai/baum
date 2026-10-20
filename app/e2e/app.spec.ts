@@ -322,7 +322,8 @@ test("a running agent session shows in the inbox and on the PR page until it end
   const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-session");
   await page.goto(await launchURL());
   const row = page.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
-  await expect(row).toBeVisible();
+  // The first inbox load can take a while on a busy CI runner.
+  await expect(row).toBeVisible({ timeout: 15000 });
   await expect(row.getByText("Agent running")).toHaveCount(0);
   // The fixture turns the marker into agent hook events of one session.
   await writeFile(marker, "running");

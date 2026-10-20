@@ -3,7 +3,7 @@
 ## What baum sends where
 
 baum is local-first, but generating a review requires a model. When you
-run `baum generate`, the following is sent to the **model provider you
+run `baum internal generate`, the following is sent to the **model provider you
 configure** (the `claude`, `codex` or `cursor-agent` CLI, each of which talks
 to its own provider under your own account, Cursor to the model it routes the
 run to, or the Anthropic API, which the `anthropic` backend calls with your
@@ -27,7 +27,7 @@ except line breaks and, in a diff, each line's leading `+`, `-` or space.
 An address such as `ada.lovelace@example.com` is sent as
 `xxx.xxxxxxxx@xxxxxxx.xxx`. @mentions are left as written.
 
-Redaction is best effort. Review `baum bundle` output before using
+Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your
 provider.
@@ -139,15 +139,15 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   running through baum for that local work; without a login they send
   nothing to a baum server.
 
-## What `baum doctor` runs and prints
+## What `baum internal doctor` runs and prints
 
-`baum doctor` diagnoses the machine and starts no model. It runs
+`baum internal doctor` diagnoses the machine and starts no model. It runs
 `<tool> --version` for `git` and `gh`, each with a timeout, in
 a process group that is killed whole when the timeout passes, and with the
 filtered environment of the local backends, which drops provider keys and
 GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
 path comes from `backend_paths`, `GH_PATH` or `PATH`;
-the same checks `baum generate` runs for `claude`, `codex` and `cursor-agent`,
+the same checks `baum internal generate` runs for `claude`, `codex` and `cursor-agent`,
 which include codex's read-only sandbox preflight (a sandboxed `cat` and a
 blocked write in a temporary directory it removes) and `cursor-agent --help`
 and `--version`, and for `anthropic`, which only looks at
@@ -161,7 +161,7 @@ and does not create a review store. It asks a running baum daemon for its
 version, process id and uptime over the daemon's socket, and never starts one. A config file that does not parse is shown
 by position, and by key for a wrong type or value, and never by its text. Asking
 gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
-its own configuration, as `baum generate` does.
+its own configuration, as `baum internal generate` does.
 
 It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,
@@ -169,14 +169,14 @@ the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
 whether it is set. It does print paths, tool versions and the `PATH` entries,
 so look at a report before pasting it into a public issue.
 
-## What `baum view` shows
+## What `baum internal view` shows
 
-`baum view` listens only on `127.0.0.1` and never contacts a server. Besides
+`baum internal view` listens only on `127.0.0.1` and never contacts a server. Besides
 the document, it shows the coding-agent sessions on your machine that it
 linked to the pull request, and, when you open one, that session's full
 transcript: your prompts, the agent's messages, and each tool call's input and
 output, which can include file contents and command output. The transcript is
-redacted with the engine `baum sessions --dump` uses, so secrets and e-mail
+redacted with the engine `baum internal sessions --dump` uses, so secrets and e-mail
 addresses are masked as described above, and your home directory is written as
 `~` where it starts a path; paths outside it (a clone elsewhere, a Windows
 home under `/mnt/c` in WSL) are shown as recorded, as are home paths glued
@@ -187,13 +187,13 @@ The server has no login. It refuses requests whose `Host` is not its own
 address, which stops other websites in your browser from reading it, but any
 other user or process on the same machine can request the port while it runs
 and read everything it serves, transcripts included, even without permission
-to read your `~/.claude` or other session stores. Do not run `baum view` on a
+to read your `~/.claude` or other session stores. Do not run `baum internal view` on a
 shared machine. The baum daemon, which serves the local application, adds the
 separate authenticated boundary described below.
 
 ## Reading your clone without downloading anything
 
-`baum sessions` and `baum view` read your clone with git but never use the
+`baum internal sessions` and `baum internal view` read your clone with git but never use the
 network. They run fixed git commands with no shell. Refs are read in your clone;
 commits, trees and Entire checkpoints are read from a private temporary
 repository that borrows the clone's objects and has no remote, so a partial
@@ -434,7 +434,7 @@ runs the model's tool calls in-process:
 
 ## Local repository registry
 
-`baum repos` stores clone paths, git common directories, normalized GitHub
+`baum internal repos` stores clone paths, git common directories, normalized GitHub
 identities and generation preferences in a 0600 SQLite database beside the XDG
 config file. Remote URLs and their credentials are never persisted or returned.
 Registration and availability checks read local git metadata only; they do not
@@ -446,7 +446,7 @@ also holds the global preferences that control this.
 
 The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, remove records
-and change settings. `baum view` exposes none of these routes.
+and change settings. `baum internal view` exposes none of these routes.
 
 ## Reporting a vulnerability
 
@@ -470,11 +470,11 @@ providers, GitHub, or the coding-agent tools whose sessions baum reads.
 
 ## The baum daemon
 
-The local application (the desktop app, or `baum ui` in a browser) is served
+The local application (the desktop app) is served
 by the baum daemon, one process per user that keeps running in the background
 after whatever started it exits. The desktop app starts it with `baum daemon
-ensure`, as `baum ui` does; an agent or Git hook that runs baum starts it when
-it is not running.
+ensure`; an agent or Git hook that runs baum starts it when it is not
+running.
 
 What it runs while it is up:
 
@@ -498,7 +498,7 @@ What it runs while it is up:
   registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
-  `baum generate` does. Some you confirmed in the app with their price
+  `baum internal generate` does. Some you confirmed in the app with their price
   estimate; the others it starts by itself, unattended (below).
 
 Automatic generation is on by default and runs without anyone watching. It
@@ -539,7 +539,7 @@ background reviews" or run `baum daemon stop`: running jobs are cancelled and
 recorded as interrupted (after at most 20 seconds), and nothing runs until
 something starts it again. Hooks do not start a daemon you stopped this way;
 the desktop app or `baum daemon ensure` does. `baum daemon status` and `baum
-doctor` show whether it runs, its version, process id and uptime. When a
+internal doctor` show whether it runs, its version, process id and uptime. When a
 newer baum finds an older daemon running jobs, it lets them finish: the
 daemon then starts the newer `baum` executable that asked and exits. A hook
 of a newer baum only asks an idle older daemon to stop; the next hook starts
@@ -598,7 +598,7 @@ environment is therefore not used. Your home, XDG and temporary directories
 come only from the starting environment, never from the shell, because they
 decide which state directory, lock and job journal the daemon uses. The SSH
 agent socket is the starting environment's, else the shell's; it is used only
-to fetch a missing pull request commit from your clone's remote, as `baum
+to fetch a missing pull request commit from your clone's remote, as `baum internal
 generate` would, never given to an agent backend, and dropped when it no longer
 exists. The daemon's fetches never prompt: git's terminal prompts and SSH's
 askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout, so
@@ -621,7 +621,7 @@ authentication. No route enables CORS. The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
-Keep the URL `baum ui` prints and that file private. Processes running as your
+Keep that file and the launch URL in it private. Processes running as your
 user can read that file and access the API.
 
 The state directory must be mode 0700 and owned by you on Unix; Windows uses a
@@ -646,11 +646,11 @@ read from the session files on disk, through the redacted transcript routes
 below.
 
 Document selectors must name a registered clone. Linked transcripts use the
-same redaction and linked-session allowlist as `baum view`; file patches are
+same redaction and linked-session allowlist as `baum internal view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
-`GET /api/diagnostics` serves the `baum doctor` report behind the same
+`GET /api/diagnostics` serves the `baum internal doctor` report behind the same
 authentication, Origin and Host checks, runs the same bounded commands as
-`baum doctor` but never the price-list fetch, and is limited to `GET`.
+`baum internal doctor` but never the price-list fetch, and is limited to `GET`.
 Stored image APIs return only document-listed, content-checked PNG, JPEG, GIF
 or WebP copies. They reject SVG/HTML and never follow document URLs. Images
 carry nosniff and a sandboxed, deny-all content security policy. Local successful
@@ -675,6 +675,22 @@ The server's bootstrap page exchanges the fragment token and clears it from
 history before the embedded local application loads; the application's files
 are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
-same sanitizers and safe rendering components as the hosted PR page and `baum
+same sanitizers and safe rendering components as the hosted PR page and `baum internal
 view`. Stored document rendering failures remain within the PR pane. The app
 never supplies approvals, merge actions or discussion mutation controls.
+
+## Desktop app
+
+The desktop app (`desktop/`) is a window onto your `baum daemon` and adds no
+API of its own. It runs the bundled `baum daemon ensure`, then reads the
+daemon's launch URL from a credential file in the daemon's state directory.
+It accepts the file only when it is private to you and names a
+`127.0.0.1` launch URL for that daemon, and it never logs that URL.
+
+The window loads only its bundled connecting screen and the attached daemon's
+loopback origin. Links to other web hosts open in your default browser; other
+loopback servers, other schemes and new windows are refused. The daemon's
+pages get no Tauri capability, so they cannot call the app's commands or any
+plugin. The bundled screen may only read the connection state and ask to
+reconnect. The app makes no network requests other than loopback requests
+to the daemon. Quitting it leaves the daemon running.
