@@ -322,6 +322,18 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 // Callers schedule NextPoll; unchanged results back off from 30s to 15m.
 // Failure returns the last complete snapshot, explicitly stale, and an error.
 func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.poll(ctx, repository, false)
+}
+
+// PollNow is Poll without waiting for NextPoll: something local (a push, an
+// agent session ending) says the pull requests changed. It still honors the
+// shared rate budget and its conditional requests, so an unchanged inbox
+// costs only 304 answers.
+func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.poll(ctx, repository, true)
+}
+
+func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	budgetMu.Lock()
@@ -363,7 +375,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 		snapshot.NextPoll = maxTime(snapshot.NextPoll, deadline)
 		return snapshot, errRateLimit
 	}
-	if now.Before(cache.Snapshot.NextPoll) {
+	if !force && now.Before(cache.Snapshot.NextPoll) {
 		return cache.Snapshot, nil
 	}
 	if cache.Responses == nil {

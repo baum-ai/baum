@@ -1613,6 +1613,12 @@ team or permission failures keep their fields unknown. Snapshots and minimal
 conditional response bodies are atomically replaced in private cache files,
 partitioned by host/credential fingerprint/repository. The index consumes these
 snapshots; it never treats missing PRs in an open-only snapshot as closed.
+Each pull request keeps its head branch (`head_ref`). A cache records its
+`Format`; one of an older format drops its conditional responses and reads
+them in full once, since a 304 would keep a stored body without the newer
+fields. `Service.PollNow` is `Poll` without waiting for the next deadline, for
+the automatic scheduler's `Trigger`; it still honors the shared rate budget
+and sends conditional requests, so an unchanged inbox costs only 304 answers.
 
 ### Persistent generation jobs
 
@@ -1709,6 +1715,9 @@ Per-repository target cursors and repository rotation prevent a small renewed
 GitHub budget from perpetually serving only the first PRs. Linked worktrees are
 deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+`Service.RefreshNow` refreshes named PRs of one clone the same way outside
+that schedule (see "Refresh on hook events"); it shares the per-host rate
+pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -1959,9 +1968,9 @@ it and `Queue.SubmitAutomatic` decides each job.
   pause or notice, and every repository's status after a `PUT`, is published
   as an `automatic` SSE event for other app windows and the desktop app's
   notifications. `Trigger(ctx, repository)` polls discovery for one
-  repository (within discovery's own poll deadline and rate budget) and passes
-  the snapshot to `Observe`. Agent hook events (a session ending, a push) are
-  to use it rather than a separate path; no hook calls it yet.
+  repository (`PollNow`: before discovery's poll deadline, within its rate
+  budget) and passes the snapshot to `Observe`. Hook events reach the
+  scheduler only this way (see "Refresh on hook events").
 
 ### Hook events
 
@@ -2032,8 +2041,78 @@ endpoint.
   behind misses records (logged) and can reread `Recent`; `SubscribeCounted`
   also reports how many it missed, so it rereads only after a miss. This is the
   interface the live features (in-progress sessions, refresh on session end
-  or push, decision capture) build on. In-progress sessions do (see "Live
-  sessions"); the others are not built yet.
+  or push, decision capture) build on. In-progress sessions (see "Live
+  sessions") and refresh on session end or push (see "Refresh on hook
+  events") do; decision capture is not built yet.
+
+### Refresh on hook events
+
+`internal/hookrefresh` refreshes pull requests as soon as a hook says they may
+have changed, rather than at background synchronization's next pass. The
+daemon subscribes it to the record (`Store.Subscribe` with `Buffer`, 64, and
+`Match`) while it builds the application, before the spool drains or the
+socket serves, and runs it beside background refresh, one worker in all.
+
+- **Events.** An agent's `session-end` (Claude Code, Codex and Cursor send
+  it) and a `pre-push` Git went on with (exit 0). Not `stop`, which ends a
+  turn, nor `post-rewrite`: a rewrite changes nothing on GitHub until it is
+  pushed, and the push's pre-push reports it. An event older than `MaxAge`
+  (10 min), which the spool delivered late, is left to the periodic refresh.
+- **Never blocking.** `Store.Add` hands a record to the subscription without
+  waiting; while the worker is busy, what does not fit the buffer is dropped,
+  and the record logs it. The worker collects events for `Debounce` (3 s, at
+  most 256; more are dropped and logged), then maps them together.
+- **Mapping.** An event's directory (the agent's `cwd`, else the hook's
+  `dir`) must lie in an available registered clone, the longest registered
+  path containing it; any other directory is ignored without running git, so
+  with nothing registered (a hosted-only user whose hooks started the daemon)
+  an event costs one registry read per `Window` and nothing else. The registry
+  is listed at most once per `Window` (30 s). git then reports the working
+  tree's common directory, which must be the clone's (a linked worktree inside
+  the clone counts, a repository nested in it does not). For a session end it
+  reports the work checked out (`prlink.Local`: branch, the branch its
+  upstream names in the same repository, commit), which maps to one pull
+  request of the discovery cache (`Cached`, no network) exactly as live
+  sessions link it (`prlink.Find`, see "Live sessions"). For a push it reports
+  the repository the named remote fetches from, which must be the clone's: a
+  push to a fork is ignored, and so is a push to a URL that names no remote
+  (Git passes the URL as the name; the hook drops it, and an argument that
+  reads as a URL, scp-style address or path runs no git). A push names each
+  branch it updates or creates, never a deletion or a tag, and maps to the
+  non-fork PRs whose `head_ref` is that branch and to the PR whose head is the
+  head the push replaces. A linked worktree outside every registered path is
+  ignored. A PR the cache does not have yet waits for discovery.
+- **Timing.** A session end's PRs are refreshed after the debounce, a push's
+  `PushDelay` (10 s) after its hook ran, since pre-push runs before the push
+  reaches GitHub. When that refresh does not show the pushed head, the PR is
+  refreshed once more `Recheck` (30 s) later (`MaxChecks`, 2), then left to the
+  periodic refresh. A PR is refreshed at most once per `Window` (30 s); later
+  events postpone a scheduled refresh by at most 60 s in all. A burst of any
+  size costs, per window, one refresh of each PR it names (two when the pushed
+  head is late), one git inspection per directory and remote, and at most one
+  discovery poll per repository.
+- **Refresh.** `background.Service.RefreshNow` refreshes the due PRs of one
+  clone's store (a repository's clones with different common directories keep
+  separate saved reviews, each refreshed) as `Sync` does: metadata for a PR without a saved review, and
+  metadata and evidence (`refresh.Refresher`, CAS publication) for one with.
+  It shares the per-host rate pause with `Sync`, and an event whose
+  repository's cached rate budget is exhausted is skipped. A failed refresh is
+  not retried here.
+- **Automatic generation.** When a refresh shows a head other than the one
+  the cache had, the cached PR could get an automatic job (the user authored
+  it or is asked to review it, it is not from a fork, its author has write
+  access, and the refresh shows it open and not a draft), and automatic
+  generation is on globally and for the repository, the worker calls
+  `Scheduler.Trigger` for the repository, at most once per `Window`. Trigger
+  polls discovery and passes the snapshot to `Observe`, the only path to a
+  job, so the scheduler's baseline, eligibility, dedupe, hold, gate, daily cap
+  and no-catch-up rules apply unchanged, and a head it already saw queues
+  nothing. Since background refresh and Trigger observe from two goroutines,
+  `Observe` ignores a snapshot fetched before the newest one it took for the
+  repository. The worker never queues or runs generation.
+- **Stopping.** The worker stops with the daemon's run context, cancelling a
+  refresh or poll under way. Its schedule is in memory only: a restart drops
+  pending refreshes, which the periodic refresh covers.
 
 ### Live sessions
 
@@ -2088,7 +2167,8 @@ replace it.
   git directory is matched against the registered clones' `common_dir`;
   a directory in no registered clone, or one whose clone is unavailable, is
   not tracked at all. The branch is `Repo.CurrentBranch` (empty when
-  detached). The pull request is the open one in the discovery cache
+  detached). The pull request (`prlink.Find`, shared with refresh on hook
+  events) is the open one in the discovery cache
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
@@ -2165,9 +2245,9 @@ identify and replace any daemon. `ping` and every method registered in
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
 `daemon.Protocol` for any incompatible change. The application registers its
 methods through `App.Methods`; a method answers with its own error code by
-returning a `daemon.Error`. `event` is the one it has (see "Hook events"); a
-hook event that should look for new heads is to call the automatic
-scheduler's `Trigger` (see "Automatic generation"). Remote attach would be
+returning a `daemon.Error`. `event` is the one it has (see "Hook events");
+hook events that may move a head reach the automatic scheduler through its
+`Trigger` (see "Refresh on hook events"). Remote attach would be
 another transport beside these two; none exists.
 
 ### Desktop app interface

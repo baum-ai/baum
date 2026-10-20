@@ -110,7 +110,7 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		t.Fatalf("snapshot %#v", snapshot)
 	}
 	prs := snapshot.PullRequests
-	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
+	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
 		t.Fatalf("authored flags %#v", prs[0])
 	}
 	if !prs[1].ReviewRequestedFromMe || !prs[1].Fork || prs[1].AuthorHasWrite == nil || !*prs[1].AuthorHasWrite {
@@ -492,5 +492,33 @@ func TestCachedNeverWaitsForNetworkPoll(t *testing.T) {
 		close(release)
 		<-done
 		t.Fatal("cached inbox blocked on network poll")
+	}
+}
+
+func TestPollNowSkipsTheDeadlineButNotTheBudget(t *testing.T) {
+	f := recordedFixture()
+	s, _ := service(t, f)
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	f.conditional = true
+	before := len(f.requests)
+	got, err := s.PollNow(context.Background(), testRepo)
+	if err != nil || len(f.requests) == before || len(got.PullRequests) != 4 || got.Stale {
+		t.Fatalf("poll now %#v %v requests=%d", got, err, len(f.requests)-before)
+	}
+	for _, request := range f.requests[before:] {
+		if request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
+			t.Errorf("unconditional %s", request.URL)
+		}
+	}
+	f.conditional = false
+	f.limited = true
+	if _, err := s.PollNow(context.Background(), testRepo); !errors.Is(err, errRateLimit) {
+		t.Fatalf("limited poll: %v", err)
+	}
+	before = len(f.requests)
+	if _, err := s.PollNow(context.Background(), testRepo); !errors.Is(err, errRateLimit) || len(f.requests) != before {
+		t.Fatalf("exhausted budget polled again: %v requests=%d", err, len(f.requests)-before)
 	}
 }

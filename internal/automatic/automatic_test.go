@@ -840,6 +840,20 @@ func TestUnreadableSettingsDoNotConsumeTheHead(t *testing.T) {
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:retry")
 }
 
+// Background refresh and Trigger observe from different goroutines: a
+// snapshot fetched before the newest one already observed changes nothing.
+func TestOlderSnapshotArrivingLateIsIgnored(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	fetched := h.now
+	h.now = h.now.Add(2 * time.Minute)
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	write := true
+	h.scheduler.Observe(context.Background(), discovery.Snapshot{Repository: "org/repo", FetchedAt: fetched.Add(time.Minute), PullRequests: []discovery.PullRequest{{Repository: "org/repo", Number: 1, HeadSHA: "a1", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}})
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+}
+
 // A queued job the daily cap stops before it starts (here the cap was lowered
 // while it waited) pauses the repository with the daily cap notice and keeps
 // its head pending; raising the cap runs it.

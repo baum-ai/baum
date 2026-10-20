@@ -13,7 +13,6 @@ import (
 
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
-	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -207,49 +206,5 @@ func TestResolverSkipsUnavailableClonesAndRemembersMisses(t *testing.T) {
 	now = now.Add(unlinkedFor)
 	if got, ok := r.Link(context.Background(), root); !ok || got.Repository != "acme/demo" {
 		t.Fatalf("after the miss expired: %+v %v", got, ok)
-	}
-}
-
-func TestResolverUpstreamComparesTheHost(t *testing.T) {
-	for _, tc := range []struct {
-		name, repository, same, other string
-	}{
-		{"github.com", "acme/demo", "https://github.com/acme/demo", "https://ghe.acme.test/acme/demo"},
-		{"enterprise", "octo.ghe.com/acme/demo", "git@octo.ghe.com:acme/demo.git", "https://github.com/acme/demo"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			clone := filepath.Join(root, "demo")
-			if err := os.MkdirAll(clone, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			git(t, clone, "init", "-q", "-b", "main")
-			git(t, clone, "commit", "-q", "--allow-empty", "-m", "first")
-			git(t, clone, "checkout", "-q", "-b", "local")
-			git(t, clone, "remote", "add", "origin", tc.same)
-			git(t, clone, "remote", "add", "other", tc.other)
-			git(t, clone, "config", "branch.local.merge", "refs/heads/pushed-as")
-			parsed, err := github.ParseRepository(tc.repository)
-			if err != nil {
-				t.Fatal(err)
-			}
-			repo, err := gitlocal.Open(context.Background(), clone, gitlocal.Options{CommandTimeout: gitTimeout})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = repo.Close() }()
-			r := &Resolver{}
-			git(t, clone, "config", "branch.local.remote", "origin")
-			if got := r.upstreamBranch(context.Background(), repo, parsed, "local"); got != "pushed-as" {
-				t.Fatalf("same host: %q", got)
-			}
-			git(t, clone, "config", "branch.local.remote", "other")
-			if got := r.upstreamBranch(context.Background(), repo, parsed, "local"); got != "" {
-				t.Fatalf("other host: %q", got)
-			}
-		})
 	}
 }

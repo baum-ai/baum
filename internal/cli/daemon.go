@@ -28,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/internal/hookrefresh"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -349,8 +350,9 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 // localApplication builds what the daemon serves: the registry, discovery,
 // review index, background refresh, diagnostics, the generation queue, the
 // automatic generation scheduler, and the record of agent and Git hook events.
-// Hook events are to reach the scheduler through Scheduler.Trigger; none does
-// yet.
+// A session ending or a push in a registered clone refreshes its pull requests
+// at once (hookrefresh), and reaches the scheduler only through
+// Scheduler.Trigger.
 func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
@@ -382,7 +384,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.Poll, Log: log,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Log: log,
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -405,6 +407,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
+		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
+		// Subscribed before the spool drains or the socket serves, so no
+		// event arrives unseen.
+		refreshEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
@@ -423,6 +429,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
+				if refreshEvents != nil {
+					wg.Go(func() { hookRefresh.Run(ctx, refreshEvents) })
+				}
 				wg.Go(func() {
 					if err := refresh(ctx); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
@@ -443,6 +452,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
+				unsubscribe()
 				events.Close()
 				_ = registry.Close()
 			},
@@ -492,6 +502,15 @@ func (h hookEvents) Run(ctx context.Context) {
 	if h.service != nil {
 		h.service.Run(ctx)
 	}
+}
+
+// Subscribe delivers the events match accepts from now on, until the
+// returned function ends it; without a record the channel is nil.
+func (h hookEvents) Subscribe(buffer int, match func(hookevents.Event) bool) (<-chan hookevents.Record, func()) {
+	if h.service == nil {
+		return nil, func() {}
+	}
+	return h.service.Store.Subscribe(buffer, match)
 }
 
 // Close closes the record.
