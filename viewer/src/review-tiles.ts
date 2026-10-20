@@ -1,4 +1,4 @@
-import type { Anchor, ReviewDocument } from "./review-document";
+import { type Anchor, githubBlobUrl, type ReviewDocument } from "./review-document";
 import { validateAnchor, validateTile } from "./precompiled/review-tile-validators.js";
 import type {
   Anchor as TileAnchor,
@@ -102,5 +102,5 @@ export function validReviewTile(value: unknown, document: ReviewDocument): value
 }
 
 export function tileCodeUrl(repository: string, file: TileCodeFile): string {
-  return `https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${file.revision}/${file.path.split("/").map(encodeURIComponent).join("/")}`;
+  return githubBlobUrl(repository, file.revision, file.path);
 }

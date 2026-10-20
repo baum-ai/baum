@@ -1600,6 +1600,26 @@ export function hunkLine(hunk: IndexedHunk): number | undefined {
   return hunk.change !== "removed" && hunk.new_range[0] > 0 ? hunk.new_range[0] : undefined;
 }
 
+/** A file of a repository on GitHub at a revision, each path segment encoded.
+ *  GitHub redirects a directory's blob link to its tree. */
+export function githubBlobUrl(repository: string, revision: string, path: string): string {
+  return `https://github.com/${encodeSegments(repository)}/blob/${revision}/${encodeSegments(path)}`;
+}
+
+function encodeSegments(value: string): string {
+  return value.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Where a context reference's file or directory reads on GitHub: at the
+ *  reviewed head, or at the merge base when the pull request deletes it. */
+export function contextRefUrl(document: ReviewDocument, path: string): string {
+  const deleted = document.index.hunks.some(
+    (hunk) => hunk.path === path && hunk.change === "removed",
+  );
+  const { repository, head, merge_base } = document.review;
+  return githubBlobUrl(repository, deleted ? merge_base : head, path);
+}
+
 /** The file of the change an anchor points into, and the line when it names
  *  one, so the link can open the review's file view. Null for anything else. */
 export function anchorFile(
