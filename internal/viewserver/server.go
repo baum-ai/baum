@@ -8,8 +8,8 @@
 // supplies in Options.Sessions, GET /api/sessions/{id}, the redacted
 // transcript of one of them, and GET /api/patch, the patch of one file the
 // document cites, through Options.Patch.
-// Host checking, security headers and routing are fixed here; a host such as a
-// later "baum ui" extends the server through Mux and Use.
+// Host checking, security headers and routing are fixed here; a host such as
+// the daemon's app server extends it through Mux and Use.
 package viewserver
 
 import (

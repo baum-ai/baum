@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fbf8f2;
+  --fg: #2a211a;
+  --muted: #6f6257;
+  --accent: #7a4a26;
+  --panel: #f1ebe0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1613;
+    --fg: #f3ebe0;
+    --muted: #b3a597;
+    --accent: #d9a46e;
+    --panel: #26201b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+main {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 32px 16px;
+}
+
+section {
+  width: min(640px, 100%);
+  text-align: center;
+}
+
+h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+
+p {
+  color: var(--muted);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+button {
+  font: inherit;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+details {
+  margin-top: 24px;
+  text-align: left;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+pre {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border: 3px solid var(--panel);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

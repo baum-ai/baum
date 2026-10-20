@@ -507,7 +507,7 @@ func uiDiagnostics(ctx context.Context) doctor.Report {
 	return doctor.Run(ctx, doctorOptions(false))
 }
 
-// daemonReport describes the daemon for "baum doctor" without starting it.
+// daemonReport describes the daemon for "baum internal doctor" without starting it.
 func daemonReport(ctx context.Context) doctor.Daemon {
 	paths, err := daemonPaths()
 	if err != nil {

@@ -78,7 +78,7 @@ if [ -n "$linux_amd64" ] && [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
   for _ in 1 2 3 4 5; do
     port=$((20000 + RANDOM % 40000))
     : >"$work/stdout"
-    "$linux_amd64" view --sample --no-open --port "$port" >"$work/stdout" 2>"$work/stderr" &
+    "$linux_amd64" internal view --sample --no-open --port "$port" >"$work/stdout" 2>"$work/stderr" &
     server_pid=$!
     for _ in $(seq 1 100); do
       if [ -s "$work/stdout" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
@@ -92,7 +92,7 @@ if [ -n "$linux_amd64" ] && [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
     server_pid=
   done
   if [ -z "$started" ]; then
-    echo "FAIL linux_amd64: baum view did not start" >&2
+    echo "FAIL linux_amd64: baum internal view did not start" >&2
     cat "$work/stderr" >&2
     exit 1
   fi

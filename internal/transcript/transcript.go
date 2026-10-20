@@ -3,7 +3,7 @@
 // in order, what each of them caused and the agent's text replies to it, and
 // per prompt the agent activity (its messages, model calls and tool calls
 // with their input and output) that the hosted service serves one prompt at a
-// time and baum view serves in the same answer.
+// time and baum internal view serves in the same answer.
 //
 // It bounds the result, so a session of many megabytes does not stall the
 // page drawing it: every text is cut to a limit, each prompt lists a limited

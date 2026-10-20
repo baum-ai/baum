@@ -25,7 +25,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 )
 
-var ErrNotFound = errors.New("no stored review version; run baum generate first")
+var ErrNotFound = errors.New("no stored review version; run baum internal generate first")
 var ErrConflict = errors.New("the stored review changed during the operation; retry using the latest version")
 
 // Key isolates pull requests of different GitHub repositories, including hosts.

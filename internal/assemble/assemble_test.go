@@ -34,7 +34,7 @@ type run struct {
 	sessions    *assembletest.Sessions
 }
 
-// open opens the clone the way "baum bundle" does.
+// open opens the clone the way "baum internal bundle" does.
 func open(t *testing.T, dir string) *gitlocal.Repo {
 	t.Helper()
 	repo, err := gitlocal.Open(context.Background(), dir, gitlocal.Options{})

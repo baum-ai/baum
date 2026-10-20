@@ -59,7 +59,7 @@ func TestViewServesSampleAndStopsOnCancel(t *testing.T) {
 	exited := make(chan struct{})
 	go func() {
 		defer close(exited)
-		finished <- Run([]string{"view", "--sample"}, strings.NewReader(""), &out, &errOut)
+		finished <- Run([]string{"internal", "view", "--sample"}, strings.NewReader(""), &out, &errOut)
 	}()
 	// Whatever happens below, the server stops before the next test starts: a
 	// view left running would use the seams the next test installs.
@@ -111,7 +111,7 @@ func TestViewServesSampleAndStopsOnCancel(t *testing.T) {
 func TestViewNoOpenPrintsURLWithoutOpening(t *testing.T) {
 	opened, stop := stubViewSeams(t)
 	stop() // the server stops as soon as it starts
-	stdout, _, err := run(t, "view", "--sample", "--no-open")
+	stdout, _, err := run(t, "internal", "view", "--sample", "--no-open")
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestViewBrowserFailureIsOnlyAWarning(t *testing.T) {
 	_, stop := stubViewSeams(t)
 	stop()
 	openBrowser = func(string) error { return errors.New("no display") }
-	_, stderr, err := run(t, "view", "--sample")
+	_, stderr, err := run(t, "internal", "view", "--sample")
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
@@ -142,8 +142,8 @@ func TestViewPRReportsMissingVersionAndInvalidNumber(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"view", "--pr", "7", "--repo", "acme/demo"}, "no stored review version"},
-		{[]string{"view", "--pr", "0"}, "--pr must be positive"},
+		{[]string{"internal", "view", "--pr", "7", "--repo", "acme/demo"}, "no stored review version"},
+		{[]string{"internal", "view", "--pr", "0"}, "--pr must be positive"},
 	} {
 		stdout, _, err := run(t, tt.args...)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -164,13 +164,13 @@ func TestViewArgumentsAreExclusive(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"view"}, exactlyOne},
-		{[]string{"view", path, "--sample"}, exactlyOne},
-		{[]string{"view", path, "--pr", "1"}, exactlyOne},
-		{[]string{"view", "--sample", "--pr", "1"}, exactlyOne},
-		{[]string{"view", path, path}, "accepts at most 1 arg(s), received 2"},
-		{[]string{"view", "--sample", "--watch"}, "--watch needs a document file"},
-		{[]string{"view", "--sample", "--port", "70000"}, "--port 70000 is out of range"},
+		{[]string{"internal", "view"}, exactlyOne},
+		{[]string{"internal", "view", path, "--sample"}, exactlyOne},
+		{[]string{"internal", "view", path, "--pr", "1"}, exactlyOne},
+		{[]string{"internal", "view", "--sample", "--pr", "1"}, exactlyOne},
+		{[]string{"internal", "view", path, path}, "accepts at most 1 arg(s), received 2"},
+		{[]string{"internal", "view", "--sample", "--watch"}, "--watch needs a document file"},
+		{[]string{"internal", "view", "--sample", "--port", "70000"}, "--port 70000 is out of range"},
 	} {
 		_, _, err := run(t, tt.args...)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -185,7 +185,7 @@ func TestViewRejectsBadDocuments(t *testing.T) {
 	bad := filepath.Join(dir, "bad.json")
 	writeFile(t, bad, "not json")
 	for _, path := range []string{bad, filepath.Join(dir, "missing.json")} {
-		if _, _, err := run(t, "view", path, "--no-open"); err == nil {
+		if _, _, err := run(t, "internal", "view", path, "--no-open"); err == nil {
 			t.Errorf("view %s succeeded", path)
 		}
 	}
@@ -196,11 +196,11 @@ func TestViewServesInvalidDocumentWithWarnings(t *testing.T) {
 	stop()
 	path := filepath.Join(t.TempDir(), "review.json")
 	writeFile(t, path, "{}")
-	_, stderr, err := run(t, "view", path, "--no-open")
+	_, stderr, err := run(t, "internal", "view", path, "--no-open")
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
-	_, validateErr, _ := run(t, "validate", path)
+	_, validateErr, _ := run(t, "internal", "validate", path)
 	for _, line := range strings.Split(strings.TrimSpace(validateErr), "\n") {
 		if !strings.Contains(stderr, line) {
 			t.Errorf("view did not print the finding %q; stderr %q", line, stderr)
@@ -217,7 +217,7 @@ func TestViewPortInUse(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 
-	_, _, err = run(t, "view", "--sample", "--no-open", "--port", port)
+	_, _, err = run(t, "internal", "view", "--sample", "--no-open", "--port", port)
 	if err == nil || !strings.Contains(err.Error(), "port "+port+" is already in use") {
 		t.Fatalf("err = %v", err)
 	}

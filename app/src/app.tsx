@@ -121,7 +121,7 @@ export function App() {
             {auth === "loading" ? (
               <p role="status">Connecting to the local application…</p>
             ) : (
-              <Alert>{authError} Open the URL printed by baum ui to authorize this browser.</Alert>
+              <Alert>{authError} Open this page from the baum desktop app.</Alert>
             )}
           </main>
         )}

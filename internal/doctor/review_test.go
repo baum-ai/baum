@@ -235,7 +235,7 @@ func TestPriceDetailSaysWhoUsesWhichList(t *testing.T) {
 		RefreshPrices: func(context.Context) error { return nil },
 		PriceSource:   func() pricing.Source { return pricing.Source{Origin: pricing.OriginFetched, Version: "2099-01-01"} },
 	}), "prices")
-	wantContains(t, "detail", c.Detail, "baum generate", "embedded list (version "+pricing.Embedded().Version()+")", "the baum daemon fetches", "only shows whether fetching works", "2099-01-01")
+	wantContains(t, "detail", c.Detail, "baum internal generate", "embedded list (version "+pricing.Embedded().Version()+")", "the baum daemon fetches", "only shows whether fetching works", "2099-01-01")
 }
 
 func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {
@@ -300,7 +300,7 @@ func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {
 	wantContains(t, "store", store.Detail, "no versions stored yet")
 	missing := find(t, report, "store-"+g.ID)
 	wantStatus(t, missing, StatusWarning)
-	wantContains(t, "fix", missing.Fix, gone, "baum repos remove "+g.ID)
+	wantContains(t, "fix", missing.Fix, gone, "baum internal repos remove "+g.ID)
 
 	after, _ := os.ReadFile(registryPath)
 	afterNames, _ := os.ReadDir(filepath.Dir(registryPath))
@@ -322,7 +322,7 @@ func TestAnUnreadableRegistryIsReportedClearly(t *testing.T) {
 	c := find(t, run(t, Options{}), "registry")
 	wantStatus(t, c, StatusWarning)
 	wantContains(t, "detail", c.Detail, "cannot read the registry")
-	wantContains(t, "fix", c.Fix, registryPath, "baum repos list")
+	wantContains(t, "fix", c.Fix, registryPath, "baum internal repos list")
 }
 
 func TestAHungVersionCheckIsBoundedAndItsChildrenDie(t *testing.T) {

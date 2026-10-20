@@ -180,7 +180,7 @@ export type DiagnosticCheck = {
   source?: string;
   fix?: string;
 };
-/** The same report as `baum doctor --json`. */
+/** The same report as `baum internal doctor --json`. */
 export type DiagnosticReport = {
   status: "ok" | "warning" | "problem";
   checks: DiagnosticCheck[];

@@ -29,7 +29,7 @@ const Name = "baum.review/1"
 var Document []byte
 
 // Example is a complete example document that validates against the schema. It
-// is what "baum view --sample" serves.
+// is what "baum internal view --sample" serves.
 //
 //go:embed review-example.json
 var Example []byte
