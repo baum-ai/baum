@@ -1,10 +1,11 @@
 // Package doctor reports why baum can or cannot find its tools, backend and
 // GitHub token, with a fix for each problem.
 //
-// It runs "<tool> --version" for git, gh and cursor-agent, the same checks
-// "baum generate" runs for claude and codex (including codex's read-only
-// sandbox preflight) and for anthropic (that ANTHROPIC_API_KEY is set; the key
-// is not tried against the API), "gh auth token" when no token is configured,
+// It runs "<tool> --version" for git and gh, the same checks "baum generate"
+// runs for claude, codex (including codex's read-only sandbox preflight) and
+// cursor-agent (its --help and --version), and for anthropic (that
+// ANTHROPIC_API_KEY is set; the key is not tried against the API), "gh auth
+// token" when no token is configured,
 // and at most one network request, for the signed price list. The tools run with the
 // environment their backends give them, never the whole of ours. It never
 // prints a token or an API key, only where one was found.
@@ -253,7 +254,6 @@ func (r *runner) run() {
 	r.git()
 	r.gh()
 	checked := r.backends()
-	r.cursorAgent()
 	r.selection(checked)
 	clones := r.locations(cfgErr)
 	r.tokens(clones)
@@ -354,8 +354,9 @@ func (r *runner) gh() {
 
 // backendTools names the tool of each backend the checks run.
 var backendTools = map[config.Backend]string{
-	config.BackendClaude: "Claude Code",
-	config.BackendCodex:  "Codex",
+	config.BackendClaude:      "Claude Code",
+	config.BackendCodex:       "Codex",
+	config.BackendCursorAgent: "the Cursor Agent CLI",
 }
 
 // checkResult is what a backend's Check returned.
@@ -364,14 +365,14 @@ type checkResult struct {
 	err     error
 }
 
-// checkedBackends holds the claude, codex and anthropic results, which
-// selection replays.
-type checkedBackends struct{ claude, codex, anthropic checkResult }
+// checkedBackends holds the claude, codex, cursor-agent and anthropic
+// results, which selection replays.
+type checkedBackends struct{ claude, codex, cursorAgent, anthropic checkResult }
 
-// backends checks claude and codex with the checks "baum generate" runs, once
-// each, and anthropic's, which only looks for the key and is reported by the
-// key's own check; selection replays the results instead of running them
-// again.
+// backends checks claude, codex and cursor-agent with the checks "baum
+// generate" runs, once each, and anthropic's, which only looks for the key and
+// is reported by the key's own check; selection replays the results instead of
+// running them again.
 func (r *runner) backends() checkedBackends {
 	built := r.opts.Backends(r.cfg)
 	var result checkedBackends
@@ -384,6 +385,11 @@ func (r *runner) backends() checkedBackends {
 		result.codex = r.backend(config.BackendCodex, built.Codex(""))
 	} else {
 		result.codex.err = errors.New("no codex backend")
+	}
+	if built.CursorAgent != nil {
+		result.cursorAgent = r.backend(config.BackendCursorAgent, built.CursorAgent(""))
+	} else {
+		result.cursorAgent.err = errors.New("no cursor-agent backend")
 	}
 	if built.Anthropic != nil {
 		result.anthropic.version, result.anthropic.err = built.Anthropic("").Check(r.ctx)
@@ -403,6 +409,13 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	ctx, cancel := context.WithTimeout(r.ctx, backendTimeout)
 	version, err := backend.Check(ctx)
 	cancel()
+	// The cursor-agent backend falls back to an executable called agent once
+	// its help shows it is the Cursor Agent.
+	if name == config.BackendCursorAgent && explicit == "" && lookErr != nil && err == nil {
+		if agentPath, agentErr := r.opts.LookPath("agent"); agentErr == nil {
+			c.Path, c.Source, lookErr = agentPath, "PATH (as agent)", nil
+		}
+	}
 	// A failed check is a problem only for the backend the user asked for, or
 	// for a path they wrote that does not work; auto needs just one.
 	severity := StatusWarning
@@ -417,12 +430,15 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	case errors.As(err, &explicitErr) || (explicit != "" && lookErr != nil):
 		c.Status, c.Detail, c.Path = StatusProblem, err.Error(), ""
 		c.Fix = fmt.Sprintf("fix backend_paths.%s in %s, or remove it to search PATH", name, r.cfgPath)
+	case lookErr != nil && name == config.BackendCursorAgent && severity != StatusProblem:
+		// Few machines have it, and auto does not need it.
+		c.Status, c.Detail = StatusInfo, "cursor-agent was not found on PATH; it is needed only for the cursor-agent backend (install the Cursor Agent CLI and sign in with cursor-agent login to use it)"
 	case lookErr != nil:
 		c.Status, c.Detail = severity, tool+" was not found on PATH"
 		c.Fix = fmt.Sprintf("install %s and sign in, or set backend_paths.%s to its absolute path in %s (apps started without a shell's PATH need this)", tool, name, r.cfgPath)
 	default:
 		c.Status, c.Detail = severity, err.Error()
-		c.Fix = checkFix(tool, path, err)
+		c.Fix = checkFix(name, tool, path, err)
 		// The tool is not run again: its version is in the message when the check
 		// got far enough to read it.
 		if m := olderPattern.FindStringSubmatch(err.Error()); m != nil {
@@ -433,7 +449,17 @@ func (r *runner) backend(name config.Backend, backend generate.CheckedBackend) c
 	return checkResult{version, err}
 }
 
-func checkFix(tool, path string, err error) string {
+func checkFix(name config.Backend, tool, path string, err error) string {
+	if name == config.BackendCursorAgent {
+		switch msg := err.Error(); {
+		case strings.Contains(msg, "does not list the options"):
+			// The detail names the update command of the executable it resolved.
+			return "upgrade the Cursor Agent CLI with the update command named above"
+		case strings.Contains(msg, "does not say it is"):
+			return "point backend_paths.cursor-agent at the Cursor Agent CLI, or remove it to search PATH"
+		}
+		return fmt.Sprintf("run `%s --help` and `%s --version` yourself to see why they fail, or reinstall %s", path, path, tool)
+	}
 	switch msg := err.Error(); {
 	case strings.Contains(msg, "older than"):
 		return "upgrade " + tool + " to the version named above or newer"
@@ -441,33 +467,6 @@ func checkFix(tool, path string, err error) string {
 		return "baum runs codex only inside its read-only sandbox; run `" + path + " sandbox -P :read-only -- cat /dev/null` to see why it fails (on Linux it needs user namespaces), or use claude"
 	}
 	return fmt.Sprintf("run `%s --version` yourself to see why it fails, or reinstall %s", path, tool)
-}
-
-func (r *runner) cursorAgent() {
-	const name = "cursor-agent"
-	c := Check{ID: name, Label: name}
-	explicit := r.cfg.BackendPaths[config.BackendCursorAgent]
-	path, source, err := r.tool(name, explicit)
-	c.Source = source
-	if err != nil {
-		if explicit != "" {
-			c.Status, c.Detail = StatusProblem, err.Error()
-			c.Fix = fmt.Sprintf("fix backend_paths.%s in %s, or remove it to search PATH", name, r.cfgPath)
-		} else {
-			c.Status, c.Detail = StatusInfo, "cursor-agent was not found on PATH; the cursor-agent backend is not available in this version of baum"
-		}
-		r.add(c)
-		return
-	}
-	c.Path = path
-	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
-	c.Version = version
-	c.Status = StatusInfo
-	c.Detail = "found, but the cursor-agent backend is not available in this version of baum"
-	if err != nil {
-		c.Detail += fmt.Sprintf(" (running %s --version failed: %v)", path, err)
-	}
-	r.add(c)
 }
 
 // replay is a backend whose Check returns the result already measured.
@@ -492,6 +491,11 @@ func (r *runner) selection(checked checkedBackends) {
 			return replay{CheckedBackend: built.Codex(model), version: checked.codex.version, err: checked.codex.err}
 		}
 	}
+	if built.CursorAgent != nil {
+		replayed.CursorAgent = func(model string) generate.CheckedBackend {
+			return replay{CheckedBackend: built.CursorAgent(model), version: checked.cursorAgent.version, err: checked.cursorAgent.err}
+		}
+	}
 	if built.Anthropic != nil {
 		replayed.Anthropic = func(model string) generate.CheckedBackend {
 			return replay{CheckedBackend: built.Anthropic(model), version: checked.anthropic.version, err: checked.anthropic.err}
@@ -504,10 +508,10 @@ func (r *runner) selection(checked checkedBackends) {
 	reasons := strings.TrimSpace(skipped.String())
 	if err != nil {
 		c.Status, c.Detail = StatusProblem, "auto finds no usable backend: "+err.Error()
-		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above", r.cfgPath)
+		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above. auto never picks cursor-agent: set backend = \"cursor-agent\" to use it", r.cfgPath)
 	} else {
 		c.Status, c.Version = StatusOK, selected.Version
-		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex and anthropic (with ANTHROPIC_API_KEY set) that passes its checks", selected.Backend.Name())
+		c.Detail = fmt.Sprintf("auto picks %s, the first of claude, codex and anthropic (with ANTHROPIC_API_KEY set) that passes its checks; it never picks cursor-agent, which cannot be held to read-only as reliably and runs only when configured", selected.Backend.Name())
 		if reasons != "" {
 			c.Detail += "\n" + reasons
 		}
@@ -525,7 +529,7 @@ func (r *runner) selection(checked checkedBackends) {
 		}
 		r.add(Check{ID: "backend-configured", Label: "backend: " + name, Status: StatusProblem,
 			Detail: fmt.Sprintf("the configured backend %q is not a known backend", name),
-			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s", name, r.cfgPath)})
+			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s", name, r.cfgPath)})
 		return
 	}
 	configured := Check{ID: "backend-configured", Label: "backend: " + string(r.cfg.Backend)}
@@ -533,12 +537,10 @@ func (r *runner) selection(checked checkedBackends) {
 	if err != nil {
 		configured.Status, configured.Detail = StatusProblem, fmt.Sprintf("the configured backend %s cannot run: %v", r.cfg.Backend, err)
 		switch r.cfg.Backend {
-		case config.BackendCursorAgent:
-			configured.Fix = fmt.Sprintf("the %s backend is not available in this version; set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
 		case config.BackendAnthropic:
-			configured.Fix = fmt.Sprintf("export ANTHROPIC_API_KEY with your Anthropic API key, or set backend = \"auto\", \"claude\" or \"codex\" in %s (BAUM_BACKEND and --backend override it)", r.cfgPath)
+			configured.Fix = fmt.Sprintf("export ANTHROPIC_API_KEY with your Anthropic API key, or set backend = \"auto\", \"claude\", \"codex\" or \"cursor-agent\" in %s (BAUM_BACKEND and --backend override it)", r.cfgPath)
 		default:
-			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\", \"codex\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
 		}
 	} else {
 		configured.Status, configured.Version = StatusOK, selected.Version

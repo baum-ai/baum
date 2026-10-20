@@ -103,6 +103,7 @@ export type Estimate = {
     backend: string;
     model: string;
     estimate_usd: number | null;
+    estimate_reason?: string;
     max_tokens: number;
     max_calls: number;
     requires_isolation_confirmation: boolean;

@@ -51,11 +51,12 @@ func (q *Queue) Handler() http.Handler {
 			EstimateID       string `json:"estimate_id"`
 			ConfirmEstimate  bool   `json:"confirm_estimate"`
 			ConfirmIsolation bool   `json:"confirm_isolation"`
+			ConfirmUnpriced  bool   `json:"confirm_unpriced"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		v, e := q.Submit(r.Context(), request.EstimateID, request.ConfirmEstimate, request.ConfirmIsolation)
+		v, e := q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation, Unpriced: request.ConfirmUnpriced})
 		if e != nil {
 			http.Error(w, "estimate expired, generation inputs changed, confirmation missing, or job already running", http.StatusConflict)
 			return

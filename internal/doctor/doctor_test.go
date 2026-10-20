@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -85,6 +86,21 @@ sandbox)
   sh) echo baum-write-blocked;;
   esac;;
 esac`)
+}
+
+// cursorAgentScript answers --help with the options a cursor-agent run needs
+// and --version with a dated version, as cursor-agent 2026.10.16 does.
+func cursorAgentScript(help string) string {
+	return `case "$1" in
+--help) /bin/cat <<'HELP'
+` + help + `HELP
+;;
+--version) echo "2026.10.16-e3cb207";;
+esac`
+}
+
+func (m *machine) cursorAgent() string {
+	return m.install("cursor-agent", cursorAgentScript(generatetest.FakeCursorAgentHelp))
 }
 
 func (m *machine) writeConfig(body string) string {
@@ -347,14 +363,29 @@ func TestConfiguredBackendThatCannotRunIsAProblem(t *testing.T) {
 	wantStatus(t, find(t, report, "backend-auto"), StatusOK)
 }
 
-func TestConfiguredBackendNotAvailableInThisVersion(t *testing.T) {
-	m := newMachine(t)
-	m.git()
-	m.claude("2.1.7")
-	t.Setenv("BAUM_BACKEND", "cursor-agent")
-	c := find(t, run(t, Options{}), "backend-configured")
-	wantStatus(t, c, StatusProblem)
-	wantContains(t, "detail", c.Detail, "not available in this version")
+func TestConfiguredCursorAgentBackend(t *testing.T) {
+	t.Run("installed", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		m.cursorAgent()
+		t.Setenv("BAUM_BACKEND", "cursor-agent")
+		c := find(t, run(t, Options{}), "backend-configured")
+		wantStatus(t, c, StatusOK)
+		wantContains(t, "detail", c.Detail, "cursor-agent is usable")
+	})
+	t.Run("missing", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		t.Setenv("BAUM_BACKEND", "cursor-agent")
+		report := run(t, Options{})
+		// Asked for, a missing cursor-agent is a problem, not information.
+		wantStatus(t, find(t, report, "cursor-agent"), StatusProblem)
+		c := find(t, report, "backend-configured")
+		wantStatus(t, c, StatusProblem)
+		wantContains(t, "fix", c.Fix, "fix the cursor-agent check above")
+	})
 }
 
 func TestConfiguredAnthropicBackend(t *testing.T) {
@@ -458,12 +489,13 @@ func TestExplicitCodexAndCursorAgentPaths(t *testing.T) {
 --version) echo "codex-cli 0.162.1";;
 sandbox) shift 4; case "$1" in cat) /bin/cat "$2";; sh) echo baum-write-blocked;; esac;;
 esac`)
-	cursorPath := m.script(dir, "cursor-custom", `echo "2025.01.01-abc"`)
+	cursorPath := m.script(dir, "cursor-custom", cursorAgentScript(generatetest.FakeCursorAgentHelp))
 	m.writeConfig("[backend_paths]\ncodex = '" + codexPath + "'\ncursor-agent = '" + cursorPath + "'\n")
 	report := run(t, Options{})
 	wantStatus(t, find(t, report, "codex"), StatusOK)
 	cursor := find(t, report, "cursor-agent")
-	if cursor.Path != cursorPath || cursor.Version != "2025.01.01" {
+	wantStatus(t, cursor, StatusOK)
+	if cursor.Path != cursorPath || cursor.Version != "2026.10.16" || !strings.Contains(cursor.Source, "backend_paths.cursor-agent") {
 		t.Errorf("%+v", cursor)
 	}
 }
@@ -474,21 +506,41 @@ func TestCursorAgent(t *testing.T) {
 		m.git()
 		c := find(t, run(t, Options{}), "cursor-agent")
 		wantStatus(t, c, StatusInfo)
-		wantContains(t, "detail", c.Detail, "not available in this version")
+		wantContains(t, "detail", c.Detail, "needed only for the cursor-agent backend")
 	})
-	t.Run("present but not available", func(t *testing.T) {
+	t.Run("installed, but never picked by auto", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		path := m.install("cursor-agent", `echo "2025.01.01-abc"`)
+		path := m.cursorAgent()
 		report := run(t, Options{})
 		c := find(t, report, "cursor-agent")
-		wantStatus(t, c, StatusInfo)
-		wantContains(t, "detail", c.Detail, "not available in this version")
-		if c.Path != path || c.Version != "2025.01.01" {
+		wantStatus(t, c, StatusOK)
+		wantContains(t, "detail", c.Detail, "the Cursor Agent CLI is installed and passes baum's checks")
+		if c.Path != path || c.Version != "2026.10.16" || c.Source != "PATH" {
 			t.Errorf("%+v", c)
 		}
-		// Auto never picks it.
-		wantStatus(t, find(t, report, "backend-auto"), StatusProblem)
+		auto := find(t, report, "backend-auto")
+		wantStatus(t, auto, StatusProblem)
+		wantContains(t, "auto fix", auto.Fix, "auto never picks cursor-agent", `backend = "cursor-agent"`)
+	})
+	t.Run("installed as agent", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		path := m.install("agent", cursorAgentScript(generatetest.FakeCursorAgentHelp))
+		c := find(t, run(t, Options{}), "cursor-agent")
+		wantStatus(t, c, StatusOK)
+		if c.Path != path || c.Source != "PATH (as agent)" {
+			t.Errorf("%+v", c)
+		}
+	})
+	t.Run("too old for the options a run needs", func(t *testing.T) {
+		m := newMachine(t)
+		m.git()
+		m.install("cursor-agent", cursorAgentScript(strings.ReplaceAll(generatetest.FakeCursorAgentHelp, `"ask"`, `"agent"`)))
+		c := find(t, run(t, Options{}), "cursor-agent")
+		wantStatus(t, c, StatusWarning)
+		wantContains(t, "detail", c.Detail, "does not list the options baum needs (ask)")
+		wantContains(t, "fix", c.Fix, "update")
 	})
 	t.Run("explicit path to a missing file", func(t *testing.T) {
 		m := newMachine(t)

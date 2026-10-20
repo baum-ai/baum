@@ -442,11 +442,11 @@ stay, so a child can still read credentials kept in files under them. Backends:
 | `anthropic` | the Anthropic Messages API directly, with read-only file tools over the run directory, submitting through a `StructuredOutput` tool (`agent/anthropic`) |
 | `claude` | `claude -p` restricted to read-only tools, submitting through structured output (`agent/claude`) |
 | `codex` | `codex exec` in its read-only sandbox, with a strict-mode output schema (`agent/codex`) |
-| `cursor-agent` | planned: `cursor-agent` confined to the checkout |
+| `cursor-agent` | `cursor-agent -p` in Cursor's read-only ask mode with its sandbox enabled, the schema carried in the prompt (`agent/cursor`) |
 
 The CLI backends rely on each tool's own read-only mode; baum does not add a
 container. [SECURITY.md](SECURITY.md#agent-isolation) describes what that
-leaves open.
+leaves open, which for `cursor-agent` is more than for the others.
 
 `agent/claude` has two profiles over the same read-only flags, which are not
 configurable. `User`, the zero value, is for local runs: the child gets
@@ -478,6 +478,54 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 `Endpoint`. No code under `internal/` or `cmd/` may name it; a test enforces
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
+
+`agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
+one profile and refuses a request with an `Endpoint`. Before its first run a
+`Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
+else `agent` when its help names the Cursor Agent) and checks `--help` for every
+option and value a run passes, since Cursor's dated releases give no version
+to compare; a missing one asks for `cursor-agent update`. A run is
+`cursor-agent --print --output-format stream-json --mode ask --sandbox enabled
+--workspace <run> --trust [--model M]` in the run directory, with
+`LocalEnvironment` plus `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` and
+`AGENT_CLI_CREDENTIAL_STORE` (never `CURSOR_API_KEY`) and `NO_OPEN_BROWSER=1`.
+The prompt goes on stdin with the model schema appended under an "Output
+schema" heading, because the CLI has no structured output. The document is the
+final message (every assistant text after the last tool call, retry or user
+turn, joined, since the CLI may split it, and at most the document bound; the
+result's text when that holds no JSON value): one
+JSON object is kept, a fenced one or one with prose around it is unwrapped, and anything else goes to the validator as it is, so the loop
+rejects and repairs it. Any tool call other than reading, listing and
+searching files and the to-do list (`readToolCall`, `grepToolCall`,
+`globToolCall`, `lsToolCall`, `semSearchToolCall`, `readLintsToolCall`,
+`readTodosToolCall`, `updateTodosToolCall`) stops the run with the
+`disallowed_tool` status, as does any event off the allowlist of event types,
+subtypes and content blocks a reading run writes (`system` init, `user`,
+`assistant` text, `tool_call` started and completed, `thinking`, `result`,
+`retry`, `connection`, and `interaction_query` only for a question) or one that
+does not decode: detection fails closed; the stream reports a call as it
+starts, so this detects rather than prevents. These failures, a missing option,
+an unavailable sandbox and a missing login are not retried: each unwraps to an
+`agent.RejectedError` for the loop, but its own text names cursor-agent
+("cursor-agent cannot run: ..." or "cursor-agent run stopped: ...") rather than
+the model provider. Model calls are the distinct `model_call_id`s of
+the stream plus the final answer, checked against `MaxCalls` as they appear.
+Usage is the result event's run total (`inputTokens` already excludes cache
+reads and writes), checked against `MaxTokens` when it arrives; a result
+without it marks the usage `Unreported`. `Result.Model` is the configured model
+(`configured`) or the display name the CLI's init event reports
+(`cli_reported`); neither is a provider model ID and no speed or cache TTL is
+reported. Cursor bills the run through the user's subscription, so
+`pricing.List.BackendEstimate`, `BackendOutcomeCost` and
+`BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
+this backend whatever its model is called: the recorded cost is unknown, and a
+`baum ui` job carries it as `Prepared.EstimateReason` with a nil estimate
+instead of an estimate at API rates. Such a job is not blocked: `Queue.SubmitConfirmed`
+queues it only with `Confirmation.Unpriced` (`confirm_unpriced`) on top of the
+estimate and any isolation confirmation. A failed process is classified
+from its stderr (`unsupported_option`, `sandbox_unavailable`,
+`authentication_error`); none is retried, as every attempt would fail the same
+way until the user acts.
 
 `agent/anthropic` is not a CLI: baum runs the model call loop itself, over
 `net/http` rather than the official SDK (one endpoint, retries that must count
@@ -560,7 +608,9 @@ type Prompt struct {
 The module ships and maintains its own public prompt in `agent/prompt`:
 `review-public-v2.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
-and anthropic, and `submit-codex.md`), embedded with `go:embed`.
+and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
+schema the cursor-agent backend appends and lists the tools that stop a run),
+embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
 `Version` to `review-public-v2` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
@@ -576,9 +626,10 @@ The loop owns the rest of what a run sends:
   only.
 - **Repair text.** `agent.RepairText(backend)` returns the text that opens and
   closes a repair prompt. A backend that submits through a `StructuredOutput`
-  tool (`claude`, `anthropic`) is told to call it again; `codex`, which answers
-  in its final message, is told to reply with the entire corrected document
-  there and to use its file tools when a finding needs the file. A prompt's
+  tool (`claude`, `anthropic`) is told to call it again; `codex` and
+  `cursor-agent`, which answer in their final message, are told to reply with
+  the entire corrected document there and to use their file tools when a
+  finding needs the file. A prompt's
   `Repair` and `RepairEnding`, when not empty, replace that text, for a host
   whose instructions name the tools differently. They are not part of the
   prompt's JSON encoding.
@@ -1263,14 +1314,17 @@ context ends the event streams and shuts the server down.
 repository/PR version, and passes `review.PreviousVersionOf` into
 `assemble.Request.Previous`. After resolving the pull request and recording its
 run, it selects and checks the backend before assembling (`claude.Backend.Check`,
-`codex.Backend.Check`, `anthropic.Backend.Check`, which only needs the key;
-`auto` tries `generate.AutoOrder`: claude, then codex, then anthropic), assembles with `Request.Checkout` and `Attachments`
+`codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
+only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
+anthropic, and never cursor-agent, which runs only when named because it cannot
+be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
 bundle's own caps, and runs `agent.Generator` with the `claude.User` or
-`codex.Local` profile, never `Isolated` or `Container` (a test guards this), or
-with `anthropic.Backend` and the key from `ANTHROPIC_API_KEY`. The
+`codex.Local` profile, never `Isolated` or `Container` (a test guards this),
+with `cursor.Backend`, or with `anthropic.Backend` and the key from
+`ANTHROPIC_API_KEY`. The
 wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
@@ -1395,9 +1449,10 @@ and the default-path helpers of `config`, `repos`, `jobs`, `discovery` and
 `uiserver`. Every outside dependency (environment, `PATH` lookup, command
 runner, backends, token lookup, price refresh and registry) is an `Options`
 field, so tests use fake executables and stubs. It creates nothing (the
-registry is opened with `repos.OpenReadOnly`), runs `git`, `gh` and
-`cursor-agent` in `agent.LocalEnvironment`'s filtered environment and never
-reruns a failed claude or codex check, and bounds every subprocess with a
+registry is opened with `repos.OpenReadOnly`), runs `git` and `gh` in
+`agent.LocalEnvironment`'s filtered environment and never reruns a failed
+claude, codex or cursor-agent check (a missing cursor-agent is information
+unless it is the configured backend), and bounds every subprocess with a
 timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
@@ -1494,6 +1549,10 @@ without duplicating review documents. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+A confirmation covers the estimate, isolation for a fork or an author without
+known write access, and, for a subscription-billed backend, that its cost is
+unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
+server, never trusted from the browser.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 The runner has no subprocess invocation of baum itself. Only the existing
@@ -1508,7 +1567,11 @@ An installed download is stored with its signature in the job state directory.
 `baum ui` re-verifies and installs it before opening the queue, so recovered
 jobs see the list they were confirmed against; an unverifiable file is ignored.
 Estimates and job confirmation never infer the default model or replace it with
-a different priced model. Unknown actual usage remains null.
+a different priced model, and an item whose model has no price is blocked. The
+one exception is a backend billed outside the list (cursor-agent): its item has
+a nil estimate with an `estimate_reason`, the total is unknown, and
+`Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
+acknowledgement. Unknown actual usage remains null.
 
 ### Local application presentation
 

@@ -65,7 +65,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("combobox").first().selectOption("all");
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
   await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("isolation_confirmation_required");
+  await expect(page.getByRole("dialog")).toContainText("needs its own confirmation");
   await expect(
     page.getByRole("button", { name: "Confirm estimate and generate", exact: true }),
   ).toBeDisabled();
