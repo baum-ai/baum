@@ -28,7 +28,8 @@ var reviewSchema = reviewschema.Document
 // DocumentValidator holds three views of the review schema: Schema is the
 // lenient contract the model writes against, strict is the authored contract
 // a normalized document must satisfy before completion, and full is the
-// stored document with the host's derived fields.
+// stored document with the host's derived fields, which also accepts tiles of
+// the kinds the schema retired (storedDocumentSchema).
 type DocumentValidator struct {
 	Schema   []byte
 	Revision string
@@ -63,8 +64,12 @@ func (v *DocumentValidator) Contract() map[string]any {
 // NewDocumentValidator compiles the embedded review schema once. The result is
 // read-only, so it may be shared between goroutines.
 func NewDocumentValidator() (*DocumentValidator, error) {
+	stored, err := storedDocumentSchema()
+	if err != nil {
+		return nil, err
+	}
 	var fullSchema jsonschema.Schema
-	if err := json.Unmarshal(reviewSchema, &fullSchema); err != nil {
+	if err := json.Unmarshal(stored, &fullSchema); err != nil {
 		return nil, err
 	}
 	full, err := fullSchema.Resolve(nil)
@@ -316,7 +321,8 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 // schema and the document's semantic rules, and returns every finding, or nil
 // when it is valid. It checks the document as every reader sees it, after the
 // stored-document rules (normalizeStored), so an identifier stored before
-// identifiers were bounded is not a finding. Images are checked against the
+// identifiers were bounded is not a finding, and neither is a tile of a
+// retired kind the viewer renders or one the rules remove. Images are checked against the
 // document's own index. The rules that need the generation bundle run only
 // when bundle is non-nil.
 func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {

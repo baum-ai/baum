@@ -6,9 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/google/jsonschema-go/jsonschema"
+
+	reviewschema "github.com/baum-ai/baum/schema"
 )
 
 // The schema keeps its $id when a constraint tightens in place, so a document
@@ -106,8 +111,8 @@ func hasLongIdentifier(document []byte) bool {
 
 // normalizeStored applies every stored-document rule to a decoded document
 // and reports whether it changed anything. A rule for another constraint
-// tightened in place (a tile shape the current schema rejects, for example)
-// belongs here too.
+// tightened in place belongs here too. The tile rule runs last, so a tile
+// the identifier rule repairs is kept.
 func normalizeStored(document map[string]any) (bool, error) {
 	schema, err := storedSchema()
 	if err != nil {
@@ -115,7 +120,11 @@ func normalizeStored(document map[string]any) (bool, error) {
 	}
 	titled := labelBlankSectionTitles(document)
 	shortened := shortenStoredIdentifiers(document, schema)
-	return titled || shortened, nil
+	tiles, err := repairStoredTiles(document)
+	if err != nil {
+		return false, err
+	}
+	return titled || shortened || tiles, nil
 }
 
 // decodeStored decodes a stored document and normalizes it. It returns the
@@ -146,6 +155,141 @@ var storedSchema = sync.OnceValues(func() (map[string]any, error) {
 	}
 	return schema, nil
 })
+
+// storedDocumentSchema is the schema a stored document must satisfy: the
+// review schema with the tile kinds it retired (reviewschema.LegacyTiles)
+// accepted as tiles too, as the viewer validates them, so a stored tile of a
+// retired kind the viewer still renders passes. The authored and model-facing
+// contracts derive from the review schema alone, so generation never offers
+// or accepts a retired kind.
+var storedDocumentSchema = sync.OnceValues(func() ([]byte, error) {
+	var root map[string]any
+	if err := json.Unmarshal(reviewSchema, &root); err != nil {
+		return nil, err
+	}
+	var legacy struct {
+		Defs map[string]any `json:"$defs"`
+	}
+	if err := json.Unmarshal(reviewschema.LegacyTiles, &legacy); err != nil {
+		return nil, fmt.Errorf("retired tile definitions: %w", err)
+	}
+	defs, _ := root["$defs"].(map[string]any)
+	if defs["tile"] == nil || legacy.Defs["legacyTile"] == nil {
+		return nil, fmt.Errorf("the review schema lacks $defs/tile or the retired tile definitions lack $defs/legacyTile")
+	}
+	for name, definition := range legacy.Defs {
+		if defs[name] != nil {
+			return nil, fmt.Errorf("retired tile definition %s is also defined by the review schema", name)
+		}
+		defs[name] = definition
+	}
+	defs["tile"] = map[string]any{"anyOf": []any{defs["tile"], map[string]any{"$ref": "#/$defs/legacyTile"}}}
+	return json.Marshal(root)
+})
+
+// storedTileSchema accepts a tile the stored-document schema accepts: one of
+// a current kind that the review schema accepts, or one of a retired kind
+// that the viewer still renders.
+var storedTileSchema = sync.OnceValues(func() (*jsonschema.Resolved, error) {
+	stored, err := storedDocumentSchema()
+	if err != nil {
+		return nil, err
+	}
+	var root struct {
+		Defs json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(stored, &root); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(map[string]any{"$ref": "#/$defs/tile", "$defs": root.Defs})
+	if err != nil {
+		return nil, err
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(encoded, &schema); err != nil {
+		return nil, err
+	}
+	return schema.Resolve(nil)
+})
+
+// retiredTileFields are the payload fields the schema removed from a current
+// tile kind. The viewer ignores them in a stored tile (withoutRetiredTileFields
+// in oss/viewer/src/review-tiles.ts), so the tile rule removes them.
+var retiredTileFields = map[string][]string{"architecture": {"context", "deployment"}}
+
+// repairStoredTiles keeps every tile of a section or of one of its risks that
+// storedTileSchema accepts, removes the retired fields of one it accepts
+// without them, and drops any other: a tile of a kind or shape that neither
+// the current schema nor a retired kind the viewer renders accepts, which only
+// a release before a tile kind changed in place could have stored. Nothing
+// outside a tile refers to it, so dropping one leaves every reference intact.
+// It reports whether it changed any tile.
+func repairStoredTiles(document map[string]any) (bool, error) {
+	schema, err := storedTileSchema()
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	sections, _ := document["sections"].([]any)
+	for _, raw := range sections {
+		section, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		owners := []map[string]any{section}
+		risks, _ := section["risks"].([]any)
+		for _, raw := range risks {
+			if risk, ok := raw.(map[string]any); ok {
+				owners = append(owners, risk)
+			}
+		}
+		for _, owner := range owners {
+			tiles, ok := owner["tiles"].([]any)
+			if !ok {
+				continue
+			}
+			kept := make([]any, 0, len(tiles))
+			repaired := false
+			for _, tile := range tiles {
+				if schema.Validate(tile) == nil {
+					kept = append(kept, tile)
+					continue
+				}
+				repaired = true
+				if stripped := withoutRetiredTileFields(tile); stripped != nil && schema.Validate(stripped) == nil {
+					kept = append(kept, stripped)
+				}
+			}
+			if repaired {
+				owner["tiles"], changed = kept, true
+			}
+		}
+	}
+	return changed, nil
+}
+
+// withoutRetiredTileFields returns a copy of a tile without the retired
+// fields of its kind, or nil when it has none.
+func withoutRetiredTileFields(value any) map[string]any {
+	tile, _ := value.(map[string]any)
+	kind, _ := tile["kind"].(string)
+	data, _ := tile["data"].(map[string]any)
+	var retired []string
+	for _, field := range retiredTileFields[kind] {
+		if _, ok := data[field]; ok {
+			retired = append(retired, field)
+		}
+	}
+	if len(retired) == 0 {
+		return nil
+	}
+	stripped, strippedData := maps.Clone(tile), maps.Clone(data)
+	for _, field := range retired {
+		delete(strippedData, field)
+	}
+	stripped["data"] = strippedData
+	return stripped
+}
 
 // shortenStoredIdentifiers rewrites with ShortenIdentifier every value over
 // MaxIdentifierLength characters that the schema closes with an identifier

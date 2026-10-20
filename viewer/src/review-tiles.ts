@@ -65,7 +65,9 @@ function validDiff(file: TileCodeFile): boolean {
 }
 
 /** Architecture fields the schema retired are ignored rather than failing the
- * whole tile, so stored tiles that carry them still render. */
+ * whole tile, so stored tiles that carry them still render. The review
+ * package's stored-document rules remove the same fields (retiredTileFields in
+ * oss/review/stored.go). */
 export function withoutRetiredTileFields(value: unknown): unknown {
   const tile = tileRecord(value);
   const data = tileRecord(tile?.data);

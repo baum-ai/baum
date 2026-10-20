@@ -13,8 +13,15 @@ when it starts. The document model is described in
 - Tiles explain existing sections and risks; they add no navigation, severity
   or approval state. JSON picks the kind, the viewer owns layout. No UI-preview
   kind.
-- To retire a kind, remove it here and from the schema, and keep its payload
-  where the viewer can still render tiles already stored.
+- To retire a kind, remove it here and from the schema, and move its
+  variant and payload definitions to
+  [`legacy-review-tiles.json`](../../schema/legacy-review-tiles.json), where
+  stored-document validation accepts tiles already stored and the viewer
+  still renders them. To remove a field from a kind the viewer keeps
+  rendering stored tiles of, list it in `retiredTileFields`
+  ([`stored.go`](../stored.go)) and `withoutRetiredTileFields`
+  (`oss/viewer/src/review-tiles.ts`). A stored tile neither file accepts
+  after that is dropped on read.
 
 ## Allow-list
 
