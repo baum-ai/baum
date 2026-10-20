@@ -197,8 +197,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 // Trigger looks at one repository again now and feeds what it finds through
-// Observe, the only way pull requests become automatic jobs. Hook events
-// (an agent session ending, a push) are meant to call it; nothing does yet.
+// Observe, the only way pull requests become automatic jobs. The daemon calls
+// it when a hook event showed a pull request's head moved (internal/
+// hookrefresh), with Discover polling before discovery's deadline but within
+// its rate budget.
 func (s *Scheduler) Trigger(ctx context.Context, repository string) error {
 	repo, err := github.ParseRepository(repository)
 	if err != nil {

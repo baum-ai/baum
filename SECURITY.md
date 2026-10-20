@@ -361,6 +361,14 @@ What it runs while it is up:
   conditional requests and backoff (see "What baum sends where");
 - once when it starts, the signed price list download;
 - the record of the events agent and Git hooks report (above);
+- when a coding-agent session ends or Git pushes in a registered clone, the
+  same free GitHub reads for the pull requests of that branch (for a push,
+  about 10 seconds later and once more 30 seconds after that if GitHub does
+  not show the pushed head yet), at most once per pull request every 30
+  seconds, and, when a head moved, one poll of the repository's open pull
+  requests for automatic generation, at most every 30 seconds. They wait while
+  GitHub's rate limit is exhausted. Events from directories outside
+  registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
   `baum generate` does. Some you confirmed in the app with their price
@@ -371,7 +379,8 @@ starts a job when a pull request in a registered repository that you authored,
 or whose review is requested from you or one of your teams, gets a new head, a
 new review request or is marked ready for review after automatic generation
 was enabled for that repository; pull requests already open then, and drafts,
-are left alone. It never starts
+are left alone. A push or a session ending only makes the daemon look sooner:
+it decides by the same rules, and starts nothing the periodic check would not. It never starts
 one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
@@ -440,7 +449,8 @@ the state directory, is mode 0600 in a 0700 directory, so other users cannot
 connect; Windows uses the same `AF_UNIX` socket, protected by the state
 directory's current-user DACL. Any process running as you can connect, ask
 for the daemon's status and stop it. It can also send hook events, which the
-daemon only records.
+daemon records; a session end or push naming a registered clone makes it run
+the bounded GitHub reads above, never a job by itself.
 
 The daemon does not use the environment of whatever started it. It runs your
 login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)

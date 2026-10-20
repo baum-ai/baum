@@ -294,7 +294,10 @@ handshake, in [`apiclient`](../apiclient).
   hooks spooling at the same moment can each add one past it, and the next
   one restores it. What hooks spool, drop or start, and why, goes to
   `<state>/hooks.log` (0600, rotated at 256 KiB), never an event's contents.
-- The daemon records the events locally only. Nothing is forwarded to the
+- The daemon records the events locally only. A session end or a push in a
+  registered clone also makes it refresh that branch's pull requests from
+  GitHub at once ("Refresh on hook events" in
+  [ARCHITECTURE.md](../../ARCHITECTURE.md)). Nothing is forwarded to the
   hosted service yet: that waits for a hosted event endpoint, and hosted
   users' sessions keep reaching it through Entire's checkpoints and
   `baum upload`.
