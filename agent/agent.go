@@ -7,6 +7,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -95,4 +97,47 @@ type Event struct {
 	Output      int    `json:"output_tokens,omitempty"`
 	CacheRead   int    `json:"cache_read_tokens,omitempty"`
 	CacheCreate int    `json:"cache_creation_tokens,omitempty"`
+}
+
+// OutsideRun is an Event's Path for a tool path outside the run directory.
+const OutsideRun = "<outside-run>"
+
+// EventPath reports a tool's path for an Event: relative to the run directory,
+// or OutsideRun for one outside it, with control characters replaced and at
+// most 256 bytes. A CLI names absolute paths from its own working directory,
+// which the kernel reports with symlinks resolved: on macOS the run directory
+// under $TMPDIR (/var/folders/...) reaches the CLI as /private/var/folders/...,
+// so a path under the resolved directory is inside the run too.
+func EventPath(directory, path string) string {
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		relative, ok := within(directory, path)
+		if !ok {
+			if resolved, err := filepath.EvalSymlinks(directory); err == nil && resolved != directory {
+				relative, ok = within(resolved, path)
+			}
+		}
+		if !ok {
+			return OutsideRun
+		}
+		path = relative
+	}
+	path = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return '?'
+		}
+		return r
+	}, path)
+	return path[:min(len(path), 256)]
+}
+
+// within reports path relative to directory, and whether it is inside it.
+func within(directory, path string) (string, bool) {
+	relative, err := filepath.Rel(directory, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return relative, true
 }
