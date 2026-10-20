@@ -104,6 +104,59 @@ func TestExternalHistoryBaseRefused(t *testing.T) {
 	}
 }
 
+func TestPaginatedReasoningMayOmitOrdinal(t *testing.T) {
+	for _, extras := range []string{"", `,"ordinal":1`} {
+		text := envelope("session_meta", `{"id":"thread","history_mode":"paginated","source":"cli"}`, `,"ordinal":0`) +
+			envelope("response_item", `{"type":"reasoning","summary":[]}`, extras) +
+			envelope("turn_context", `{}`, `,"ordinal":2`)
+		lines, _, err := decodeText(t, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(lines) != 3 || lines[1].Ordinal != 2 || lines[2].Ordinal != 3 {
+			t.Fatalf("physical ordinals changed: %+v", lines)
+		}
+	}
+}
+
+func TestPaginatedReasoningStillRequiresCorrectSuppliedOrdinal(t *testing.T) {
+	for _, extras := range []string{`,"ordinal":0`, `,"ordinal":2`} {
+		text := envelope("session_meta", `{"id":"thread","history_mode":"paginated","source":"cli"}`, `,"ordinal":0`) +
+			envelope("response_item", `{"type":"reasoning","summary":[]}`, extras)
+		if _, _, err := decodeText(t, text); err == nil {
+			t.Fatal("accepted incorrect reasoning ordinal")
+		}
+	}
+	text := envelope("session_meta", `{"id":"thread","history_mode":"paginated","source":"cli"}`, `,"ordinal":0`) +
+		envelope("response_item", `{"type":"reasoning","summary":[]}`) +
+		envelope("turn_context", `{}`, `,"ordinal":1`)
+	if _, _, err := decodeText(t, text); err == nil {
+		t.Fatal("reasoning omission shifted following ordinal")
+	}
+}
+
+func TestPaginatedCompactionMayOmitOrdinal(t *testing.T) {
+	for _, extras := range []string{"", `,"ordinal":1`} {
+		text := envelope("session_meta", `{"id":"thread","history_mode":"paginated","source":"cli"}`, `,"ordinal":0`) +
+			envelope("compacted", `{}`, extras) +
+			envelope("turn_context", `{}`, `,"ordinal":2`)
+		lines, _, err := decodeText(t, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(lines) != 3 || lines[1].Ordinal != 2 || lines[2].Ordinal != 3 {
+			t.Fatalf("physical ordinals changed: %+v", lines)
+		}
+	}
+	for _, extras := range []string{`,"ordinal":0`, `,"ordinal":2`} {
+		text := envelope("session_meta", `{"id":"thread","history_mode":"paginated","source":"cli"}`, `,"ordinal":0`) +
+			envelope("compacted", `{}`, extras)
+		if _, _, err := decodeText(t, text); err == nil {
+			t.Fatal("accepted incorrect compaction ordinal")
+		}
+	}
+}
+
 func TestTokenUsageRecordDecodes(t *testing.T) {
 	usage := `{"input_tokens":20,"cached_input_tokens":5,"cache_write_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":1,"total_tokens":23}`
 	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope("token_usage_record", `{"thread_id":"th","turn_id":"tu","session_id":"se","root_turn_id":"ro","response_id":"resp","usage":`+usage+`,"turn_token_usage":`+usage+`,"thread_token_usage":{"input_tokens":50,"total_tokens":60}}`))

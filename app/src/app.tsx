@@ -435,12 +435,13 @@ function Workspace({ url }: { url: UrlState }) {
             isolation={isolation}
             setIsolation={setIsolation}
             close={() => setEstimate(null)}
-            confirm={async () => {
+            confirm={async (unpriced) => {
               try {
                 await request("api/jobs", {
                   estimate_id: estimate.id,
                   confirm_estimate: true,
                   confirm_isolation: isolation,
+                  confirm_unpriced: unpriced,
                 });
                 setEstimate(null);
                 setSelection(new Set());
@@ -455,6 +456,24 @@ function Workspace({ url }: { url: UrlState }) {
     </>
   );
 }
+// estimateReasons explains, in words, why an item has no estimate on purpose.
+const estimateReasons: Record<string, string> = {
+  billed_by_cursor_subscription:
+    "Cost is billed by your Cursor subscription; baum can't estimate it.",
+};
+// blockedReasons explains why an item is left out of the generation.
+const blockedReasons: Record<string, string> = {
+  unknown_model_price:
+    "No price is known for this model. Choose a priced model in repository settings.",
+  isolation_confirmation_required:
+    "A fork or an author without known write access needs its own confirmation: generate this pull request on its own.",
+};
+export function estimateReasonText(reason: string): string {
+  return estimateReasons[reason] ?? "baum can't estimate the cost of this run.";
+}
+export function blockedReasonText(reason: string): string {
+  return blockedReasons[reason] ?? "It cannot be generated with the current settings.";
+}
 function Confirmation({
   estimate,
   error,
@@ -468,12 +487,14 @@ function Confirmation({
   isolation: boolean;
   setIsolation: (value: boolean) => void;
   close: () => void;
-  confirm: () => Promise<void>;
+  confirm: (unpriced: boolean) => Promise<void>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
+  const [unpriced, setUnpriced] = useState(false);
   const needed = estimate.items.some((i) => i.requires_isolation_confirmation && !i.blocked_reason);
   const allowed = estimate.items.some((i) => !i.blocked_reason);
+  const unpricedNeeded = estimate.items.some((i) => i.estimate_reason && !i.blocked_reason);
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
@@ -496,19 +517,18 @@ function Confirmation({
         {estimate.items.map((item) => (
           <li key={`${item.clone}:${item.pr}`}>
             #{item.pr}: {item.backend} / {item.model || "No model configured"} —{" "}
-            {cost(item.estimate_usd)}
-            <p>
-              Assumes {formatCount(item.max_tokens)} charged tokens and {item.max_calls} backend
-              calls, with one budget-sized cache read per call at the highest listed rates. Cache
-              reads can exceed this assumption.
-            </p>
-            {item.blocked_reason ? (
-              <p role="alert">
-                Excluded: {item.blocked_reason}.{" "}
-                {item.blocked_reason.includes("model")
-                  ? "Choose a priced model in repository settings."
-                  : ""}
+            {item.estimate_reason ? "cost unknown" : cost(item.estimate_usd)}
+            {item.estimate_reason ? (
+              <p>{estimateReasonText(item.estimate_reason)}</p>
+            ) : (
+              <p>
+                Assumes {formatCount(item.max_tokens)} charged tokens and {item.max_calls} backend
+                calls, with one budget-sized cache read per call at the highest listed rates. Cache
+                reads can exceed this assumption.
               </p>
+            )}
+            {item.blocked_reason ? (
+              <p role="alert">Excluded: {blockedReasonText(item.blocked_reason)}</p>
             ) : null}
           </li>
         ))}
@@ -524,12 +544,23 @@ function Confirmation({
           write access in the configured isolation environment.
         </label>
       ) : null}
+      {unpricedNeeded ? (
+        <label className="block my-3">
+          <input
+            type="checkbox"
+            checked={unpriced}
+            onChange={(e) => setUnpriced(e.target.checked)}
+          />{" "}
+          I understand that baum can't estimate the cost of these runs: my Cursor subscription bills
+          them.
+        </label>
+      ) : null}
       <div className="flex gap-3">
         <Button
-          disabled={pending || !allowed || (needed && !isolation)}
+          disabled={pending || !allowed || (needed && !isolation) || (unpricedNeeded && !unpriced)}
           onClick={() => {
             setPending(true);
-            void confirm().finally(() => setPending(false));
+            void confirm(unpricedNeeded && unpriced).finally(() => setPending(false));
           }}
         >
           {pending ? "Starting…" : "Confirm estimate and generate"}

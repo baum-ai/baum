@@ -102,12 +102,18 @@ const (
 
 // anyRemoteIs reports whether any remote URL names the repository "owner/name".
 func anyRemoteIs(remotes []gitlocal.Remote, repository string) bool {
+	return remoteFor(remotes, repository) != ""
+}
+
+// remoteFor names the first remote whose URL names the repository
+// "owner/name", "" when none does.
+func remoteFor(remotes []gitlocal.Remote, repository string) string {
 	for _, remote := range remotes {
 		if gitlocal.SameRepository(remote.URL, repository) {
-			return true
+			return remote.Name
 		}
 	}
-	return false
+	return ""
 }
 
 // remoteReason says that no remote is the document's repository and what the

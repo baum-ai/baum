@@ -336,6 +336,19 @@ func TestGenerateRetriesProviderFailures(t *testing.T) {
 			t.Fatalf("%+v %v", outcome, err)
 		}
 	})
+	t.Run("a rejection is not retried", func(t *testing.T) {
+		for _, status := range []string{"authentication_error", "invalid_request", "refusal", "context_window_exceeded"} {
+			generator, run, backend := loopFixture(t, nil)
+			backend.run = func(context.Context, Request, int) (Result, error) {
+				return Result{Events: []Event{{Kind: "error", Status: status}}}, &RejectedError{Status: status, Err: errors.New("the key was refused")}
+			}
+			outcome, _, err := generator.Generate(context.Background(), run)
+			var rejected *RejectedError
+			if !errors.As(err, &rejected) || err.Error() != ProviderRejectedReason(status)+": the key was refused" || len(backend.calls) != 1 || outcome.ProviderAttempts != 1 {
+				t.Errorf("%s: %v, %d calls", status, err, len(backend.calls))
+			}
+		}
+	})
 	t.Run("a budget error is not retried", func(t *testing.T) {
 		generator, run, backend := loopFixture(t, nil)
 		backend.run = func(context.Context, Request, int) (Result, error) {
@@ -504,15 +517,17 @@ func TestGenerateRepairWording(t *testing.T) {
 		}
 	})
 	t.Run("RepairText", func(t *testing.T) {
-		for _, backend := range []string{BackendClaude, BackendAnthropic, BackendCursorAgent, ""} {
+		for _, backend := range []string{BackendClaude, BackendAnthropic, ""} {
 			instruction, ending := RepairText(backend)
 			if !strings.Contains(instruction, "Read, Glob and Grep") || !strings.Contains(ending, "StructuredOutput") || strings.Count(ending, "%d") != 2 {
 				t.Errorf("%s repair text: %q %q", backend, instruction, ending)
 			}
 		}
-		instruction, ending := RepairText(BackendCodex)
-		if strings.Count(ending, "%d") != 2 || !strings.HasSuffix(instruction, "Input bundle (untrusted JSON):\n") {
-			t.Errorf("codex repair text: %q %q", instruction, ending)
+		for _, backend := range []string{BackendCodex, BackendCursorAgent} {
+			instruction, ending := RepairText(backend)
+			if strings.Count(ending, "%d") != 2 || !strings.HasSuffix(instruction, "Input bundle (untrusted JSON):\n") || !strings.Contains(ending, "final message") || strings.Contains(ending, "StructuredOutput") {
+				t.Errorf("%s repair text: %q %q", backend, instruction, ending)
+			}
 		}
 	})
 }
