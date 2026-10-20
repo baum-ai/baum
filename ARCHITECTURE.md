@@ -752,7 +752,7 @@ inside the clone and the session store overrides, and does this:
    a checkpoint whose objects are missing is skipped with a warning. Entire
    keeps checkpoints in two stores, read alike (see step 6), and clones usually
    lack the git-refs one, since a clone does not fetch it; fetching it is the
-   user's to do (`git fetch origin
+   user's to do (`git fetch <remote>
    '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`; the `+` lets a
    rewritten ref update), never baum's. Only the
    remotes' URLs are read from configuration, never contacted.
@@ -818,10 +818,13 @@ inside the clone and the session store overrides, and does this:
    fuller record. Trailers with no valid id, checkpoints the clone does not
    hold, or ones whose sessions cannot be mapped leave the commit to the
    heuristics. A checkpoint in neither store is named in one warning line for the run, with the command
-   that fetches the git-refs store (`git fetch origin
+   that fetches the git-refs store (`git fetch <remote>
    '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`) and, when one of
    the ids is 12-hex, the one that fetches the legacy branch (`git fetch
-   origin entire/checkpoints/v1`); nothing is fetched. A checkpoint the clone
+   <remote> entire/checkpoints/v1`); nothing is fetched. `<remote>` is the
+   first remote whose URL is the document's repository, which need not be
+   `origin`; where the repository is not known (bundle assembly), it stays a
+   `<remote>` placeholder. A checkpoint the clone
    holds but cannot read (malformed or oversized metadata, or objects a partial
    clone never downloaded) gets a "cannot be read" line of its own and no
    fetch hint. An id in both stores is dated for the `SessionWindow` by the

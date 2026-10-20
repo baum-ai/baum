@@ -361,6 +361,29 @@ func TestResolveWarnsWithTheFetchHintForAMissingRefCheckpoint(t *testing.T) {
 	}
 }
 
+// The fetch hint names the remote that is the document's repository, not
+// origin: here origin is a fork and the repository is upstream.
+func TestResolveFetchHintNamesTheMatchingRemote(t *testing.T) {
+	f := linktest.NewWithTrailer(t, "Entire-Checkpoint: "+ulidCheckpoint+"\nEntire-Checkpoint: ffffffffffff")
+	linktest.Git(t, f.Repo, "remote", "rename", "origin", "upstream")
+	linktest.Git(t, f.Repo, "remote", "add", "origin", "https://github.com/someone/widgets.git")
+	var warnings bytes.Buffer
+	req := request(f)
+	req.Warn = &warnings
+	resolve(t, req)
+	for _, want := range []string{
+		"git fetch upstream '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'",
+		"git fetch upstream entire/checkpoints/v1",
+	} {
+		if !strings.Contains(warnings.String(), want) {
+			t.Errorf("warnings = %q, want it to contain %q", warnings.String(), want)
+		}
+	}
+	if strings.Contains(warnings.String(), "git fetch origin") {
+		t.Errorf("warnings = %q; origin is a fork, so no hint names it", warnings.String())
+	}
+}
+
 // Reading a checkpoint ref in a partial clone downloads nothing either: the
 // ref is there, its blobs are not, and the commit falls back to the heuristics.
 func TestResolveReadsNoMissingRefCheckpointObject(t *testing.T) {
@@ -481,7 +504,7 @@ func TestResolveDoesNotSuggestAFetchForABranchDirectoryWithoutMetadata(t *testin
 func TestWarnMissingSuggestsNoFetchWhenTheCheckFailed(t *testing.T) {
 	var warnings bytes.Buffer
 	warnMissing(&warnings, []string{ulidCheckpoint, "ffffffffffff"}, map[string][]string{"ffffffffffff": {"s"}}, nil,
-		errors.New("boom"), map[string]string{ulidCheckpoint: "abc"})
+		errors.New("boom"), map[string]string{ulidCheckpoint: "abc"}, "origin")
 	got := warnings.String()
 	if !strings.Contains(got, "could not check") || !strings.Contains(got, ulidCheckpoint) || !strings.Contains(got, "boom") {
 		t.Errorf("warnings = %q, want the unchecked checkpoint and the error named", got)

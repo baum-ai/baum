@@ -35,14 +35,6 @@ const (
 	CheckpointBranch = "entire/checkpoints/v1"
 	// RefPrefix is where the git-refs store keeps one ref per checkpoint.
 	RefPrefix = "refs/entire/checkpoints/"
-	// FetchHint is the command that downloads the git-refs store, for a
-	// warning to name when a checkpoint is not in the clone. The + forces the
-	// update, since a rewritten ref (as "entire migrate" leaves) is otherwise
-	// rejected as a non-fast-forward. Nothing here runs it.
-	FetchHint = "git fetch origin '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
-	// BranchFetchHint downloads the legacy checkpoint branch, which holds the
-	// 12-hex checkpoints a migration has not moved.
-	BranchFetchHint = "git fetch origin entire/checkpoints/v1"
 
 	maxCheckpointBytes = 256 << 20
 	maxCheckpointFiles = 512
@@ -50,6 +42,36 @@ const (
 )
 
 var checkpointPathPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}/[0-9a-f]{10}$`)
+
+// FetchHint is the command that downloads the git-refs store from remote, for
+// a warning to name when a checkpoint is not in the clone. The + forces the
+// update, since a rewritten ref (as "entire migrate" leaves) is otherwise
+// rejected as a non-fast-forward. An empty remote is named by a placeholder.
+// Nothing here runs it.
+func FetchHint(remote string) string {
+	return "git fetch " + hintRemote(remote) + " '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'"
+}
+
+// BranchFetchHint downloads the legacy checkpoint branch from remote, which
+// holds the 12-hex checkpoints a migration has not moved.
+func BranchFetchHint(remote string) string {
+	return "git fetch " + hintRemote(remote) + " " + CheckpointBranch
+}
+
+var plainRemoteName = regexp.MustCompile(`^[A-Za-z0-9._/@+-]+$`)
+
+// hintRemote is remote as a shell word: as is when it is plain, else single
+// quoted, and "<remote>" when there is none to name.
+func hintRemote(remote string) string {
+	switch {
+	case remote == "":
+		return "<remote>"
+	case plainRemoteName.MatchString(remote):
+		return remote
+	default:
+		return "'" + strings.ReplaceAll(remote, "'", `'\''`) + "'"
+	}
+}
 
 // Path is the two-level branch path for a 12-hex checkpoint id.
 func Path(checkpointID string) string {
@@ -302,7 +324,7 @@ func Read(ctx context.Context, repoRoot string, store Store, checkpointID string
 	}
 	loc, ok := store.locate(id)
 	if !ok {
-		return nil, fmt.Errorf("entire checkpoint %s is not in this clone; fetch it with: %s", id, FetchHint)
+		return nil, fmt.Errorf("entire checkpoint %s is not in this clone; fetch it from the repository's remote with: %s", id, FetchHint(""))
 	}
 	args := []string{"archive", "--format=tar", loc.commit}
 	if loc.dir != "" {

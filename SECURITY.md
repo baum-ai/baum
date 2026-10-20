@@ -126,8 +126,9 @@ Entire checkpoints already in your clone: the per-checkpoint refs
 `refs/entire/checkpoints/*` and the checkpoint branch `entire/checkpoints/v1`,
 both read in the private repository. A checkpoint you have not fetched is not
 fetched for it; the warning says so and names the command you can run yourself,
-`git fetch origin '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'` (and, for a
-12-hex id, `git fetch origin entire/checkpoints/v1`).
+`git fetch <remote> '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'` (and, for a
+12-hex id, `git fetch <remote> entire/checkpoints/v1`), with `<remote>` the clone's
+remote for the repository when it is known.
 
 ## Agent isolation
 

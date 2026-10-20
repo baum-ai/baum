@@ -35,7 +35,7 @@ import (
 //
 // The checkpoints are read whatever Request.Sessions.Sources says: a
 // trailer is evidence in the commit, not a store the caller chose to read.
-func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
+func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
 	named := map[string][]string{} // commit → checkpoints, in trailer order
 	firstNamedBy := map[string]string{}
 	var ids []string
@@ -64,7 +64,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 	if branch == nil {
-		warnMissing(warn, ids, nil, nil, nil, firstNamedBy)
+		warnMissing(warn, ids, nil, nil, nil, firstNamedBy, remote)
 		return nil, nil
 	}
 	defer branch.Close()
@@ -75,7 +75,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 	}
 
 	located, checkErr := branch.Located(ctx, ids)
-	warnMissing(warn, ids, recorded, located, checkErr, firstNamedBy)
+	warnMissing(warn, ids, recorded, located, checkErr, firstNamedBy, remote)
 
 	have := make(map[string]bool, len(found))
 	for _, s := range found {
@@ -125,9 +125,10 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 // line each, with no fetch hint: fetching would not help. Those it does not
 // hold are listed in one line with the command that downloads them: the refs
 // for any id, and the legacy branch too when one is 12-hex, which only the
-// branch may hold. Nothing here runs a command: local linking never fetches,
-// and the commits are left to the heuristic steps.
-func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, checkErr error, firstNamedBy map[string]string) {
+// branch may hold, from remote ("" names a placeholder). Nothing here runs a
+// command: local linking never fetches, and the commits are left to the
+// heuristic steps.
+func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, checkErr error, firstNamedBy map[string]string, remote string) {
 	var missing []string
 	var unchecked []string
 	legacy := false
@@ -155,9 +156,9 @@ func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, loc
 	if len(missing) == 0 {
 		return
 	}
-	hint := entire.FetchHint
+	hint := entire.FetchHint(remote)
 	if legacy {
-		hint += " or " + entire.BranchFetchHint
+		hint += " or " + entire.BranchFetchHint(remote)
 	}
 	warnf(warn, "warning: Entire checkpoints not in this clone, so the commits naming them are linked without them: %s; fetch them with: %s\n",
 		strings.Join(missing, ", "), hint)

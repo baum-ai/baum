@@ -174,8 +174,8 @@ func TestReadFromRefsAndBranch(t *testing.T) {
 	}
 
 	_, err = Read(ctx, objects, store, "01ARZ3NDEKTSV4RRFFQ69G5FAW")
-	if err == nil || !strings.Contains(err.Error(), FetchHint) {
-		t.Errorf("Read of a ULID checkpoint with no ref = %v, want an error naming %q", err, FetchHint)
+	if err == nil || !strings.Contains(err.Error(), FetchHint("")) {
+		t.Errorf("Read of a ULID checkpoint with no ref = %v, want an error naming %q", err, FetchHint(""))
 	}
 	// A ULID is never in the branch, whatever the branch holds.
 	if _, err := Read(ctx, objects, Store{Branch: store.Branch}, ulidID); err == nil {
@@ -363,5 +363,22 @@ func TestLocatedHoldsABranchDirectoryWithoutMetadata(t *testing.T) {
 	sessions, err := Sessions(ctx, privateRepo(t, dir), store, []string{"ee0000000001"})
 	if err != nil || len(sessions) != 0 {
 		t.Errorf("Sessions = %v, %v; want it unreadable", sessions, err)
+	}
+}
+
+// A fetch hint names the remote it is given as one shell word, and a
+// placeholder when there is none.
+func TestFetchHintsNameTheRemote(t *testing.T) {
+	for _, tc := range []struct{ remote, refs, branch string }{
+		{"upstream", "git fetch upstream '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'", "git fetch upstream entire/checkpoints/v1"},
+		{"", "git fetch <remote> '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'", "git fetch <remote> entire/checkpoints/v1"},
+		{"it's mine", `git fetch 'it'\''s mine' '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`, `git fetch 'it'\''s mine' entire/checkpoints/v1`},
+	} {
+		if got := FetchHint(tc.remote); got != tc.refs {
+			t.Errorf("FetchHint(%q) = %s, want %s", tc.remote, got, tc.refs)
+		}
+		if got := BranchFetchHint(tc.remote); got != tc.branch {
+			t.Errorf("BranchFetchHint(%q) = %s, want %s", tc.remote, got, tc.branch)
+		}
 	}
 }
