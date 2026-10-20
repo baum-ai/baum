@@ -69,7 +69,7 @@ func localEnvironment(windows bool, environ, extra []string) []string {
 
 var deniedPrefixes = []string{"ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_", "GH_", "GIT_"}
 
-var deniedNames = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_API_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK"}
+var deniedNames = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_API_KEY", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"}
 
 // denied reports a provider or source-host credential or setting. name is
 // already upper case on Windows; elsewhere names are case-sensitive.

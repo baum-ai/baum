@@ -4,9 +4,10 @@
 
 baum is local-first, but generating a review requires a model. When you
 run `baum generate`, the following is sent to the **model provider you
-configure** (the `claude` or `codex` CLI, each of which talks to its own
-provider under your own account, or the Anthropic API, which the `anthropic`
-backend calls with your `ANTHROPIC_API_KEY`):
+configure** (the `claude`, `codex` or `cursor-agent` CLI, each of which talks
+to its own provider under your own account, Cursor to the model it routes the
+run to, or the Anthropic API, which the `anthropic` backend calls with your
+`ANTHROPIC_API_KEY`):
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -56,14 +57,15 @@ author write permissions remain unknown, rather than granting automatic work.
 ## What `baum doctor` runs and prints
 
 `baum doctor` diagnoses the machine and starts no model. It runs
-`<tool> --version` for `git`, `gh` and `cursor-agent`, each with a timeout, in
+`<tool> --version` for `git` and `gh`, each with a timeout, in
 a process group that is killed whole when the timeout passes, and with the
 filtered environment of the local backends, which drops provider keys and
 GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
 path comes from `backend_paths`, `GH_PATH` or `PATH`;
-the same checks `baum generate` runs for `claude` and `codex`, which include
-codex's read-only sandbox preflight (a sandboxed `cat` and a blocked write in a
-temporary directory it removes), and for `anthropic`, which only looks at
+the same checks `baum generate` runs for `claude`, `codex` and `cursor-agent`,
+which include codex's read-only sandbox preflight (a sandboxed `cat` and a
+blocked write in a temporary directory it removes) and `cursor-agent --help`
+and `--version`, and for `anthropic`, which only looks at
 whether `ANTHROPIC_API_KEY` is set and sends it nowhere; and, only when no token comes from the
 environment, the config file or `gh`'s own files, `gh auth token
 --secure-storage --hostname <host>`. Its one network contact is the signed price
@@ -123,15 +125,21 @@ or runs a program. Because whoever made the clone controls that bookkeeping,
 an entry is used only when the worktree's own `.git` file points back at this
 repository (or its directory is gone), and never when it is the file system
 root, your home directory, or a directory containing the repository, so a
-planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up on
-the checkpoint branch already in your clone, in the private repository; a
-checkpoint you have not fetched is not fetched for it.
+planted entry cannot widen the sessions read to your whole machine. An `Entire-Checkpoint` trailer in a commit is looked up in the
+Entire checkpoints already in your clone: the per-checkpoint refs
+`refs/entire/checkpoints/*` and the checkpoint branch `entire/checkpoints/v1`,
+both read in the private repository. A checkpoint you have not fetched is not
+fetched for it; the warning says so and names the command you can run yourself,
+`git fetch <remote> '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'` (and, for a
+12-hex id, `git fetch <remote> entire/checkpoints/v1`), with `<remote>` the clone's
+remote for the repository when it is known.
 
 ## Agent isolation
 
-The `claude` and `codex` backends run on your machine under
+The `claude`, `codex` and `cursor-agent` backends run on your machine under
 your user account, each in its own read-only mode, inside a temporary
-checkout of the pull request. baum adds no container or sandbox of its own,
+checkout of the pull request. **`cursor-agent` cannot be held to read-only as
+reliably as the other two**; see [below](#the-cursor-agent-backend). baum adds no container or sandbox of its own,
 so isolation is only as strong as that tool's read-only mode. Repository
 content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
@@ -221,6 +229,83 @@ What remains for `codex`:
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
+
+### The cursor-agent backend
+
+**baum cannot make the Cursor Agent CLI reliably read-only.** It uses every
+restriction the CLI offers, and stops a run that strays, but several of
+Cursor's own features stay on and its read-only mode is enforced by Cursor,
+not by baum. Use it only on pull requests you are prepared to have an agent
+read, and possibly act on, under your account. Choose `claude`, `codex` or
+`anthropic` where that matters. For the same reason `auto` never picks
+`cursor-agent`: it runs only when you set `backend = "cursor-agent"` or pass
+`--backend cursor-agent`.
+
+What baum does (checked against the help of cursor-agent 2026.10.16-e3cb207;
+the CLI's behaviour behind the flags was read from that release, not tested
+against a model):
+
+- It runs `cursor-agent --print --output-format stream-json --mode ask
+  --sandbox enabled --workspace <run directory> --trust` in the run directory.
+  Ask mode is the CLI's read-only mode ("Q&A style for explanations and
+  questions (read-only)"), and a headless run cannot switch out of it.
+  `--sandbox enabled` runs any command the agent still starts in Cursor's
+  sandbox, which confines writes to the workspace (the temporary run
+  directory, not your clone), and the CLI exits rather than run unsandboxed
+  where the sandbox cannot start. `--trust` only answers the workspace trust
+  prompt for the run directory; baum never passes `--force`, `--yolo`,
+  `--auto-review` or `--approve-mcps`, so commands and MCP servers are not
+  approved by baum.
+- It stops the run, kills the CLI's process group and fails the attempt
+  (`disallowed_tool`) as soon as the CLI reports any tool call other than
+  reading, listing or searching files or updating its to-do list: shell
+  commands, edits, deletes, MCP tools, web search and fetch, subagents, mode
+  switches and any tool baum does not know. Detection fails closed: it is an
+  allowlist of the event types, subtypes and text content the CLI writes in a
+  run that only reads, and any other event, or one baum cannot decode, stops
+  the run too. The
+  attempt is not retried, so a pull request that steers the model into such
+  a call gets no second try. The CLI reports a call as it starts, so this
+  limits what a stray call can do; it does not prevent it.
+- The process gets the same environment allowlist as the `claude` backend, plus
+  `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` and `AGENT_CLI_CREDENTIAL_STORE` when
+  you set them. `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN` and the other provider,
+  cloud and GitHub credentials are removed: it uses your own `cursor-agent
+  login`. baum gives it no endpoint or key of its own.
+- It runs only an executable whose `--help` names the Cursor Agent and lists
+  every option above (an executable called `agent` is used only then), so an
+  older CLI that would ignore or reject one is refused.
+
+What remains for `cursor-agent`:
+
+- **Reads are not confined to the checkout** by anything baum controls. The
+  read tools ask mode offers may read any file your account can, such as
+  `~/.ssh` or `~/.aws`, and what the model reads is sent to Cursor and the
+  model provider it routes to.
+- **Your Cursor configuration applies.** No flag turns off hooks: user, team
+  and enterprise hooks (`~/.cursor/hooks.json`, `/etc/cursor/hooks.json` and
+  the like) and the Claude Code user hooks Cursor also loads run during the
+  review, as you. Rules, `AGENTS.md` files and skills in the checkout or your
+  home directory may be read as instructions. The pull request's own
+  `.cursor/hooks.json`, `.cursor/cli.json` and `.cursor/mcp.json` (and its
+  `.claude` settings) are inactive only because baum unpacks the checkout
+  under `head/` and `merge-base/` in the run directory, not at its root, which
+  is the workspace `--trust` covers; a test fails if that layout changes. MCP servers you approved before
+  may start, though calling one stops the run. If your Cursor CLI config sets
+  the approval mode to run everything, or allow-lists commands, the CLI may
+  run a command without asking; it runs in the sandbox, and baum stops the run
+  when it sees the call.
+- **The run is kept in Cursor's own chat history** (under `~/.cursor` or
+  `$XDG_CONFIG_HOME/cursor`), with the prompt and bundle, and the run
+  directory may be recorded as a trusted workspace; there is no flag to turn
+  either off. baum's own session discovery reads Cursor's editor store, not
+  these CLI chats, and the prompt starts with the generation-run marker, so
+  the run is never used as evidence.
+- Only environment variables are filtered, not files, the network or other
+  processes running as you, as for the other CLI backends.
+- Usage is the run total the CLI reports at the end, so the token budget is
+  checked only then; a call that is not reported is not counted. The cost is
+  billed by Cursor and recorded as unknown.
 
 ### The anthropic backend
 

@@ -39,7 +39,13 @@ Stale discovery and unknown team membership/cost remain explicit. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
 restricted fork/author entries are excluded from batches and require explicit
 isolation confirmation when generated individually. Generation confirms an
-approximate price and configured model; unknown prices cannot start a run.
+approximate price and configured model; an unknown model price cannot start a
+run. The exception is the `cursor-agent` backend, which Cursor bills through
+the user's subscription: its item shows "cost unknown" with that reason in
+words instead of a price, the total is unknown, and the run starts only after a
+separate acknowledgement that baum cannot estimate it. The app sends it as
+`confirm_unpriced`, and the server refuses such a run without it. Exclusion and
+estimate reasons are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs can be cancelled. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that

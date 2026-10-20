@@ -42,7 +42,7 @@ const GitHubHost = "github.com"
 
 // Backend names a model backend. Auto picks one at run time: claude, then
 // codex, each when installed and passing its checks, then anthropic when
-// ANTHROPIC_API_KEY is set. cursor-agent is accepted but not available yet.
+// ANTHROPIC_API_KEY is set. cursor-agent runs only when named.
 type Backend string
 
 const (

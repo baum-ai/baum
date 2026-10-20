@@ -57,13 +57,13 @@ func TestResolveListRead(t *testing.T) {
 	ctx := context.Background()
 	dir := checkpointRepo(t)
 
-	commit, ok, err := Resolve(ctx, dir)
-	if err != nil || !ok || len(commit) < 40 {
-		t.Fatalf("Resolve = %q, %v, %v", commit, ok, err)
+	store, ok, err := Resolve(ctx, dir)
+	if err != nil || !ok || len(store.Branch) < 40 {
+		t.Fatalf("Resolve = %+v, %v, %v", store, ok, err)
 	}
 
 	objects := privateRepo(t, dir)
-	checkpoints, err := List(ctx, objects, commit)
+	checkpoints, err := List(ctx, objects, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestResolveListRead(t *testing.T) {
 		t.Error("tree oid missing")
 	}
 
-	fsys, err := Read(ctx, objects, commit, "abcdef012345")
+	fsys, err := Read(ctx, objects, store, "abcdef012345")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestResolveWithoutBranch(t *testing.T) {
 }
 
 func TestReadRejectsBadID(t *testing.T) {
-	if _, err := Read(context.Background(), t.TempDir(), "HEAD", "../etc"); err == nil {
+	if _, err := Read(context.Background(), t.TempDir(), Store{Branch: "HEAD"}, "../etc"); err == nil {
 		t.Fatal("expected an error for a malformed id")
 	}
 }
