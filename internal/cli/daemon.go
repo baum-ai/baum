@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
+	"github.com/baum-ai/baum/internal/notices"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -391,11 +392,19 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			},
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) },
 		}
-		worker.Discovered = scheduler.Observe
+		// Notices are what the desktop app turns into notifications; they
+		// carry the pull request's title and risk score, read when they happen.
+		notify := &notices.Service{Registry: registry, Index: index.Build, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
+		worker.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
+			scheduler.Observe(ctx, snapshot)
+			notify.Observe(ctx, snapshot)
+		}
 		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
+				// Reading the index takes a moment; the queue must not wait.
+				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
 			}

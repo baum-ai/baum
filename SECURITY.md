@@ -700,7 +700,16 @@ install or remove the `baum` command and the user-wide agent hooks; it does
 so only when you click the button for that change, and a change that would
 replace a different `baum` needs you to confirm that file's path first. The
 app makes no network requests other than loopback requests to the daemon.
-Quitting it leaves the daemon running.
+Quitting it leaves the daemon running, and so does closing
+its window, which hides it into the tray. The tray reads the daemon's job
+list, automatic generation status and diagnostics, and can pause automatic
+generation, with the same launch capability the window uses, sent as a bearer
+token to the loopback API and nowhere else. "Quit and stop background reviews"
+runs `baum daemon stop` after asking when a review is running. Start at login
+is off until you turn it on; it adds one per-user entry (an XDG autostart file,
+a LaunchAgent or a Run key value) that starts the app hidden, which starts
+your daemon. Turn it off in the tray or the window's Background menu, which
+removes the entry.
 
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run

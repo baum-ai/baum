@@ -20,11 +20,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-#[cfg(target_os = "macos")]
-use tauri::menu::PredefinedMenuItem;
-#[cfg(not(target_os = "macos"))]
-use tauri::menu::Submenu;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager};
 
 use crate::install::{self, Record, SystemPrompt};
@@ -34,8 +30,10 @@ pub const SETUP_PAGE: &str = "setup.html";
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";
 const STATE_FILE: &str = "setup.json";
-const MENU_ID: &str = "command-line-and-hooks";
-const MENU_LABEL: &str = "Command Line and Hooks…";
+/// The menu item's id in the window's menu bar, and its label there and in
+/// the tray.
+pub const MENU_ID: &str = "command-line-and-hooks";
+pub const MENU_LABEL: &str = "Command Line and Hooks…";
 
 /// `baum daemon login-path` runs the login shell (10 s at most) and the
 /// `--version` of another baum (5 s).
@@ -166,40 +164,10 @@ fn with_diagnostics(launch: &url::Url) -> url::Url {
     url
 }
 
-/// Adds the menu item that opens the setup screen: to the application menu
-/// on macOS, and as a "baum" menu elsewhere.
-pub fn menu(app: &AppHandle) -> tauri::Result<()> {
-    let item = MenuItem::with_id(app, MENU_ID, MENU_LABEL, true, None::<&str>)?;
-    #[cfg(target_os = "macos")]
-    {
-        let menu = match app.menu() {
-            Some(menu) => menu,
-            None => {
-                let menu = Menu::default(app)?;
-                app.set_menu(menu.clone())?;
-                menu
-            }
-        };
-        let first = menu.items()?.into_iter().next();
-        if let Some(application) = first.as_ref().and_then(|i| i.as_submenu()) {
-            // After "About baum" and its separator.
-            application.insert(&item, 2)?;
-            application.insert(&PredefinedMenuItem::separator(app)?, 3)?;
-        } else {
-            menu.append(&item)?;
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let baum = Submenu::with_items(app, "baum", true, &[&item])?;
-        app.set_menu(Menu::with_items(app, &[&baum])?)?;
-    }
-    app.on_menu_event(|app, event| {
-        if event.id() == MENU_ID {
-            show(app);
-        }
-    });
-    Ok(())
+/// The "Command Line and Hooks…" item of the window's menu bar; the tray
+/// builds the menu bar and its own menu, and calls `show` for it.
+pub fn menu_item(app: &AppHandle) -> tauri::Result<MenuItem<tauri::Wry>> {
+    MenuItem::with_id(app, MENU_ID, MENU_LABEL, true, None::<&str>)
 }
 
 fn cli() -> Result<PathBuf, String> {
