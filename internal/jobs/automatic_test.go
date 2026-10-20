@@ -40,6 +40,13 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 }
 
 func (f *autoExecutor) Execute(ctx context.Context, p Prepared, _ func(Progress)) (*float64, error) {
+	// Like Local's recheck: an automatic job of a PR now a draft is refused.
+	f.mu.Lock()
+	draft := f.draft
+	f.mu.Unlock()
+	if p.RefuseDraft && draft {
+		return nil, &NotAutomaticError{ReasonDraft}
+	}
 	f.started <- p
 	select {
 	case <-ctx.Done():
@@ -61,7 +68,7 @@ func newAutoQueue(t *testing.T) (*Queue, *autoExecutor) {
 	t.Cleanup(q.Close)
 	// Like the daemon, which installs the gate right after Open: an automatic
 	// job does not start before one is set.
-	q.SetAutomaticGate(func(Job) string { return "" })
+	q.SetAutomaticGate(func(Job) Admission { return Admission{} })
 	return q, f
 }
 
@@ -279,7 +286,7 @@ func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(q.Close)
-		q.SetAutomaticGate(func(Job) string { return "" })
+		q.SetAutomaticGate(func(Job) Admission { return Admission{} })
 		return q
 	}
 	q := open()
@@ -368,10 +375,10 @@ func TestAutomaticGateStopsQueuedJobs(t *testing.T) {
 	ctx := context.Background()
 	var mu sync.Mutex
 	refuse := map[int]string{}
-	q.SetAutomaticGate(func(j Job) string {
+	q.SetAutomaticGate(func(j Job) Admission {
 		mu.Lock()
 		defer mu.Unlock()
-		return refuse[j.PR]
+		return Admission{Reason: refuse[j.PR]}
 	})
 	set := func(pr int, reason string) {
 		mu.Lock()
@@ -450,7 +457,7 @@ func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	done := make(chan Job, 1)
-	q.SetAutomaticGate(func(j Job) string { return "automatic_off" })
+	q.SetAutomaticGate(func(Job) Admission { return Admission{Reason: "automatic_off"} })
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if l := q.List(); len(l) == 1 && l[0].State == "cancelled" {
@@ -472,4 +479,197 @@ func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
 		t.Fatal("refused job started")
 	default:
 	}
+}
+
+// capGate is a gate that allows every job under a daily cap a test changes.
+type capGate struct {
+	mu    sync.Mutex
+	limit *float64
+	day   time.Time
+}
+
+func (g *capGate) gate(Job) Admission {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return Admission{DailyCap: g.limit, Day: g.day}
+}
+
+func (g *capGate) set(limit float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.limit = &limit
+}
+
+// noStart fails if the executor starts a job within a short wait.
+func noStart(t *testing.T, f *autoExecutor, what string) {
+	t.Helper()
+	select {
+	case p := <-f.started:
+		t.Fatalf("%s: PR %d started", what, p.PR)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// The daily cap is checked again before a queued automatic job starts: a cap
+// lowered while it waited stops it without a model call, the job does not use
+// up its head, and once the cap allows it the head runs. Confirmed jobs are
+// not limited.
+func TestAutomaticDailyCapRecheckedBeforeStart(t *testing.T) {
+	q, f := newAutoQueue(t)
+	ctx := context.Background()
+	start := time.Now().Add(-time.Hour)
+	g := &capGate{day: start}
+	g.set(10)
+	q.SetAutomaticGate(g.gate)
+	capped := func(r AutomaticRequest) AutomaticRequest {
+		limit := 10.0
+		r.Day, r.DailyCap = start, &limit
+		return r
+	}
+	running, err := q.SubmitAutomatic(ctx, capped(auto(1, "a1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	queued := []Job{}
+	for _, pr := range []int{2, 3} {
+		j, err := q.SubmitAutomatic(ctx, capped(auto(pr, f.heads[pr])))
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued = append(queued, j)
+	}
+	// The user lowers the cap to zero while two jobs wait.
+	g.set(0)
+	f.release <- struct{}{}
+	waitState(t, q, running.ID, "completed")
+	for _, j := range queued {
+		if got := waitState(t, q, j.ID, "cancelled"); got.Reason != ReasonDailyCap || got.Calls != 0 {
+			t.Fatalf("stopped job %+v", got)
+		}
+	}
+	noStart(t, f, "cap lowered to zero")
+	// Stopped jobs spent nothing and are offered back to the scheduler.
+	if spent, known := q.AutomaticSpend("org/repo", start); spent != 1.5 || !known {
+		t.Fatalf("spend %v %v", spent, known)
+	}
+	if refused := q.Refused(); len(refused) != 2 || refused[0].ID != queued[0].ID || refused[1].ID != queued[1].ID {
+		t.Fatalf("refused %+v", refused)
+	}
+	// A confirmed job is not held by the automatic cap.
+	f.heads[4] = "d1"
+	e := estimate(t, q, "single", Item{"clone", 4})
+	manual, err := q.Submit(ctx, e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	f.release <- struct{}{}
+	waitState(t, q, manual[0].ID, "completed")
+	// Raised again, the stopped head is not a duplicate and runs.
+	g.set(10)
+	again, err := q.SubmitAutomatic(ctx, capped(auto(2, "b1")))
+	if err != nil {
+		t.Fatalf("head stopped by the cap: %v", err)
+	}
+	if p := <-f.started; p.PR != 2 {
+		t.Fatalf("started %+v", p)
+	}
+	f.release <- struct{}{}
+	waitState(t, q, again.ID, "completed")
+	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != queued[1].ID {
+		t.Fatalf("refused after the rerun %+v", refused)
+	}
+}
+
+// The cost an earlier job reports can take the repository past its cap
+// before the next queued job starts; that job then does not start.
+func TestAutomaticReportedCostStopsTheNextQueuedJob(t *testing.T) {
+	q, f := newAutoQueue(t)
+	ctx := context.Background()
+	price := 1.0
+	f.price = &price // each run reports 1.5, more than its estimate
+	start := time.Now().Add(-time.Hour)
+	g := &capGate{day: start}
+	g.set(2.4)
+	q.SetAutomaticGate(g.gate)
+	capped := func(r AutomaticRequest) AutomaticRequest {
+		limit := 2.4
+		r.Day, r.DailyCap = start, &limit
+		return r
+	}
+	first, err := q.SubmitAutomatic(ctx, capped(auto(1, "a1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	// 1 running + 1 queued fits under 2.4 at submission.
+	second, err := q.SubmitAutomatic(ctx, capped(auto(2, "b1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.release <- struct{}{}
+	waitState(t, q, first.ID, "completed")
+	// 1.5 reported + 1 estimated is over 2.4.
+	if got := waitState(t, q, second.ID, "cancelled"); got.Reason != ReasonDailyCap {
+		t.Fatalf("second job %+v", got)
+	}
+	noStart(t, f, "over the cap after a reported cost")
+}
+
+// A PR converted back to draft while its automatic job waited is not run:
+// the recheck before any model call cancels the job with ReasonDraft, which
+// does not use up its head. A confirmed run of a draft still runs.
+func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
+	q, f := newAutoQueue(t)
+	ctx := context.Background()
+	setDraft := func(draft bool) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.draft = draft
+	}
+	running, err := q.SubmitAutomatic(ctx, auto(1, "a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := <-f.started; !p.RefuseDraft {
+		t.Fatalf("automatic job executed without the draft recheck %+v", p)
+	}
+	waiting, err := q.SubmitAutomatic(ctx, auto(2, "b1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDraft(true)
+	f.release <- struct{}{}
+	waitState(t, q, running.ID, "completed")
+	if got := waitState(t, q, waiting.ID, "cancelled"); got.Reason != ReasonDraft || got.Calls != 0 {
+		t.Fatalf("draft job %+v", got)
+	}
+	noStart(t, f, "PR turned draft")
+	if spent, known := q.AutomaticSpend("org/repo", time.Now().Add(-time.Hour)); spent != 1.5 || !known {
+		t.Fatalf("spend %v %v", spent, known)
+	}
+	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != waiting.ID {
+		t.Fatalf("refused %+v", refused)
+	}
+	// A confirmed run of the draft is not rechecked for it.
+	e := estimate(t, q, "single", Item{"clone", 3})
+	manual, err := q.Submit(ctx, e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := <-f.started; p.RefuseDraft {
+		t.Fatalf("confirmed job executed with the draft recheck %+v", p)
+	}
+	f.release <- struct{}{}
+	waitState(t, q, manual[0].ID, "completed")
+	// Ready again at the same head: not a duplicate.
+	setDraft(false)
+	again, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{"clone", 2}, Repository: "org/repo", Head: "b1", Trigger: TriggerReadyForReview})
+	if err != nil {
+		t.Fatalf("head stopped as a draft: %v", err)
+	}
+	<-f.started
+	f.release <- struct{}{}
+	waitState(t, q, again.ID, "completed")
 }

@@ -19,10 +19,10 @@ const (
 //
 // A backend that submits through a StructuredOutput tool (claude, anthropic)
 // is told to call it again. A backend that answers in its final message
-// (codex) is told to reply with the whole document there. Any other backend
-// gets the StructuredOutput wording.
+// (codex, cursor-agent) is told to reply with the whole document there. Any
+// other backend gets the StructuredOutput wording.
 func RepairText(backend string) (instruction, ending string) {
-	if backend == BackendCodex {
+	if backend == BackendCodex || backend == BackendCursorAgent {
 		return repairInstructionFinalMessage, repairEndingFinalMessage
 	}
 	return repairInstructionClaude, repairEndingClaude

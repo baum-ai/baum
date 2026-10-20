@@ -49,7 +49,7 @@ func DecodeFirst(r io.Reader) (Line, error) {
 			if line.SessionMeta == nil {
 				return Line{}, fmt.Errorf("rollout does not start with session_meta")
 			}
-			if err := validateOuterOrdinal(line.Ordinal, outerOrdinal, line.SessionMeta.HistoryMode == "paginated"); err != nil {
+			if err := validateOuterOrdinal(line, outerOrdinal, line.SessionMeta.HistoryMode == "paginated"); err != nil {
 				return Line{}, err
 			}
 			return line, nil
@@ -75,7 +75,7 @@ func Decode(r io.Reader) (lines []Line, torn bool, err error) {
 		if first && line.SessionMeta != nil {
 			paginated = line.SessionMeta.HistoryMode == "paginated"
 		}
-		if err := validateOuterOrdinal(line.Ordinal, outerOrdinal, paginated); err != nil {
+		if err := validateOuterOrdinal(line, outerOrdinal, paginated); err != nil {
 			return Line{}, err
 		}
 		first = false
@@ -146,7 +146,8 @@ func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
 	return line, envelope.Ordinal, nil
 }
 
-func validateOuterOrdinal(ordinal int, outer *int, paginated bool) error {
+func validateOuterOrdinal(line Line, outer *int, paginated bool) error {
+	ordinal := line.Ordinal
 	if !paginated {
 		if outer != nil {
 			return fmt.Errorf("line %d uses a paginated ordinal in a legacy rollout", ordinal)
@@ -154,6 +155,12 @@ func validateOuterOrdinal(ordinal int, outer *int, paginated bool) error {
 		return nil
 	}
 	if outer == nil {
+		// Codex omits envelope ordinals on reasoning and compaction records
+		// in otherwise paginated rollouts. They still occupy their physical
+		// line; every supplied ordinal must agree with that position.
+		if line.Compacted != nil || (line.ResponseItem != nil && line.ResponseItem.Reasoning != nil) {
+			return nil
+		}
 		return fmt.Errorf("line %d has no paginated ordinal", ordinal)
 	}
 	if want := ordinal - 1; *outer != want {

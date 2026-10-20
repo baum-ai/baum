@@ -171,6 +171,12 @@ func TestResolveInstalledShells(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Some machines' system startup files set HOME themselves (CI
+			// runners' /etc/profile.d does), so the shell never reads the
+			// files written here.
+			if got := result.Env["HOME"]; got != home {
+				t.Skipf("the system's startup files set HOME to %q", got)
+			}
 			if result.Env["GITHUB_TOKEN"] != "from-"+tc.name {
 				t.Fatalf("GITHUB_TOKEN %q", result.Env["GITHUB_TOKEN"])
 			}
