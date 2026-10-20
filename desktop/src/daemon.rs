@@ -595,9 +595,17 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         /// A stand-in for the bundled baum binary.
+        /// The script is written to a temporary file and copied into place
+        /// by a child process. A file this process had open for writing
+        /// could still be open in a child another test thread was forking
+        /// at that moment, and running it would then fail with ETXTBSY;
+        /// renaming would not help, as the inode stays the same.
         fn fake_cli(dir: &Path, script: &str) -> PathBuf {
             let path = dir.join("baum");
-            fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+            let source = dir.join("baum.script");
+            fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
+            let copied = Command::new("cp").arg(&source).arg(&path).status().unwrap();
+            assert!(copied.success());
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
             path
         }

@@ -8,14 +8,19 @@
 //! the Windows installer), it downloads the update in the background, waits
 //! while the daemon runs generation jobs, and asks before it restarts. A deb
 //! install, or any other copy the updater cannot replace, only says that a
-//! new version exists and links to its release page.
+//! new version exists and links to its release page. So does a version whose
+//! installation failed before: it is remembered in the app's config
+//! directory and never offered for installation again.
 
 use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+use serde::{Deserialize, Serialize};
 use tauri::utils::config::BundleType;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -33,10 +38,17 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// How often the app looks at the clock between checks. Wall-clock time is
 /// compared, so a computer that slept through the day checks when it wakes.
 const CLOCK_TICK: Duration = Duration::from_secs(10 * 60);
-/// Bounds the manifest request and the download.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A request that receives nothing for this long is abandoned. A slow
+/// download that keeps receiving data is not cut off.
+const STALL_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const JOBS_POLL: Duration = Duration::from_secs(60);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long `baum daemon stop` may take before a Windows update.
+#[cfg(windows)]
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+/// In the app's config directory: versions whose installation failed.
+const STATE_FILE: &str = "updates.json";
 
 /// What the app does with an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +101,44 @@ fn wait_until_idle(mut running: impl FnMut() -> usize, mut sleep: impl FnMut(Dur
         }
         sleep(JOBS_POLL);
     }
+}
+
+/// What the updater remembers between app starts.
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Remembered {
+    #[serde(default)]
+    failed_installs: Vec<String>,
+}
+
+fn load(path: &Path) -> Remembered {
+    fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+fn install_failed_before(path: &Path, version: &str) -> bool {
+    load(path).failed_installs.iter().any(|v| v == version)
+}
+
+fn remember_failed_install(path: &Path, version: &str) -> std::io::Result<()> {
+    let mut remembered = load(path);
+    if !remembered.failed_installs.iter().any(|v| v == version) {
+        remembered.failed_installs.push(version.to_string());
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let partial = path.with_extension("json.partial");
+    fs::write(&partial, serde_json::to_vec_pretty(&remembered)?)?;
+    fs::rename(partial, path)
+}
+
+fn state_file<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(STATE_FILE))
 }
 
 fn running_jobs() -> usize {
@@ -144,7 +194,11 @@ impl Session {
     fn check<R: Runtime>(&mut self, app: &AppHandle<R>) -> Result<(), String> {
         let updater = app
             .updater_builder()
-            .timeout(REQUEST_TIMEOUT)
+            .configure_client(|client| {
+                client
+                    .connect_timeout(CONNECT_TIMEOUT)
+                    .read_timeout(STALL_TIMEOUT)
+            })
             .build()
             .map_err(|e| e.to_string())?;
         let Some(update) =
@@ -153,12 +207,17 @@ impl Session {
             self.ready = None;
             return Ok(());
         };
+        let state = state_file(app);
+        let failed_before = state
+            .as_deref()
+            .is_some_and(|path| install_failed_before(path, &update.version));
         match mode(tauri::utils::platform::bundle_type()) {
-            Mode::Announce => {
-                self.announce(app, &update, None);
+            Mode::Install if !failed_before => self.install(app, update),
+            _ => {
+                let reason = failed_before.then_some("An earlier attempt to install it failed.");
+                self.announce(app, &update, reason);
                 Ok(())
             }
-            Mode::Install => self.install(app, update),
         }
     }
 
@@ -190,8 +249,22 @@ impl Session {
         }
         // A job may have started while the question was open.
         wait_until_idle(running_jobs, thread::sleep);
+        // Windows cannot replace the bundled baum.exe while the daemon runs
+        // from it. Stopping marks the daemon as stopped by the user, so hooks
+        // leave it alone; the updated app's `baum daemon ensure` starts it
+        // again and clears that mark. The installer's pre-install hook stops
+        // it too (windows/installer-hooks.nsh).
+        #[cfg(windows)]
+        stop_daemon();
         if let Err(e) = update.install(&bytes) {
             eprintln!("baum desktop: cannot install baum {}: {e}", update.version);
+            #[cfg(windows)]
+            restart_daemon();
+            if let Some(path) = state_file(app)
+                && let Err(e) = remember_failed_install(&path, &update.version)
+            {
+                eprintln!("baum desktop: cannot record the failed update: {e}");
+            }
             self.announce(
                 app,
                 &update,
@@ -205,7 +278,7 @@ impl Session {
     }
 
     fn announce<R: Runtime>(&mut self, app: &AppHandle<R>, update: &Update, reason: Option<&str>) {
-        if reason.is_none() && self.announced.as_deref() == Some(update.version.as_str()) {
+        if self.announced.as_deref() == Some(update.version.as_str()) {
             return;
         }
         self.announced = Some(update.version.clone());
@@ -235,10 +308,49 @@ impl Session {
     }
 }
 
+#[cfg(windows)]
+fn stop_daemon() {
+    let stopped =
+        daemon::cli_path().and_then(|cli| daemon::run(&cli, &["daemon", "stop"], STOP_TIMEOUT));
+    if let Err(e) = stopped {
+        eprintln!(
+            "baum desktop: cannot stop the daemon before updating: {}",
+            e.message
+        );
+    }
+}
+
+#[cfg(windows)]
+fn restart_daemon() {
+    let started = daemon::cli_path()
+        .and_then(|cli| daemon::run(&cli, &["daemon", "ensure"], daemon::ENSURE_TIMEOUT));
+    if let Err(e) = started {
+        eprintln!("baum desktop: cannot start the daemon again: {}", e.message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use base64::Engine;
+
+    #[test]
+    fn remembers_failed_installs() {
+        let dir = std::env::temp_dir().join(format!("baum-desktop-updates-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("config").join(STATE_FILE);
+        assert!(!install_failed_before(&path, "1.2.3"));
+        remember_failed_install(&path, "1.2.3").unwrap();
+        remember_failed_install(&path, "1.2.3").unwrap();
+        assert!(install_failed_before(&path, "1.2.3"));
+        assert!(!install_failed_before(&path, "1.2.4"));
+        assert_eq!(load(&path).failed_installs, vec!["1.2.3"]);
+        // A damaged file forgets, rather than blocking updates.
+        fs::write(&path, "not json").unwrap();
+        assert!(!install_failed_before(&path, "1.2.3"));
+        remember_failed_install(&path, "1.2.4").unwrap();
+        assert_eq!(load(&path).failed_installs, vec!["1.2.4"]);
+    }
 
     fn config() -> serde_json::Value {
         serde_json::from_slice(
