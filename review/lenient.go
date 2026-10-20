@@ -16,7 +16,8 @@ import (
 // unions become discriminated allOf/if/then chains so a wrong branch is
 // reported by name, optional fields accept null, fields with a canonical empty
 // value or a host-derived value are not required, prefixed identifiers
-// accept any spelling, and code sources name their revision by role and an
+// accept any spelling (references keep only their allowed prefixes, in any
+// case), and code sources name their revision by role and an
 // excerpt by its hunk headers. normalizeAuthored maps a document this schema
 // accepts onto the strict contract before it is validated.
 func lenientContract(strict map[string]any) (map[string]any, error) {
@@ -274,11 +275,35 @@ func relaxSchema(node map[string]any, defs map[string]any) {
 			}
 		}
 	}
-	if pattern, ok := node["pattern"].(string); ok && identifierPattern(pattern) != nil {
-		delete(node, "pattern")
-		delete(node, "maxLength")
-		node["minLength"] = 1
+	if pattern, ok := node["pattern"].(string); ok {
+		if rule := identifierPattern(pattern); rule != nil {
+			delete(node, "pattern")
+			delete(node, "maxLength")
+			node["minLength"] = 1
+			if len(rule.prefixes) > 0 {
+				node["pattern"] = referenceKindPattern(rule.prefixes)
+			}
+		}
 	}
+}
+
+// referenceKindPattern constrains a reference to its allowed kinds of
+// identifier while leaving the spelling after the prefix to normalization. A
+// reference names an item only through its prefix: without one, an attention
+// reference could be generated as the section's own ID or a hunk ID. Every
+// provider that receives the model schema must accept it, so case is spelled
+// out in character classes rather than with a flag, and the pattern uses only
+// an anchor, a group, character classes and +.
+func referenceKindPattern(prefixes []string) string {
+	kinds := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		var kind strings.Builder
+		for _, letter := range prefix {
+			kind.WriteString("[" + strings.ToUpper(string(letter)) + string(letter) + "]")
+		}
+		kinds = append(kinds, kind.String())
+	}
+	return "^(" + strings.Join(kinds, "|") + ")[^A-Za-z0-9]+[A-Za-z0-9]"
 }
 
 // identifierPattern recognizes the patterns normalizeIdentifier can satisfy
