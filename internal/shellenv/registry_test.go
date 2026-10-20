@@ -6,7 +6,7 @@ import (
 )
 
 func TestWithPathReplacesPathInAnyCase(t *testing.T) {
-	got := withPath([]string{`PATH=C:\agent\bin`, `path=C:\other`, `=C:=C:\work`, `GH_TOKEN=x`, `noequals`}, `C:\Windows\system32;C:\Users\ada\AppData\Local\Microsoft\WinGet\Links`)
+	got := withPath([]string{`PATH=C:\agent\bin`, `path=C:\elsewhere`, `=C:=C:\work`, `GH_TOKEN=x`, `noequals`}, `C:\Windows\system32;C:\Users\ada\AppData\Local\Microsoft\WinGet\Links`)
 	want := map[string]string{
 		"Path":     `C:\Windows\system32;C:\Users\ada\AppData\Local\Microsoft\WinGet\Links`,
 		"GH_TOKEN": "x",
