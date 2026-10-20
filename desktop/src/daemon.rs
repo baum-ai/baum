@@ -50,6 +50,14 @@ pub struct Launch {
     token: String,
 }
 
+impl Launch {
+    /// The launch capability, which the daemon also accepts as a bearer token
+    /// on its `/api/` routes. Never log it.
+    pub fn bearer(&self) -> &str {
+        &self.token
+    }
+}
+
 /// Why the app could not reach a daemon, with whatever the user needs to see.
 #[derive(Debug, Clone)]
 pub struct Failure {
@@ -103,15 +111,15 @@ pub fn ensure(cli: &Path, timeout: Duration) -> Result<Launch, Failure> {
     Ok(launch)
 }
 
-struct Output {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
+pub struct Output {
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
 }
 
 /// Runs the CLI with a deadline. Output is read line by line on separate
 /// threads, so a detached daemon that kept a copy of a pipe cannot hold the
 /// app up once the command itself has exited.
-fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
+pub fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
     let mut child = Command::new(cli)
         .args(args)
         .stdin(Stdio::null())
@@ -330,6 +338,24 @@ pub fn log_tail(state: &Path, max: usize) -> Vec<String> {
         }
     }
     out
+}
+
+/// A launch on a local test server, for other modules' tests.
+#[cfg(test)]
+pub fn test_launch(port: u16) -> Launch {
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+    let (url, token) = launch_url(&format!("http://127.0.0.1:{port}/#token={token}")).unwrap();
+    Launch {
+        status: Status {
+            version: String::new(),
+            pid: 0,
+            app: None,
+            state: PathBuf::from("/s"),
+        },
+        origin: url.origin(),
+        url,
+        token,
+    }
 }
 
 #[cfg(test)]
