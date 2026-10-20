@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
-import { App } from "./app";
+import { App, blockedReasonText, estimateReasonText } from "./app";
 import { appBase, cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
@@ -201,6 +201,92 @@ it("shows an unpriced model exclusion and keeps generation disabled", async () =
       (b) => b.textContent === "Confirm estimate and generate",
     )!.disabled,
   ).toBe(true);
+});
+
+it("runs an unpriced cursor-agent review only after acknowledging its cost", async () => {
+  entries = [entry(1)];
+  const original = globalThis.fetch;
+  const submitted: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit, ...rest: unknown[]) => {
+      if (path === "/s/test-ns/api/jobs/estimate") {
+        return Response.json({
+          id: "quote",
+          estimate_usd: null,
+          price_version: "test",
+          expires_at: "2026-10-15T15:00:00Z",
+          items: [
+            {
+              clone: "clone",
+              pr: 1,
+              head_sha: "head",
+              backend: "cursor-agent",
+              model: "",
+              estimate_usd: null,
+              estimate_reason: "billed_by_cursor_subscription",
+              max_tokens: 1000,
+              max_calls: 4,
+              requires_isolation_confirmation: false,
+            },
+          ],
+        });
+      }
+      if (path === "/s/test-ns/api/jobs" && init?.method === "POST") {
+        submitted.push(JSON.parse(String(init.body)));
+        return Response.json({ jobs: [] });
+      }
+      return original(path, init, ...(rest as []));
+    }),
+  );
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await act(async () =>
+    node
+      .querySelector<HTMLInputElement>('input[aria-label="Select all visible pull requests"]')!
+      .click(),
+  );
+  await act(async () =>
+    Array.from(node.querySelectorAll("button"))
+      .find((b) => b.textContent?.includes("Generate selected"))!
+      .click(),
+  );
+  expect(node.textContent).toContain(
+    "Cost is billed by your Cursor subscription; baum can't estimate it.",
+  );
+  expect(node.textContent).not.toContain("billed_by_cursor_subscription");
+  expect(node.textContent).not.toContain("Excluded");
+  const confirm = () =>
+    Array.from(node.querySelectorAll("button")).find(
+      (b) => b.textContent === "Confirm estimate and generate",
+    )!;
+  expect(confirm().disabled).toBe(true);
+  const acknowledge = Array.from(node.querySelectorAll("label"))
+    .find((l) => l.textContent?.includes("can't estimate the cost"))!
+    .querySelector("input")!;
+  await act(async () => acknowledge.click());
+  expect(confirm().disabled).toBe(false);
+  await act(async () => confirm().click());
+  expect(submitted).toEqual([
+    {
+      estimate_id: "quote",
+      confirm_estimate: true,
+      confirm_isolation: false,
+      confirm_unpriced: true,
+    },
+  ]);
+});
+
+it("explains blocked items in words, not reason codes", () => {
+  expect(blockedReasonText("unknown_model_price")).toContain("Choose a priced model");
+  expect(blockedReasonText("isolation_confirmation_required")).toContain("on its own");
+  expect(blockedReasonText("something_new")).not.toContain("something_new");
+  expect(estimateReasonText("billed_by_cursor_subscription")).toContain("Cursor subscription");
 });
 
 it("groups requested PRs before authored PRs once and keeps saved history separate", () => {

@@ -28,18 +28,26 @@ type Prepared struct {
 	ConfigDigest string `json:"config_digest"`
 	PriceVersion string `json:"price_version"`
 	Item
-	Repository                    string   `json:"repository"`
-	HeadSHA                       string   `json:"head_sha"`
-	Backend                       string   `json:"backend"`
-	Model                         string   `json:"model"`
-	MaxTokens                     int      `json:"max_tokens,omitempty"`
-	MaxCalls                      int      `json:"max_calls,omitempty"`
-	EstimateUSD                   *float64 `json:"estimate_usd"`
-	RequiresIsolationConfirmation bool     `json:"requires_isolation_confirmation"`
-	BlockedReason                 string   `json:"blocked_reason,omitempty"`
+	Repository  string   `json:"repository"`
+	HeadSHA     string   `json:"head_sha"`
+	Backend     string   `json:"backend"`
+	Model       string   `json:"model"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
+	MaxCalls    int      `json:"max_calls,omitempty"`
+	EstimateUSD *float64 `json:"estimate_usd"`
+	// EstimateReason, when set, is why EstimateUSD is nil on purpose: the
+	// backend is billed outside the price list (pricing.ReasonBilledByCursor).
+	// Such an item runs only after its own acknowledgement.
+	EstimateReason                string `json:"estimate_reason,omitempty"`
+	RequiresIsolationConfirmation bool   `json:"requires_isolation_confirmation"`
+	BlockedReason                 string `json:"blocked_reason,omitempty"`
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
 	// a confirmed run does not.
 	Draft bool `json:"draft,omitempty"`
+	// RefuseDraft is set by the queue, never stored, on the inputs of an
+	// automatic job it executes: the executor refuses the run with
+	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
+	RefuseDraft bool `json:"-"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -51,6 +59,15 @@ func (p Prepared) sameConfirmedInputs(o Prepared) bool {
 	}
 	p.EstimateUSD, o.EstimateUSD = nil, nil
 	return p == o
+}
+
+// sameEstimate reports whether a fresh preparation carries the confirmed
+// estimate: the same amount, or the same reason it has none.
+func sameEstimate(current, confirmed Prepared) bool {
+	if current.EstimateUSD == nil || confirmed.EstimateUSD == nil {
+		return current.EstimateUSD == nil && confirmed.EstimateUSD == nil && current.EstimateReason != "" && current.EstimateReason == confirmed.EstimateReason
+	}
+	return *current.EstimateUSD == *confirmed.EstimateUSD
 }
 
 type Estimate struct {
@@ -102,14 +119,16 @@ type Queue struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	changed   func(Job)
+	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
+	clock func() time.Time
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
-	// gate, when set, says why an automatic job may not run now ("" when
-	// it may); see SetAutomaticGate.
-	gate func(Job) string
+	// gate, when set, answers whether an automatic job may run now (and
+	// under which daily cap); see SetAutomaticGate.
+	gate func(Job) Admission
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -339,7 +358,11 @@ func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estima
 			known = false
 		}
 		if p.BlockedReason == "" {
-			if p.EstimateUSD == nil {
+			if p.EstimateUSD == nil && p.EstimateReason != "" {
+				// Billed elsewhere: the total is unknown, the item is not
+				// blocked, and Submit asks for its acknowledgement.
+				known = false
+			} else if p.EstimateUSD == nil {
 				known = false
 				p.BlockedReason = "unknown_model_price"
 			} else {
@@ -369,7 +392,24 @@ func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estima
 	q.estimates[estimate.ID] = estimate
 	return estimate, nil
 }
+
+// Confirmation is what a person confirmed for an estimate: the estimate
+// itself, running an agent on a fork or an author without known write access,
+// and running items baum cannot estimate because another service bills them.
+type Confirmation struct {
+	Estimate, Isolation, Unpriced bool
+}
+
+// Submit is SubmitConfirmed without acknowledging unpriced items.
 func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolation bool) ([]Job, error) {
+	return q.SubmitConfirmed(ctx, estimateID, Confirmation{Estimate: confirmed, Isolation: isolation})
+}
+
+// SubmitConfirmed queues the unblocked items of a current estimate. An item
+// with an EstimateReason needs Unpriced, as one needing isolation
+// confirmation needs Isolation.
+func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confirmation) ([]Job, error) {
+	confirmed, isolation := c.Estimate, c.Isolation
 	q.mu.Lock()
 	e, ok := q.estimates[estimateID]
 	q.mu.Unlock()
@@ -384,11 +424,14 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 		if p.RequiresIsolationConfirmation && !isolation {
 			return nil, errors.New("separate isolation confirmation is required")
 		}
+		if p.EstimateReason != "" && !c.Unpriced {
+			return nil, errors.New("acknowledging that the cost cannot be estimated is required")
+		}
 		current, version, err := q.executor.Prepare(ctx, p.Item)
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || current.EstimateUSD == nil || p.EstimateUSD == nil || *current.EstimateUSD != *p.EstimateUSD {
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) {
 			return nil, errors.New("generation inputs changed; estimate again")
 		}
 		prepared = append(prepared, current)
@@ -540,7 +583,9 @@ func (q *Queue) worker() {
 			q.mu.Unlock()
 			q.signal()
 			q.notify(j)
-			cost, err := q.executor.Execute(ctx, j.Prepared, func(p Progress) {
+			inputs := j.Prepared
+			inputs.RefuseDraft = j.Automatic
+			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
 				q.jobs[i].Phase = p.Phase
 				q.jobs[i].Calls = p.Calls
@@ -570,7 +615,14 @@ func (q *Queue) worker() {
 			current.Phase = "finished"
 			current.UpdatedAt = time.Now().UTC()
 			current.State = "completed"
-			if err != nil {
+			var refused *NotAutomaticError
+			switch {
+			case err != nil && current.Automatic && errors.As(err, &refused):
+				// The recheck found what automatic generation skips (a PR
+				// turned draft) before any model call.
+				current.State = "cancelled"
+				current.Reason = refused.Reason
+			case err != nil:
 				current.State = "failed"
 				current.Reason = string(generate.CategoryOf(err))
 				if current.Reason == "" {

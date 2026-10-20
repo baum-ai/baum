@@ -479,3 +479,64 @@ func TestSetupInstallsUserHooksOnlyForHostedUsers(t *testing.T) {
 		})
 	}
 }
+
+// With every repository already set up, setup still installs user-wide hooks
+// that are missing, after the usual confirmation.
+func TestSetupAllInstallsPendingUserHooksWhenRepositoriesAreDone(t *testing.T) {
+	setup := func(t *testing.T) string {
+		stub := workingEntire(t)
+		addStubAgent(t, stub.dir, "codex")
+		setTempConfigHome(t)
+		t.Setenv(serverEnvVar, failingServer(t))
+		t.Setenv(tokenEnvVar, "provisioned")
+		parent := t.TempDir()
+		newGitHubRepo(t, parent, "demo")
+		t.Chdir(parent)
+		if _, _, err := runCLI(t, "setup", "--all", "--yes"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := runCLI(t, "hooks", "uninstall", "--user"); err != nil {
+			t.Fatal(err)
+		}
+		return os.Getenv("HOME")
+	}
+	installed := func(home string) bool {
+		for _, file := range []string{".claude/settings.json", ".codex/hooks.json"} {
+			contents, err := os.ReadFile(filepath.Join(home, file))
+			if err == nil && strings.Contains(string(contents), "--check --user") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("missing hooks are installed after confirmation", func(t *testing.T) {
+		home := setup(t)
+		stdout, _, err := runCLIWithInput(t, "yes\n", "setup", "--all")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"Setup also adds baum's user-wide hooks", "Continue?", "Installed baum's Claude Code hooks"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("output misses %q:\n%s", want, stdout)
+			}
+		}
+		if !installed(home) {
+			t.Error("user-wide hooks were not installed")
+		}
+		stdout, _, err = runCLIWithInput(t, "", "setup", "--all")
+		if err != nil || !strings.Contains(stdout, "No repositories need setup.") || strings.Contains(stdout, "Continue?") {
+			t.Errorf("rerun with hooks present: %v\n%s", err, stdout)
+		}
+	})
+	t.Run("declined confirmation writes nothing", func(t *testing.T) {
+		home := setup(t)
+		stdout, _, err := runCLIWithInput(t, "no\n", "setup", "--all")
+		if err != nil || !strings.Contains(stdout, "Setup cancelled.") {
+			t.Fatalf("err = %v\n%s", err, stdout)
+		}
+		if installed(home) {
+			t.Error("hooks were installed after declining")
+		}
+	})
+}

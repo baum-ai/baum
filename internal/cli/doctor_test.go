@@ -75,9 +75,12 @@ func TestDoctorJSONShape(t *testing.T) {
 	bin := doctorMachine(t)
 	fakeTool(t, bin, "git", `echo "git version 2.43.0"`)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTEDclikey000000000000000000000")
+	// claude is configured but not installed, so there is a problem; auto
+	// would use the Anthropic API.
+	t.Setenv("BAUM_BACKEND", "claude")
 	stdout, _, err := run(t, "internal", "doctor", "--json", "--offline")
 	if ExitCode(err) != ExitDiagnostics {
-		t.Fatalf("err = %v (no backend is installed, so there is a problem)", err)
+		t.Fatalf("err = %v (the configured backend is not installed, so there is a problem)", err)
 	}
 	if strings.Contains(stdout, "PLANTED") {
 		t.Errorf("the key leaked:\n%s", stdout)
@@ -110,8 +113,11 @@ func TestDoctorJSONShape(t *testing.T) {
 	if git := byID["git"]; git.Status != doctor.StatusOK || git.Version != "2.43.0" || git.Path != filepath.Join(bin, "git") {
 		t.Errorf("git = %+v", git)
 	}
-	if auto := byID["backend-auto"]; auto.Status != doctor.StatusProblem || auto.Fix == "" {
+	if auto := byID["backend-auto"]; auto.Status != doctor.StatusOK || !strings.Contains(auto.Detail, "picks anthropic") {
 		t.Errorf("backend-auto = %+v", auto)
+	}
+	if configured := byID["backend-configured"]; configured.Status != doctor.StatusProblem || configured.Fix == "" {
+		t.Errorf("backend-configured = %+v", configured)
 	}
 }
 

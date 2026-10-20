@@ -239,12 +239,23 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "cat-file", "--batch")
 	// GIT_NO_LAZY_FETCH (git 2.44 and later) keeps a partial clone from
 	// fetching a missing blob. Older git ignores it, so the timeout kills the
-	// whole process group: a fetch git started cannot outlive it or hold the
-	// pipe open.
+	// whole process group on Unix. Where only git itself is killed (Windows) a
+	// fetch child can keep the pipe open, so the read is also abandoned at the
+	// deadline.
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0")
 	proc.Configure(cmd)
 	cmd.WaitDelay = time.Second
-	cmd.Stdin = strings.NewReader(request.String())
+	return readsDispatcherFrom(ctx, cmd, request.String())
+}
+
+// readsDispatcherFrom runs cmd with stdin and reports whether its output
+// carries the dispatcher, returning false once ctx ends. The read happens in
+// a goroutine because a descendant of cmd that outlives it (Windows kills
+// only the process, not its children) can hold the stdout pipe open, and a
+// blocking read would then ignore the deadline. On timeout the process is
+// killed and the read is abandoned; it ends when the pipe closes.
+func readsDispatcherFrom(ctx context.Context, cmd *exec.Cmd, stdin string) bool {
+	cmd.Stdin = strings.NewReader(stdin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false
@@ -252,9 +263,17 @@ func onboardedRepository(ctx context.Context, dir string) bool {
 	if err := cmd.Start(); err != nil {
 		return false
 	}
-	found := readsDispatcher(bufio.NewReader(stdout))
-	cancel()
-	_ = cmd.Wait()
+	result := make(chan bool, 1)
+	go func() { result <- readsDispatcher(bufio.NewReader(stdout)) }()
+	found := false
+	select {
+	case found = <-result:
+	case <-ctx.Done():
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	go func() { _ = cmd.Wait() }()
 	return found
 }
 

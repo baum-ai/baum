@@ -83,9 +83,11 @@ type Options struct {
 	// protocol to match.
 	Methods map[string]Method
 	// Respawn starts the daemon executable a newer client named, detached,
-	// to take over once this daemon exits (see StopParams). Without it such
-	// requests stop the daemon only when it is idle, and are refused while
-	// it is not.
+	// to take over once this daemon exits (see StopParams). The daemon gives
+	// it only an executable it trusts (see executablePolicy), with symbolic
+	// links resolved, checked when it is requested and again just before.
+	// Without it such requests stop the daemon only when it is idle, and are
+	// refused while it is not.
 	Respawn func(executable string, status Status) error
 	// OpenLogger opens the log once the lock is held, so a daemon that loses
 	// the race never rotates the winner's log. It replaces Logger.
@@ -96,6 +98,8 @@ type Options struct {
 	// lock; zero is DefaultLockTimeout.
 	LockTimeout time.Duration
 	Logger      *slog.Logger
+	// trust replaces trustedExecutable in tests.
+	trust func(path string) (string, error)
 }
 
 // Run is the daemon. It returns ErrRunning when another daemon holds the
@@ -194,7 +198,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	stopCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn}
+	trust := opts.trust
+	if trust == nil {
+		trust = trustedExecutable
+	}
+	control := &controller{status: status, stop: stop, methods: opts.Methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
 	self.Store(control)
 	defer self.Store(nil)
 	runCtx, cancelRun := context.WithCancel(context.Background())
@@ -303,12 +311,18 @@ type controller struct {
 	drain   func() bool
 	resume  func()
 	respawn func(string, Status) error
-	// restartInto is the executable of the newest client that asked the
-	// daemon to restart as its version, and restartVersion that version.
+	trust   func(string) (string, error)
+	// restartInto is the trusted executable of the newest client that asked
+	// the daemon to restart as its version, and restartVersion that version.
 	restartInto, restartVersion string
 	wg                          sync.WaitGroup
 }
 
+// setStopping marks the daemon stopping when it stops for another reason
+// than a stop request (its context ended or the app transport failed). A stop
+// request and the idle restart mark it themselves, under the lock that
+// decides to stop and before answering, so no hello answered in between
+// reports a daemon that is about to disappear as usable.
 func (c *controller) setStopping() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -320,7 +334,8 @@ func (c *controller) current() Status {
 	return c.status
 }
 
-// drained stops accepting paid work if none is pending.
+// drained stops accepting paid work if none is pending. Callers may hold
+// c.mu: the application's drain never calls back into the controller.
 func (c *controller) drained() bool { return c.drain == nil || c.drain() }
 
 // undrain accepts paid work again.
@@ -341,19 +356,30 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		c.mu.Lock()
-		executable, status := c.restartInto, c.status
-		c.mu.Unlock()
 		// Drain refuses new jobs in the same step that finds none pending,
 		// so a job confirmed now gets a "restarting, retry" answer instead of
-		// being interrupted.
+		// being interrupted. The daemon is marked stopping under the same
+		// lock, so no hello sees it idle and usable in between.
+		c.mu.Lock()
+		executable := c.restartInto
 		if executable == "" || !c.drained() {
+			c.mu.Unlock()
 			continue
 		}
-		c.setStopping()
-		c.log.Info("idle; restarting as the newer version")
-		if err := c.respawn(executable, status); err != nil {
-			c.log.Error("could not start the newer version; keeping this one", "error", err)
+		c.status.Stopping = true
+		status := c.status
+		c.mu.Unlock()
+		// Check again: the file may have changed since it was requested.
+		resolved, err := c.trust(executable)
+		if err != nil {
+			c.log.Warn("restart executable refused; keeping this version", "reason", err.Error())
+		} else {
+			c.log.Info("idle; restarting as the newer version")
+			if err = c.respawn(resolved, status); err != nil {
+				c.log.Error("could not start the newer version; keeping this one", "error", err)
+			}
+		}
+		if err != nil {
 			c.mu.Lock()
 			c.restartInto, c.restartVersion, c.status.RestartPending, c.status.Stopping = "", "", false, false
 			c.mu.Unlock()
@@ -440,23 +466,39 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) != nil {
 			return Response{Error: &Error{Code: CodeBadRequest, Message: "invalid stop parameters"}}, false
 		}
-		if params.WhenIdle && !c.drained() {
-			if c.respawn == nil || !filepath.IsAbs(params.Executable) {
-				return Response{OK: true, Status: &status}, false
-			}
-			c.mu.Lock()
-			// Racing clients of different versions: the newest wins.
-			if c.restartInto == "" || Older(c.restartVersion, req.Client) {
-				c.restartInto, c.restartVersion = params.Executable, req.Client
-				c.log.Info("restart requested once idle", "client", req.Client)
-			}
-			c.status.RestartPending = true
+		// A plain stop, or one asked to wait for idle that finds the daemon
+		// idle, marks it stopping under the same lock as the idle check and
+		// before answering, so no hello in between reports it usable.
+		c.mu.Lock()
+		if !params.WhenIdle || c.drained() {
+			c.status.Stopping = true
 			status = c.status
 			c.mu.Unlock()
+			return Response{OK: true, Status: &status}, true
+		}
+		c.mu.Unlock()
+		// Only a newer client may name what the daemon restarts into,
+		// and only an executable the daemon trusts: a process that can
+		// reach the socket may be sandboxed, unable to run what it can
+		// write. Anything else leaves the daemon as it is.
+		if c.respawn == nil || params.Executable == "" || !Older(status.Version, req.Client) {
 			return Response{OK: true, Status: &status}, false
 		}
-		status.Stopping = true
-		return Response{OK: true, Status: &status}, true
+		executable, err := c.trust(params.Executable)
+		if err != nil {
+			c.log.Warn("restart executable refused", "client", req.Client, "reason", err.Error())
+			return Response{OK: true, Status: &status}, false
+		}
+		c.mu.Lock()
+		// Racing clients of different versions: the newest wins.
+		if c.restartInto == "" || Older(c.restartVersion, req.Client) {
+			c.restartInto, c.restartVersion = executable, req.Client
+			c.log.Info("restart requested once idle", "client", req.Client)
+		}
+		c.status.RestartPending = true
+		status = c.status
+		c.mu.Unlock()
+		return Response{OK: true, Status: &status}, false
 	}
 	if req.Protocol != Protocol {
 		return Response{Status: &status, Error: &Error{Code: CodeProtocolMismatch, Message: "the daemon speaks a different control protocol"}}, false

@@ -78,7 +78,9 @@ type Request struct {
 	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
-	// read, as "baum internal sessions" prints them. It defaults to discarding them.
+	// read, as "baum internal sessions" prints them, and for each malformed
+	// Entire-Checkpoint value skipped beside a valid one. It defaults to
+	// discarding them.
 	Warn io.Writer
 }
 
@@ -228,7 +230,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	found, truth, err := loadSessions(ctx, dir, req.Sessions, commits, req.Warn)
+	found, truth, err := loadSessions(ctx, dir, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
 	if err != nil {
 		return Result{}, err
 	}
@@ -238,8 +240,10 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // loadSessions reads the sessions recorded for the clone containing dir that
 // were written recently enough to match commits, and the ground truth the
 // commits' Entire-Checkpoint trailers give, with the sessions only those
-// checkpoints hold. baum's own generation runs are left out of both.
-func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+// checkpoints hold. baum's own generation runs are left out of both. remote
+// is the clone's remote a missing checkpoint's fetch hint names; "" names a
+// placeholder.
+func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
 	}
@@ -255,7 +259,7 @@ func loadSessions(ctx context.Context, dir string, opts sessions.Options, commit
 			_, _ = fmt.Fprintf(warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	truth, extra := checkpointLinks(ctx, dir, commits, found, warn)
+	truth, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
 	found, truth = withoutGenerationRuns(append(found, extra...), truth)
 	return found, truth, nil
 }
