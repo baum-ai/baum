@@ -1682,7 +1682,10 @@ A daemon speaking a newer protocol is an
 When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:
 the holder starts `baum daemon run --detached` and waits until it answers,
 and every other caller finds it running once it gets the lock, so concurrent
-calls start exactly one daemon. A daemon that holds the lock but never
+calls start exactly one daemon. The daemon that answers may not be the one
+the holder started (a direct `baum daemon run` of another version can win the
+daemon lock), so it gets the same version and protocol decision as one found
+running. A daemon that holds the lock but never
 answers is reported with its process id from `daemon.json`, not killed.
 
 A detached daemon runs in its own session (Unix `setsid`; Windows

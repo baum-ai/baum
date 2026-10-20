@@ -943,3 +943,36 @@ func TestIdleRestartMarksStoppingWhileDraining(t *testing.T) {
 		t.Fatalf("a hello during the drain saw %+v", status)
 	}
 }
+
+// A "baum daemon run" of an older version that wins the daemon lock while
+// Ensure starts a daemon is judged like one found running: it is replaced,
+// not reported as ensured.
+func TestEnsureReplacesAnOlderDaemonThatWonTheStartRace(t *testing.T) {
+	paths := testPaths(t)
+	var spawned atomic.Int32
+	spawn := func(paths Paths, _ StartOptions) (<-chan struct{}, error) {
+		version := "v1.0.0"
+		if spawned.Add(1) == 1 {
+			version = "v0.9.0"
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if err := Run(ctx, Options{Paths: paths, Version: version}); err != nil {
+				t.Error(err)
+			}
+		}()
+		t.Cleanup(func() { cancel(); <-done })
+		return done, nil
+	}
+	restarted := 0
+	client := &Client{Paths: paths, Version: "v1.0.0", Spawn: spawn, ReadyTimeout: 10 * time.Second, Restarted: func(Status) { restarted++ }}
+	status, err := client.Ensure(context.Background())
+	if err != nil || status.Version != "v1.0.0" || status.Stopping {
+		t.Fatalf("%+v %v", status, err)
+	}
+	if spawned.Load() != 2 || restarted != 1 {
+		t.Fatalf("%d spawned, %d restarted", spawned.Load(), restarted)
+	}
+}
