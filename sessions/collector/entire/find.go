@@ -192,10 +192,32 @@ func refID(ref string) (id string, exactShard, ok bool) {
 		return "", false, false
 	}
 	id, ok = entirecheckpoint.CanonicalID(name)
-	if !ok || name != id || !strings.EqualFold(shard, id[len(id)-2:]) {
+	if !ok || name != id || !sameShard(shard, id[len(id)-2:]) {
 		return "", false, false
 	}
 	return id, shard == id[len(id)-2:], true
+}
+
+// sameShard reports whether shard spells want, an ASCII shard, in any case.
+// strings.EqualFold would also fold other characters onto ASCII ones, such as
+// the Kelvin sign onto k, which no filesystem's case variant produces.
+func sameShard(shard, want string) bool {
+	if len(shard) != len(want) {
+		return false
+	}
+	for i := range len(shard) {
+		if lowerASCII(shard[i]) != lowerASCII(want[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCII(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
 }
 
 // Located reports which of ids the store holds, by canonical id: a ref is

@@ -305,6 +305,23 @@ func TestResolveIgnoresCaseVariantRefs(t *testing.T) {
 	}
 }
 
+// Only the ASCII case of a shard may differ: Unicode folding would take the
+// Kelvin sign for k, and no filesystem lists a ref Entire wrote that way.
+func TestRefIDFoldsOnlyTheASCIICaseOfTheShard(t *testing.T) {
+	const ulid = "01ARZ3NDEKTSV4RRFFQ69G5FKX"
+	for ref, want := range map[string]bool{
+		refPrefix + "KX/" + ulid: true,
+		refPrefix + "kx/" + ulid: true,
+		refPrefix + "KX/" + ulid: false,
+		refPrefix + "Kx/" + ulid: false,
+		refPrefix + "K/" + ulid:  false,
+	} {
+		if _, _, ok := refID(ref); ok != want {
+			t.Errorf("refID(%q) ok = %v, want %v", ref, ok, want)
+		}
+	}
+}
+
 // On a case-insensitive filesystem a loose ref goes in whichever spelling of
 // its shard directory was made first, and git lists it under that spelling:
 // a ULID ref ending in AB written after a 12-hex one in ab/ is listed as
