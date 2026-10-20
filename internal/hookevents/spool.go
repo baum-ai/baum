@@ -18,9 +18,10 @@ import (
 	"github.com/baum-ai/baum/internal/privatefs"
 )
 
-// Spool bounds: the spool never holds more than MaxSpoolEvents events or
-// MaxSpoolBytes bytes. A hook that would pass either drops the oldest events
-// first and logs each one it drops.
+// Spool bounds: MaxSpoolEvents events and MaxSpoolBytes bytes. A hook that
+// would pass either drops the oldest events first and logs each one it drops.
+// Hooks spooling at the same moment can each add one event past the bound;
+// the next Put restores it.
 const (
 	MaxSpoolEvents       = 1000
 	MaxSpoolBytes  int64 = 8 << 20
@@ -63,7 +64,7 @@ func (s *Spool) log() *slog.Logger {
 // Put writes e to the spool, first dropping the oldest events when it would
 // pass a bound.
 func (s *Spool) Put(e Event) error {
-	data, err := json.Marshal(e)
+	data, err := e.encode()
 	if err != nil {
 		return err
 	}
@@ -118,8 +119,8 @@ func (s *Spool) entries() []spooled {
 	return entries
 }
 
-// makeRoom drops the oldest events until one more of size bytes fits. Hooks
-// running at once may each drop one; the bound still holds.
+// makeRoom drops the oldest events until one more of size bytes fits. An event
+// another hook or a drain removed meanwhile is not logged as dropped.
 func (s *Spool) makeRoom(size int64) {
 	maxEvents, maxBytes := s.MaxEvents, s.MaxBytes
 	if maxEvents <= 0 {
@@ -137,7 +138,7 @@ func (s *Spool) makeRoom(size int64) {
 		oldest := entries[0]
 		entries = entries[1:]
 		total -= oldest.size
-		if err := os.Remove(filepath.Join(s.Dir, oldest.name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(s.Dir, oldest.name)); err != nil {
 			continue
 		}
 		s.log().Warn("hook event spool full; dropped the oldest event", "spooled_at", spooledAt(oldest.name), "max_events", maxEvents, "max_bytes", maxBytes)
@@ -160,7 +161,15 @@ func spooledAt(name string) time.Time {
 // is left for a newer daemon.
 func (s *Spool) Drain(record func(Event) error) error {
 	s.removeStaleTemporaries()
-	for _, entry := range s.entries() {
+	entries := s.entries()
+	// Forget the newer events no longer spooled (dropped, or drained by a
+	// newer daemon).
+	for name := range s.newer {
+		if !slices.ContainsFunc(entries, func(entry spooled) bool { return entry.name == name }) {
+			delete(s.newer, name)
+		}
+	}
+	for _, entry := range entries {
 		path := filepath.Join(s.Dir, entry.name)
 		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {

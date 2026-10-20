@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,14 @@ import (
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
+
+// TestMain clears what keeps a hook from starting a daemon, which CI sets;
+// the tests that need it set it themselves.
+func TestMain(m *testing.M) {
+	_ = os.Unsetenv("CI")
+	_ = os.Unsetenv(NoDaemonEnv)
+	os.Exit(m.Run())
+}
 
 // testPaths are short private paths: Unix socket paths are limited to about
 // 100 bytes, which t.TempDir() can exceed.
@@ -45,12 +54,18 @@ type testDaemon struct {
 // run; with events it serves the hook event service as the command line's
 // daemon does. It returns once the application is built or Run failed.
 func runDaemon(paths daemon.Paths, version string, events bool) *testDaemon {
+	return runDaemonWith(paths, version, events, nil)
+}
+
+// runDaemonWith is runDaemon with a Respawn, which a restart as a newer
+// version calls.
+func runDaemonWith(paths daemon.Paths, version string, events bool, respawn func(string, daemon.Status) error) *testDaemon {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &testDaemon{done: make(chan struct{}), cancel: cancel}
 	ready := make(chan *Service, 1)
 	go func() {
 		defer close(d.done)
-		d.err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: version, Start: func(context.Context, *uiserver.Server) (daemon.App, error) {
+		d.err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: version, Respawn: respawn, Start: func(context.Context, *uiserver.Server) (daemon.App, error) {
 			if !events {
 				ready <- nil
 				return daemon.App{}, nil
@@ -73,7 +88,12 @@ func runDaemon(paths daemon.Paths, version string, events bool) *testDaemon {
 // startDaemon runs a daemon until the test ends and waits until it serves.
 func startDaemon(t *testing.T, paths daemon.Paths, version string, events bool) *testDaemon {
 	t.Helper()
-	d := runDaemon(paths, version, events)
+	return startDaemonWith(t, paths, version, events, nil)
+}
+
+func startDaemonWith(t *testing.T, paths daemon.Paths, version string, events bool, respawn func(string, daemon.Status) error) *testDaemon {
+	t.Helper()
+	d := runDaemonWith(paths, version, events, respawn)
 	t.Cleanup(func() {
 		d.stop()
 		if d.err != nil {
@@ -318,19 +338,32 @@ func TestSenderStaysWithinBudgetWhenTheDaemonHangs(t *testing.T) {
 }
 
 // A daemon from before hook events answers that it does not know the method:
-// the event waits in the spool, and the daemon, older than the hook's baum, is
-// asked to restart as it once idle.
-func TestOlderDaemonIsAskedToRestartAndTheEventSpooled(t *testing.T) {
+// the event waits in the spool, and the daemon, older than the hook's baum,
+// restarts as it although idle, so the newer daemon starts without anyone
+// waiting for the old one to exit.
+func TestOlderDaemonRestartsAsTheHooksVersionAndTheEventSpooled(t *testing.T) {
 	paths := testPaths(t)
-	d := startDaemon(t, paths, "v0.1.0", false)
+	respawned := make(chan string, 1)
+	d := startDaemonWith(t, paths, "v0.1.0", false, func(executable string, _ daemon.Status) error {
+		respawned <- executable
+		return nil
+	})
 	sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: noSpawn, Executable: "/usr/local/bin/baum"}
 	if outcome := sender.Send(context.Background(), testEvent("stop")); outcome != Spooled {
 		t.Fatalf("outcome = %v, want Spooled", outcome)
 	}
 	select {
+	case executable := <-respawned:
+		if executable != "/usr/local/bin/baum" {
+			t.Errorf("respawned %q", executable)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the idle older daemon did not restart as the hook's version")
+	}
+	select {
 	case <-d.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the idle older daemon did not stop to be replaced")
+		t.Fatal("the older daemon did not stop after starting its successor")
 	}
 	if len(spooledEvents(t, paths)) != 1 {
 		t.Fatal("the event was not spooled")
@@ -486,6 +519,35 @@ func TestStoreRecordsOnceAcrossRestartsAndNotifiesSubscribers(t *testing.T) {
 	}
 }
 
+func TestEventBoundsKeepInvalidBytesAndEscapedCharactersWithinTheLine(t *testing.T) {
+	e := testEvent("stop")
+	// Invalid bytes become six-byte escapes and <, > and & are escaped too:
+	// the encoding, not the byte length, has to fit.
+	e.Dir = "\xff" + strings.Repeat("<>&\x01", 600)
+	e.Session.TranscriptPath = strings.Repeat("\xfe", 2000)
+	e.Session.Cwd = "abc\xffdéf"
+	e.Bound()
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > maxEventSize {
+		t.Errorf("a bounded event encodes to %d bytes", len(data))
+	}
+	if e.Session.Cwd != "abc\xffdéf" {
+		t.Errorf("a short field with an invalid byte was changed: %q", e.Session.Cwd)
+	}
+	if !strings.HasPrefix(e.Dir, "\xff<>&") {
+		t.Errorf("the field was cut at its first invalid byte: %q", e.Dir[:min(10, len(e.Dir))])
+	}
+	if got := cut("aé", 2); got != "a" {
+		t.Errorf("cut inside a character = %q", got)
+	}
+	if got := cut("a\xffb", 2); got != "a\xff" {
+		t.Errorf("cut after an invalid byte = %q", got)
+	}
+}
+
 func TestEventBoundsKeepItWithinOneControlLine(t *testing.T) {
 	e := testEvent("pre-push")
 	long := strings.Repeat("é", 10_000)
@@ -504,5 +566,193 @@ func TestEventBoundsKeepItWithinOneControlLine(t *testing.T) {
 	}
 	if !json.Valid(data) || !strings.HasPrefix(e.Dir, "é") || len(e.Dir) > maxField {
 		t.Errorf("bounding broke a field: %d bytes", len(e.Dir))
+	}
+}
+
+// The spool can pass its bound while hooks write at once; the next Put
+// restores it.
+func TestConcurrentSpoolWritersAreBoundedByTheNextPut(t *testing.T) {
+	paths := testPaths(t)
+	spool := &Spool{Dir: SpoolDir(paths), MaxEvents: 5}
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Go(func() {
+			if err := (&Spool{Dir: spool.Dir, MaxEvents: 5}).Put(testEvent("stop")); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if err := spool.Put(testEvent("stop")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(spool.entries()); n > 5 {
+		t.Errorf("the spool holds %d events after a Put, over its bound of 5", n)
+	}
+}
+
+func TestDrainForgetsNewerEventsNoLongerSpooled(t *testing.T) {
+	paths := testPaths(t)
+	spool := &Spool{Dir: SpoolDir(paths)}
+	newer := testEvent("stop")
+	newer.V = Version + 1
+	if err := spool.Put(newer); err != nil {
+		t.Fatal(err)
+	}
+	record := func(Event) error { return nil }
+	if err := spool.Drain(record); err != nil || len(spool.newer) != 1 {
+		t.Fatalf("drain: %v, newer %v", err, spool.newer)
+	}
+	for _, entry := range spool.entries() {
+		_ = os.Remove(filepath.Join(spool.Dir, entry.name))
+	}
+	if err := spool.Drain(record); err != nil || len(spool.newer) != 0 {
+		t.Fatalf("drain: %v, newer %v", err, spool.newer)
+	}
+}
+
+// A damaged record loses only its damaged lines: the daemon still opens it.
+func TestStoreSkipsDamagedRecordLines(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "events")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	good, _ := json.Marshal(Record{Received: time.Now(), Via: ViaSocket, Event: testEvent("stop")})
+	content := "not json\n" + strings.Repeat("x", 3*maxRecordLine) + "\n" + string(good) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	records, err := store.Recent(0)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %+v, %v", records, err)
+	}
+}
+
+// Whatever the file system or a daemon start does, Send returns within its
+// budget.
+func TestSendReturnsWithinBudgetWhenSpoolingOrStartingStalls(t *testing.T) {
+	t.Run("slow spool", func(t *testing.T) {
+		paths := testPaths(t)
+		sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: noSpawn, beforeSpool: func() { time.Sleep(2 * Budget) }}
+		start := time.Now()
+		outcome := sender.Send(context.Background(), testEvent("stop"))
+		if elapsed := time.Since(start); elapsed > Budget+50*time.Millisecond {
+			t.Errorf("Send took %s", elapsed)
+		}
+		if outcome != Unfinished {
+			t.Errorf("outcome = %v, want Unfinished", outcome)
+		}
+	})
+	t.Run("start that never serves", func(t *testing.T) {
+		paths := testPaths(t)
+		spawned := make(chan struct{}, 1)
+		sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: func(daemon.Paths, daemon.StartOptions) (<-chan struct{}, error) {
+			spawned <- struct{}{}
+			// A process that never takes the lock, and a slow exec.
+			time.Sleep(2 * Budget)
+			return nil, nil
+		}}
+		start := time.Now()
+		sender.Send(context.Background(), testEvent("stop"))
+		if elapsed := time.Since(start); elapsed > Budget+50*time.Millisecond {
+			t.Errorf("Send took %s", elapsed)
+		}
+		select {
+		case <-spawned:
+		default:
+			t.Error("no daemon was started")
+		}
+		if len(spooledEvents(t, paths)) != 1 {
+			t.Error("the event was not spooled")
+		}
+	})
+}
+
+// A daemon that was started but has not served is not started again by every
+// hook; once one served, the next hook may start one at once.
+func TestHooksBackOffFromADaemonThatDoesNotStart(t *testing.T) {
+	paths := testPaths(t)
+	var spawns atomic.Int32
+	var log bytes.Buffer
+	sender := &Sender{Paths: paths, Version: "v0.2.0", Log: slog.New(slog.NewTextHandler(&log, nil)), Spawn: func(daemon.Paths, daemon.StartOptions) (<-chan struct{}, error) {
+		spawns.Add(1)
+		return nil, nil
+	}}
+	for range 3 {
+		sender.Send(context.Background(), testEvent("stop"))
+	}
+	if n := spawns.Load(); n != 1 {
+		t.Fatalf("started %d daemons, want 1", n)
+	}
+	if !strings.Contains(log.String(), "started moments ago") {
+		t.Errorf("log = %s", log.String())
+	}
+	// A daemon serves, then stops.
+	d := startDaemon(t, paths, "v0.2.0", true)
+	d.stop()
+	sender.Send(context.Background(), testEvent("stop"))
+	if n := spawns.Load(); n != 2 {
+		t.Fatalf("started %d daemons after one served, want 2", n)
+	}
+}
+
+// Hooks do not start a daemon the user stopped, nor where the environment
+// opts out; the events still wait in the spool.
+func TestHooksDoNotStartADaemonTheUserOrEnvironmentRulesOut(t *testing.T) {
+	cases := map[string]func(t *testing.T, paths daemon.Paths){
+		"stopped by the user": func(t *testing.T, paths daemon.Paths) {
+			if err := daemon.MarkStopped(paths); err != nil {
+				t.Fatal(err)
+			}
+		},
+		NoDaemonEnv: func(t *testing.T, _ daemon.Paths) { t.Setenv(NoDaemonEnv, "1") },
+		"CI":        func(t *testing.T, _ daemon.Paths) { t.Setenv("CI", "true") },
+	}
+	for name, setUp := range cases {
+		t.Run(name, func(t *testing.T) {
+			paths := testPaths(t)
+			if err := os.MkdirAll(paths.State, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			setUp(t, paths)
+			var spawns atomic.Int32
+			sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: func(daemon.Paths, daemon.StartOptions) (<-chan struct{}, error) {
+				spawns.Add(1)
+				return nil, nil
+			}}
+			if outcome := sender.Send(context.Background(), testEvent("stop")); outcome != Spooled {
+				t.Fatalf("outcome = %v", outcome)
+			}
+			if spawns.Load() != 0 {
+				t.Error("a daemon was started")
+			}
+		})
+	}
+}
+
+// A hook starts the daemon without its TMPDIR, which an agent sandbox points
+// at a directory that lasts one session.
+func TestHooksStartTheDaemonWithoutTheirTMPDIR(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("BAUM_HOOK_TEST_MARK", "kept")
+	var env []string
+	sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: func(_ daemon.Paths, start daemon.StartOptions) (<-chan struct{}, error) {
+		env = start.Env
+		return nil, nil
+	}}
+	sender.Send(context.Background(), testEvent("stop"))
+	if !slices.Contains(env, "BAUM_HOOK_TEST_MARK=kept") {
+		t.Fatalf("the daemon's environment lacks the hook's: %d entries", len(env))
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TMPDIR=") {
+			t.Errorf("the daemon inherits %s", entry)
+		}
 	}
 }

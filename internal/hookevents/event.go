@@ -11,8 +11,10 @@
 package hookevents
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
 	"unicode/utf8"
@@ -120,16 +122,14 @@ func New(kind, agent, name, dir, client string) Event {
 	return Event{V: Version, ID: NewID(), Time: time.Now().UTC(), Kind: kind, Agent: agent, Name: name, Dir: dir, Client: client}
 }
 
-// Bound cuts every field to the event bounds, so a hook never builds an event
-// the daemon would refuse for its size.
+// Bound cuts the event to the event bounds, so a hook never builds an event
+// the daemon would refuse for its size: every field to its own bound, then,
+// while the encoding is still too large (escaping can make a field up to six
+// times longer than its bytes), the Git lines from the end and the longest
+// fields by half.
 func (e *Event) Bound() {
-	for _, field := range []*string{&e.Agent, &e.Name, &e.Dir, &e.Client} {
+	for _, field := range e.fields() {
 		*field = cut(*field, maxField)
-	}
-	if s := e.Session; s != nil {
-		for _, field := range []*string{&s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason} {
-			*field = cut(*field, maxField)
-		}
 	}
 	if g := e.Git; g != nil {
 		if len(g.Args) > maxGitArgs {
@@ -145,18 +145,74 @@ func (e *Event) Bound() {
 			g.Lines[i] = cut(g.Lines[i], maxGitLine)
 		}
 	}
+	for e.size() > maxEventSize {
+		if e.Git != nil && len(e.Git.Lines) > 0 {
+			e.Git.Lines = e.Git.Lines[:len(e.Git.Lines)-1]
+			continue
+		}
+		var longest *string
+		for _, field := range e.fields() {
+			if longest == nil || len(*field) > len(*longest) {
+				longest = field
+			}
+		}
+		if longest == nil || *longest == "" {
+			return
+		}
+		*longest = cut(*longest, len(*longest)/2)
+	}
 }
 
-// cut shortens s to at most n bytes without splitting a character.
+// fields are the event's strings, Git lines excepted.
+func (e *Event) fields() []*string {
+	fields := []*string{&e.Agent, &e.Name, &e.Dir, &e.Client}
+	if s := e.Session; s != nil {
+		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason)
+	}
+	if g := e.Git; g != nil {
+		for i := range g.Args {
+			fields = append(fields, &g.Args[i])
+		}
+	}
+	return fields
+}
+
+// size is the event's length as the control request carries it, which
+// escapes <, > and & too, so it is the longest encoding the event has.
+func (e *Event) size() int {
+	data, err := json.Marshal(e)
+	if err != nil {
+		return 0
+	}
+	return len(data)
+}
+
+// encode is the event as the spool stores it.
+func (e Event) encode() ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(e); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// cut shortens s to at most n bytes, at a character boundary when the cut
+// falls inside a valid character; invalid bytes elsewhere stay.
 func cut(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	s = s[:n]
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
+	for i := n; i > 0 && i > n-utf8.UTFMax; i-- {
+		if utf8.RuneStart(s[i]) {
+			if r, size := utf8.DecodeRuneInString(s[i:]); (r != utf8.RuneError || size > 1) && i+size > n {
+				return s[:i]
+			}
+			break
+		}
 	}
-	return s
+	return s[:n]
 }
 
 // errInvalid is an event no daemon can record.

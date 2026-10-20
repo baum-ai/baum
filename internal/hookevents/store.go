@@ -2,6 +2,7 @@ package hookevents
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,7 +26,8 @@ const (
 )
 
 // rememberedIDs is how many recent event ids the store keeps to record each
-// event once.
+// event once: an event delivered again after this many others (a spooled copy
+// drained very late) is recorded twice, and readers dedupe by id.
 const rememberedIDs = 4096
 
 // Delivery says how an event reached the daemon.
@@ -159,21 +161,52 @@ func (s *Store) read() ([]Record, error) {
 		if err != nil {
 			return nil, err
 		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64<<10), 2*maxEventSize)
-		for scanner.Scan() {
+		records = append(records, readRecords(f)...)
+		_ = f.Close()
+	}
+	return records, nil
+}
+
+// maxRecordLine bounds one record line; a longer one is not a record this
+// store wrote.
+const maxRecordLine = 2 * maxEventSize
+
+// readRecords reads the record lines of r, skipping lines that are too long
+// or not records, so a damaged file loses only those lines.
+func readRecords(r io.Reader) []Record {
+	var records []Record
+	reader := bufio.NewReaderSize(r, 64<<10)
+	for {
+		line, tooLong, err := readBoundedLine(reader, maxRecordLine)
+		if !tooLong && len(line) > 0 {
 			var record Record
-			if json.Unmarshal(scanner.Bytes(), &record) == nil && record.Event.ID != "" {
+			if json.Unmarshal(line, &record) == nil && record.Event.ID != "" {
 				records = append(records, record)
 			}
 		}
-		err = scanner.Err()
-		_ = f.Close()
 		if err != nil {
-			return nil, err
+			return records
 		}
 	}
-	return records, nil
+}
+
+// readBoundedLine reads one line, keeping at most limit bytes of it; tooLong
+// reports a line it cut. err is set at the end of the input.
+func readBoundedLine(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if !tooLong {
+			if len(line)+len(chunk) > limit {
+				tooLong, line = true, nil
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return bytes.TrimSpace(line), tooLong, err
+	}
 }
 
 // Subscribe returns a channel that receives every record added from now on

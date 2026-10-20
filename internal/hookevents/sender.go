@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/internal/daemon"
@@ -42,6 +43,20 @@ const (
 	Spooled
 	// Dropped: the event could not be spooled; the hook log says why.
 	Dropped
+	// Unfinished: the budget ended before the event was spooled. The spool
+	// write goes on while the process lives; it is atomic, so an exit leaves
+	// the event spooled whole or not at all.
+	Unfinished
+)
+
+// Environment variables that keep a hook from starting a daemon. Events still
+// reach a running daemon, or the spool.
+const (
+	// NoDaemonEnv set to 1 opts out of starting one.
+	NoDaemonEnv = "BAUM_NO_DAEMON"
+	// ciEnv is set by CI services, where a background daemon outliving a job
+	// is unwanted.
+	ciEnv = "CI"
 )
 
 // Sender delivers a hook's event to the user's daemon.
@@ -59,13 +74,20 @@ type Sender struct {
 	// Log receives what the sender spools, drops or starts; nil appends to
 	// HookLogFile.
 	Log *slog.Logger
+	// beforeSpool runs before the event is spooled; tests slow the spool.
+	beforeSpool func()
 }
 
-// Send hands e to the daemon within the budget and never fails the hook.
+// Send hands e to the daemon and never fails the hook. It returns within the
+// budget whatever the daemon, the file system or a process start does: what
+// is not done by then is left to finish while the hook's process lives.
 //
 //   - A daemon that records it in time: Delivered.
 //   - No daemon: e is spooled and a daemon is started, without waiting for
-//     it to serve; it drains the spool when it starts.
+//     it to serve; it drains the spool when it starts. None is started when
+//     the user stopped the daemon (`baum daemon stop`), BAUM_NO_DAEMON=1 or CI
+//     is set, or one was started less than daemon.StartBackoff ago and has
+//     not served yet.
 //   - A daemon that does not answer in time, answers with an error, or does
 //     not know Method or e's Version: e is spooled for the next drain. A
 //     daemon older than this baum is asked to restart as this version once
@@ -83,13 +105,27 @@ func (s *Sender) Send(ctx context.Context, e Event) Outcome {
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	client := &daemon.Client{Paths: s.Paths, Version: s.Version, Spawn: s.Spawn, Executable: s.Executable}
+	client := &daemon.Client{Paths: s.Paths, Version: s.Version, Spawn: s.Spawn, Executable: s.Executable,
+		Start: daemon.StartOptions{Env: daemonEnvironment()}}
 	requestCtx, cancelRequest := context.WithTimeout(ctx, requestBudget)
 	response, callErr := client.Call(requestCtx, Method, e)
 	cancelRequest()
 	if callErr == nil && response.OK {
 		return Delivered
 	}
+	done := make(chan Outcome, 1)
+	go func() { done <- s.fallBack(ctx, client, e, response, callErr) }()
+	select {
+	case outcome := <-done:
+		return outcome
+	case <-ctx.Done():
+		return Unfinished
+	}
+}
+
+// fallBack spools e after the daemon did not record it, then starts or
+// upgrades the daemon.
+func (s *Sender) fallBack(ctx context.Context, client *daemon.Client, e Event, response daemon.Response, callErr error) Outcome {
 	log, closeLog := s.logger()
 	defer closeLog()
 	reason := "the baum daemon is not running"
@@ -101,6 +137,9 @@ func (s *Sender) Send(ctx context.Context, e Event) Outcome {
 	case callErr == nil:
 		reason = "the baum daemon answered without recording it"
 	}
+	if s.beforeSpool != nil {
+		s.beforeSpool()
+	}
 	outcome := Spooled
 	spool := &Spool{Dir: SpoolDir(s.Paths), Log: log}
 	if err := spool.Put(e); err != nil {
@@ -111,12 +150,7 @@ func (s *Sender) Send(ctx context.Context, e Event) Outcome {
 	}
 	switch {
 	case errors.Is(callErr, daemon.ErrNotRunning):
-		started, err := client.StartDetached(ctx)
-		if err != nil {
-			log.Warn("baum daemon not started", "error", err.Error())
-		} else if started {
-			log.Info("started the baum daemon")
-		}
+		s.start(ctx, client, log)
 	case callErr == nil && response.Error != nil:
 		switch response.Error.Code {
 		case daemon.CodeProtocolMismatch, daemon.CodeUnknownMethod, CodeEventVersion:
@@ -126,9 +160,48 @@ func (s *Sender) Send(ctx context.Context, e Event) Outcome {
 	return outcome
 }
 
+// start starts a daemon unless the user or the environment rules it out.
+func (s *Sender) start(ctx context.Context, client *daemon.Client, log *slog.Logger) {
+	switch {
+	case os.Getenv(NoDaemonEnv) == "1":
+		log.Info("not starting the baum daemon: " + NoDaemonEnv + "=1")
+		return
+	case os.Getenv(ciEnv) != "":
+		log.Info("not starting the baum daemon: CI is set")
+		return
+	case daemon.StoppedByUser(s.Paths):
+		log.Info("not starting the baum daemon: it was stopped with `baum daemon stop`; `baum daemon ensure` starts it again")
+		return
+	}
+	started, err := client.StartDetached(ctx)
+	switch {
+	case errors.Is(err, daemon.ErrStartBackoff):
+		log.Info("not starting the baum daemon: one was started moments ago and has not served yet")
+	case err != nil:
+		log.Warn("baum daemon not started", "error", err.Error())
+	case started:
+		log.Info("started the baum daemon")
+	}
+}
+
+// daemonEnvironment is the environment a hook starts the daemon with: its
+// own, without TMPDIR, which agent sandboxes point at a directory that lasts
+// one session. The daemon then uses the system's.
+func daemonEnvironment() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "TMPDIR=") {
+			env = append(env, entry)
+		}
+	}
+	return env
+}
+
 // upgrade asks a daemon older than this baum to restart as this version once
-// no job is queued or running. An idle one stops at once; the next hook or
-// `baum daemon ensure` starts this version, which drains the spool.
+// no job is queued or running. A daemon of this release restarts itself even
+// when idle (StopParams.Respawn), so nobody has to wait for it to exit; an
+// older one that ignores that stops when idle, and this hook, or the next,
+// starts this version, which drains the spool.
 func (s *Sender) upgrade(ctx context.Context, client *daemon.Client, status *daemon.Status, log *slog.Logger) {
 	if status == nil {
 		hello, err := client.Hello(ctx)
@@ -149,11 +222,14 @@ func (s *Sender) upgrade(ctx context.Context, client *daemon.Client, status *dae
 		}
 		executable = self
 	}
-	response, err := client.Call(ctx, "stop", daemon.StopParams{WhenIdle: true, Executable: executable})
+	response, err := client.Call(ctx, "stop", daemon.StopParams{WhenIdle: true, Executable: executable, Respawn: true})
 	if err != nil || !response.OK {
 		return
 	}
 	log.Info("asked the older baum daemon to restart as this version once idle", "daemon_version", status.Version, "version", s.Version)
+	if response.Status != nil && response.Status.Stopping {
+		s.start(ctx, client, log)
+	}
 }
 
 // logger is s.Log, or the hook log opened for this send.
