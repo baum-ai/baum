@@ -37,14 +37,20 @@ mkdir -p "$out"
 out=$(cd "$out" && pwd)
 
 identity=${APPLE_SIGNING_IDENTITY:-}
-notarize=false
+# How to authenticate to the notary service: an App Store Connect API key
+# (preferred: no secret on a command line, only the key file's path) or an
+# Apple ID with an app-specific password, which notarytool takes only as an
+# argument.
+notary=
 if [ -n "$identity" ]; then
   if [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
-    notarize=true
+    notary=api-key
   elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
-    notarize=true
+    notary=apple-id
   fi
 fi
+notarize=false
+if [ -n "$notary" ]; then notarize=true; fi
 name=baum-desktop-darwin-universal
 if [ -z "$identity" ]; then
   name=$name-unsigned
@@ -54,6 +60,39 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+
+# The archive came from a job that ran third-party build code: accept only
+# regular files and directories inside baum.app/, so extracting it cannot
+# write anywhere else or plant a link.
+names=$(tar -tf "$app_tar")
+types=$(tar -tvf "$app_tar" | cut -c1)
+if [ "$(wc -l <<<"$names")" -ne "$(wc -l <<<"$types")" ]; then
+  echo "macos-finalize: $app_tar has entries whose names cannot be listed one per line" >&2
+  exit 1
+fi
+while IFS=$'\t' read -r type entry; do
+  case "$type" in
+    - | d) ;;
+    *)
+      echo "macos-finalize: $app_tar holds $entry, which is not a regular file or directory" >&2
+      exit 1
+      ;;
+  esac
+  case "/$entry/" in
+    */../* | */./*)
+      echo "macos-finalize: $app_tar holds the path $entry" >&2
+      exit 1
+      ;;
+  esac
+  case "$type:$entry" in
+    d:baum.app | ?:baum.app/ | ?:baum.app/?*) ;;
+    *)
+      echo "macos-finalize: $app_tar holds $entry, outside baum.app/" >&2
+      exit 1
+      ;;
+  esac
+done < <(paste <(printf '%s\n' "$types") <(printf '%s\n' "$names"))
+
 tar -xf "$app_tar" -C "$work"
 app=$work/baum.app
 main=$app/Contents/MacOS/baum-desktop
@@ -65,7 +104,7 @@ done
 notarize_file() {
   local file=$1
   local result=$work/notarization.json
-  if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+  if [ "$notary" = api-key ]; then
     xcrun notarytool submit "$file" --wait --timeout 30m --output-format json \
       --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" >"$result"
   else
