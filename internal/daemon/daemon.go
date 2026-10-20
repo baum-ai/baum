@@ -12,10 +12,8 @@
 //   - app: the authenticated loopback HTTP server of internal/uiserver, whose
 //     credential the app reads from a private file in the state directory.
 //
-// The daemon itself never contacts a baum server. What it runs in the
-// background is whatever the application started with Options.Start does
-// (the command line's forwards hook events to the hosted service only for a
-// user logged in to it).
+// The daemon never contacts a baum server. What it runs in the background is
+// whatever the application started with Options.Start does.
 package daemon
 
 import (
@@ -25,6 +23,8 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+
+	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 // Protocol is the control protocol version. Increment it when a request or
@@ -79,6 +79,38 @@ func (p Paths) startFile() string {
 	return filepath.Join(p.State, "start.lock.sqlite")
 }
 func (p Paths) statusFile() string { return filepath.Join(p.State, "daemon.json") }
+
+// startedFile records when StartDetached last started a daemon; the daemon
+// removes it once it serves.
+func (p Paths) startedFile() string { return filepath.Join(p.State, "started.json") }
+
+// StoppedFile marks a daemon the user stopped (`baum daemon stop`, which the
+// desktop app's "Quit and stop background reviews" runs). Hooks do not start
+// a daemon while it exists; Ensure and a foreground run remove it.
+func (p Paths) StoppedFile() string { return filepath.Join(p.State, "stopped-by-user") }
+
+// MarkStopped records that the user stopped the daemon.
+func MarkStopped(p Paths) error {
+	if err := privatefs.MkdirAll(p.State); err != nil {
+		return err
+	}
+	return writePrivate(p.StoppedFile(), time.Now().UTC())
+}
+
+// ClearStopped removes the mark MarkStopped wrote.
+func ClearStopped(p Paths) error {
+	if err := os.Remove(p.StoppedFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// StoppedByUser reports whether the user stopped the daemon and nothing
+// started it explicitly since.
+func StoppedByUser(p Paths) bool {
+	_, err := os.Lstat(p.StoppedFile())
+	return err == nil
+}
 
 // CredentialFile is the private file holding the app transport's address and
 // credential while a daemon runs.

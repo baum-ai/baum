@@ -31,7 +31,9 @@ func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
 	if start.Concurrency != 0 {
 		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
-	return Spawn(paths, exec.Command(self, args...))
+	cmd := exec.Command(self, args...)
+	cmd.Env = start.Env
+	return Spawn(paths, cmd)
 }
 
 // Spawn starts cmd as a detached daemon process with its output in
@@ -55,6 +57,7 @@ func Spawn(paths Paths, cmd *exec.Cmd) (<-chan struct{}, error) {
 		cmd.Dir = home()
 	}
 	detach(cmd)
+	closeInherited()
 	if cmd, err = startDetached(cmd); err != nil {
 		return nil, err
 	}

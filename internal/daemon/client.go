@@ -34,7 +34,19 @@ const (
 type StartOptions struct {
 	Port        int
 	Concurrency int
+	// Env, when not nil, is the environment the daemon process starts with;
+	// nil passes the caller's.
+	Env []string
 }
+
+// StartBackoff is how long StartDetached waits after starting a daemon
+// before it starts another, unless that daemon served meanwhile: a daemon
+// that cannot start must not be started again by every hook.
+const StartBackoff = 3 * time.Minute
+
+// ErrStartBackoff means StartDetached started a daemon less than
+// StartBackoff ago that has not served yet.
+var ErrStartBackoff = errors.New("a baum daemon was started moments ago and has not served yet")
 
 // Spawner starts a detached daemon process. done is closed when the process
 // exits (it never is for a daemon that keeps running).
@@ -66,6 +78,11 @@ type StopParams struct {
 	// then restart as Executable; an idle daemon stops at once.
 	WhenIdle   bool   `json:"when_idle,omitempty"`
 	Executable string `json:"executable,omitempty"`
+	// Respawn asks an idle daemon to restart as Executable too, rather than
+	// stop and leave the start to the client. Hooks ask so, because they do
+	// not wait for the old daemon to exit. A daemon that predates it ignores
+	// it and stops.
+	Respawn bool `json:"respawn,omitempty"`
 }
 
 // socket is the daemon's own record of its socket, from its status file, so
@@ -226,6 +243,10 @@ func (c *Client) waitExit(ctx context.Context) error {
 // calls start exactly one daemon. A daemon newer than this client is kept;
 // one speaking a newer protocol is an IncompatibleError.
 func (c *Client) Ensure(ctx context.Context) (Status, error) {
+	// An explicit start ends a stop the user asked for.
+	if err := ClearStopped(c.Paths); err != nil {
+		return Status{}, err
+	}
 	status, err := c.Hello(ctx)
 	if err == nil && !status.Stopping {
 		if st, done, err := c.decide(ctx, status); done {
@@ -284,10 +305,11 @@ func (c *Client) Ensure(ctx context.Context) (Status, error) {
 
 // StartDetached starts a daemon without waiting for it to serve, for callers
 // that must not wait, such as hooks; Ensure waits. It starts none while a
-// daemon holds the daemon lock (one is starting, stopping or not answering)
-// or another client is starting one, and reports whether it started one. It
-// holds the start lock until the new daemon holds the daemon lock or ctx
-// ends, so callers racing it do not start a second one.
+// daemon holds the daemon lock (one is starting, stopping or not answering),
+// another client is starting one, or it started one less than StartBackoff
+// ago that has not served yet (ErrStartBackoff); it reports whether it
+// started one. The start is recorded in a file the daemon removes once it
+// serves, so callers racing it see it rather than start a second one.
 func (c *Client) StartDetached(ctx context.Context) (bool, error) {
 	if locked, err := c.locked(ctx); err != nil || locked {
 		return false, err
@@ -306,26 +328,20 @@ func (c *Client) StartDetached(ctx context.Context) (bool, error) {
 	if locked, err := c.locked(ctx); err != nil || locked {
 		return false, err
 	}
+	if info, err := os.Stat(c.Paths.startedFile()); err == nil && time.Since(info.ModTime()) < StartBackoff {
+		return false, ErrStartBackoff
+	}
+	if err = writePrivate(c.Paths.startedFile(), time.Now().UTC()); err != nil {
+		return false, err
+	}
 	spawn := c.Spawn
 	if spawn == nil {
 		spawn = SpawnSelf
 	}
-	exited, err := spawn(c.Paths, c.Start)
-	if err != nil {
+	if _, err = spawn(c.Paths, c.Start); err != nil {
 		return false, fmt.Errorf("start the baum daemon: %w", err)
 	}
-	for {
-		if locked, err := c.locked(ctx); err != nil || locked {
-			return true, nil
-		}
-		select {
-		case <-ctx.Done():
-			return true, nil
-		case <-exited:
-			return true, nil
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	return true, nil
 }
 
 // decide keeps a compatible daemon (done), replaces an older one (not done,

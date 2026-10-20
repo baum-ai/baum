@@ -218,6 +218,8 @@ func Run(ctx context.Context, opts Options) error {
 	go func() { httpDone <- server.Serve(httpCtx) }()
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); control.serve(listener) }()
+	// It served: a client that started it may start the next one at once.
+	_ = os.Remove(paths.startedFile())
 	log.Info("daemon ready", "app", status.App, "socket", paths.Socket)
 	running.Go(func() { control.restartWhenIdle(runCtx) })
 
@@ -448,7 +450,11 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) != nil {
 			return Response{Error: &Error{Code: CodeBadRequest, Message: "invalid stop parameters"}}, false
 		}
-		if params.WhenIdle && !c.drained() {
+		// An idle daemon asked to respawn restarts like a busy one, at the
+		// next idle check, so the newer version starts without the client
+		// waiting for this one to exit.
+		respawnIdle := params.WhenIdle && params.Respawn && c.respawn != nil && filepath.IsAbs(params.Executable)
+		if params.WhenIdle && (respawnIdle || !c.drained()) {
 			if c.respawn == nil || !filepath.IsAbs(params.Executable) {
 				return Response{OK: true, Status: &status}, false
 			}
