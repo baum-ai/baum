@@ -132,7 +132,7 @@ func lenientFixture() []byte {
 	// attention reference, a revision named by role, no review_version and an
 	// excerpt named by header only.
 	return []byte(`{
-	  "summary": {"text": "Changes parser behavior.", "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
+	  "summary": {"text": "Changes parser behavior.", "context": {"area": {"text": "The parser turns source text into a syntax tree."}}, "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
 	  "sections": [{
 	    "id": "Parser Core", "title": "Parser", "kind": "logical",
 	    "hunks": ["h_0123456789ab", "h_0123456789ab", "h_ffffffffffff"],

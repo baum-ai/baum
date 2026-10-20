@@ -370,6 +370,25 @@ export type ReviewStack = {
   members: { number: number; head_sha: string; review_version: number }[];
 };
 
+/** A file of the repository, and optionally a symbol in it. */
+export type ReviewContextRef = {
+  path: string;
+  symbol: string | null;
+};
+
+/** One part of a review's context: a short Markdown paragraph and its files. */
+export type ReviewContextPart = {
+  text: string;
+  refs: ReviewContextRef[];
+};
+
+export type ReviewContext = {
+  area: ReviewContextPart;
+  reached_by?: ReviewContextPart;
+  contracts?: ReviewContextPart;
+  related?: ReviewContextPart;
+};
+
 export type ReviewDocument = {
   schema: string;
   /** Present only on a stack review. */
@@ -406,6 +425,9 @@ export type ReviewDocument = {
   summary: {
     title: string;
     text: string;
+    /** How the change fits into the codebase around it. Absent on documents
+     *  generated before it existed. */
+    context?: ReviewContext;
     change_kind: string;
     implements: Implements[];
     release_note: string | null;

@@ -87,6 +87,7 @@ func NewDocumentValidator() (*DocumentValidator, error) {
 	contract["title"] = "Model-authored baum review fields"
 	summary := props["summary"].(map[string]any)
 	omitProperties(summary, "title", "author", "risk_score")
+	requireAuthoredContext(summary)
 	authorship := summary["properties"].(map[string]any)["authorship"].(map[string]any)
 	omitProperties(authorship, "observed_sessions", "observed_vendors", "observed_models")
 	exchange := summary["properties"].(map[string]any)["review_exchange"].(map[string]any)
@@ -265,6 +266,23 @@ func sectionOutlineFindings(sections []sectionOutline, bundle *bundlepkg.Bundle)
 		findings = append(findings, "previous sections cannot be removed")
 	}
 	return findings
+}
+
+// requireAuthoredContext makes summary.context part of every authored
+// document. The stored contract lets it be absent, for documents generated
+// before it existed, but a document the model writes now must have one: its
+// absence is a validation finding the model repairs, and the lenient contract
+// derived from this one requires it and does not let it be null.
+func requireAuthoredContext(summary map[string]any) {
+	context := summary["properties"].(map[string]any)["context"].(map[string]any)
+	if description, _ := context["description"].(string); description != "" {
+		if cut := strings.Index(description, " Absent on documents"); cut >= 0 {
+			context["description"] = description[:cut]
+		}
+	}
+	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "context") {
+		summary["required"] = append(required, "context")
+	}
 }
 
 func omitProperties(schema map[string]any, keys ...string) {
