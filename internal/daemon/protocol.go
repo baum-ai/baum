@@ -64,6 +64,6 @@ type IncompatibleError struct {
 }
 
 func (e *IncompatibleError) Error() string {
-	return fmt.Sprintf("the running baum daemon (version %s, pid %d) speaks control protocol %d, but this baum (version %s) speaks protocol %d; upgrade baum, or stop the daemon with `baum daemon stop`",
+	return fmt.Sprintf("the running baum daemon (version %s, pid %d) speaks control protocol %d, but this baum (version %s) speaks protocol %d; upgrade baum, or stop the daemon with `baum daemon stop`; agent hooks do not start it again until `baum daemon ensure` (or the app) runs",
 		e.Daemon.Version, e.Daemon.PID, e.Daemon.Protocol, e.Client, Protocol)
 }

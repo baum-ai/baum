@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/baum-ai/baum/internal/privatefs"
 )
@@ -67,6 +68,26 @@ func ReadCredential(paths Paths) (Credential, error) {
 	return c, nil
 }
 
+// staleTemporary is how old a temporary file of writePrivate must be before a
+// later write removes it: one is renamed within milliseconds, so an older one
+// was left by a process that was killed.
+const staleTemporary = 5 * time.Minute
+
+func removeStaleTemporaries(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".baum-") {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && info.Mode().IsRegular() && time.Since(info.ModTime()) > staleTemporary {
+			_ = os.Remove(filepath.Join(dir, entry.Name()))
+		}
+	}
+}
+
 // writePrivate atomically replaces path with value as JSON, mode 0600, in a
 // private directory.
 func writePrivate(path string, value any) error {
@@ -77,6 +98,7 @@ func writePrivate(path string, value any) error {
 	if err = privatefs.ProtectDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
+	removeStaleTemporaries(filepath.Dir(path))
 	// CreateTemp makes the file 0600 before anything is written to it.
 	f, err := os.CreateTemp(filepath.Dir(path), ".baum-*")
 	if err != nil {

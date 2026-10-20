@@ -23,8 +23,6 @@ import (
 	"runtime"
 	"strconv"
 	"time"
-
-	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 // Protocol is the control protocol version. Increment it when a request or
@@ -74,7 +72,9 @@ func DefaultPaths() (Paths, error) {
 	return p, nil
 }
 
-func (p Paths) lockFile() string { return filepath.Join(p.State, "daemon.lock.sqlite") }
+// LockFile is the SQLite file whose write lock a running daemon holds. Only
+// a daemon creates it; clients only look for it.
+func (p Paths) LockFile() string { return filepath.Join(p.State, "daemon.lock.sqlite") }
 func (p Paths) startFile() string {
 	return filepath.Join(p.State, "start.lock.sqlite")
 }
@@ -89,12 +89,20 @@ func (p Paths) startedFile() string { return filepath.Join(p.State, "started.jso
 // a daemon while it exists; Ensure and a foreground run remove it.
 func (p Paths) StoppedFile() string { return filepath.Join(p.State, "stopped-by-user") }
 
-// MarkStopped records that the user stopped the daemon.
+// MarkStopped records that the user stopped the daemon. Without a state
+// directory no daemon ever ran here, and nothing is marked.
 func MarkStopped(p Paths) error {
-	if err := privatefs.MkdirAll(p.State); err != nil {
-		return err
+	if _, err := os.Lstat(p.State); errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
 	return writePrivate(p.StoppedFile(), time.Now().UTC())
+}
+
+// HasRun reports whether a daemon ever started for these paths: its lock
+// file, which only a daemon creates (clients only look for it), exists.
+func HasRun(p Paths) bool {
+	info, err := os.Lstat(p.LockFile())
+	return err == nil && info.Mode().IsRegular()
 }
 
 // ClearStopped removes the mark MarkStopped wrote.

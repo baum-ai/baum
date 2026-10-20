@@ -636,13 +636,13 @@ func (r *runner) daemon() {
 	switch {
 	case d.Err != nil:
 		c.Status, c.Detail = StatusWarning, d.Err.Error()
-		c.Fix = "stop it with `baum daemon stop`, or end the process it names; its logs are in " + d.State
+		c.Fix = "stop it with `baum daemon stop`, or end the process it names (after `baum daemon stop`, agent hooks do not start it again until `baum daemon ensure` or the app runs); its logs are in " + d.State
 	case !d.Running:
-		c.Detail = "not running; the desktop app and agent hooks start it (`baum daemon ensure`)"
+		c.Detail = "not running; the desktop app (`baum daemon ensure`) and agent hooks start it, except hooks after `baum daemon stop`"
 	case d.Incompatible:
 		c.Status = StatusWarning
 		c.Detail = fmt.Sprintf("running as process %d for %s, but it speaks control protocol %d, newer than this baum", d.PID, d.Uptime, d.Protocol)
-		c.Fix = "upgrade baum, or stop the daemon with `baum daemon stop`"
+		c.Fix = "upgrade baum, or stop the daemon with `baum daemon stop`; agent hooks do not start it again until `baum daemon ensure` (or the app) runs"
 	case d.Older:
 		c.Status = StatusWarning
 		c.Detail = fmt.Sprintf("running as process %d for %s, older than this baum", d.PID, d.Uptime)

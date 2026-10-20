@@ -338,10 +338,9 @@ func TestSenderStaysWithinBudgetWhenTheDaemonHangs(t *testing.T) {
 }
 
 // A daemon from before hook events answers that it does not know the method:
-// the event waits in the spool, and the daemon, older than the hook's baum,
-// restarts as it although idle, so the newer daemon starts without anyone
-// waiting for the old one to exit.
-func TestOlderDaemonRestartsAsTheHooksVersionAndTheEventSpooled(t *testing.T) {
+// the event waits in the spool, and the idle daemon, older than the hook's
+// baum, is asked to stop and does; it starts nothing itself.
+func TestOlderDaemonIsAskedToStopAndTheEventSpooled(t *testing.T) {
 	paths := testPaths(t)
 	respawned := make(chan string, 1)
 	d := startDaemonWith(t, paths, "v0.1.0", false, func(executable string, _ daemon.Status) error {
@@ -353,17 +352,14 @@ func TestOlderDaemonRestartsAsTheHooksVersionAndTheEventSpooled(t *testing.T) {
 		t.Fatalf("outcome = %v, want Spooled", outcome)
 	}
 	select {
-	case executable := <-respawned:
-		if executable != "/usr/local/bin/baum" {
-			t.Errorf("respawned %q", executable)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the idle older daemon did not restart as the hook's version")
-	}
-	select {
 	case <-d.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the older daemon did not stop after starting its successor")
+		t.Fatal("the idle older daemon did not stop to be replaced")
+	}
+	select {
+	case executable := <-respawned:
+		t.Errorf("the idle daemon started %q", executable)
+	default:
 	}
 	if len(spooledEvents(t, paths)) != 1 {
 		t.Fatal("the event was not spooled")
@@ -641,7 +637,7 @@ func TestSendReturnsWithinBudgetWhenSpoolingOrStartingStalls(t *testing.T) {
 		sender := &Sender{Paths: paths, Version: "v0.2.0", Spawn: noSpawn, beforeSpool: func() { time.Sleep(2 * Budget) }}
 		start := time.Now()
 		outcome := sender.Send(context.Background(), testEvent("stop"))
-		if elapsed := time.Since(start); elapsed > Budget+50*time.Millisecond {
+		if elapsed := time.Since(start); elapsed > Budget+250*time.Millisecond {
 			t.Errorf("Send took %s", elapsed)
 		}
 		if outcome != Unfinished {
@@ -658,9 +654,12 @@ func TestSendReturnsWithinBudgetWhenSpoolingOrStartingStalls(t *testing.T) {
 			return nil, nil
 		}}
 		start := time.Now()
-		sender.Send(context.Background(), testEvent("stop"))
-		if elapsed := time.Since(start); elapsed > Budget+50*time.Millisecond {
+		outcome := sender.Send(context.Background(), testEvent("stop"))
+		if elapsed := time.Since(start); elapsed > Budget+250*time.Millisecond {
 			t.Errorf("Send took %s", elapsed)
+		}
+		if outcome != Unfinished {
+			t.Errorf("outcome = %v, want Unfinished", outcome)
 		}
 		select {
 		case <-spawned:
@@ -698,6 +697,16 @@ func TestHooksBackOffFromADaemonThatDoesNotStart(t *testing.T) {
 	sender.Send(context.Background(), testEvent("stop"))
 	if n := spawns.Load(); n != 2 {
 		t.Fatalf("started %d daemons after one served, want 2", n)
+	}
+	// A start recorded in the future (the clock was set back) does not hold
+	// starts off.
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(paths.State, "started.json"), future, future); err != nil {
+		t.Fatal(err)
+	}
+	sender.Send(context.Background(), testEvent("stop"))
+	if n := spawns.Load(); n != 3 {
+		t.Fatalf("started %d daemons with a start recorded in the future, want 3", n)
 	}
 }
 

@@ -284,7 +284,7 @@ func TestEnsureReportsDaemonThatHoldsTheLockButDoesNotAnswer(t *testing.T) {
 	if err := os.MkdirAll(paths.State, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := tryLock(context.Background(), paths.lockFile())
+	lock, err := tryLock(context.Background(), paths.LockFile())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -883,5 +883,14 @@ func TestRestartTargetsTheNewestClientAndNoticesOnce(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("never restarted")
+	}
+}
+
+func TestSpawnPassesTheResolvedSocket(t *testing.T) {
+	paths := Paths{State: "/state", Socket: "/tmp/baum-1000/daemon.sock"}
+	args := spawnArgs(paths, StartOptions{Port: 8080})
+	want := []string{"daemon", "run", "--detached", "--socket", "/tmp/baum-1000/daemon.sock", "--port", "8080"}
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Errorf("args = %q, want %q", args, want)
 	}
 }

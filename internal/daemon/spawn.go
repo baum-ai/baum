@@ -24,16 +24,23 @@ func SpawnSelf(paths Paths, start StartOptions) (<-chan struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"daemon", "run", "--detached"}
+	cmd := exec.Command(self, spawnArgs(paths, start)...)
+	cmd.Env = start.Env
+	return Spawn(paths, cmd)
+}
+
+// spawnArgs are the arguments SpawnSelf runs this executable with. The
+// socket is passed as the caller resolved it: a daemon started with another
+// environment (a hook passes no TMPDIR) could otherwise resolve another one.
+func spawnArgs(paths Paths, start StartOptions) []string {
+	args := []string{"daemon", "run", "--detached", "--socket", paths.Socket}
 	if start.Port != 0 {
 		args = append(args, "--port", strconv.Itoa(start.Port))
 	}
 	if start.Concurrency != 0 {
 		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
-	cmd := exec.Command(self, args...)
-	cmd.Env = start.Env
-	return Spawn(paths, cmd)
+	return args
 }
 
 // Spawn starts cmd as a detached daemon process with its output in

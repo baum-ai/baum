@@ -79,8 +79,11 @@ type Sender struct {
 }
 
 // Send hands e to the daemon and never fails the hook. It returns within the
-// budget whatever the daemon, the file system or a process start does: what
-// is not done by then is left to finish while the hook's process lives.
+// budget whatever the daemon, the file system or a process start does. The
+// work after a failed request runs in a goroutine on the budget's context:
+// once Send returns, that context is cancelled, so the goroutine finishes
+// only a spool write already under way (while the process lives) and starts
+// no daemon, since the lock checks a start needs fail on it.
 //
 //   - A daemon that records it in time: Delivered.
 //   - No daemon: e is spooled and a daemon is started, without waiting for
@@ -90,8 +93,10 @@ type Sender struct {
 //     not served yet.
 //   - A daemon that does not answer in time, answers with an error, or does
 //     not know Method or e's Version: e is spooled for the next drain. A
-//     daemon older than this baum is asked to restart as this version once
-//     it is idle, as `baum daemon ensure` would, without waiting for it.
+//     daemon older than this baum is asked to stop once it is idle (a busy
+//     one restarts as this version when its jobs finish), as `baum daemon
+//     ensure` would, without waiting for it; the next hook then starts this
+//     version, which drains the spool.
 //
 // An event that cannot be spooled either is dropped, with the reason logged.
 func (s *Sender) Send(ctx context.Context, e Event) Outcome {
@@ -124,7 +129,7 @@ func (s *Sender) Send(ctx context.Context, e Event) Outcome {
 }
 
 // fallBack spools e after the daemon did not record it, then starts or
-// upgrades the daemon.
+// upgrades the daemon. ctx is Send's budget (see Send).
 func (s *Sender) fallBack(ctx context.Context, client *daemon.Client, e Event, response daemon.Response, callErr error) Outcome {
 	log, closeLog := s.logger()
 	defer closeLog()
@@ -197,11 +202,10 @@ func daemonEnvironment() []string {
 	return env
 }
 
-// upgrade asks a daemon older than this baum to restart as this version once
-// no job is queued or running. A daemon of this release restarts itself even
-// when idle (StopParams.Respawn), so nobody has to wait for it to exit; an
-// older one that ignores that stops when idle, and this hook, or the next,
-// starts this version, which drains the spool.
+// upgrade asks a daemon older than this baum to stop once no job is queued or
+// running: an idle one stops at once, a busy one restarts as this version
+// when its jobs finish. The hook does not wait for it to exit; the next hook
+// finds no daemon and starts this version, which drains the spool.
 func (s *Sender) upgrade(ctx context.Context, client *daemon.Client, status *daemon.Status, log *slog.Logger) {
 	if status == nil {
 		hello, err := client.Hello(ctx)
@@ -222,14 +226,11 @@ func (s *Sender) upgrade(ctx context.Context, client *daemon.Client, status *dae
 		}
 		executable = self
 	}
-	response, err := client.Call(ctx, "stop", daemon.StopParams{WhenIdle: true, Executable: executable, Respawn: true})
+	response, err := client.Call(ctx, "stop", daemon.StopParams{WhenIdle: true, Executable: executable})
 	if err != nil || !response.OK {
 		return
 	}
-	log.Info("asked the older baum daemon to restart as this version once idle", "daemon_version", status.Version, "version", s.Version)
-	if response.Status != nil && response.Status.Stopping {
-		s.start(ctx, client, log)
-	}
+	log.Info("asked the older baum daemon to stop once idle", "daemon_version", status.Version, "version", s.Version)
 }
 
 // logger is s.Log, or the hook log opened for this send.

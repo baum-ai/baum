@@ -78,11 +78,6 @@ type StopParams struct {
 	// then restart as Executable; an idle daemon stops at once.
 	WhenIdle   bool   `json:"when_idle,omitempty"`
 	Executable string `json:"executable,omitempty"`
-	// Respawn asks an idle daemon to restart as Executable too, rather than
-	// stop and leave the start to the client. Hooks ask so, because they do
-	// not wait for the old daemon to exit. A daemon that predates it ignores
-	// it and stops.
-	Respawn bool `json:"respawn,omitempty"`
 }
 
 // socket is the daemon's own record of its socket, from its status file, so
@@ -328,8 +323,11 @@ func (c *Client) StartDetached(ctx context.Context) (bool, error) {
 	if locked, err := c.locked(ctx); err != nil || locked {
 		return false, err
 	}
-	if info, err := os.Stat(c.Paths.startedFile()); err == nil && time.Since(info.ModTime()) < StartBackoff {
-		return false, ErrStartBackoff
+	if info, err := os.Stat(c.Paths.startedFile()); err == nil {
+		// A time in the future (a clock set back) does not count.
+		if age := time.Since(info.ModTime()); age >= 0 && age < StartBackoff {
+			return false, ErrStartBackoff
+		}
 	}
 	if err = writePrivate(c.Paths.startedFile(), time.Now().UTC()); err != nil {
 		return false, err
@@ -444,10 +442,10 @@ func (c *Client) waitReady(ctx context.Context, exited <-chan struct{}) (Status,
 }
 
 func (c *Client) locked(ctx context.Context) (bool, error) {
-	if _, err := os.Stat(c.Paths.lockFile()); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(c.Paths.LockFile()); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	return held(ctx, c.Paths.lockFile())
+	return held(ctx, c.Paths.LockFile())
 }
 
 func (c *Client) unresponsive(cause error) error {

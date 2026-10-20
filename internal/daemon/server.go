@@ -251,7 +251,7 @@ func acquire(ctx context.Context, paths Paths, timeout time.Duration) (*filelock
 	deadline := time.Now().Add(timeout)
 	probe := &Client{Paths: paths}
 	for {
-		lock, err := tryLock(ctx, paths.lockFile())
+		lock, err := tryLock(ctx, paths.LockFile())
 		if !errors.Is(err, errLocked) {
 			return lock, err
 		}
@@ -450,11 +450,7 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) != nil {
 			return Response{Error: &Error{Code: CodeBadRequest, Message: "invalid stop parameters"}}, false
 		}
-		// An idle daemon asked to respawn restarts like a busy one, at the
-		// next idle check, so the newer version starts without the client
-		// waiting for this one to exit.
-		respawnIdle := params.WhenIdle && params.Respawn && c.respawn != nil && filepath.IsAbs(params.Executable)
-		if params.WhenIdle && (respawnIdle || !c.drained()) {
+		if params.WhenIdle && !c.drained() {
 			if c.respawn == nil || !filepath.IsAbs(params.Executable) {
 				return Response{OK: true, Status: &status}, false
 			}
