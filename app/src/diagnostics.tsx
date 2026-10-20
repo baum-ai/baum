@@ -70,6 +70,11 @@ export function DiagnosticsSection({
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const sequence = useRef(0);
+  // A new callback from the parent must not rerun the checks.
+  const reported = useRef(onReport);
+  useEffect(() => {
+    reported.current = onReport;
+  });
   const run = useCallback(async () => {
     const mine = ++sequence.current;
     setRunning(true);
@@ -78,7 +83,7 @@ export function DiagnosticsSection({
       const body = await request<Diagnostics>("api/diagnostics");
       if (mine === sequence.current) {
         setReport(body.report);
-        onReport?.(body.report);
+        reported.current?.(body.report);
       }
     } catch (e) {
       if (mine === sequence.current)
@@ -86,7 +91,7 @@ export function DiagnosticsSection({
     } finally {
       if (mine === sequence.current) setRunning(false);
     }
-  }, [onReport]);
+  }, []);
   useEffect(() => {
     void run();
     return () => {
