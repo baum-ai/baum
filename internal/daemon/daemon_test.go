@@ -291,7 +291,7 @@ func TestEnsureReplacesStaleFiles(t *testing.T) {
 
 func TestEnsureReportsDaemonThatHoldsTheLockButDoesNotAnswer(t *testing.T) {
 	paths := testPaths(t)
-	if err := os.MkdirAll(paths.State, 0o700); err != nil {
+	if err := privatefs.MkdirAll(paths.State); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := tryLock(context.Background(), paths.lockFile())
@@ -638,10 +638,12 @@ func TestOlder(t *testing.T) {
 }
 
 func TestDefaultPaths(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", "/state")
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user/7")
+	// An absolute path on Windows needs a volume, so root both on the temp one.
+	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(root, "run", "user", "7"))
 	p, err := DefaultPaths()
-	if err != nil || p.State != filepath.FromSlash("/state/baum/daemon") || p.Socket != filepath.FromSlash("/run/user/7/baum/daemon.sock") {
+	if err != nil || p.State != filepath.Join(root, "state", "baum", "daemon") || p.Socket != filepath.Join(root, "run", "user", "7", "baum", "daemon.sock") {
 		t.Fatal(p, err)
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")
