@@ -114,7 +114,7 @@ type Linker interface {
 // Source is the daemon's record of hook events; *hookevents.Store is one.
 type Source interface {
 	Recent(limit int) ([]hookevents.Record, error)
-	Subscribe(buffer int, match func(hookevents.Event) bool) (<-chan hookevents.Record, func())
+	SubscribeCounted(buffer int, match func(hookevents.Event) bool) (events <-chan hookevents.Record, cancel func(), dropped func() uint64)
 }
 
 // Tracker follows the sessions of the agents whose hooks report to the daemon.
@@ -128,7 +128,8 @@ type Tracker struct {
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	// Buffer is the subscription's size; zero is 256. A subscriber that falls
-	// behind misses events, which Reconcile applies from the record.
+	// behind misses events, which Reconcile applies from the record once the
+	// subscription reports it missed some.
 	Buffer int
 
 	ready    sync.Once
@@ -141,6 +142,10 @@ type Tracker struct {
 	order   []string
 	wake    chan struct{}
 	kick    chan struct{}
+	// dropped reports the subscription's missed events; reconciled is how
+	// many of them the last reconcile covered.
+	dropped    func() uint64
+	reconciled uint64
 }
 
 type key struct{ agent, id string }
@@ -224,8 +229,9 @@ func (t *Tracker) Run(ctx context.Context) {
 	if buffer <= 0 {
 		buffer = 256
 	}
-	events, cancel := t.Source.Subscribe(buffer, matchAgent)
+	events, cancel, dropped := t.Source.SubscribeCounted(buffer, matchAgent)
 	defer cancel()
+	t.dropped = dropped
 	t.Rebuild(ctx)
 	go func() {
 		for {
@@ -261,7 +267,7 @@ func (t *Tracker) Run(ctx context.Context) {
 		case <-t.kick:
 			changed()
 		case <-sweep.C:
-			swept, reconciled := t.Sweep(), t.Reconcile(ctx)
+			swept, reconciled := t.Sweep(), t.reconcileIfDropped(ctx)
 			if swept || reconciled {
 				changed()
 			}
@@ -327,6 +333,21 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 	for _, e := range events {
 		t.applyLocked(e, now)
 	}
+}
+
+// reconcileIfDropped reconciles when the subscription missed events since
+// the last reconcile: rereading the record takes the store's lock, which
+// every hook's event also needs, so it does not run for nothing.
+func (t *Tracker) reconcileIfDropped(ctx context.Context) bool {
+	if t.dropped == nil {
+		return false
+	}
+	missed := t.dropped()
+	if missed == t.reconciled {
+		return false
+	}
+	t.reconciled = missed
+	return t.Reconcile(ctx)
 }
 
 // Reconcile applies the events of the record that the subscription did not

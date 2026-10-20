@@ -1810,7 +1810,8 @@ endpoint.
   `Store.Recent(n)` reads the latest records, oldest first; spooled events
   arrive late, so readers order by `event.time`. `Store.Subscribe(buffer,
   match)` delivers new records matching a filter; a subscriber that falls
-  behind misses records (logged) and can reread `Recent`. This is the
+  behind misses records (logged) and can reread `Recent`; `SubscribeCounted`
+  also reports how many it missed, so it rereads only after a miss. This is the
   interface the live features (in-progress sessions, refresh on session end
   or push, decision capture) build on. In-progress sessions do (see "Live
   sessions"); the others are not built yet.
@@ -1841,9 +1842,13 @@ replace it.
   is full. The event loop therefore never waits for git: it applies the event
   at once, and a new session is hidden until a background worker looks up its
   link (`ResolvePending`; a directory in no registered clone is dropped then).
-  Every sweep (30 s) also runs `Reconcile`, which rereads `Store.Recent` and
-  applies the events not yet applied, so a dropped `session-end` is found
-  within 30 seconds rather than leaving a session waiting until it times out.
+  Each sweep (30 s) checks the subscription's drop count
+  (`Store.SubscribeCounted`) and, only when it missed events since the last
+  reconcile, runs `Reconcile`, which rereads `Store.Recent` and applies the
+  events not yet applied, so a dropped `session-end` is found within 30
+  seconds rather than leaving a session waiting until it times out. Without a
+  drop the record is not read, since reading it takes the store's lock, which
+  every hook's event needs too.
 - **States.** `running` after a start, prompt or tool event. `idle` after a
   `stop`, which agents send at the end of every turn (waiting for the user),
   and for a running session silent longer than `IdleAfter` (10 minutes): an

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,7 +47,9 @@ type source struct {
 	records []hookevents.Record
 	ch      chan hookevents.Record
 	// ready, when set, is closed once something subscribed.
-	ready chan struct{}
+	ready   chan struct{}
+	drops   atomic.Int64
+	recents atomic.Int64
 }
 
 // add records e and hands it to the subscriber as the store does: a full
@@ -57,16 +60,20 @@ func (s *source) add(e hookevents.Event) {
 	select {
 	case s.ch <- r:
 	default:
+		s.drops.Add(1)
 	}
 }
 
-func (s *source) Recent(int) ([]hookevents.Record, error) { return s.records, nil }
-func (s *source) Subscribe(buffer int, _ func(hookevents.Event) bool) (<-chan hookevents.Record, func()) {
+func (s *source) Recent(int) ([]hookevents.Record, error) {
+	s.recents.Add(1)
+	return s.records, nil
+}
+func (s *source) SubscribeCounted(buffer int, _ func(hookevents.Event) bool) (<-chan hookevents.Record, func(), func() uint64) {
 	s.ch = make(chan hookevents.Record, buffer)
 	if s.ready != nil {
 		close(s.ready)
 	}
-	return s.ch, func() {}
+	return s.ch, func() {}, func() uint64 { return uint64(s.drops.Load()) }
 }
 
 func event(id, name string, at time.Time, cwd string) hookevents.Event {
@@ -423,7 +430,8 @@ func TestReconcileAppliesEventsTheSubscriptionDropped(t *testing.T) {
 	c := &clock{t0}
 	src := &source{}
 	tr := &Tracker{Source: src, Linker: newLinker(), Now: c.Now}
-	ch, _ := func() (<-chan hookevents.Record, func()) { return src.Subscribe(1, nil) }()
+	ch, _, dropped := src.SubscribeCounted(1, nil)
+	tr.dropped = dropped
 	src.add(event("s1", "session-start", c.now, "/work/demo"))
 	c.advance(time.Minute)
 	src.add(event("s1", "user-prompt-submit", c.now, "/work/demo"))
@@ -437,7 +445,7 @@ func TestReconcileAppliesEventsTheSubscriptionDropped(t *testing.T) {
 	if got := tr.Sessions(); len(got) != 1 || got[0].State != StateRunning || got[0].LastEvent != EventStart {
 		t.Fatalf("before reconciling: %+v", got)
 	}
-	if !tr.Reconcile(context.Background()) {
+	if !tr.reconcileIfDropped(context.Background()) {
 		t.Fatal("reconciling found nothing")
 	}
 	if got := tr.Sessions(); len(got) != 1 || got[0].State != StateEnded {
@@ -445,5 +453,30 @@ func TestReconcileAppliesEventsTheSubscriptionDropped(t *testing.T) {
 	}
 	if tr.Reconcile(context.Background()) {
 		t.Fatal("reconciling twice changed something")
+	}
+}
+
+func TestSweepReadsTheRecordOnlyAfterADrop(t *testing.T) {
+	c := &clock{t0}
+	src := &source{}
+	tr := &Tracker{Source: src, Linker: newLinker(), Now: c.Now}
+	_, _, tr.dropped = src.SubscribeCounted(8, nil)
+	// An event in the record the subscription delivered nothing of, but
+	// nothing was dropped: the record is not read.
+	src.records = append(src.records, record(event("s1", "session-start", c.now, "/work/demo")))
+	if tr.reconcileIfDropped(context.Background()) || src.recents.Load() != 0 {
+		t.Fatalf("reconciled without a drop (reads %d)", src.recents.Load())
+	}
+	src.drops.Add(1)
+	if !tr.reconcileIfDropped(context.Background()) && !tr.ResolvePending(context.Background()) {
+		t.Fatal("a drop did not reconcile")
+	}
+	if src.recents.Load() != 1 || len(tr.Sessions()) != 1 {
+		t.Fatalf("reads %d, sessions %+v", src.recents.Load(), tr.Sessions())
+	}
+	// The drop is covered: later sweeps read nothing.
+	tr.reconcileIfDropped(context.Background())
+	if src.recents.Load() != 1 {
+		t.Fatalf("read the record again without a new drop (%d)", src.recents.Load())
 	}
 }
