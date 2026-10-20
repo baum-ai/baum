@@ -11,13 +11,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 type Item struct {
@@ -181,17 +181,10 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			return nil, e
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, err
-	}
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(filepath.Dir(path))
-		if err != nil {
-			return nil, err
-		}
-		if info.Mode().Perm()&0077 != 0 {
-			return nil, errors.New("job state directory must be private (0700)")
-		}
+	// The lock file takes its permissions from the directory: on Windows only
+	// a protected directory gives it the current-user DACL filelock requires.
+	if err := privatefs.MkdirAll(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("job state directory: %w", err)
 	}
 	// One process owns a journal: two queues on one file would run confirmed
 	// jobs twice and overwrite each other's records.
