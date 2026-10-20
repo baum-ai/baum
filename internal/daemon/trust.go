@@ -13,8 +13,8 @@ import (
 // TrustedExecutables are further executables a daemon may restart into at a
 // newer client's request, beside its own executable and the baum on its login
 // shell's PATH. Entries are absolute paths, compared after resolving symbolic
-// links, and are set before Run. It is empty: the desktop app's bundled baum
-// belongs here once the app ships one.
+// links, and are set before Run. It is empty: the desktop app links its
+// bundled baum onto the PATH instead, which makes it the baum on the PATH.
 var TrustedExecutables []string
 
 // executablePolicy decides whether the daemon may run an executable a client

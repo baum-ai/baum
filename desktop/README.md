@@ -3,8 +3,9 @@
 A [Tauri](https://tauri.app) v2 shell around the user's `baum daemon`. The
 shell adds no review features: the daemon serves the local application
 (`../app`) over loopback HTTP, and the window shows it. The shell handles only
-what the operating system has to: the window, and later the tray, start at
-login, notifications, installing the CLI, signing and updates.
+what the operating system has to: the window, installing the `baum` command
+and the user-wide agent hooks, and later the tray, start at login,
+notifications, signing and updates.
 
 The app bundles the release `baum` binary next to its executable. `baum`
 itself is unchanged and stays `CGO_ENABLED=0`.
@@ -32,12 +33,104 @@ may start it, and it outlives the app: quitting the app leaves it running.
      screen. That screen shows the last lines of `daemon.log` and `daemon.out`
      from the state directory, and a button to start the daemon again.
    - While that screen shows, the app watches the credential file. When
-     another client starts a new daemon (hooks run `baum daemon ensure` on
-     every event), the app attaches to it.
+     another client starts a new daemon (a hook that finds none running starts
+     one in the background, except after `baum daemon stop`), the app
+     attaches to it.
    - The app never restarts the daemon on its own, so a crashing daemon
      cannot restart in a loop.
 
 A second launch focuses the existing window instead of opening another one.
+
+## First run: the baum command and the hooks
+
+Agent hooks run `baum` by name, so the app's first run sets up two things
+before the window attaches to the daemon (which starts meanwhile). The window
+opens on a bundled setup screen (`ui/setup.html`) that shows what is on this
+computer and what installing would change; nothing changes until the user
+clicks Install. The Rust side then makes each change:
+
+1. The `baum` command: the bundled binary, linked onto the login shell's
+   `PATH` (below). One binary and one version: the terminal, the hooks and
+   the daemon all run the app's baum, and updating the app updates them.
+2. The user-wide Claude Code and Codex hooks: the bundled
+   `baum hooks install --user`, for the agents it finds. Its output (files
+   changed, backups, Codex's `/hooks` trust step) is shown.
+
+"Skip for now" is there too, and so is "Keep my baum, install the hooks" when
+a different baum is in the way. Leaving the screen records that setup ran
+(`setup.json` in the app's configuration directory, with the link the app
+created), attaches to the daemon and opens its diagnostics page, which lists
+each problem with its fix. Later, every page of the app shows a notice with
+a link to that page while the diagnostics find a problem (see
+[`../app/README.md`](../app/README.md)).
+
+The "Command Line and Hooks…" menu item (the application menu on macOS, a
+"baum" menu elsewhere) reopens the same screen: what is installed, Update,
+Replace, Remove, and Install or Remove hooks. "Done" attaches to the daemon
+again. `onboarding::show` opens it from other places, such as a tray menu.
+
+The screen gets the facts from the bundled baum: `baum daemon login-path
+--json` resolves the login shell's `PATH` as the daemon does and names the
+first `baum` on it (the one hooks run) with its version, and `baum hooks
+status --user --json` reports each agent's hooks.
+
+### Where the command goes
+
+- **macOS and Linux:** a symbolic link named `baum` to the bundled binary.
+  - If a different `baum` comes first on the `PATH` (`go install`,
+    Homebrew, a release archive), the screen shows its path and version, and
+    replaces it only when the user clicks "Replace <path>": that file is
+    moved aside to `<path>.replaced-by-baum-app` and the link takes its
+    place, so it keeps its position on the `PATH`.
+  - Otherwise the link goes in the first of `~/.local/bin` and `~/bin` that
+    is on the `PATH`, else in `/usr/local/bin`, else in `~/.local/bin` with a
+    note to add it to the `PATH`. A directory the user cannot write
+    (usually `/usr/local/bin`) is changed through the system's password
+    prompt (`osascript` with administrator privileges on macOS, `pkexec` on
+    Linux), which runs a fixed script that receives the paths as arguments.
+  - The link points at a stable path: the binary inside the installed app
+    bundle (`baum.app/Contents/MacOS/baum`, or `/usr/bin/baum` from the deb),
+    which updates replace in place. An AppImage runs from a mount that
+    disappears when it quits, so the app keeps a copy in its data directory
+    (`bin/baum`, mode 0755) and refreshes it at every launch. On macOS an app
+    still on its disk image or translocated by Gatekeeper must be moved to
+    Applications first.
+  - The deb's `/usr/bin/baum` already is the app's binary: the screen shows
+    it as installed and leaves it to the package manager.
+  - A link the app made whose app was since deleted points nowhere; shells
+    and the hooks' `command -v baum` skip it, so the hooks do nothing. The
+    next install replaces such a broken link without asking, and the app's
+    own link to an older copy of the app is updated without asking.
+- **Windows:** the directory of the bundled `baum.exe` is added to the front
+  of the user's `PATH` (the registry value, keeping unexpanded variables);
+  new terminals pick it up. A `baum` in a system `PATH` directory still comes
+  first and is shown.
+
+Remove deletes only what the app recorded: the link, while it still points
+where the app put it (a link someone changed since is left alone), and puts
+back a baum it had replaced; on Windows it takes the directory off the user
+`PATH`. Hooks are removed with the bundled `baum hooks uninstall --user`,
+which removes only baum's own entries.
+
+### Restarts into the app's baum
+
+A busy older daemon restarts into a newer baum only if it trusts the
+executable (`internal/daemon/trust.go`): its own, or the `baum` on its login
+shell's `PATH` after resolving links, owned by the user or root and not
+group- or world-writable, in directories that pass the same test up to `/`.
+Installing the link makes the bundled binary the `baum` on the `PATH`, so:
+
+- Linux deb (`/usr/bin/baum`) and the AppImage's copy in the user's data
+  directory are trusted (the copy only while the home directory and
+  `~/.local/share` are not group-writable, which a umask of 002 can cause).
+  The binary inside an AppImage's mount (under `/tmp`) never is.
+- macOS: `/Applications` is `root:admin`, mode 0775, so an app there is
+  refused, both as the `PATH` baum and as the daemon's own executable. An
+  older busy daemon is then not restarted when its jobs finish; it keeps
+  running and is replaced the next time the app or a hook finds it idle. An
+  app in `~/Applications` is trusted.
+- Windows checks only that the file is the daemon's own or the `PATH` baum,
+  which the user `PATH` entry makes it for daemons started after the change.
 
 ## What pages may do
 
@@ -47,13 +140,21 @@ A second launch focuses the existing window instead of opening another one.
 - Tauri treats the daemon's pages as remote, and no capability names a remote
   URL, so they cannot call any Tauri command or plugin. `withGlobalTauri` is
   off.
-- The bundled screen has one capability, `connecting-screen`, which allows
-  only the app's `connection` and `reconnect` commands.
+- The bundled screens have two capabilities, for the main window's bundled
+  origin only: `connecting-screen` allows the app's `connection` and
+  `reconnect` commands, and `setup-screen` the setup commands
+  (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
+  `uninstall_hooks` and `finish_setup`). Every change they make runs in the
+  Rust side and only when the user clicked it on the setup screen;
+  replacing a different baum also needs the screen to name the path the
+  user confirmed. The daemon's pages cannot call any of them.
 - The opener plugin is used only from Rust, to open links in the browser. No
   page is granted its commands.
 
 The app itself makes no network requests other than loopback requests to the
-daemon.
+daemon. Outside its own configuration and data directories it writes only
+what the setup screen installs: the `baum` link (or the user `PATH` entry on
+Windows), and, through the bundled baum, the user-wide hook entries.
 
 ## Development
 

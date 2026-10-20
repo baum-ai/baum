@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-hooks"
+description = "Enables the uninstall_hooks command without any pre-configured scope."
+commands.allow = ["uninstall_hooks"]
+
+[[permission]]
+identifier = "deny-uninstall-hooks"
+description = "Denies the uninstall_hooks command without any pre-configured scope."
+commands.deny = ["uninstall_hooks"]

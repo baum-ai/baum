@@ -9,7 +9,9 @@
 //! daemon running.
 
 mod daemon;
+mod install;
 mod navigation;
+mod onboarding;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -122,7 +124,11 @@ fn connect(app: &AppHandle, why: Attach) {
         let Some(window) = app.get_webview_window(MAIN) else {
             return;
         };
-        if let Err(e) = window.navigate(launch.url.clone()) {
+        // The setup screen stays until the user leaves it, which attaches again.
+        if onboarding::is_open(&app) {
+            return watch(&app, &state, attempt, &launch, why);
+        }
+        if let Err(e) = window.navigate(onboarding::landing(&app, &launch.url)) {
             let failure = daemon::Failure {
                 message: format!("Cannot open the baum daemon: {e}"),
                 details: Vec::new(),
@@ -182,8 +188,9 @@ fn watch(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch, 
 }
 
 /// While the error screen shows a daemon that stopped, waits for another
-/// client (a coding-agent hook runs `baum daemon ensure` on every event) to
-/// start a new one, and attaches to it. The app itself starts nothing; the
+/// client (a coding-agent hook that finds no daemon starts one in the
+/// background, except after `baum daemon stop`) to start a new one, and
+/// attaches to it. The app itself starts nothing; the
 /// wait ends when the user restarts the daemon from the screen.
 fn await_replacement(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch) {
     loop {
@@ -254,11 +261,23 @@ fn main() {
         // Used only from Rust; no page is granted its commands.
         .plugin(tauri_plugin_opener::init())
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![connection, reconnect])
+        .manage(onboarding::Setup::default())
+        .invoke_handler(tauri::generate_handler![
+            connection,
+            reconnect,
+            onboarding::setup_state,
+            onboarding::install_command,
+            onboarding::uninstall_command,
+            onboarding::install_hooks,
+            onboarding::uninstall_hooks,
+            onboarding::finish_setup,
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
-            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+            onboarding::menu(app.handle())?;
+            let page = onboarding::start(app.handle());
+            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App(page.into()))
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
@@ -290,30 +309,42 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They must get no capability,
-    /// so the only one is the bundled screen's, with exactly its two commands.
+    /// so the only ones are the bundled screens', with exactly their commands
+    /// and no remote URL.
     #[test]
-    fn only_the_bundled_screen_has_a_capability() {
-        let entries: Vec<_> =
-            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .collect();
-        assert_eq!(entries.len(), 1, "{entries:?}");
-        let capability: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&entries[0]).unwrap()).unwrap();
-        assert_eq!(capability["identifier"], "connecting-screen");
-        assert!(capability.get("remote").is_none());
-        assert_eq!(
-            capability["permissions"],
-            serde_json::json!(["allow-connection", "allow-reconnect"])
-        );
+    fn only_the_bundled_screens_have_capabilities() {
+        let expected = serde_json::json!({
+            "connecting-screen": ["allow-connection", "allow-reconnect"],
+            "setup-screen": [
+                "allow-setup-state",
+                "allow-install-command",
+                "allow-uninstall-command",
+                "allow-install-hooks",
+                "allow-uninstall-hooks",
+                "allow-finish-setup"
+            ],
+        });
+        let mut found = serde_json::Map::new();
+        for entry in
+            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities")).unwrap()
+        {
+            let capability: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
+            assert!(capability.get("remote").is_none(), "{capability}");
+            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            found.insert(
+                capability["identifier"].as_str().unwrap().to_string(),
+                capability["permissions"].clone(),
+            );
+        }
+        assert_eq!(serde_json::Value::Object(found), expected);
         let config: serde_json::Value = serde_json::from_slice(
             &std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen"])
+            serde_json::json!(["connecting-screen", "setup-screen"])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }
