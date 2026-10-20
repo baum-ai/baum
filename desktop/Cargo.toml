@@ -23,12 +23,12 @@ tauri = { version = "2.12.4", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.8.0"
 tauri-plugin-opener = "2.7.2"
 tauri-plugin-single-instance = "2.5.4"
-tauri-plugin-updater = "2.13.0"
+tauri-plugin-updater = "2.13.3"
 url = "2"
 
 [dev-dependencies]
 base64 = "0.22"
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 
 [profile.release]
 codegen-units = 1
