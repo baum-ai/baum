@@ -723,11 +723,20 @@ installs its bundled `baum` as your `baum` command, because agent hooks run
   binary, in `~/.local/bin` or `~/bin` when one is on your login shell's
   `PATH`, else in `/usr/local/bin`. Writing to a directory you cannot write
   goes through the system password prompt (`osascript` on macOS, `pkexec` on
-  Linux) only for a system directory: outside your home directory, owned by
-  root and reached without symbolic links (in practice `/usr/local/bin`).
-  Root then runs a fixed shell script that takes the paths as arguments and
-  refuses any link not named `baum` in that directory and any backup not
-  named as the app names them. A different `baum` first on your `PATH` is
+  Linux) only for a system directory: outside your home directory, reached
+  without symbolic links, owned by root and writable by no one else, below
+  directories that are root's and not writable by others (in practice
+  `/usr/local/bin`), and only for a link to a baum outside your home
+  directory (a baum in your home directory gets a link in `~/.local/bin`
+  instead). Root then runs a fixed shell script that takes the paths as
+  arguments, refuses any link not named `baum` in that directory and any
+  backup not named as the app names them, and checks the directory again
+  from inside it before it changes anything, so a directory swapped in while
+  the prompt shows is refused. A password-prompted link to an app in
+  `/Applications` (as other developer tools install their commands) puts
+  that app's binary on every user's `PATH` and on sudo's `secure_path`; it
+  is only as safe as the app bundle, which on macOS the admin group can
+  rewrite. A different `baum` first on your `PATH` is
   replaced only after you confirm, and is kept beside it as
   `baum.replaced-by-baum-app`; one a package manager owns (Homebrew, Nix,
   the system directories, asdf or mise shims) is never replaced. An AppImage

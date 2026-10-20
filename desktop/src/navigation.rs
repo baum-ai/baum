@@ -14,21 +14,32 @@ pub enum Decision {
 /// Decides a navigation of the main window. `daemon` is the origin of the
 /// daemon the window is attached to, if any.
 pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision {
-    // The setup screen loads only while the app shows it, never because a
-    // page navigated there.
-    if is_bundled(url) && url.path() == "/setup.html" {
-        return if setup_open {
+    if is_bundled(url) {
+        return if bundled_page_allowed(url.path(), setup_open) {
             Decision::Allow
         } else {
             Decision::Deny
         };
     }
-    if is_bundled(url) || daemon.is_some_and(|d| &url.origin() == d) {
+    if daemon.is_some_and(|d| &url.origin() == d) {
         return Decision::Allow;
     }
     match url.scheme() {
         "http" | "https" if url.host().is_some() && !is_loopback(url) => Decision::OpenInBrowser,
         _ => Decision::Deny,
+    }
+}
+
+/// The bundled pages the window may show, by their exact path: the
+/// connecting screen, and the setup screen only while the app shows it,
+/// never because a page navigated there. The asset server also answers other
+/// spellings of a page (`/setup`, `/setup.html/`, `/setup%2Ehtml`), so every
+/// other path, any percent-encoding included, is refused.
+fn bundled_page_allowed(path: &str, setup_open: bool) -> bool {
+    match path {
+        "/" | "/index.html" => true,
+        "/setup.html" => setup_open,
+        _ => false,
     }
 }
 
@@ -143,11 +154,30 @@ mod tests {
 
     #[test]
     fn the_setup_screen_loads_only_while_it_shows() {
-        let mut setup = bundled_screen();
-        setup.set_path("/setup.html");
-        assert_eq!(decide(&setup, None, true), Decision::Allow);
-        assert_eq!(decide(&setup, None, false), Decision::Deny);
+        let page = |path: &str| {
+            let mut url = bundled_screen();
+            url.set_path(path);
+            url
+        };
+        assert_eq!(decide(&page("/setup.html"), None, true), Decision::Allow);
+        assert_eq!(decide(&page("/setup.html"), None, false), Decision::Deny);
         assert_eq!(decide(&bundled_screen(), None, false), Decision::Allow);
+        assert_eq!(decide(&page("/"), None, false), Decision::Allow);
+        // Other spellings the asset server maps to a page, and other files.
+        for path in [
+            "/setup",
+            "/setup.html/",
+            "/setup%2Ehtml",
+            "/setup%2ehtml",
+            "/%73etup.html",
+            "/index",
+            "/index.html/",
+            "/screen.js",
+        ] {
+            for open in [false, true] {
+                assert_eq!(decide(&page(path), None, open), Decision::Deny, "{path}");
+            }
+        }
     }
 
     #[test]

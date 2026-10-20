@@ -91,24 +91,46 @@ status --user --json` reports each agent's hooks.
     note to add it to the `PATH`.
   - A directory the user cannot write is changed through the system's
     password prompt (`osascript` with administrator privileges on macOS,
-    `pkexec` on Linux) only when it is a system directory: outside the home
-    directory, owned by root and reached without symbolic links (in practice
-    `/usr/local/bin`). Anywhere else the screen says what is in the way
-    instead. Root runs a fixed script that receives the paths as arguments
-    and itself refuses a link not named `baum` in that directory, or a backup
-    not named `baum.replaced-by-baum-app[.N]` beside it. If placing the link
-    fails, the script puts the replaced baum back.
+    `/usr/bin/pkexec` on Linux) only when it is a system directory: outside
+    the home directory, existing or with an existing parent, reached without
+    symbolic links, owned by root and writable by no one else, below
+    directories that are root's and not writable by others either (sticky
+    ones such as `/tmp` aside); in practice `/usr/local/bin`. Anywhere else
+    the screen says what is in the way instead.
+  - Root runs a fixed script that receives the paths as arguments. It
+    refuses (exit 4) anything but absolute paths, the link `<dir>/baum` and
+    a backup `<dir>/baum.replaced-by-baum-app` with at most a numeric suffix.
+    It changes into the parent and then the directory (creating only the
+    last one), checks that the physical path is the one named and that root
+    owns it and no one else can write it, and then works by relative names
+    with `--`, so a directory swapped in after the app's check is never
+    followed. Uninstalling also requires the link to be a symbolic link to
+    the recorded target (exit 3 otherwise). If placing the link fails, the
+    replaced baum is put back. These scripts were exercised as root in a
+    container against path traversal, newlines, option injection, relative
+    paths, an empty target and a directory swapped for a symbolic link.
+  - The link never needs a password when it would point into the home
+    directory (an AppImage's copy, an app in `~/Applications`): the user can
+    rewrite that file, and a root-owned link to it would put it on every
+    user's `PATH` and on sudo's `secure_path`. Such a link goes in
+    `~/.local/bin` (created if needed, with the note to add it to the
+    `PATH`); if a baum in a system directory would still come first, the
+    screen says to remove it or reorder the `PATH`.
   - The link points at a stable path: the binary inside the installed app
     bundle (`baum.app/Contents/MacOS/baum`, or `/usr/bin/baum` from the deb),
     which updates replace in place. On macOS an app still on its disk image
     or translocated by Gatekeeper must be moved to Applications first.
   - An AppImage runs from a mount that disappears when it quits. The app
     keeps a copy of its baum in its data directory (`bin/baum`, mode 0755),
-    refreshes it at every launch before anything runs baum (when its size or
-    modification time differs; the new file is renamed into place, so a
-    daemon running the old one keeps it), and runs that copy for everything:
-    the daemon, `login-path` and the hooks commands. The link points at the
-    copy, and removing the command leaves the copy. The app counts as an
+    checks it before every run of baum and copies again when the stamp
+    beside it (`baum.stamp`: the bundled binary's size and modification time
+    and the copy's modification time) does not match, so a changed app or a
+    rewritten copy heals; the new file is renamed into place, so a daemon
+    running the old one keeps it. It runs that copy for everything: the
+    daemon, `login-path` and the hooks commands. A copy that cannot be made
+    is an error on the connecting screen, whose Retry tries again; the app
+    never falls back to the binary in the mount. The link points at the copy,
+    and removing the command leaves the copy. The app counts as an
     AppImage only when `APPIMAGE` and `APPDIR` are set and its executable is
     under `APPDIR`, since programs started from an AppImage inherit
     `APPIMAGE`.
@@ -119,17 +141,20 @@ status --user --json` reports each agent's hooks.
     next install replaces such a broken link without asking, and the app's
     own link to an older copy of the app is updated without asking.
 - **Windows:** the app keeps a copy of its `baum.exe`, alone in `bin` in its
-  data directory and refreshed at every launch (a running copy is renamed
-  aside first), runs that copy, and adds the directory to the front of the
+  local (not roaming) data directory and refreshed the same way (a running
+  copy is renamed aside under a name of its own, and earlier ones are
+  removed once they no longer run), runs that copy, and adds the directory to the front of the
   user's `PATH` (the registry value, keeping unexpanded variables, compared
   with them expanded so `%LOCALAPPDATA%\…` counts as the same directory;
   refused if the value would pass 32,000 characters). New terminals pick it
   up. A `baum` in a system `PATH` directory still comes first; the screen
   says so.
 
-`setup.json` is the user's file, so before anything reaches the password
-prompt the app checks that its record has this shape and names the baum the
-app runs now. Remove deletes only what the app recorded: the link, while it
+`setup.json` is the user's file, so the app uses a record only when it has
+this shape (a link named `baum`, a backup named as above, an absolute target
+named `baum`), still blocks a package manager's baum and asks before
+replacing anything it did not itself link, and asks for a password to remove
+a link only when the record names the baum the app runs now. Remove deletes only what the app recorded: the link, while it
 still points where the app put it (a link someone changed since is left
 alone, and the screen names a backup still beside it), and puts back a baum
 it had replaced; on Windows it takes the directory off the user `PATH`.
@@ -322,7 +347,12 @@ title is not interpreted.
 
 ## What pages may do
 
-- The window loads only the bundled screen and the attached daemon's origin.
+- The window loads only the bundled screens and the attached daemon's origin.
+  Of the bundled files it shows exactly `/` and `/index.html`, and
+  `/setup.html` only while the app shows the setup screen; any other path,
+  including other spellings the asset server maps to a page (`/setup`,
+  `/setup.html/`, percent-encoded names), is refused. The bundled pages'
+  content security policy has `frame-ancestors 'none'`.
   `http` and `https` links to other hosts open in the default browser. Other
   loopback servers, other schemes and new-window requests are refused.
 - Tauri treats the daemon's pages as remote, and no capability names a remote

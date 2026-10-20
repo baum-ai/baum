@@ -108,10 +108,19 @@ fn save(app: &AppHandle, saved: &Saved) -> Result<(), String> {
 /// then on, so updating the app updates the command and the daemon.
 pub fn start(app: &AppHandle) -> &'static str {
     if let (Some(copy), Ok(bundled)) = (managed_copy(app), crate::daemon::bundled_cli_path()) {
-        match install::refresh_copy(&bundled, &copy) {
-            Ok(_) => crate::daemon::use_stable_cli(copy),
-            Err(e) => eprintln!("baum desktop: cannot copy baum to {}: {e}", copy.display()),
-        }
+        // One refresh at a time: they share the temporary file's name.
+        let refreshing = Mutex::new(());
+        crate::daemon::use_stable_cli(move || {
+            let _one = refreshing.lock().unwrap_or_else(|p| p.into_inner());
+            install::refresh_copy(&bundled, &copy)
+                .map(|_| copy.clone())
+                .map_err(|e| {
+                    format!(
+                        "Cannot copy baum out of the app to {}: {e}. Check that the folder can be written and the disk has room, then try again.",
+                        copy.display()
+                    )
+                })
+        });
     }
     if load(app).onboarded {
         return CONNECTING_PAGE;
@@ -206,7 +215,8 @@ fn managed_copy(app: &AppHandle) -> Option<PathBuf> {
     if crate::daemon::cli_overridden() || !(cfg!(windows) || running_as_appimage()) {
         return None;
     }
-    let dir = app.path().app_data_dir().ok()?;
+    // Windows: the local, not the roaming, application data.
+    let dir = app.path().app_local_data_dir().ok()?;
     Some(
         dir.join("bin")
             .join(if cfg!(windows) { "baum.exe" } else { "baum" }),
@@ -615,10 +625,21 @@ mod tests {
         use super::*;
         use std::os::unix::fs::PermissionsExt;
 
+        /// A stand-in for the bundled baum. It is written under another name
+        /// and copied into place by `cp`: a file this process held open for
+        /// writing could still be open in a child another test forks at that
+        /// moment, and running it would then fail with ETXTBSY.
         fn fake_cli(dir: &Path, script: &str) -> PathBuf {
+            let source = dir.join("baum.source");
+            fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
             let path = dir.join("baum");
-            fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            let copied = Command::new("cp")
+                .arg("-p")
+                .arg(&source)
+                .arg(&path)
+                .status();
+            assert!(copied.unwrap().success());
             path
         }
 

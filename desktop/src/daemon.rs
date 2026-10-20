@@ -93,19 +93,23 @@ pub fn cli_path() -> Result<PathBuf, Failure> {
     if let Some(path) = std::env::var_os("BAUM_DESKTOP_BAUM") {
         return Ok(PathBuf::from(path));
     }
-    if let Some(copy) = STABLE_CLI.get() {
-        return Ok(copy.clone());
+    if let Some(stable) = STABLE_CLI.get() {
+        return stable().map_err(Failure::new);
     }
     bundled_cli_path()
 }
 
-/// A stable copy of the bundled binary that the app runs instead (an
-/// AppImage's mount vanishes when it quits; see `onboarding::start`). Set
-/// once, at startup, before anything runs baum.
-static STABLE_CLI: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// Where the app keeps a stable copy of the bundled binary (an AppImage's
+/// mount vanishes when it quits; see `onboarding::start`), a function that
+/// refreshes the copy if needed and returns it. Every run of baum goes
+/// through it, so a copy that could not be made is an error the connecting
+/// screen shows and Retry tries again, never a fall back to the binary that
+/// would vanish. Set once, at startup, before anything runs baum.
+type StableCli = Box<dyn Fn() -> Result<PathBuf, String> + Send + Sync>;
+static STABLE_CLI: std::sync::OnceLock<StableCli> = std::sync::OnceLock::new();
 
-pub fn use_stable_cli(path: PathBuf) {
-    let _ = STABLE_CLI.set(path);
+pub fn use_stable_cli(stable: impl Fn() -> Result<PathBuf, String> + Send + Sync + 'static) {
+    let _ = STABLE_CLI.set(Box::new(stable));
 }
 
 /// Whether `BAUM_DESKTOP_BAUM` names the baum to run (development).
@@ -567,11 +571,20 @@ mod tests {
         use super::*;
         use std::os::unix::fs::PermissionsExt;
 
-        /// A stand-in for the bundled baum binary.
+        /// A stand-in for the bundled baum binary, copied into place by `cp`
+        /// so that no child another test forks holds it open for writing,
+        /// which would make running it fail with ETXTBSY.
         fn fake_cli(dir: &Path, script: &str) -> PathBuf {
+            let source = dir.join("baum.source");
+            fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
             let path = dir.join("baum");
-            fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            let copied = Command::new("cp")
+                .arg("-p")
+                .arg(&source)
+                .arg(&path)
+                .status();
+            assert!(copied.unwrap().success());
             path
         }
 
