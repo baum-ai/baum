@@ -14,6 +14,7 @@ func TestReasonTextIsStable(t *testing.T) {
 		GenerationBudgetExceededReason("tokens"):     "generation budget exceeded: tokens",
 		GenerationBudgetExceededReason("wall_clock"): "generation budget exceeded: wall_clock",
 		GenerationBudgetExceededReason(""):           "generation budget exceeded: ",
+		ProviderRejectedReason("refusal"):            "the model provider rejected the request: refusal",
 	} {
 		if got != want {
 			t.Errorf("reason %q, want %q", got, want)

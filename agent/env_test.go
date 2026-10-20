@@ -19,7 +19,7 @@ func names(environ []string) []string {
 func TestLocalEnvironmentDropsCredentials(t *testing.T) {
 	denied := []string{
 		"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-		"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_PROFILE",
+		"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_PROFILE",
 		"GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET", "GITHUB_TOKEN", "GH_TOKEN", "GIT_ASKPASS", "GIT_SSH_COMMAND",
 		"SSH_AUTH_SOCK", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "SECRET",
 	}
@@ -64,9 +64,9 @@ func TestLocalEnvironmentExtraIsTrusted(t *testing.T) {
 }
 
 func TestLocalEnvironmentExtraCannotAdmitCredentials(t *testing.T) {
-	environ := []string{"ANTHROPIC_API_KEY=x", "OPENAI_API_KEY=x", "CODEX_API_KEY=x", "AWS_PROFILE=x", "GOOGLE_API_KEY=x", "AZURE_X=x",
+	environ := []string{"ANTHROPIC_API_KEY=x", "OPENAI_API_KEY=x", "CODEX_API_KEY=x", "CURSOR_API_KEY=x", "CURSOR_AUTH_TOKEN=x", "AWS_PROFILE=x", "GOOGLE_API_KEY=x", "AZURE_X=x",
 		"GITHUB_TOKEN=x", "GH_TOKEN=x", "GIT_ASKPASS=x", "SSH_AUTH_SOCK=x", "CLAUDE_CODE_USE_BEDROCK=1", "CLAUDE_CODE_USE_VERTEX=1", "CODEX_HOME=/x"}
-	extra := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "AWS_PROFILE", "GOOGLE_API_KEY", "AZURE_X", "GITHUB_TOKEN",
+	extra := []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "AWS_PROFILE", "GOOGLE_API_KEY", "AZURE_X", "GITHUB_TOKEN",
 		"GH_TOKEN", "GIT_ASKPASS", "SSH_AUTH_SOCK", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_HOME"}
 	for _, windows := range []bool{false, true} {
 		if got := localEnvironment(windows, environ, extra); !slices.Equal(names(got), []string{"CODEX_HOME"}) {

@@ -51,11 +51,12 @@ func (q *Queue) Handler() http.Handler {
 			EstimateID       string `json:"estimate_id"`
 			ConfirmEstimate  bool   `json:"confirm_estimate"`
 			ConfirmIsolation bool   `json:"confirm_isolation"`
+			ConfirmUnpriced  bool   `json:"confirm_unpriced"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		v, e := q.Submit(r.Context(), request.EstimateID, request.ConfirmEstimate, request.ConfirmIsolation)
+		v, e := q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation, Unpriced: request.ConfirmUnpriced})
 		if errors.Is(e, ErrRestarting) {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)

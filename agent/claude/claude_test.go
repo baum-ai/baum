@@ -249,6 +249,27 @@ func TestClaudeDiagnosticsSurviveFailureWithoutRawContent(t *testing.T) {
 	}
 }
 
+// Each tool use runs from its tool_use to its tool_result, so the tool timeout
+// bounds a tool that never returns.
+func TestClaudeReportsToolsToTheActivity(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	events := []string{
+		`{"type":"assistant","message":{"id":"m1","model":"fixture","usage":{"input_tokens":10,"output_tokens":2},"content":[{"type":"tool_use","id":"read1","name":"Read","input":{"file_path":"a.go"}},{"type":"tool_use","id":"grep1","name":"Grep","input":{"path":"."}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"read1","content":"ok"}]}}`,
+		`{"type":"result","subtype":"error_max_turns","is_error":true}`,
+	}
+	body := "#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n" + strings.Join(events, "\n") + "\nEVENTS\n"
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	activity := agent.NewActivity()
+	_, _ = (&Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}).Run(context.Background(), agent.Request{Directory: t.TempDir(), Schema: []byte(`{}`), MaxCalls: 2, MaxTokens: 100, Activity: activity})
+	// Read returned; Grep never did.
+	if running := activity.Running(); running != 1 {
+		t.Fatalf("%d tools running, want the Grep that never returned", running)
+	}
+}
+
 func TestClaudeLogsStructuredOutputRejectionsBounded(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "claude")
 	detail := "Output validation failed: sections[0].risks[0].id " + strings.Repeat("x", 600) + "\nprivate tail"

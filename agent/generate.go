@@ -121,10 +121,12 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 	}
 	text := contextPack
 	var assessed []byte
+	// Stalls are counted over the run, repairs included.
+	stalls := 0
 	budgets := run.Budgets
 	repairs := max(budgets.MaxRepairAttempts, 1)
 	for attempt := 0; ; attempt++ {
-		result, callErr := g.call(ctx, budgets, Request{Directory: run.Directory, Prompt: text, Schema: schema, Logger: logger, Endpoint: run.Endpoint}, &outcome)
+		result, callErr := g.call(ctx, budgets, Request{Directory: run.Directory, Prompt: text, Schema: schema, Logger: logger, Endpoint: run.Endpoint}, &outcome, &stalls)
 		if callErr != nil {
 			if attempt > 0 {
 				// A repair that could not finish still fails with the call's
@@ -181,8 +183,9 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 }
 
 // call runs the backend, retrying a provider failure within the attempt budget
-// and charging every call and token to the outcome and the run's budgets.
-func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, outcome *Outcome) (Result, error) {
+// and a stall within the run's stall retries (stalls counts the run's stalls so
+// far), and charging every call and token to the outcome and the run's budgets.
+func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, outcome *Outcome, stalls *int) (Result, error) {
 	var result Result
 	for attempt := 0; attempt < budgets.MaxProviderAttempts; attempt++ {
 		request.MaxCalls = budgets.MaxCalls - outcome.Calls
@@ -195,7 +198,7 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		}
 		var err error
 		outcome.ProviderAttempts++
-		result, err = g.Backend.Run(ctx, request)
+		result, err = g.runWatched(ctx, budgets, request)
 		if err != nil {
 			outcome.ErroredAttempts++
 		}
@@ -221,10 +224,24 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		if err == nil {
 			return result, nil
 		}
+		var stall *stallError
+		if errors.As(err, &stall) {
+			// A stall is retried at once and does not use up the provider
+			// attempt budget, though it counts as an attempt.
+			*stalls++
+			if *stalls > maxStallRetries {
+				return result, errors.New(ReasonStalled)
+			}
+			attempt--
+			continue
+		}
 		if request.Logger != nil {
 			request.Logger.ErrorContext(ctx, "review agent failed", "provider_attempt", attempt+1, "error", err, "status", LastErrorStatus(result.Events))
 		}
-		if strings.HasPrefix(err.Error(), GenerationBudgetExceededReason("")) {
+		// A spent budget and a refusal a retry cannot change end the run with
+		// their own reason.
+		var rejected *RejectedError
+		if strings.HasPrefix(err.Error(), GenerationBudgetExceededReason("")) || errors.As(err, &rejected) {
 			return result, err
 		}
 		if attempt+1 < budgets.MaxProviderAttempts {
