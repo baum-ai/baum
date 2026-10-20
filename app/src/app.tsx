@@ -31,6 +31,7 @@ import {
   cost,
   automaticLabel,
   automaticNotice,
+  parseLive,
   type Automatic,
   type AutomaticStatus,
   type Clone,
@@ -38,6 +39,7 @@ import {
   type Snapshot,
   type Estimate,
   type Job,
+  type LiveSession,
 } from "./api";
 
 function useLocation() {
@@ -151,6 +153,15 @@ function Workspace({ url }: { url: UrlState }) {
     }[]
   >([]);
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
+  const [live, setLive] = useState<LiveSession[]>([]);
+  const lastLive = useRef(0);
+  // Sessions in progress change far more often than the rest, so the live
+  // event rereads only them. A daemon without them serves none.
+  const reloadLive = useCallback(async () => {
+    const sequence = ++lastLive.current;
+    const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => []);
+    if (sequence === lastLive.current) setLive(sessions);
+  }, []);
   const lastReload = useRef(0);
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
@@ -181,15 +192,20 @@ function Workspace({ url }: { url: UrlState }) {
   }, []);
   useEffect(() => {
     void reload();
+    void reloadLive();
     const source = new EventSource(appURL("api/events"));
     const refresh = () => void reload();
+    const refreshLive = () => void reloadLive();
     source.addEventListener("open", refresh);
+    source.addEventListener("open", refreshLive);
+    source.addEventListener("live", refreshLive);
+    source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
     return () => source.close();
-  }, [reload]);
+  }, [reload, reloadLive]);
   const cloneFor = (e: Entry) =>
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
@@ -294,6 +310,7 @@ function Workspace({ url }: { url: UrlState }) {
             revision={revision}
             job={reviewJob(selectedEntry, jobs)}
             changed={reload}
+            live={live}
             generate={() => void generate([selectedEntry], "single")}
           />
         ) : (
@@ -401,6 +418,7 @@ function Workspace({ url }: { url: UrlState }) {
                 selection={selection}
                 setSelection={setSelection}
                 Link={LocalLink}
+                live={live}
               />
             )}
           </>

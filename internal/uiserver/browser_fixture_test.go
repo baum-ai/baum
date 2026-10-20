@@ -24,7 +24,9 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -69,6 +71,37 @@ func browserDiagnostics(context.Context) doctor.Report {
 		{ID: "github-token", Label: "GitHub token", Status: doctor.StatusProblem, Detail: "No GitHub token was found in the environment, the config file or gh.", Fix: "Run gh auth login, or set github_token in ~/.config/baum/a-deliberately-long-directory-name/for-narrow-layouts/config.toml."},
 		{ID: "price-list", Label: "Price list", Status: doctor.StatusInfo, Detail: "Using the built-in price list.", Source: "built-in"},
 	}}
+}
+
+// browserLiveLinker links the one directory the browser test's agent session
+// works in to PR 7's branch; the real linkage is tested in livesessions.
+type browserLiveLinker struct{}
+
+func (browserLiveLinker) Link(_ context.Context, cwd string) (livesessions.Link, bool) {
+	return livesessions.Link{Repository: "acme/demo", Branch: "feature", PR: 7}, cwd == "/fixture/live"
+}
+
+// feedLiveSession records a hook event for the agent session "live-e2e"
+// whenever the browser test writes its marker file: "running", "idle" or
+// "ended".
+func feedLiveSession(ctx context.Context, events *hookevents.Store, marker string) {
+	names := map[string]string{"running": "user-prompt-submit", "idle": "stop", "ended": "session-end"}
+	var last string
+	for ticker := time.NewTicker(100 * time.Millisecond); ; {
+		if data, err := os.ReadFile(marker); err == nil && string(data) != last {
+			last = string(data)
+			if name, ok := names[last]; ok {
+				e := hookevents.New(hookevents.KindAgent, "claude-code", name, "/fixture/live", "fixture")
+				e.Session = &hookevents.Session{ID: "live-e2e", Cwd: "/fixture/live"}
+				_, _ = events.Add(e, hookevents.ViaSocket)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type browserTransport func(*http.Request) (*http.Response, error)
@@ -225,7 +258,15 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	liveMarker := filepath.Join(state, "live-session")
+	_ = os.Remove(liveMarker)
+	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(_ context.Context, server *uiserver.Server) (daemon.App, error) {
+		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
+		if err != nil {
+			return daemon.App{}, err
+		}
+		live := &livesessions.Tracker{Source: events, Linker: browserLiveLinker{}, Notify: func() { _ = server.Publish("live", struct{}{}) }}
 		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
 		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
@@ -240,12 +281,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		scheduler.Queue = runner
 		runner.SetAutomaticGate(scheduler.Gate)
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: api.Close, Drain: runner.Drain, Resume: runner.Resume,
+		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.
 			Run: func(ctx context.Context) {
 				go scheduler.Run(ctx)
+				go live.Run(ctx)
+				go feedLiveSession(ctx, events, liveMarker)
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {

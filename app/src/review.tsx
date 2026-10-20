@@ -1,5 +1,13 @@
 import { UsageDetails } from "./usage";
-import { Component, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Component,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
@@ -18,8 +26,11 @@ import {
   type Job,
   isActiveJob,
   automaticLabel,
+  liveFor,
+  type LiveSession,
   type Provenance,
 } from "./api";
+import { LiveSessions } from "./live";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -73,6 +84,7 @@ export function LocalReview({
   generate,
   job,
   changed,
+  live = [],
 }: {
   entry: Entry;
   clone: string;
@@ -80,8 +92,22 @@ export function LocalReview({
   generate: () => void;
   job?: Job;
   changed: () => Promise<void>;
+  /** Agent sessions in progress; those of this pull request are listed. */
+  live?: LiveSession[];
 }) {
   const pr = entry.pull_request;
+  const running = liveFor(live, pr);
+  // A session that ends is read from disk like any other: reload the list
+  // when one leaves the live section.
+  const [ended, setEnded] = useState(0);
+  const liveKeys = running.map((s) => `${s.agent}:${s.session_id}`).join("\n");
+  const previousKeys = useRef(liveKeys);
+  useEffect(() => {
+    const now = new Set(liveKeys.split("\n"));
+    if (previousKeys.current.split("\n").some((key) => key && !now.has(key)))
+      setEnded((n) => n + 1);
+    previousKeys.current = liveKeys;
+  }, [liveKeys]);
   const generating = isActiveJob(job) || (!job && entry.status === "generating");
   const generationState = generating
     ? "pending"
@@ -152,7 +178,7 @@ export function LocalReview({
         if (!abort.signal.aborted) setSessions({ state: "request-failed" });
       });
     return () => abort.abort();
-  }, [viewedDocument, query]);
+  }, [viewedDocument, query, ended]);
   const lists = viewedDocument ? sessionLists(sessions, viewedDocument) : null;
   const patches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
@@ -232,6 +258,7 @@ export function LocalReview({
           }
           notices={
             <>
+              <LiveSessions sessions={running} />
               {viewedDocument
                 ? (() => {
                     const saved = provenance.find(

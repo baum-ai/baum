@@ -191,6 +191,50 @@ export type Diagnostics = {
   index: boolean;
   report: DiagnosticReport | null;
 };
+/** An agent session in progress, from `api/live-sessions`: identifiers and
+ * times only, never a path or any transcript content. */
+export type LiveSession = {
+  agent: string;
+  session_id: string;
+  state: "running" | "idle" | "ended";
+  started_at: string;
+  last_activity_at: string;
+  /** The normalised kind of the latest hook event. */
+  last_event: "start" | "prompt" | "tool" | "stop" | "end";
+  repository: string;
+  branch?: string;
+  /** Absent while the branch has no pull request. */
+  pr?: number;
+};
+const agentNames: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+};
+export function agentName(agent: string): string {
+  return agentNames[agent] ?? agent;
+}
+/** The sessions an older daemon, or one without the capability, does not
+ * serve are none. */
+export function parseLive(body: unknown): LiveSession[] {
+  const list = (body as { sessions?: unknown } | null)?.sessions;
+  return Array.isArray(list)
+    ? list.filter(
+        (s): s is LiveSession =>
+          !!s && typeof s.session_id === "string" && typeof s.repository === "string",
+      )
+    : [];
+}
+/** Sessions that are not over and belong to the pull request, matched by
+ * repository across clones as jobs are. */
+export function liveFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "number">) {
+  return sessions.filter(
+    (s) =>
+      s.state !== "ended" &&
+      s.pr === pr.number &&
+      s.repository.toLowerCase() === pr.repository.toLowerCase(),
+  );
+}
 export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason: string }[] };
 /** The server serves the app only under its session namespace,
  * `/s/<namespace>/`: the first two segments of the page's path. The session
