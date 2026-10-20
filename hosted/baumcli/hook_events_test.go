@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -181,7 +182,7 @@ func TestFrozenDispatchersKeepTheirContractWithoutADaemon(t *testing.T) {
 
 	spec, _ := agenthooks.Lookup("claude-code")
 	payload := `{"session_id":"s-3","cwd":` + quoteJSON(world.repo) + `}`
-	cmd := exec.Command("sh", "-c", agenthooks.Dispatcher(spec, agenthooks.SessionEndEvent))
+	cmd := exec.Command("sh", "-c", agenthooks.Dispatcher(spec, "session-end"))
 	cmd.Dir = world.repo
 	cmd.Stdin = strings.NewReader(payload)
 	var stdout bytes.Buffer
@@ -207,6 +208,195 @@ func TestFrozenDispatchersKeepTheirContractWithoutADaemon(t *testing.T) {
 	}
 	if events[1].Kind != hookevents.KindGit || events[1].Name != "post-commit" || events[1].Dir != world.repo {
 		t.Errorf("git event = %+v", events[1])
+	}
+	if n := world.requests.Load(); n != 0 {
+		t.Errorf("hooks sent %d requests to the baum server", n)
+	}
+}
+
+// A push to a URL that names no remote passes the URL as both arguments;
+// neither is kept, so credentials in it never reach the event.
+func TestPrePushToAURLKeepsNoRemoteName(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	stubEntireBinary(t, "#!/bin/sh\ncat >/dev/null\n")
+	url := "https://x-access-token:" + fakeGitHubToken + "@github.com/acme/demo.git"
+	if _, _, err := runCLIWithInput(t, "", "hooks", "git", "pre-push", url, url); err != nil {
+		t.Fatal(err)
+	}
+	events, raw := spooledHookEvents(t, paths)
+	if len(events) != 1 {
+		t.Fatalf("spooled %d events", len(events))
+	}
+	if events[0].Git != nil && len(events[0].Git.Args) != 0 {
+		t.Errorf("args = %q", events[0].Git.Args)
+	}
+	if bytes.Contains(raw[0], []byte(fakeGitHubToken)) {
+		t.Error("the event kept the URL's credentials")
+	}
+	for name, args := range map[string][]string{
+		"origin":                       {"origin", "https://github.com/acme/demo.git"},
+		"":                             {"git@github.com:acme/demo.git", "git@github.com:acme/demo.git"},
+		"scp-style name is not a name": {"host:path", "ssh://host/path"},
+	} {
+		want := name
+		if name == "scp-style name is not a name" {
+			want = ""
+		}
+		if got := pushRemoteName(args); got != want {
+			t.Errorf("pushRemoteName(%q) = %q, want %q", args, got, want)
+		}
+	}
+}
+
+// The identifiers are read from the whole payload, however large, while only
+// a bounded copy of it is kept.
+func TestLargeAgentPayloadStillYieldsItsIdentifiers(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	stubEntireBinary(t, "#!/bin/sh\ncat >/dev/null\n")
+	payload := `{"tool_input":{"session_id":"nested"},"tool_response":"` + strings.Repeat("x", 2*maxHookInput) + `","session_id":"s-big","cwd":"/work/demo"}`
+	if _, _, err := runCLIWithInput(t, payload, "hooks", "agent", "claude-code", "stop"); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := spooledHookEvents(t, paths)
+	if len(events) != 1 || events[0].Session == nil || events[0].Session.ID != "s-big" || events[0].Session.Cwd != "/work/demo" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestTopLevelStringsKeepsOnlyNamedTopLevelStrings(t *testing.T) {
+	reader := newTopLevelStrings("id", "path", "count")
+	input := `{"nested":{"id":"inner","list":["id",{"id":"x"}]},"count":3,` +
+		`"path":"C:\\dir\\\"quoted\" \u00e9","skipped":"` + strings.Repeat("v", maxPayloadValue+1) + `","id":"outer","id":"second"}`
+	// Fed in small pieces, as a pipe delivers it.
+	for chunk := range slices.Chunk([]byte(input), 7) {
+		_, _ = reader.Write(chunk)
+	}
+	want := map[string]string{"id": "outer", "path": `C:\dir\"quoted" é`}
+	if !maps.Equal(reader.values, want) {
+		t.Errorf("values = %q, want %q", reader.values, want)
+	}
+	for _, input := range []string{`["id","x"]`, `"id"`, `nonsense {"id":"x"}`} {
+		reader := newTopLevelStrings("id")
+		_, _ = reader.Write([]byte(input))
+		if len(reader.values) != 0 {
+			t.Errorf("%s yielded %q", input, reader.values)
+		}
+	}
+	long := newTopLevelStrings("id")
+	_, _ = long.Write([]byte(`{"id":"` + strings.Repeat("v", maxPayloadValue+1) + `"}`))
+	if len(long.values) != 0 {
+		t.Error("a value over the bound was kept")
+	}
+}
+
+// makeDaemonState gives the user of the hook world a baum daemon state
+// directory, as running the daemon leaves.
+func makeDaemonState(t *testing.T) daemon.Paths {
+	t.Helper()
+	paths, err := daemon.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(paths.State, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+func TestCheckPassesWhereTheUserHasADaemon(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	t.Chdir(t.TempDir())
+	if _, _, err := runCLI(t, "hooks", "agent", "--check", "claude-code", "stop"); err == nil {
+		t.Fatal("--check passed for a user who never opted in and has no daemon")
+	}
+	if err := os.MkdirAll(paths.State, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"hooks", "agent", "--check", "claude-code", "stop"},
+		{"hooks", "git", "--check", "post-commit"},
+	} {
+		if _, _, err := runCLI(t, args...); err != nil {
+			t.Errorf("%v with a daemon: %v", args, err)
+		}
+	}
+}
+
+// dispatcherRun is what an agent or Git sees of one hook command run.
+type dispatcherRun struct {
+	stdout       string
+	exit         int
+	entire, baum []string
+}
+
+func (w hookWorld) runForContract(t *testing.T, command string, stdin string, args ...string) dispatcherRun {
+	t.Helper()
+	cmd := exec.Command("sh", append([]string{"-c", command, "hook"}, args...)...)
+	cmd.Dir = w.repo
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	run := dispatcherRun{stdout: stdout.String()}
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		run.exit = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	run.baum, run.entire = w.logs(t)
+	return run
+}
+
+// A user who is not logged in and never set the clone up, but runs the baum
+// daemon, gets exactly what the fall-through gives the agent and Git (Entire's
+// output and status, Entire called once the same way, no bootstrap), and the
+// event reaches the daemon's spool; no baum server hears anything.
+func TestDaemonOnlyHooksBehaveLikeTheFallThroughAndRecordTheEvent(t *testing.T) {
+	world := newHookWorld(t)
+	entire, err := exec.LookPath("entire")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, entire, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+world.entireLog+"'\ncat\nexit 3\n")
+	spec, _ := agenthooks.Lookup("claude-code")
+	agentHook := agenthooks.Dispatcher(spec, agenthooks.SessionStartEvent)
+	gitHook := gitHookDispatcher("post-commit")
+	gitPath := filepath.Join(t.TempDir(), "post-commit")
+	writeExecutable(t, gitPath, gitHook)
+	payload := `{"session_id":"s-4","source":"startup"}`
+
+	fallThrough := world.runForContract(t, agentHook, payload)
+	fallThroughGit := world.runForContract(t, gitPath, "")
+	if len(fallThrough.baum) != 1 || len(fallThroughGit.baum) != 1 {
+		t.Fatalf("baum ran past --check without a daemon: %q, %q", fallThrough.baum, fallThroughGit.baum)
+	}
+
+	paths := makeDaemonState(t)
+	local := world.runForContract(t, agentHook, payload)
+	localGit := world.runForContract(t, gitPath, "")
+	if local.stdout != fallThrough.stdout || local.exit != fallThrough.exit || !slices.Equal(local.entire, fallThrough.entire) {
+		t.Errorf("agent hook: with a daemon %+v, fall-through %+v", local, fallThrough)
+	}
+	if len(local.baum) != 2 || local.baum[1] != "hooks agent claude-code session-start" {
+		t.Errorf("baum calls = %q, want --check then the hook", local.baum)
+	}
+	if local.exit != 3 || local.stdout != payload {
+		t.Errorf("agent hook lost Entire's contract: %+v", local)
+	}
+	if localGit.stdout != fallThroughGit.stdout || localGit.exit != fallThroughGit.exit || !slices.Equal(localGit.entire, fallThroughGit.entire) {
+		t.Errorf("git hook: with a daemon %+v, fall-through %+v", localGit, fallThroughGit)
+	}
+	// No hosted work: the session start installed nothing.
+	if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+		t.Errorf("the session start bootstrapped the clone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(world.repo, ".git", "hooks", "post-commit")); !os.IsNotExist(err) {
+		t.Errorf("the session start installed Git hooks: %v", err)
+	}
+	events, _ := spooledHookEvents(t, paths)
+	if len(events) != 2 || events[0].Name != "session-start" || events[0].Session == nil || events[0].Session.ID != "s-4" ||
+		events[1].Kind != hookevents.KindGit || events[1].Name != "post-commit" {
+		t.Errorf("events = %+v", events)
 	}
 	if n := world.requests.Load(); n != 0 {
 		t.Errorf("hooks sent %d requests to the baum server", n)

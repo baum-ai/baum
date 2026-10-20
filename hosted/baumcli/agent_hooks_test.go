@@ -115,6 +115,8 @@ func TestAgentHookBootstrapsGitHooksOnSessionStart(t *testing.T) {
 	repo := initHookTestRepo(t)
 	stubEntireBinary(t, "#!/bin/sh\nexit 0\n")
 	t.Chdir(repo)
+	// Only a hook of a user opted in to the hosted service bootstraps.
+	t.Setenv(tokenEnvVar, "token")
 
 	if _, _, err := runCLI(t, "hooks", "agent", "claude-code", "session-start"); err != nil {
 		t.Fatalf("session start: %v", err)

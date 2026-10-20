@@ -55,7 +55,7 @@ func defaultClaudeManagedDir() string {
 //   - where no other hook the agent runs for the event calls Entire (see
 //     handledElsewhere), so the event reaches Entire once, not twice;
 //   - and where the committed dispatcher's `--check` would succeed
-//     (hostedHooksEnabled), so the opt-in rules are the same.
+//     (hooksEnabled), so the opt-in rules are the same.
 //
 // The first two read a few local files and start no process, so the hook
 // costs a repository that does not use Entire almost nothing.
@@ -79,7 +79,7 @@ func userHooksEnabled(ctx context.Context, dir, agent, event string) error {
 	if handledElsewhere(start, root, spec, settings, event) {
 		return errUserHookHandledElsewhere
 	}
-	return hostedHooksEnabled(ctx, dir)
+	return hooksEnabled(ctx, dir)
 }
 
 // handledElsewhere reports whether a hook the agent runs besides baum's

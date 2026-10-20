@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -62,12 +62,18 @@ const (
 	hookInputWait = 20 * time.Millisecond
 )
 
-// hookInput keeps a bounded copy of a hook's standard input for its event
+// payloadIdentifiers are the members of an agent hook's payload its event
+// keeps.
+var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason"}
+
+// hookInput keeps, for the hook's event, a bounded copy of its standard input
+// and the identifiers of the JSON payload it carries, read from all of it,
 // while Entire, which owns the hook protocol, reads it unchanged.
 type hookInput struct {
 	source io.Reader
 	mu     sync.Mutex
 	data   []byte
+	fields *topLevelStrings
 	done   chan struct{}
 }
 
@@ -83,7 +89,7 @@ func newHookInput(in io.Reader) *hookInput {
 			return nil
 		}
 	}
-	return &hookInput{source: in, done: make(chan struct{})}
+	return &hookInput{source: in, fields: newTopLevelStrings(payloadIdentifiers...), done: make(chan struct{})}
 }
 
 // pipe returns the read end of a pipe the delegated command reads in place of
@@ -123,6 +129,7 @@ func (h *hookInput) copy(w *os.File) {
 			if room := maxHookInput - len(h.data); room > 0 {
 				h.data = append(h.data, buf[:min(n, room)]...)
 			}
+			_, _ = h.fields.Write(buf[:n])
 			h.mu.Unlock()
 			// A command that exits without reading everything closes the
 			// pipe; the input is still read for the copy.
@@ -138,31 +145,42 @@ func (h *hookInput) copy(w *os.File) {
 	}
 }
 
-// payload is what the input carried, once it ended or hookInputWait passed.
-func (h *hookInput) payload() []byte {
-	if h == nil {
-		return nil
-	}
+// wait waits until the input ended or hookInputWait passed.
+func (h *hookInput) wait() {
 	select {
 	case <-h.done:
 	case <-time.After(hookInputWait):
 	}
+}
+
+// payload is the bounded copy of what the input carried.
+func (h *hookInput) payload() []byte {
+	if h == nil {
+		return nil
+	}
+	h.wait()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return bytes.Clone(h.data)
 }
 
-// agentSession reads the identifiers an agent hook's payload carries. Only
-// these string fields are kept, never prompts or tool input and output.
-func agentSession(payload []byte) *hookevents.Session {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(payload, &fields) != nil {
+// identifiers are the payload's identifier members.
+func (h *hookInput) identifiers() map[string]string {
+	if h == nil {
 		return nil
 	}
+	h.wait()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.fields.values)
+}
+
+// agentSession builds an event's session from the payload's identifiers. Only
+// these string members are kept, never prompts or tool input and output.
+func agentSession(fields map[string]string) *hookevents.Session {
 	text := func(names ...string) string {
 		for _, name := range names {
-			var value string
-			if json.Unmarshal(fields[name], &value) == nil && value != "" {
+			if value := fields[name]; value != "" {
 				return value
 			}
 		}
@@ -188,9 +206,12 @@ func agentSession(payload []byte) *hookevents.Session {
 func gitHookEvent(args []string, input []byte) *hookevents.Git {
 	git := &hookevents.Git{}
 	if len(args) > 1 {
-		git.Args = append(git.Args, args[1:]...)
 		if args[0] == "pre-push" {
-			git.Args = git.Args[:1]
+			if name := pushRemoteName(args[1:]); name != "" {
+				git.Args = []string{name}
+			}
+		} else {
+			git.Args = append(git.Args, args[1:]...)
 		}
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(input))
@@ -203,4 +224,19 @@ func gitHookEvent(args []string, input []byte) *hookevents.Git {
 		return nil
 	}
 	return git
+}
+
+// pushRemoteName is a pre-push hook's remote name. Git passes the name and
+// the URL, or, for a push to a URL that names no remote, the URL twice, which
+// can carry credentials. A name equal to the URL, or that reads as a URL or
+// an scp-style address, is not kept.
+func pushRemoteName(args []string) string {
+	name := args[0]
+	if len(args) > 1 && name == args[1] {
+		return ""
+	}
+	if strings.Contains(name, "://") || strings.ContainsAny(name, ":@") {
+		return ""
+	}
+	return name
 }

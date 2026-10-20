@@ -98,6 +98,8 @@ func TestBaumGitHookCommandDelegatesToEntireAndIgnoresInformationalFailure(t *te
 // a Git hook still has to reach the binary the session start put there.
 func TestBaumGitHookFindsEntireOutsideThePath(t *testing.T) {
 	withoutEntire(t)
+	// Only a hosted hook uses the Entire baum installed.
+	t.Setenv(tokenEnvVar, "token")
 	log := filepath.Join(t.TempDir(), "entire.log")
 	writeExecutable(t, filepath.Join(entireInstallDir, "entire"), "#!/bin/sh\nprintf '%s' \"$*\" > \""+log+"\"\n")
 

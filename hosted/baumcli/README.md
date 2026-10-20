@@ -15,10 +15,9 @@ handshake, in [`apiclient`](../apiclient).
   provisioned for CI or by an administrator. `login` starts the device flow
   with the server it names; `whoami`, `logout`, `upload`, `setup --sync` and
   `setup --upload` need a token and fail with a `baum login` hint before any
-  request without one. `setup` without those flags and the hook commands
-  never contact a baum server. The hooks hand their events to the local
-  daemon, which forwards an ended session to the server only for a logged-in
-  user (see "Hook events").
+  request without one. `setup` without those flags and the hooks never contact
+  a baum server; the events they hand the local daemon stay on the machine
+  (see "Hook events").
 - The hook dispatchers committed to customer repositories and installed as Git
   hooks run `baum hooks agent --check` (`baum hooks git --check`) and use baum
   only when it succeeds, falling through to Entire otherwise. `--check`
@@ -35,7 +34,16 @@ handshake, in [`apiclient`](../apiclient).
     dispatcher and settings that are not committed do not count, so a hook
     configured outside the repository still falls through in a repository
     that was never onboarded. The read runs under a timeout, without fetching
-    or prompting, and skips a settings file over 1 MiB.
+    or prompting, and skips a settings file over 1 MiB;
+  - or, without any of these, the user has a baum daemon: its state directory
+    (`$XDG_STATE_HOME/baum/daemon`, default `~/.local/state/baum/daemon`,
+    found as the daemon finds it, by a `stat`, without contacting it) exists.
+    Such a hook is local: it does nothing hosted (no session-start bootstrap,
+    no Entire baum installed outside `PATH`) and hands the event to Entire
+    exactly as the fall-through would, with the same output and exit status,
+    and sends the event to the daemon (see "Hook events"). A hook run decides
+    this again itself, so a hook is hosted only where the hosted opt-in
+    holds.
 - A hosted install is a build linked with
   `-X github.com/baum-ai/baum/hosted/baumcli.distribution=hosted`, as the
   hosted release builds it, or a baum the hosted install script installed,
@@ -46,13 +54,13 @@ handshake, in [`apiclient`](../apiclient).
   the hooks do only local work: the session-start bootstrap (installing the
   pinned Entire and the Git hook dispatchers) and delegating to Entire. That
   keeps the onboarding promise for a teammate who installed the hosted baum
-  but never logged in. Nothing a hook does contacts a baum server; uploads,
-  the daemon's forwarding included, and every other server request need a
-  login in every case.
-- For an open-source user who never logged in, in a clone nobody set up, the
-  hooks run Entire directly and baum does nothing, not even the bootstrap,
-  whatever the repository commits. The user-wide hooks (below) apply the same
-  rules and, where they refuse, do nothing at all.
+  but never logged in. Nothing a hook does contacts a baum server; uploads and
+  every other server request need a login in every case.
+- For an open-source user who never logged in and runs no baum daemon, in a
+  clone nobody set up, the hooks run Entire directly and baum does nothing,
+  not even the bootstrap, whatever the repository commits. The user-wide
+  hooks (below) apply the same rules and, where they refuse, do nothing at
+  all.
 - `logout` removes the stored token but leaves the markers in `.git/baum`, so
   a set-up clone's hooks keep running through baum; without a login they still
   reach no baum server.
@@ -230,56 +238,54 @@ handshake, in [`apiclient`](../apiclient).
   pipe the hook fills, keeping a copy of at most 256 KiB), its output still
   reaches them untouched, and the exit status is the one it was. The event
   writes nothing to standard output or error.
-- An agent event keeps only the payload's identifiers: `session_id` (Cursor:
-  `conversation_id`), `transcript_path`, `cwd`, `hook_event_name`, `source`
-  and `reason`. Prompts, tool input and output and every other field are
-  never kept. A Git event keeps the hook's arguments, except the remote URL a
-  `pre-push` gets, which can carry credentials (its remote name is kept), and
-  the lines Git writes to `pre-push` and `post-rewrite` (refs and commits).
-  Every event names its working directory, exit status and baum version, and
-  is bounded so it fits one control line.
+- An agent event keeps only the payload's top-level identifiers:
+  `session_id` (Cursor: `conversation_id`), `transcript_path`, `cwd`,
+  `hook_event_name`, `source` and `reason`, read from the whole payload as it
+  streams, however large, keeping at most 4 KiB of each. Prompts, tool input
+  and output and every other member are never kept. A Git event keeps the
+  hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
+  (refs and commits), but never a pre-push remote URL, which can carry
+  credentials: the remote name is kept only when it differs from the URL and
+  reads as neither a URL nor an scp-style address (a push to a URL passes the
+  URL as both). Every event names its working directory, exit status and
+  baum version, and is cut, by its encoded size, to fit one control line.
 - Latency: sending adds at most `hookevents.Budget` (300 ms) to a hook,
-  whatever the daemon does; the request itself gets 150 ms. Against a running
-  daemon a hook costs about one `baum` start more than delegating to Entire
-  (measured at 5 ms against 4 ms for `baum --version`). Once Entire is done,
-  the hook waits at most 20 ms more for its input to end.
+  whatever the daemon, the file system or a process start does; the request
+  itself gets 150 ms, and what is not done by then (spooling, starting a
+  daemon) goes on while the hook's process lives. Against a running daemon a
+  hook costs about one `baum` start more than delegating to Entire (measured
+  at 4–5 ms against 3 ms for `baum --version`). Once Entire is done, the hook
+  waits at most 20 ms more for its input to end.
 - No daemon running: the event is spooled and the hook starts one (`baum
-  daemon run --detached`, as `baum daemon ensure` would) without waiting for
-  it to serve (15 ms measured), unless one holds the daemon lock (starting,
-  stopping or not answering) or another client is starting one. The new
-  daemon drains the spool when it starts. Hosted users without the desktop
-  app get a daemon this way.
+  daemon run --detached`) without waiting for it to serve (5 ms measured),
+  unless one holds the daemon lock (starting, stopping or not answering),
+  another client is starting one, or one was started less than three minutes
+  ago and has not served yet (a daemon that cannot start is not restarted by
+  every hook). Nor does it start one after `baum daemon stop` (which the
+  desktop app's "Quit and stop background reviews" runs) until `baum daemon
+  ensure` or a foreground `baum daemon run`, with `BAUM_NO_DAEMON=1`, or when
+  `CI` is set; the events then wait in the spool. A hook starts the daemon
+  with its own environment minus `TMPDIR`, which agent sandboxes point at a
+  directory that lasts one session, and with no descriptor but its standard
+  ones. The new daemon drains the spool when it starts.
 - A daemon that does not answer within the budget, refuses the event or
   predates it (`unknown_method`, `protocol_mismatch`, or `event_version` for
   an event of a newer format) gets it through the spool instead; a running
-  daemon drains it every 30 s. One older than this baum is also asked to
-  restart as this version once idle (`stop` with `when_idle`). An event that
-  cannot be spooled either is dropped.
+  daemon drains it every 30 s. One older than this baum is asked to restart
+  as this version once idle (`stop` with `when_idle` and `respawn`): it starts
+  this baum itself, even when idle, so nobody waits for it to exit; one that
+  predates `respawn` stops when idle and the next hook starts this version.
+  An event that cannot be spooled either is dropped.
 - The spool is `<state>/spool/` (the daemon's state directory, mode 0700),
-  one file per event, mode 0600, written atomically. It holds at most 1000
-  events and 8 MiB; a hook that would pass a bound drops the oldest events
-  first. What hooks spool, drop or start, and why, goes to `<state>/hooks.log`
-  (0600, rotated at 256 KiB), never an event's contents.
-
-## Forwarding to the hosted service
-
-- The daemon forwards hook events with `SessionForwarder`. The hosted service
-  receives sessions one way, `baum upload`'s, so forwarding is that upload,
-  unchanged, of the session an agent's `session-end` event names (matched by
-  session id, or by transcript path): the same endpoint, archive, local
-  redaction (goredact, before anything is archived) and 512 MiB bound, no
-  upload for a repository the server reports not enabled in baum, and no root
-  inventory, which one session's roots could not complete. Other events stay
-  local.
-- Only for a logged-in user: a `BAUM_TOKEN` in the daemon's environment
-  (which it reads from the login shell, not from the hook) or a stored token,
-  sent only to the server it was issued for. Without one the daemon logs once
-  that events stay on this machine. The login is read for every event, so
-  `baum login` and `logout` apply without a restart.
-- As with `baum upload`, one attempt: a failure (network, server, an expired
-  token) is logged with its reason, never retried, and the session stays on
-  disk for a later `baum upload`. Forwarding runs in the daemon, one session
-  at a time, never in the hook.
+  one file per event, mode 0600, written atomically. It holds 1000 events
+  and 8 MiB: a hook that would pass a bound drops the oldest events first;
+  hooks spooling at the same moment can each add one past it, and the next
+  one restores it. What hooks spool, drop or start, and why, goes to
+  `<state>/hooks.log` (0600, rotated at 256 KiB), never an event's contents.
+- The daemon records the events locally only. Nothing is forwarded to the
+  hosted service yet: that waits for a hosted event endpoint, and hosted
+  users' sessions keep reaching it through Entire's checkpoints and
+  `baum upload`.
 
 ## Discovery
 
