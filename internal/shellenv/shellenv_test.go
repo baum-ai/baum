@@ -167,37 +167,21 @@ func TestResolveInstalledShells(t *testing.T) {
 			if err = os.WriteFile(rc, []byte(tc.line+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			environ := []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}
-			result, err := Resolve(context.Background(), Options{Shell: shell, Printer: printer(t), Environ: environ})
+			result, err := Resolve(context.Background(), Options{Shell: shell, Printer: printer(t), Environ: []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config")}})
 			if err != nil {
-				diagnose(t, shell, environ)
 				t.Fatal(err)
 			}
+			// Some machines' system startup files set HOME themselves (CI
+			// runners' /etc/profile.d does), so the shell never reads the
+			// files written here.
+			if got := result.Env["HOME"]; got != home {
+				t.Skipf("the system's startup files set HOME to %q", got)
+			}
 			if result.Env["GITHUB_TOKEN"] != "from-"+tc.name {
-				diagnose(t, shell, environ)
 				t.Fatalf("GITHUB_TOKEN %q", result.Env["GITHUB_TOKEN"])
 			}
 		})
 	}
-}
-
-// diagnose logs what a failing shell saw: how it was started, who it runs
-// as, and its startup files' errors, which Resolve discards.
-func diagnose(t *testing.T, shell string, environ []string) {
-	t.Helper()
-	t.Logf("test process: uid=%d euid=%d gid=%d egid=%d TMPDIR=%q", os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid(), os.Getenv("TMPDIR"))
-	if filepath.Base(shell) == "fish" {
-		return
-	}
-	script := `echo "flags=$- shell=$0 version=${BASH_VERSION-}${ZSH_VERSION-} HOME=$HOME PWD=$PWD"; ` +
-		`[ -n "${BASH_VERSION-}" ] && shopt login_shell; id; grep -E '^(Uid|Gid|Groups|NoNewPrivs|Seccomp|SigBlk|SigIgn):' /proc/$$/status; ` +
-		`ls -la "$HOME"; echo "token=${GITHUB_TOKEN-unset}"; trap -p; set -o | grep -w on; ls /etc/profile.d`
-	cmd := exec.Command(shell, append(Arguments(shell), script)...)
-	cmd.Env = shellEnvironment(environ, shell)
-	cmd.Dir = lookup(cmd.Env, "HOME")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	out, err := cmd.CombinedOutput()
-	t.Logf("%s %v (%v):\n%s", shell, Arguments(shell), err, out)
 }
 
 func TestArguments(t *testing.T) {
