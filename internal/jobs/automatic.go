@@ -125,7 +125,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if err := q.automaticConflict(p.Repository, p.PR, p.HeadSHA); err != nil {
 		return Job{}, err
 	}
-	now := time.Now().UTC()
+	now := q.clock0()
 	j := Job{ID: id(), Prepared: p, Automatic: true, Trigger: r.Trigger, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 	// Settings are read again here, under the mutex the worker and
 	// CancelDisallowedAutomatic hold, so a pass that read them before an off
@@ -290,4 +290,21 @@ func (q *Queue) automaticSpend(repository string, day time.Time) (float64, bool)
 		}
 	}
 	return total, known
+}
+
+// SetClock replaces the clock that stamps automatic jobs' creation time, which
+// the daily cap's calendar day is measured against. The scheduler's clock and
+// this one must agree; tests inject the same fake clock into both.
+func (q *Queue) SetClock(now func() time.Time) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.clock = now
+}
+
+// clock0 reads the clock; the caller holds q.mu.
+func (q *Queue) clock0() time.Time {
+	if q.clock != nil {
+		return q.clock().UTC()
+	}
+	return time.Now().UTC()
 }

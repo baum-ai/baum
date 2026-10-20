@@ -138,6 +138,7 @@ func (h *harness) openQueue() {
 		h.t.Fatal(err)
 	}
 	h.t.Cleanup(q.Close)
+	q.SetClock(func() time.Time { return h.now })
 	h.queue = q
 }
 
@@ -347,6 +348,33 @@ func TestDailyCapPausesTheRepositoryUntilTomorrow(t *testing.T) {
 	last := h.notices[len(h.notices)-1]
 	if last.PausedUntil != nil || last.Notice != "" {
 		t.Fatalf("resume not announced %+v", h.notices)
+	}
+}
+
+// The cap's day is the scheduler clock's calendar day in its own zone, also
+// when that differs from the UTC day the job was stamped in.
+func TestDailyCapDayFollowsTheClockZoneNearMidnight(t *testing.T) {
+	for _, zone := range []*time.Location{time.FixedZone("west", -8*3600), time.FixedZone("east", 10*3600), time.UTC} {
+		t.Run(zone.String(), func(t *testing.T) {
+			h := newHarness(t)
+			h.now = time.Date(2026, 10, 19, 23, 30, 0, 0, zone)
+			h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(3.0) })
+			h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+			h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
+			h.pass()
+			h.want("org/repo#1@a2:new_head")
+			midnight := time.Date(2026, 10, 20, 0, 0, 0, 0, zone)
+			if len(h.notices) != 1 || h.notices[0].PausedUntil == nil || !h.notices[0].PausedUntil.Equal(midnight) {
+				t.Fatalf("pause notice %+v", h.notices)
+			}
+			h.waitIdle()
+			h.now = midnight.Add(-time.Minute)
+			h.pass()
+			h.want("org/repo#1@a2:new_head")
+			h.now = midnight.Add(time.Minute)
+			h.pass()
+			h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
+		})
 	}
 }
 
