@@ -603,7 +603,7 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	}
 	// The model wrote against the lenient contract; everything the host
 	// can decide for it is decided here, before the strict contract applies.
-	value, derived := normalizeAuthored(value, v.strict, bundle)
+	value, derived := normalizeAuthored(value, v.strict, bundle, directory)
 	if normalized, err := json.Marshal(value); err == nil {
 		document = normalized
 	}

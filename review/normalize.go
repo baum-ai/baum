@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,8 +21,9 @@ import (
 // and repeats within a section, empty anchors other than a risk's or a
 // behavior step's default to the enclosing section's hunks, attention references are resolved, evidence
 // whose anchors cannot carry its status becomes asserted, and code
-// sources get their SHA, review version and excerpt lines from the bundle.
-// What it cannot decide stays for validation to report.
+// sources get their SHA, review version and excerpt lines from the bundle,
+// and the summary context loses empty parts and references to files the
+// checkout does not hold. What it cannot decide stays for validation to report.
 type authoredNormalizer struct {
 	defs     map[string]any
 	bundle   *bundlepkg.Bundle
@@ -36,7 +39,7 @@ type authoredNormalizer struct {
 	identifier func(value, normalized string, schema map[string]any)
 }
 
-func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundle) (any, []string) {
+func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundle, directory string) (any, []string) {
 	root, ok := value.(map[string]any)
 	if !ok {
 		return value, nil
@@ -51,6 +54,7 @@ func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundl
 	}
 	n.walk(root, strict)
 	reviewMinutes(root)
+	summaryContext(root, directory)
 	n.hunkAnchorLines(root)
 	n.sections(root)
 	return root, n.findings
@@ -104,6 +108,131 @@ func reviewMinutes(root map[string]any) {
 }
 
 const minReviewMinutes, maxReviewMinutes = 1, 240
+
+// summaryContext tidies the model's summary context so that references never
+// cost a repair: an optional part without text is dropped, and each part's
+// references are cleaned (cleanContextRefs). A missing context or area stays
+// for validation to report.
+func summaryContext(root map[string]any, directory string) {
+	summary, _ := root["summary"].(map[string]any)
+	context, ok := summary["context"].(map[string]any)
+	if !ok {
+		return
+	}
+	checkout := hasCheckout(directory)
+	for _, name := range contextParts {
+		part, ok := context[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		text, isText := part["text"].(string)
+		if isText {
+			text = strings.TrimSpace(text)
+			part["text"] = text
+		}
+		if name != "area" && text == "" {
+			delete(context, name)
+			continue
+		}
+		if refs, ok := part["refs"].([]any); ok {
+			part["refs"] = cleanContextRefs(refs, directory, checkout)
+		}
+	}
+}
+
+var contextParts = []string{"area", "reached_by", "contracts", "related"}
+
+const maxContextRefs = 8
+
+// cleanContextRefs makes each reference's path repository-relative, as the
+// model may write it from the run directory (./head/api/handler.go), and
+// drops a reference that is malformed, leaves the repository or repeats an
+// earlier one. With a checkout it also drops a path neither tree holds, so a
+// reference never names an invented file. It keeps at most maxContextRefs.
+func cleanContextRefs(refs []any, directory string, checkout bool) []any {
+	kept := []any{}
+	type key struct {
+		path   string
+		symbol any
+	}
+	seen := map[key]bool{}
+	for _, raw := range refs {
+		ref, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		path, _ := ref["path"].(string)
+		path = contextRefPath(path)
+		if path == "" || !filepath.IsLocal(path) || strings.Contains(path, "\\") {
+			continue
+		}
+		path = filepath.ToSlash(filepath.Clean(path))
+		if checkout && !checkoutHolds(directory, path) {
+			continue
+		}
+		var symbol any
+		if name, ok := ref["symbol"].(string); ok && strings.TrimSpace(name) != "" {
+			symbol = strings.TrimSpace(name)
+		}
+		if seen[key{path, symbol}] {
+			continue
+		}
+		seen[key{path, symbol}] = true
+		kept = append(kept, map[string]any{"path": path, "symbol": symbol})
+		if len(kept) == maxContextRefs {
+			break
+		}
+	}
+	return kept
+}
+
+// contextRefPath trims a reference path and strips a leading "./" or "/",
+// then a leading checkout tree name when a path remains after it.
+func contextRefPath(path string) string {
+	path = strings.TrimSpace(path)
+	for {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
+		if trimmed == path {
+			break
+		}
+		path = trimmed
+	}
+	for _, tree := range checkoutTrees {
+		if rest, ok := strings.CutPrefix(path, tree+"/"); ok && rest != "" {
+			return rest
+		}
+	}
+	return path
+}
+
+// checkoutTrees are the run directory's checkout trees, as agent.sourceContext
+// reads them.
+var checkoutTrees = []string{"head", "merge-base"}
+
+// hasCheckout reports whether the run directory holds a checkout tree. A
+// stack review's directory, for one, holds none.
+func hasCheckout(directory string) bool {
+	if directory == "" {
+		return false
+	}
+	for _, tree := range checkoutTrees {
+		if info, err := os.Stat(filepath.Join(directory, tree)); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// checkoutHolds reports whether either checkout tree has a file or directory
+// at the repository-relative path.
+func checkoutHolds(directory, path string) bool {
+	for _, tree := range checkoutTrees {
+		if info, err := os.Stat(filepath.Join(directory, tree, path)); err == nil && (info.Mode().IsRegular() || info.IsDir()) {
+			return true
+		}
+	}
+	return false
+}
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A
 // usable overlap is made canonical; a range that cannot select the hunk's
