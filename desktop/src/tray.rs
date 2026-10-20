@@ -135,23 +135,16 @@ enum Host {
 /// counts as no tray: the window then stays reachable.
 #[cfg(target_os = "linux")]
 fn host_check() -> Host {
-    use std::process::{Command, Stdio};
     const WATCHER: &str = "org.kde.StatusNotifierWatcher";
-    let run = |program: &str, args: &[&str]| {
-        Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-    };
-    if let Ok(out) = run("busctl", &["--user", "status", WATCHER]) {
-        return if out.status.success() {
-            Host::Present
-        } else {
-            Host::Absent
-        };
+    match run_bounded("busctl", &["--user", "status", WATCHER], HOST_CHECK_TIMEOUT) {
+        Bounded::Done { success, .. } => {
+            return if success { Host::Present } else { Host::Absent };
+        }
+        // A stalled bus will not answer gdbus either.
+        Bounded::TimedOut => return Host::Unknown,
+        Bounded::NotRun => {}
     }
-    let gdbus = run(
+    let gdbus = run_bounded(
         "gdbus",
         &[
             "call",
@@ -164,24 +157,75 @@ fn host_check() -> Host {
             "org.freedesktop.DBus.NameHasOwner",
             WATCHER,
         ],
+        HOST_CHECK_TIMEOUT,
     );
     match gdbus {
-        Ok(out) => match parse_name_has_owner(&String::from_utf8_lossy(&out.stdout)) {
+        Bounded::Done { stdout, .. } => match parse_name_has_owner(&stdout) {
             Some(true) => Host::Present,
             Some(false) => Host::Absent,
             None => Host::Unknown,
         },
-        Err(_) => Host::Unknown,
+        Bounded::TimedOut | Bounded::NotRun => Host::Unknown,
+    }
+}
+
+/// How long one bus query may take. The check runs when the window closes,
+/// on the main thread, so a stalled session bus must not hang it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Bounded {
+    Done {
+        success: bool,
+        stdout: String,
+    },
+    TimedOut,
+    /// The program could not be started.
+    NotRun,
+}
+
+/// Runs a program and waits at most `timeout`, killing it after that.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn run_bounded(program: &str, args: &[&str], timeout: Duration) -> Bounded {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Bounded::NotRun;
+    };
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Bounded::TimedOut;
+            }
+        }
+    };
+    // The answers are a few bytes, so they fit the pipe and are there to read.
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    Bounded::Done {
+        success: status.success(),
+        stdout,
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn host_check() -> Host {
     Host::Present
-}
-
-fn host_present() -> bool {
-    host_check() == Host::Present
 }
 
 /// How long a hidden start at login waits for the desktop's tray host, which
@@ -199,8 +243,6 @@ struct Inner {
     /// A tray icon was created; whether the desktop shows it is asked again
     /// when it matters.
     has_tray: AtomicBool,
-    /// The last answer to whether the desktop shows it.
-    hosted: AtomicBool,
     /// Counts attachments, so diagnostics run again for a new daemon.
     generation: AtomicU64,
     launch: Mutex<Option<Launch>>,
@@ -222,21 +264,20 @@ fn shared(app: &AppHandle) -> Option<Shared> {
     app.try_state::<Shared>().map(|s| s.inner().clone())
 }
 
-/// Whether a tray icon is showing, so the window may hide into it. Asked
-/// again each time it has not been, since the host can appear after the app.
+/// Whether a tray icon is showing, so the window may hide into it. The
+/// desktop is asked every time, never remembered: the host can appear after
+/// the app, and it can go away (the panel exits, an extension is disabled),
+/// after which hiding the window would leave nothing to reopen it.
 pub fn available(app: &AppHandle) -> bool {
     let Some(shared) = shared(app) else {
         return false;
     };
-    if !shared.0.has_tray.load(Ordering::Relaxed) {
-        return false;
-    }
-    if shared.0.hosted.load(Ordering::Relaxed) {
-        return true;
-    }
-    let now = host_present();
-    shared.0.hosted.store(now, Ordering::Relaxed);
-    now
+    tray_usable(shared.0.has_tray.load(Ordering::Relaxed), host_check())
+}
+
+/// The decision: a tray was created and the desktop shows it now.
+fn tray_usable(has_tray: bool, host: Host) -> bool {
+    has_tray && host == Host::Present
 }
 
 /// Creates the tray and the window menu, and starts the poll threads. Runs on
@@ -246,6 +287,10 @@ pub fn setup(app: &AppHandle) {
     app.manage(shared.clone());
     autostart::refresh();
     let login = autostart::enabled();
+    // The only menu listener: Tauri gives it the events of every menu, the
+    // window's and the tray's, so no menu registers a second one (a second
+    // would run each click twice, and a toggle would flip back).
+    app.on_menu_event(|app, event| on_menu(app, event.id().as_ref()));
     let menu_login = match install_window_menu(app, login) {
         Ok(item) => Some(item),
         Err(e) => {
@@ -333,15 +378,6 @@ fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry
         window_menu.append(&notifications).map_err(e)?;
     }
     app.set_menu(window_menu).map_err(e)?;
-    app.on_menu_event(|app, event| {
-        if event.id().as_ref() == MENU_LOGIN {
-            toggle_login(app);
-        } else if event.id().as_ref() == onboarding::MENU_ID {
-            onboarding::show(app);
-        } else {
-            notifications::on_menu(app, event.id().as_ref());
-        }
-    });
     Ok(item)
 }
 
@@ -355,7 +391,6 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         // Windows opens the window on a left click and keeps the menu for the
         // right one; elsewhere a click shows the menu.
         .show_menu_on_left_click(!cfg!(windows))
-        .on_menu_event(|app, event| on_tray_menu(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             #[cfg(windows)]
             if let tauri::tray::TrayIconEvent::Click {
@@ -418,17 +453,46 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(app, &refs)
 }
 
-fn on_tray_menu(app: &AppHandle, id: &str) {
+/// What a menu id does. Ids are unique across the window and tray menus,
+/// except the notification toggles, which both hold and which mean the same.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    Open,
+    Pause,
+    Login,
+    /// "Command Line and Hooks…", in the tray and the window's menu bar.
+    Setup,
+    Quit,
+    QuitStop,
+    Notification,
+    Ignore,
+}
+
+fn route(id: &str) -> Action {
     match id {
-        "open" => lifecycle::show_window(app),
-        "pause" => toggle_pause(app),
-        "login" => toggle_login(app),
-        "setup" => onboarding::show(app),
-        "quit" => lifecycle::quit(app),
-        "quit-stop" => lifecycle::quit_and_stop(app),
-        _ => {
+        "open" => Action::Open,
+        "pause" => Action::Pause,
+        "login" | MENU_LOGIN => Action::Login,
+        "setup" | onboarding::MENU_ID => Action::Setup,
+        "quit" => Action::Quit,
+        "quit-stop" => Action::QuitStop,
+        _ if notifications::is_menu_id(id) => Action::Notification,
+        _ => Action::Ignore,
+    }
+}
+
+fn on_menu(app: &AppHandle, id: &str) {
+    match route(id) {
+        Action::Open => lifecycle::show_window(app),
+        Action::Pause => toggle_pause(app),
+        Action::Login => toggle_login(app),
+        Action::Setup => onboarding::show(app),
+        Action::Quit => lifecycle::quit(app),
+        Action::QuitStop => lifecycle::quit_and_stop(app),
+        Action::Notification => {
             notifications::on_menu(app, id);
         }
+        Action::Ignore => {}
     }
 }
 
@@ -513,16 +577,15 @@ pub fn window_seen(app: &AppHandle) {
     render(app, &shared, false);
 }
 
-/// Running and queued jobs, asked of the daemon now; the last poll's answer
-/// when it cannot be asked.
-pub fn job_counts(app: &AppHandle) -> (usize, usize) {
-    let Some(shared) = shared(app) else {
-        return (0, 0);
-    };
-    let launch = lock(&shared.0.launch).clone();
-    let fresh = launch.and_then(|l| client::jobs(&l).and_then(|b| status::parse_jobs(&b)).ok());
-    let jobs = fresh.or_else(|| lock(&shared.0.observed).jobs.clone());
-    jobs.map_or((0, 0), |j| (j.running, j.queued))
+/// Running and queued jobs, asked of the daemon now. `None` when it cannot be
+/// asked: the last poll may be seconds old, so it is not a substitute.
+pub fn job_counts(app: &AppHandle) -> Option<(usize, usize)> {
+    let shared = shared(app)?;
+    let launch = lock(&shared.0.launch).clone()?;
+    let jobs = client::jobs(&launch)
+        .and_then(|b| status::parse_jobs(&b))
+        .ok()?;
+    Some((jobs.running, jobs.queued))
 }
 
 fn wake(shared: &Shared) {
@@ -679,6 +742,45 @@ mod tests {
     }
 
     #[test]
+    fn every_menu_id_has_exactly_one_action() {
+        use crate::notifications;
+        let ids = menu_spec(&View::default(), false)
+            .into_iter()
+            .map(|e| e.id)
+            .chain([MENU_LOGIN.to_string(), onboarding::MENU_ID.to_string()])
+            .chain(notifications::menu_ids().map(String::from));
+        for id in ids {
+            let action = route(&id);
+            let expected = match id.as_str() {
+                "open" => Action::Open,
+                "pause" => Action::Pause,
+                "login" | MENU_LOGIN => Action::Login,
+                "setup" | onboarding::MENU_ID => Action::Setup,
+                "quit" => Action::Quit,
+                "quit-stop" => Action::QuitStop,
+                _ if id.starts_with("notifications:") => Action::Notification,
+                _ => Action::Ignore,
+            };
+            assert_eq!(action, expected, "{id}");
+        }
+        assert_eq!(route("unknown"), Action::Ignore);
+    }
+
+    /// Tauri hands every menu's events to the app listener, so a listener on
+    /// the tray or a menu as well runs each click twice.
+    #[test]
+    fn one_menu_listener_is_registered() {
+        let source = include_str!("tray.rs");
+        let code = &source[..source.find("#[cfg(test)]").unwrap()];
+        let calls = code
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .filter(|l| l.contains(".on_menu_event("))
+            .count();
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
     fn the_menu_has_the_decided_entries_in_order() {
         let spec = menu_spec(&view(up(2, true)), false);
         assert_eq!(
@@ -737,6 +839,46 @@ mod tests {
         assert_eq!(spec[1].text, "Idle");
         assert_eq!(spec[2].text, "! A diagnostics check reports a problem");
         assert!(!spec[2].enabled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_bus_query_is_cut_off_and_counts_as_unknown() {
+        let started = Instant::now();
+        let result = run_bounded("sleep", &["30"], Duration::from_millis(200));
+        assert_eq!(result, Bounded::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Unknown never lets the window hide.
+        assert!(!tray_usable(true, Host::Unknown));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bounded_query_returns_its_answer_and_status() {
+        assert_eq!(
+            run_bounded("sh", &["-c", "echo '(true,)'"], Duration::from_secs(5)),
+            Bounded::Done {
+                success: true,
+                stdout: "(true,)\n".into()
+            }
+        );
+        assert!(matches!(
+            run_bounded("sh", &["-c", "exit 1"], Duration::from_secs(5)),
+            Bounded::Done { success: false, .. }
+        ));
+        assert_eq!(
+            run_bounded("/nonexistent/busctl", &[], Duration::from_secs(1)),
+            Bounded::NotRun
+        );
+    }
+
+    #[test]
+    fn the_window_hides_only_into_a_tray_the_desktop_shows_now() {
+        assert!(tray_usable(true, Host::Present));
+        // The watcher went away since the last check.
+        assert!(!tray_usable(true, Host::Absent));
+        assert!(!tray_usable(true, Host::Unknown));
+        assert!(!tray_usable(false, Host::Present));
     }
 
     #[test]
