@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -78,7 +79,7 @@ func recordedFixture() *fixture {
 		"/user":                           `{"login":"viewer"}`,
 		"/user/teams?per_page=100&page=1": `[{"id":42}]`,
 		"/repos/acme/app/pulls?state=open&per_page=100&page=1": `[
- {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
+ {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"feature","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
  {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
  {"number":4,"title":"Unknown permissions","user":{"login":"unknown"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
@@ -185,6 +186,43 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 	before = len(f.requests)
 	if _, err := s.Poll(context.Background(), testRepo); !errors.Is(err, errRateLimit) || len(f.requests) != before {
 		t.Fatal("exhausted rate limit retried early")
+	}
+}
+func TestHeadBranchIsKeptAndOlderCachesAreRequestedAgain(t *testing.T) {
+	f := recordedFixture()
+	s, now := service(t, f)
+	first, err := s.Poll(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PullRequests[0].HeadRef != "feature" || first.PullRequests[1].HeadRef != "" {
+		t.Fatalf("head branches %#v", first.PullRequests)
+	}
+	// A cache written before the head branch was kept holds responses
+	// without it; a conditional request would keep serving them.
+	err = filepath.WalkDir(s.directory, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		old := strings.ReplaceAll(strings.ReplaceAll(string(data), `"Fields":2`, `"Fields":0`), `"ref":"feature",`, "")
+		old = strings.ReplaceAll(old, `"head_ref":"feature",`, "")
+		return os.WriteFile(path, []byte(old), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.conditional = true
+	*now = first.NextPoll
+	second, err := s.Poll(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.PullRequests[0].HeadRef != "feature" {
+		t.Fatalf("head branch %#v", second.PullRequests[0])
 	}
 }
 func TestMissingTeamScopeDoesNotHideDirectRequest(t *testing.T) {

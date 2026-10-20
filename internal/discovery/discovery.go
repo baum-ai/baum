@@ -22,9 +22,13 @@ import (
 )
 
 type PullRequest struct {
-	Repository            string `json:"repository"`
-	Number                int    `json:"number"`
-	HeadSHA               string `json:"head_sha"`
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	HeadSHA    string `json:"head_sha"`
+	// HeadRef is the head branch's name, which links a local session on that
+	// branch to the pull request. It is empty in a snapshot cached before it
+	// was kept, until the next poll.
+	HeadRef               string `json:"head_ref,omitempty"`
 	Title                 string `json:"title"`
 	URL                   string `json:"url"`
 	Author                string `json:"author"`
@@ -73,7 +77,16 @@ type Snapshot struct {
 type cachedResponse struct {
 	ETag string
 	Body json.RawMessage
+	// Fields is the version of the inbox fields Body keeps. A response kept
+	// with fewer fields is requested again without its ETag, so a 304 does
+	// not keep serving them.
+	Fields int
 }
+
+// responseFields is the current cachedResponse.Fields: 2 added the head
+// branch.
+const responseFields = 2
+
 type diskCache struct {
 	Snapshot  Snapshot
 	Responses map[string]cachedResponse
@@ -204,6 +217,9 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		return errRateLimit
 	}
 	old := p.cache.Responses[path]
+	if old.Fields < responseFields {
+		old = cachedResponse{}
+	}
 	status, headers, body, err := p.reader.Read(ctx, path, old.ETag)
 	if err != nil {
 		return err
@@ -247,7 +263,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		if string(minimal) != string(old.Body) {
 			p.unchanged = false
 		}
-		p.cache.Responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal}
+		p.cache.Responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal, Fields: responseFields}
 	}
 	return nil
 }
@@ -271,6 +287,7 @@ type apiPR struct {
 	User   actor  `json:"user"`
 	Head   struct {
 		SHA  string `json:"sha"`
+		Ref  string `json:"ref"`
 		Repo *struct {
 			ID       int64  `json:"id"`
 			FullName string `json:"full_name"`
@@ -416,7 +433,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
 		for _, user := range pr.RequestedReviewers {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.ReviewRequestedFromMe = true
