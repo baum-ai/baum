@@ -185,6 +185,21 @@ func setupInstallsUserHooks() bool {
 	return hostedInstall() || loggedIn()
 }
 
+// userHooksPendingForSetup reports whether setup would change any detected
+// agent's user-wide settings.
+func userHooksPendingForSetup() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	for _, agent := range detectedUserHookAgents() {
+		if pending, err := userhooks.Pending(home, agent); err == nil && pending {
+			return true
+		}
+	}
+	return false
+}
+
 // writeUserHooksPlan names the files outside the repositories that setup is
 // about to change, before it asks to go ahead.
 func writeUserHooksPlan(stdout io.Writer) {

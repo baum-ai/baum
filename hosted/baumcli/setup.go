@@ -370,11 +370,18 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 			ready++
 		}
 	}
-	if ready == 0 {
+	// User-wide hooks can be missing when every repository is set up, for
+	// example after `baum hooks uninstall --user`, so they count as pending
+	// work before the no-op return.
+	userHooksPending := opts.userHooks != nil && !opts.userHooks.done && userHooksPendingForSetup()
+	if ready == 0 && !userHooksPending {
 		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
 		return nil
 	}
-	if opts.userHooks != nil {
+	if ready == 0 {
+		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
+	}
+	if userHooksPending {
 		writeUserHooksPlan(stdout)
 	}
 	if !opts.yes {
@@ -409,6 +416,12 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 				entry.Roots = append(entry.Roots, root)
 			}
 		}
+	}
+
+	if ready == 0 {
+		opts.userHooks.done = true
+		installUserHooksDuringSetup(stdout, stderr)
+		return nil
 	}
 
 	succeeded, failed := 0, 0
