@@ -480,3 +480,69 @@ func TestSweepReadsTheRecordOnlyAfterADrop(t *testing.T) {
 		t.Fatalf("read the record again without a new drop (%d)", src.recents.Load())
 	}
 }
+
+func TestSweepRetriesALookupTheThrottleSkipped(t *testing.T) {
+	c := &clock{t0}
+	l := &linker{links: map[string]Link{"/work/demo": {Repository: "acme/demo", Branch: "feature", PR: 7}}}
+	tr := newTracker(c, l)
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
+	// The branch gets its pull request, and the session's last event (a stop)
+	// arrives inside the throttle window, so it does not look it up.
+	l.mu.Lock()
+	l.links["/work/demo"] = Link{Repository: "acme/demo", Branch: "feature", PR: 9}
+	l.mu.Unlock()
+	c.advance(time.Second)
+	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	if l.calls != 1 {
+		t.Fatalf("lookups = %d, want 1", l.calls)
+	}
+	// Sweep within the window does not look either.
+	c.advance(time.Second)
+	tr.Sweep()
+	tr.ResolvePending(context.Background())
+	if l.calls != 1 || tr.Sessions()[0].PR != 7 {
+		t.Fatalf("lookups = %d, session = %+v", l.calls, tr.Sessions()[0])
+	}
+	// After the window it does, though no event arrives.
+	c.advance(RelinkEvery)
+	tr.Sweep()
+	if !tr.ResolvePending(context.Background()) {
+		t.Fatal("the new pull request is a change")
+	}
+	if got := tr.Sessions()[0]; got.PR != 9 || l.calls != 2 {
+		t.Fatalf("lookups = %d, session = %+v", l.calls, got)
+	}
+	// Nothing is stale and it has a pull request: Sweep stays quiet.
+	c.advance(RelinkEvery)
+	tr.Sweep()
+	tr.ResolvePending(context.Background())
+	if l.calls != 2 {
+		t.Fatalf("lookups = %d, want 2", l.calls)
+	}
+}
+
+func TestSweepRelooksForAPullRequestOfASessionWithoutOne(t *testing.T) {
+	c := &clock{t0}
+	l := &linker{links: map[string]Link{"/work/demo": {Repository: "acme/demo", Branch: "wip"}}}
+	tr := newTracker(c, l)
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
+	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	l.mu.Lock()
+	l.links["/work/demo"] = Link{Repository: "acme/demo", Branch: "wip", PR: 4}
+	l.mu.Unlock()
+	c.advance(RelinkEvery)
+	tr.Sweep()
+	tr.ResolvePending(context.Background())
+	if got := tr.Sessions()[0]; got.PR != 4 {
+		t.Fatalf("session = %+v", got)
+	}
+	// An ended session is not looked up again.
+	apply(tr, event("s1", "session-end", c.now, "/work/demo"))
+	calls := l.calls
+	c.advance(RelinkEvery)
+	tr.Sweep()
+	tr.ResolvePending(context.Background())
+	if l.calls != calls {
+		t.Fatalf("lookups = %d, want %d", l.calls, calls)
+	}
+}

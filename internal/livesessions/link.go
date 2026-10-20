@@ -168,7 +168,7 @@ func (r *Resolver) pullRequest(ctx context.Context, repository, branch string, r
 		if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == branch }); number > 0 {
 			return number
 		}
-		if name := r.upstreamBranch(ctx, repo, repository, branch); name != "" && name != branch {
+		if name := r.upstreamBranch(ctx, repo, parsed, branch); name != "" && name != branch {
 			if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == name }); number > 0 {
 				return number
 			}
@@ -182,8 +182,9 @@ func (r *Resolver) pullRequest(ctx context.Context, repository, branch string, r
 }
 
 // upstreamBranch is the name of the branch of repository that branch's
-// upstream is, "" when it has none there.
-func (r *Resolver) upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository, branch string) string {
+// upstream is, "" when it has none there. The host counts: on an Enterprise
+// host the same owner/name elsewhere is another repository.
+func (r *Resolver) upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository github.Repository, branch string) string {
 	remote, merge, err := repo.BranchUpstream(ctx, branch)
 	name, ok := strings.CutPrefix(merge, "refs/heads/")
 	if err != nil || !ok || name == "" || remote == "" || remote == "." {
@@ -196,7 +197,7 @@ func (r *Resolver) upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repo
 	if url == "" {
 		url = remote
 	}
-	if !gitlocal.SameRepository(url, repository) {
+	if !github.RemoteNames(url, repository) {
 		return ""
 	}
 	return name
