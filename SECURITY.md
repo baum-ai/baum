@@ -40,12 +40,14 @@ credentials, and only these hosts are contacted: `github.com`
 `github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
 any other host is refused, and an image hosted elsewhere is not downloaded.
 
-baum sends no telemetry. Besides GitHub and the configured provider, it
-contacts only `static.usebaum.com`, to download the public price list used
-for cost estimates. That request is a plain download: it carries no token,
+baum sends no telemetry. Unless you run `baum login`, nothing leaves the
+machine except calls to GitHub, the configured model provider and
+`static.usebaum.com`, from which it downloads the public price list used for
+cost estimates. That request is a plain download: it carries no token,
 repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
-verified, baum uses a copy embedded at release. Tokens are read from the
+verified, baum uses a copy embedded at release. The hosted service commands
+are described [below](#hosted-service-commands). Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else. Local inbox discovery also reads GitHub's REST API using that
 same token and derived host, without redirects or extra scopes. Its private
@@ -53,6 +55,55 @@ same token and derived host, without redirects or extra scopes. Its private
 fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
+
+## Hosted service commands
+
+`baum login`, `logout`, `whoami`, `setup`, `upload` and the hidden `hooks`
+connect this machine to a hosted baum server. They are opt-in: nothing is sent
+to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
+
+- `baum login` runs a device-authorization flow with the server you name
+  (`--server` or `BAUM_SERVER`, default `https://usebaum.com/api`) and stores
+  the token it issues in `~/.config/baum/credentials.json` (mode 0600, or under
+  `XDG_CONFIG_HOME`). The token is sent only to that server.
+- After that, `baum upload` and `baum setup --upload` send the coding-agent
+  sessions recorded for a repository to the server you logged in to, as an
+  archive in which goredact masked the secrets it detected, on this machine.
+  Redaction is best effort, as above, and repository and worktree paths are
+  sent as they are. `setup --sync` asks that server to synchronize the
+  repository. Each request also names this baum's version and API protocol.
+- `baum setup` without those flags contacts no baum server. It may download
+  the pinned release of the [Entire](https://docs.entire.io) CLI from GitHub,
+  checked against a SHA-256 built into the binary, and installs Entire's
+  hooks and baum's in the repository.
+- Agent and Git hooks contact no baum server. The hook commands committed to
+  repositories run baum only for a logged-in user or in a clone set up with
+  `baum setup`, and, for a baum built or installed for the hosted service,
+  also in a repository whose committed agent hook settings dispatch through
+  baum (as the hosted service's onboarding pull request and `baum setup` write
+  them). There a hook may install the pinned Entire release from GitHub and
+  the clone's Git hook dispatchers, then hands the event to Entire.
+  Everywhere else the hooks run Entire directly, and baum does nothing at all:
+  without a login, an open-source build does not install Entire or its hooks
+  in a repository just because the repository's files ask for it, unless the
+  machine still has the hosted install script's marker (below). Uploading, or
+  anything else that contacts a baum server, needs `baum login` in every case.
+- Once installed, Entire's own hooks record agent sessions as checkpoints and
+  push them, transcripts included, with `git push` to the checkpoint branch of
+  the repository's remote (or the checkpoint remote its settings name). That
+  is Entire's behaviour, not baum's; whoever can read that remote can read
+  them.
+- A baum counts as installed for the hosted service when its release build
+  says so, or when the hosted install script left the file `hosted-install`
+  beside the credentials (`~/.config/baum/`, or under `XDG_CONFIG_HOME`). The
+  marker outlives the binary that came with it: an open-source baum installed
+  later on the same machine also sets up onboarded repositories without a
+  login. Delete the file (`rm ~/.config/baum/hosted-install`) to stop that.
+- `baum logout` revokes and removes the stored token but leaves the markers
+  `baum setup` and the hook bootstrap write in a clone's `.git/baum`
+  directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep
+  running through baum for that local work; without a login they send
+  nothing to a baum server.
 
 ## What `baum doctor` runs and prints
 
