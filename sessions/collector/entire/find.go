@@ -124,10 +124,9 @@ func (s Store) locate(id string) (location, bool) {
 // Resolve finds the checkpoint stores in the clone at repoRoot: the commit the
 // checkpoint branch points at (the local branch first, then any
 // remote-tracking copy of it) and every refs/entire/checkpoints/<shard>/<id>
-// ref. A ref is used only when its shard is the last two characters of its
-// id, which must be a valid checkpoint id, and it has no further path
-// segments; anything else under the prefix is ignored. ok is false when the
-// clone has neither store. Nothing is fetched.
+// ref. A ref is used only when it is named as refID requires; anything else
+// under the prefix is ignored. ok is false when the clone has neither store.
+// Nothing is fetched.
 func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err error) {
 	out, err := git(ctx, repoRoot, "for-each-ref", "--format=%(objectname) %(refname)",
 		"refs/heads/"+CheckpointBranch, "refs/remotes/*/"+CheckpointBranch, RefPrefix)
@@ -136,16 +135,22 @@ func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err er
 	}
 	var local, remote string
 	refs := map[string]string{}
+	exact := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		oid, ref, found := strings.Cut(line, " ")
 		if !found {
 			continue
 		}
 		if strings.HasPrefix(ref, RefPrefix) {
-			if id, valid := refID(ref); valid && commitPattern.MatchString(oid) {
-				if _, dup := refs[id]; !dup {
-					refs[id] = oid
-				}
+			id, exactShard, valid := refID(ref)
+			if !valid || !commitPattern.MatchString(oid) {
+				continue
+			}
+			// The exactly named ref wins over one under a case variant of its
+			// shard, whatever order git lists them in.
+			if _, dup := refs[id]; !dup || exactShard && !exact[id] {
+				refs[id] = oid
+				exact[id] = exactShard
 			}
 			continue
 		}
@@ -163,25 +168,34 @@ func Resolve(ctx context.Context, repoRoot string) (store Store, ok bool, err er
 	return store, store.Branch != "" || len(refs) > 0, nil
 }
 
-// refID is the canonical checkpoint id of a ref, which must be named exactly
+// refID is the canonical checkpoint id of a ref, which must be named
 // RefPrefix, the last two characters of the canonical id, a slash and the
 // canonical id (hex lower-case, ULID upper-case), as the platform mirror
-// reads them. Any other spelling is not a checkpoint Entire wrote, and a
-// case variant must not shadow the real one.
-func refID(ref string) (string, bool) {
+// reads them. Any other spelling of the id, another shard or an extra path
+// segment is not a checkpoint Entire wrote, and a case variant of the id
+// must not shadow the real one.
+//
+// Only the shard may differ in case, and exactShard reports whether it does
+// not. On a case-insensitive filesystem (the default on macOS and Windows) a
+// loose ref goes in whichever spelling of its shard directory was made
+// first, and git lists it under that spelling: a ULID ref .../AB/<ULID>
+// written after a 12-hex .../ab/<id> is listed as .../ab/<ULID>, and
+// pack-refs keeps that name. The id itself is the file's own name, which
+// keeps its spelling, since no two checkpoint ids differ only in case.
+func refID(ref string) (id string, exactShard, ok bool) {
 	rest, ok := strings.CutPrefix(ref, RefPrefix)
 	if !ok {
-		return "", false
+		return "", false, false
 	}
-	_, name, found := strings.Cut(rest, "/")
+	shard, name, found := strings.Cut(rest, "/")
 	if !found {
-		return "", false
+		return "", false, false
 	}
-	id, ok := entirecheckpoint.CanonicalID(name)
-	if !ok || ref != RefPrefix+id[len(id)-2:]+"/"+id {
-		return "", false
+	id, ok = entirecheckpoint.CanonicalID(name)
+	if !ok || name != id || !strings.EqualFold(shard, id[len(id)-2:]) {
+		return "", false, false
 	}
-	return id, true
+	return id, shard == id[len(id)-2:], true
 }
 
 // Located reports which of ids the store holds, by canonical id: a ref is
