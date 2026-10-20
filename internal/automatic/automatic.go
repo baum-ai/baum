@@ -84,6 +84,10 @@ type Scheduler struct {
 	runMu sync.Mutex
 	mu    sync.Mutex
 	state *fileState
+	// observed is when the newest snapshot Observe took for each repository
+	// was fetched. Background refresh and Trigger observe from different
+	// goroutines, so an older snapshot can arrive after a newer one.
+	observed map[string]time.Time
 }
 
 // Status is one repository's automatic generation as the app shows it.
@@ -319,7 +323,9 @@ func eligible(pr discovery.PullRequest) bool {
 // Observe records a complete discovery snapshot. The first one after a
 // repository is enabled is its baseline; afterwards a new head, or a new
 // review request, on an eligible PR leaves a pending job for the next pass.
-// Background discovery calls it after every successful poll.
+// Background discovery calls it after every successful poll, and Trigger
+// after its own; a snapshot fetched before the newest one observed for its
+// repository is ignored.
 func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	v, err := s.current(ctx)
 	if err != nil {
@@ -329,6 +335,13 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	name := strings.ToLower(snapshot.Repository)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if snapshot.FetchedAt.Before(s.observed[name]) {
+		return
+	}
+	if s.observed == nil {
+		s.observed = map[string]time.Time{}
+	}
+	s.observed[name] = snapshot.FetchedAt
 	state := s.load()
 	changed := s.prune(v)
 	r, ok := v.repos[name]

@@ -826,3 +826,17 @@ func TestUnreadableSettingsDoNotConsumeTheHead(t *testing.T) {
 	h.waitIdle()
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:retry")
 }
+
+// Background refresh and Trigger observe from different goroutines: a
+// snapshot fetched before the newest one already observed changes nothing.
+func TestOlderSnapshotArrivingLateIsIgnored(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	fetched := h.now
+	h.now = h.now.Add(2 * time.Minute)
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	write := true
+	h.scheduler.Observe(context.Background(), discovery.Snapshot{Repository: "org/repo", FetchedAt: fetched.Add(time.Minute), PullRequests: []discovery.PullRequest{{Repository: "org/repo", Number: 1, HeadSHA: "a1", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}})
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+}
