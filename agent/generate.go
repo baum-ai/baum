@@ -54,7 +54,7 @@ type Run struct {
 	TileKinds []string
 	// TileEntries, when set, are the catalogue entries offered in the prompt
 	// instead of the shipped entries of TileKinds (tilecatalogue.WithCandidates).
-	// Evaluation uses it to try selection guidance; nil keeps the shipped ones.
+	// Evaluation uses it to try selection guidance; none (nil or empty) keeps the shipped ones.
 	TileEntries []tilecatalogue.Entry
 	Budgets     Budgets
 	// Endpoint is how the backend reaches the model; nil leaves its own.
@@ -112,7 +112,7 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 	}
 	source := sourceContext(run.Directory, run.Bundle)
 	tileText := tilecatalogue.Instructions(run.TileKinds)
-	if run.TileEntries != nil {
+	if len(run.TileEntries) > 0 {
 		tileText = tilecatalogue.InstructionsFor(run.TileEntries)
 	}
 	instructions := prompt.Body + tileText

@@ -176,6 +176,18 @@ func TestGenerateOffersCandidateTileEntriesInsteadOfTheShippedOnes(t *testing.T)
 	}
 }
 
+func TestGenerateTreatsEmptyTileEntriesAsTheShippedOnes(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.TileKinds = []string{"database-schema"}
+	run.TileEntries = []tilecatalogue.Entry{}
+	if _, _, err := generator.Generate(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if want := testBody + tilecatalogue.Instructions(run.TileKinds) + "\n\nInput bundle"; !strings.HasPrefix(backend.calls[0].Prompt, want) {
+		t.Fatalf("an empty entry list changed the offered tiles: %.300s", backend.calls[0].Prompt)
+	}
+}
+
 func TestGenerateRepairsAnInvalidDocument(t *testing.T) {
 	generator, run, backend := loopFixture(t, nil)
 	backend.run = func(_ context.Context, request Request, n int) (Result, error) {
