@@ -172,7 +172,9 @@ pub fn stable_target(cli: &Path) -> Result<PathBuf, String> {
 pub fn refresh_copy(source: &Path, copy: &Path) -> io::Result<bool> {
     let wanted = fs::metadata(source)?;
     let stamp_path = stamp_path(copy);
-    if fs::read_to_string(&stamp_path).is_ok_and(|s| Some(s) == stamp(&wanted, copy)) {
+    let current =
+        |wanted: &fs::Metadata| Some(format!("{}{}", source_stamp(source)?, stamp(wanted, copy)?));
+    if fs::read_to_string(&stamp_path).is_ok_and(|s| Some(s) == current(&wanted)) {
         return Ok(false);
     }
     let dir = copy.parent().ok_or(io::ErrorKind::InvalidInput)?;
@@ -190,7 +192,7 @@ pub fn refresh_copy(source: &Path, copy: &Path) -> io::Result<bool> {
         let _ = fs::remove_file(&temporary);
     }
     written?;
-    if let Some(stamp) = stamp(&wanted, copy) {
+    if let Some(stamp) = current(&wanted) {
         fs::write(&stamp_path, stamp)?;
     }
     Ok(true)
@@ -202,23 +204,76 @@ fn stamp_path(copy: &Path) -> PathBuf {
     copy.with_file_name(name)
 }
 
-/// What the stamp says for this source and the copy as it is now.
+/// What the stamp says for this source and the copy as it is now. File
+/// times tick coarsely (a few milliseconds on Linux), so an update or a
+/// rewrite within one tick keeps them; the stamp therefore also holds each
+/// file's identity (a renamed-in update is a new inode, and any write moves
+/// the change time, which no one can set back) and a hash of its first and
+/// last 64 KiB, where a binary's headers and build id live.
 fn stamp(source: &fs::Metadata, copy: &Path) -> Option<String> {
     let copied = fs::metadata(copy).ok()?;
-    let nanos = |m: &fs::Metadata| {
-        m.modified()
-            .ok()?
+    (copied.len() == source.len()).then_some(())?;
+    Some(format!(
+        "source {}\ncopy {} {}\n",
+        identity(source)?,
+        identity(&copied)?,
+        ends_hash(copy)?
+    ))
+}
+
+/// The source's part of the stamp also hashes its ends; it is kept with the
+/// source's identity so a changed source is noticed even if its size and
+/// times match.
+fn source_stamp(source: &Path) -> Option<String> {
+    Some(format!(
+        "{} {}",
+        identity(&fs::metadata(source).ok()?)?,
+        ends_hash(source)?
+    ))
+}
+
+fn identity(m: &fs::Metadata) -> Option<String> {
+    let nanos = |t: io::Result<std::time::SystemTime>| {
+        t.ok()?
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| d.as_nanos())
     };
-    (copied.len() == source.len()).then_some(())?;
-    Some(format!(
-        "source {} {}\ncopy {}\n",
-        source.len(),
-        nanos(source)?,
-        nanos(&copied)?
-    ))
+    #[cfg(unix)]
+    let extra = {
+        use std::os::unix::fs::MetadataExt;
+        format!("{}:{} {}.{}", m.dev(), m.ino(), m.ctime(), m.ctime_nsec())
+    };
+    #[cfg(not(unix))]
+    let extra = String::new();
+    Some(format!("{} {} {extra}", m.len(), nanos(m.modified())?))
+}
+
+/// FNV-1a over the first and last 64 KiB of a file: cheap, and stable
+/// across builds of the app.
+fn ends_hash(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const SPAN: u64 = 64 * 1024;
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    let mut buffer = Vec::with_capacity(SPAN as usize);
+    file.by_ref().take(SPAN).read_to_end(&mut buffer).ok()?;
+    feed(&buffer);
+    if len > SPAN {
+        buffer.clear();
+        file.seek(SeekFrom::Start(len.saturating_sub(SPAN).max(SPAN)))
+            .ok()?;
+        file.take(SPAN).read_to_end(&mut buffer).ok()?;
+        feed(&buffer);
+    }
+    Some(format!("{hash:016x}"))
 }
 
 fn write_copy(source: &Path, temporary: &Path) -> io::Result<()> {
@@ -1645,6 +1700,22 @@ mod tests {
         assert!(refresh_copy(&w.app, &copy).unwrap());
         assert_eq!(fs::read(&copy).unwrap(), fs::read(&w.app).unwrap());
         assert!(fs::symlink_metadata(&stale).is_err());
+        // An update of the same size landing at once, within the same tick
+        // of the file clock, and with its old times put back.
+        let times = fs::metadata(&w.app).unwrap().modified().unwrap();
+        let same_size = String::from_utf8(fs::read(&w.app).unwrap())
+            .unwrap()
+            .replace("updated", "patched");
+        fs::write(&w.app, same_size).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&w.app)
+            .unwrap()
+            .set_modified(times)
+            .unwrap();
+        assert!(refresh_copy(&w.app, &copy).unwrap());
+        assert_eq!(fs::read(&copy).unwrap(), fs::read(&w.app).unwrap());
+        assert!(!refresh_copy(&w.app, &copy).unwrap());
         // The same size and a new modification time.
         let app = fs::File::options().write(true).open(&w.app).unwrap();
         app.set_modified(std::time::SystemTime::UNIX_EPOCH).unwrap();
@@ -1654,7 +1725,7 @@ mod tests {
         // missing stamp.
         let rewritten = String::from_utf8(fs::read(&w.app).unwrap())
             .unwrap()
-            .replace("updated", "changed");
+            .replace("patched", "changed");
         fs::write(&copy, rewritten).unwrap();
         assert!(refresh_copy(&w.app, &copy).unwrap());
         assert_eq!(fs::read(&copy).unwrap(), fs::read(&w.app).unwrap());
