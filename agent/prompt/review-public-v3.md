@@ -114,9 +114,9 @@ section states, timestamps, risk lifecycle), and ignores it if you write it.
 ```
 {
   "schema": "baum.review/1",
-  "summary": { text, review_exchange: { summary }, change_kind, implements,
-               release_note, breaking_change, review_minutes, attention,
-               authorship },
+  "summary": { text, context, review_exchange: { summary }, change_kind,
+               implements, release_note, breaking_change, review_minutes,
+               attention, authorship },
   "sections": [ ... ],
   "relations": [ ... ]
 }
@@ -132,6 +132,33 @@ risk's `state`, `introduced_version` or `mitigated_version`.
   of behaviour a reader cares about. Lead with the most consequential change.
   If the reason is not stated anywhere, say what it does and that the reason
   is not given.
+- `context`: how the change fits into the codebase around it, for a reviewer
+  who has not worked in this area. It is shown collapsed under `text`, so it
+  goes deeper than `text` instead of repeating it, and section summaries do
+  not repeat it either. Ground it in code you read in the checkout or the
+  bundle, not in the diff alone: a few reads of the changed code's callers,
+  its package's entry points or the code it calls are worth it here. Each
+  part is `{text, refs}`, one to three short sentences:
+  - `area` (always): the part of the system the changed code belongs to, in
+    words a teammate would recognise, and what that part is responsible for.
+  - `reached_by`: the important callers, entry points and consumers through
+    which the changed code runs.
+  - `contracts`: existing contracts, invariants or behaviour the change
+    relies on or alters, such as an API shape, a stored format, an ordering
+    or an access rule; say which it relies on and which it alters.
+  - `related`: other code a reviewer should know about to judge the change,
+    such as a parallel implementation that must stay consistent or code that
+    must change in step.
+
+  Give `reached_by`, `contracts` and `related` only when you established them
+  from code you read; omit a part rather than guess or fill it. For a routine
+  change, `area` alone may be enough. `refs` lists the files a part rests on,
+  most important first (at most eight), each `{path, symbol}`: `path` is
+  repository-relative, without the `head/` or `merge-base/` prefix, and
+  `symbol` names the function, type or table meant, or is null for the file
+  as a whole. Describe the surrounding code as it is, and the change only
+  through how it touches that code: do not restate the diff, `text` or the
+  sections.
 - `review_exchange.summary`: what reviewers (people and bots) raised, what
   changed in response, and what is still open. If there has been no review,
   say so in one sentence.
@@ -371,6 +398,8 @@ document: `rsk_claim_race`, not `rsk_1`.
 
 - Every hunk ID in `diff` is in a section; every ID you cite exists in the
   bundle.
+- `summary.context` has an `area`; every other part rests on code you read,
+  and every ref is a path in the checkout.
 - At most one mechanical section; no risk above `low` in it.
 - Every logical section with hunks has an `assessment`.
 - Every risk has a hunk anchor; every behaviour step has a hunk anchor.

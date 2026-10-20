@@ -22,13 +22,21 @@ func readFile(t *testing.T, name string) string {
 }
 
 func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
-	shared := readFile(t, "review-public-v2.md")
+	shared := readFile(t, "review-public-v3.md")
 	if !strings.HasSuffix(shared, "## 10. Submitting\n") {
 		t.Fatal("shared text must end with the Submitting heading")
 	}
 	for _, phrase := range []string{"`review_minutes`: whole minutes", "native English speaker", "not the time to review the diff independently"} {
 		if !strings.Contains(shared, phrase) {
 			t.Errorf("the shared text does not ask for the review time estimate: no %q", phrase)
+		}
+	}
+	for _, phrase := range []string{
+		"summary\": { text, context,", "- `context`: how the change fits into the codebase", "`area` (always)",
+		"omit a part rather than guess or fill it", "without the `head/` or `merge-base/` prefix", "`summary.context` has an `area`",
+	} {
+		if !strings.Contains(shared, phrase) {
+			t.Errorf("the shared text does not ask for the codebase context: no %q", phrase)
 		}
 	}
 	cases := map[string]string{
@@ -46,7 +54,7 @@ func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
 		if !strings.HasPrefix(got.Body, shared) || !strings.HasSuffix(got.Body, block) {
 			t.Fatalf("%s: body is not the shared text then %s", backend, file)
 		}
-		if got.Version != "review-public-v2" {
+		if got.Version != "review-public-v3" {
 			t.Fatalf("version %q", got.Version)
 		}
 		sum := sha256.Sum256([]byte(got.Body))
