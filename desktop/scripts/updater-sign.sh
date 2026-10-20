@@ -12,8 +12,8 @@
 #
 # TAURI_SIGNING_PRIVATE_KEY is the content of the key file `tauri signer
 # generate` writes; TAURI_SIGNING_PRIVATE_KEY_PASSWORD its password. MINISIGN
-# names the minisign binary (default: minisign on PATH; the release uses
-# scripts/install-minisign.sh). UPDATER_PUBKEY overrides the configured
+# names the minisign binary (default: minisign on PATH; the release must use
+# scripts/install-minisign.sh's and sets BAUM_RELEASE_SIGNING=1). UPDATER_PUBKEY overrides the configured
 # public key (tests). Runs no build tooling.
 set -euo pipefail
 
@@ -26,6 +26,21 @@ shift
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   echo "updater-sign: TAURI_SIGNING_PRIVATE_KEY is not set" >&2
   exit 1
+fi
+# In the release (BAUM_RELEASE_SIGNING=1) only the pinned minisign that
+# scripts/install-minisign.sh installed may run, never one found on PATH.
+if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
+  case "${MINISIGN:-}" in
+    /*) ;;
+    *)
+      echo "$(basename "$0"): MINISIGN must be the absolute path of the pinned minisign in the release" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$MINISIGN" ] || [ ! -x "$MINISIGN" ]; then
+    echo "$(basename "$0"): MINISIGN ($MINISIGN) is not an executable file" >&2
+    exit 1
+  fi
 fi
 minisign=${MINISIGN:-minisign}
 here=$(cd "$(dirname "$0")/.." && pwd)

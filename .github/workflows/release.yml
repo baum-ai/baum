@@ -34,7 +34,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # No cache: a release never restores files another run saved.
+      # No caches anywhere in this workflow: a release never restores files
+      # another run saved.
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -70,8 +71,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: viewer/pnpm-lock.yaml
 
       - name: Rebuild and compare
         run: sh scripts/viewer-fresh.sh
@@ -145,13 +144,29 @@ jobs:
           # environment and never pushes, so no credentials stay in the clone.
           persist-credentials: false
 
-      # Only a reviewed commit is released: the tag must point into main.
-      - name: The tagged commit is on main
+      # Only a reviewed commit is released: the tag must point into main,
+      # past the previous release.
+      - name: The tagged commit is on main and newer than the last release
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; only commits on main are released."
             exit 1
+          fi
+          # The tag before this one in version order (pre-releases before
+          # their release), if any, must be on this commit's history. The
+          # same commit is allowed, so a release candidate can be promoted.
+          previous=$(git -c versionsort.suffix=- tag --list 'v*' --sort=v:refname |
+            grep -B1 -xF "$GITHUB_REF_NAME" | head -n1)
+          if [ -n "$previous" ] && [ "$previous" != "$GITHUB_REF_NAME" ]; then
+            previous_commit=$(git rev-parse "$previous^{commit}")
+            if ! git merge-base --is-ancestor "$previous_commit" "$GITHUB_SHA"; then
+              echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) does not come after $previous ($previous_commit)."
+              exit 1
+            fi
+            echo "Releasing $GITHUB_REF_NAME, after $previous."
+          else
+            echo "Releasing $GITHUB_REF_NAME, the first v* tag."
           fi
 
       - name: Set up Go
@@ -212,6 +227,9 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
     outputs:
       updater: ${{ steps.signing.outputs.updater }}
     steps:
@@ -292,7 +310,9 @@ jobs:
 
       - name: Install minisign
         if: steps.signing.outputs.updater == 'true'
-        run: echo "MINISIGN=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")" >>"$GITHUB_ENV"
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
 
       - name: Sign the updater archive
         if: steps.signing.outputs.updater == 'true'
@@ -329,6 +349,9 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
     outputs:
       updater: ${{ steps.signing.outputs.updater }}
     steps:
@@ -387,7 +410,9 @@ jobs:
 
       - name: Install minisign
         if: steps.signing.outputs.updater == 'true'
-        run: echo "MINISIGN=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")" >>"$GITHUB_ENV"
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
 
       # After the Authenticode signature: the updater signs the final file.
       - name: Sign the updater installer
@@ -418,6 +443,9 @@ jobs:
     timeout-minutes: 15
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
     outputs:
       updater: ${{ steps.signing.outputs.updater }}
     steps:
@@ -426,13 +454,31 @@ jobs:
         with:
           persist-credentials: false
 
-      # linux-arm64 is there when its optional build succeeded.
-      - name: Download the bundles
+      - name: Download the x86_64 bundles
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: desktop-linux-*
-          path: signed
-          merge-multiple: true
+          name: desktop-linux-amd64
+          path: unsigned/linux-amd64
+
+      # Missing when the optional arm64 build failed.
+      - name: Download the arm64 bundles
+        id: arm64
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-linux-arm64
+          path: unsigned/linux-arm64
+
+      # Each platform's own files only, so no artifact can supply another's.
+      - name: Take the bundles
+        env:
+          ARM64: ${{ steps.arm64.outcome }}
+        run: |
+          mkdir signed
+          cp unsigned/linux-amd64/baum-desktop-linux-amd64.deb unsigned/linux-amd64/baum-desktop-linux-amd64.AppImage signed/
+          if [ "$ARM64" = success ]; then
+            cp unsigned/linux-arm64/baum-desktop-linux-arm64.deb unsigned/linux-arm64/baum-desktop-linux-arm64.AppImage signed/
+          fi
 
       - name: Signing configuration
         id: signing
@@ -447,7 +493,9 @@ jobs:
 
       - name: Install minisign
         if: steps.signing.outputs.updater == 'true'
-        run: echo "MINISIGN=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")" >>"$GITHUB_ENV"
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
 
       - name: Sign the AppImages
         if: steps.signing.outputs.updater == 'true'
@@ -473,6 +521,7 @@ jobs:
     timeout-minutes: 10
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      BAUM_RELEASE_SIGNING: "1"
       # Whether the release environment holds the updater key, as each sign
       # job saw it.
       UPDATER: ${{ needs.sign-linux.outputs.updater }}
@@ -484,15 +533,53 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download the signed files
+      - name: Download the signed macOS files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: signed-*
-          path: release
-          merge-multiple: true
+          name: signed-darwin-universal
+          path: signed/darwin-universal
+
+      - name: Download the signed Windows files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-windows-amd64
+          path: signed/windows-amd64
+
+      - name: Download the signed Linux files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-linux
+          path: signed/linux
+
+      # Each platform contributes only its own names, and no name twice.
+      - name: Collect the release files
+        run: |
+          mkdir release
+          status=0
+          take() {
+            local platform=$1 pattern=$2 file name
+            for file in "signed/$platform"/*; do
+              name=$(basename "$file")
+              if ! [[ $name =~ $pattern ]]; then
+                echo "::error::signed-$platform holds $name, which is not one of its files"
+                status=1
+              elif [ -e "release/$name" ]; then
+                echo "::error::$name comes from more than one artifact"
+                status=1
+              else
+                cp "$file" release/
+              fi
+            done
+          }
+          take darwin-universal '^baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)$'
+          take windows-amd64 '^baum-desktop-windows-amd64(-unsigned)?-setup\.exe(\.sig)?$'
+          take linux '^baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)$'
+          exit "$status"
 
       - name: Install minisign
-        run: echo "MINISIGN=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")" >>"$GITHUB_ENV"
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
 
       - name: Write and verify latest.json
         run: |
@@ -561,10 +648,13 @@ jobs:
               status=1
             fi
           done
-          for required in 'baum-desktop-darwin-universal*.dmg' 'baum-desktop-linux-amd64.deb' \
-            'baum-desktop-linux-amd64.AppImage' 'baum-desktop-windows-amd64*-setup.exe' desktop-checksums.txt; do
-            if ! compgen -G "release/$required" >/dev/null; then
-              echo "::error::missing $required"
+          # Exactly one of each, so no bundle is shipped under two names.
+          for required in 'baum-desktop-darwin-universal*.dmg' 'baum-desktop-darwin-universal*.app.tar.gz' \
+            'baum-desktop-linux-amd64.deb' 'baum-desktop-linux-amd64.AppImage' \
+            'baum-desktop-windows-amd64*-setup.exe' desktop-checksums.txt; do
+            mapfile -t matches < <(compgen -G "release/$required" || true)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::expected one $required, found ${#matches[@]}"
               status=1
             fi
           done

@@ -130,10 +130,12 @@ test, viewer-dist, desktop-test          checks of the tagged commit
                       └─ desktop-publish attach files, latest.json last, publish the draft
 ```
 
-- `release` fails unless the tagged commit is on `main`
-  (`git merge-base --is-ancestor`). goreleaser creates the release as a
-  draft with empty notes, and keeps its `baum` binaries as the artifact
-  `cli-binaries`.
+- `release` fails unless the tagged commit is on `main` and the previous
+  `v*` tag in version order points into its history (both with `git
+  merge-base --is-ancestor`; the same commit is allowed, so a release
+  candidate can be promoted). goreleaser creates the release as a draft with empty
+  notes (a re-run reuses that draft), and keeps its `baum` binaries as the
+  artifact `cli-binaries`.
 - `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
   on Linux in this directory's Docker image. This is where third-party code
   runs: hundreds of crates' build scripts and macros, and the bundler's
@@ -149,17 +151,22 @@ test, viewer-dist, desktop-test          checks of the tagged commit
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
   `scripts/updater-sign.sh`, which signs each updater bundle for the release
   version. OS signing comes first, so the updater signature covers the final
-  file.
-- `desktop-manifest` writes `latest.json` with `scripts/updater-manifest.sh`
-  and checks every bundle in it against the release key, the version and its
-  expected download URL. If the environment holds the updater key but a
+  file. Each job downloads only its own platform's artifact, by name, and
+  takes only that platform's file names from it; `updater-sign.sh` and
+  `updater-manifest.sh` refuse any minisign but the pinned one there.
+- `desktop-manifest` downloads each sign job's artifact by name, accepts
+  only that platform's file names and fails if two artifacts carry the same
+  name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
+  every bundle in it against the release key, the version and its expected
+  download URL. If the environment holds the updater key but a
   signature is missing, it fails. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
   files (`latest.json` last), and only then publishes the draft.
 
 To release, tag a commit on `main` with the next version (`git tag v1.2.3`,
-then push the tag). Write the release notes on the draft while the run waits
+then push the tag). The reviewer then works through the checklist below
+before approving the `release` environment. Write the release notes on the draft while the run waits
 for the environment approval; the draft is published, with those notes, when
 the desktop files are attached. A tag with a pre-release suffix
 (`v1.2.3-rc.1`) becomes a GitHub pre-release, which apps do not update to:
@@ -171,6 +178,32 @@ release stays a draft. A failure before the sign jobs needs no approval to
 re-run; a sign job asks again. To give up on a tag, delete the draft and the
 tag. Publishing the draft by hand without the desktop files is possible but
 leaves installed apps without the release.
+
+### Approving a release
+
+The approval releases the signing keys to that run, so check, in the run's
+summary and a local clone of baum-ai/baum:
+
+1. The run is for the commit you meant to release. Its SHA is on `main` and
+   does not predate the previous release; the `release` job checks both, so
+   it must have passed.
+2. The release machinery has not changed unexpectedly since the previous
+   release. Read the changes to the workflows and the signing scripts:
+
+   ```sh
+   git fetch --tags origin
+   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
+   ```
+
+3. The settings still hold: the `release` environment's deployment policy is
+   the tag pattern `v*` (not branches); a tag ruleset restricts who may create
+   or move `v*` tags (recommended); with more than one reviewer, "prevent
+   self-review" is on; and the repository has no signing secrets of its own
+   (Settings → Secrets and variables → Actions → Repository secrets), only the
+   environment's.
+4. The draft release has its notes.
+
+### Snapshots
 
 Each pull request and push to `main` also runs `desktop.yml` from `check.yml`
 with version 0.0.0, packaging the macOS app ad hoc with `macos-finalize.sh`,
@@ -232,7 +265,13 @@ signs the bundled `baum` and then the app with the hardened runtime and no
 entitlements (no App Sandbox), checks that both executables carry the
 Developer ID and hardened runtime, notarises and staples the app, builds the
 disk image with `hdiutil`, signs, notarises and staples it, and checks both
-with `stapler validate` and `spctl`. Without them the app is signed ad hoc,
+with `stapler validate` and `spctl`. Before extracting the unsigned app, it
+rejects any archive entry that is not a regular file or directory inside
+`baum.app/`. Two passwords still reach a command line, on the ephemeral
+runner only: `security import` takes the certificate's password only as an
+argument (`-P`), and notarising with an Apple ID passes the app-specific
+password to `notarytool`; the App Store Connect API key avoids the second.
+The keychain's own password is random per run. Without them the app is signed ad hoc,
 so it runs on Apple silicon once the user allows it in System Settings. The
 updater archive is the finished app in a gzipped tar, as Tauri's bundler
 makes it.
@@ -277,9 +316,11 @@ tools installed after the app or the agent started are found.
 - `cargo test`: the updater configuration (key, manifest URL,
   `requireSignedVersion`, Windows passive install), that the key rejects
   another key's signature, and the record of failed installs.
-- `scripts/updater-manifest-test.sh` (Check, the release's `desktop-test`,
-  and `just desktop::check`): `updater-sign.sh` signs with a
-  password-protected key and refuses a wrong password or key; a correctly
+- `scripts/updater-manifest-test.sh` (Check on Linux, and with the pinned
+  minisign on macOS and Windows; the release's `desktop-test`; and `just
+  desktop::check`): `updater-sign.sh` signs with a password-protected key
+  read from standard input and refuses a wrong password or key, and both
+  scripts refuse an unpinned minisign in release mode; a correctly
   signed release passes; a tampered bundle, a signature of another bundle or
   from another key, another platform's bundle, a foreign host, another tag,
   plain `http`, an unknown platform, an announced version the bundles were

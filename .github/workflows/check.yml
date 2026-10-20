@@ -345,6 +345,41 @@ jobs:
         if: matrix.os == 'linux'
         run: bash scripts/updater-manifest-test.sh
 
+  updater-signing:
+    # The release signs updater bundles on macOS and Windows runners with the
+    # pinned minisign, reading the key's password from standard input. Run
+    # the signing and manifest checks there with that binary, so a broken
+    # download, checksum or password path shows before a release.
+    name: Updater signing (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned minisign
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
+
+      - name: Updater signing and manifest checks
+        env:
+          BAUM_RELEASE_SIGNING: "1"
+        run: bash desktop/scripts/updater-manifest-test.sh
+
   desktop-bundle:
     # Unsigned snapshot bundles for every platform the release ships, built
     # exactly as the release builds them, so a bundling or signing-script break

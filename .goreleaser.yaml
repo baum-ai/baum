@@ -64,6 +64,9 @@ release:
     owner: baum-ai
     name: baum
   # The release workflow attaches the desktop app and then publishes the
-  # draft, so nobody sees a release without it.
+  # draft, so nobody sees a release without it. A re-run reuses the draft
+  # and replaces its files instead of creating a second one.
   draft: true
+  use_existing_draft: true
+  replace_existing_artifacts: true
   prerelease: auto

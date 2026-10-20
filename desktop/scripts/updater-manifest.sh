@@ -32,6 +32,21 @@ usage() {
 }
 
 here=$(cd "$(dirname "$0")/.." && pwd)
+# In the release (BAUM_RELEASE_SIGNING=1) only the pinned minisign that
+# scripts/install-minisign.sh installed may run, never one found on PATH.
+if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
+  case "${MINISIGN:-}" in
+    /*) ;;
+    *)
+      echo "$(basename "$0"): MINISIGN must be the absolute path of the pinned minisign in the release" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$MINISIGN" ] || [ ! -x "$MINISIGN" ]; then
+    echo "$(basename "$0"): MINISIGN ($MINISIGN) is not an executable file" >&2
+    exit 1
+  fi
+fi
 minisign=${MINISIGN:-minisign}
 pubkey=${UPDATER_PUBKEY:-$(jq -er '.plugins.updater.pubkey' "$here/tauri.conf.json")}
 work=$(mktemp -d)

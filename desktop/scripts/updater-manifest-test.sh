@@ -2,7 +2,8 @@
 # Tests scripts/updater-sign.sh and scripts/updater-manifest.sh with a
 # throwaway, password-protected key: a correctly signed release passes, and
 # every kind of tampering fails verification. Needs jq, minisign and base64
-# (the desktop-test image has them).
+# (the desktop-test image has them); MINISIGN names another minisign, such as
+# the pinned one Check installs on macOS and Windows.
 set -euo pipefail
 
 scripts=$(cd "$(dirname "$0")" && pwd)
@@ -13,9 +14,12 @@ dir=$work/release
 mkdir -p "$dir"
 base=https://github.com/baum-ai/baum/releases/download/v1.2.3
 
-# Keys in the Tauri CLI's format: the minisign key file, base64 encoded.
-printf 'release password\nrelease password\n' | minisign -G -f -p "$work/key.pub" -s "$work/key" >/dev/null 2>&1
-printf 'other\nother\n' | minisign -G -f -p "$work/other.pub" -s "$work/other" >/dev/null 2>&1
+minisign=${MINISIGN:-minisign}
+
+# Keys in the Tauri CLI's format: the minisign key file, base64 encoded. The
+# passwords go through standard input, as in the release.
+printf 'release password\nrelease password\n' | "$minisign" -G -f -p "$work/key.pub" -s "$work/key" >/dev/null 2>&1
+printf 'other\nother\n' | "$minisign" -G -f -p "$work/other.pub" -s "$work/other" >/dev/null 2>&1
 export UPDATER_PUBKEY
 UPDATER_PUBKEY=$(base64 <"$work/key.pub" | tr -d '\n')
 release_key=$(base64 <"$work/key" | tr -d '\n')
@@ -68,6 +72,12 @@ fail "wrong key password" "signing" sign "$release_key" "wrong" 1.2.3 "$work/key
 cp "$dir/baum-desktop-linux-amd64.deb" "$work/deb"
 fail "signing with a key other than the configured one" "does not verify with the configured public key" \
   sign "$other_key" other 1.2.3 "$work/deb"
+
+fail "release signing with a minisign from PATH" "must be the absolute path" \
+  env BAUM_RELEASE_SIGNING=1 MINISIGN=minisign TAURI_SIGNING_PRIVATE_KEY="$release_key" \
+  "$scripts/updater-sign.sh" 1.2.3 "$work/key.pub"
+fail "release verification without the pinned minisign" "must be the absolute path" \
+  env -u MINISIGN BAUM_RELEASE_SIGNING=1 "$manifest" verify "$dir"
 
 pass "$manifest" write 1.2.3 "$dir"
 keys=$(jq -c '.platforms | keys' "$dir/latest.json")
