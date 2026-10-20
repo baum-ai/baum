@@ -27,6 +27,12 @@ func edit(start, end int) Edit {
 
 type repository map[string]Commit
 
+type resolveFunc func(context.Context, string) (Commit, error)
+
+func (f resolveFunc) ValidationCommit(ctx context.Context, id string) (Commit, error) {
+	return f(ctx, id)
+}
+
 func (r repository) ValidationCommit(_ context.Context, id string) (Commit, error) {
 	var matches []Commit
 	for sha, c := range r {
@@ -134,6 +140,22 @@ func TestMissingMirrorNeverLabelsHead(t *testing.T) {
 	in, _ := fixture()
 	if got := Compute(context.Background(), nil, in, []string{"check"}); got.Kind != Unknown || got.Reason == "" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestConflictingCanonicalObjectEvidenceIsUnknown(t *testing.T) {
+	in, r := fixture()
+	source := resolveFunc(func(ctx context.Context, id string) (Commit, error) {
+		if id == a[:7] {
+			return Commit{SHA: a, TreeSHA: treeH}, nil
+		}
+		return r.ValidationCommit(ctx, id)
+	})
+	for _, refs := range [][]CommitRef{{ref(a[:7], 5)}, {ref(h, 20), ref(a[:7], 5)}} {
+		in.CommitRefs = refs
+		if got := Compute(context.Background(), source, in, []string{"check"}); got.Kind != Unknown {
+			t.Fatalf("conflicting tree evidence produced %+v", got)
+		}
 	}
 }
 func TestOrderDoesNotChangeLabel(t *testing.T) {

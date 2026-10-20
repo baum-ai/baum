@@ -89,6 +89,7 @@ func Compute(ctx context.Context, repo Repository, input Input, citedIDs []strin
 		return unknown(call.ID, "Git evidence is unavailable.")
 	}
 	cache := map[string]Commit{}
+	conflictingObjects := false
 	resolve := func(id string) (Commit, bool) {
 		id = strings.ToLower(id)
 		if !hexID(id, 7) {
@@ -101,7 +102,12 @@ func Compute(ctx context.Context, repo Repository, input Input, citedIDs []strin
 		if err != nil || !fullID(c.SHA) || !fullID(c.TreeSHA) || !strings.HasPrefix(c.SHA, id) {
 			return Commit{}, false
 		}
+		if previous, ok := cache[c.SHA]; ok && previous.TreeSHA != c.TreeSHA {
+			conflictingObjects = true
+			return Commit{}, false
+		}
 		cache[id] = c
+		cache[c.SHA] = c
 		return c, true
 	}
 	head, ok := resolve(input.HeadSHA)
@@ -189,6 +195,9 @@ func Compute(ctx context.Context, repo Repository, input Input, citedIDs []strin
 		} else {
 			outside = true
 		}
+	}
+	if conflictingObjects {
+		return unknown(call.ID, "Git returned conflicting trees for the same canonical commit.")
 	}
 	if best != nil {
 		return *best

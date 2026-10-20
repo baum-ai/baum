@@ -64,6 +64,7 @@ when their input SHA strings are equal. Unique hex prefixes of at least seven
 digits are resolved to actual commit objects; string-prefix equality cannot
 establish a match. Missing or ambiguous objects produce unknown. A host may
 cache immutable object lookups during one labeling batch.
+Conflicting trees returned for the same canonical commit also produce unknown.
 
 The local `internal/gitlocal.Repo` adapter reads its private object repository,
 never fetches and never resolves hex-looking branch names as commit evidence.
