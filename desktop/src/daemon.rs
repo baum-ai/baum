@@ -103,27 +103,33 @@ pub fn ensure(cli: &Path, timeout: Duration) -> Result<Launch, Failure> {
     Ok(launch)
 }
 
-struct Output {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
+pub struct Output {
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
 }
 
 /// Runs the CLI with a deadline. Output is read line by line on separate
 /// threads, so a detached daemon that kept a copy of a pipe cannot hold the
 /// app up once the command itself has exited.
-fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
-    let mut child = Command::new(cli)
+pub fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
+    let mut command = Command::new(cli);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            Failure::new(format!(
-                "Cannot run the bundled baum command ({}): {e}",
-                cli.display()
-            ))
-        })?;
+        .stderr(Stdio::piped());
+    // No console window flashing next to the app.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().map_err(|e| {
+        Failure::new(format!(
+            "Cannot run the bundled baum command ({}): {e}",
+            cli.display()
+        ))
+    })?;
     let stdout = lines(child.stdout.take());
     let stderr = lines(child.stderr.take());
     let deadline = Instant::now() + timeout;
