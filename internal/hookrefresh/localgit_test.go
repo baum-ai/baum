@@ -96,4 +96,17 @@ func TestLocalGitReadsTheWorkingTreeTheHookRanIn(t *testing.T) {
 	if err != nil || missing.Pushed != "" {
 		t.Fatalf("missing remote %+v %v", missing, err)
 	}
+	// A distinct pushurl decides, whichever way it points.
+	git(t, clone, "remote", "add", "split", "https://github.com/acme/app.git")
+	git(t, clone, "remote", "set-url", "--push", "split", "git@github.com:someone/app.git")
+	toFork, err := LocalGit(ctx, clone, "acme/app", "split")
+	if err != nil || toFork.Pushed != "someone/app" {
+		t.Fatalf("fetch from the registered repository, push to a fork %+v %v", toFork, err)
+	}
+	git(t, clone, "remote", "add", "mirror", "https://github.com/someone/app.git")
+	git(t, clone, "remote", "set-url", "--push", "mirror", "https://github.com/acme/app.git")
+	toRegistered, err := LocalGit(ctx, clone, "acme/app", "mirror")
+	if err != nil || toRegistered.Pushed != "acme/app" {
+		t.Fatalf("fetch from a fork, push to the registered repository %+v %v", toRegistered, err)
+	}
 }

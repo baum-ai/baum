@@ -88,7 +88,7 @@ type Worktree struct {
 	CommonDir string
 	// Work is what is checked out, read only when no remote was asked for.
 	Work prlink.Work
-	// Pushed is the repository the asked-for remote fetches from, as the
+	// Pushed is the repository the asked-for remote pushes to, as the
 	// registry names repositories; "" when there is no such remote or it is
 	// not on GitHub.
 	Pushed string
@@ -651,7 +651,7 @@ func (s *Service) forget() {
 }
 
 // LocalGit inspects the working tree containing dir with git: its common
-// directory and, when remote is set, the repository that remote fetches from,
+// directory and, when remote is set, the repository that remote pushes to,
 // else the work checked out (prlink.Local). It reads configuration only and
 // contacts no remote.
 func LocalGit(ctx context.Context, dir, repository, remote string) (Worktree, error) {
@@ -669,7 +669,10 @@ func LocalGit(ctx context.Context, dir, repository, remote string) (Worktree, er
 		w.Work = prlink.Local(ctx, repo, repository)
 		return w, nil
 	}
-	url, err := repo.RemoteFetchURL(ctx, remote)
+	// A push goes to the remote's push URL, which a pushurl or pushInsteadOf
+	// makes differ from the fetch URL (a fork pushed to through the registered
+	// repository's remote name, or the reverse).
+	url, err := repo.RemotePushURL(ctx, remote)
 	if err != nil {
 		return Worktree{}, err
 	}
