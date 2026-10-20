@@ -190,10 +190,7 @@ func (s *Service) Sync(ctx context.Context) {
 				next = snapshot.NextPoll
 			}
 		} else {
-			if s.hostPause == nil {
-				s.hostPause = map[string]time.Time{}
-			}
-			pause := s.hostPause[repo.Host]
+			pause := s.pause(repo.Host)
 			exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
 			if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
 				state.Error = "rate_limited"
@@ -261,7 +258,7 @@ func (s *Service) Sync(ctx context.Context) {
 							// it can starve every second target when each window funds one PR.
 							s.cursors[name] = (cursor + i) % len(targets)
 							next = maxTime(next, limited.ResumeAt)
-							s.hostPause[repo.Host] = next
+							s.setPause(repo.Host, next)
 							s.nextRepo = names[(repoIndex+1)%len(names)]
 							break
 						}
@@ -285,6 +282,65 @@ func (s *Service) Sync(ctx context.Context) {
 		}
 	}
 }
+
+// pause is when the host's rate limit lets refreshes resume.
+func (s *Service) pause(host string) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hostPause[host]
+}
+
+func (s *Service) setPause(host string, until time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hostPause == nil {
+		s.hostPause = map[string]time.Time{}
+	}
+	s.hostPause[host] = maxTime(s.hostPause[host], until)
+}
+
+// RefreshNow refreshes some pull requests of one clone at once, as Sync
+// refreshes each of them, outside Sync's schedule: a hook event said they
+// changed. It honors the host's rate pause, which a rate-limited refresh here
+// extends for Sync too, and returns the observations it made. It never
+// enqueues or invokes generation.
+func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []int) ([]discovery.Observation, error) {
+	repo, err := github.ParseRepository(clone.Repository)
+	if err != nil {
+		return nil, err
+	}
+	if resume := s.pause(repo.Host); resume.After(s.now()) {
+		return nil, &github.RateLimitedError{ResumeAt: resume}
+	}
+	var observations []discovery.Observation
+	var errs []error
+	for _, number := range numbers {
+		if ctx.Err() != nil {
+			break
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		observation, err := s.Refresh(requestCtx, clone, number)
+		cancel()
+		if observation.Number > 0 && observation.HeadSHA != "" {
+			observations = append(observations, observation)
+			if observeErr := s.Discovery.Observe(ctx, repo, observation); observeErr != nil {
+				errs = append(errs, observeErr)
+			}
+		}
+		if err != nil && !errors.Is(err, store.ErrConflict) {
+			errs = append(errs, err)
+			if limited, ok := errors.AsType[*github.RateLimitedError](err); ok {
+				s.setPause(repo.Host, limited.ResumeAt)
+				break
+			}
+		}
+	}
+	if len(observations) > 0 && s.Changed != nil {
+		s.Changed()
+	}
+	return observations, errors.Join(errs...)
+}
+
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a
