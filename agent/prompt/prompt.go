@@ -1,12 +1,15 @@
 // Package prompt is the review prompt this module ships: the instructions the
 // generate-and-repair loop (agent.Generator) gives a model backend.
 //
-// Three files are embedded:
+// Four files are embedded:
 //
 //	review-public-v2.md   the review instructions shared by every backend,
 //	                      ending with the "## 10. Submitting" heading
 //	submit-claude.md      how a StructuredOutput backend submits the document
 //	submit-codex.md       how a final-message backend returns the document
+//	submit-cursor.md      the same for cursor-agent, which has no schema
+//	                      enforcement and stops a run on any tool that does
+//	                      not read
 //
 // Instructions joins the shared text with the backend's submit text under the
 // trailing heading, sets Version to Version and Digest to the sha256 of the
@@ -37,6 +40,9 @@ var submitClaude string
 //go:embed submit-codex.md
 var submitCodex string
 
+//go:embed submit-cursor.md
+var submitCursor string
+
 // Prompts implements agent.Prompts with this module's public review prompt.
 type Prompts struct{}
 
@@ -44,8 +50,9 @@ var _ agent.Prompts = Prompts{}
 
 // Instructions returns the review prompt for a backend: the shared text with
 // the backend's submit block appended. The claude and anthropic backends submit
-// through the StructuredOutput tool; codex returns the document as its final
-// message. Any other backend is an error.
+// through the StructuredOutput tool; codex and cursor-agent return the document
+// as their final message, cursor-agent with the schema the backend appends to
+// the prompt. Any other backend is an error.
 func (Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, error) {
 	var submit string
 	switch backend {
@@ -53,6 +60,8 @@ func (Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, er
 		submit = submitClaude
 	case agent.BackendCodex:
 		submit = submitCodex
+	case agent.BackendCursorAgent:
+		submit = submitCursor
 	default:
 		return agent.Prompt{}, fmt.Errorf("no public review prompt for backend %q", backend)
 	}

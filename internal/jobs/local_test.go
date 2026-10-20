@@ -154,6 +154,39 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 	}
 }
 
+// A cursor-agent job has no estimate at API rates, whatever its model is
+// called: Cursor bills it through the user's subscription. It is not blocked:
+// it says why the estimate is unknown. Its progress and recorded cost stay
+// unknown for the same reason.
+func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	local.Config.Backend = config.BackendCursorAgent
+	local.Backends.CursorAgent = func(string) generate.CheckedBackend {
+		return &generatetest.Backend{BackendName: agent.BackendCursorAgent, Version: "2026.10.16"}
+	}
+	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.EstimateUSD != nil || p.EstimateReason != pricing.ReasonBilledByCursor || p.BlockedReason != "" {
+		t.Fatalf("prepared = %+v", p)
+	}
+
+	var reports []Progress
+	run := func(context.Context, agent.Request, int) (agent.Result, error) {
+		return agent.Result{Model: "Claude 4.5 Sonnet", ModelSource: "cli_reported", Calls: 2, Tokens: 1500, Usage: agent.Usage{Input: 1000, Output: 300, CacheCreate: 200}}, nil
+	}
+	b := &trackedBackend{Backend: &generatetest.Backend{BackendName: agent.BackendCursorAgent, RunFunc: run}, progress: func(p Progress) { reports = append(reports, p) }, redacted: true}
+	if _, err := b.Run(ctx, agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := reports[len(reports)-1]; got.CostReason != pricing.ReasonBilledByCursor {
+		t.Fatalf("cost reason = %q", got.CostReason)
+	}
+}
+
 func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { pricing.Install(pricing.Embedded()) })

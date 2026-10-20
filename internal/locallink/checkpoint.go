@@ -2,10 +2,8 @@ package locallink
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -13,66 +11,48 @@ import (
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/linkage/steps"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/collector/entire"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
-var checkpointIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
-
-var errInvalidCheckpointTrailer = errors.New("invalid Entire-Checkpoint trailer")
-
-// entireCheckpointID reads a commit's Entire-Checkpoint trailers the way the
-// hosted resolver does: present is whether there is one at all, and err a
-// value that is not a 12-hex checkpoint id or more than one distinct id. The
-// key is matched without regard to case and the id is lower-cased.
-func entireCheckpointID(trailers []string) (id string, present bool, err error) {
-	var distinct []string
-	for _, trailer := range trailers {
-		key, value, found := strings.Cut(trailer, ":")
-		if !found || !strings.EqualFold(strings.TrimSpace(key), "Entire-Checkpoint") {
-			continue
-		}
-		value = strings.ToLower(strings.TrimSpace(value))
-		if !checkpointIDPattern.MatchString(value) {
-			return "", true, fmt.Errorf("%w: %q", errInvalidCheckpointTrailer, value)
-		}
-		if !slices.Contains(distinct, value) {
-			distinct = append(distinct, value)
-		}
-	}
-	switch len(distinct) {
-	case 0:
-		return "", false, nil
-	case 1:
-		return distinct[0], true, nil
-	default:
-		return "", true, fmt.Errorf("%w: multiple distinct checkpoint ids", errInvalidCheckpointTrailer)
-	}
-}
-
 // checkpointLinks is the ground truth Entire left in the pull request's
-// commits: for each commit whose Entire-Checkpoint trailer names a checkpoint
-// on the clone's checkpoint branch, the sessions that checkpoint records.
+// commits: for each commit whose Entire-Checkpoint trailers name checkpoints
+// in the clone, on the per-checkpoint refs (refs/entire/checkpoints/*) or the
+// checkpoint branch, the sessions those checkpoints record.
+// Trailers are read as the hosted resolver reads them
+// (entirecheckpoint.ParseTrailers): a commit naming several checkpoints links
+// to the union of their sessions, in trailer order, each once, and a malformed
+// value beside valid ones is skipped with a warning.
 //
 // Every such session must be listed with the result, so one that loading did
 // not return (it ran before the sessions read, or only the checkpoint records
 // it) is mapped from the checkpoint and returned in extra. A session that
 // cannot be mapped is left out, and a commit none of whose sessions are left
-// has no ground truth. A malformed trailer, a checkpoint the clone does not
-// hold, and a branch that cannot be read all leave the commit to the
+// has no ground truth. A trailer with no valid id, a checkpoint the clone does
+// not hold (warned about, with the command that fetches the refs: nothing is
+// fetched here), and a store that cannot be read all leave the commit to the
 // heuristic steps, as in the hosted resolver.
 //
-// The checkpoint branch is read whatever Request.Sessions.Sources says: a
+// The checkpoints are read whatever Request.Sessions.Sources says: a
 // trailer is evidence in the commit, not a store the caller chose to read.
-func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
-	named := map[string]string{} // commit → checkpoint
+func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
+	named := map[string][]string{} // commit → checkpoints, in trailer order
+	firstNamedBy := map[string]string{}
 	var ids []string
 	for _, c := range commits {
-		id, present, err := entireCheckpointID(c.Trailers)
-		if !present || err != nil {
+		valid, malformed := entirecheckpoint.ParseTrailers(c.Trailers)
+		if len(valid) == 0 {
 			continue
 		}
-		named[c.OID] = id
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
+		for _, value := range malformed {
+			warnf(warn, "warning: commit %s: skipping malformed Entire-Checkpoint value %q\n", c.OID, value)
+		}
+		named[c.OID] = valid
+		for _, id := range valid {
+			if !slices.Contains(ids, id) {
+				ids = append(ids, id)
+				firstNamedBy[id] = c.OID
+			}
 		}
 	}
 	if len(ids) == 0 {
@@ -84,6 +64,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		return nil, nil
 	}
 	if branch == nil {
+		warnMissing(warn, ids, nil, nil, nil, firstNamedBy, remote)
 		return nil, nil
 	}
 	defer branch.Close()
@@ -92,6 +73,9 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		warnf(warn, "warning: reading the Entire checkpoints the commits name: %v\n", err)
 		return nil, nil
 	}
+
+	located, checkErr := branch.Located(ctx, ids)
+	warnMissing(warn, ids, recorded, located, checkErr, firstNamedBy, remote)
 
 	have := make(map[string]bool, len(found))
 	for _, s := range found {
@@ -120,14 +104,12 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 
 	truth = map[string][]string{}
 	for _, c := range commits {
-		id, ok := named[c.OID]
-		if !ok {
-			continue
-		}
 		var linked []string
-		for _, sessionID := range recorded[id] {
-			if have[sessionID] {
-				linked = append(linked, sessionID)
+		for _, id := range named[c.OID] {
+			for _, sessionID := range recorded[id] {
+				if have[sessionID] && !slices.Contains(linked, sessionID) {
+					linked = append(linked, sessionID)
+				}
 			}
 		}
 		if len(linked) > 0 {
@@ -137,7 +119,52 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 	return truth, extra
 }
 
-// entireEdges are a commit's links to the sessions its checkpoint records,
+// warnMissing reports the checkpoints a trailer names that Sessions did not
+// return. Those the clone holds but cannot read (metadata that is unreadable,
+// too large or malformed, or objects a partial clone never downloaded) get a
+// line each, with no fetch hint: fetching would not help. Those it does not
+// hold are listed in one line with the command that downloads them: the refs
+// for any id, and the legacy branch too when one is 12-hex, which only the
+// branch may hold, from remote ("" names a placeholder). Nothing here runs a
+// command: local linking never fetches, and the commits are left to the
+// heuristic steps.
+func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, located map[string]bool, checkErr error, firstNamedBy map[string]string, remote string) {
+	var missing []string
+	var unchecked []string
+	legacy := false
+	for _, id := range ids {
+		if _, ok := recorded[id]; ok {
+			continue
+		}
+		if checkErr != nil {
+			unchecked = append(unchecked, id)
+			continue
+		}
+		if located[id] {
+			warnf(warn, "warning: commit %s: Entire checkpoint %s is in this clone but cannot be read (its metadata is unreadable or its objects are not downloaded), so the commit is linked without it\n",
+				firstNamedBy[id], id)
+			continue
+		}
+		missing = append(missing, id)
+		legacy = legacy || len(id) == 12
+	}
+	if len(unchecked) > 0 {
+		// Whether they are in the clone is unknown, so no fetch is suggested.
+		warnf(warn, "warning: could not check whether Entire checkpoints %s are in this clone, so the commits naming them are linked without them: %v\n",
+			strings.Join(unchecked, ", "), checkErr)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	hint := entire.FetchHint(remote)
+	if legacy {
+		hint += " or " + entire.BranchFetchHint(remote)
+	}
+	warnf(warn, "warning: Entire checkpoints not in this clone, so the commits naming them are linked without them: %s; fetch them with: %s\n",
+		strings.Join(missing, ", "), hint)
+}
+
+// entireEdges are a commit's links to the sessions its checkpoints record,
 // exactly as the hosted resolver writes them: matched, certain, and by the
 // entire_checkpoint method.
 func entireEdges(commitSHA string, sessionIDs []string) []linkage.Edge {
@@ -154,7 +181,7 @@ func entireEdges(commitSHA string, sessionIDs []string) []linkage.Edge {
 }
 
 // commitEdges links one commit as the hosted resolver does: the sessions its
-// Entire checkpoint records first (linked; none for a commit without one),
+// Entire checkpoints record first (linked; none for a commit without one),
 // then, while the files the linked sessions edited do not cover the commit's,
 // the heuristic matcher again over the other sessions, up to the link cap,
 // and finally only the links at or above the review confidence once one is
@@ -167,7 +194,7 @@ func commitEdges(commit linkage.EnrichedCommit, linked []string, candidates []li
 	for _, candidate := range candidates {
 		byID[candidate.RunID] = candidate
 	}
-	// The hosted groundTruthCoverage: the checkpoint's sessions' edits paired
+	// The hosted groundTruthCoverage: the checkpoints' sessions' edits paired
 	// against the commit as one set.
 	var edited []string
 	for _, id := range linked {

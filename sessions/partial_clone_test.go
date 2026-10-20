@@ -92,3 +92,118 @@ func present(t *testing.T, dir, oid string) bool {
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	return cmd.Run() == nil
 }
+
+// The same holds for a checkpoint kept in a per-checkpoint ref: the ref is in
+// the clone (a fetch of refs/entire/checkpoints/* brought it) but its blob was
+// filtered out, and Load leaves it absent and reports the checkpoint as one it
+// could not read.
+func TestLoadNeverFetchesARefCheckpointFromAPartialClone(t *testing.T) {
+	const id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	ref := "refs/entire/checkpoints/" + id[len(id)-2:] + "/" + id
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main")
+	git(t, src, "config", "uploadpack.allowFilter", "true")
+	git(t, src, "config", "uploadpack.allowAnySHA1InWant", "true")
+	write(t, filepath.Join(src, "a.txt"), "a\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-q", "-m", "base")
+	git(t, src, "checkout", "-q", "--orphan", "scratch")
+	git(t, src, "rm", "-rqf", ".")
+	write(t, filepath.Join(src, "metadata.json"), `{"checkpoint_id":"`+id+`"}`+"\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-q", "-m", "checkpoint")
+	git(t, src, "update-ref", ref, "HEAD")
+	blob := gitOutput(t, src, "rev-parse", ref+":metadata.json")
+	git(t, src, "checkout", "-q", "main")
+
+	base := t.TempDir()
+	clone := filepath.Join(base, "clone")
+	if out, err := exec.Command("git", "clone", "-q", "--filter=blob:none", "file://"+filepath.ToSlash(src), clone).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	git(t, clone, "fetch", "-q", "origin", "refs/entire/checkpoints/*:refs/entire/checkpoints/*")
+	if present(t, clone, blob) {
+		t.Fatal("the checkpoint blob is already in the partial clone")
+	}
+
+	_, report, err := Load(context.Background(), clone, Options{
+		Sources:           []vendors.Slug{Entire},
+		ClaudeProjectsDir: filepath.Join(base, "claude"),
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if present(t, clone, blob) {
+		t.Fatal("Load fetched the checkpoint blob from the promisor remote")
+	}
+	if len(report.Failures) != 1 || report.Failures[0].Source != Entire || report.Failures[0].Path != id {
+		t.Errorf("failures = %+v, want the one unreadable checkpoint %s", report.Failures, id)
+	}
+}
+
+// A checkpoint migrated to a ref is still dated by its branch copy, so an old
+// one is skipped unread under a Since window although its ref's commit is new.
+func TestLoadSkipsAnOldMigratedCheckpointInAPartialClone(t *testing.T) {
+	const id = "abcdef012345"
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main")
+	git(t, src, "config", "uploadpack.allowFilter", "true")
+	git(t, src, "config", "uploadpack.allowAnySHA1InWant", "true")
+	write(t, filepath.Join(src, "a.txt"), "a\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-q", "-m", "base")
+
+	old := "2020-01-01T00:00:00Z"
+	t.Setenv("GIT_COMMITTER_DATE", old)
+	t.Setenv("GIT_AUTHOR_DATE", old)
+	git(t, src, "checkout", "-q", "--orphan", entireBranch)
+	git(t, src, "rm", "-rqf", ".")
+	write(t, filepath.Join(src, "ab", "cdef012345", "metadata.json"), `{"checkpoint_id":"`+id+`"}`+"\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-q", "-m", "checkpoint")
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	t.Setenv("GIT_COMMITTER_DATE", now)
+	t.Setenv("GIT_AUTHOR_DATE", now)
+	git(t, src, "checkout", "-q", "--orphan", "scratch")
+	git(t, src, "rm", "-rqf", ".")
+	write(t, filepath.Join(src, "metadata.json"), `{"checkpoint_id":"`+id+`"}`+"\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-q", "-m", "migrated")
+	git(t, src, "update-ref", "refs/entire/checkpoints/45/"+id, "HEAD")
+	blob := gitOutput(t, src, "rev-parse", "refs/entire/checkpoints/45/"+id+":metadata.json")
+	git(t, src, "checkout", "-q", "main")
+
+	base := t.TempDir()
+	clone := filepath.Join(base, "clone")
+	if out, err := exec.Command("git", "clone", "-q", "--filter=blob:none", "file://"+filepath.ToSlash(src), clone).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	git(t, clone, "fetch", "-q", "origin", "refs/heads/*:refs/remotes/origin/*")
+	git(t, clone, "fetch", "-q", "origin", "refs/entire/checkpoints/*:refs/entire/checkpoints/*")
+	if present(t, clone, blob) {
+		t.Fatal("the checkpoint blob is already in the partial clone")
+	}
+	opts := Options{
+		Sources:           []vendors.Slug{Entire},
+		ClaudeProjectsDir: filepath.Join(base, "claude"),
+		CodexSessionsDir:  filepath.Join(base, "codex"),
+		CursorStorePaths:  []string{filepath.Join(base, "absent.vscdb")},
+	}
+
+	// Without a window the checkpoint is read, and reported unreadable.
+	_, report, err := Load(context.Background(), clone, opts)
+	if err != nil || len(report.Failures) != 1 {
+		t.Fatalf("without Since: failures = %+v, err = %v; want the one unreadable checkpoint", report.Failures, err)
+	}
+	opts.Since = time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, report, err = Load(context.Background(), clone, opts)
+	if err != nil || len(report.Failures) != 0 {
+		t.Errorf("with Since: failures = %+v, err = %v; the old checkpoint should not be read", report.Failures, err)
+	}
+	if present(t, clone, blob) {
+		t.Fatal("Load fetched the checkpoint blob from the promisor remote")
+	}
+}

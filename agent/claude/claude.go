@@ -320,6 +320,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			break
 		}
+		request.Activity.Progress()
 
 		if event.Type == "stream_event" {
 			switch event.Event.Type {
@@ -358,6 +359,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		for _, content := range event.Message.Content {
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
+				request.Activity.ToolStarted(content.ID, content.Name)
 				path := content.Input.FilePath
 				if path == "" {
 					path = content.Input.Path
@@ -382,6 +384,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				record(agent.Event{Kind: "tool_call", ID: content.ID, Tool: content.Name, Path: path, Offset: content.Input.Offset, Limit: content.Input.Limit})
 			}
 			if content.Type == "tool_result" {
+				request.Activity.ToolFinished(content.ToolUseID)
 				status := "success"
 				tool := toolsSeen[content.ToolUseID]
 				if content.IsError && tool == structuredOutputTool {
