@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/discovery"
@@ -107,36 +108,49 @@ func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 // snapshot shows as newly review-requested from the user. Safe for
 // concurrent use; an older snapshot arriving late changes nothing it
 // already saw.
+//
+// When GitHub's team list was unavailable (TeamMembershipKnown is false), a
+// false flag proves nothing: a request made through a team would be hidden.
+// Such a pull request keeps the state the previous snapshot gave it, and one
+// never seen before is recorded as requested without a notice, so the next
+// complete snapshot cannot announce it as new.
 func (s *Service) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	name := strings.ToLower(snapshot.Repository)
-	now := map[int]bool{}
-	for _, pr := range snapshot.PullRequests {
-		if pr.ReviewRequestedFromMe && !pr.AuthoredByMe {
-			now[pr.Number] = true
-		}
-	}
 	s.mu.Lock()
 	if s.requested == nil {
 		s.requested = map[string]map[int]bool{}
 	}
 	before, seen := s.requested[name]
+	now := map[int]bool{}
+	for _, pr := range snapshot.PullRequests {
+		switch {
+		case pr.AuthoredByMe:
+		case pr.ReviewRequestedFromMe:
+			now[pr.Number] = true
+		case !pr.TeamMembershipKnown:
+			if had, known := before[pr.Number]; had || !known {
+				now[pr.Number] = true
+			}
+		}
+	}
 	s.requested[name] = now
 	s.mu.Unlock()
 	if !seen {
 		return
 	}
-	var clone string
+	// The repository as the registry stores it, like the job notices.
+	repository, clone := snapshot.Repository, ""
 	if clones, err := s.Registry.List(ctx); err == nil {
 		for _, c := range clones {
 			if c.Available && strings.EqualFold(c.Repository, snapshot.Repository) {
-				clone = c.ID
+				repository, clone = c.Repository, c.ID
 				break
 			}
 		}
 	}
 	for _, pr := range snapshot.PullRequests {
-		if now[pr.Number] && !before[pr.Number] {
-			s.Publish(Notice{Kind: KindRequested, Repository: name, PR: pr.Number, Clone: clone, Title: clip(pr.Title)})
+		if now[pr.Number] && !before[pr.Number] && pr.ReviewRequestedFromMe {
+			s.Publish(Notice{Kind: KindRequested, Repository: repository, PR: pr.Number, Clone: clone, Title: clip(pr.Title)})
 		}
 	}
 }
@@ -183,7 +197,18 @@ func reasonOf(reason string) string {
 	return reason
 }
 
+// clip drops format characters (bidirectional overrides, zero-width
+// characters), turns control characters into spaces, and bounds the length.
 func clip(title string) string {
+	title = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, title)
 	title = strings.Join(strings.Fields(title), " ")
 	if utf8.RuneCountInString(title) <= maxTitle {
 		return title
