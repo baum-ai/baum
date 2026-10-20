@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestFreshInstallCreatesTheSettings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if perm := info.Mode().Perm(); perm != 0o600 {
+			if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 				t.Errorf("mode = %v, want 0600", perm)
 			}
 		})
@@ -237,7 +238,8 @@ func TestReinstallIsByteIdentical(t *testing.T) {
 	if backup := readFile(t, first.Backup); backup != claudeUserSettings {
 		t.Errorf("backup does not hold the previous file:\n%s", backup)
 	}
-	if info, err := os.Stat(first.Backup); err != nil || info.Mode().Perm() != 0o600 {
+	// Windows reports 0666 whatever the file's access list says.
+	if info, err := os.Stat(first.Backup); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("backup mode: %v %v", info, err)
 	}
 	if siblings, _ := filepath.Glob(path + "*"); len(siblings) != 1 {
@@ -426,6 +428,9 @@ func TestCRLFLineEndingsArePreserved(t *testing.T) {
 // Root editing another user's home, as sudo with HOME kept does, is refused
 // before anything is read or written.
 func TestRootIsRefusedInAnotherUsersHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no root and no home directory owner to compare")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("the test home would belong to root")
 	}
@@ -558,7 +563,7 @@ func TestSymlinkedSettingsStayLinked(t *testing.T) {
 	if entries, _ := os.ReadDir(dotfiles); len(entries) != 1 {
 		t.Errorf("files beside the link target: %v", entries)
 	}
-	if info, _ := os.Stat(target); info.Mode().Perm() != 0o640 {
+	if info, _ := os.Stat(target); runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Errorf("mode = %v, want the original 0640", info.Mode().Perm())
 	}
 }
