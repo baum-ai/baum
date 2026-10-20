@@ -65,7 +65,9 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if dir == "" {
 		dir = "."
 	}
-	found, truth, err := loadSessions(ctx, dir, req.Sessions, req.Commits, req.Warn)
+	// The pull request's repository is not known here, so a missing
+	// checkpoint's fetch hint names a placeholder remote.
+	found, truth, err := loadSessions(ctx, dir, req.Sessions, req.Commits, "", req.Warn)
 	if err != nil {
 		return nil, err
 	}

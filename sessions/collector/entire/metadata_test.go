@@ -56,12 +56,12 @@ func TestSessionsReadsMetadataOnly(t *testing.T) {
 	run("checkout", "-q", "main")
 
 	ctx := context.Background()
-	commit, _, err := Resolve(ctx, dir)
+	store, _, err := Resolve(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	objects := privateRepo(t, dir)
-	got, err := Sessions(ctx, objects, commit, []string{"aa0000000001", "bb0000000002", "cc0000000003", "dd0000000004", "ee0000000005", "not-an-id"})
+	got, err := Sessions(ctx, objects, store, []string{"aa0000000001", "bb0000000002", "cc0000000003", "dd0000000004", "ee0000000005", "not-an-id"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestSessionsReadsMetadataOnly(t *testing.T) {
 		t.Errorf("Sessions = %+v, want only aa0000000001 = %+v", got, want)
 	}
 
-	if _, err := Sessions(ctx, objects, "HEAD", []string{"aa0000000001"}); err == nil {
+	if _, err := Sessions(ctx, objects, Store{Branch: "HEAD"}, []string{"aa0000000001"}); err == nil {
 		t.Error("a commit that is not an object id was accepted")
 	}
 }

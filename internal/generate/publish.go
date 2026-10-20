@@ -92,7 +92,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 		list = pricing.Active()
 	}
 	result.Metadata.PriceVersion = list.Version()
-	result.Metadata.RecordedCostUSD, result.Metadata.CostReason = list.AccountingCost(result.Metadata.Accounting)
+	result.Metadata.RecordedCostUSD, result.Metadata.CostReason = list.BackendAccountingCost(result.Metadata.Backend, result.Metadata.Accounting)
 	if cost != nil {
 		result.Metadata.RecordedCostUSD = cost(result)
 		if result.Metadata.RecordedCostUSD != nil {
