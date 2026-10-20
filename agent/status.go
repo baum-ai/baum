@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // IsProviderErrorStatus reports whether an ErrorStatus class is a provider
 // failure, as opposed to a tool error. Each class is a fixed word, so a host may
@@ -38,4 +41,38 @@ func LastErrorStatus(events []Event) string {
 		}
 	}
 	return ""
+}
+
+// HTTPErrorStatus classifies the HTTP status code of a failed provider
+// response as the anthropic backend does: 401 and 403 are a rejected key, 429
+// a rate limit, 529 an overloaded provider, and any other 4xx but 408 a request
+// the provider refused. Any other code gives "".
+func HTTPErrorStatus(code int) string {
+	switch {
+	case code == 401 || code == 403:
+		return "authentication_error"
+	case code == 429:
+		return "rate_limit"
+	case code == 529:
+		return "provider_overloaded"
+	case code >= 400 && code < 500 && code != 408:
+		return "invalid_request"
+	}
+	return ""
+}
+
+// IsRejectedStatus reports whether a provider error class is a refusal a
+// retry cannot change: a rejected key, schema or request.
+func IsRejectedStatus(status string) bool {
+	return status == "authentication_error" || status == "invalid_schema" || status == "invalid_request"
+}
+
+// ProviderFailure is the error of a harness call whose provider failed with
+// the error class status: a RejectedError, which the loop does not retry, for
+// a refusal, and otherwise ReasonProviderUnavailable.
+func ProviderFailure(harness, status string) error {
+	if IsRejectedStatus(status) {
+		return &RejectedError{Status: status, Err: errors.New(harness + " reported the provider's refusal")}
+	}
+	return errors.New(ReasonProviderUnavailable)
 }

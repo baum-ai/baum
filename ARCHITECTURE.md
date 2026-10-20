@@ -591,6 +591,16 @@ in an `agent.RejectedError`, which the generate-and-repair loop does not retry
 and whose text starts with `agent.ProviderRejectedReason(status)`. No error
 text, event or log line holds the key.
 
+The `claude` and `codex` backends classify a failed call by the provider's
+HTTP status where the harness reports one (`agent.HTTPErrorStatus`): Claude
+Code's `api_error_status` on its failed `result`, and the status Codex names in
+a failed turn's message (`unexpected status NNN`); a Codex 400 carries only
+the response body and is classified by its text (`invalid_request_error`,
+`invalid_json_schema`). A 4xx other than 408 and 429 (`authentication_error`
+for 401 and 403, `invalid_schema`, `invalid_request`) is a refusal a retry
+cannot change and comes back as an `agent.RejectedError`; every other failure,
+408, 429 and 5xx included, is `the model provider was unavailable`.
+
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
 Session discovery skips sessions recorded under a path element with that

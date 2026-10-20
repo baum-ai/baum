@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/config"
@@ -47,5 +48,37 @@ func TestErrorStatus(t *testing.T) {
 	}
 	if got := LastErrorStatus(nil); got != "" {
 		t.Errorf("LastErrorStatus(nil) = %q", got)
+	}
+}
+
+// A provider's 4xx but 408 and 429 is a refusal no retry changes; 408, 429
+// and 5xx are outages.
+func TestHTTPErrorStatus(t *testing.T) {
+	for code, want := range map[int]string{
+		400: "invalid_request", 401: "authentication_error", 403: "authentication_error", 404: "invalid_request",
+		408: "", 413: "invalid_request", 422: "invalid_request", 429: "rate_limit",
+		500: "", 502: "", 529: "provider_overloaded", 0: "", 200: "",
+	} {
+		got := HTTPErrorStatus(code)
+		if got != want {
+			t.Errorf("HTTPErrorStatus(%d) = %q, want %q", code, got, want)
+		}
+		if got != "" && !IsProviderErrorStatus(got) {
+			t.Errorf("HTTPErrorStatus(%d) = %q is not a provider error class", code, got)
+		}
+	}
+}
+
+func TestProviderFailure(t *testing.T) {
+	for _, status := range []string{"authentication_error", "invalid_schema", "invalid_request"} {
+		var rejected *RejectedError
+		if err := ProviderFailure("codex", status); !errors.As(err, &rejected) || rejected.Status != status {
+			t.Errorf("ProviderFailure(%q) = %v, want a rejection", status, err)
+		}
+	}
+	for _, status := range []string{"rate_limit", "provider_overloaded", "error", "", "file_not_found"} {
+		if err := ProviderFailure("codex", status); err == nil || err.Error() != ReasonProviderUnavailable {
+			t.Errorf("ProviderFailure(%q) = %v, want %q", status, err, ReasonProviderUnavailable)
+		}
 	}
 }

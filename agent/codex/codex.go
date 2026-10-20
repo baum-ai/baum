@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -286,9 +288,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if message == "" {
 				message = lastError
 			}
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
-			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", agent.ErrorStatus(message))
-			err = errors.New(agent.ReasonProviderUnavailable)
+			status := failureStatus(message)
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status})
+			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
+			err = agent.ProviderFailure("codex", status)
 		}
 		if err == nil && result.Calls > request.MaxCalls {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
@@ -317,7 +320,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	if waitErr != nil {
 		if lastError != "" {
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(lastError)})
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: failureStatus(lastError)})
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
@@ -338,6 +341,27 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	result.Model = c.Model
 	result.Events = append(result.Events, agent.Event{Kind: "document", Bytes: len(document)})
 	return result, nil
+}
+
+// unexpectedStatus is how Codex names the HTTP status of a provider response
+// it gave up on, other than a 400 (whose message is the response body) and
+// an exhausted 429 ("last status: 429").
+var unexpectedStatus = regexp.MustCompile(`unexpected status (\d{3})\b`)
+
+// failureStatus classifies a failed turn's message by its text when that names
+// a provider error class, and otherwise by the HTTP status it names.
+func failureStatus(message string) string {
+	status := agent.ErrorStatus(message)
+	if agent.IsProviderErrorStatus(status) {
+		return status
+	}
+	if match := unexpectedStatus.FindStringSubmatch(message); match != nil {
+		code, _ := strconv.Atoi(match[1])
+		if classified := agent.HTTPErrorStatus(code); classified != "" {
+			return classified
+		}
+	}
+	return status
 }
 
 // since is how long ago a turn started, or zero when none did.

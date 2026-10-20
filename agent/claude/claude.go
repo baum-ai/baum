@@ -287,7 +287,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			Tools         []string `json:"tools"`
 			IsError       bool     `json:"is_error"`
 			Errors        []string `json:"errors"`
-			Message       struct {
+			// APIErrorStatus is the HTTP status of the provider response
+			// a failed result ended on, when it ended on one.
+			APIErrorStatus int `json:"api_error_status"`
+			Message        struct {
 				ID, Model string
 				Content   []struct {
 					Type, ID, Name string
@@ -425,8 +428,12 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				break
 			}
 			if event.IsError || event.Subtype != "success" {
-				record(agent.Event{Kind: "error", Status: agent.ErrorStatus(strings.Join(event.Errors, " "))})
-				err = errors.New(agent.ReasonProviderUnavailable)
+				status := agent.HTTPErrorStatus(event.APIErrorStatus)
+				if status == "" {
+					status = agent.ErrorStatus(strings.Join(event.Errors, " "))
+				}
+				record(agent.Event{Kind: "error", Status: status})
+				err = agent.ProviderFailure("claude code", status)
 				break
 			}
 			result.Document = bytes.TrimSpace(event.Document)

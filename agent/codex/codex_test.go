@@ -176,19 +176,44 @@ func TestCodexFailureDoesNotExposeOutput(t *testing.T) {
 }
 
 // A failed turn keeps the classification of its message, so a request the
-// provider rejects is told apart from an outage in the logs.
+// provider rejects is told apart from an outage: a refusal is not retried. The
+// messages are the shapes Codex 0.156 prints for each provider status.
 func TestCodexFailedTurnRecordsErrorStatus(t *testing.T) {
-	message := `unexpected status 400 Bad Request: {\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema'\",\"code\":\"invalid_json_schema\"}}`
-	script := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"turn.failed\",\"error\":{\"message\":\""+message+"\"}}'\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	result, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
-	if err == nil || err.Error() != agent.ReasonProviderUnavailable {
-		t.Fatalf("err = %v, want %q", err, agent.ReasonProviderUnavailable)
-	}
-	if status := agent.LastErrorStatus(result.Events); status != "invalid_schema" {
-		t.Fatalf("status = %q, want invalid_schema (events %+v)", status, result.Events)
+	for _, tt := range []struct{ name, message, want string }{
+		{"rejected schema", `unexpected status 400 Bad Request: {\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema'\",\"code\":\"invalid_json_schema\"}}`, "invalid_schema"},
+		{"bad request body", `{\"error\":{\"message\":\"private repository text\",\"type\":\"invalid_request_error\",\"code\":null,\"param\":null}}`, "invalid_request"},
+		{"unauthorized", `unexpected status 401 Unauthorized: private repository text, url: http://proxy/openai/responses`, "authentication_error"},
+		{"forbidden", `unexpected status 403 Forbidden: permission denied, url: http://proxy/openai/responses`, "authentication_error"},
+		{"not found", `unexpected status 404 Not Found: model not found, url: http://proxy/openai/responses`, "invalid_request"},
+		{"too large", `unexpected status 413 Payload Too Large: private repository text, url: http://proxy/openai/responses`, "invalid_request"},
+		{"unprocessable", `unexpected status 422 Unprocessable Entity: private repository text, url: http://proxy/openai/responses`, "invalid_request"},
+		{"request timeout", `unexpected status 408 Request Timeout: private repository text, url: http://proxy/openai/responses`, ""},
+		{"rate limit", `exceeded retry limit, last status: 429 Too Many Requests`, "rate_limit"},
+		{"server error", `We are currently experiencing high demand, which may cause temporary errors.`, ""},
+		{"bad gateway", `unexpected status 502 Bad Gateway: private repository text, url: http://proxy/openai/responses`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "codex")
+			checkNoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"turn.failed\",\"error\":{\"message\":\""+tt.message+"\"}}'\nexit 1\n"), 0700))
+			result, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
+			status := agent.LastErrorStatus(result.Events)
+			var rejected *agent.RejectedError
+			if tt.want == "" {
+				if err == nil || err.Error() != agent.ReasonProviderUnavailable || agent.IsRejectedStatus(status) {
+					t.Fatalf("err = %v, status = %q, want %q", err, status, agent.ReasonProviderUnavailable)
+				}
+				return
+			}
+			if status != tt.want {
+				t.Fatalf("status = %q, want %q (events %+v)", status, tt.want, result.Events)
+			}
+			if agent.IsRejectedStatus(tt.want) != errors.As(err, &rejected) || (rejected == nil && err.Error() != agent.ReasonProviderUnavailable) {
+				t.Fatalf("err = %v for status %q", err, tt.want)
+			}
+			if err != nil && strings.Contains(err.Error(), "private") {
+				t.Fatalf("the error exposes the message: %v", err)
+			}
+		})
 	}
 }
 
@@ -213,7 +238,8 @@ func TestCodexClassifiesLastErrorEventWithoutTurnMessage(t *testing.T) {
 			}
 			checkNoError(t, os.WriteFile(script, []byte(body), 0700))
 			result, err := (&Backend{Binary: script, Profile: Container}).Run(context.Background(), request(t.TempDir()))
-			if err == nil || (!tt.exit && err.Error() != agent.ReasonProviderUnavailable) {
+			var rejected *agent.RejectedError
+			if err == nil || (!tt.exit && err.Error() != agent.ReasonProviderUnavailable && !errors.As(err, &rejected)) {
 				t.Fatalf("err = %v", err)
 			}
 			if status := agent.LastErrorStatus(result.Events); status != tt.want || strings.Contains(fmt.Sprintf("%+v", result.Events), "unexpected") {
