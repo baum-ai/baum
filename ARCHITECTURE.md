@@ -1696,8 +1696,9 @@ previous start's in `daemon.out.1`). It outlives every client.
 
 `baum daemon stop` (and the version restart) sends `stop`; while a daemon
 holds the lock but does not answer yet (it is starting), the client keeps
-asking until it does. The daemon answers,
-marks itself stopping (hello reports it, so `ensure` waits for it to exit
+asking until it does. The daemon marks itself stopping before it answers
+(under the same lock as the idle check of a `when_idle` stop or the idle
+restart, so any later hello reports it and `ensure` waits for it to exit
 rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
 cancel running jobs, which are recorded as interrupted (a backend that does
 not return in time leaves its job running in the journal, and the next start
