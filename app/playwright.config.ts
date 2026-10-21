@@ -10,6 +10,9 @@ process.env.BAUM_APP_STATE_DIR = stateDir;
 export default defineConfig({
   testDir: "./e2e",
   workers: 1,
+  // The fixture daemon answers its first requests slowly on a busy CI runner,
+  // so assertions wait longer than Playwright's 5 s default.
+  expect: { timeout: 15000 },
   use: {
     baseURL: "http://127.0.0.1:4167",
     headless: true,
