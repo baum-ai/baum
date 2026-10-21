@@ -5,11 +5,18 @@
 //! adds no review features; the daemon serves the application. The window
 //! starts on a bundled connecting screen, attaches to the daemon (starting it
 //! if needed) and loads it, and returns to that screen with the daemon's
-//! recent log when the daemon cannot be reached. Quitting the app leaves the
-//! daemon running.
+//! recent log when the daemon cannot be reached. Closing the window hides it
+//! into the tray (`tray`, `lifecycle`) and quitting the app leaves the daemon
+//! running; `autostart` starts the app hidden at login.
 
+mod autostart;
+mod client;
 mod daemon;
+mod lifecycle;
 mod navigation;
+mod notifications;
+mod status;
+mod tray;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -21,7 +28,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use navigation::Decision;
 
-const MAIN: &str = "main";
+pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
 /// row count as the daemon having gone away.
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
@@ -98,6 +105,7 @@ fn connect(app: &AppHandle, why: Attach) {
         shared.daemon = None;
         shared.attempt
     };
+    tray::connecting(app);
     show_screen(app);
     let app = app.clone();
     thread::spawn(move || {
@@ -119,6 +127,7 @@ fn connect(app: &AppHandle, why: Attach) {
             "baum desktop: attached to baum daemon {} (pid {})",
             launch.status.version, launch.status.pid
         );
+        tray::attached(&app, &launch);
         let Some(window) = app.get_webview_window(MAIN) else {
             return;
         };
@@ -129,6 +138,8 @@ fn connect(app: &AppHandle, why: Attach) {
             };
             return fail(&app, &state, attempt, failure);
         }
+        let current = state.clone();
+        notifications::attach(&app, &launch, move || current.lock().attempt != attempt);
         watch(&app, &state, attempt, &launch, why);
     });
 }
@@ -219,6 +230,7 @@ fn fail(app: &AppHandle, state: &State, attempt: u64, failure: daemon::Failure) 
         };
         shared.daemon = None;
     }
+    tray::detached(app);
     show_screen(app);
 }
 
@@ -242,26 +254,31 @@ fn open_externally(app: &AppHandle, url: &url::Url) {
 
 fn main() {
     let state = State::default();
-    tauri::Builder::default()
+    // Start at login runs the app with this flag: the app attaches to the
+    // daemon (starting it) without showing the window.
+    let hidden = std::env::args().any(|a| a == autostart::HIDDEN_FLAG);
+    let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses this window and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window(MAIN) {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            lifecycle::show_window(app);
         }))
-        // Used only from Rust; no page is granted its commands.
+        // Used only from Rust; no page is granted their commands.
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![connection, reconnect])
+        .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
+            // Before the tray, whose menus hold the notification toggles.
+            notifications::install(app.handle())?;
+            tray::setup(app.handle());
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
+                .visible(!hidden)
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
                     match navigation::decide(url, daemon.as_ref()) {
@@ -280,11 +297,22 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // A hidden start shows the window after all if no tray appears.
+            tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the baum desktop app");
+        .build(tauri::generate_context!())
+        .expect("error while building the baum desktop app");
+    app.run(|app, event| {
+        // Clicking the Dock icon with the window hidden reopens it.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            lifecycle::show_window(app);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }
 
 #[cfg(test)]
