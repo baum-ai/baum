@@ -28,6 +28,12 @@ case "$target" in
   *) echo "sidecar: unsupported target $target" >&2; exit 1 ;;
 esac
 
+for app in internal/viewer/dist internal/localapp/dist; do
+  if [ ! -f "$app/index.html" ]; then
+    echo "sidecar: warning: $app is not built, so the app's window will only say so; run 'just viewer-build' first" >&2
+  fi
+done
+
 mkdir -p desktop/binaries
 out="desktop/binaries/baum-$target$suffix"
 CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -o "$out" ./cmd/baum

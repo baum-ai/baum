@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Check what "just release-snapshot" left under dist/: the five archives and
 # checksums.txt exist, there is no windows/arm64 build, every binary was built
-# with CGO off and embeds the committed viewer bundle, and, on a linux/amd64
-# host, the linux/amd64 binary serves the sample review. The bundle marker is
+# with CGO off and embeds the viewer bundle the before hook built, and, on a
+# linux/amd64 host, the linux/amd64 binary serves the sample review. The bundle marker is
 # the hashed main chunk that internal/viewer/dist/index.html loads.
 set -euo pipefail
 

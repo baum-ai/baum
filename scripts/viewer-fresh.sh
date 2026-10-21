@@ -9,7 +9,8 @@
 # renames its hashed chunk, which shows up as one new file and one deleted file.
 #
 # BAUM_SKIP_VIEWER_FRESH=1 skips the check, for a pipeline in which another job
-# has already run it.
+# has already run it. BAUM_RELEASE_COMMIT=1 fails unless HEAD is a release
+# commit, for the checks of one.
 set -eu
 
 if [ -n "${BAUM_SKIP_VIEWER_FRESH:-}" ]; then
@@ -22,9 +23,18 @@ cd "$(dirname "$0")/.."
 sh scripts/viewer-build.sh
 
 paths="viewer/src/precompiled"
-if git ls-files --error-unmatch internal/viewer/dist/index.html >/dev/null 2>&1; then
+if [ -n "$(git ls-files -- internal/viewer/dist internal/localapp/dist | grep -v '/\.gitkeep$')" ]; then
   echo "HEAD is a release commit: checking the built apps it carries"
   paths="$paths internal/viewer/dist internal/localapp/dist"
+  for app in internal/viewer/dist internal/localapp/dist; do
+    if ! git ls-files --error-unmatch "$app/index.html" >/dev/null 2>&1; then
+      echo "the release commit does not carry the built $app" >&2
+      exit 1
+    fi
+  done
+elif [ -n "${BAUM_RELEASE_COMMIT:-}" ]; then
+  echo "BAUM_RELEASE_COMMIT is set, but HEAD carries no built apps" >&2
+  exit 1
 fi
 # shellcheck disable=SC2086 # paths is a list of paths without spaces
 changed=$(git status --porcelain --untracked-files=all --ignored=matching -- $paths)

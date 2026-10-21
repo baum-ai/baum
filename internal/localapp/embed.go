@@ -30,7 +30,10 @@ func Assets() fs.FS {
 // query strings on its base path, so only "/" and existing files are served;
 // directories are never listed.
 func Handler() http.Handler {
-	assets := Assets()
+	return handler(Assets())
+}
+
+func handler(assets fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if name == "" {

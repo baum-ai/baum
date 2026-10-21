@@ -222,6 +222,7 @@ jobs:
             internal/viewer/dist
             internal/localapp/dist
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
 
   clean-install:
@@ -413,10 +414,13 @@ jobs:
 
   desktop-bundle:
     # Unsigned snapshot bundles for every platform the release ships, built
-    # exactly as the release builds them, so a bundling or signing-script break
-    # shows here rather than on the tag. They are kept as workflow artifacts.
+    # as the release builds them (with baum built from source and the apps
+    # viewer-dist built), so a bundling or signing-script break shows here
+    # rather than on the tag. They are kept as workflow artifacts.
     name: Desktop snapshot
+    needs: viewer-dist
     uses: ./.github/workflows/desktop.yml
     with:
       version: 0.0.0
+      apps-artifact: built-apps
       finalize-macos: true

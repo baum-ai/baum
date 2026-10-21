@@ -78,6 +78,8 @@ jobs:
           node-version: 24
 
       - name: Rebuild and compare
+        env:
+          BAUM_RELEASE_COMMIT: "1"
         run: sh scripts/viewer-fresh.sh
 
   desktop-test:
@@ -152,41 +154,12 @@ jobs:
       # Only a reviewed commit is released: the tag must point at a release
       # commit whose one parent is on main, past the previous release, and
       # which adds nothing but the built apps. viewer-dist checks those match
-      # their sources.
+      # their sources. The tagging workflow ran the same checks before
+      # pushing the tag.
       - name: The tag is a release commit of a commit on main, newer than the last release
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if [ "$(git rev-list --no-walk --parents "$GITHUB_SHA" | wc -w)" -ne 2 ]; then
-            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not a release commit: it must have exactly one parent."
-            exit 1
-          fi
-          base=$(git rev-parse "$GITHUB_SHA^")
-          if ! git merge-base --is-ancestor "$base" origin/main; then
-            echo "::error::$GITHUB_REF_NAME's parent ($base) is not on main; only commits on main are released."
-            exit 1
-          fi
-          extra=$(git diff --no-renames --name-only "$base" "$GITHUB_SHA" |
-            grep -v -e '^internal/viewer/dist/' -e '^internal/localapp/dist/' || true)
-          if [ -n "$extra" ]; then
-            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) changes more than the built apps: $(echo $extra)"
-            exit 1
-          fi
-          # The tag before this one in version order (pre-releases before
-          # their release), if any, must be on this one's history, compared
-          # by the commits on main they were made from. The same base is
-          # allowed, so a release candidate can be promoted.
-          previous=$(git -c versionsort.suffix=- tag --list 'v*' --sort=v:refname |
-            grep -B1 -xF "$GITHUB_REF_NAME" | head -n1)
-          if [ -n "$previous" ] && [ "$previous" != "$GITHUB_REF_NAME" ]; then
-            previous_commit=$(git rev-parse "$previous^{commit}^")
-            if ! git merge-base --is-ancestor "$previous_commit" "$base"; then
-              echo "::error::$GITHUB_REF_NAME ($base) does not come after $previous ($previous_commit)."
-              exit 1
-            fi
-            echo "Releasing $GITHUB_REF_NAME, after $previous."
-          else
-            echo "Releasing $GITHUB_REF_NAME, the first v* tag."
-          fi
+          sh scripts/release-check.sh "$GITHUB_REF_NAME" origin/main
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0

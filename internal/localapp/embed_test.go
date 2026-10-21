@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/baum-ai/baum/internal/uibuild"
 )
@@ -34,5 +35,19 @@ func TestHandlerServesFilesOnly(t *testing.T) {
 		if w := get(path); w.Code != 404 {
 			t.Fatal(path, w.Code)
 		}
+	}
+}
+
+func TestUnbuiltAppSaysSo(t *testing.T) {
+	h := handler(fstest.MapFS{".gitkeep": {}})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "built without its web app") {
+		t.Fatal("index", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/assets/index.js", nil))
+	if w.Code != 404 {
+		t.Fatal("asset", w.Code)
 	}
 }

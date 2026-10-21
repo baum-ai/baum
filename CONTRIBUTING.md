@@ -22,7 +22,10 @@ opening a pull request. The built viewer and local app (`internal/viewer/dist`,
 a `v*` tag points at, carries them, so `go install` of a tagged version needs
 nothing but Go. Run `just viewer-build` before building a binary with a working
 UI or running the tests that read the built apps, which skip without it; a
-binary built without it says so in place of each app. The precompiled tile
+binary built without it says so in place of each app. Because release commits
+sit beside `main` rather than on it, `go install …@main` (or any untagged
+commit) gets such a binary, and its pseudo-version derives from an older tag
+than the latest release; install a tagged version (`@latest`). The precompiled tile
 validators are committed, and `just viewer-fresh` fails when they differ from a
 fresh build, as CI does. `just --list` shows the other recipes, including
 `release-snapshot` (a local goreleaser build for every target).

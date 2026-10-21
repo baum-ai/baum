@@ -29,7 +29,8 @@ vet:
 build:
     CGO_ENABLED=0 go build ./...
 
-# Build the binary into ./bin
+# Build the binary into ./bin; run viewer-build first for a binary whose
+# viewer and local app work
 install:
     CGO_ENABLED=0 go build -o ./bin/ ./cmd/baum
 

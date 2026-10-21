@@ -501,9 +501,15 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   files (`latest.json` last), and only then publishes the draft.
 
 To release, run the private monorepo's "Tag an open-source release" workflow
-(`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). It
-builds the apps from the published `main`, makes the release commit on top of
-it and pushes only the tag. The reviewer then works through the checklist below
+(`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
+clone of this repository at the commit published for that `main`, it builds
+the apps, makes the release commit, and runs this workflow's checks on it
+(`scripts/release-check.sh`, `viewer-fresh`, the tests) before pushing only
+the tag: the Go module proxy keeps a version for good once anyone fetches it,
+so nothing unchecked may get that far. To promote a release candidate, give
+its `base` input the commit the candidate was made from (`git rev-parse
+v1.2.3-rc.1^`); otherwise later commits on `main` would come along. The
+reviewer then works through the checklist below
 before approving the `release` environment. Write the release notes on the draft while the run waits
 for the environment approval; the draft is published, with those notes, when
 the desktop files are attached. A tag with a pre-release suffix
@@ -534,9 +540,16 @@ summary and a local clone of baum-ai/baum:
    git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
    ```
 
+   and that the release commit itself adds only the built apps:
+
+   ```sh
+   git diff --stat RUN_SHA^ RUN_SHA
+   ```
+
 3. The settings still hold: the `release` environment's deployment policy is
    the tag pattern `v*` (not branches); a tag ruleset restricts who may create
-   or move `v*` tags (recommended); with more than one reviewer, "prevent
+   or move `v*` tags (recommended; the publish deploy key the tagging workflow
+   pushes with needs a bypass for creating them); with more than one reviewer, "prevent
    self-review" is on; and the repository has no signing secrets of its own
    (Settings → Secrets and variables → Actions → Repository secrets), only the
    environment's.
