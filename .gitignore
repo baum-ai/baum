@@ -22,10 +22,15 @@ node_modules/
 .plans/
 /.agents/worktrees
 
-# The built standalone viewer is committed (see viewer/README.md).
+# The built viewer and local app are committed only in a release commit, the
+# commit a v* tag points at (see scripts/release-commit.sh). Each directory
+# keeps a tracked .gitkeep, since go:embed needs it to exist.
 !/internal/viewer/dist/
-
+/internal/viewer/dist/*
+!/internal/viewer/dist/.gitkeep
 !/internal/localapp/dist/
+/internal/localapp/dist/*
+!/internal/localapp/dist/.gitkeep
 /app/playwright-report/
 /app/test-results/
 /app/e2e/fixture

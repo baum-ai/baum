@@ -1,5 +1,8 @@
-// Package localapp embeds the local application. Built assets are committed so
-// go install needs only Go; rebuild with pnpm --dir app build inside Docker.
+// Package localapp embeds the local application. Only a release commit, the
+// commit a v* tag points at, carries the built assets, so go install of a
+// tagged version needs only Go. Elsewhere, build them with "just viewer-build"
+// (or pnpm --dir app build inside Docker); a binary built without them answers
+// with viewer.NotBuilt in place of the application.
 package localapp
 
 import (
@@ -7,6 +10,8 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"github.com/baum-ai/baum/internal/viewer"
 )
 
 //go:embed all:dist
@@ -36,6 +41,10 @@ func Handler() http.Handler {
 			return
 		}
 		info, err := fs.Stat(assets, name)
+		if err != nil && name == "index.html" {
+			viewer.NotBuilt(w)
+			return
+		}
 		if err != nil || info.IsDir() {
 			http.NotFound(w, r)
 			return

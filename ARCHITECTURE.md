@@ -805,7 +805,12 @@ hosted service sets its own licensed face this way.
 The components and their seams are in [`viewer/`](viewer/README.md). The
 package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
-built output is committed.
+built output is committed only in a release commit, the commit a `v*` tag
+points at: the tag's commit on `main` plus the built viewer and local app, so
+`go install` of a tagged version needs nothing but Go. Any other checkout
+embeds an empty directory (its `.gitkeep`) until `just viewer-build` runs, and
+a binary built from it answers each app page with `viewer.NotBuilt`, a 503
+naming the fix.
 
 `baum internal view`'s app fills the `sessions` and `commits` slots from
 `GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
@@ -1754,7 +1759,8 @@ acknowledgement. Unknown actual usage remains null.
 
 ### Local application presentation
 
-`app/` builds into the committed `internal/localapp/dist` embed.
+`app/` builds into the `internal/localapp/dist` embed, which, like the
+viewer's, only a release commit carries.
 `localapp.Handler` is the daemon's `App.Assets`, mounted as `uiserver`'s
 `Options.App`, so the application's files
 are served only under the authenticated `/s/<namespace>/` path; the public

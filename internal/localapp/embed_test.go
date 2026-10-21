@@ -5,9 +5,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/uibuild"
 )
 
 func TestHandlerServesFilesOnly(t *testing.T) {
+	uibuild.Require(t, Assets())
 	assets, err := fs.Glob(Assets(), "assets/*.js")
 	if err != nil || len(assets) == 0 {
 		t.Fatal("no built assets", err)

@@ -1,6 +1,8 @@
 name: Release
 
-# On a version tag of a commit on main:
+# On a version tag of a release commit: a commit on main plus the built
+# viewer and local app, which no other commit carries, so go install of the tag
+# needs only Go. The monorepo's "Tag an open-source release" workflow makes it.
 #
 #   test, viewer-dist, desktop-test
 #     -> release (goreleaser: CLI archives into a draft GitHub release)
@@ -48,11 +50,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The release commit carries the built apps, so their tests must run.
       - name: Test
+        env:
+          BAUM_REQUIRE_UI: "1"
         run: go test -race ./...
 
   viewer-dist:
-    # The tag must carry the viewer bundle its sources build to.
+    # The tag must carry the viewer and local app its sources build to.
     name: Viewer bundle is fresh
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -144,24 +149,38 @@ jobs:
           # environment and never pushes, so no credentials stay in the clone.
           persist-credentials: false
 
-      # Only a reviewed commit is released: the tag must point into main,
-      # past the previous release.
-      - name: The tagged commit is on main and newer than the last release
+      # Only a reviewed commit is released: the tag must point at a release
+      # commit whose one parent is on main, past the previous release, and
+      # which adds nothing but the built apps. viewer-dist checks those match
+      # their sources.
+      - name: The tag is a release commit of a commit on main, newer than the last release
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; only commits on main are released."
+          if [ "$(git rev-list --no-walk --parents "$GITHUB_SHA" | wc -w)" -ne 2 ]; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not a release commit: it must have exactly one parent."
+            exit 1
+          fi
+          base=$(git rev-parse "$GITHUB_SHA^")
+          if ! git merge-base --is-ancestor "$base" origin/main; then
+            echo "::error::$GITHUB_REF_NAME's parent ($base) is not on main; only commits on main are released."
+            exit 1
+          fi
+          extra=$(git diff --no-renames --name-only "$base" "$GITHUB_SHA" |
+            grep -v -e '^internal/viewer/dist/' -e '^internal/localapp/dist/' || true)
+          if [ -n "$extra" ]; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) changes more than the built apps: $(echo $extra)"
             exit 1
           fi
           # The tag before this one in version order (pre-releases before
-          # their release), if any, must be on this commit's history. The
-          # same commit is allowed, so a release candidate can be promoted.
+          # their release), if any, must be on this one's history, compared
+          # by the commits on main they were made from. The same base is
+          # allowed, so a release candidate can be promoted.
           previous=$(git -c versionsort.suffix=- tag --list 'v*' --sort=v:refname |
             grep -B1 -xF "$GITHUB_REF_NAME" | head -n1)
           if [ -n "$previous" ] && [ "$previous" != "$GITHUB_REF_NAME" ]; then
-            previous_commit=$(git rev-parse "$previous^{commit}")
-            if ! git merge-base --is-ancestor "$previous_commit" "$GITHUB_SHA"; then
-              echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) does not come after $previous ($previous_commit)."
+            previous_commit=$(git rev-parse "$previous^{commit}^")
+            if ! git merge-base --is-ancestor "$previous_commit" "$base"; then
+              echo "::error::$GITHUB_REF_NAME ($base) does not come after $previous ($previous_commit)."
               exit 1
             fi
             echo "Releasing $GITHUB_REF_NAME, after $previous."

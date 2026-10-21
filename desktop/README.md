@@ -450,8 +450,8 @@ GitHub release. Pushing the tag to baum-ai/baum runs
 `.github/workflows/release.yml`:
 
 ```text
-test, viewer-dist, desktop-test          checks of the tagged commit
-  └─ release                             tag on main? goreleaser: CLI archives, draft release
+test, viewer-dist, desktop-test          checks of the tagged release commit
+  └─ release                             parent on main? goreleaser: CLI archives, draft release
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐
             ├─ sign-windows  ├─ environment "release": sign what desktop built
@@ -460,10 +460,16 @@ test, viewer-dist, desktop-test          checks of the tagged commit
                       └─ desktop-publish attach files, latest.json last, publish the draft
 ```
 
-- `release` fails unless the tagged commit is on `main` and the previous
-  `v*` tag in version order points into its history (both with `git
-  merge-base --is-ancestor`; the same commit is allowed, so a release
-  candidate can be promoted). goreleaser creates the release as a draft with empty
+- A tag points at a release commit: a commit on `main` plus the built viewer
+  and local app (`internal/viewer/dist`, `internal/localapp/dist`), which no
+  other commit carries, so `go install` of the tag needs only Go.
+  `viewer-dist` rebuilds both from the tagged sources and fails unless they
+  match what the release commit carries.
+- `release` fails unless the tagged commit has one parent, that parent is on
+  `main`, the commit changes nothing outside the two built directories, and
+  the previous `v*` tag in version order was made from a commit in the
+  parent's history (both with `git merge-base --is-ancestor`; the same
+  parent is allowed, so a release candidate can be promoted). goreleaser creates the release as a draft with empty
   notes (a re-run reuses that draft), and keeps its `baum` binaries as the
   artifact `cli-binaries`.
 - `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
@@ -494,8 +500,10 @@ test, viewer-dist, desktop-test          checks of the tagged commit
   write, attests the files' build provenance, uploads exactly the expected
   files (`latest.json` last), and only then publishes the draft.
 
-To release, tag a commit on `main` with the next version (`git tag v1.2.3`,
-then push the tag). The reviewer then works through the checklist below
+To release, run the private monorepo's "Tag an open-source release" workflow
+(`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). It
+builds the apps from the published `main`, makes the release commit on top of
+it and pushes only the tag. The reviewer then works through the checklist below
 before approving the `release` environment. Write the release notes on the draft while the run waits
 for the environment approval; the draft is published, with those notes, when
 the desktop files are attached. A tag with a pre-release suffix
@@ -514,9 +522,10 @@ leaves installed apps without the release.
 The approval releases the signing keys to that run, so check, in the run's
 summary and a local clone of baum-ai/baum:
 
-1. The run is for the commit you meant to release. Its SHA is on `main` and
-   does not predate the previous release; the `release` job checks both, so
-   it must have passed.
+1. The run is for the commit you meant to release. Its SHA is a release
+   commit whose parent is on `main` and does not predate the previous
+   release, and it adds only the built apps; the `release` job checks all
+   three, so it must have passed.
 2. The release machinery has not changed unexpectedly since the previous
    release. Read the changes to the workflows and the signing scripts:
 

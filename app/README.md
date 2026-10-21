@@ -108,9 +108,11 @@ background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
-`pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes committed assets
-to `../internal/localapp/dist`; the common `viewer-build` / `viewer-fresh` recipes
-also build/check this bundle, so `go install` needs no Node.js.
+`pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes the assets the
+daemon embeds to `../internal/localapp/dist`, which only a release commit (the
+commit a `v*` tag points at) carries, so `go install` of a tagged version needs
+no Node.js. The common `viewer-build` recipe also builds this bundle; a binary
+built without it answers the application's page with a note saying so.
 
 Browser tests run the actual daemon (`daemon.Run`, with its lock, credential
 file and control socket in a temporary directory) serving a `uiserver.Server`,

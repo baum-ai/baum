@@ -19,7 +19,7 @@ typecheck:
 test:
     {{ heavy }} pnpm test:unit
 
-# Build the standalone app into ../internal/viewer/dist, which is committed
+# Build the standalone app into ../internal/viewer/dist, which the baum binary embeds
 build-app:
     {{ heavy }} pnpm build:app
 
