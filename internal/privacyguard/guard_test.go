@@ -26,21 +26,28 @@ import (
 var forbidden = []struct {
 	id string
 	re *regexp.Regexp
+	// needs is a prefilter: the regexp runs only on text that contains one of
+	// these literals, and a pattern without any runs on every text. Each
+	// literal is a necessary condition, so every match of re contains at least
+	// one of them and skipping the regexp loses nothing. A (?i) pattern lists
+	// lower-case literals, checked against the folded text (see foldCase);
+	// any other lists the exact bytes.
+	needs []string
 	// ok reports whether a match is acceptable after all; nil accepts none.
 	ok func(match []byte) bool
 }{
-	{"old-name", regexp.MustCompile(`(?i)recount` + `able`), nil},
-	{"monorepo", regexp.MustCompile(`(?i)baum-` + `monorepo`), nil},
-	{"platform-pkg", regexp.MustCompile(`platform/` + `internal`), nil},
-	{"ui-app", regexp.MustCompile(`ui/` + `app/`), nil},
-	{"private-specs", regexp.MustCompile(`specs/` + `platform`), nil},
-	{"mac-home", regexp.MustCompile(`(?i)/Us` + `ers/`), nil},
-	{"dev-home", regexp.MustCompile(`/home/([A-Za-z0-9._-]+)`), syntheticHome},
-	{"worktree", regexp.MustCompile(`\.(?:claude|agents)/work` + `trees`), nil},
-	{"company", regexp.MustCompile(`(?i)arv` + `ina`), nil},
-	{"private-product", regexp.MustCompile(`(?i)fact` + `beat`), nil},
-	{"linear-workspace", regexp.MustCompile(`(?i)linear\.app/last-` + `person-labs`), nil},
-	{"issue-key", regexp.MustCompile(`\b(?:E` + `NG|A` + `GE)-\d+\b`), nil},
+	{"old-name", regexp.MustCompile(`(?i)recount` + `able`), []string{"recount" + "able"}, nil},
+	{"monorepo", regexp.MustCompile(`(?i)baum-` + `monorepo`), []string{"baum-" + "monorepo"}, nil},
+	{"platform-pkg", regexp.MustCompile(`platform/` + `internal`), []string{"platform/" + "internal"}, nil},
+	{"ui-app", regexp.MustCompile(`ui/` + `app/`), []string{"ui/" + "app/"}, nil},
+	{"private-specs", regexp.MustCompile(`specs/` + `platform`), []string{"specs/" + "platform"}, nil},
+	{"mac-home", regexp.MustCompile(`(?i)/Us` + `ers/`), []string{"/us" + "ers/"}, nil},
+	{"dev-home", regexp.MustCompile(`/home/([A-Za-z0-9._-]+)`), []string{"/home/"}, syntheticHome},
+	{"worktree", regexp.MustCompile(`\.(?:claude|agents)/work` + `trees`), []string{"/work" + "trees"}, nil},
+	{"company", regexp.MustCompile(`(?i)arv` + `ina`), []string{"arv" + "ina"}, nil},
+	{"private-product", regexp.MustCompile(`(?i)fact` + `beat`), []string{"fact" + "beat"}, nil},
+	{"linear-workspace", regexp.MustCompile(`(?i)linear\.app/last-` + `person-labs`), []string{"linear.app/last-" + "person-labs"}, nil},
+	{"issue-key", regexp.MustCompile(`\b(?:E` + `NG|A` + `GE)-\d+\b`), []string{"E" + "NG-", "A" + "GE-"}, nil},
 }
 
 // syntheticHomes are the home directory names that may appear in fixtures.
@@ -97,9 +104,22 @@ type finding struct {
 
 // findings returns the first forbidden match of each pattern in a file.
 func findings(data []byte) []finding {
+	texts := scannable(data)
+	folded := make([][]byte, len(texts))
+	for i, text := range texts {
+		folded[i] = foldCase(text)
+	}
 	var out []finding
 	for _, f := range forbidden {
-		for _, text := range scannable(data) {
+		caseless := strings.HasPrefix(f.re.String(), "(?i)")
+		for i, text := range texts {
+			haystack := text
+			if caseless {
+				haystack = folded[i]
+			}
+			if !mayMatch(haystack, f.needs) {
+				continue
+			}
 			if h, ok := firstMatch(f.id, text, f.re, f.ok); ok {
 				out = append(out, h)
 				break
@@ -107,6 +127,29 @@ func findings(data []byte) []finding {
 		}
 	}
 	return out
+}
+
+// mayMatch reports whether text contains one of the literals, or whether there
+// are none to require.
+func mayMatch(text []byte, needs []string) bool {
+	if len(needs) == 0 {
+		return true
+	}
+	for _, n := range needs {
+		if bytes.Contains(text, []byte(n)) {
+			return true
+		}
+	}
+	return false
+}
+
+// foldCase lower-cases text for the prefilter of a (?i) pattern. The regexp
+// also matches the two non-ASCII letters that fold onto ASCII ones, the long s
+// and the Kelvin sign, so they are mapped to s and k as well.
+func foldCase(text []byte) []byte {
+	lower := bytes.ToLower(text)
+	lower = bytes.ReplaceAll(lower, []byte("\u017f"), []byte("s"))
+	return bytes.ReplaceAll(lower, []byte("\u212a"), []byte("k"))
 }
 
 func firstMatch(id string, text []byte, re *regexp.Regexp, ok func([]byte) bool) (finding, bool) {
@@ -145,6 +188,43 @@ func TestScanFindsPrivateStringsInEveryEncoding(t *testing.T) {
 				t.Fatalf("findings = %+v, want one mac-home", got)
 			}
 		})
+	}
+}
+
+// TestPrefilterLiteralsAreImpliedByPatterns checks that a text each pattern
+// matches passes its own prefilter, in the spellings the regexp accepts.
+func TestPrefilterLiteralsAreImpliedByPatterns(t *testing.T) {
+	samples := map[string][]string{
+		"old-name":         {"Recount" + "able", "recount" + "able"},
+		"monorepo":         {"Baum-" + "Monorepo"},
+		"platform-pkg":     {"platform/" + "internal/x"},
+		"ui-app":           {"ui/" + "app/x"},
+		"private-specs":    {"specs/" + "platform"},
+		"mac-home":         {"/Us" + "ers/x", "/u\u017fers/x"},
+		"dev-home":         {"/home/" + "bob"},
+		"worktree":         {".claude/work" + "trees", ".agents/work" + "trees"},
+		"company":          {"Arv" + "ina"},
+		"private-product":  {"Fact" + "Beat"},
+		"linear-workspace": {"linear.app/last-" + "person-labs"},
+		"issue-key":        {"E" + "NG-12", "A" + "GE-7"},
+	}
+	for _, f := range forbidden {
+		if len(samples[f.id]) == 0 {
+			t.Errorf("no sample for pattern %s", f.id)
+		}
+		for _, sample := range samples[f.id] {
+			if !f.re.MatchString(sample) {
+				t.Errorf("%s: sample %q does not match its regexp", f.id, sample)
+				continue
+			}
+			haystack := []byte(sample)
+			if strings.HasPrefix(f.re.String(), "(?i)") {
+				haystack = foldCase(haystack)
+			}
+			if !mayMatch(haystack, f.needs) {
+				t.Errorf("%s: prefilter rejects %q, which the regexp matches", f.id, sample)
+			}
+		}
 	}
 }
 
