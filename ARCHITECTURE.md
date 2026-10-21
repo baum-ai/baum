@@ -2346,5 +2346,10 @@ lock without answering.
 packages. It bundles the release `baum` binary and depends on it only through
 `baum daemon ensure --json` and the daemon's private credential file.
 Everything that knows where the daemon lives stays in Go. The shell owns the
-window, its navigation policy and the reconnect screen; the daemon serves
-`app/` to it like any loopback client. See [`desktop/README.md`](desktop/README.md).
+window, its navigation policy and the reconnect screen, the tray (job counts,
+pause of automatic generation, an icon that shows idle, running or attention),
+the window's close and quit behaviour and start at login; the daemon serves
+`app/` to it like any loopback client. Besides `ensure` and `stop`, the tray
+reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
+`PUT /api/automatic` with the launch token as a bearer, over the app API the
+window uses. See [`desktop/README.md`](desktop/README.md).

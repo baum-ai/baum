@@ -693,4 +693,13 @@ loopback servers, other schemes and new windows are refused. The daemon's
 pages get no Tauri capability, so they cannot call the app's commands or any
 plugin. The bundled screen may only read the connection state and ask to
 reconnect. The app makes no network requests other than loopback requests
-to the daemon. Quitting it leaves the daemon running.
+to the daemon. Quitting it leaves the daemon running, and so does closing
+its window, which hides it into the tray. The tray reads the daemon's job
+list, automatic generation status and diagnostics, and can pause automatic
+generation, with the same launch capability the window uses, sent as a bearer
+token to the loopback API and nowhere else. "Quit and stop background reviews"
+runs `baum daemon stop` after asking when a review is running. Start at login
+is off until you turn it on; it adds one per-user entry (an XDG autostart file,
+a LaunchAgent or a Run key value) that starts the app hidden, which starts
+your daemon. Turn it off in the tray or the window's Background menu, which
+removes the entry.
