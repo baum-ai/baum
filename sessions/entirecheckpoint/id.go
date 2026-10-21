@@ -1,6 +1,9 @@
 package entirecheckpoint
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // TrailerKey is the commit trailer Entire writes to name the checkpoint that
 // recorded the commit's sessions.
@@ -56,10 +59,11 @@ func CanonicalID(s string) (string, bool) {
 // "Key: value" lines. The key is matched without regard to case. ids holds
 // every valid checkpoint id in canonical form, in trailer order, each once,
 // as Entire's own ParseAllCheckpoints returns them. malformed holds every
-// other value, trimmed, in trailer order, so a caller can report what it
-// skipped. Both are empty when the commit names no checkpoint at all.
+// other value, trimmed, in trailer order, each once, so a caller can report
+// what it skipped. Both are empty when the commit names no checkpoint at all.
 func ParseTrailers(trailers []string) (ids, malformed []string) {
 	seen := map[string]bool{}
+	skipped := map[string]bool{}
 	for _, trailer := range trailers {
 		key, value, found := strings.Cut(trailer, ":")
 		if !found || !strings.EqualFold(strings.TrimSpace(key), TrailerKey) {
@@ -68,7 +72,10 @@ func ParseTrailers(trailers []string) (ids, malformed []string) {
 		value = strings.TrimSpace(value)
 		id, ok := CanonicalID(value)
 		if !ok {
-			malformed = append(malformed, value)
+			if !skipped[value] {
+				skipped[value] = true
+				malformed = append(malformed, value)
+			}
 			continue
 		}
 		if !seen[id] {
@@ -77,6 +84,79 @@ func ParseTrailers(trailers []string) (ids, malformed []string) {
 		}
 	}
 	return ids, malformed
+}
+
+// ParseMessage reads every Entire-Checkpoint a commit message names, wherever
+// in the message it sits, and returns what ParseTrailers returns for them.
+// This is how a commit is read for its checkpoints, not from git's trailer
+// block alone: a GitHub squash merge copies each squashed commit's message,
+// trailers included, into its body, so the checkpoints of all but the last
+// squashed commit sit in body paragraphs the trailer block does not include.
+func ParseMessage(message string) (ids, malformed []string) {
+	return ParseTrailers(MessageTrailers(message))
+}
+
+// entireCheckpointPattern is Entire's own checkpointTrailerRegex
+// (cmd/entire/cli/trailers in entireio/cli), which its ParseAllCheckpoints
+// runs over the whole commit message: the key, case-sensitive and anywhere in
+// the text, whitespace that may span lines, then a legacy 12-hex id or the
+// shape of a ULID in the case Entire writes it, ending at whitespace or at the
+// end of the message.
+var entireCheckpointPattern = regexp.MustCompile(
+	TrailerKey + `:\s*((?:[0-9a-f]{12}|[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}))(?:\s|$)`)
+
+// MessageTrailers returns, as "Entire-Checkpoint: <value>" lines in message
+// order for ParseTrailers, every Entire-Checkpoint value a commit message
+// names. It is the union of two readings:
+//
+//   - Every id Entire's own pattern finds that CanonicalID accepts, which is
+//     what Entire links the commit to. The pattern is not anchored to a line,
+//     so an id after the key in the middle of a line counts, as it does for
+//     Entire.
+//   - Every line shaped like the trailer (the key at the start of the line, in
+//     any case, then optional blanks and a colon), as git's trailer block
+//     would hold it, wherever the line sits. This keeps what ParseTrailers
+//     accepts beyond Entire's pattern (a key or an id in another case) and
+//     reports a malformed value. A line on which Entire's pattern found a
+//     valid id is that id and nothing more, so text after the id is not
+//     reported as malformed.
+//
+// A value the key introduces in the middle of a line that is not an id is
+// prose about the trailer, not a malformed trailer, and is ignored.
+func MessageTrailers(message string) []string {
+	matches := entireCheckpointPattern.FindAllStringSubmatchIndex(message, -1)
+	var trailers []string
+	next := 0
+	for start := 0; start <= len(message); {
+		end := len(message)
+		if newline := strings.IndexByte(message[start:], '\n'); newline >= 0 {
+			end = start + newline
+		}
+		found := false
+		for ; next < len(matches) && matches[next][0] <= end; next++ {
+			id := message[matches[next][2]:matches[next][3]]
+			if _, ok := CanonicalID(id); ok {
+				found = true
+				trailers = append(trailers, TrailerKey+": "+id)
+			}
+		}
+		if line := message[start:end]; !found && isTrailerLine(line) {
+			_, value, _ := strings.Cut(line, ":")
+			trailers = append(trailers, TrailerKey+":"+value)
+		}
+		start = end + 1
+	}
+	return trailers
+}
+
+// isTrailerLine reports whether a message line is shaped like an
+// Entire-Checkpoint trailer as git reads one: the key at the very start of the
+// line, in any case, then optional spaces or tabs and the separator.
+func isTrailerLine(line string) bool {
+	if len(line) < len(TrailerKey) || !strings.EqualFold(line[:len(TrailerKey)], TrailerKey) {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimLeft(line[len(TrailerKey):], " \t"), ":")
 }
 
 func isHex(c byte) bool {

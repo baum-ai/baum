@@ -54,6 +54,64 @@
   "summary": {
     "title": "Add retry budgets and a dead-letter queue",
     "text": "Jobs that fail now back off exponentially and stop after a bounded number of attempts. A job that runs out of attempts is buried in a new dead-letter table, and operators can list and requeue buried jobs through two new endpoints. A second acknowledgement of a job no longer marks it done twice, and Job.Err becomes Job.LastError.",
+    "context": {
+      "area": {
+        "text": "The `queue` package runs taskline's background jobs: a `Worker` claims jobs from a `Store`, runs them and acknowledges or fails each one. The `api` package serves job lookups over HTTP from the same store.",
+        "refs": [
+          {
+            "path": "queue/worker.go",
+            "symbol": "Worker"
+          },
+          {
+            "path": "queue/store.go",
+            "symbol": "Store"
+          },
+          {
+            "path": "api/handler.go",
+            "symbol": "Handler"
+          }
+        ]
+      },
+      "reached_by": {
+        "text": "Every job passes through `Worker.Run`, so a failed run now reaches the retry policy there. The dead-letter endpoints join the job lookup in `Handler.Routes`, behind `RequireOperator`.",
+        "refs": [
+          {
+            "path": "queue/worker.go",
+            "symbol": "Worker.Run"
+          },
+          {
+            "path": "api/handler.go",
+            "symbol": "Handler.Routes"
+          },
+          {
+            "path": "api/auth.go",
+            "symbol": "RequireOperator"
+          }
+        ]
+      },
+      "contracts": {
+        "text": "`Store` is an interface other stores implement, so a new method and a new `Ack` error reach every implementation. `RoleFromRequest` decides who is an operator, and the new endpoints trust it as it is.",
+        "refs": [
+          {
+            "path": "queue/store.go",
+            "symbol": "Store"
+          },
+          {
+            "path": "api/auth.go",
+            "symbol": "RoleFromRequest"
+          }
+        ]
+      },
+      "related": {
+        "text": "`MemoryStore` is the store the tests use; it gains `Reset` and the stricter `Ack` alongside the interface.",
+        "refs": [
+          {
+            "path": "queue/store.go",
+            "symbol": "MemoryStore"
+          }
+        ]
+      }
+    },
     "review_exchange": {
       "summary": "Two automated reviewers and a maintainer reviewed earlier heads. The first automated review's overflow note and the maintainer's request for an operator check were resolved by later commits, and a second automated finding about Requeue was resolved too. The final automated review approved the last commit but left one open must-fix thread: the operator role is read from a request header the client can set.",
       "reviews": 4,

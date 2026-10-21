@@ -605,9 +605,22 @@ mod tests {
     #[cfg(unix)]
     mod cli {
         use super::*;
+        use std::sync::{Mutex, MutexGuard};
+
+        /// Held by every test that writes or runs a fake CLI. A child another
+        /// test forks holds the script's write descriptor until it execs, and
+        /// running the script meanwhile fails with "Text file busy".
+        static SPAWN: Mutex<()> = Mutex::new(());
+
+        fn serial() -> MutexGuard<'static, ()> {
+            SPAWN
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
 
         #[test]
         fn ensure_loads_the_running_daemon() {
+            let _serial = serial();
             let dir = temp_dir("ensure");
             write_private(
                 &dir.join(CREDENTIAL_FILE),
@@ -631,6 +644,7 @@ echo '{{"protocol":1,"version":"v1","pid":42,"app":"http://127.0.0.1:4100","stat
 
         #[test]
         fn ensure_rejects_a_credential_for_another_daemon() {
+            let _serial = serial();
             let dir = temp_dir("ensure-mismatch");
             write_private(
                 &dir.join(CREDENTIAL_FILE),
@@ -648,6 +662,7 @@ echo '{{"protocol":1,"version":"v1","pid":42,"app":"http://127.0.0.1:4100","stat
 
         #[test]
         fn ensure_reports_the_command_error() {
+            let _serial = serial();
             let dir = temp_dir("ensure-fails");
             let cli = fake_cli(&dir, "echo 'cannot lock the state directory' >&2; exit 1");
             let failure = ensure(&cli, Duration::from_secs(5)).unwrap_err();
@@ -657,6 +672,7 @@ echo '{{"protocol":1,"version":"v1","pid":42,"app":"http://127.0.0.1:4100","stat
 
         #[test]
         fn ensure_gives_up_after_the_timeout() {
+            let _serial = serial();
             let dir = temp_dir("ensure-hangs");
             let cli = fake_cli(&dir, "exec sleep 30");
             let started = Instant::now();
@@ -671,6 +687,7 @@ echo '{{"protocol":1,"version":"v1","pid":42,"app":"http://127.0.0.1:4100","stat
 
         #[test]
         fn a_detached_child_holding_stdout_does_not_block() {
+            let _serial = serial();
             let dir = temp_dir("ensure-detached");
             write_private(
                 &dir.join(CREDENTIAL_FILE),
@@ -691,6 +708,7 @@ echo '{{"app":"http://127.0.0.1:4100","state":"{}"}}'"#,
 
         #[test]
         fn running_jobs_asks_the_daemon_status_reports() {
+            let _serial = serial();
             let (port, server) = serve_once(
                 "HTTP/1.1 200 OK\r\n\r\n{\"jobs\":[{\"state\":\"running\"},{\"state\":\"queued\"}]}",
             );
@@ -713,6 +731,7 @@ echo '{{"app":"http://127.0.0.1:{port}","state":"{}"}}'"#,
 
         #[test]
         fn no_daemon_means_no_running_jobs() {
+            let _serial = serial();
             let dir = temp_dir("jobs-no-daemon");
             let cli = fake_cli(&dir, "echo 'the baum daemon is not running' >&2; exit 1");
             assert_eq!(running_jobs(&cli, Duration::from_secs(5)), Ok(0));
@@ -720,6 +739,7 @@ echo '{{"app":"http://127.0.0.1:{port}","state":"{}"}}'"#,
 
         #[test]
         fn a_missing_cli_is_reported() {
+            let _serial = serial();
             let failure =
                 ensure(Path::new("/nonexistent/baum"), Duration::from_secs(1)).unwrap_err();
             assert!(

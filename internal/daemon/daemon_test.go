@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
 
@@ -290,7 +291,7 @@ func TestEnsureReplacesStaleFiles(t *testing.T) {
 
 func TestEnsureReportsDaemonThatHoldsTheLockButDoesNotAnswer(t *testing.T) {
 	paths := testPaths(t)
-	if err := os.MkdirAll(paths.State, 0o700); err != nil {
+	if err := privatefs.MkdirAll(paths.State); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := tryLock(context.Background(), paths.LockFile())
@@ -333,6 +334,37 @@ func TestOlderDaemonIsRestartedAndNewerKept(t *testing.T) {
 	kept, err := h.client("v0.1.5").Ensure(ctx)
 	if err != nil || kept.PID != current.PID {
 		t.Fatalf("an older client replaced a newer daemon: %+v %v", kept, err)
+	}
+}
+
+// A daemon restarting into a newer version spawns its successor while its own
+// output is still open, so the output rotates under it (Windows refuses to
+// rename an open file unless it was opened to allow that).
+func TestOutputRotatesWhileADaemonWritesIt(t *testing.T) {
+	paths := testPaths(t)
+	if err := privatefs.MkdirAll(paths.State); err != nil {
+		t.Fatal(err)
+	}
+	old, err := openOutput(paths.OutputFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = old.Close() }()
+	if err = rotateOutput(paths); err != nil {
+		t.Fatal(err)
+	}
+	next, err := openOutput(paths.OutputFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = next.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = old.WriteString("old"); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(paths.OutputFile() + ".1"); err != nil || string(data) != "old" {
+		t.Fatalf("rotated output %q %v", data, err)
 	}
 }
 
@@ -606,10 +638,12 @@ func TestOlder(t *testing.T) {
 }
 
 func TestDefaultPaths(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", "/state")
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user/7")
+	// An absolute path on Windows needs a volume, so root both on the temp one.
+	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(root, "run", "user", "7"))
 	p, err := DefaultPaths()
-	if err != nil || p.State != filepath.FromSlash("/state/baum/daemon") || p.Socket != filepath.FromSlash("/run/user/7/baum/daemon.sock") {
+	if err != nil || p.State != filepath.Join(root, "state", "baum", "daemon") || p.Socket != filepath.Join(root, "run", "user", "7", "baum", "daemon.sock") {
 		t.Fatal(p, err)
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")

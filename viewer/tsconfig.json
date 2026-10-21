@@ -28,11 +28,13 @@
   "include": [
     "src/**/*",
     "app/**/*",
+    "gallery/**/*",
     "test/**/*",
     "e2e/**/*",
     "playwright.config.ts",
     "generated/**/*",
     "vitest.config.ts",
-    "vite.app.config.ts"
+    "vite.app.config.ts",
+    "vite.gallery.config.ts"
   ]
 }

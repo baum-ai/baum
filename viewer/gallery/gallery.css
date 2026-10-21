@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@import "../src/viewer.css";
+@source "../src";
+@source ".";
+
+body {
+  background: var(--surface-page);
+}
