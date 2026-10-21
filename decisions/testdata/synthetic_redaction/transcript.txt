@@ -1,0 +1,11 @@
+## Turn 1
+Human: Deploy with postgres://app:Xx9xx9xxx-9xxx9Xx@xx.xxxxxxx.xxx:5432/app and mail xxx@xxxxxxx.xxx when done.
+  Then fix platform/deploy.go and ui/app.ts.
+Agent: The request sends `Authorization: Bearer xxXxxXxxXxXXXxX9XxX9.xxXxxXXxXxXxXXXxxX.x9xxxxX9xXXxXXXxxXXx` and the config has api_key = xx_xxxx_Xx9Xx9Xx9Xx9Xx9Xx9Xx9Xx9.
+Agent: The key file reads:
+  -----XXXXX*XXX*XXXXXXX*XXX-----
+  XXXXxXXXXXXXXXXX9Xx9
+  -----XXX*XXX*XXXXXXX*XXX-----
+Agent: Logs are in <local path>, <local path> and <local path>; Cursor keeps -Users-user-repo-.
+  Pushed user/feature-retry to user.example.dev for Alice's review; alice will merge.
+Edited files: platform/deploy.go, ui/app.ts

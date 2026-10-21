@@ -13,6 +13,15 @@ sessions/claudesession/ingest_test.go worktree
 # the layout the path relativization rules strip; not a developer's checkout.
 linkage/sessioncorrelate/paths_test.go worktree
 internal/locallink/sessionevidence_test.go worktree
+decisions/render_test.go worktree
+
+# Synthetic session trees for the decision transcript's masking rules: alice
+# is a made-up account name the renderer must mask, and the ui and app
+# directories a made-up repository layout for the edited-file rules; neither
+# is a developer's.
+decisions/render_test.go dev-home
+decisions/render_test.go ui-app
+decisions/tree_test.go dev-home
 
 # The macOS user database path dscl reads the login shell from, not a home
 # directory.
