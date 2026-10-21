@@ -128,7 +128,7 @@ func lenientFixture() []byte {
 	// Everything the lenient contract tolerates and the strict one rejects:
 	// no schema constant, nulls for optionals, missing empty collections,
 	// unprefixed and oddly spelled identifiers, a repeated identifier, a
-	// duplicated and an unknown hunk, unanchored items, an unprefixed
+	// duplicated and an unknown hunk, unanchored items, an oddly spelled
 	// attention reference, a revision named by role, no review_version and an
 	// excerpt named by header only.
 	return []byte(`{
@@ -137,7 +137,7 @@ func lenientFixture() []byte {
 	    "id": "Parser Core", "title": "Parser", "kind": "logical",
 	    "hunks": ["h_0123456789ab", "h_0123456789ab", "h_ffffffffffff"],
 	    "summary": {"text": "Adds the parser."},
-	    "attention": {"text": "Check the risk.", "refs": ["Bad Input"]},
+	    "attention": {"text": "Check the risk.", "refs": ["RSK Bad Input"]},
 	    "risks": [
 	      {"id": "Bad Input", "tier": "medium", "category": "Input Validation", "source": "model", "text": "Malformed input aborts.", "finding": null, "anchors": [{"type": "hunk", "id": "h_0123456789ab", "lines": null}]},
 	      {"id": "bad-input", "tier": "low", "category": "robustness", "source": "model", "text": "Second risk.", "anchors": [{"type": "hunk", "id": "h_0123456789ab"}, {"type": "file", "path": "main.go", "lines": null}]}
@@ -334,6 +334,26 @@ func TestExcerptDerivationRejectsHolesInsideOnePatchHunk(t *testing.T) {
 	if len(n.findings) != 1 || !strings.Contains(n.findings[0], "not adjacent") || source["diff"] != nil {
 		t.Fatalf("findings=%v diff=%v", n.findings, source["diff"])
 	}
+}
+
+// A provider that cannot enforce the model schema, such as Cursor, may still
+// write an attention reference without its prefix; normalization resolves it
+// to the section's item.
+func TestNormalizationResolvesUnprefixedAttentionReferences(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := &bundlepkg.Bundle{Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go"}}}
+	doc, err := decodeObject(authoredFixture(), "candidate")
+	checkNoError(t, err)
+	section := doc["sections"].([]any)[0].(map[string]any)
+	section["risks"] = []any{map[string]any{"id": "rsk_bad_input", "tier": "medium", "category": "robustness", "source": "model", "text": "Malformed input aborts.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}
+	section["attention"] = map[string]any{"text": "Check the risk.", "refs": []any{"Bad Input"}}
+	prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+	checkEqual(t, "", findings)
+	var stored map[string]any
+	checkNoError(t, json.Unmarshal(prepared, &stored))
+	attention := stored["sections"].([]any)[0].(map[string]any)["attention"]
+	assertSameDocumentJSON(t, []byte(`{"text":"Check the risk.","refs":["rsk_bad_input"]}`), tileJSON(t, attention))
 }
 
 // What normalization must leave for the model: a risk without anchors, a

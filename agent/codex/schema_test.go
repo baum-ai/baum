@@ -3,8 +3,11 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/schema"
 )
 
@@ -53,4 +56,68 @@ func TestCodexOutputSchemaMeetsStrictModeRules(t *testing.T) {
 		}
 	}
 	walk(strict, "#")
+}
+
+// The model schema leaves an attention reference's spelling to normalization
+// but not its kind: a section's own ID or a hunk ID cannot be generated.
+func TestCodexOutputSchemaLimitsAttentionReferencesToItemKinds(t *testing.T) {
+	validator, err := review.NewDocumentValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := validator.ModelSchema(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := StrictSchema(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var strict map[string]any
+	if err := json.Unmarshal(encoded, &strict); err != nil {
+		t.Fatal(err)
+	}
+	properties := strict["properties"].(map[string]any)
+	section := properties["sections"].(map[string]any)["items"].(map[string]any)
+	refs := attentionRefs(t, section)
+	pattern, ok := refs["pattern"].(string)
+	if !ok {
+		t.Fatalf("section attention refs have no pattern: %v", refs)
+	}
+	// OpenAI strict mode supports patterns, including non-capturing groups,
+	// but not inline flags or lookarounds; keep to plain classes as well.
+	for _, unsupported := range []string{"(?i", "(?=", "(?!", "(?<", "\\b", "\\d", "\\w"} {
+		if strings.Contains(pattern, unsupported) {
+			t.Errorf("pattern %q uses %s", pattern, unsupported)
+		}
+	}
+	expression := regexp.MustCompile(pattern)
+	for _, ref := range []string{"ev_x", "rsk_retry_herd", "RSK_x", "Dec-x", "EV Retry Herd", "dec_api_header"} {
+		if !expression.MatchString(ref) {
+			t.Errorf("pattern %q rejects %q", pattern, ref)
+		}
+	}
+	for _, ref := range []string{"sec_sync", "h_0123456789ab", "retry_herd", "evidence_x", "ev", "ev_", "SEC_ev_x"} {
+		if expression.MatchString(ref) {
+			t.Errorf("pattern %q accepts %q", pattern, ref)
+		}
+	}
+	// Summary attention names sections, so it stays unconstrained.
+	summary := properties["summary"].(map[string]any)
+	if pattern, ok := attentionRefs(t, summary)["pattern"]; ok {
+		t.Errorf("summary attention refs have pattern %v", pattern)
+	}
+}
+
+func attentionRefs(t *testing.T, owner map[string]any) map[string]any {
+	t.Helper()
+	attention := owner["properties"].(map[string]any)["attention"].(map[string]any)
+	for _, variant := range asSlice(attention["anyOf"]) {
+		object, _ := variant.(map[string]any)
+		if properties, ok := object["properties"].(map[string]any); ok {
+			return properties["refs"].(map[string]any)["items"].(map[string]any)
+		}
+	}
+	t.Fatalf("attention has no object variant: %v", attention)
+	return nil
 }
