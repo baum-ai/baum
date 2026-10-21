@@ -966,12 +966,16 @@ inside the clone and the session store overrides, and does this:
    maps to the sessions the checkpoint records; a commit naming several
    checkpoints maps to the union of their sessions. The stores are:
    the git-refs store, one ref `refs/entire/checkpoints/<shard>/<id>` per
-   checkpoint, named exactly `refs/entire/checkpoints/` + the last two
-   characters of the canonical id + `/` + the canonical id (hex lower-case,
-   ULID upper-case), as the platform mirror reads them; any other spelling,
-   shard, extra path segment or invalid id is ignored, so a case variant cannot
-   shadow the real ref and the ref's commit has the checkpoint as its root tree
-   (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
+   checkpoint, named `refs/entire/checkpoints/` + the last two characters of
+   the canonical id + `/` + the canonical id (hex lower-case, ULID
+   upper-case), as the platform mirror reads them; any other spelling of the
+   id, other shard, extra path segment or invalid id is ignored, so a case
+   variant cannot shadow the real ref. Only the shard may differ in case: on a
+   case-insensitive filesystem (macOS and Windows by default) git lists a
+   loose ref under whichever spelling of its shard directory was made first
+   (a ULID's `AB/` merges into a 12-hex id's `ab/`), and where both spellings
+   name one id the exact one wins. The ref's commit has the checkpoint as its
+   root tree (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
    (the local branch, else a remote-tracking copy), which keeps a 12-hex
    checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
    A 12-hex id in both stores (a clone migrated with `entire migrate`) is read
