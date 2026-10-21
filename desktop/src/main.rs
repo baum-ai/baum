@@ -14,6 +14,7 @@ mod client;
 mod daemon;
 mod lifecycle;
 mod navigation;
+mod notifications;
 mod status;
 mod tray;
 
@@ -137,6 +138,8 @@ fn connect(app: &AppHandle, why: Attach) {
             };
             return fail(&app, &state, attempt, failure);
         }
+        let current = state.clone();
+        notifications::attach(&app, &launch, move || current.lock().attempt != attempt);
         watch(&app, &state, attempt, &launch, why);
     });
 }
@@ -268,6 +271,8 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
+            // Before the tray, whose menus hold the notification toggles.
+            notifications::install(app.handle())?;
             tray::setup(app.handle());
             WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
                 .title("baum")

@@ -1629,6 +1629,21 @@ the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index.
 
+The stream also carries `notice` events for the desktop app's notifications
+(`internal/notices`), which the web app ignores: `{"kind","repository","pr",
+"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?}` with `kind` one of
+`review_finished`, `review_failed`, `review_automatic` (an automatic review
+finished) and `review_requested`. They are published when a job finishes or
+fails (not when it is cancelled, interrupted or superseded) and when a
+discovery snapshot shows a pull request newly review-requested from the user
+(a repository's first snapshot after the daemon starts is only a baseline).
+The title is GitHub's, trimmed to 200 characters; `risk` (1 to 5) is the
+stored review's score, with `risk_status` `lower_bound` when incomplete
+coverage may hide a higher one; `reason` is the job's failure category and
+nothing free-form. A notice never holds review text, paths or error messages.
+A client that wants no history sends a `Last-Event-ID` beyond the latest
+event: it gets a `reset` and then only new events.
+
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.
 `generate` returns copies from the original, hash-checked assembly archive,

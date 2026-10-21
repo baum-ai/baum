@@ -3,8 +3,8 @@
 A [Tauri](https://tauri.app) v2 shell around the user's `baum daemon`. The
 shell adds no review features: the daemon serves the local application
 (`../app`) over loopback HTTP, and the window shows it. The shell handles only
-what the operating system has to: the window, the tray, start at login, and
-later notifications, installing the CLI, signing and updates.
+what the operating system has to: the window, the tray, start at login,
+notifications, and later installing the CLI, signing and updates.
 
 The app bundles the release `baum` binary next to its executable. `baum`
 itself is unchanged and stays `CGO_ENABLED=0`.
@@ -57,7 +57,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   tray library that fails to load leaves the app running without a tray.
 - **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
   1 queued"); anything needing attention; Pause or Resume automatic reviews;
-  Start at login; Quit; Quit and stop background reviews.
+  Start at login; a Notifications submenu (see "Notifications"); Quit; Quit
+  and stop background reviews.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -102,6 +103,8 @@ Two channels, each the least that does the job:
    requires. It is polled rather than streamed: the events stream carries only
    change notices, so the tray would fetch the same data anyway.
 
+Notifications read the events stream separately (see "Notifications").
+
 No new Tauri capability exists, and none names a remote URL: the tray, the
 dialogs and the autostart entry are used from Rust only, so pages the daemon
 serves still reach no command or plugin.
@@ -139,6 +142,67 @@ and, on Linux, rewrites only `Exec` and the enabled flag, keeping any other keys
 The macOS LaunchAgent is temporary: once the app is signed (release work),
 SMAppService login items replace it.
 
+## Notifications
+
+The app turns daemon events into operating system notifications. It reads the
+daemon's `GET /api/events` stream itself (`src/notifications/`), so they
+arrive while the window is hidden (closing it hides it) or minimised, for as
+long as the app runs. Where no tray exists, closing the window quits the app
+(see "Tray, closing and quitting"), and notifications stop with it. Pages the
+daemon serves are not involved and get no capability.
+
+| Notification | Daemon event |
+| --- | --- |
+| Review finished, with the review's risk score | `notice` `review_finished` |
+| Review failed, with its failure category | `notice` `review_failed` |
+| Review requested from me | `notice` `review_requested` |
+| Review generated automatically | `notice` `review_automatic` |
+| Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
+
+`notice` events are published by the daemon (`oss/internal/notices`, see
+`ARCHITECTURE.md`); the cap notification comes from the scheduler's existing
+`automatic` event. There is no default cap, so the cap notification exists only
+for a user who set one. The text comes only from fields the daemon already
+redacted: the repository, the pull request title as GitHub returned it
+(control characters stripped, 200 characters at most), the stored risk score
+and the failure category. A title is shown unchanged; where a Linux
+notification server renders markup, its `<`, `>` and `&` are escaped so the
+title is not interpreted.
+
+- **Click.** Clicking a notification shows the window if it is hidden or
+  minimised, brings it to the front and loads
+  the pull request (`?clone=<id>&pr=<number>`) or, for the cap and for a
+  notice with no registered clone, the jobs list (`?page=jobs`). The app learns
+  the daemon's secret app path with one `POST /api/auth/exchange` and loads the
+  URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
+  toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
+  platform; no real notification was shown in testing.
+- **Focus.** No notification shows while the window has focus on the same pull
+  request (the same clone and number).
+- **Permission.** The app never asks at launch. The operating system is asked
+  when the first notification is due. Linux and Windows have no per-app prompt
+  and macOS prompts when the first notification posts; `notify-rust` does not
+  report a macOS refusal, so a refusal there simply shows nothing. A refusal
+  the platform does report is remembered and the app stops trying; switching a
+  kind on again in the menu asks once more.
+- **Settings.** Each kind is on by default. A "Notifications" submenu with one
+  check item per kind is in the window's menu bar and in the tray menu (the
+  tray reaches Linux and Windows users without a menu bar). The choices, the
+  permission answer, and the daily-cap pauses already announced (so a restart
+  or a replaced daemon does not announce one again) are saved in
+  `notifications.json` in the app's config directory
+  (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
+  only copy of the state: a click on either menu flips them, then both menus
+  are rebuilt or updated from them. Native menus need no page capability.
+- **Authentication.** The daemon accepts one bearer credential, the launch
+  capability the app already holds for `/api/health`; it has no events-only or
+  read-only scope. The app sends it only in an `Authorization` header, only to
+  `GET /api/events` and the exchange, and never in a URL or log. The stream
+  starts with `Last-Event-ID` beyond the latest event, so the daemon sends only
+  new events and history is never shown as news; after a reconnect the app
+  resumes after the last event it saw. A review requested or finished while the
+  daemon was down is not announced.
+
 ## What pages may do
 
 - The window loads only the bundled screen and the attached daemon's origin.
@@ -153,7 +217,8 @@ SMAppService login items replace it.
   page is granted its commands.
 
 The app itself makes no network requests other than loopback requests to the
-daemon.
+daemon. Notifications use the operating system's notification service
+(`notify-rust`) only from Rust.
 
 ## Development
 
