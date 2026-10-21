@@ -37,8 +37,50 @@ func gitIn(t *testing.T, dir, date string, args ...string) string {
 }
 
 // addRef commits files as the root tree of a new orphan commit and points ref
-// at it, leaving main checked out.
+// at it, a loose ref, leaving main checked out.
 func addRef(t *testing.T, dir, ref string, files map[string]string) string {
+	t.Helper()
+	commit := orphanCommit(t, dir, ref, files)
+	gitIn(t, dir, refDate, "update-ref", ref, commit)
+	return commit
+}
+
+// addPackedRef is addRef for a ref that, on a case-insensitive filesystem
+// (macOS and Windows by default), would be the same loose ref file as a ref
+// differing from it only in case: the one would overwrite the other. It is
+// written to packed-refs instead, where both names are kept.
+func addPackedRef(t *testing.T, dir, ref string, files map[string]string) {
+	t.Helper()
+	commit := orphanCommit(t, dir, ref, files)
+	if _, err := os.Stat(filepath.Join(dir, ".git", "reftable")); err == nil {
+		// The reftable backend keeps refs in no file of their own.
+		gitIn(t, dir, refDate, "update-ref", ref, commit)
+		return
+	}
+	// With no header, so no "sorted" trait, git sorts the file as it reads it.
+	path := filepath.Join(dir, ".git", "packed-refs")
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	lines = append(lines, commit+" "+ref)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitIn(t, dir, refDate, "for-each-ref", "--format=%(objectname)", ref); got != commit {
+		t.Fatalf("packed ref %s = %q, want %s", ref, got, commit)
+	}
+}
+
+// orphanCommit commits files as the root tree of a new orphan commit, leaving
+// main checked out.
+func orphanCommit(t *testing.T, dir, message string, files map[string]string) string {
 	t.Helper()
 	gitIn(t, dir, refDate, "checkout", "-q", "--orphan", "scratch")
 	gitIn(t, dir, refDate, "rm", "-rqf", "--ignore-unmatch", ".")
@@ -52,9 +94,8 @@ func addRef(t *testing.T, dir, ref string, files map[string]string) string {
 		}
 	}
 	gitIn(t, dir, refDate, "add", "-A")
-	gitIn(t, dir, refDate, "commit", "-q", "-m", ref)
+	gitIn(t, dir, refDate, "commit", "-q", "-m", message)
 	commit := gitIn(t, dir, refDate, "rev-parse", "HEAD")
-	gitIn(t, dir, refDate, "update-ref", ref, commit)
 	gitIn(t, dir, refDate, "checkout", "-q", "main")
 	gitIn(t, dir, refDate, "branch", "-qD", "scratch")
 	return commit
@@ -83,10 +124,10 @@ func migratedRepo(t *testing.T) (dir string, refCommits map[string]string) {
 	addRef(t, dir, refPrefix+"45/ABCDEF012345X", junk)              // too long
 	addRef(t, dir, refPrefix+"AV/81ARZ3NDEKTSV4RRFFQ69G5FAV", junk) // ULID overflowing its timestamp
 	// Case variants of the genuine refs, which must not shadow or add to them.
-	addRef(t, dir, refPrefix+"45/ABCDEF012345", junk)
-	addRef(t, dir, refPrefix+"av/"+strings.ToLower(ulidID), junk)
-	addRef(t, dir, refPrefix+"AV/"+strings.ToLower(ulidID), junk)
-	addRef(t, dir, refPrefix+"av/"+ulidID, junk)
+	addPackedRef(t, dir, refPrefix+"45/ABCDEF012345", junk)
+	addPackedRef(t, dir, refPrefix+"av/"+strings.ToLower(ulidID), junk)
+	addPackedRef(t, dir, refPrefix+"AV/"+strings.ToLower(ulidID), junk)
+	addPackedRef(t, dir, refPrefix+"av/"+ulidID, junk)
 	return dir, refCommits
 }
 
@@ -250,8 +291,9 @@ func TestLocatedSaysWhichCheckpointsTheStoreHolds(t *testing.T) {
 	}
 }
 
-// A ref must be named exactly as Entire names it; a case variant is not a
-// checkpoint, and does not shadow the genuine ref.
+// A ref must be named as Entire names it; a case variant of the id is not a
+// checkpoint, and neither it nor a case variant of the shard shadows the
+// genuine ref.
 func TestResolveIgnoresCaseVariantRefs(t *testing.T) {
 	dir, refCommits := migratedRepo(t)
 	store, _, err := Resolve(context.Background(), dir)
@@ -260,6 +302,56 @@ func TestResolveIgnoresCaseVariantRefs(t *testing.T) {
 	}
 	if len(store.Refs) != 2 || store.Refs[migrated] != refCommits[migrated] || store.Refs[ulidID] != refCommits[ulidID] {
 		t.Errorf("refs = %v, want only the genuine ones", store.Refs)
+	}
+}
+
+// Only the ASCII case of a shard may differ: Unicode folding would take the
+// Kelvin sign for k, and no filesystem lists a ref Entire wrote that way.
+func TestRefIDFoldsOnlyTheASCIICaseOfTheShard(t *testing.T) {
+	const ulid = "01ARZ3NDEKTSV4RRFFQ69G5FKX"
+	for ref, want := range map[string]bool{
+		refPrefix + "KX/" + ulid: true,
+		refPrefix + "kx/" + ulid: true,
+		refPrefix + "KX/" + ulid: false,
+		refPrefix + "Kx/" + ulid: false,
+		refPrefix + "K/" + ulid:  false,
+	} {
+		if _, _, ok := refID(ref); ok != want {
+			t.Errorf("refID(%q) ok = %v, want %v", ref, ok, want)
+		}
+	}
+}
+
+// On a case-insensitive filesystem a loose ref goes in whichever spelling of
+// its shard directory was made first, and git lists it under that spelling:
+// a ULID ref ending in AB written after a 12-hex one in ab/ is listed as
+// ab/<ULID>. The shard's case is not the checkpoint's, so both are read.
+func TestResolveReadsRefsListedUnderAnotherCaseOfTheirShard(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	gitIn(t, dir, refDate, "init", "-q", "-b", "main")
+	gitIn(t, dir, refDate, "commit", "-q", "--allow-empty", "-m", "main")
+	const hexID, ulid = "0123456789ab", "01ARZ3NDEKTSV4RRFFQ69G5FAB"
+	hexCommit := addRef(t, dir, refPrefix+"AB/"+hexID, map[string]string{
+		"metadata.json": `{"checkpoint_id":"` + hexID + `"}`,
+	})
+	ulidCommit := addRef(t, dir, refPrefix+"ab/"+ulid, map[string]string{
+		"metadata.json":   `{"checkpoint_id":"` + ulid + `","sessions":[{"metadata":"/0/metadata.json"}]}`,
+		"0/metadata.json": `{"session_id":"in-ab","created_at":"2026-07-02T10:00:00Z"}`,
+	})
+	store, ok, err := Resolve(ctx, dir)
+	if err != nil || !ok {
+		t.Fatalf("Resolve = %+v, %v, %v", store, ok, err)
+	}
+	if len(store.Refs) != 2 || store.Refs[hexID] != hexCommit || store.Refs[ulid] != ulidCommit {
+		t.Fatalf("refs = %v, want both checkpoints", store.Refs)
+	}
+	got, err := Sessions(ctx, privateRepo(t, dir), store, []string{ulid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := got[ulid]; len(s) != 1 || s[0].SessionID != "in-ab" {
+		t.Errorf("Sessions = %+v, want the ULID checkpoint's session", got)
 	}
 }
 

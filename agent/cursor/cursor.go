@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -457,7 +456,7 @@ func (e streamEvent) tool(directory string) (name, path string) {
 			} `json:"args"`
 		}
 		_ = json.Unmarshal(body, &call)
-		name, path = key, relativePath(directory, call.Args.Path)
+		name, path = key, agent.EventPath(directory, call.Args.Path)
 	}
 	return name, path
 }
@@ -476,27 +475,6 @@ func (e streamEvent) toolStatus() string {
 		}
 	}
 	return "unknown"
-}
-
-// relativePath reports a tool's path relative to the run directory, or
-// <outside-run> for one outside it, with control characters replaced.
-func relativePath(directory, path string) string {
-	if path == "" {
-		return ""
-	}
-	if filepath.IsAbs(path) {
-		relative, err := filepath.Rel(directory, path)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return "<outside-run>"
-		}
-		path = relative
-	}
-	return bounded(strings.Map(func(r rune) rune {
-		if r < 32 {
-			return '?'
-		}
-		return r
-	}, path), 256)
 }
 
 // modelSource says where Result.Model came from: the configured model, or the

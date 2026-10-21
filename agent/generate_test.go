@@ -22,7 +22,7 @@ const testHunk = "h_0123456789ab"
 
 // authoredFixture is a valid document for the fixture bundle.
 func authoredFixture() []byte {
-	return []byte(`{"schema":"baum.review/1","summary":{"text":"Changes parser behavior.","review_exchange":{"summary":"No reviews available."},"change_kind":"feature","implements":[],"release_note":null,"breaking_change":null,"attention":null,"authorship":{"declared":"unknown","declared_tools":[],"anchors":[]}},"relations":[],"sections":[{"id":"sec_parser","title":"Parser","kind":"logical","hunks":["h_0123456789ab"],"summary":{"text":"Adds the parser.","anchors":[{"type":"hunk","id":"h_0123456789ab"}]},"attention":null,"risks":[],"evidence":[],"blocks":[]}]}`)
+	return []byte(`{"schema":"baum.review/1","summary":{"text":"Changes parser behavior.","context":{"area":{"text":"The parser turns source text into a syntax tree.","refs":[]}},"review_exchange":{"summary":"No reviews available."},"change_kind":"feature","implements":[],"release_note":null,"breaking_change":null,"attention":null,"authorship":{"declared":"unknown","declared_tools":[],"anchors":[]}},"relations":[],"sections":[{"id":"sec_parser","title":"Parser","kind":"logical","hunks":["h_0123456789ab"],"summary":{"text":"Adds the parser.","anchors":[{"type":"hunk","id":"h_0123456789ab"}]},"attention":null,"risks":[],"evidence":[],"blocks":[]}]}`)
 }
 
 // stubBackend is a Backend whose runs a test scripts.
@@ -154,6 +154,37 @@ func TestGenerateSendsTheOfferedTilesAfterTheBody(t *testing.T) {
 	run.TileKinds = []string{"no-such-kind"}
 	if _, _, err := generator.Generate(context.Background(), run); err == nil || !strings.Contains(err.Error(), "no-such-kind") {
 		t.Fatalf("an unknown tile kind: %v", err)
+	}
+}
+
+func TestGenerateOffersCandidateTileEntriesInsteadOfTheShippedOnes(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.TileKinds = []string{"database-schema"}
+	candidates, err := tilecatalogue.ParseEntries([]byte(`[{"kind":"database-schema","use_when":"candidate guidance"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.TileEntries, err = tilecatalogue.WithCandidates(run.TileKinds, candidates); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := generator.Generate(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	prompt := backend.calls[0].Prompt
+	if !strings.Contains(prompt, "candidate guidance") || strings.Contains(prompt, "Explain table, column, index or relationship changes.") {
+		t.Fatalf("prompt does not carry the candidate entry instead of the shipped one: %.400s", prompt)
+	}
+}
+
+func TestGenerateTreatsEmptyTileEntriesAsTheShippedOnes(t *testing.T) {
+	generator, run, backend := loopFixture(t, nil)
+	run.TileKinds = []string{"database-schema"}
+	run.TileEntries = []tilecatalogue.Entry{}
+	if _, _, err := generator.Generate(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if want := testBody + tilecatalogue.Instructions(run.TileKinds) + "\n\nInput bundle"; !strings.HasPrefix(backend.calls[0].Prompt, want) {
+		t.Fatalf("an empty entry list changed the offered tiles: %.300s", backend.calls[0].Prompt)
 	}
 }
 

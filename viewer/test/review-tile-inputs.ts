@@ -1,6 +1,6 @@
 /** Synthetic test inputs derived from the contract, never imported by application code. */
 import reviewTileSchema from "../../schema/review-1.json" with { type: "json" };
-import legacyTileSchema from "../src/legacy-review-tiles.json" with { type: "json" };
+import legacyTileSchema from "../../schema/legacy-review-tiles.json" with { type: "json" };
 import type { ReviewTile } from "../generated/review-tile-types.js";
 
 type Schema = {

@@ -558,35 +558,132 @@ func TestRedactionMarginAtItsBoundary(t *testing.T) {
 	}
 }
 
-// The margin must cover the furthest the engine reads past where a secret
-// starts. The PEM rule, which has the longest lookahead in the goredact
-// version measured, masks a key with no END marker up to the end of its
-// window, so that span bounds the window. Any goredact upgrade must
-// re-measure redactionMargin against its rules' lookaheads (see its
-// comment), then update the version pinned here.
+// The margin must cover the furthest the engine reads past a secret's
+// trigger to confirm it: in the goredact version pinned here, the
+// private-key rules' 16384-byte window. A PEM key whose first body run ends
+// that far past "-----BEGIN " is found, and one a byte further is not.
+// Once found, a key is masked to its END marker, past the margin. Any
+// goredact upgrade must re-measure redactionMargin against its rules'
+// lookaheads (see its comment), then update the version pinned here.
 func TestRedactionMarginCoversTheEngine(t *testing.T) {
 	gomod, err := os.ReadFile(filepath.Join("..", "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(gomod), "github.com/baum-ai/goredact v0.2.0\n") {
+	if !strings.Contains(string(gomod), "github.com/baum-ai/goredact v0.3.0\n") {
 		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
 	}
 	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	begin := "-----BEGIN RSA " + "PRIVATE KEY-----\n"
-	text := begin + strings.Join(keyBody(4*redactionMargin/65), "\n")
-	spans, err := redactor.Find(context.Background(), text)
+	begin := "-----BEGIN RSA " + "PRIVATE KEY-----"
+	trigger := len("-----BEGIN ")
+	body := strings.Join(keyBody(4*redactionMargin/65), "\n")
+	end := "\n-----END RSA " + "PRIVATE KEY-----"
+	// reach is how far past the trigger the 16th byte of the key's first
+	// body line lies, the byte that makes the body plausible key material.
+	for reach, found := range map[int]bool{redactionMargin: true, redactionMargin + 1: false} {
+		blank := reach - (len(begin) - trigger) - 16
+		text := begin + strings.Repeat("\n", blank) + body + end + "\nafter"
+		spans, err := redactor.Find(context.Background(), text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(spans) > 0 && spans[0].Start == 0; got != found {
+			t.Fatalf("a key decided %d bytes past its trigger: found %v, want %v; the margin is %d", reach, got, found, redactionMargin)
+		}
+		if found && (len(spans) != 1 || spans[0].End != len(text)-len("\nafter")) {
+			t.Fatalf("the key is not masked to its END marker: %+v of %d bytes", spans, len(text))
+		}
+	}
+}
+
+// pgpKeyLines returns an ASCII-armored PGP private key block of at least
+// size bytes, one line per element: synthetic base64, not key material.
+func pgpKeyLines(size int) []string {
+	label := "PGP " + "PRIVATE KEY BLOCK"
+	lines := append([]string{"-----BEGIN " + label + "-----", ""}, keyBody(size/65+1)...)
+	return append(lines, "=Qz7a", "-----END "+label+"-----")
+}
+
+// A key far longer than the margin, added in a hunk, is masked whole in the
+// bundle: every line of it, past the line cap and the margin too, keeps its
+// diff marker and nothing else.
+func TestRedactionMasksALongKeyInAHunk(t *testing.T) {
+	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spans) == 0 || spans[0].Start != 0 {
-		t.Fatalf("the unterminated key is not found: %+v", spans)
+	key := pgpKeyLines(40 << 10)
+	patch := "@@ -1,2 +1,700 @@\n before\n" + prefixLines("+", strings.Join(key, "\n")) + "\n after\n"
+	for _, limit := range []int{0, 40} {
+		var got string
+		if limit == 0 {
+			b := &Bundle{Diff: []Hunk{{Patch: strings.TrimRight(patch, "\n")}}}
+			if err := Redact(context.Background(), b, redactor); err != nil {
+				t.Fatal(err)
+			}
+			got = b.Diff[0].Patch
+			if !strings.HasSuffix(got, "\n after") || strings.Count(got, "\n") != len(key)+2 {
+				t.Fatalf("the hunk lost its lines or its trailing context:\n%s", got[max(0, len(got)-200):])
+			}
+		} else {
+			var want string
+			got, want, _ = cutAfterRedaction(t, redactor, patch, limit)
+			if got != want {
+				t.Fatalf("capped at %d lines: redaction differs from the whole patch's", limit)
+			}
+		}
+		for _, line := range key[2:] {
+			if strings.Contains(got, line) {
+				t.Fatalf("limit %d: key line %q survives", limit, line)
+			}
+		}
+		if strings.Contains(got, "PRIVATE KEY") {
+			t.Fatalf("limit %d: the armor survives", limit)
+		}
+		for _, line := range strings.Split(got, "\n")[1:] {
+			if line != "" && !strings.ContainsRune(" +", rune(line[0])) {
+				t.Fatalf("limit %d: line %q lost its diff marker", limit, line)
+			}
+		}
 	}
-	if past := spans[0].End - len(begin); past > redactionMargin || past < redactionMargin/2 {
-		t.Fatalf("the key is masked %d bytes past its BEGIN line; the margin is %d", past, redactionMargin)
+}
+
+// A PuTTY key added in a hunk is found on its "+" lines: its private lines
+// are masked, its public lines kept.
+func TestRedactionMasksAPuTTYKeyInAHunk(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := keyBody(5)
+	public, private := lines[:2], lines[2:]
+	ppk := []string{
+		"PuTTY-User-Key-File-3: ssh-rsa", "Encryption: none", "Comment: rsa-key-20261020",
+		"Public-Lines: 2", public[0], public[1],
+		"Private-Lines: 3", private[0], private[1], private[2],
+		"Private-MAC: " + strings.Repeat("0a1b2c3d", 8),
+	}
+	patch := "@@ -0,0 +1,11 @@\n" + prefixLines("+", strings.Join(ppk, "\n"))
+	b := &Bundle{Diff: []Hunk{{Patch: patch}}}
+	if err := Redact(context.Background(), b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	got := b.Diff[0].Patch
+	for _, line := range private {
+		if strings.Contains(got, line) {
+			t.Fatalf("private key line %q survives:\n%s", line, got)
+		}
+	}
+	for _, line := range append(public, "+Private-MAC: ", "+Public-Lines: 2") {
+		if !strings.Contains(got, line) {
+			t.Fatalf("%q was masked:\n%s", line, got)
+		}
+	}
+	if b.MaskedSpanCount != 1 || strings.Count(got, "\n") != strings.Count(patch, "\n") {
+		t.Fatalf("masked %d spans, %d lines; want the one key and every line:\n%s", b.MaskedSpanCount, strings.Count(got, "\n")+1, got)
 	}
 }
 

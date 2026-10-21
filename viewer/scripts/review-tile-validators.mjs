@@ -29,7 +29,7 @@ export async function buildReviewTileValidators() {
   );
   // Stored documents may still carry tile kinds the shared schema retired.
   const legacy = JSON.parse(
-    await readFile(new URL("../src/legacy-review-tiles.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../schema/legacy-review-tiles.json", import.meta.url), "utf8"),
   );
   const defs = { ...schema.$defs, ...legacy.$defs };
   const ajv = new Ajv2020({
