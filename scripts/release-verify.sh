@@ -21,6 +21,20 @@ for archive in baum-linux-amd64.tar.gz baum-linux-arm64.tar.gz baum-darwin-amd64
   baum-darwin-arm64.tar.gz baum-windows-amd64.zip checksums.txt; do
   if [ -s "dist/$archive" ]; then
     echo "ok   dist/$archive"
+    # The licence and the third-party notices travel with every binary.
+    case "$archive" in
+      *.tar.gz) listing=$(tar -tzf "dist/$archive") ;;
+      *.zip) listing=$(unzip -Z1 "dist/$archive") ;;
+      *) listing= ;;
+    esac
+    if [ -n "$listing" ]; then
+      for member in LICENSE THIRD_PARTY_NOTICES.txt; do
+        if ! printf '%s\n' "$listing" | grep -qx "$member"; then
+          echo "FAIL dist/$archive does not contain $member" >&2
+          status=1
+        fi
+      done
+    fi
   else
     echo "FAIL dist/$archive is missing or empty" >&2
     status=1

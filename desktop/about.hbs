@@ -1,0 +1,16 @@
+Rust crates compiled into the baum desktop app
+
+{{#each licenses}}
+------------------------------------------------------------------------------
+{{name}} ({{id}})
+
+Used by:
+{{#each used_by}}
+{{#unless (eq crate.name "baum-desktop")}}
+  {{crate.name}} {{crate.version}}{{#if crate.repository}}  {{crate.repository}}{{/if}}
+{{/unless}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

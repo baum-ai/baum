@@ -63,3 +63,15 @@ release-verify:
 # Install baum from a module-proxy-shaped source tree with no Node, then smoke test it
 clean-install:
     bash scripts/clean-install.sh
+
+# Regenerate third_party/go.txt (the Go modules' licences) and assemble
+# THIRD_PARTY_NOTICES.txt from it and the npm and Rust parts. The npm and Rust
+# parts need their own containers: from the monorepo root run
+# "just third-party-notices" instead.
+notices-go:
+    sh scripts/third-party-notices.sh go
+    sh scripts/third-party-notices.sh assemble
+
+# Fail when the committed Go notices or an assembled notices file is stale
+notices-check:
+    sh scripts/third-party-notices.sh check

@@ -28,7 +28,13 @@
     "createUpdaterArtifacts": false,
     "category": "DeveloperTool",
     "shortDescription": "Keep up with what your coding agents build",
+    "copyright": "Copyright (c) 2026 Baum AI Ltd",
+    "license": "MIT",
     "externalBin": ["binaries/baum"],
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -29,6 +29,11 @@ build bundles="deb": sidecar
 bundle version="0.0.0": sidecar
     {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
 
+# Regenerate ../third_party/rust.txt, the licences of the crates in the app
+# (just third-party-notices does the rest)
+notices:
+    {{ heavy }} desktop-test scripts/third-party-notices.sh
+
 # Check that scripts/updater-manifest.sh rejects tampered releases
 updater-test:
     {{ heavy }} desktop-test scripts/updater-manifest-test.sh
