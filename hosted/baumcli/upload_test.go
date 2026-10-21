@@ -233,6 +233,7 @@ func TestCancelledUploadLeavesNoStagingDirectory(t *testing.T) {
 	// The interrupt arrives while the archive is being uploaded.
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	release := make(chan struct{})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /github/repositories/find", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"id": "repo-1", "full_name": "acme/demo", "enabled": true})
@@ -241,11 +242,15 @@ func TestCancelledUploadLeavesNoStagingDirectory(t *testing.T) {
 		cancel()
 		select {
 		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
+		case <-release:
 		}
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
+	// The handler never sees the disconnect while the request body is unread,
+	// so it holds the request open until the test ends. Cleanups run last
+	// first, so this releases it before srv.Close waits for it.
+	t.Cleanup(func() { close(release) })
 	if err := saveCredentials(credentials{ServerURL: srv.URL, Token: "rcnt_upload"}); err != nil {
 		t.Fatal(err)
 	}
