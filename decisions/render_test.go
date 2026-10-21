@@ -99,7 +99,7 @@ func TestRenderOrdersRowsBySourcePositionWithoutTimestamps(t *testing.T) {
 		tool("u1", "q", "AskQuestion", `{"questions":[{"prompt":"third?"}]}`, session.ToolResult{Status: session.StatusNoResult}).at("q", 30).
 		render(t).Text()
 
-	if first, second, third := strings.Index(text, "first"), strings.Index(text, "second"), strings.Index(text, "third?"); !(first < second && second < third) {
+	if first, second, third := strings.Index(text, "first"), strings.Index(text, "second"), strings.Index(text, "third?"); first >= second || second >= third {
 		t.Errorf("rows not in source order:\n%s", text)
 	}
 }
