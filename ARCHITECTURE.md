@@ -795,10 +795,10 @@ them; the hosted service imports it with its own private prompt.
   `<local path>`, and account names from the tree's home-directory paths are
   masked as `user` where they are joined to path, host or branch punctuation.
   Masking runs before any trimming. It is best effort.
-- **Tree.** `NewTree` exposes the rules `Render` applies (turn ownership,
-  dialogue and subagent detection, edited paths, path masking and row order)
-  so another render of the same tree, such as the hosted validation
-  transcript, shares them instead of copying them.
+- **Tree.** `NewTree` exposes the rules `Render` applies (dialogue and
+  subagent detection, edited paths, path masking and row order) so another
+  render of the same tree, such as a validation transcript, shares them
+  instead of copying them.
 - **Extraction.** `NewExtractor(systemPrompt)` builds one structured-output
   request through a `Model` the host implements: the prompt as the system
   message, `Transcript.Text()` as the user message, and `ExtractSchema`, a

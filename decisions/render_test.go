@@ -204,7 +204,7 @@ func TestRenderRedactsSecretsEmailsAndLocalPaths(t *testing.T) {
 		render(t).Text()
 
 	// alice is the account in the session's recorded working directory, so it
-	// is masked in every form, not only inside /home/alice.
+	// is masked in every form, not only inside its home directory.
 	for _, leaked := range []string{"bob@example.com", "ghp_JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM", "/home/alice", "/tmp/claude", ".cursor", "lice"} {
 		if strings.Contains(text, leaked) {
 			t.Errorf("transcript leaks %q:\n%s", leaked, text)
@@ -221,13 +221,13 @@ func TestRenderMasksJoinedAccountNamesOnly(t *testing.T) {
 	c := newCaseGraph()
 	c.graph.Sessions[0].WorkingDir = new("/home/will/repo")
 	text := c.
-		input("u1", 1, session.OriginHuman, "We will ship it; see https://example.com/home/page and will.example.dev").
+		input("u1", 1, session.OriginHuman, "We will ship it; see https://example.com/home/dev and will.example.dev").
 		// A home directory inside the repository names nobody.
-		edit("u1", "/home/will/repo/src/home/components/Button.tsx").
+		edit("u1", "/home/will/repo/src/home/dev/Button.tsx").
 		say("u1", "The components render.").
 		render(t).Text()
 
-	for _, want := range []string{"We will ship it", "https://example.com/home/page", "user.example.dev", "The components render."} {
+	for _, want := range []string{"We will ship it", "https://example.com/home/dev", "user.example.dev", "The components render."} {
 		if !strings.Contains(text, want) {
 			t.Errorf("transcript lacks %q:\n%s", want, text)
 		}
@@ -306,7 +306,7 @@ func TestRenderSessionFilesKeepExactStoredSpelling(t *testing.T) {
 
 func TestRenderSessionFilesLeaveTextCutByCwd(t *testing.T) {
 	// Text is cut by recorded roots and working directories only; the list
-	// takes the stored spelling. The prompt has decision files copied from the list.
+	// takes the stored spelling. Decision files are cited from the list.
 	c := newCaseGraph()
 	c.graph.Sessions[0].WorkingDir = new("/home/alice/repo/ui")
 	transcript := c.

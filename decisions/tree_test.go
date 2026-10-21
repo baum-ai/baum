@@ -9,8 +9,8 @@ import (
 	"github.com/baum-ai/baum/sessions/session"
 )
 
-// The Tree's exported rules are the ones Render applies, for other renders of
-// the same tree.
+// The Tree's rules are the ones Render applies, for other renders of the same
+// tree.
 func TestTreeSharesTheTranscriptRules(t *testing.T) {
 	rejected := "The user doesn't want to proceed with this tool use. The tool use was rejected."
 	c := newCaseGraph().
@@ -31,8 +31,8 @@ func TestTreeSharesTheTranscriptRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if tree.TurnOf("s", "u2") != "u2" || tree.TurnOf("child", "anything") != "u1" {
-		t.Errorf("turns: root input %q, nested %q", tree.TurnOf("s", "u2"), tree.TurnOf("child", "anything"))
+	if tree.turnOf("s", "u2") != "u2" || tree.turnOf("child", "anything") != "u1" {
+		t.Errorf("turns: root input %q, nested %q", tree.turnOf("s", "u2"), tree.turnOf("child", "anything"))
 	}
 	if child, ok := tree.SpawnedSession("spawn"); !ok || child != "child" {
 		t.Errorf("SpawnedSession = %q, %v", child, ok)
@@ -43,8 +43,8 @@ func TestTreeSharesTheTranscriptRules(t *testing.T) {
 	if result := tree.Result("w"); result == nil || result.Status != session.StatusError {
 		t.Errorf("Result = %+v", result)
 	}
-	if id, async := ClaudeSubagent(c.graph.ToolUses[0], tree.Result("spawn")); id != "a1" || !async {
-		t.Errorf("ClaudeSubagent = %q, %v", id, async)
+	if agent := claudeAgent(c.graph.ToolUses[0], tree.Result("spawn")); agent.AgentID != "a1" || !agent.IsAsync {
+		t.Errorf("claudeAgent = %+v", agent)
 	}
 	if report, spawn := tree.NotificationReport(c.graph.UserInputs[1]); report != "Async report" || spawn != "spawn" {
 		t.Errorf("NotificationReport = %q, %q", report, spawn)
@@ -70,8 +70,8 @@ func TestTreeSharesTheTranscriptRules(t *testing.T) {
 	if got := tree.ScrubPaths("see /home/alice/repo/kept.go and /tmp/x on alice.example.dev"); got != "see kept.go and <local path> on user.example.dev" {
 		t.Errorf("ScrubPaths = %q", got)
 	}
-	if names := AccountNames(&c.graph); !slices.Equal(names, []string{"alice"}) {
-		t.Errorf("AccountNames = %v", names)
+	if names := localNames(&c.graph); !slices.Equal(names, []string{"alice"}) {
+		t.Errorf("localNames = %v", names)
 	}
 	if HumanText(c.graph.UserInputs[0]) != "Review it" || HumanText(c.graph.UserInputs[1]) != "" {
 		t.Error("HumanText keeps a system input or drops a prompt")
@@ -111,6 +111,9 @@ func TestSortRowsOrdersTheGivenRows(t *testing.T) {
 	}
 	if at := timed[0].Timestamp(); at == nil || !at.Equal(early) {
 		t.Errorf("Timestamp = %v", at)
+	}
+	if at := (Row{}).Timestamp(); at != nil {
+		t.Errorf("empty row Timestamp = %v, want nil", at)
 	}
 
 	// One untimed row: the invocation, then messages before calls, decide.

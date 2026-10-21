@@ -440,8 +440,8 @@ func TestExtractDropsInvalidDecisions(t *testing.T) {
 	}
 }
 
-// NUL characters, which PostgreSQL rejects, are removed from the reply's text,
-// so a decision is cached rather than paid for on every review.
+// NUL characters, which text stores such as PostgreSQL reject, are removed
+// from the reply's text, so a decision can be stored.
 func TestExtractRemovesNULCharacters(t *testing.T) {
 	got := extract(t, citationTranscript(), `{"decisions":[
 		{"summary":"Use\u0000 postgres","who":"agent","category":"testing","trigger":"request","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"sql\u0000ite","superseded":false,"turns":[1],"files":[]},

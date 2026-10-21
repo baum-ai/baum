@@ -149,10 +149,10 @@ func WithVendor(vendor string) Option {
 	return func(s *settings) { s.vendor = vendor }
 }
 
-// WithSessionFiles supplies the session's stored file evidence
-// (agent_session_files): Correlate's repo-relative files for the session's
-// repository, built with evidence the graph does not hold, such as Entire's
-// files_touched. They anchor relativization, and an edit counts only when
+// WithSessionFiles supplies the session's file evidence as
+// sessioncorrelate.Correlate made it: repo-relative files for the session's
+// repository, possibly built with evidence the graph does not hold, such as
+// Entire's files_touched. They anchor relativization, and an edit counts only when
 // Correlate also reports it as an edit, so files in another repository and
 // paths Correlate could not prove stay out. A path a working directory cut
 // short takes the spelling of the one stored edit it names (storedEdit).
@@ -189,7 +189,7 @@ func Render(ctx context.Context, graph *session.Graph, redactor Redactor, opts .
 // the tree's roots and working directories, the account names its paths
 // reveal, the calls the human rejected, and the order of its rows. Render
 // builds the decisions transcript from one. Its exported methods let another
-// render of the same tree, such as the hosted validation transcript, share
+// render of the same tree, such as a validation transcript, share
 // these rules rather than copy them.
 type Tree struct {
 	graph  *session.Graph
@@ -274,8 +274,8 @@ func newTree(graph *session.Graph, rootID string, s settings) *Tree {
 	// Roots come first, longest first, then working directories, so a path
 	// under a recorded root reads repo-relative, as in the edited-file list.
 	// Text is cut by these directories alone: a path a subdirectory cwd cut
-	// short reads src/x.ts even when storedEdit lists it as web/src/x.ts. The
-	// prompt has decision files copied from the edited-file list, and
+	// short reads src/x.ts even when storedEdit lists it as web/src/x.ts.
+	// Decision files are cited from the edited-file list, and
 	// ValidateCitations drops any other spelling.
 	for _, group := range [][]string{r.paths.Roots(), r.paths.Dirs()} {
 		var dirs []string
@@ -326,10 +326,10 @@ func newTree(graph *session.Graph, rootID string, s settings) *Tree {
 	return r
 }
 
-// TurnOf returns the root input a row with this session and input belongs to:
+// turnOf returns the root input a row with this session and input belongs to:
 // the input itself in the root session, else the root input whose call
 // spawned the row's nested session (whatever inputID is).
-func (r *Tree) TurnOf(sessionID, inputID string) string {
+func (r *Tree) turnOf(sessionID, inputID string) string {
 	if sessionID == r.rootID {
 		return inputID
 	}
@@ -450,7 +450,7 @@ func (r *Tree) editedFiles(inputID string) []string {
 	seen := map[string]bool{}
 	files := []string{}
 	for _, touch := range r.graph.FileTouches {
-		if r.TurnOf(touch.SessionID, touch.UserInputID) != inputID {
+		if r.turnOf(touch.SessionID, touch.UserInputID) != inputID {
 			continue
 		}
 		path, ok := r.EditedPath(touch)
@@ -647,13 +647,6 @@ func ReportOnCall(use session.ToolUse) bool {
 type agentResult struct {
 	AgentID string `json:"agentId"`
 	IsAsync bool   `json:"isAsync"`
-}
-
-// ClaudeSubagent reads the subagent id and async flag Claude Code records on
-// an Agent or Task tool result. Both are empty for any other call.
-func ClaudeSubagent(use session.ToolUse, result *session.ToolResult) (agentID string, async bool) {
-	agent := claudeAgent(use, result)
-	return agent.AgentID, agent.IsAsync
 }
 
 // claudeAgent reads the subagent fields Claude Code records on an Agent or
@@ -902,7 +895,9 @@ func (r *Tree) redactTurn(ctx context.Context, redactor Redactor, turn *Turn) er
 // ScrubPaths rewrites the tree's roots and working directories to
 // repo-relative form, masks every other local path, and masks the account
 // names the tree's own paths reveal where they are joined to other text: a
-// dashed project directory, a hostname, a branch.
+// dashed project directory, a hostname, a branch. It masks paths and account
+// names only and redacts no secrets or e-mail addresses: its output must
+// still go through a Redactor, as Render does, before it is shown or sent.
 func (r *Tree) ScrubPaths(text string) string {
 	for _, dir := range r.dirs {
 		text = strings.ReplaceAll(text, dir+"/", "")
@@ -1016,12 +1011,16 @@ type Row struct {
 	Index   int
 }
 
-// Timestamp is the message's or tool call's timestamp, nil when unknown.
+// Timestamp is the message's or tool call's timestamp, nil when unknown or
+// when the row has neither.
 func (row Row) Timestamp() *time.Time {
-	if row.Message != nil {
+	switch {
+	case row.Message != nil:
 		return row.Message.Timestamp
+	case row.ToolUse != nil:
+		return row.ToolUse.Timestamp
 	}
-	return row.ToolUse.Timestamp
+	return nil
 }
 
 // SortRows puts rows in session order as the transcript orders a turn: by
@@ -1036,11 +1035,4 @@ func (r *Tree) SortRows(rows []Row) {
 		}
 		return ordered{id: row.ToolUse.ID, timestamp: row.ToolUse.Timestamp, invocation: r.invocation[row.ToolUse.ModelInvocationID], rank: 1, index: row.Index}
 	})
-}
-
-// AccountNames are the account names in the tree's recorded paths that start
-// in a home directory, as the transcript masks them where they are joined to
-// path, host or branch punctuation. Generic names such as "dev" are left out.
-func AccountNames(graph *session.Graph) []string {
-	return localNames(graph)
 }
