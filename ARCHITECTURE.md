@@ -220,10 +220,16 @@ backoff, `sources` and the mapping onto the bundle.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
+  The hunks of one file are redacted together, as the file's patch, so a
+  key that runs on from one hunk into the next, past the hunk header between
+  them, is masked in both; each hunk header keeps its `@@ -a,b +c,d @@`
+  line ranges, while the section heading after them stays masked when it is
+  a line of the key.
   The per-hunk line cap cuts after redaction: parsing keeps 16 KiB past
-  the cap, so a key the cut runs through is masked whole, as it would be in
-  the full patch. A previous section's code excerpt lines are redacted as
-  one text too.
+  the cap, and keeps a file's whole patch until redaction when the cap cuts
+  a hunk other than its last, so a key the cut runs through is masked
+  whole, as it would be in the full patch. A previous section's code excerpt
+  lines are redacted as one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
