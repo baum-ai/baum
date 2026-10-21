@@ -47,6 +47,10 @@ func TestCommitsListsTheRangeOldestFirst(t *testing.T) {
 	if !slices.Equal(commits[1].Trailers, wantTrailers) {
 		t.Errorf("trailers = %q", commits[1].Trailers)
 	}
+	wantMessage := "Add second\n\nbody text\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nReviewed-by: Ada <ada@example.com>"
+	if commits[1].Message != wantMessage {
+		t.Errorf("message = %q, want %q", commits[1].Message, wantMessage)
+	}
 	if empty, err := r.Commits(context.Background(), f.head, f.head); err != nil || len(empty) != 0 {
 		t.Errorf("empty range = %v, %v", empty, err)
 	}

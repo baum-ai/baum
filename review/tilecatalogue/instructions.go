@@ -16,8 +16,11 @@ Code sources use exact repository-relative paths and name their revision as "hea
 // Instructions is what a run adds to the prompt body for the offered kinds:
 // nothing when none are offered, otherwise the tile guidance and the catalogue
 // entries of those kinds.
-func Instructions(kinds []string) string {
-	entries := Entries(kinds)
+func Instructions(kinds []string) string { return InstructionsFor(Entries(kinds)) }
+
+// InstructionsFor is Instructions for entries already chosen, such as the
+// offered kinds with candidate entries (WithCandidates).
+func InstructionsFor(entries []Entry) string {
 	if len(entries) == 0 {
 		return ""
 	}

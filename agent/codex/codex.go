@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -286,9 +288,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			if message == "" {
 				message = lastError
 			}
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(message)})
-			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", agent.ErrorStatus(message))
-			err = errors.New(agent.ReasonProviderUnavailable)
+			status, refused := failureStatus(message)
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: refused})
+			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
+			err = agent.ProviderFailure("codex", status, refused)
 		}
 		if err == nil && result.Calls > request.MaxCalls {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
@@ -317,7 +320,14 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	if waitErr != nil {
 		if lastError != "" {
-			result.Events = append(result.Events, agent.Event{Kind: "error", Status: agent.ErrorStatus(lastError)})
+			status, structured := failureStatus(lastError)
+			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: structured})
+			// A refusal read from the provider ends the run whether or not
+			// Codex reported a failed turn before exiting.
+			var rejected *agent.RejectedError
+			if err := agent.ProviderFailure("codex", status, structured); errors.As(err, &rejected) {
+				return result, err
+			}
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
@@ -338,6 +348,51 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	result.Model = c.Model
 	result.Events = append(result.Events, agent.Event{Kind: "document", Bytes: len(document)})
 	return result, nil
+}
+
+// unexpectedStatus is how Codex names the HTTP status of a provider response
+// it gave up on, other than a 400 (whose message is the response body) and
+// an exhausted 429 ("last status: 429").
+var unexpectedStatus = regexp.MustCompile(`unexpected status (\d{3})\b`)
+
+// invalidSchema is the error code of a response format the provider refused.
+var invalidSchema = regexp.MustCompile(`"code":\s*"invalid_json_schema"`)
+
+// bodyMarkers are structured parts of a provider response Codex quotes
+// without naming its status, each with the class it gives.
+var bodyMarkers = []struct {
+	pattern *regexp.Regexp
+	status  string
+}{
+	{invalidSchema, "invalid_schema"},
+	{regexp.MustCompile(`"type":\s*"invalid_request_error"`), "invalid_request"},
+	{regexp.MustCompile(`last status: 429\b`), "rate_limit"},
+}
+
+// failureStatus classifies a failed turn's message and reports whether the
+// class was read from the provider rather than guessed from free text: only
+// such a class may end the run as a refusal. A named HTTP status decides alone (a
+// 400 whose body names an invalid schema is invalid_schema), so a 408 or 5xx
+// is never a refusal whatever its body quotes; without one, only a structured
+// marker of the body may refuse. Free text is classified for the diagnostics
+// only: a request ID or a quoted run can hold "400" or "authentication".
+func failureStatus(message string) (string, bool) {
+	if match := unexpectedStatus.FindStringSubmatch(message); match != nil {
+		code, _ := strconv.Atoi(match[1])
+		if code == 400 && invalidSchema.MatchString(message) {
+			return "invalid_schema", true
+		}
+		if status := agent.HTTPErrorStatus(code); status != "" {
+			return status, true
+		}
+		return "error", false
+	}
+	for _, marker := range bodyMarkers {
+		if marker.pattern.MatchString(message) {
+			return marker.status, true
+		}
+	}
+	return agent.ErrorStatus(message), false
 }
 
 // since is how long ago a turn started, or zero when none did.

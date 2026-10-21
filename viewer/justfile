@@ -35,3 +35,28 @@ e2e:
 [positional-arguments]
 pnpm *args:
     {{ heavy }} pnpm "$@"
+
+# Tile gallery: every tile from prompt-eval runs, exported stored reviews and
+# hand-edited fixtures, rendered by the real tile components with Vite hot
+# reload. Serves http://127.0.0.1:${GALLERY_PORT:-5180}; Ctrl+C stops it.
+gallery:
+    #!/usr/bin/env sh
+    set -eu
+    port="${GALLERY_PORT:-5180}"
+    root="$(cd {{ source_directory() }}/../.. && pwd)"
+    # Created here, as the invoking user, so Docker never creates them as root.
+    mkdir -p "$root/tools/prompt-eval/runs" "{{ source_directory() }}/gallery-data/fixtures" "{{ source_directory() }}/gallery-data/stored"
+    echo "tile gallery: http://127.0.0.1:$port"
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/viewer \
+        -p "127.0.0.1:$port:$port" \
+        -v "$root/tools/prompt-eval/runs:/tools/prompt-eval/runs:ro" \
+        -e "GALLERY_PORT=$port" -e "GALLERY_HOST_RUNS_DIR=$root/tools/prompt-eval/runs" \
+        -e "GALLERY_POLLING=${GALLERY_POLLING:-0}" \
+        ui-test pnpm gallery
+
+# Dump the dev database's stored reviews that hold tiles into
+# gallery-data/stored for the gallery. Flags: --repository owner/name,
+# --kinds a,b, --limit N.
+[positional-arguments]
+gallery-export *args:
+    {{ source_directory() }}/../../tools/prompt-eval/export-stored-tiles.sh "$@"

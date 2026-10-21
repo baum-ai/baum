@@ -61,6 +61,12 @@ func writeConfig(t *testing.T, content string) {
 }
 
 func TestGenerateWritesOnlyTheDocumentToStdout(t *testing.T) {
+	// Other packages' tests run at the same time in the system temp directory,
+	// so check for leftovers in this run's own.
+	temp := t.TempDir()
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, temp)
+	}
 	stub, stores := generateEnv(t)
 	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7"}, stores...)...)
 	if err != nil {

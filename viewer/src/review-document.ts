@@ -370,6 +370,25 @@ export type ReviewStack = {
   members: { number: number; head_sha: string; review_version: number }[];
 };
 
+/** A file or directory of the repository, and optionally a symbol in it. */
+export type ReviewContextRef = {
+  path: string;
+  symbol: string | null;
+};
+
+/** One part of a review's context: a short Markdown paragraph and its files. */
+export type ReviewContextPart = {
+  text: string;
+  refs: ReviewContextRef[];
+};
+
+export type ReviewContext = {
+  area: ReviewContextPart;
+  reached_by?: ReviewContextPart;
+  contracts?: ReviewContextPart;
+  related?: ReviewContextPart;
+};
+
 export type ReviewDocument = {
   schema: string;
   /** Present only on a stack review. */
@@ -406,6 +425,9 @@ export type ReviewDocument = {
   summary: {
     title: string;
     text: string;
+    /** How the change fits into the codebase around it. Absent on documents
+     *  generated before it existed. */
+    context?: ReviewContext;
     change_kind: string;
     implements: Implements[];
     release_note: string | null;
@@ -1576,6 +1598,32 @@ export function hunkUrl(document: ReviewDocument, hunk: IndexedHunk): string {
  *  a removed hunk, which has no new side to land on. */
 export function hunkLine(hunk: IndexedHunk): number | undefined {
   return hunk.change !== "removed" && hunk.new_range[0] > 0 ? hunk.new_range[0] : undefined;
+}
+
+/** A file of a repository on GitHub at a revision, each path segment encoded.
+ *  GitHub redirects a directory's blob link to its tree. */
+export function githubBlobUrl(repository: string, revision: string, path: string): string {
+  return `https://github.com/${encodeSegments(repository)}/blob/${revision}/${encodeSegments(path)}`;
+}
+
+function encodeSegments(value: string): string {
+  return value.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Where a context reference's file or directory reads on GitHub: at the
+ *  reviewed head, or at the merge base when the pull request deletes it. A
+ *  path counts as deleted when hunks touch it or anything under it and every
+ *  one of them removes a file, so a directory the pull request deletes whole
+ *  links at the merge base, while a path one stack member removes and a later
+ *  member adds back still exists at head. A renamed file's old path links at
+ *  head: hunks name only the new path. */
+export function contextRefUrl(document: ReviewDocument, path: string): string {
+  const touching = document.index.hunks.filter(
+    (hunk) => hunk.path === path || hunk.path.startsWith(`${path}/`),
+  );
+  const deleted = touching.length > 0 && touching.every((hunk) => hunk.change === "removed");
+  const { repository, head, merge_base } = document.review;
+  return githubBlobUrl(repository, deleted ? merge_base : head, path);
 }
 
 /** The file of the change an anchor points into, and the line when it names

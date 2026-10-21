@@ -1,0 +1,68 @@
+{
+  "id": "tile_example_migration",
+  "kind": "database-schema",
+  "anchors": [{ "type": "file", "path": "platform/migrations/0042_review_tiles.up.sql" }],
+  "code": [
+    {
+      "path": "platform/migrations/0042_review_tiles.up.sql",
+      "revision": "1111111111111111111111111111111111111111",
+      "why": "Adds the review_tiles table and its index.",
+      "review_version": 1,
+      "diff": {
+        "hunks": [
+          {
+            "header": "@@ -10,4 +10,9 @@",
+            "lines": [
+              { "kind": "context", "old_line": 10, "new_line": 10, "text": "" },
+              { "kind": "context", "old_line": 11, "new_line": 11, "text": "-- tiles" },
+              { "kind": "add", "new_line": 12, "text": "CREATE TABLE review_tiles (" },
+              { "kind": "add", "new_line": 13, "text": "    id uuid PRIMARY KEY," },
+              {
+                "kind": "add",
+                "new_line": 14,
+                "text": "    review_id uuid NOT NULL REFERENCES pr_reviews (id),"
+              },
+              { "kind": "add", "new_line": 15, "text": "    kind text NOT NULL" },
+              { "kind": "add", "new_line": 16, "text": ");" },
+              { "kind": "context", "old_line": 12, "new_line": 17, "text": "" },
+              { "kind": "context", "old_line": 13, "new_line": 18, "text": "-- indexes" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "data": {
+    "overview": {
+      "headline": "A table for stored review tiles",
+      "description": "Each tile row belongs to one stored review and records its kind."
+    },
+    "tables": [
+      {
+        "name": "review_tiles",
+        "change": "add",
+        "columns": [
+          { "name": "id", "type": "uuid", "key": "primary" },
+          { "name": "review_id", "type": "uuid", "key": "foreign", "references": "pr_reviews.id" },
+          { "name": "kind", "type": "text" }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "from": "review_tiles.review_id",
+        "to": "pr_reviews.id",
+        "cardinality": "many-to-one",
+        "description": "A review has many tiles."
+      }
+    ],
+    "operations": [
+      {
+        "kind": "add",
+        "object": "table",
+        "subject": "review_tiles",
+        "detail": "New table with a primary key and a foreign key to pr_reviews."
+      }
+    ]
+  }
+}

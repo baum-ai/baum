@@ -28,7 +28,8 @@ var reviewSchema = reviewschema.Document
 // DocumentValidator holds three views of the review schema: Schema is the
 // lenient contract the model writes against, strict is the authored contract
 // a normalized document must satisfy before completion, and full is the
-// stored document with the host's derived fields.
+// stored document with the host's derived fields, which also accepts tiles of
+// the kinds the schema retired (storedDocumentSchema).
 type DocumentValidator struct {
 	Schema   []byte
 	Revision string
@@ -63,8 +64,12 @@ func (v *DocumentValidator) Contract() map[string]any {
 // NewDocumentValidator compiles the embedded review schema once. The result is
 // read-only, so it may be shared between goroutines.
 func NewDocumentValidator() (*DocumentValidator, error) {
+	stored, err := storedDocumentSchema()
+	if err != nil {
+		return nil, err
+	}
 	var fullSchema jsonschema.Schema
-	if err := json.Unmarshal(reviewSchema, &fullSchema); err != nil {
+	if err := json.Unmarshal(stored, &fullSchema); err != nil {
 		return nil, err
 	}
 	full, err := fullSchema.Resolve(nil)
@@ -87,6 +92,7 @@ func NewDocumentValidator() (*DocumentValidator, error) {
 	contract["title"] = "Model-authored baum review fields"
 	summary := props["summary"].(map[string]any)
 	omitProperties(summary, "title", "author", "risk_score")
+	requireAuthoredContext(summary)
 	authorship := summary["properties"].(map[string]any)["authorship"].(map[string]any)
 	omitProperties(authorship, "observed_sessions", "observed_vendors", "observed_models")
 	exchange := summary["properties"].(map[string]any)["review_exchange"].(map[string]any)
@@ -267,6 +273,23 @@ func sectionOutlineFindings(sections []sectionOutline, bundle *bundlepkg.Bundle)
 	return findings
 }
 
+// requireAuthoredContext makes summary.context part of every authored
+// document. The stored contract lets it be absent, for documents generated
+// before it existed, but a document the model writes now must have one: its
+// absence is a validation finding the model repairs, and the lenient contract
+// derived from this one requires it and does not let it be null.
+func requireAuthoredContext(summary map[string]any) {
+	context := summary["properties"].(map[string]any)["context"].(map[string]any)
+	if description, _ := context["description"].(string); description != "" {
+		if cut := strings.Index(description, " Absent on documents"); cut >= 0 {
+			context["description"] = description[:cut]
+		}
+	}
+	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "context") {
+		summary["required"] = append(required, "context")
+	}
+}
+
 func omitProperties(schema map[string]any, keys ...string) {
 	props := schema["properties"].(map[string]any)
 	for _, key := range keys {
@@ -316,7 +339,8 @@ func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) 
 // schema and the document's semantic rules, and returns every finding, or nil
 // when it is valid. It checks the document as every reader sees it, after the
 // stored-document rules (normalizeStored), so an identifier stored before
-// identifiers were bounded is not a finding. Images are checked against the
+// identifiers were bounded is not a finding, and neither is a tile of a
+// retired kind the viewer renders or one the rules remove. Images are checked against the
 // document's own index. The rules that need the generation bundle run only
 // when bundle is non-nil.
 func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {
@@ -585,7 +609,7 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	}
 	// The model wrote against the lenient contract; everything the host
 	// can decide for it is decided here, before the strict contract applies.
-	value, derived := normalizeAuthored(value, v.strict, bundle)
+	value, derived := normalizeAuthored(value, v.strict, bundle, directory)
 	if normalized, err := json.Marshal(value); err == nil {
 		document = normalized
 	}

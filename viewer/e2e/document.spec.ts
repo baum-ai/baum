@@ -111,3 +111,30 @@ test("the head shows no estimate when the document has none or null", async ({ p
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.getByText("min to review")).toHaveCount(0);
 });
+
+test("the summary's context starts collapsed under the overview and expands", async ({ page }) => {
+  await page.goto("/");
+  const summary = page.getByRole("region", { name: "Summary", exact: true });
+  const context = summary.getByRole("region", { name: "Context" });
+  const toggle = context.locator("summary");
+  await expect(toggle).toHaveText("ContextWhere this change sits in the codebase");
+  await expect(context.getByRole("heading", { name: "Area" })).toBeHidden();
+
+  await toggle.click();
+  for (const label of ["Area", "How it's reached", "Contracts", "Related code"])
+    await expect(context.getByRole("heading", { level: 4, name: label })).toBeVisible();
+  await expect(context).toContainText("runs taskline's background jobs");
+  await expect(context.getByText("queue/worker.go · Worker.Run")).toBeVisible();
+
+  await toggle.press("Enter");
+  await expect(context.getByRole("heading", { name: "Area" })).toBeHidden();
+});
+
+test("a document without a context shows none", async ({ page }) => {
+  const document = sampleDocument();
+  delete document.summary.context;
+  await serveDocument(page, document);
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Context" })).toHaveCount(0);
+});

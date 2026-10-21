@@ -52,7 +52,7 @@ func Spawn(paths Paths, cmd *exec.Cmd) (<-chan struct{}, error) {
 	if err := rotateOutput(paths); err != nil {
 		return nil, err
 	}
-	out, err := os.OpenFile(paths.OutputFile(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	out, err := openOutput(paths.OutputFile())
 	if err != nil {
 		return nil, err
 	}

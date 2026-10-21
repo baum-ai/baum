@@ -18,6 +18,7 @@ import {
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
+import { ContextPart } from "./review-context";
 import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
 import { cn } from "./classnames";
@@ -86,6 +87,8 @@ export function ReviewSummary({
               </StatusBlock>
             )}
           </div>
+
+          <ContextPart document={document} />
 
           {intent.length > 0 && (
             <Part label="Intent and instructions">

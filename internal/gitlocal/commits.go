@@ -14,7 +14,7 @@ import (
 const MaxCommits = 2000
 
 const (
-	maxCommitLogBytes   = 8 << 20
+	maxCommitLogBytes   = 16 << 20
 	maxCommitFilesBytes = 1 << 20
 	commitFieldSep      = "\x1f"
 )
@@ -32,6 +32,10 @@ type Commit struct {
 	// Trailers are the "Key: value" lines of the message's trailer block,
 	// continuation lines unfolded.
 	Trailers []string
+	// Message is the whole commit message, as git prints %B without its final
+	// newline. Entire-Checkpoint lines are read from all of it, not from the
+	// trailer block alone (entirecheckpoint.ParseMessage).
+	Message string
 	// Files are the repository-relative paths the commit changed, both sides
 	// of a rename or copy. A merge commit lists none.
 	Files []string
@@ -56,7 +60,7 @@ func (r *Repo) Commits(ctx context.Context, base, head string) ([]Commit, error)
 		}
 	}
 	const format = "%H" + commitFieldSep + "%P" + commitFieldSep + "%an" + commitFieldSep + "%ae" + commitFieldSep +
-		"%cI" + commitFieldSep + "%s" + commitFieldSep + "%(trailers:only,unfold)"
+		"%cI" + commitFieldSep + "%s" + commitFieldSep + "%(trailers:only,unfold)" + commitFieldSep + "%B"
 	out, err := r.read(ctx, maxCommitLogBytes, "log", "--reverse", "--no-color", "--no-ext-diff", "-z", "--format="+format, base+".."+head)
 	if err != nil {
 		return nil, rangeError(err)
@@ -66,8 +70,10 @@ func (r *Repo) Commits(ctx context.Context, base, head string) ([]Commit, error)
 		if strings.TrimSpace(record) == "" {
 			continue
 		}
-		fields := strings.SplitN(record, commitFieldSep, 7)
-		if len(fields) != 7 {
+		// The message is the last field, so a separator byte inside it stays
+		// in it.
+		fields := strings.SplitN(record, commitFieldSep, 8)
+		if len(fields) != 8 {
 			return nil, errors.New("reading commits: unexpected git log output")
 		}
 		oid := strings.TrimSpace(fields[0])
@@ -76,7 +82,7 @@ func (r *Repo) Commits(ctx context.Context, base, head string) ([]Commit, error)
 		}
 		c := Commit{
 			OID: oid, Parents: strings.Fields(fields[1]), AuthorName: fields[2], AuthorEmail: fields[3],
-			CommittedAt: fields[4], Subject: fields[5],
+			CommittedAt: fields[4], Subject: fields[5], Message: strings.TrimSuffix(fields[7], "\n"),
 		}
 		for _, line := range strings.Split(fields[6], "\n") {
 			if line = strings.TrimSpace(line); line != "" {

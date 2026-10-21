@@ -388,6 +388,33 @@ const chipClass = cn(
   "inline-flex max-w-full min-w-0 items-center gap-1 rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-sunken) px-1.5 py-0.5 text-xs leading-[1.4] text-(--text-secondary)",
 );
 
+const chipLinkClass = cn(
+  chipClass,
+  "hover:border-(--border-default) hover:text-(--text-primary) hover:no-underline",
+);
+
+/** A chip for a file of the repository. It opens the review's file view when
+ *  the pull request changes the file, and otherwise `href`, marked as leaving. */
+export function CodeChip({
+  path,
+  line,
+  href,
+  title,
+  children,
+}: {
+  path: string;
+  line?: number;
+  href?: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <CodeFileLink path={path} line={line} href={href} title={title} className={chipLinkClass}>
+      {children}
+    </CodeFileLink>
+  );
+}
+
 /** The sources behind a judgment, as chips. A chip for code opens the file in
  *  the review's file view; one with a URL opens GitHub in a new tab at the
  *  comment or check; one without — a prompt, an issue key, a spec assertion —
@@ -412,29 +439,16 @@ export function AnchorChips({
         return (
           <li key={`${anchor.type}-${position}`} className="max-w-full min-w-0">
             {file ? (
-              <CodeFileLink
-                path={file.path}
-                line={file.line}
-                href={resolved.href}
-                title={title}
-                className={cn(
-                  chipClass,
-                  "hover:border-(--border-default) hover:text-(--text-primary) hover:no-underline",
-                )}
-              >
+              <CodeChip path={file.path} line={file.line} href={resolved.href} title={title}>
                 {label}
-              </CodeFileLink>
+              </CodeChip>
             ) : resolved.href ? (
               <a
                 href={resolved.href}
                 target="_blank"
                 rel="noreferrer"
                 title={title}
-                className={cn(
-                  chipClass,
-                  "hover:border-(--border-default) hover:text-(--text-primary) hover:no-underline",
-                  FOCUS_RING,
-                )}
+                className={cn(chipLinkClass, FOCUS_RING)}
               >
                 {label}
                 <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />

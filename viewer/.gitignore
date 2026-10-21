@@ -4,3 +4,5 @@ coverage/
 /e2e-dist/
 /playwright-report/
 /test-results/
+# Tile gallery inputs: exported reviews and hand-edited fixtures hold repository content.
+/gallery-data/

@@ -254,8 +254,11 @@ func (o *outputRedaction) value(value any, schema map[string]any, scope string, 
 				scope = constant
 			}
 		}
-		if def == "tileCodeFile" {
+		switch def {
+		case "tileCodeFile":
 			scope, excerpt = def, o.excerptLines(v)
+		case "contextRef":
+			scope = def
 		}
 		bundleLine := def == "tileCodeLine" && excerpt != nil && excerpt[exactLine(v)]
 		for _, key := range slices.Sorted(maps.Keys(v)) {
@@ -326,8 +329,8 @@ func (e *mapEntry) set(value string) {
 
 // resolvedReference reports a reference value that names something the
 // redacted bundle or the checkout holds, so its text came from there:
-//   - a code source's or file anchor's path: a file in either checkout tree,
-//     or a path or old path of the bundle's diff;
+//   - a code source's, file anchor's or context reference's path: a file in
+//     either checkout tree, or a path or old path of the bundle's diff;
 //   - a pr_comment ID: a conversation item; a bot_report ID: one that is a
 //     bot report; a review_thread ID: a thread; a check ID: a check;
 //   - a prompt's or session event's session: a session's root session ID; a
@@ -342,7 +345,7 @@ func (o *outputRedaction) resolvedReference(scope, key, value string) bool {
 		return false
 	}
 	switch scope + "." + key {
-	case "tileCodeFile.path", "file.path":
+	case "tileCodeFile.path", "file.path", "contextRef.path":
 		return o.checkout[value] || slices.ContainsFunc(b.Diff, func(h bundlepkg.Hunk) bool { return h.Path == value || h.OldPath == value })
 	case "pr_comment.id", "bot_report.id":
 		return slices.ContainsFunc(b.Conversation, func(c bundlepkg.ConversationItem) bool {
