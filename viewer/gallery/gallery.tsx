@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import reviewSchema from "../../schema/review-1.json";
 import example from "../../schema/review-example.json";
-import legacySchema from "../src/legacy-review-tiles.json";
+import legacySchema from "../../schema/legacy-review-tiles.json";
 import { ReviewTiles } from "../src/components/review-tiles/review-tiles";
 import { validateTile } from "../src/precompiled/review-tile-validators.js";
 import type { ReviewDocument } from "../src/review-document";
