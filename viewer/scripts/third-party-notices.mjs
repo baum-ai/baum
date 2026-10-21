@@ -11,18 +11,20 @@
 // small parts of them (the preload helper, the CSS reset) end up in the output.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const output = process.argv[2];
 if (!output) {
-  console.error("usage: node scripts/third-party-notices.mjs OUTPUT");
+  process.stderr.write("usage: node scripts/third-party-notices.mjs OUTPUT\n");
   process.exit(2);
 }
 
 const viewerDir = resolve(import.meta.dirname, "..");
 const projects = [viewerDir, resolve(viewerDir, "../app")];
-const roots = Object.keys(JSON.parse(readFileSync(join(viewerDir, "package.json"), "utf8")).peerDependencies);
+const roots = Object.keys(
+  JSON.parse(readFileSync(join(viewerDir, "package.json"), "utf8")).peerDependencies,
+);
 const standalone = ["vite", "tailwindcss"];
 
 const packages = new Map(); // name@version -> {name, version, dir}
@@ -42,7 +44,10 @@ function walk(deps) {
 
 for (const dir of projects) {
   const listing = JSON.parse(
-    execFileSync("pnpm", ["ls", "--depth", "Infinity", "--json"], { cwd: dir, maxBuffer: 1 << 28 }).toString(),
+    execFileSync("pnpm", ["ls", "--depth", "Infinity", "--json"], {
+      cwd: dir,
+      maxBuffer: 1 << 28,
+    }).toString(),
   );
   const top = { ...listing[0].dependencies, ...listing[0].devDependencies };
   for (const name of roots) {
@@ -64,17 +69,22 @@ function describe(pkg) {
   if (typeof license === "object") license = license.type;
   const texts = readdirSync(pkg.dir)
     .filter((f) => licenseFile.test(f) && !f.endsWith(".js") && !f.endsWith(".ts"))
-    .sort()
+    .toSorted()
     .map((f) => readFileSync(join(pkg.dir, f), "utf8").replace(/\r\n/g, "\n").trim())
     .filter((t) => t.length > 0);
   let repository = manifest.repository;
   if (repository && typeof repository === "object") repository = repository.url;
   const author = typeof manifest.author === "object" ? manifest.author.name : manifest.author;
-  return { license: license ?? "UNKNOWN", texts, repository: manifest.homepage ?? repository ?? "", author: author ?? "" };
+  return {
+    license: license ?? "UNKNOWN",
+    texts,
+    repository: manifest.homepage ?? repository ?? "",
+    author: author ?? "",
+  };
 }
 
 const entries = [...packages.values()]
-  .sort((a, b) => (a.name + a.version).localeCompare(b.name + b.version))
+  .toSorted((a, b) => (a.name + a.version).localeCompare(b.name + b.version))
   .map((pkg) => ({ ...pkg, ...describe(pkg) }));
 
 // Packages that share one licence text are listed together under it.
@@ -92,12 +102,16 @@ for (const entry of entries) {
 
 const rule = "-".repeat(78);
 const out = [];
-out.push(`npm packages compiled into the embedded viewer and local app (${entries.length} package versions)`);
+out.push(
+  `npm packages compiled into the embedded viewer and local app (${entries.length} package versions)`,
+);
 out.push("");
 out.push("Summary:");
 for (const e of entries) out.push(`  ${e.name}@${e.version}  ${e.license}`);
 out.push("");
-for (const group of [...groups.values()].sort((a, b) => a.entries[0].name.localeCompare(b.entries[0].name))) {
+for (const group of [...groups.values()].toSorted((a, b) =>
+  a.entries[0].name.localeCompare(b.entries[0].name),
+)) {
   out.push(rule);
   for (const e of group.entries) {
     out.push(`${e.name}@${e.version} (${e.license})${e.repository ? `  ${e.repository}` : ""}`);
@@ -108,12 +122,18 @@ for (const group of [...groups.values()].sort((a, b) => a.entries[0].name.locale
 }
 if (unlicensed.length > 0) {
   out.push(rule);
-  out.push("Packages that ship no licence file; the licence is the one their package.json declares:");
+  out.push(
+    "Packages that ship no licence file; the licence is the one their package.json declares:",
+  );
   out.push("");
   for (const e of unlicensed) {
-    out.push(`${e.name}@${e.version} (${e.license})${e.author ? `  by ${e.author}` : ""}${e.repository ? `  ${e.repository}` : ""}`);
+    out.push(
+      `${e.name}@${e.version} (${e.license})${e.author ? `  by ${e.author}` : ""}${e.repository ? `  ${e.repository}` : ""}`,
+    );
   }
   out.push("");
 }
 writeFileSync(output, `${out.join("\n")}\n`);
-console.log(`wrote ${output}: ${entries.length} package versions, ${unlicensed.length} without a licence file`);
+process.stdout.write(
+  `wrote ${output}: ${entries.length} package versions, ${unlicensed.length} without a licence file\n`,
+);
