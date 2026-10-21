@@ -7,6 +7,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -82,17 +84,64 @@ type Result struct {
 
 // Event stores bounded metadata, never assistant text, tool output or search patterns.
 type Event struct {
-	Kind        string `json:"kind"`
-	ElapsedMS   int64  `json:"elapsed_ms"`
-	ID          string `json:"id,omitempty"`
-	Tool        string `json:"tool,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Offset      int    `json:"offset,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Bytes       int    `json:"bytes,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Input       int    `json:"input_tokens,omitempty"`
-	Output      int    `json:"output_tokens,omitempty"`
-	CacheRead   int    `json:"cache_read_tokens,omitempty"`
-	CacheCreate int    `json:"cache_creation_tokens,omitempty"`
+	Kind      string `json:"kind"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	ID        string `json:"id,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Offset    int    `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	Bytes     int    `json:"bytes,omitempty"`
+	Status    string `json:"status,omitempty"`
+	// FromProvider marks an error event whose Status was read from the
+	// provider's HTTP status or a structured field of its response, not
+	// guessed from free text.
+	FromProvider bool `json:"from_provider,omitempty"`
+	Input        int  `json:"input_tokens,omitempty"`
+	Output       int  `json:"output_tokens,omitempty"`
+	CacheRead    int  `json:"cache_read_tokens,omitempty"`
+	CacheCreate  int  `json:"cache_creation_tokens,omitempty"`
+}
+
+// OutsideRun is an Event's Path for a tool path outside the run directory.
+const OutsideRun = "<outside-run>"
+
+// EventPath reports a tool's path for an Event: relative to the run directory,
+// or OutsideRun for one outside it, with control characters replaced and at
+// most 256 bytes. A CLI names absolute paths from its own working directory,
+// which the kernel reports with symlinks resolved: on macOS the run directory
+// under $TMPDIR (/var/folders/...) reaches the CLI as /private/var/folders/...,
+// so a path under the resolved directory is inside the run too.
+func EventPath(directory, path string) string {
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		relative, ok := within(directory, path)
+		if !ok {
+			if resolved, err := filepath.EvalSymlinks(directory); err == nil && resolved != directory {
+				relative, ok = within(resolved, path)
+			}
+		}
+		if !ok {
+			return OutsideRun
+		}
+		path = relative
+	}
+	path = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return '?'
+		}
+		return r
+	}, path)
+	return path[:min(len(path), 256)]
+}
+
+// within reports path relative to directory, and whether it is inside it.
+func within(directory, path string) (string, bool) {
+	relative, err := filepath.Rel(directory, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return relative, true
 }

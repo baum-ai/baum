@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import reviewSchema from "../../schema/review-1.json" with { type: "json" };
 import { reviewDocumentFor } from "../test/review-document";
-import legacyTileSchema from "./legacy-review-tiles.json" with { type: "json" };
+import legacyTileSchema from "../../schema/legacy-review-tiles.json" with { type: "json" };
 import { legacyTileKinds, tileKinds } from "../test/review-tile-inputs";
 import { ReviewTiles } from "./components/review-tiles/review-tiles";
 import type { ReviewDocument } from "./review-document";

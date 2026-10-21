@@ -98,8 +98,10 @@ type documentReviewSources struct {
 }
 
 type documentSummary struct {
-	Title          string                 `json:"title"`
-	Text           string                 `json:"text"`
+	Title string `json:"title"`
+	Text  string `json:"text"`
+	// Context is absent on documents generated before it existed.
+	Context        json.RawMessage        `json:"context,omitempty"`
 	ReviewExchange documentReviewExchange `json:"review_exchange"`
 	ChangeKind     string                 `json:"change_kind"`
 	Implements     json.RawMessage        `json:"implements"`

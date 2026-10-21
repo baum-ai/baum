@@ -260,7 +260,8 @@ backoff, `sources` and the mapping onto the bundle.
 `review` derives three views from `schema/review-1.json`:
 
 - the **stored** schema, with every derived field, which a stored document
-  must satisfy;
+  must satisfy; it also accepts tiles of the kinds the schema retired
+  (`schema/legacy-review-tiles.json`);
 - the **strict authored** contract: what the model is responsible for;
 - the **lenient model-facing** schema, which accepts the shapes models
   commonly produce. Normalisation maps it onto the strict contract without a
@@ -281,6 +282,15 @@ The stored contract stays strict; leniency exists only in derived views.
   current section score, never an average, with floors set by active high and
   critical risks.
 - A count the tool cannot establish is null, never zero.
+- `summary.context` (how the change fits into the codebase: a required
+  `area` and optional `reached_by`, `contracts` and `related` parts, each
+  text with references to files or directories) is optional in the stored
+  schema, for documents generated before it existed, and required in the
+  strict authored contract, so its absence is a repair finding. Normalisation drops optional parts
+  without text and makes reference paths repository-relative; with a
+  checkout in the run directory it drops paths that are neither a file nor
+  a directory inside either tree, and it never spends a repair on a
+  reference.
 
 ### History
 
@@ -309,8 +319,7 @@ schema rejects, deterministically and idempotently, keeping references
 consistent; a document that passes is unchanged. `Refresh` stores the
 rewrite. A stored document the rules cannot repair fails `Refresh` with a
 `StoredDocumentError`, so a host can tell it from a failure of the refresh
-itself. A rule for another in-place change, such as a tile shape the schema no
-longer accepts, belongs with them.
+itself. A rule for another in-place change belongs with them.
 
 - A blank section title is labelled by its position (`SectionTitle`).
 - Identifiers, identifier references and risk categories have been bounded
@@ -328,6 +337,20 @@ mentions one. Generation still
   this rule alone to an encoded document, for a host that serves stored
   documents and keys records of its own (read marks, approvals) by their
   identifiers; such a host compares a stored key through `ShortenIdentifier`.
+- Tile kinds and shapes changed in place before they were finalised. A
+  stored tile the current `$defs/tile` accepts is kept, and so is one of a
+  retired kind the viewer still renders: `schema/legacy-review-tiles.json`
+  (`schema.LegacyTiles`) defines those kinds, and the stored schema accepts
+  them. A field the schema removed from a current kind, which the viewer
+  ignores (an architecture tile's `context` and `deployment`), is removed.
+  Any other tile of a section or risk is dropped, and so is one the
+  document's own tile rules reject: its internal references must resolve,
+  which removing a retired field can break, and a tile kept before it in the
+  same section or risk must not have its ID. Nothing outside a tile refers to
+  it. The rule runs after the identifier rule, so a tile whose only fault is
+  a long identifier is kept. Generation never offers a retired
+  kind: the authored and model-facing contracts derive from `review-1.json`
+  alone.
 
 ### Refresh and redaction
 
@@ -591,6 +614,25 @@ in an `agent.RejectedError`, which the generate-and-repair loop does not retry
 and whose text starts with `agent.ProviderRejectedReason(status)`. No error
 text, event or log line holds the key.
 
+The `claude` and `codex` backends classify a failed call by the provider's
+HTTP status where the harness reports one (`agent.HTTPErrorStatus`): Claude
+Code's `api_error_status` on its failed `result`, and the status Codex names in
+a failed turn's message (`unexpected status NNN`). A Codex 400 carries only the
+response body, whose structured fields classify it (`"type":
+"invalid_request_error"`, `"code": "invalid_json_schema"`), as `last status:
+429` does an exhausted rate limit; only such an OpenAI-shaped 400 refuses, and
+a 400 whose body lacks them is retried as unavailable. Codex's 426 answer to
+its WebSocket attempt is a silent fallback to HTTPS and never reaches this
+classification. An error event whose class was read this way, rather than
+from free text, has `Event.FromProvider` set (`agent.LastProviderErrorStatus`). A 4xx other than 408 and 429
+(`authentication_error` for 401 and 403, `not_found` for 404,
+`upgrade_required` for 426, `invalid_schema`, `invalid_request`) is a refusal a
+retry cannot change and comes back as an `agent.RejectedError`. Every other
+failure, 408, 429 and 5xx included, is `the model provider was unavailable`,
+and so is any failure classified from free text alone (`agent.ErrorStatus`),
+which only labels the diagnostics: a request ID or a quoted run can read like a
+status.
+
 `agent.RunDirPrefix` is the convention for a local run's directory name
 (`os.MkdirTemp("", agent.RunDirPrefix+"*")`); nothing in `agent` creates one.
 Session discovery skips sessions recorded under a path element with that
@@ -617,13 +659,13 @@ type Prompt struct {
 ```
 
 The module ships and maintains its own public prompt in `agent/prompt`:
-`review-public-v2.md`, shared by every backend and ending with a "Submitting"
+`review-public-v3.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
 and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v2` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v3` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
@@ -962,12 +1004,16 @@ inside the clone and the session store overrides, and does this:
    maps to the sessions the checkpoint records; a commit naming several
    checkpoints maps to the union of their sessions. The stores are:
    the git-refs store, one ref `refs/entire/checkpoints/<shard>/<id>` per
-   checkpoint, named exactly `refs/entire/checkpoints/` + the last two
-   characters of the canonical id + `/` + the canonical id (hex lower-case,
-   ULID upper-case), as the platform mirror reads them; any other spelling,
-   shard, extra path segment or invalid id is ignored, so a case variant cannot
-   shadow the real ref and the ref's commit has the checkpoint as its root tree
-   (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
+   checkpoint, named `refs/entire/checkpoints/` + the last two characters of
+   the canonical id + `/` + the canonical id (hex lower-case, ULID
+   upper-case), as the platform mirror reads them; any other spelling of the
+   id, other shard, extra path segment or invalid id is ignored, so a case
+   variant cannot shadow the real ref. Only the shard may differ in case: on a
+   case-insensitive filesystem (macOS and Windows by default) git lists a
+   loose ref under whichever spelling of its shard directory was made first
+   (a ULID's `AB/` merges into a 12-hex id's `ab/`), and where both spellings
+   name one id the exact one wins. The ref's commit has the checkpoint as its
+   root tree (`metadata.json`, `0/…`); and the legacy branch `entire/checkpoints/v1`
    (the local branch, else a remote-tracking copy), which keeps a 12-hex
    checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
    A 12-hex id in both stores (a clone migrated with `entire migrate`) is read

@@ -1,4 +1,4 @@
-import type { Anchor, ReviewDocument } from "./review-document";
+import { type Anchor, githubBlobUrl, type ReviewDocument } from "./review-document";
 import { validateAnchor, validateTile } from "./precompiled/review-tile-validators.js";
 import type {
   Anchor as TileAnchor,
@@ -65,7 +65,9 @@ function validDiff(file: TileCodeFile): boolean {
 }
 
 /** Architecture fields the schema retired are ignored rather than failing the
- * whole tile, so stored tiles that carry them still render. */
+ * whole tile, so stored tiles that carry them still render. The review
+ * package's stored-document rules remove the same fields (retiredTileFields in
+ * oss/review/stored.go). */
 export function withoutRetiredTileFields(value: unknown): unknown {
   const tile = tileRecord(value);
   const data = tileRecord(tile?.data);
@@ -102,5 +104,5 @@ export function validReviewTile(value: unknown, document: ReviewDocument): value
 }
 
 export function tileCodeUrl(repository: string, file: TileCodeFile): string {
-  return `https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${file.revision}/${file.path.split("/").map(encodeURIComponent).join("/")}`;
+  return githubBlobUrl(repository, file.revision, file.path);
 }

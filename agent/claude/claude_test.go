@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -246,6 +247,49 @@ func TestClaudeDiagnosticsSurviveFailureWithoutRawContent(t *testing.T) {
 	}
 	if bytes.Contains(trace, []byte("private")) || bytes.Contains(logs.Bytes(), []byte("private")) {
 		t.Fatal("raw content leaked")
+	}
+}
+
+// A failed result is classified by the HTTP status of the provider response it
+// ended on, so a refusal is not retried. The results are the shape Claude Code
+// 2.1 prints after an API error.
+func TestClaudeClassifiesTheProviderStatusOfAFailedResult(t *testing.T) {
+	for _, tt := range []struct {
+		name, result, want string
+		rejected           bool
+	}{
+		{"bad request", `{"type":"result","subtype":"success","is_error":true,"api_error_status":400,"result":"API Error: 400 private repository text","terminal_reason":"api_error"}`, "invalid_request", true},
+		{"forbidden", `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 private repository text"}`, "authentication_error", true},
+		{"model not found", `{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"result":"There's an issue with the selected model"}`, "not_found", true},
+		{"overloaded", `{"type":"result","subtype":"success","is_error":true,"api_error_status":529,"result":"API Error: 529 private repository text"}`, "provider_overloaded", false},
+		{"server error", `{"type":"result","subtype":"success","is_error":true,"api_error_status":500,"result":"API Error: 500 private repository text"}`, "error", false},
+		{"server error quoting a refusal", `{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":502,"errors":["authentication 401 invalid_request"]}`, "error", false},
+		{"no status", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["boom"]}`, "error", false},
+		// Text alone is classified for the diagnostics, never a refusal.
+		{"text that reads as a refusal", `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 401 authentication failed"]}`, "authentication_error", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "claude")
+			body := "#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n" + tt.result + "\nEVENTS\n"
+			if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			r, err := (&Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}).Run(context.Background(), agent.Request{Directory: t.TempDir(), Schema: []byte(`{}`), MaxCalls: 2, MaxTokens: 100})
+			if status := agent.LastErrorStatus(r.Events); status != tt.want {
+				t.Fatalf("status = %q, want %q", status, tt.want)
+			}
+			// Only api_error_status is the provider's own class.
+			if structured := tt.rejected || tt.want == "provider_overloaded"; (agent.LastProviderErrorStatus(r.Events) == tt.want) != structured {
+				t.Fatalf("provider status = %q for %q", agent.LastProviderErrorStatus(r.Events), tt.want)
+			}
+			var rejected *agent.RejectedError
+			if errors.As(err, &rejected) != tt.rejected || (!tt.rejected && (err == nil || err.Error() != agent.ReasonProviderUnavailable)) {
+				t.Fatalf("err = %v, want rejected %t", err, tt.rejected)
+			}
+			if strings.Contains(err.Error(), "private") {
+				t.Fatalf("the error exposes the result: %v", err)
+			}
+		})
 	}
 }
 

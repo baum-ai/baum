@@ -92,6 +92,10 @@ func DocumentFor(raw []byte, edit func(map[string]any)) ([]byte, error) {
 		"schema": "baum.review/1",
 		"summary": map[string]any{
 			"text": "Adds notes, settings and a renamed guide.", "review_exchange": map[string]any{"summary": "No reviews available."},
+			"context": map[string]any{"area": map[string]any{
+				"text": "The demo app keeps notes and settings beside its guide.",
+				"refs": []any{map[string]any{"path": b.Diff[0].Path, "symbol": nil}},
+			}},
 			"change_kind": "feature", "implements": []any{}, "release_note": nil, "breaking_change": nil, "attention": nil,
 			"authorship": map[string]any{"declared": "unknown", "declared_tools": []any{}, "anchors": []any{}},
 		},

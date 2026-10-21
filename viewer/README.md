@@ -134,6 +134,18 @@ links open Changes. Changes are ordered by review score, with attention items
 first when scores tie. The Changes count excludes obsolete sections, which are
 hidden by default and can be revealed with “View obsolete changes.”
 
+The document's `summary.context` sits under the Summary's overview, after the
+breaking change and release note and before Intent and instructions, as a
+Context part that starts collapsed; the reviewer expands it. Each part it
+holds is labelled, in order Area, How it's reached, Contracts and Related
+code, with its Markdown text and its references as chips (the path, then
+`· symbol` when one is named). A chip opens the review's file view when the
+pull request changes the file, and otherwise GitHub at the reviewed head, or
+at the merge base for a file or directory the pull request deletes: every
+hunk on or under the path removes a file. A document without a context,
+generated before it existed, shows no Context part. Stack reviews show theirs
+the same way.
+
 Attention uses a flat callout with evidence directly below its risks. For a
 single referenced risk, its explanation replaces the overlapping attention
 summary. Category labels are omitted and lifecycle labels use quiet text
@@ -390,8 +402,10 @@ text it is, for prose that names tags rather than containing them.
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
 canonical. Tiles are validated against it at runtime, and
-`src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
-retired, so stored tiles of those kinds still render. `pnpm generate` writes
+[`../schema/legacy-review-tiles.json`](../schema/legacy-review-tiles.json)
+keeps the definitions of kinds the schema has retired, so stored tiles of
+those kinds still render; the Go `review` package reads the same file, so
+stored-document validation accepts them too. `pnpm generate` writes
 the tile types to `generated/review-tile-types.d.ts` from both files, which is
 not committed. `pnpm generate:validators` writes the validators to
 `src/precompiled/review-tile-validators.js` with Ajv's standalone code
@@ -487,7 +501,7 @@ parallel.
 
 | Spec | What it covers |
 | --- | --- |
-| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render; the head's review time estimate, present, null and absent |
+| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render; the head's review time estimate, present, null and absent; the Summary's context, collapsed, expanded and absent |
 | `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
 | `section.spec.ts` | a section's blocks (intent, entities, behavior, decisions, table, code, diagram); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
 | `checks.spec.ts` | the Activity tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
