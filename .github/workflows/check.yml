@@ -63,8 +63,13 @@ jobs:
         env:
           CGO_ENABLED: "0"
 
+      # A race-enabled binary sleeps a second as it exits, and the tests run
+      # their own binary as a fake baum or cursor-agent hundreds of times.
+      # Races are still reported; only the wait is skipped.
       - name: Test
         run: go test -race ./...
+        env:
+          GORACE: atexit_sleep_ms=0
 
   lint:
     name: Lint

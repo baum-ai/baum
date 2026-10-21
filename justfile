@@ -37,8 +37,10 @@ install:
 privacy:
     go test ./internal/privacyguard/
 
+# GORACE skips the second a race-enabled binary sleeps as it exits; the tests
+# run their own binary as a fake baum or cursor-agent hundreds of times.
 test *args:
-    go test -race ./... {{ args }}
+    GORACE=atexit_sleep_ms=0 go test -race ./... {{ args }}
 
 lint:
     golangci-lint run ./...

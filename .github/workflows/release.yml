@@ -48,8 +48,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Skips the second a race-enabled binary sleeps as it exits; see check.yml.
       - name: Test
         run: go test -race ./...
+        env:
+          GORACE: atexit_sleep_ms=0
 
   viewer-dist:
     # The tag must carry the viewer bundle its sources build to.
