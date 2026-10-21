@@ -27,6 +27,14 @@ except line breaks and, in a diff, each line's leading `+`, `-` or space.
 An address such as `ada.lovelace@example.com` is sent as
 `xxx.xxxxxxxx@xxxxxxx.xxx`. @mentions are left as written.
 
+The diff is masked more than that, on purpose: an edit inside a committed
+private key shows key lines without the key's armor, so every run of three
+or more diff lines that are pure base64 (`A-Z a-z 0-9 + / =`) of 40
+characters or more is masked, with a shorter base64 line at either end, and
+so is a hunk's section heading that is pure base64 of that length. Base64
+data embedded in a file, such as an inline image or a test fixture, is
+masked the same way.
+
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your

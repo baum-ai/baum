@@ -513,8 +513,8 @@ func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int
 // assembleFilePatch runs patch, one file's diff, through the assembly order
 // (diff index within the line cap, ApplyCaps, Redact, Fit) and returns each
 // hunk's kept patch and the bundle, with want: the whole patch redacted as
-// one text with its diff syntax kept, split into hunks, then capped. A limit
-// of 0 caps nothing.
+// one text, its base64 runs masked and its diff syntax kept, split into
+// hunks, then capped. A limit of 0 caps nothing.
 func assembleFilePatch(t *testing.T, redactor *Redactor, patch string, limit int) (got, want []string, b *Bundle) {
 	t.Helper()
 	ctx := context.Background()
@@ -538,11 +538,16 @@ func assembleFilePatch(t *testing.T, redactor *Redactor, patch string, limit int
 	// Diff parsing reads lines as bufio.ScanLines does, dropping a CR before
 	// each newline.
 	text := strings.TrimRight(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
+	if !strings.HasPrefix(text, "@@ -") {
+		// The text from the first hunk header on, without git's file header.
+		text = text[strings.Index(text, "\n@@ -")+1:]
+	}
 	redacted, _, err := redactor.RedactString(ctx, text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	redacted = keepDiffSyntax(text, redacted)
+	masks, _ := base64Masks(text)
+	redacted = maskRange(text, redacted, masks, 0, len(text))
 	for _, hunk := range strings.Split(redacted, "\n@@ -") {
 		if !strings.HasPrefix(hunk, "@@ -") {
 			hunk = "@@ -" + hunk
@@ -587,9 +592,9 @@ func syntheticPuTTYKey() (lines, private []string) {
 // file's whole patch, so the bundle masks it as one text would, in both
 // hunks and in the second hunk's header, whose line ranges are put back.
 // That holds with the cap cutting a long first hunk short, so the key's
-// first lines sit only in the text the cap drops. goredact v0.3.0 ends a key at a
-// hunk header even in one text; later versions follow it across, and the
-// bundle must then keep no line of it.
+// first lines sit only in the text the cap drops. goredact v0.3.0 ends a
+// key at a hunk header even in one text, and the base64 runs mask the body
+// lines it leaves; later versions follow the key across, armor included.
 func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
@@ -634,11 +639,10 @@ func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 						if b.Diff[1].StartLine != 36 || b.Diff[1].LineCount != 7 {
 							t.Fatalf("%s: second hunk = %+v", where, b.Diff[1])
 						}
-						if b.MaskedSpanCount != 1 {
+						// goredact v0.3.0 leaves the second hunk's key lines and
+						// the heading to base64Masks, whose runs count apart.
+						if b.MaskedSpanCount != 1 && (acrossHunks || b.MaskedSpanCount < 1) {
 							t.Fatalf("%s: masked %d spans, want the one key", where, b.MaskedSpanCount)
-						}
-						if !acrossHunks {
-							continue
 						}
 						text := strings.Join(got, "\n")
 						for _, line := range key.secret {
@@ -646,7 +650,7 @@ func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 								t.Fatalf("%s: key line %q survives:\n%s", where, line, text)
 							}
 						}
-						if strings.Contains(text, "PRIVATE KEY") {
+						if acrossHunks && strings.Contains(text, "PRIVATE KEY") {
 							t.Fatalf("%s: the armor survives:\n%s", where, text)
 						}
 						if header, _, _ := strings.Cut(got[1], "\n"); heading != "" && !strings.HasPrefix(header, "@@ -36,7 +36,7 @@ ") {

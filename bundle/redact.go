@@ -13,14 +13,18 @@ import (
 // before the byte-fit pass and the hunk line cap it starts with. Each field
 // is redacted as one text, so a secret spanning lines is found, and keeps its
 // length and lines. The hunks of one file are redacted together, as the
-// file's patch, so a key that runs on from one hunk into the next is masked
-// in both; each hunk keeps its diff markers and its header's line ranges
-// (redactPatches). A patch still holds the margin diff parsing keeps past
-// the line cap, and the lines an earlier hunk of the file drops are read
-// too, so a secret the cap runs through is masked as in the whole patch.
-// MaskedSpanCount is the number of spans masked, e-mail addresses included:
-// a secret spanning hunks counts once, and a secret found only in text the
-// cap drops counts too.
+// file's patch, so the engine follows a key that runs on from one hunk into
+// the next (goredact v0.4.0 and later mask it in both); each hunk keeps its
+// diff markers and its header's line ranges. Runs of base64 lines and
+// base64 hunk headings are masked as key material too, a deliberate
+// over-mask (redactPatches, base64Masks). A patch still holds the margin
+// diff parsing keeps past the line cap, and the lines an earlier hunk of
+// the file drops are read too, so a secret the cap runs through is masked
+// as in the whole patch. MaskedSpanCount is the number of spans masked,
+// e-mail addresses and base64 runs the engine left included. It counts the
+// spans in the text Redact reads, each file's patch up to its last hunk's
+// margin, so a secret spanning hunks counts once, and one only in lines the
+// cap then drops counts too.
 //
 // Mentions are not rewritten: nothing in the bundle is posted to a code
 // host as it is, and a field may hold code (a patch, a suggestion block, a
@@ -219,158 +223,6 @@ func redactLineTexts(ctx context.Context, redactor *Redactor, lines []any, total
 	}
 	*total += count
 	return nil
-}
-
-// redactPatches masks the patch text of diff in place and returns the
-// number of spans masked. The hunks diff parsing took from one file are
-// redacted as one text, the file's patch, so a key that runs on from one
-// hunk into the next, past the hunk header between them, is found and
-// masked in both. That text is the file's whole patch when a hunk other
-// than its last was cut (filePatch.text); otherwise it is the hunks' kept
-// texts joined by newlines, which is the whole patch up to the last hunk's
-// margin. A hunk with no file, or whose patch no longer lies where parsing
-// put it in its file's text, is redacted on its own.
-func redactPatches(ctx context.Context, redactor *Redactor, diff []Hunk) (int, error) {
-	type group struct {
-		text  string
-		hunks []int
-	}
-	var groups []*group
-	byFile := map[*filePatch]*group{}
-	for i := range diff {
-		hunk := &diff[i]
-		file := hunk.file
-		hunk.file = nil
-		if hunk.Patch == "" {
-			continue
-		}
-		if file != nil && file.text != "" && !strings.HasPrefix(file.text[min(hunk.offset, len(file.text)):], hunk.Patch) {
-			file = nil
-		}
-		g := byFile[file]
-		if g == nil {
-			g = &group{}
-			if file != nil {
-				g.text, byFile[file] = file.text, g
-			}
-			groups = append(groups, g)
-		}
-		g.hunks = append(g.hunks, i)
-	}
-	total := 0
-	for _, g := range groups {
-		text, offsets := g.text, make([]int, len(g.hunks))
-		if text == "" {
-			patches := make([]string, len(g.hunks))
-			at := 0
-			for k, i := range g.hunks {
-				patches[k], offsets[k] = diff[i].Patch, at
-				at += len(diff[i].Patch) + 1
-			}
-			text = strings.Join(patches, "\n")
-		} else {
-			for k, i := range g.hunks {
-				offsets[k] = diff[i].offset
-			}
-		}
-		redacted, count, err := redactor.RedactString(ctx, text)
-		if err != nil {
-			return 0, err
-		}
-		if len(redacted) != len(text) {
-			// The mask keeps the text's length, so this is not expected; no
-			// hunk could be cut back out, so each is redacted on its own.
-			for _, i := range g.hunks {
-				redacted, count, err := redactor.RedactString(ctx, diff[i].Patch)
-				if err != nil {
-					return 0, err
-				}
-				if len(redacted) == len(diff[i].Patch) {
-					redacted = keepDiffSyntax(diff[i].Patch, redacted)
-				}
-				diff[i].Patch, total = redacted, total+count
-			}
-			continue
-		}
-		total += count
-		if redacted != text {
-			redacted = keepDiffSyntax(text, redacted)
-		}
-		for k, i := range g.hunks {
-			diff[i].Patch = redacted[offsets[k] : offsets[k]+len(diff[i].Patch)]
-			if g.text != "" {
-				// A copy, so the lines the cap drops are not held.
-				diff[i].Patch = strings.Clone(diff[i].Patch)
-			}
-		}
-	}
-	return total, nil
-}
-
-// keepDiffSyntax puts back the diff syntax a mask spanning lines overwrites:
-// the first byte of every patch line, its diff marker, and the line ranges
-// of every hunk header. A key spanning lines is masked whole, and the mask
-// would turn a context line's leading space into "*", or a hunk header
-// inside the key, "@@ -36,7 +36,7 @@", into "@@*-99*9*+99*9*@@*", so neither
-// would parse as diff syntax. A marker (space, "+", "-" or "\\") and a
-// header's "@@ -a,b +c,d @@" and the space after it are diff syntax, never
-// part of the secret. Any other first byte stays masked, as does the
-// section heading git writes after a header: it copies a line of the file,
-// which may be a line of the key.
-func keepDiffSyntax(patch, redacted string) string {
-	out := []byte(redacted)
-	for start := 0; start < len(patch); {
-		end := strings.IndexByte(patch[start:], '\n')
-		if end < 0 {
-			end = len(patch)
-		} else {
-			end += start
-		}
-		line := patch[start:end]
-		if n := hunkHeaderLen(line); n > 0 {
-			copy(out[start:], line[:n])
-		} else if line != "" && strings.IndexByte(" +-\\", line[0]) >= 0 {
-			out[start] = line[0]
-		}
-		start = end + 1
-	}
-	return string(out)
-}
-
-// hunkHeaderLen returns the length of the "@@ -a,b +c,d @@" a hunk header
-// line starts with, with the space after it, or 0 for any other line. A
-// count may be left out, as in "@@ -1 +1 @@".
-func hunkHeaderLen(line string) int {
-	i, ok := len("@@ -"), strings.HasPrefix(line, "@@ -")
-	lineRange := func() bool {
-		digits := func() bool {
-			from := i
-			for i < len(line) && '0' <= line[i] && line[i] <= '9' {
-				i++
-			}
-			return i > from
-		}
-		if !digits() {
-			return false
-		}
-		if i < len(line) && line[i] == ',' {
-			i++
-			return digits()
-		}
-		return true
-	}
-	if !ok || !lineRange() || !strings.HasPrefix(line[i:], " +") {
-		return 0
-	}
-	i += len(" +")
-	if !lineRange() || !strings.HasPrefix(line[i:], " @@") {
-		return 0
-	}
-	i += len(" @@")
-	if i < len(line) && line[i] == ' ' {
-		i++
-	}
-	return i
 }
 
 // Redactor masks bundle text with the redact package's engine, the one
