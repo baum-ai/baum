@@ -52,7 +52,11 @@ type Run struct {
 	// TileKinds is the tile allow-list: the only kinds the run offers the model
 	// and keeps from what it returns.
 	TileKinds []string
-	Budgets   Budgets
+	// TileEntries, when set, are the catalogue entries offered in the prompt
+	// instead of the shipped entries of TileKinds (tilecatalogue.WithCandidates).
+	// Evaluation uses it to try selection guidance; none (nil or empty) keeps the shipped ones.
+	TileEntries []tilecatalogue.Entry
+	Budgets     Budgets
 	// Endpoint is how the backend reaches the model; nil leaves its own.
 	Endpoint *Endpoint
 }
@@ -107,7 +111,11 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 		logger.InfoContext(ctx, "review inputs prepared", "bundle_bytes", len(run.EncodedBundle), "hunks", len(run.Bundle.Diff), "hunks_with_patches", patches)
 	}
 	source := sourceContext(run.Directory, run.Bundle)
-	instructions := prompt.Body + tilecatalogue.Instructions(run.TileKinds)
+	tileText := tilecatalogue.Instructions(run.TileKinds)
+	if len(run.TileEntries) > 0 {
+		tileText = tilecatalogue.InstructionsFor(run.TileEntries)
+	}
+	instructions := prompt.Body + tileText
 	repairInstruction, repairEnding := RepairText(g.Backend.Name())
 	if prompt.Repair != "" {
 		repairInstruction = prompt.Repair

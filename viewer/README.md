@@ -484,6 +484,60 @@ compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` 
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.
 
+### Tile gallery
+
+`gallery/` is a dev-only page for working on a review tile against real
+payloads, with no model call. It renders every tile it finds with the same
+`ReviewTiles` the review page uses, each beside the viewer's own verdict on it
+(the compiled tile validators, then the code-source checks that need the
+document), where it came from, and a filter by kind and source. It is served
+by Vite's dev server, with hot module replacement, from its own config
+(`vite.gallery.config.ts`): the standalone app's build roots at `app/` and
+never sees it, so it is not in `just viewer-build` output and
+`just viewer-fresh` stays clean.
+
+```sh
+just viewer::gallery                  # http://127.0.0.1:5180, GALLERY_PORT=... to move it
+just viewer::gallery-export           # copy tiles of stored dev reviews into gallery-data/stored
+```
+
+The recipe runs the server in the `ui-test` container with the port published
+on `127.0.0.1`, prints the URL and stops with Ctrl+C. It reads three sources,
+listed afresh every moment, so a new run, export or saved fixture appears
+without a reload:
+
+| Source | Where it reads | Shown against |
+| --- | --- | --- |
+| Prompt-eval runs | `attempts/*.json` under `tools/prompt-eval/runs/` (mounted read-only), each attempt's `document` | that document; the `tools/prompt-eval/prompt-eval view <attempt>` command for the whole review sits beside it |
+| Stored reviews | `gallery-data/stored/*.json`, written by `just viewer::gallery-export` from the dev database (`--repository`, `--kinds`, `--limit`) | the stored document |
+| Fixtures | `gallery-data/fixtures/*.json`: one tile, an array of tiles, or `{ "document", "tiles" }` | the schema's example document, adjusted so the tiles' code sources can pass (or your `document`) |
+
+`gallery-data/` is ignored by git, since runs and stored reviews hold
+repository content. [`gallery/example-database-schema.json`](gallery/example-database-schema.json)
+is a valid `database-schema` tile to copy into `gallery-data/fixtures/` and
+edit. A fixture that is not valid is drawn as the viewer draws it (Tile
+unavailable) under the list of what the validator rejected, so a payload can be
+broken and repaired in place. The export needs the shared dev database
+(`just shared-up`) and writes nothing when no stored review has tiles, which is
+the case until one is generated with a tile allow-list.
+
+Editing a tile component, or anything it imports, replaces the modules in
+place and draws the page again without a reload; the kind and source filters
+live in the URL, so the page keeps its view. Set `GALLERY_POLLING=1` if file
+changes do not reach the container. The loop end to end:
+
+```sh
+just prompt_eval::cases migrations --limit 2     # pick PRs whose review has migration hunks
+tools/prompt-eval/prompt-eval \
+  -manifest "$PWD/tools/prompt-eval/experiments/migrations/manifest.json" \
+  -output "$PWD/tools/prompt-eval/runs/migrations-01"   # database-schema allowed; calls the model
+just viewer::gallery                             # open the URL, filter on database-schema
+$EDITOR oss/viewer/src/components/review-tiles/contract-schema-diff.tsx   # the page updates on save
+```
+
+See [`tools/prompt-eval`](../../tools/prompt-eval/README.md#tiles) for the
+manifest's `tile_kinds` and `tile_catalogue`.
+
 ### Browser tests
 
 `e2e/` holds Playwright specs that drive the standalone app in Chromium.
