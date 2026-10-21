@@ -402,8 +402,10 @@ text it is, for prose that names tags rather than containing them.
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
 canonical. Tiles are validated against it at runtime, and
-`src/legacy-review-tiles.json` keeps the definitions of kinds the schema has
-retired, so stored tiles of those kinds still render. `pnpm generate` writes
+[`../schema/legacy-review-tiles.json`](../schema/legacy-review-tiles.json)
+keeps the definitions of kinds the schema has retired, so stored tiles of
+those kinds still render; the Go `review` package reads the same file, so
+stored-document validation accepts them too. `pnpm generate` writes
 the tile types to `generated/review-tile-types.d.ts` from both files, which is
 not committed. `pnpm generate:validators` writes the validators to
 `src/precompiled/review-tile-validators.js` with Ajv's standalone code

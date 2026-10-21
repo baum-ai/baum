@@ -260,7 +260,8 @@ backoff, `sources` and the mapping onto the bundle.
 `review` derives three views from `schema/review-1.json`:
 
 - the **stored** schema, with every derived field, which a stored document
-  must satisfy;
+  must satisfy; it also accepts tiles of the kinds the schema retired
+  (`schema/legacy-review-tiles.json`);
 - the **strict authored** contract: what the model is responsible for;
 - the **lenient model-facing** schema, which accepts the shapes models
   commonly produce. Normalisation maps it onto the strict contract without a
@@ -318,8 +319,7 @@ schema rejects, deterministically and idempotently, keeping references
 consistent; a document that passes is unchanged. `Refresh` stores the
 rewrite. A stored document the rules cannot repair fails `Refresh` with a
 `StoredDocumentError`, so a host can tell it from a failure of the refresh
-itself. A rule for another in-place change, such as a tile shape the schema no
-longer accepts, belongs with them.
+itself. A rule for another in-place change belongs with them.
 
 - A blank section title is labelled by its position (`SectionTitle`).
 - Identifiers, identifier references and risk categories have been bounded
@@ -337,6 +337,20 @@ mentions one. Generation still
   this rule alone to an encoded document, for a host that serves stored
   documents and keys records of its own (read marks, approvals) by their
   identifiers; such a host compares a stored key through `ShortenIdentifier`.
+- Tile kinds and shapes changed in place before they were finalised. A
+  stored tile the current `$defs/tile` accepts is kept, and so is one of a
+  retired kind the viewer still renders: `schema/legacy-review-tiles.json`
+  (`schema.LegacyTiles`) defines those kinds, and the stored schema accepts
+  them. A field the schema removed from a current kind, which the viewer
+  ignores (an architecture tile's `context` and `deployment`), is removed.
+  Any other tile of a section or risk is dropped, and so is one the
+  document's own tile rules reject: its internal references must resolve,
+  which removing a retired field can break, and a tile kept before it in the
+  same section or risk must not have its ID. Nothing outside a tile refers to
+  it. The rule runs after the identifier rule, so a tile whose only fault is
+  a long identifier is kept. Generation never offers a retired
+  kind: the authored and model-facing contracts derive from `review-1.json`
+  alone.
 
 ### Refresh and redaction
 

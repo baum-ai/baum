@@ -1,5 +1,5 @@
 {
-  "$comment": "Tile kinds removed from the review schema (schema/review-1.json). Generation never produces them, but stored documents may still carry them, so the viewer validates them and renders them when its showTiles prop is set. $ref targets not defined here resolve against the schema's $defs.",
+  "$comment": "Tile kinds removed from the review schema (review-1.json). Generation never produces them, but stored documents may still carry them, so stored-document validation (the review package) accepts them and the viewer validates them and renders them when its showTiles prop is set. $ref targets not defined here resolve against the schema's $defs. Not published.",
   "$defs": {
     "legacyTile": {
       "oneOf": [
