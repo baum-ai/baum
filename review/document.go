@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -61,9 +62,18 @@ func (v *DocumentValidator) Contract() map[string]any {
 	return contract
 }
 
-// NewDocumentValidator compiles the embedded review schema once. The result is
-// read-only, so it may be shared between goroutines.
+// sharedDocumentValidator builds the validator once per process: resolving the
+// schema documents costs seconds under the race detector.
+var sharedDocumentValidator = sync.OnceValues(newDocumentValidator)
+
+// NewDocumentValidator compiles the embedded review schema once per process
+// and returns the same validator on every call, or the same error. The result
+// is read-only, so it may be shared between goroutines.
 func NewDocumentValidator() (*DocumentValidator, error) {
+	return sharedDocumentValidator()
+}
+
+func newDocumentValidator() (*DocumentValidator, error) {
 	stored, err := storedDocumentSchema()
 	if err != nil {
 		return nil, err
