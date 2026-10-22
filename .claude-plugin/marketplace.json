@@ -1,0 +1,14 @@
+{
+  "name": "baum",
+  "owner": {
+    "name": "baum"
+  },
+  "plugins": [
+    {
+      "name": "baum",
+      "source": "./plugins/baum-claude-code",
+      "version": "1.0.0",
+      "description": "baum agent hooks"
+    }
+  ]
+}

@@ -75,6 +75,9 @@ jobs:
         env:
           GORACE: atexit_sleep_ms=0
 
+      - name: Check shipped marketplace files without cached results
+        run: go test -race -count=1 ./hosted/agenthooks/
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04

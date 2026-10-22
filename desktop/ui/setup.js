@@ -89,9 +89,9 @@ function describeCommand(command) {
 
 function describeAgent(agent) {
   if (agent.error) return `${agent.name}: ${agent.error}`;
-  if (agent.installed) return `${agent.name}: installed in ${agent.settings}`;
-  if (!agent.detected) return `${agent.name}: not found on this computer`;
-  return `${agent.name}: not installed (${agent.settings})`;
+  if (agent.installed) return `${agent.name}: ${agent.plugin} installed, ${agent.enabled ? "enabled; review hook trust in your agent" : "disabled; enable it in your agent"}`;
+  if (!agent.detected) return `${agent.name}: CLI not found on PATH; install/update the agent to manage plugins`;
+  return `${agent.name}: ${agent.plugin} not installed`;
 }
 
 function render() {
@@ -120,13 +120,13 @@ function render() {
     }),
   );
   text($("hooks-error"), hooks.error ?? "");
-  const pending = hooks.agents.some((a) => a.detected && !a.installed && !a.error);
+  const pending = hooks.agents.some((a) => a.detected && (!a.installed || !a.enabled) && !a.error);
   const installed = hooks.agents.some((a) => a.installed);
   const noAgent = !hooks.error && !hooks.agents.some((a) => a.detected);
   if (noAgent)
-    text($("hooks-error"), "Neither Claude Code nor Codex was found. Install one, then come back here.");
+    text($("hooks-error"), "Neither Claude Code nor Codex CLI was found on PATH. Install/update one, then come back here.");
   $("hooks-install").hidden = !pending;
-  $("hooks-install").textContent = installed ? "Update hooks" : "Install hooks";
+  $("hooks-install").textContent = installed ? "Enable plugins" : "Install plugins";
   $("hooks-remove").hidden = !installed;
 
   // First run: one action installs both; panels show what it will do.

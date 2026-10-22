@@ -4,7 +4,7 @@ A [Tauri](https://tauri.app) v2 shell around the user's `baum daemon`. The
 shell adds no review features: the daemon serves the local application
 (`../app`) over loopback HTTP, and the window shows it. The shell handles only
 what the operating system has to: the window, the tray, start at login,
-notifications, installing the `baum` command and the user-wide agent hooks,
+notifications, installing the `baum` command and agent marketplace plugins,
 and later signing and updates.
 
 The app bundles the release `baum` binary next to its executable. `baum`
@@ -52,9 +52,12 @@ clicks Install. The Rust side then makes each change:
 1. The `baum` command: the bundled binary, linked onto the login shell's
    `PATH` (below). One binary and one version: the terminal, the hooks and
    the daemon all run the app's baum, and updating the app updates them.
-2. The user-wide Claude Code and Codex hooks: the bundled
-   `baum hooks install --user`, for the agents it finds. Its output (files
-   changed, backups, Codex's `/hooks` trust step) is shown.
+2. The Claude Code and Codex marketplace plugins: the bundled
+   `baum hooks install --user`, for executable agents it finds on `PATH`.
+   The native CLI registers the public `baum-ai/baum` Git marketplace and
+   downloads/installs/enables `baum@baum`. Installation calls no baum server,
+   but does fetch the public marketplace. Its output and hook trust guidance
+   (Codex: `/hooks`) are shown. Installed and enabled do not mean trusted.
 
 "Skip for now" is there too, and so is "Keep my baum, install the hooks" when
 a different baum is in the way. Leaving the screen records that setup ran
@@ -73,7 +76,14 @@ application menu on macOS, the Background menu elsewhere), both built in
 The screen gets the facts from the bundled baum: `baum daemon login-path
 --json` resolves the login shell's `PATH` as the daemon does and names the
 first `baum` on it (the one hooks run) with its version, and `baum hooks
-status --user --json` reports each agent's hooks.
+status --user --json` reads each agent's native plugin registry, reporting
+plugin ID, installation and enablement separately. Disabled plugins offer an
+Enable action; trust must be reviewed in the agent. Each native action has a
+90-second bound and status queries have 10 seconds. The desktop gives both
+agents, login PATH resolution and process overhead a 240-second total budget.
+Status, install and removal run with the resolved login shell PATH so agents
+installed through Homebrew or npm are found from GUI launchers too. If login
+PATH resolution fails, the app uses its inherited PATH and displays the reason.
 
 ### Where the command goes
 
@@ -165,7 +175,8 @@ succeeds for it. Updating the app's own link keeps the backup of the baum it
 replaced, so Remove still puts that back. (A `setup.json` of the first
 release, with a single `command`, is read as a one-item list.)
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
-removes only baum's own entries.
+removes only the native `baum@baum` plugin and leaves the marketplace and
+other plugins.
 
 ### Restarts into the app's baum
 
@@ -380,7 +391,7 @@ The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
 directories it writes only what the setup screen installs: the `baum` link
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
-user-wide hook entries. Notifications use the operating system's
+agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
 
 ## Updates

@@ -1,0 +1,90 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code session-start >/dev/null 2>&1; then exec baum hooks agent --user claude-code session-start; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code user-prompt-submit >/dev/null 2>&1; then exec baum hooks agent --user claude-code user-prompt-submit; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code pre-task >/dev/null 2>&1; then exec baum hooks agent --user claude-code pre-task; fi'"
+          }
+        ],
+        "matcher": "Agent"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code post-task >/dev/null 2>&1; then exec baum hooks agent --user claude-code post-task; fi'"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code post-todo >/dev/null 2>&1; then exec baum hooks agent --user claude-code post-todo; fi'"
+          }
+        ],
+        "matcher": "TaskCreate|TaskUpdate"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code stop >/dev/null 2>&1; then exec baum hooks agent --user claude-code stop; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code session-end >/dev/null 2>&1; then exec baum hooks agent --user claude-code session-end; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code subagent-stop >/dev/null 2>&1; then exec baum hooks agent --user claude-code subagent-stop; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}

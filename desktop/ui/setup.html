@@ -13,8 +13,8 @@
         <h1 id="title">Set up baum</h1>
         <p id="intro" hidden>
           baum learns what your coding agents do from their hooks. The hooks run the
-          <code>baum</code> command, so the app makes its own baum that command and adds the hooks
-          to your Claude Code and Codex settings. Nothing changes until you choose to install.
+          <code>baum</code> command, so the app makes its own baum that command and installs the baum marketplace plugins
+          through your Claude Code and Codex CLIs. Nothing changes until you choose to install.
         </p>
         <p id="checking" role="status">Checking this computer…</p>
         <div id="panels" hidden>
@@ -30,14 +30,15 @@
           <article class="panel" aria-labelledby="hooks-heading">
             <h2 id="hooks-heading">Coding-agent hooks</h2>
             <p class="note">
-              They act only in Git repositories that use Entire, and never contact a baum
-              server.
+              Installation downloads the public Git marketplace. Review hook trust in your
+              agent afterwards (Codex: /hooks). Hooks act only in Git repositories
+              that use Entire, and never contact a baum server.
             </p>
             <ul id="hooks-list"></ul>
             <p id="hooks-error" class="note" hidden></p>
             <div class="actions manage">
-              <button id="hooks-install" type="button">Install hooks</button>
-              <button id="hooks-remove" type="button" class="secondary">Remove hooks</button>
+              <button id="hooks-install" type="button">Install plugins</button>
+              <button id="hooks-remove" type="button" class="secondary">Remove plugins</button>
             </div>
           </article>
           <pre id="log" role="status" hidden></pre>

@@ -48,7 +48,7 @@ to three levels below the current directory, then asks once before changing
 anything. Every repository needs a GitHub origin. Setup installs and enables
 Entire for detected coding agents unless --skip-entire is set. For a hosted
 install or a logged-in user it also installs baum's user-wide Claude Code and
-Codex hooks (see baum hooks install --user) unless --skip-user-hooks or
+Codex marketplace plugins (see baum hooks install --user) unless --skip-user-hooks or
 --skip-entire is set.
 
 --sync requests a server-side GitHub repository sync and --upload uploads
@@ -127,7 +127,7 @@ locally recorded agent sessions. Both need credentials: run baum login first.`,
 	cmd.Flags().StringArrayVar(&previousPaths, "previous-path", nil, "prior filesystem location of the repository, with --upload (repeatable)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&skipEntire, "skip-entire", false, "skip installing and configuring Entire")
-	cmd.Flags().BoolVar(&skipUserHooks, "skip-user-hooks", false, "leave the user-wide Claude Code and Codex settings alone")
+	cmd.Flags().BoolVar(&skipUserHooks, "skip-user-hooks", false, "skip user-scoped Claude Code and Codex marketplace plugin installation")
 	cmd.Flags().BoolVar(&syncRepo, "sync", false, "request a server-side GitHub repository sync (requires login)")
 	cmd.Flags().BoolVar(&upload, "upload", false, "upload locally recorded agent sessions (requires login)")
 	cmd.MarkFlagsMutuallyExclusive("all", "previous-path")
@@ -373,7 +373,7 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 	// User-wide hooks can be missing when every repository is set up, for
 	// example after `baum hooks uninstall --user`, so they count as pending
 	// work before the no-op return.
-	userHooksPending := opts.userHooks != nil && !opts.userHooks.done && userHooksPendingForSetup()
+	userHooksPending := opts.userHooks != nil && !opts.userHooks.done && userHooksPendingForSetup(ctx)
 	if ready == 0 && !userHooksPending {
 		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
 		return nil
@@ -382,7 +382,7 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 		_, _ = fmt.Fprintln(stdout, "No repositories need setup.")
 	}
 	if userHooksPending {
-		writeUserHooksPlan(stdout)
+		writeUserHooksPlan(ctx, stdout)
 	}
 	if !opts.yes {
 		confirmed, confirmErr := confirmUpload(in, stdout)
@@ -420,7 +420,7 @@ func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.C
 
 	if ready == 0 {
 		opts.userHooks.done = true
-		installUserHooksDuringSetup(stdout, stderr)
+		installUserHooksDuringSetup(ctx, stdout, stderr)
 		return nil
 	}
 
@@ -507,7 +507,7 @@ func setupRepository(ctx context.Context, in io.Reader, client *apiclient.Client
 	}
 	if opts.userHooks != nil && !opts.userHooks.done {
 		opts.userHooks.done = true
-		installUserHooksDuringSetup(stdout, stderr)
+		installUserHooksDuringSetup(ctx, stdout, stderr)
 	}
 	if opts.sync && repository.ID == "" {
 		repository, err = client.FindGitHubRepository(ctx, repository.FullName)

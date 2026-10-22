@@ -69,7 +69,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
-| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `userhooks`, which edits the user-wide Claude Code and Codex settings |
+| `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `agentplugins`, which installs user-scoped marketplace plugins through native agent CLIs |
 
 Code that only the CLI needs (flag parsing, configuration, the local version
 store, the `doctor` diagnostics) stays under `internal/`.
@@ -1394,9 +1394,12 @@ format and the protocol constants have one definition on both sides.
   server; they hand their events to the local daemon, which keeps them on the
   machine (see "Hook events" under "Local daemon"). The rules are in
   [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
-- User-wide hooks. `baum hooks install --user` puts a dispatcher in
-  `~/.claude/settings.json` and `~/.codex/hooks.json` (`hosted/userhooks`
-  edits them as text, touching only its own handlers). It calls
+- User-scoped marketplace hooks. `baum hooks install --user` registers the
+  public `baum-ai/baum` Git marketplace and installs/enables `baum@baum`
+  through the Claude Code or Codex CLI (`hosted/agentplugins`), with a final
+  native list query verifying installation and enablement. It edits no hook
+  files directly and maintains no migration state. Installation fetches the
+  public marketplace; hook execution stays local. The dispatcher calls
   `--check --user`, which adds two conditions to the rules above: the
   repository has Entire enabled, and no other hook the agent runs (project,
   user, managed or system settings; Codex project hooks only where Codex
@@ -2376,10 +2379,13 @@ and two files:
    `baum` being the first executable `baum` on that `PATH` (relative entries
    skipped), with its links resolved and its `--version` (5 s timeout; its
    own version when it is this executable). `baum hooks status --user --json`
-   prints `{"agents":[{"agent","name","detected","settings","installed","error"}]}`
-   for each agent with user-wide hooks, `installed` meaning an install would
-   change nothing (`userhooks.Pending`). It installs and removes the hooks
-   with `baum hooks install --user` and `uninstall --user`.
+   prints `{"agents":[{"agent","name","detected","plugin","installed","enabled","version","error"}]}`
+   from native plugin registries, with executable detection and installation/
+   enablement separate from the agent's hook trust decision. It installs and
+   removes `baum@baum` through native CLIs with `baum hooks install --user`
+   and `uninstall --user`. Native status queries have a 10-second bound and
+   actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
+   240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
    ("Quit and stop background reviews"), and marks it stopped by the user, so
    hooks do not start it again until `baum daemon ensure`. `baum daemon
@@ -2419,6 +2425,9 @@ with its own narrow capability, from which the user installs the bundled
 stable path of the bundled binary; an AppImage and Windows run and link a
 copy in the app's data directory, which Windows adds to the user `PATH`;
 the password prompt only for root-owned system directories) and the
-user-wide agent hooks; after that the window opens the daemon's diagnostics
-page. It records what it installed in `setup.json` in its configuration
-directory and removes only that. See [`desktop/README.md`](desktop/README.md).
+native `baum@baum` marketplace plugins; after that the window opens the
+daemon's diagnostics page. `setup.json` records onboarding and the command
+links/copies it installed; agent registries own plugin installation and
+enablement. Plugin status/install/removal use the resolved login shell PATH,
+with an inherited-PATH fallback warning if resolution fails. Command removal
+uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).
