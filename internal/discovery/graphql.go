@@ -162,9 +162,9 @@ func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped 
 		merge = "draft"
 	case pr.Mergeable == "CONFLICTING" || pr.MergeStateStatus == "DIRTY":
 		merge = "conflict"
-	case pr.MergeStateStatus == "CLEAN" || pr.MergeStateStatus == "UNSTABLE" || pr.MergeStateStatus == "HAS_HOOKS":
+	case pr.MergeStateStatus == "CLEAN" || pr.MergeStateStatus == "HAS_HOOKS":
 		merge = "ready"
-	case pr.MergeStateStatus == "BLOCKED" || pr.MergeStateStatus == "BEHIND":
+	case pr.MergeStateStatus == "BLOCKED" || pr.MergeStateStatus == "BEHIND" || pr.MergeStateStatus == "UNSTABLE":
 		merge = "blocked"
 	}
 	if pr.ReviewThreads != nil {

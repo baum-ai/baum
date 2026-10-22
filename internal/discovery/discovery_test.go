@@ -57,7 +57,9 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 		}
 		page := 1
 		if request.Variables.Cursor != nil {
-			fmt.Sscanf(*request.Variables.Cursor, "page-%d", &page)
+			if _, err := fmt.Sscanf(*request.Variables.Cursor, "page-%d", &page); err != nil {
+				return nil, err
+			}
 		}
 		var rows []apiPR
 		if err := json.Unmarshal([]byte(f.pages[fmt.Sprintf("/repos/acme/app/pulls?state=open&per_page=100&page=%d", page)]), &rows); err != nil {

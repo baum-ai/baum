@@ -122,6 +122,7 @@ func TestGraphQLStateMappingsAndUnknown(t *testing.T) {
 		capped                     bool
 	}{
 		{`{}`, "", "", "", -1, false},
+		{`{"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}`, "", "failing", "blocked", -1, false},
 		{`{"reviewDecision":"CHANGES_REQUESTED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]},"mergeable":"CONFLICTING"}`, "changes_requested", "failing", "conflict", -1, false},
 		{`{"latestOpinionatedReviews":{"nodes":[{"state":"APPROVED"}]},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING"}}}]},"mergeStateStatus":"BLOCKED"}`, "approved", "running", "blocked", -1, false},
 		{`{"latestOpinionatedReviews":{"nodes":[{"state":"APPROVED"},{"state":"CHANGES_REQUESTED"}]},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"ERROR"}}}]},"mergeStateStatus":"BEHIND"}`, "changes_requested", "failing", "blocked", -1, false},
