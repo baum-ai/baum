@@ -263,15 +263,37 @@ func (c checkout) close() {
 }
 
 // holds reports whether a checkout tree has a file or directory at the
-// repository-relative path. The trees are roots, so a symbolic link that
-// leads out of its tree holds nothing.
+// repository-relative path with exactly that spelling. The trees are roots,
+// so a symbolic link that leads out of its tree holds nothing.
 func (c checkout) holds(path string) bool {
 	for _, tree := range c.trees {
-		if info, err := tree.Stat(filepath.FromSlash(path)); err == nil && (info.Mode().IsRegular() || info.IsDir()) {
+		if holdsExactPath(tree.FS(), path) {
 			return true
 		}
 	}
 	return false
+}
+
+func holdsExactPath(tree fs.FS, path string) bool {
+	info, err := fs.Stat(tree, path)
+	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
+		return false
+	}
+	// Stat accepts different casing on some filesystems. GitHub links need
+	// the spelling stored in the tree, including every parent directory.
+	parent := "."
+	for _, component := range strings.Split(path, "/") {
+		entries, err := fs.ReadDir(tree, parent)
+		if err != nil || !slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == component }) {
+			return false
+		}
+		if parent == "." {
+			parent = component
+		} else {
+			parent += "/" + component
+		}
+	}
+	return true
 }
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A
