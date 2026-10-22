@@ -267,17 +267,17 @@ func (c checkout) close() {
 // so a symbolic link that leads out of its tree holds nothing.
 func (c checkout) holds(path string) bool {
 	for _, tree := range c.trees {
-		if holdsExactPath(tree.FS(), path) {
+		if statExactPath(tree.FS(), path) != nil {
 			return true
 		}
 	}
 	return false
 }
 
-func holdsExactPath(tree fs.FS, path string) bool {
+func statExactPath(tree fs.FS, path string) fs.FileInfo {
 	info, err := fs.Stat(tree, path)
 	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
-		return false
+		return nil
 	}
 	// Stat accepts different casing on some filesystems. GitHub links need
 	// the spelling stored in the tree, including every parent directory.
@@ -285,7 +285,7 @@ func holdsExactPath(tree fs.FS, path string) bool {
 	for _, component := range strings.Split(path, "/") {
 		entries, err := fs.ReadDir(tree, parent)
 		if err != nil || !slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == component }) {
-			return false
+			return nil
 		}
 		if parent == "." {
 			parent = component
@@ -293,7 +293,7 @@ func holdsExactPath(tree fs.FS, path string) bool {
 			parent += "/" + component
 		}
 	}
-	return true
+	return info
 }
 
 // hunkAnchorLines treats model-selected line ranges as optional precision. A

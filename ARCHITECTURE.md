@@ -286,6 +286,9 @@ The stored contract stays strict; leniency exists only in derived views.
 - Validation reports every finding in one pass, each located to the item it
   concerns, so a repair can fix them all at once. An anchor that does not
   resolve is shown as unresolved; it never rejects a document.
+  File anchors resolve only to regular files inside a checkout tree with
+  exactly matching path spelling, even on case-insensitive filesystems;
+  evidence citing an unavailable file becomes asserted.
 - A hunk may belong to several sections or to none; unplaced hunks are listed
   as `unassigned_hunks`. At most one section is `mechanical`.
 - Derived fields are never model-written: statistics, section states, hunk

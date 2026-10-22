@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -692,12 +691,14 @@ func resolveDocumentAnchor(a documentAnchor, b *bundlepkg.Bundle, directory stri
 			}
 		}
 	case "file":
-		path := valueOrEmpty(a.Path)
-		if !filepath.IsLocal(path) {
+		path, ok := localRefPath(valueOrEmpty(a.Path))
+		if !ok {
 			return false
 		}
-		for _, root := range []string{"head", "merge-base"} {
-			if info, err := os.Stat(filepath.Join(directory, root, path)); err == nil && info.Mode().IsRegular() {
+		opened := openCheckout(directory, os.OpenRoot)
+		defer opened.close()
+		for _, tree := range opened.trees {
+			if info := statExactPath(tree.FS(), path); info != nil && info.Mode().IsRegular() {
 				return true
 			}
 		}

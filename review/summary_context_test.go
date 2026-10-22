@@ -199,21 +199,25 @@ func TestSummaryContextRefsRequireExactPathSpelling(t *testing.T) {
 
 	// Exercise the filesystem behavior responsible for the bug on Linux too:
 	// a successful Stat must not be sufficient to keep a misspelled link.
-	tree := foldedStatFS{os.DirFS(filepath.Join(directory, "head"))}
-	for _, path := range []string{"api", "api/handler.go", "API", "API/handler.go", "api/Handler.go"} {
+	tree := aliasedStatFS{os.DirFS(filepath.Join(directory, "head"))}
+	for _, path := range []string{"api", "api/handler.go", "API", "API/handler.go", "api/Handler.go", "api./handler.go", "api/handler.go.", "api/handler.go "} {
 		if _, err := fs.Stat(tree, path); err != nil {
 			t.Fatalf("case-insensitive Stat(%q): %v", path, err)
 		}
-		if got, want := holdsExactPath(tree, path), path == strings.ToLower(path); got != want {
-			t.Errorf("holdsExactPath(%q) = %v, want %v", path, got, want)
+		if got, want := statExactPath(tree, path) != nil, path == "api" || path == "api/handler.go"; got != want {
+			t.Errorf("statExactPath(%q) resolved = %v, want %v", path, got, want)
 		}
 	}
 }
 
-type foldedStatFS struct{ fs.FS }
+type aliasedStatFS struct{ fs.FS }
 
-func (f foldedStatFS) Stat(path string) (fs.FileInfo, error) {
-	return fs.Stat(f.FS, strings.ToLower(path))
+func (f aliasedStatFS) Stat(path string) (fs.FileInfo, error) {
+	parts := strings.Split(strings.ToLower(path), "/")
+	for i := range parts {
+		parts[i] = strings.TrimRight(parts[i], ". ")
+	}
+	return fs.Stat(f.FS, strings.Join(parts, "/"))
 }
 
 // A checkout tree that exists but cannot be opened still makes the checkout
