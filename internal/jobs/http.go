@@ -47,16 +47,30 @@ func (q *Queue) Handler() http.Handler {
 		respond(w, v)
 	})
 	mux.HandleFunc("POST /api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		// Either items to generate now, or a confirmed estimate.
 		var request struct {
+			Items            []Item `json:"items"`
+			Mode             string `json:"mode"`
 			EstimateID       string `json:"estimate_id"`
 			ConfirmEstimate  bool   `json:"confirm_estimate"`
 			ConfirmIsolation bool   `json:"confirm_isolation"`
-			ConfirmUnpriced  bool   `json:"confirm_unpriced"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		v, e := q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation, Unpriced: request.ConfirmUnpriced})
+		var v []Job
+		var e error
+		if len(request.Items) > 0 {
+			v, e = q.Generate(r.Context(), request.Items, request.Mode, request.ConfirmIsolation)
+			if errors.Is(e, ErrIsolationRequired) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"isolation_required": true})
+				return
+			}
+		} else {
+			v, e = q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation})
+		}
 		if errors.Is(e, ErrRestarting) {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)

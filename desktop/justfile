@@ -3,7 +3,7 @@ heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --
 cargo := heavy + " desktop-test cargo"
 
 # Format check, lints, unit tests and the updater manifest checks
-check: sidecar
+check: frontend sidecar
     {{ cargo }} fmt --check
     {{ cargo }} clippy --locked --all-targets -- -D warnings
     {{ cargo }} test --locked
@@ -12,21 +12,25 @@ check: sidecar
 fmt:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test cargo fmt
 
-test *args: sidecar
+test *args: frontend sidecar
     {{ cargo }} test --locked {{ args }}
+
+# Bundle the React application and native setup screen in the UI container.
+frontend:
+    {{ heavy }} --workdir /oss/app ui-test pnpm build
 
 # Build the bundled baum binary for this platform into binaries/
 sidecar:
     {{ heavy }} oss-test sh desktop/scripts/sidecar.sh
 
 # Build the Linux bundles into target/release/bundle (default: deb)
-build bundles="deb": sidecar
+build bundles="deb": frontend sidecar
     {{ heavy }} desktop-test cargo tauri build --bundles {{ bundles }}
 
 # Build the Linux release bundles (deb, AppImage) into target/release-bundles
 # as the release workflow does, without updater signatures. The version
 # defaults to a snapshot's.
-bundle version="0.0.0": sidecar
+bundle version="0.0.0": frontend sidecar
     {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
 
 # Regenerate ../third_party/rust.txt, the licences of the crates in the app
@@ -42,12 +46,12 @@ updater-test:
 icons:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 icons/source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 icons/tray/$s.svg -o icons/tray/$s.png; done'
 
-# Run the desktop with Vite hot reload on this Wayland display
-dev: sidecar
+# Run the native desktop on the Linux host, with Vite hot reload in Docker
+dev: frontend sidecar
     sh {{ source_directory() }}/scripts/dev.sh
 
 # Run the app on this Wayland display, with the container's own home and daemon
-run: sidecar
+run: frontend sidecar
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps \
         -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
         -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \

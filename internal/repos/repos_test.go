@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,6 +189,20 @@ func TestHTTP(t *testing.T) {
 		return w
 	}
 	p := clone(t, "https://github.com/owner/repo")
+	check := func(path string) string {
+		t.Helper()
+		w := request(http.MethodGet, "/api/repos/check?path="+url.QueryEscape(path), "")
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body)
+		}
+		return strings.TrimSpace(w.Body.String())
+	}
+	if got := check(p); got != `{"valid":true,"repository":"owner/repo"}` {
+		t.Fatal(got)
+	}
+	if got := check(t.TempDir()); !strings.Contains(got, `"valid":false`) || !strings.Contains(got, "not a git working tree") {
+		t.Fatal(got)
+	}
 	body, _ := json.Marshal(map[string]string{"path": p})
 	w := request("POST", "/api/repos", string(body))
 	if w.Code != 200 {
@@ -196,6 +211,9 @@ func TestHTTP(t *testing.T) {
 	var c Clone
 	if e := json.Unmarshal(w.Body.Bytes(), &c); e != nil {
 		t.Fatal(e)
+	}
+	if got := check(p); got != `{"valid":true,"repository":"owner/repo","registered":true}` {
+		t.Fatal(got)
 	}
 	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"automatic":null}`, `{"daily_cap":null}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {

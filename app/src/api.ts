@@ -41,6 +41,8 @@ export type Entry = {
     recorded_cost_usd: number | null;
   } | null;
   risk_score: { score: number | null; status: string } | null;
+  /** The saved review's estimate of the time to read it, in whole minutes. */
+  review_minutes?: number;
   historical: boolean;
   stale: boolean;
   failure_reason?: string;
@@ -91,6 +93,8 @@ export type Job = {
   accounting?: Accounting;
   cost_reason?: string;
   reason?: string;
+  /** A failure in words, from the generator; absent for other failures. */
+  detail?: string;
   /** Queued by the daemon's scheduler, not confirmed by a person. */
   automatic?: boolean;
   trigger?: string;
@@ -109,8 +113,25 @@ export type AutomaticStatus = {
 export type Automatic = {
   enabled: boolean;
   cursor_agent_acknowledged: boolean;
+  /** Which pull requests get automatic reviews; absent from older daemons. */
+  pull_requests?: "both" | "authored" | "requested";
   repositories: AutomaticStatus[];
 };
+const jobReasons: Record<string, string> = {
+  input:
+    "baum couldn't gather what the review needs: the pull request, its commits in your clone, or GitHub.",
+  backend: "The agent couldn't run, or its provider was unavailable.",
+  budget: "The run reached its time or size limit before it finished.",
+  validation: "The agent's review didn't pass baum's checks, even after repairs.",
+  interrupted: "The run stopped before it finished.",
+  internal: "Something went wrong inside baum.",
+  superseded: "A newer commit replaced it.",
+  draft: "The pull request became a draft.",
+};
+/** What a finished job's reason means, in a sentence. */
+export function jobReasonText(reason: string): string {
+  return jobReasons[reason] ?? reason.replaceAll("_", " ");
+}
 /** How the jobs list and PR page say a job started without confirmation. */
 export function automaticLabel(job: Job): string | null {
   if (!job.automatic) return null;
@@ -271,6 +292,30 @@ export async function request<T>(
   if (response.status === 204) return undefined as T;
   return response.json();
 }
+/** Queues reviews of these pull requests at once. A fork or an author
+ *  without known write access needs the user's confirmation first: then
+ *  nothing is queued and the answer is "isolation". */
+export async function generateReviews(
+  items: { clone: string; pr: number }[],
+  mode: "single" | "batch",
+  confirmIsolation = false,
+): Promise<"queued" | "isolation"> {
+  const response = await fetch(appURL("api/jobs"), {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, mode, confirm_isolation: confirmIsolation }),
+  });
+  if (response.status === 409) {
+    const body = await response.json().catch(() => null);
+    if (body?.isolation_required) return "isolation";
+  }
+  if (!response.ok)
+    throw Error(
+      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
+    );
+  return "queued";
+}
 export function selector(clone: string, pr: number, version?: number) {
   return new URLSearchParams({
     clone,
@@ -329,20 +374,3 @@ export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
 }
 
 // estimateReasons explains, in words, why an item has no estimate on purpose.
-const estimateReasons: Record<string, string> = {
-  billed_by_cursor_subscription:
-    "Cost is billed by your Cursor subscription; baum can't estimate it.",
-};
-// blockedReasons explains why an item is left out of the generation.
-const blockedReasons: Record<string, string> = {
-  unknown_model_price:
-    "No price is known for this model. Choose a priced model in repository settings.",
-  isolation_confirmation_required:
-    "A fork or an author without known write access needs its own confirmation: generate this pull request on its own.",
-};
-export function estimateReasonText(reason: string): string {
-  return estimateReasons[reason] ?? "baum can't estimate the cost of this run.";
-}
-export function blockedReasonText(reason: string): string {
-  return blockedReasons[reason] ?? "It cannot be generated with the current settings.";
-}

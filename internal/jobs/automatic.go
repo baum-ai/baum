@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/baum-ai/baum/agent"
 )
 
 // Why an automatic job was queued.
@@ -76,10 +74,6 @@ type AutomaticRequest struct {
 	// ErrHeadChanged.
 	Head    string
 	Trigger string
-	// AllowUnpriced is the user's one-time acknowledgement that cursor-agent
-	// (or another backend billed outside the price list) runs without an
-	// estimate. Without it such an item is refused.
-	AllowUnpriced bool
 	// DailyCap, when set, limits the repository's automatic spending on the
 	// calendar day starting at Day.
 	DailyCap *float64
@@ -116,10 +110,6 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	}
 	if p.RequiresIsolationConfirmation {
 		return Job{}, &NotAutomaticError{ReasonIsolation}
-	}
-	unpriced := p.Backend == agent.BackendCursorAgent || (p.EstimateUSD == nil && p.BlockedReason == "")
-	if unpriced && !r.AllowUnpriced {
-		return Job{}, &NotAutomaticError{ReasonCursorAgentConsent}
 	}
 	if p.BlockedReason != "" {
 		return Job{}, &NotAutomaticError{p.BlockedReason}

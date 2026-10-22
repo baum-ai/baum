@@ -43,6 +43,7 @@ type Entry struct {
 	VersionCount  int                   `json:"version_count"`
 	Latest        *store.Metadata       `json:"latest"`
 	RiskScore     json.RawMessage       `json:"risk_score"`
+	ReviewMinutes *int                  `json:"review_minutes,omitempty"`
 	// Historical includes saved reviews outside the current discovered inbox.
 	// Their state is UNKNOWN unless the saved document already says closed/merged.
 	Historical        bool   `json:"historical"`
@@ -149,7 +150,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 				}
 				pr = discovery.PullRequest{Repository: identity, Number: summary.Key.Number, Title: summary.Title, State: state}
 			}
-			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, Historical: !found, Stale: stale[identity] || !found}
+			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale[identity] || !found}
 			if summary.Latest != nil {
 				entry.Status = "outdated"
 				if !found || pr.HeadSHA == "" {

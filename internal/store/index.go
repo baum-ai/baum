@@ -102,7 +102,10 @@ type Summary struct {
 	Title        string          `json:"title"`
 	PRState      string          `json:"pr_state"`
 	RiskScore    json.RawMessage `json:"risk_score"`
-	Run          *Run            `json:"run,omitempty"`
+	// ReviewMinutes is the document's estimate of the time to read it, whole
+	// minutes from 1 to 240; nil when it has none or an invalid one.
+	ReviewMinutes *int `json:"review_minutes,omitempty"`
+	Run           *Run `json:"run,omitempty"`
 }
 
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
@@ -119,7 +122,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
+	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),CASE json_type(v.document,'$.summary.review_minutes') WHEN 'integer' THEN json_extract(v.document,'$.summary.review_minutes') END,summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +132,10 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		var item Summary
 		var raw []byte
 		var risk sql.NullString
-		if err = rows.Scan(&item.Key.Repository, &item.Key.Number, &raw, &item.Title, &item.PRState, &risk, &item.VersionCount); err != nil {
+		// Only a JSON integer reaches here; one out of range is dropped rather
+		// than failing the whole index.
+		var minutes sql.NullInt64
+		if err = rows.Scan(&item.Key.Repository, &item.Key.Number, &raw, &item.Title, &item.PRState, &risk, &minutes, &item.VersionCount); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -144,6 +150,10 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 				return nil, errors.New("invalid stored risk assessment")
 			}
 			item.RiskScore = json.RawMessage(risk.String)
+		}
+		if minutes.Valid && minutes.Int64 >= 1 && minutes.Int64 <= 240 {
+			whole := int(minutes.Int64)
+			item.ReviewMinutes = &whole
 		}
 		out = append(out, item)
 	}

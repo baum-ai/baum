@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
-import { blockedReasonText, estimateReasonText } from "./api";
 import { appBase, cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
@@ -77,11 +76,6 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
 });
-it("shows first-run registration rather than a blank inbox", async () => {
-  await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Register a local clone");
-  expect(node.textContent).toContain("Repositories & settings");
-});
 it("keeps API, event and navigation URLs under the session namespace", async () => {
   entries = [entry(1)];
   await act(async () => root.render(<App />));
@@ -100,16 +94,16 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   await act(async () => jobs.click());
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?page=jobs");
-  expect(node.textContent).toContain("No generation jobs yet.");
+  expect(node.textContent).toContain("No reviews generated yet");
   await act(async () => {
     Array.from(node.querySelectorAll("a"))
       .find((a) => a.textContent === "Inbox")!
       .click();
   });
   await act(async () => {
-    const select = node.querySelector<HTMLSelectElement>("select")!;
-    select.value = "mine";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')]
+      .find((button) => button.textContent?.startsWith("Mine"))!
+      .click();
   });
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?filter=mine");
@@ -120,15 +114,14 @@ it("shows actionable launch authorization failure", async () => {
   expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate selected");
 });
-it("renders review states and unknown costs without inventing zero", async () => {
+it("says only what needs the reader: a review being generated or one that failed", async () => {
   entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("outdated");
-  expect(node.textContent).toContain("failed");
-  expect(node.textContent).toContain("current");
-  expect(node.textContent).toContain("generating");
-  expect(node.textContent).toContain("—");
-  expect(node.textContent).not.toContain("$0.0000");
+  const rows = [...node.querySelectorAll('[aria-label="Pull request inbox"] li')];
+  const status = rows.map((row) => row.querySelector(".inbox-status")?.textContent ?? "");
+  expect(status.filter(Boolean).sort()).toEqual(["Generating review", "Review failed"]);
+  expect(node.textContent).not.toContain("outdated");
+  expect(node.textContent).not.toMatch(/\$\d/);
 });
 it("filters by requested, authored, review state, repository and saved history", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
@@ -151,41 +144,32 @@ it("selects multiple rows before generation", async () => {
   expect(node.textContent).toContain("Generate selected (2)");
 });
 
-it("shows an unpriced model exclusion and keeps generation disabled", async () => {
-  entries = [entry(1)];
-  const original = globalThis.fetch;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (path: string, ...args: unknown[]) =>
-      path === "/s/test-ns/api/jobs/estimate"
-        ? Response.json({
-            id: "quote",
-            estimate_usd: null,
-            price_version: "test",
-            expires_at: "2026-10-15T15:00:00Z",
-            items: [
-              {
-                clone: "clone",
-                pr: 1,
-                head_sha: "head",
-                backend: "claude",
-                model: "",
-                estimate_usd: null,
-                requires_isolation_confirmation: false,
-                blocked_reason: "unknown_model_price",
-              },
-            ],
-          })
-        : original(path, ...(args as [])),
-    ),
-  );
+/** Answers POST api/jobs as the daemon would, recording each request. */
+function stubGenerate(needsIsolation: boolean) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const posts: unknown[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const init = args[1] as RequestInit | undefined;
+    if (String(args[0]) === "/s/test-ns/api/jobs" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      posts.push(body);
+      return Promise.resolve(
+        needsIsolation && !body.confirm_isolation
+          ? Response.json({ isolation_required: true }, { status: 409 })
+          : Response.json({ jobs: [] }),
+      );
+    }
+    return original(...args);
+  });
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value() {
       this.open = true;
     },
   });
-  await act(async () => root.render(<App />));
+  return posts;
+}
+const generateSelected = async () => {
   await act(async () =>
     node
       .querySelector<HTMLInputElement>('input[aria-label="Select all visible pull requests"]')!
@@ -196,100 +180,43 @@ it("shows an unpriced model exclusion and keeps generation disabled", async () =
       .find((b) => b.textContent?.includes("Generate selected"))!
       .click(),
   );
-  expect(node.textContent).toContain("Choose a priced model in repository settings.");
-  expect(
-    Array.from(node.querySelectorAll("button")).find(
-      (b) => b.textContent === "Confirm estimate and generate",
-    )!.disabled,
-  ).toBe(true);
-});
-
-it("runs an unpriced cursor-agent review only after acknowledging its cost", async () => {
-  entries = [entry(1)];
-  const original = globalThis.fetch;
-  const submitted: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (path: string, init?: RequestInit, ...rest: unknown[]) => {
-      if (path === "/s/test-ns/api/jobs/estimate") {
-        return Response.json({
-          id: "quote",
-          estimate_usd: null,
-          price_version: "test",
-          expires_at: "2026-10-15T15:00:00Z",
-          items: [
-            {
-              clone: "clone",
-              pr: 1,
-              head_sha: "head",
-              backend: "cursor-agent",
-              model: "",
-              estimate_usd: null,
-              estimate_reason: "billed_by_cursor_subscription",
-              max_tokens: 1000,
-              max_calls: 4,
-              requires_isolation_confirmation: false,
-            },
-          ],
-        });
-      }
-      if (path === "/s/test-ns/api/jobs" && init?.method === "POST") {
-        submitted.push(JSON.parse(String(init.body)));
-        return Response.json({ jobs: [] });
-      }
-      return original(path, init, ...(rest as []));
-    }),
-  );
-  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
-    configurable: true,
-    value() {
-      this.open = true;
-    },
-  });
+};
+it("generates the selected reviews at once, without a confirmation", async () => {
+  entries = [entry(1), entry(2)];
+  const posts = stubGenerate(false);
   await act(async () => root.render(<App />));
-  await act(async () =>
-    node
-      .querySelector<HTMLInputElement>('input[aria-label="Select all visible pull requests"]')!
-      .click(),
-  );
-  await act(async () =>
-    Array.from(node.querySelectorAll("button"))
-      .find((b) => b.textContent?.includes("Generate selected"))!
-      .click(),
-  );
-  expect(node.textContent).toContain(
-    "Cost is billed by your Cursor subscription; baum can't estimate it.",
-  );
-  expect(node.textContent).not.toContain("billed_by_cursor_subscription");
-  expect(node.textContent).not.toContain("Excluded");
-  const confirm = () =>
-    Array.from(node.querySelectorAll("button")).find(
-      (b) => b.textContent === "Confirm estimate and generate",
-    )!;
-  expect(confirm().disabled).toBe(true);
-  const acknowledge = Array.from(node.querySelectorAll("label"))
-    .find((l) => l.textContent?.includes("can't estimate the cost"))!
-    .querySelector("input")!;
-  await act(async () => acknowledge.click());
-  expect(confirm().disabled).toBe(false);
-  await act(async () => confirm().click());
-  expect(submitted).toEqual([
+  await generateSelected();
+  expect(posts).toEqual([
     {
-      estimate_id: "quote",
-      confirm_estimate: true,
+      items: [
+        { clone: "clone", pr: 1 },
+        { clone: "clone", pr: 2 },
+      ],
+      mode: "batch",
       confirm_isolation: false,
-      confirm_unpriced: true,
     },
   ]);
+  expect(node.querySelector("dialog")).toBeNull();
 });
-
-it("explains blocked items in words, not reason codes", () => {
-  expect(blockedReasonText("unknown_model_price")).toContain("Choose a priced model");
-  expect(blockedReasonText("isolation_confirmation_required")).toContain("on its own");
-  expect(blockedReasonText("something_new")).not.toContain("something_new");
-  expect(estimateReasonText("billed_by_cursor_subscription")).toContain("Cursor subscription");
+it("asks before running an agent on a fork, and generates once confirmed", async () => {
+  entries = [entry(1)];
+  const posts = stubGenerate(true);
+  await act(async () => root.render(<App />));
+  await generateSelected();
+  expect(node.querySelector("dialog")?.textContent).toContain(
+    "Review code from outside your team?",
+  );
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>("dialog button"))
+      .find((b) => b.textContent === "Generate anyway")!
+      .click(),
+  );
+  expect(posts.map((p) => (p as { confirm_isolation: boolean }).confirm_isolation)).toEqual([
+    false,
+    true,
+  ]);
+  expect(node.querySelector("dialog")).toBeNull();
 });
-
 it("groups requested PRs before authored PRs once and keeps saved history separate", () => {
   const requested = entry(1);
   requested.pull_request.authored_by_me = true;
@@ -408,7 +335,7 @@ function stubDiagnostics(respond: () => Promise<Response>) {
   return calls;
 }
 it("lists diagnostics problems first with status text and fixes", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   await act(async () => root.render(<App />));
   const text = node.textContent ?? "";
@@ -423,13 +350,15 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   expect(checks).toEqual(["GitHub token", "GitHub CLI", "git"]);
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   let resolve: (r: Response) => void = () => {};
   const calls = stubDiagnostics(() => new Promise<Response>((r) => (resolve = r)));
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Checking this machine…");
   const button = () =>
-    [...node.querySelectorAll("button")].find((b) => /Check/.test(b.textContent ?? ""))!;
+    [...node.querySelectorAll("dialog button")].find((b) =>
+      (b.textContent ?? "").startsWith("Check"),
+    )! as HTMLButtonElement;
   expect(button().disabled).toBe(true);
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().textContent).toBe("Check again");
@@ -509,7 +438,7 @@ const automaticOverview = {
     },
   ],
 };
-/** Serves api/repos and api/automatic, and records PUT bodies. */
+/** Serves api/repos, api/automatic and api/settings, and records PUT bodies. */
 function stubAutomatic(clone: object = demoClone, overview: object = automaticOverview) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const puts: { path: string; body: unknown }[] = [];
@@ -522,34 +451,38 @@ function stubAutomatic(clone: object = demoClone, overview: object = automaticOv
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
+    if (path === "/s/test-ns/api/settings")
+      return Promise.resolve(Response.json({ backend: "auto", model: "" }));
     return original(...args);
   });
   return puts;
 }
-it("sets automatic reviews globally and per repository and shows a daily cap pause", async () => {
+it("saves the global review settings from the form the desktop setup uses", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic();
   await act(async () => root.render(<App />));
-  const text = node.textContent ?? "";
-  expect(text).toContain("Automatic reviews");
-  expect(text).toContain("acme/demo: Automatic generation is paused");
-  expect(text).toContain("Spent automatically today: $5.00 of $5.00. 1 waiting to start.");
-  const global = node.querySelector<HTMLInputElement>(
-    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
-  )!;
+  const save = () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Save review settings")!;
+  // "auto" shows as the harness it runs first, with that harness's default model.
+  expect(node.querySelector<HTMLInputElement>('input[value="claude"]')!.checked).toBe(true);
+  expect(node.querySelector<HTMLSelectElement>("#review-model")!.value).toBe("claude-haiku-5-5");
+  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(global.checked).toBe(true);
   await act(async () => global.click());
-  expect(puts).toContainEqual({ path: "/s/test-ns/api/automatic", body: { enabled: false } });
-  const acknowledge = node.querySelectorAll<HTMLInputElement>(
-    'section[aria-label="Automatic reviews"] input[type="checkbox"]',
-  )[1]!;
-  await act(async () => acknowledge.click());
+  await act(async () => save().click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/automatic",
-    body: { cursor_agent_acknowledged: true },
+    body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "both" },
   });
-  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+});
+it("sets automatic reviews per repository and clears an old daily cap", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("acme/demo: Automatic generation is paused");
+  const region = await openRepository();
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("default");
   expect(mode.options[0]!.textContent).toBe("Global setting (on)");
@@ -557,8 +490,6 @@ it("sets automatic reviews globally and per repository and shows a daily cap pau
     mode.value = "off";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  const cap = region.querySelector<HTMLInputElement>('input[type="number"]')!;
-  expect(cap.value).toBe("5");
   await act(async () =>
     Array.from(region.querySelectorAll("button"))
       .find((b) => b.textContent === "Save repository settings")!
@@ -566,51 +497,67 @@ it("sets automatic reviews globally and per repository and shows a daily cap pau
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repos/clone/settings",
-    body: { automatic: false, daily_cap: 5, backend: null, model: null },
+    body: { automatic: false, daily_cap: null, backend: null, model: null },
   });
 });
+/** Opens a repository's settings dialog and returns it. */
+async function openRepository(name = "acme/demo") {
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>(`button[aria-label="Settings for ${name}"]`)!.click(),
+  );
+  return node.querySelector(`[aria-label="Repository ${name}"]`)!;
+}
 function typeInto(input: HTMLInputElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
-it("never saves an invalid daily cap as no cap; removing it is explicit", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+it("adds a repository only once the daemon says the path is a clone it would register", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic();
+  const posts: unknown[] = [];
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    const init = args[1] as RequestInit | undefined;
+    if (path.startsWith("/s/test-ns/api/repos/check?"))
+      return Promise.resolve(
+        Response.json(
+          path.includes("good")
+            ? { valid: true, repository: "acme/new" }
+            : { valid: false, reason: "path is unavailable or is not a git working tree" },
+        ),
+      );
+    if (path === "/s/test-ns/api/repos" && init?.method === "POST") {
+      posts.push(JSON.parse(String(init.body)));
+      return Promise.resolve(Response.json({}));
+    }
+    return stubbed(...args);
+  });
   await act(async () => root.render(<App />));
-  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
-  const cap = () => region.querySelector<HTMLInputElement>('input[type="number"]')!;
-  const save = () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click();
-  for (const value of ["", "-1", "1e999", "abc"]) {
-    await act(async () => typeInto(cap(), value));
-    await act(async () => save());
-    expect(region.textContent).toContain(
-      "Enter a daily cap of 0 or more in USD, or choose No daily cap.",
-    );
-  }
-  expect(puts.filter((p) => p.path.endsWith("/settings"))).toEqual([]);
-  await act(async () => typeInto(cap(), "2.5"));
-  await act(async () => save());
-  expect(puts).toContainEqual({
-    path: "/s/test-ns/api/repos/clone/settings",
-    body: { automatic: null, daily_cap: 2.5, backend: null, model: null },
-  });
-  const noCap = Array.from(region.querySelectorAll("label"))
-    .find((l) => l.textContent === "No daily cap")!
-    .querySelector("input")!;
-  await act(async () => noCap.click());
-  expect(cap().disabled).toBe(true);
-  await act(async () => save());
-  expect(puts.at(-1)).toEqual({
-    path: "/s/test-ns/api/repos/clone/settings",
-    body: { automatic: null, daily_cap: null, backend: null, model: null },
-  });
+  const input = node.querySelector<HTMLInputElement>(
+    'input[placeholder="/path/to/a/local/clone"]',
+  )!;
+  const button = () => node.querySelector<HTMLButtonElement>(".local-add-repo button")!;
+  // Outside the desktop app there is no folder picker to browse with.
+  expect(button().textContent).toBe("Add repo");
+  expect(button().disabled).toBe(true);
+  await act(async () => typeInto(input, "/work/bad"));
+  await act(async () => vi.advanceTimersByTimeAsync(300));
+  expect(node.textContent).toContain("Path is unavailable or is not a git working tree.");
+  expect(button().disabled).toBe(true);
+  await act(async () => typeInto(input, "/work/good"));
+  await act(async () => vi.advanceTimersByTimeAsync(300));
+  expect(node.textContent).toContain("GitHub repository acme/new");
+  expect(button().disabled).toBe(false);
+  await act(async () => button().click());
+  expect(posts).toEqual([{ path: "/work/good" }]);
+  expect(puts).toEqual([]);
+  vi.useRealTimers();
 });
 it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   // The server omits daily_cap when there is none.
   const puts = stubAutomatic({
@@ -624,7 +571,7 @@ it("saves a repository without a cap as explicit null when automatic settings ar
       : stubbed(...args),
   );
   await act(async () => root.render(<App />));
-  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const region = await openRepository();
   await act(async () =>
     Array.from(region.querySelectorAll("button"))
       .find((b) => b.textContent === "Save repository settings")!
@@ -636,7 +583,7 @@ it("saves a repository without a cap as explicit null when automatic settings ar
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(
     { ...demoClone, settings: { ...demoClone.settings, automatic: true } },
@@ -656,7 +603,7 @@ it("shows a repository set to On as paused while the global switch is off", asyn
     },
   );
   await act(async () => root.render(<App />));
-  const region = node.querySelector('[aria-label="Repository acme/demo"]')!;
+  const region = await openRepository();
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("on");
   expect(mode.selectedOptions[0]!.textContent).toBe(
@@ -711,7 +658,7 @@ it("marks automatically started jobs in the jobs list", async () => {
   expect(text.match(/Started automatically/g)).toHaveLength(4);
 });
 it("shows a diagnostics error with a retry that recovers", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   let ok = false;
   const calls = stubDiagnostics(async () =>
     ok

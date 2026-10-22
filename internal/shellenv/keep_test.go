@@ -9,7 +9,7 @@ func TestMergeTakesKeptVariablesFromTheLoginShell(t *testing.T) {
 	inherited := []string{"HOME=/home/dev", "PATH=/agent/bin", "GITHUB_TOKEN=agent", "GH_TOKEN=agent-only", "AGENT_SECRET=x", "XDG_STATE_HOME=/client/state", "BAUM_MODEL=inherited"}
 	resolved := map[string]string{"HOME": "/home/user", "PATH": "/usr/bin", "GITHUB_TOKEN": "shell", "BAUM_BACKEND": "codex", "XDG_STATE_HOME": "/shell/state", "EDITOR": "vim", ResolvingVariable: "1", "LC_ALL": "C"}
 	got := merge(false, inherited, resolved)
-	want := []string{"BAUM_BACKEND=codex", "GITHUB_TOKEN=shell", "HOME=/home/dev", "LC_ALL=C", "PATH=/usr/bin", "XDG_STATE_HOME=/client/state"}
+	want := []string{"BAUM_BACKEND=codex", "GITHUB_TOKEN=shell", "HOME=/home/dev", "LC_ALL=C", "PATH=/usr/bin:/agent/bin", "XDG_STATE_HOME=/client/state"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
@@ -22,7 +22,7 @@ func TestMergeNeverTakesLocationsFromTheShell(t *testing.T) {
 	inherited := []string{"HOME=/home/dev", "PATH=/usr/bin"}
 	resolved := map[string]string{"HOME": "/home/dev", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/other", "TMPDIR": "/shell/tmp", "PATH": "/opt/bin"}
 	got := merge(false, inherited, resolved)
-	want := []string{"HOME=/home/dev", "PATH=/opt/bin"}
+	want := []string{"HOME=/home/dev", "PATH=/opt/bin:/usr/bin"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
@@ -58,5 +58,24 @@ func TestMergeKeepsTheStartersSSHAgentAndFallsBackToTheShells(t *testing.T) {
 	want = []string{"GIT_SSH_COMMAND=ssh -i ~/.ssh/work", "SSH_AUTH_SOCK=/shell/agent.sock"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("shell fallback: got %v", got)
+	}
+}
+
+func TestMergePreservesInheritedUnixPathAfterLoginTools(t *testing.T) {
+	got := merge(false, []string{"PATH=/home/dev/.local/bin:/usr/bin::/home/dev/.local/bin"}, map[string]string{"PATH": "/opt/tools:/usr/bin"})
+	want := []string{"PATH=/opt/tools:/usr/bin:/home/dev/.local/bin"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	got = merge(false, []string{"PATH=/home/dev/.local/bin"}, map[string]string{})
+	if !slices.Equal(got, []string{"PATH=/home/dev/.local/bin"}) {
+		t.Fatal(got)
+	}
+}
+
+func TestMergeWindowsKeepsResolvedRegistryPath(t *testing.T) {
+	got := merge(true, []string{`Path=C:\old`}, map[string]string{"PATH": `C:\new`})
+	if !slices.Equal(got, []string{`PATH=C:\new`}) {
+		t.Fatal(got)
 	}
 }

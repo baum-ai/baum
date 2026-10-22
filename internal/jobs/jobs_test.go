@@ -194,7 +194,10 @@ func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 		t.Fatal("restricted batch accepted")
 	}
 }
-func TestUnknownPriceAndChangedHeadAreFailClosed(t *testing.T) {
+
+// A moved head is refused; a model the price list does not know still runs,
+// with no estimate.
+func TestChangedHeadFailsClosedAndUnknownPriceRuns(t *testing.T) {
 	q, f := newQueue(t)
 	e := estimate(t, q, "single", Item{"clone", 1})
 	f.mu.Lock()
@@ -205,18 +208,17 @@ func TestUnknownPriceAndChangedHeadAreFailClosed(t *testing.T) {
 	}
 	f.price = nil
 	e = estimate(t, q, "single", Item{"clone", 1})
-	if e.Items[0].BlockedReason != "unknown_model_price" || e.EstimateUSD != nil {
+	if e.Items[0].BlockedReason != "" || e.EstimateUSD != nil {
 		t.Fatal(e)
 	}
-	if _, err := q.Submit(context.Background(), e.ID, true, true); err == nil {
-		t.Fatal("unknown price accepted")
+	if _, err := q.Submit(context.Background(), e.ID, true, true); err != nil {
+		t.Fatal(err)
 	}
 }
 
 // A backend billed outside the price list (cursor-agent) is not blocked: its
-// estimate is unknown with a reason, and it runs once that is acknowledged,
-// on top of the usual confirmations.
-func TestUnpricedBackendRunsAfterAcknowledgement(t *testing.T) {
+// estimate is unknown with a reason, and it runs on the usual confirmations.
+func TestUnpricedBackendRuns(t *testing.T) {
 	q, f := newQueue(t)
 	f.mu.Lock()
 	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
@@ -225,13 +227,10 @@ func TestUnpricedBackendRunsAfterAcknowledgement(t *testing.T) {
 	if e.EstimateUSD != nil || e.Items[0].BlockedReason != "" || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
 		t.Fatalf("estimate = %+v", e)
 	}
-	if _, err := q.Submit(context.Background(), e.ID, true, false); err == nil {
-		t.Fatal("an unpriced run was queued without its acknowledgement")
-	}
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Unpriced: true}); err == nil {
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{}); err == nil {
 		t.Fatal("an unpriced run was queued without confirming the estimate")
 	}
-	jobs, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true})
+	jobs, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true})
 	if err != nil || len(jobs) != 1 || jobs[0].EstimateReason != "billed_by_cursor_subscription" {
 		t.Fatalf("jobs = %+v, err = %v", jobs, err)
 	}
@@ -245,10 +244,10 @@ func TestUnpricedBackendRunsAfterAcknowledgement(t *testing.T) {
 	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
 	f.mu.Unlock()
 	e = estimate(t, q, "single", Item{"clone", 1})
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true}); err == nil {
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true}); err == nil {
 		t.Fatal("a fork run was queued without isolation confirmation")
 	}
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Unpriced: true, Isolation: true}); err != nil {
+	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Isolation: true}); err != nil {
 		t.Fatal(err)
 	}
 	batch := estimate(t, q, "batch", Item{"clone", 2})

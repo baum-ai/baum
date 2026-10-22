@@ -7,16 +7,11 @@ import {
   type SetStateAction,
 } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { formatCount, formatRelative } from "@baum/viewer/components/format";
-import {
-  ChevronRightIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-  WarningIcon,
-} from "@baum/viewer/components/icons";
+import { formatCount } from "@baum/viewer/components/format";
+import { ChevronRightIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL, cost, liveFor, rowKey, type Entry, type LiveSession } from "./api";
+import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
 import { LiveBadge } from "./live";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
@@ -91,7 +86,10 @@ export function Inbox({
       return next;
     });
   return (
-    <section aria-label="Pull request inbox" className="local-inbox">
+    <section
+      aria-label="Pull request inbox"
+      className={cn("local-inbox", selection.size > 0 && "selecting")}
+    >
       <div className="inbox-columns inbox-columns-head">
         <input
           type="checkbox"
@@ -109,13 +107,11 @@ export function Inbox({
             })
           }
         />
-        <span className="hidden md:inline">Risk</span>
+        <span className="inbox-wide">Risk</span>
         <span className="inbox-title-heading">
-          Pull request <span className="md:hidden">· {formatCount(visible.length)} visible</span>
+          Pull request <span className="inbox-narrow">· {formatCount(visible.length)} visible</span>
         </span>
-        <span className="hidden md:inline">Review</span>
-        <span className="hidden md:inline">Generated</span>
-        <span className="hidden md:inline">Cost</span>
+        <span className="inbox-wide">Review time</span>
       </div>
       {groups.map((group) => (
         <Bucket
@@ -196,38 +192,28 @@ function Bucket({
     </section>
   );
 }
-function ReviewState({ entry }: { entry: Entry }) {
-  const tone =
-    entry.status === "failed"
-      ? "text-(--status-critical)"
-      : entry.status === "outdated"
-        ? "text-(--status-caution)"
-        : entry.status === "current"
-          ? "text-(--text-secondary)"
-          : "text-(--text-tertiary)";
-  return (
-    <span
-      className={cn("inline-flex min-w-0 items-center gap-1.5 text-xs", tone)}
-      title={entry.failure_reason ?? entry.store_error}
-    >
-      <span className="sr-only">Review: </span>
-      {entry.status === "generating" ? (
+/** The baum review's state, only when it asks for something: a review being
+ *  generated, or one that failed. A current or outdated review needs nothing
+ *  from the reader here; its risk is in the first column. */
+function ReviewActivity({ entry }: { entry: Entry }) {
+  if (entry.status === "generating")
+    return (
+      <span className="inbox-activity text-(--text-secondary)">
         <LiveDot />
-      ) : entry.status === "current" ? (
-        <CircleCheckIcon size={14} className="flex-none text-(--status-positive)" />
-      ) : entry.status === "failed" || entry.status === "outdated" ? (
+        Generating review
+      </span>
+    );
+  if (entry.status === "failed")
+    return (
+      <span
+        className="inbox-activity text-(--status-critical)"
+        title={entry.failure_reason ?? entry.store_error}
+      >
         <WarningIcon size={14} className="flex-none" />
-      ) : (
-        <CircleDashedIcon size={14} className="flex-none" />
-      )}
-      <span>{entry.status.replaceAll("_", " ")}</span>
-      {entry.version_count > 0 ? (
-        <span className="text-(--text-tertiary)">
-          · v{entry.latest?.version ?? entry.version_count}
-        </span>
-      ) : null}
-    </span>
-  );
+        Review failed
+      </span>
+    );
+  return null;
 }
 function InboxRow({
   entry,
@@ -263,15 +249,8 @@ function InboxRow({
           : score === 3
             ? "text-(--text-secondary)"
             : "text-(--status-positive)";
-  const metadata = [
-    pr.repository,
-    `#${pr.number}`,
-    pr.author,
-    entry.stale ? "Stale discovery" : null,
-    !pr.team_membership_known ? "Team requests unknown" : null,
-    entry.failure_reason,
-    entry.store_error,
-  ].filter(Boolean);
+  const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
+  const minutes = entry.review_minutes;
   return (
     <li className={cn("inbox-columns inbox-row", selected && "bg-(--surface-selected)")}>
       <input
@@ -308,33 +287,19 @@ function InboxRow({
           {metadata.join(" · ")}
         </p>
       </div>
-      <div className="inbox-review flex flex-wrap items-center gap-x-3 gap-y-1 md:block">
-        <ReviewState entry={entry} />
-        <span className="text-xs text-(--text-tertiary) md:hidden">
-          Generated {entry.latest?.generated_at ? formatRelative(entry.latest.generated_at) : "—"} ·
-          Cost {cost(entry.latest?.recorded_cost_usd)}
-        </span>
-      </div>
-      <div className="inbox-generation min-w-0 text-xs text-(--text-tertiary)">
-        <span className="md:hidden">Generated </span>
-        <span title={entry.latest?.generated_at}>
-          {entry.latest?.generated_at ? formatRelative(entry.latest.generated_at) : "—"}
-        </span>
-        {entry.latest ? (
-          <div
-            className="inbox-model truncate"
-            title={`${entry.latest.backend} / ${entry.latest.model}`}
-          >
-            {entry.latest.backend} / {entry.latest.model}
-          </div>
-        ) : null}
-      </div>
-      <div
-        className="inbox-cost text-xs tabular-nums text-(--text-tertiary)"
-        title={entry.latest?.recorded_cost_usd == null ? "Cost was not recorded" : undefined}
+      <span
+        className="inbox-time"
+        title={
+          minutes
+            ? `About ${minutes} ${minutes === 1 ? "minute" : "minutes"} to read the review`
+            : "No review yet"
+        }
       >
-        <span className="sr-only">Recorded cost: </span>
-        {cost(entry.latest?.recorded_cost_usd)}
+        <span className="sr-only">Review time: </span>
+        {minutes ? `~${minutes} min` : "—"}
+      </span>
+      <div className="inbox-status">
+        <ReviewActivity entry={entry} />
       </div>
     </li>
   );

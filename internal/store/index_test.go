@@ -28,7 +28,7 @@ func TestSnapshotRunLifecycleAndVersions(t *testing.T) {
 	v := version(k, 1)
 	cost := 0.12
 	v.Metadata.RecordedCostUSD = &cost
-	v.Document = []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1,"pr_state":"merged"},"summary":{"title":"Saved title","risk_score":{"score":42}}}`)
+	v.Document = []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1,"pr_state":"merged"},"summary":{"title":"Saved title","risk_score":{"score":42},"review_minutes":12}}`)
 	if err = s.Put(ctx, k, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestSnapshotRunLifecycleAndVersions(t *testing.T) {
 		t.Fatal(rows, err)
 	}
 	row := rows[0]
-	if row.Run.ID != newer || row.Run.State != "completed" || row.VersionCount != 1 || row.Title != "Saved title" || row.PRState != "merged" || string(row.RiskScore) != `{"score":42}` || *row.Latest.RecordedCostUSD != cost {
+	if row.Run.ID != newer || row.Run.State != "completed" || row.VersionCount != 1 || row.Title != "Saved title" || row.PRState != "merged" || string(row.RiskScore) != `{"score":42}` || row.ReviewMinutes == nil || *row.ReviewMinutes != 12 || *row.Latest.RecordedCostUSD != cost {
 		t.Fatalf("row=%+v", row)
 	}
 	failed, err := s.BeginRun(ctx, k, time.Now().Add(time.Minute))
@@ -162,6 +162,25 @@ func BenchmarkSnapshot(b *testing.B) {
 		rows, err := s.Snapshot(ctx)
 		if err != nil || len(rows) != 100 {
 			b.Fatal(fmt.Sprint(rows), err)
+		}
+	}
+}
+
+// Review time is a whole number of minutes from 1 to 240; anything else in a
+// stored document is left out rather than failing the index.
+func TestSnapshotDropsInvalidReviewMinutes(t *testing.T) {
+	ctx := context.Background()
+	for _, value := range []string{`0`, `3.5`, `241`, `"5"`, `null`} {
+		s := opened(t)
+		k := Key{"acme/widgets", 7}
+		v := version(k, 1)
+		v.Document = []byte(`{"review":{"repository":"acme/widgets","pull_request":7,"version":1},"summary":{"title":"t","review_minutes":` + value + `}}`)
+		if err := s.Put(ctx, k, Version{}, v); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := s.Snapshot(ctx)
+		if err != nil || len(rows) != 1 || rows[0].ReviewMinutes != nil {
+			t.Fatalf("%s: %+v %v", value, rows, err)
 		}
 	}
 }

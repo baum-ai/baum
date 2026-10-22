@@ -17,6 +17,7 @@
     "format:check": "biome format .",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
+    "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:unit"
   },

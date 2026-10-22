@@ -115,6 +115,20 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
           rustup default 1.99.1
 
+      - name: Set up pnpm for the desktop frontend
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 11.0.8
+
+      - name: Set up Node.js for the desktop frontend
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.22.1
+
+      - name: Build the React application and desktop setup
+        working-directory: .
+        run: pnpm --dir viewer install --frozen-lockfile && pnpm --dir app install --frozen-lockfile && pnpm --dir app build
+
       - name: Build the bundled baum binary
         working-directory: .
         run: sh desktop/scripts/sidecar.sh

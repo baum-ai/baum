@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -194,7 +195,7 @@ func TestApplyLoginEnvironment(t *testing.T) {
 				return shellenv.Result{Shell: "/bin/zsh", Env: map[string]string{"PATH": "/opt/bin", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/elsewhere"}}, nil
 			},
 			inherit: []string{"PATH=/usr/bin", "HOME=/home/user"},
-			want:    map[string]string{"PATH": "/opt/bin", "HOME": "/home/user"},
+			want:    map[string]string{"PATH": "/opt/bin:/usr/bin", "HOME": "/home/user"},
 			dropped: []string{"XDG_STATE_HOME", "XDG_RUNTIME_DIR"},
 		},
 		{
@@ -233,6 +234,9 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			var logged strings.Builder
 			applyLoginEnvironment(context.Background(), slog.New(slog.NewTextHandler(&logged, nil)))
 			for name, value := range tc.want {
+				if name == "PATH" && tc.name == "registry PATH" && runtime.GOOS != "windows" {
+					value += ":/usr/bin"
+				}
 				if got := os.Getenv(name); got != value {
 					t.Errorf("%s = %q, want %q", name, got, value)
 				}

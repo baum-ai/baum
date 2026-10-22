@@ -16,6 +16,7 @@ import (
 
 func stubLoginShell(t *testing.T, path string, err error) {
 	t.Helper()
+	t.Setenv("PATH", "")
 	old := resolveShell
 	t.Cleanup(func() { resolveShell = old })
 	resolveShell = func(context.Context, shellenv.Options) (shellenv.Result, error) {
@@ -96,8 +97,8 @@ func TestLoginPathRecognisesItself(t *testing.T) {
 // Without a login shell the inherited PATH is used and the reason given.
 func TestLoginPathFallsBackToTheInheritedPath(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("PATH", dir)
 	stubLoginShell(t, "", errors.New("login shell /bin/zsh did not finish within 10s"))
+	t.Setenv("PATH", dir)
 	report := loginPathJSON(t)
 	if report.LoginShell || !strings.Contains(report.Error, "did not finish") {
 		t.Errorf("report = %+v", report)
@@ -108,5 +109,16 @@ func TestLoginPathFallsBackToTheInheritedPath(t *testing.T) {
 	stdout, _, err := run(t, "daemon", "login-path")
 	if err != nil || !strings.Contains(stdout, "baum: not found on PATH") {
 		t.Errorf("text output: %v\n%s", err, stdout)
+	}
+}
+
+func TestLoginPathIncludesInheritedLocalBin(t *testing.T) {
+	dir := t.TempDir()
+	writeScript(t, filepath.Join(dir, "baum"), `echo "baum version v9.9.9"`, 0o755)
+	stubLoginShell(t, "/usr/bin", nil)
+	t.Setenv("PATH", dir+":/usr/bin")
+	report := loginPathJSON(t)
+	if len(report.Path) != 2 || report.Path[0] != "/usr/bin" || report.Path[1] != dir || report.Baum == nil || report.Baum.Path != filepath.Join(dir, "baum") {
+		t.Fatalf("inherited baum missing: %+v", report)
 	}
 }

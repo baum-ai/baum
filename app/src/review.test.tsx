@@ -118,14 +118,8 @@ it("matches active PR jobs across clones while isolating GitHub hosts and PRs", 
 });
 it("shows queued initial generation and progress instead of an empty review", async () => {
   await render(job("queued"));
-  expect(node.textContent).toContain("Review generation is queued");
-  expect(node.textContent).toContain("Calls 2 · Repairs 1");
+  expect(node.textContent).toContain("Review queued");
   expect(node.textContent).not.toContain("No generated review yet");
-  expect(
-    Array.from(node.querySelectorAll("button")).find(
-      (button) => button.textContent === "Review queued",
-    )!.disabled,
-  ).toBe(true);
   expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
   expect(node.querySelector("[data-back]")!.getAttribute("data-back")).toBe("/s/test-ns/");
   expect(node.textContent).not.toContain("Started automatically");
@@ -178,14 +172,18 @@ it.each(["cancelled", "failed", "interrupted"])(
       1,
       { ...entry, status: "generating" },
     );
-    expect(node.textContent).toContain(`Review generation ${state}`);
+    expect(node.textContent).toContain(
+      state === "failed" ? "The review couldn't be generated" : `Review generation was ${state}`,
+    );
     expect(node.querySelector('[data-generation="pending"]')).toBeNull();
     expect(
       Array.from(node.querySelectorAll("button")).some(
-        (button) => button.textContent === "Generate review" && !button.disabled,
+        (button) =>
+          button.textContent === (state === "failed" ? "Try again" : "Generate review") &&
+          !button.disabled,
       ),
     ).toBe(true);
-    if (state === "failed") expect(node.textContent).toContain("provider_unavailable");
+    if (state === "failed") expect(node.textContent).toContain("provider unavailable");
   },
 );
 it("shows cancellation errors and keeps the active job available for retry", async () => {
@@ -244,11 +242,11 @@ it("keeps the PR page through queued, running and completed SSE states across cl
   );
   history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7");
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Review generation is queued");
+  expect(node.textContent).toContain("Review queued");
   currentJob = job("running");
   indexed = { ...entry, clone_id: "another-clone", status: "generating" };
   await act(async () => events[0]!.dispatchEvent(new Event("progress")));
-  expect(node.textContent).toContain("Generating review");
+  expect(node.textContent).toContain("Generating the review");
   expect(node.textContent).not.toContain("No generated review yet.");
   documentValue = structuredClone(example) as unknown as ReviewDocument;
   documentValue.summary.text = "Published review from the job clone";

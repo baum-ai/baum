@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "daemon-pages",
+  "description": "The daemon's pages on loopback may open the native folder picker, which only returns the folder the user chose. Nothing else: registering it is the daemon's own API, and every install, removal and setup command stays with the bundled setup screen.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*"] },
+  "local": false,
+  "permissions": ["allow-choose-repository"]
+}

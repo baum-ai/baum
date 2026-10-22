@@ -28,6 +28,20 @@ use crate::install::{self, Record, SystemPrompt};
 
 /// The bundled setup screen.
 pub const SETUP_PAGE: &str = "setup.html";
+/// The setup screen's commands, as `capabilities/setup-screen.json` grants
+/// them; development grants Vite's copy of the screen the same.
+pub const SETUP_PERMISSIONS: &[&str] = &[
+    "allow-setup-state",
+    "allow-install-command",
+    "allow-uninstall-command",
+    "allow-install-hooks",
+    "allow-uninstall-hooks",
+    "allow-choose-repository",
+    "allow-add-repository",
+    "allow-review-settings",
+    "allow-save-review-settings",
+    "allow-finish-setup",
+];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";
 const STATE_FILE: &str = "setup.json";
@@ -210,7 +224,7 @@ pub fn show(app: &AppHandle) {
     let _ = window.show();
     let _ = window.set_focus();
     app.state::<Setup>().open.store(true, Ordering::SeqCst);
-    let _ = window.navigate(bundled(SETUP_PAGE));
+    let _ = window.navigate(setup_url());
 }
 
 /// Sends the window to the daemon's launch URL unless the setup screen
@@ -232,6 +246,11 @@ pub fn attach(
         return Some(Err(e));
     }
     receive.recv().unwrap_or(None)
+}
+
+/// Where the setup screen loads from: Vite's copy under `desktop::dev`.
+pub fn setup_url() -> url::Url {
+    crate::development::setup_page().unwrap_or_else(|| bundled(SETUP_PAGE))
 }
 
 fn bundled(page: &str) -> url::Url {
@@ -312,6 +331,7 @@ fn target(app: &AppHandle, cli: &Path) -> Result<PathBuf, String> {
 #[derive(Debug, Serialize)]
 pub struct View {
     first_run: bool,
+    home: Option<PathBuf>,
     command: install::Status,
     hooks: Hooks,
 }
@@ -402,6 +422,7 @@ fn view(app: &AppHandle) -> Result<View, String> {
     let cli = cli()?;
     Ok(View {
         first_run: !load(app).onboarded,
+        home: app.path().home_dir().ok(),
         command: command_status(app, &cli),
         hooks: hooks_status(&cli),
     })
@@ -508,21 +529,129 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
 
 /// Runs the bundled `baum hooks install --user`, for the agents it finds.
 #[tauri::command]
-pub async fn install_hooks(app: AppHandle) -> Result<Outcome, String> {
-    change_hooks(app, "install").await
+pub async fn install_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
+    change_hooks(app, "install", agent).await
 }
 
 /// Runs the bundled `baum hooks uninstall --user`.
 #[tauri::command]
-pub async fn uninstall_hooks(app: AppHandle) -> Result<Outcome, String> {
-    change_hooks(app, "uninstall").await
+pub async fn uninstall_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
+    change_hooks(app, "uninstall", agent).await
 }
 
-async fn change_hooks(app: AppHandle, action: &'static str) -> Result<Outcome, String> {
+async fn change_hooks(
+    app: AppHandle,
+    action: &'static str,
+    agent: Option<String>,
+) -> Result<Outcome, String> {
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
-        let out = run_hooks(&cli()?, &["hooks", action, "--user"])?;
+        let mut args = vec!["hooks", action, "--user"];
+        if let Some(agent) = agent.as_deref() {
+            if !matches!(agent, "codex" | "claude-code") {
+                return Err("Choose Codex or Claude Code.".into());
+            }
+            args.extend(["--agent", agent]);
+        }
+        let out = run_hooks(&cli()?, &args)?;
+        let mut lines = out.stdout;
+        lines.extend(out.stderr);
+        Ok(Outcome { ok: out.ok, lines })
+    })
+    .await
+}
+
+/// The native folder picker. The setup screen and the daemon's pages (the
+/// `daemon-pages` capability) may call it: it changes nothing and returns only
+/// the folder the user chose.
+#[tauri::command]
+pub async fn choose_repository(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose a local GitHub repository")
+            .blocking_pick_folder()
+            .map(|path| {
+                path.into_path()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .map_err(|e| e.to_string())
+            })
+            .transpose()
+    })
+    .await
+}
+
+/// Register one existing clone without changing its agent or Git hooks.
+#[tauri::command]
+pub async fn add_repository(app: AppHandle, path: PathBuf) -> Result<Outcome, String> {
+    blocking(move || {
+        let setup = app.state::<Setup>();
+        let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
+        if !path.is_absolute() || !path.is_dir() {
+            return Err("Choose an existing repository folder using an absolute path.".into());
+        }
+        let path = path
+            .to_str()
+            .ok_or("This folder path is not valid UTF-8.")?;
+        let out = run(
+            &cli()?,
+            &["internal", "repos", "add", "--", path],
+            LOGIN_PATH_TIMEOUT,
+        )?;
+        let mut lines = out.stdout;
+        lines.extend(out.stderr);
+        Ok(Outcome { ok: out.ok, lines })
+    })
+    .await
+}
+
+/// How the app generates reviews, as `baum internal reviews show` prints it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReviewSettings {
+    backend: String,
+    model: String,
+    automatic: bool,
+    pull_requests: String,
+}
+
+#[tauri::command]
+pub async fn review_settings() -> Result<ReviewSettings, String> {
+    blocking(move || {
+        let out = run(
+            &cli()?,
+            &["internal", "reviews", "show"],
+            LOGIN_PATH_TIMEOUT,
+        )?;
+        if !out.ok {
+            return Err(out.stderr.join("\n"));
+        }
+        serde_json::from_str(&out.stdout.join("\n"))
+            .map_err(|e| format!("Cannot read the review settings: {e}"))
+    })
+    .await
+}
+
+/// Saves the review settings; the CLI validates every value.
+#[tauri::command]
+pub async fn save_review_settings(
+    app: AppHandle,
+    settings: ReviewSettings,
+) -> Result<Outcome, String> {
+    blocking(move || {
+        let setup = app.state::<Setup>();
+        let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
+        // `--flag=value` keeps a value starting with `-` from reading as a flag.
+        let args = [
+            format!("--backend={}", settings.backend),
+            format!("--model={}", settings.model),
+            format!("--automatic={}", settings.automatic),
+            format!("--pull-requests={}", settings.pull_requests),
+        ];
+        let mut command = vec!["internal", "reviews", "set"];
+        command.extend(args.iter().map(String::as_str));
+        let out = run(&cli()?, &command, LOGIN_PATH_TIMEOUT)?;
         let mut lines = out.stdout;
         lines.extend(out.stderr);
         Ok(Outcome { ok: out.ok, lines })

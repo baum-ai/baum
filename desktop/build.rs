@@ -9,6 +9,10 @@ fn main() {
         "uninstall_command",
         "install_hooks",
         "uninstall_hooks",
+        "choose_repository",
+        "add_repository",
+        "review_settings",
+        "save_review_settings",
         "finish_setup",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

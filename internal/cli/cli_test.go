@@ -78,7 +78,7 @@ func TestInternalHelpListsEngineCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help: %v", err)
 	}
-	want := []string{"bundle", "doctor", "generate", "refresh", "repos", "sessions", "validate", "view"}
+	want := []string{"bundle", "doctor", "generate", "refresh", "repos", "reviews", "sessions", "validate", "view"}
 	got := listedCommands(stdout)
 	sort.Strings(got)
 	if !slices.Equal(got, want) {

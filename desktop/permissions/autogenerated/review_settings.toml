@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-review-settings"
+description = "Enables the review_settings command without any pre-configured scope."
+commands.allow = ["review_settings"]
+
+[[permission]]
+identifier = "deny-review-settings"
+description = "Denies the review_settings command without any pre-configured scope."
+commands.deny = ["review_settings"]

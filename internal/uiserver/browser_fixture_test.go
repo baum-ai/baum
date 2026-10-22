@@ -176,6 +176,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		review["merge_base"] = repo.MergeBase
 		doc["summary"].(map[string]any)["text"] = fmt.Sprintf("Local fixture review version %d", n)
+		doc["summary"].(map[string]any)["review_minutes"] = 4 + n
 		id := fmt.Sprintf("att_%032d", n)
 		doc["index"].(map[string]any)["attachments"] = []any{map[string]any{"id": id, "alt": fmt.Sprintf("Captured image v%d", n), "position": 1, "source_url": "https://github.com/user-attachments/assets/fixture", "content_type": "image/png", "width": 1, "height": 1}}
 		for _, section := range doc["sections"].([]any) {

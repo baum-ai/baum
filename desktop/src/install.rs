@@ -1474,6 +1474,10 @@ mod tests {
                 target: w.root.join("Applications/sh"),
                 ..record.clone()
             },
+            Record {
+                target: w.root.join("binaries/baum-x86_64-unknown-linux-gnu"),
+                ..record.clone()
+            },
         ] {
             let err = uninstall_with(&tampered, Some(&w.app), &NoPrompt, &writable, &|_| true)
                 .unwrap_err();

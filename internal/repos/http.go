@@ -43,6 +43,38 @@ func (r *Registry) Handler() http.Handler {
 		}
 		write(w, list)
 	})
+	// Whether a path can be registered, before registering it: the app's
+	// Repositories page offers Add only for a clone this would accept.
+	mux.HandleFunc("GET /api/repos/check", func(w http.ResponseWriter, req *http.Request) {
+		path := req.URL.Query().Get("path")
+		if path == "" {
+			http.Error(w, "path required", http.StatusBadRequest)
+			return
+		}
+		type answer struct {
+			Valid      bool   `json:"valid"`
+			Repository string `json:"repository,omitempty"`
+			Registered bool   `json:"registered,omitempty"`
+			Reason     string `json:"reason,omitempty"`
+		}
+		c, e := Inspect(req.Context(), path)
+		if e != nil {
+			write(w, answer{Reason: e.Error()})
+			return
+		}
+		list, e := r.List(req.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		registered := false
+		for _, existing := range list {
+			if existing.Path == c.Path {
+				registered = true
+			}
+		}
+		write(w, answer{Valid: true, Repository: c.Repository, Registered: registered})
+	})
 	mux.HandleFunc("POST /api/repos", func(w http.ResponseWriter, req *http.Request) {
 		var input struct {
 			Path     string    `json:"path"`

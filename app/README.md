@@ -1,12 +1,24 @@
 # Local application
 
 For desktop UI development, run `just desktop::dev` from the repository root
-on a Wayland session. Vite serves React and CSS with hot reload while proxying
-login and namespaced API requests to an isolated container daemon. Changes to
-this app and `../viewer` appear in the native window without rebuilding Go or
-Rust. See [desktop development](../desktop/README.md#development) for details.
-`just local_app::e2e` checks both the built app and the development proxy;
-the latter covers login, CSRF, event streaming and React/CSS hot reload.
+on Linux in a Wayland or X11 session. The native app and shared daemon run on the
+host; Vite and frontend dependencies stay in Docker. Changes to the daemon-served
+app and `../viewer` hot reload without rebuilding Go or Rust. See
+[desktop development](../desktop/README.md#development).
+
+The native onboarding screen is React too: `setup.html` mounts `src/desktop/setup.tsx`,
+with typed native IPC and the same Vite, TypeScript, lint and test pipeline. The
+multi-page production build emits both entries and assembles `../desktop/dist`
+for Tauri, including the small connecting screen from `../desktop/ui`. Fonts and
+icons are bundled as local assets rather than requiring a network. The setup
+screen keeps its Tauri-local origin and permissions; serving it from the daemon
+or Vite does not grant native access. Setup changes currently require restarting
+`just desktop::dev` to rebuild the embedded assets.
+
+`just local_app::e2e` checks the built app, development proxy and compiled native
+setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
+completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
+React/CSS hot reload for the daemon-served application.
 
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
@@ -68,16 +80,29 @@ while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
-Automatic reviews are on by default. Repositories & settings has the global
-"Generate reviews automatically" switch and the one-time "Allow automatic
-reviews with cursor-agent" acknowledgement (`GET`/`PUT api/automatic`, kept by
-the daemon, which enforces both). The global switch is a master switch (the
+The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
+Settings holds the global review settings in the same form as the desktop
+setup's last step: the harness, its model (a listed model or a custom name),
+whether reviews run automatically and for which pull requests (authored,
+requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
+`backend`, `model`, `pull_requests`), which the daemon keeps as app
+preferences over the config file; `GET api/settings` reports the effective
+harness and model. Choosing cursor-agent, globally or for a repository, is the
+one-time acknowledgement that its cost cannot be estimated.
+Automatic reviews are on by default. The global switch is a master switch (the
 desktop tray's pause sets it): off stops automatic generation everywhere. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
 `true`, `false`); only "Off" differs while the global switch is on, and while
 it is off a repository set to "On" is shown as paused by the global switch.
-Turning automatic generation off, for everything or one repository, or
-withdrawing the cursor-agent acknowledgement cancels the affected automatic
+Repositories adds a clone from a path: `GET api/repos/check?path=` says
+whether the daemon would register it (and as which GitHub repository, or why
+not), and only then does the button read "Add repo". Until then, in the
+desktop app, it reads "Browse…" and opens the native folder picker, the one
+Tauri command daemon pages may call; in a plain browser it stays a disabled
+"Add repo". The page lists each registered clone with its own automatic choice, daily
+cap, and harness and model overrides (the same tiles and dropdown, with a
+"Global setting" choice that inherits). Turning automatic generation off, for
+everything or one repository, cancels the affected automatic
 jobs that have not started (the jobs list shows the reason); a running job
 finishes. Each repository also has a daily automatic cap in USD (0 permits no
 automatic spending) or an explicit "No daily cap" checkbox; an empty,
@@ -103,14 +128,16 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
-Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) are a
-section of Repositories & settings and a page of their own,
-`?page=diagnostics`, which the desktop app opens after its first-run setup
-(the bootstrap page carries `page=diagnostics` from the launch URL's
-fragment). Each warning and problem shows its fix. The app runs the
-diagnostics once when it opens on any other page and, while they find a
-problem, shows a notice on every page linking to the diagnostics page; the
-settings and diagnostics pages update it when they run the checks again.
+Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) open
+in a dialog from Settings' "Check this computer" button, which shows how many
+problems they found. `?page=diagnostics` opens Settings with the dialog open;
+the desktop app opens it after its first-run setup (the bootstrap page carries
+`page=diagnostics` from the launch URL's fragment). Each warning and problem
+shows its fix. The app runs the diagnostics once when it opens and, while they
+find a problem, shows a notice on every page linking to them; the dialog
+updates it when it runs the checks again. GitHub discovery shows a note only
+when a refresh failed or the request allowance is used up; a cache that is
+merely older than the poll interval is normal and says nothing.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.

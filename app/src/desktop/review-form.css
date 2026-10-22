@@ -1,0 +1,213 @@
+/* The review settings form, shared by the desktop setup's last step and the
+   app's settings: harness tiles, the model dropdown, the automatic switch and
+   which pull requests it covers. Colours are the brand's own, so it reads the
+   same on both screens. */
+.review-card,
+.setup-card.review-card {
+  padding: 0;
+}
+.review-section {
+  margin: 0;
+  padding: 20px 22px;
+  border: 0;
+  min-width: 0;
+}
+.review-section + .review-section {
+  border-top: 1px solid #ead3a8;
+}
+.review-section legend,
+.review-label {
+  display: block;
+  float: left;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b4a33;
+}
+.harness-grid {
+  clear: both;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.harness-option input,
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.harness-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 10px 12px;
+  border: 1px solid #ddbf8e;
+  border-radius: 9px;
+  background: #fff8ea;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.harness-tile small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #6b4a33;
+}
+.harness-tile img {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+.select select:hover {
+  border-color: #c9a97e;
+}
+.harness-option:hover .harness-tile {
+  border-color: #c9a97e;
+}
+.harness-option input:checked + .harness-tile {
+  border-color: #2e7d3e;
+  background: #eef4e8;
+  box-shadow: inset 0 0 0 1px #2e7d3e;
+}
+.harness-option input:focus-visible + .harness-tile,
+.segmented input:focus-visible + span {
+  outline: 2px solid #2e7d3e;
+  outline-offset: 2px;
+}
+.model-row {
+  clear: both;
+  display: flex;
+  gap: 8px;
+}
+.select {
+  position: relative;
+  flex: 0 0 240px;
+  min-width: 0;
+}
+/* A CSS chevron: the native control is WebKitGTK's grey one. */
+.select::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid #6b4a33;
+  border-bottom: 1.5px solid #6b4a33;
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.select select {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #ddbf8e;
+  border-radius: 7px;
+  padding: 10px 36px 10px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  background: #fff8ea;
+  color: #2a1d15;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.switch-row small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b4a33;
+}
+.switch-row input[role="switch"] {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: #c9a97e;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch-row input[role="switch"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff8ea;
+  transition: transform 0.15s;
+}
+.switch-row input[role="switch"]:checked {
+  background: #2e7d3e;
+}
+.switch-row input[role="switch"]:checked::after {
+  transform: translateX(18px);
+}
+.scope {
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.segmented {
+  clear: both;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #ddbf8e;
+  border-radius: 9px;
+  background: #fff8ea;
+}
+.segmented span {
+  display: block;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #6b4a33;
+  cursor: pointer;
+}
+.segmented input:checked + span {
+  background: #2a1d15;
+  color: #fff8ea;
+}
+.review-card .review-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #6b4a33;
+}
+.model-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #ddbf8e;
+  border-radius: 7px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  background: #fff8ea;
+  color: #2a1d15;
+}
+/* The tile that leaves the choice to the level above. */
+.harness-inherit {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px dashed #c9a97e;
+  border-radius: 50%;
+}
