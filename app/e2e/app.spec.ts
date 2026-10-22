@@ -75,11 +75,45 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   expect((await page.request.get("/s/wrong/api/repos")).status()).toBe(404);
   await expect(page.getByRole("link", { name: /Reuse the existing PR page/ })).toBeVisible();
   expect(errors).toEqual([]);
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  const row = (title: string) => inbox.getByRole("listitem").filter({ hasText: title });
+  const approved = row("Reuse the existing PR page");
+  await expect(approved).toContainText("Review time: ~12 min");
+  await expect(approved).toContainText("Unresolved: 0");
+  await expect(approved).toContainText("Review: Approved");
+  await expect(approved).toContainText("Checks: Passing");
+  await expect(approved).toContainText("Merge: Ready");
+  const changes = row("A pull request without a review");
+  await expect(changes).toContainText("Review time: —");
+  await expect(changes).toContainText("Unresolved: 3");
+  await expect(changes).toContainText("Review: Changes requested");
+  await expect(changes).toContainText("Checks: Failing");
+  await expect(changes).toContainText("Merge: Conflict");
+  const fork = row("A fork requiring confirmation");
+  await expect(fork).toContainText("Unresolved: 6+");
+  await expect(fork.locator('[title*="only the first 100"]')).toBeVisible();
+  await expect(fork).toContainText("Review: Commented");
+  await expect(fork).toContainText("Checks: Running");
+  await expect(fork).toContainText("Merge: Blocked");
+  const unreviewed = row("An automatically reviewed change");
+  await expect(unreviewed).toContainText("Review: Unreviewed");
+  await expect(unreviewed).toContainText("Checks: —");
+  await expect(unreviewed).toContainText("Merge: Draft");
+  const unknown = row("Other repository change");
+  await expect(unknown.locator(".inbox-status")).toHaveCount(5);
+  for (const cell of await unknown.locator(".inbox-status").all())
+    await expect(cell).toContainText("—");
+  await expect(inbox).not.toContainText(/Generated|Cost|Stale discovery/);
   await page.screenshot({
     path: "test-results/inbox-wide.png",
     fullPage: false,
     animations: "disabled",
   });
+  await page.setViewportSize({ width: 720, height: 900 });
+  await expect(approved.getByText("Checks:", { exact: true })).toBeVisible();
+  await expect(approved.getByText("Checks: Passing", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
+  await page.screenshot({ path: "test-results/inbox-desktop-minimum.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("region", { name: "Pull request inbox" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

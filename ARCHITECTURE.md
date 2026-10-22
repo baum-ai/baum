@@ -110,12 +110,14 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` is the GraphQL client `baum internal bundle` reads GitHub with, and
-the bounded read-only GraphQL and REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
-aliases and tokens as the GitHub CLI does, through its library go-gh
-(`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
-themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
-that client sends the user's time zone and preview media types, and
+`internal/github` provides the GraphQL client `baum internal bundle` reads
+GitHub with and the bounded read-only GraphQL and REST transport local inbox
+discovery uses. It reads hosts, repositories, remote URLs, SSH host aliases and
+tokens as the GitHub CLI does, through its library go-gh
+(`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). Bundle requests use
+`shurcooL-graphql`; discovery sends bounded requests through `RESTReader`,
+including its `GraphQL` method. Neither uses go-gh's API client, which sends
+the user's time zone and preview media types and
 rewrites control characters in every response, which would make a local
 bundle's text, and so its digest, differ from the hosted service's. baum
 also keeps what it fetches, the pagination, head pinning, rate-limit

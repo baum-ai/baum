@@ -36,7 +36,7 @@ body {
   padding: 0.4rem 0.6rem;
   max-width: 100%;
 }
-/* The local inbox follows the hosted Focus rows with local evidence columns. */
+/* Status columns fold under the title in smaller desktop windows. */
 .local-inbox {
   min-width: 0;
   background: var(--surface-card);
@@ -59,7 +59,7 @@ body {
   color: var(--text-tertiary);
 }
 .inbox-title-heading {
-  grid-column: 2 / -1;
+  grid-column: 3;
 }
 .inbox-bucket {
   padding-left: 1rem;
@@ -92,31 +92,42 @@ body {
   margin-top: 0.2rem;
   line-height: 1.5;
 }
-.inbox-review {
+.inbox-detail-heading {
+  display: none;
+}
+.inbox-statuses {
   grid-column: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
   min-width: 0;
 }
-.inbox-generation {
-  display: none;
-  grid-column: 3;
-  overflow-wrap: anywhere;
+.inbox-status {
+  white-space: nowrap;
 }
-.inbox-model {
-  display: none;
+.inbox-cell-label {
+  color: var(--text-tertiary);
 }
-.inbox-cost {
-  display: none;
-  grid-column: 3;
-}
-@media (width >= 48rem) {
+@media (width >= 64rem) {
   .inbox-columns {
-    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 9rem 10rem 5rem;
+    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 5rem 5rem 9.5rem 5.5rem 5.5rem;
   }
-  .inbox-title-heading,
-  .inbox-review,
-  .inbox-generation,
-  .inbox-cost {
-    grid-column: auto;
+  .inbox-detail-heading {
+    display: inline;
+  }
+  .inbox-statuses {
+    display: contents;
+  }
+  .inbox-cell-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
   }
   .inbox-row {
     padding-top: 0.75rem;
@@ -127,25 +138,14 @@ body {
     align-self: center;
     margin-top: 0;
   }
-  .inbox-pr-title {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+  .inbox-pr-title,
   .inbox-meta {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .inbox-model {
-    display: block;
-    margin-top: 0.2rem;
-  }
-  .inbox-generation,
-  .inbox-cost {
-    display: block;
-  }
 }
+
 dialog {
   background: var(--surface-card);
   color: var(--text-primary);

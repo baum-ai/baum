@@ -13,7 +13,14 @@ export type Clone = {
     model: string | null;
   };
 };
-export type PR = {
+export type GitHubState = {
+  review: "" | "approved" | "changes_requested" | "commented" | "unreviewed";
+  checks: "" | "passing" | "failing" | "running" | "none";
+  merge: "" | "ready" | "conflict" | "blocked" | "draft";
+  unresolved: number | null;
+  unresolved_capped: boolean;
+};
+export type PR = GitHubState & {
   repository: string;
   number: number;
   head_sha: string;
@@ -28,7 +35,8 @@ export type PR = {
   author_has_write: boolean | null;
   team_membership_known: boolean;
 };
-export type Entry = {
+export type Entry = GitHubState & {
+  review_minutes: number | null;
   pull_request: PR;
   clone_id?: string;
   status: string;

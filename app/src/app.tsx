@@ -414,12 +414,20 @@ function Workspace({ url }: { url: UrlState }) {
               </label>
             </div>
             {rates
-              .filter((r) => r.stale || r.error || r.rate.remaining === 0)
+              .filter((r) => r.error || r.rate.remaining === 0)
               .map((r) => (
-                <Alert key={r.repository}>
-                  {r.repository}: {r.error ?? "Cached discovery is stale"}. GitHub requests
-                  remaining: {r.rate.remaining ?? "unknown"}; reset: {r.rate.reset}.
-                </Alert>
+                <p
+                  key={r.repository}
+                  role="status"
+                  className="rounded-(--radius-sm) bg-(--surface-wash) px-3 py-2 text-base text-(--text-secondary)"
+                >
+                  {r.repository}:{" "}
+                  {r.error
+                    ? "GitHub refresh failed; showing cached data"
+                    : "GitHub request allowance used up; showing cached data"}
+                  . GitHub allowance remaining: {r.rate.remaining ?? "unknown"}; reset:{" "}
+                  {r.rate.reset}.
+                </p>
               ))}
             {snapshot.problems.map((p) => (
               <Alert key={p.clone_id + p.reason}>

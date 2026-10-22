@@ -7,16 +7,21 @@ import {
   type SetStateAction,
 } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { formatCount, formatRelative } from "@baum/viewer/components/format";
+import { formatCount } from "@baum/viewer/components/format";
 import {
   ChevronRightIcon,
+  CheckIcon,
+  CircleCrossIcon,
+  CommentsIcon,
+  MergeIcon,
+  type IconProps,
   CircleCheckIcon,
   CircleDashedIcon,
   WarningIcon,
 } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL, cost, liveFor, rowKey, type Entry, type LiveSession } from "./api";
+import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
 import { LiveBadge } from "./live";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
@@ -109,13 +114,13 @@ export function Inbox({
             })
           }
         />
-        <span className="hidden md:inline">Risk</span>
-        <span className="inbox-title-heading">
-          Pull request <span className="md:hidden">· {formatCount(visible.length)} visible</span>
-        </span>
-        <span className="hidden md:inline">Review</span>
-        <span className="hidden md:inline">Generated</span>
-        <span className="hidden md:inline">Cost</span>
+        <span>Risk</span>
+        <span className="inbox-title-heading">Pull request</span>
+        {["Review time", "Unresolved", "Review", "Checks", "Merge"].map((column) => (
+          <span key={column} className="inbox-detail-heading">
+            {column}
+          </span>
+        ))}
       </div>
       {groups.map((group) => (
         <Bucket
@@ -196,37 +201,89 @@ function Bucket({
     </section>
   );
 }
-function ReviewState({ entry }: { entry: Entry }) {
-  const tone =
-    entry.status === "failed"
-      ? "text-(--status-critical)"
-      : entry.status === "outdated"
-        ? "text-(--status-caution)"
-        : entry.status === "current"
-          ? "text-(--text-secondary)"
-          : "text-(--text-tertiary)";
+type StateStyle = {
+  label: string;
+  tone: string;
+  icon: ComponentType<IconProps>;
+  iconTone?: string;
+};
+const MUTED = "text-(--text-tertiary)";
+const POSITIVE = "text-(--status-positive)";
+const CRITICAL = "text-(--status-critical)";
+const REVIEW: Record<string, StateStyle> = {
+  approved: { label: "Approved", tone: POSITIVE, icon: CheckIcon },
+  changes_requested: { label: "Changes requested", tone: CRITICAL, icon: CircleCrossIcon },
+  commented: { label: "Commented", tone: MUTED, icon: CommentsIcon },
+  unreviewed: { label: "Unreviewed", tone: MUTED, icon: CircleDashedIcon },
+};
+const CHECKS: Record<string, StateStyle> = {
+  passing: { label: "Passing", tone: MUTED, iconTone: POSITIVE, icon: CircleCheckIcon },
+  failing: { label: "Failing", tone: CRITICAL, icon: CircleCrossIcon },
+  running: { label: "Running", tone: "text-(--status-caution)", icon: CircleDashedIcon },
+};
+const MERGE: Record<string, StateStyle> = {
+  ready: { label: "Ready", tone: POSITIVE, icon: MergeIcon },
+  conflict: { label: "Conflict", tone: CRITICAL, icon: WarningIcon },
+  blocked: { label: "Blocked", tone: MUTED, icon: CircleCrossIcon },
+  draft: { label: "Draft", tone: MUTED, icon: CircleDashedIcon },
+};
+function StatusCell({
+  column,
+  label,
+  style,
+  title,
+}: {
+  column: string;
+  label?: string;
+  style?: StateStyle;
+  title?: string;
+}) {
+  const Icon = style?.icon;
+  const text = label ?? style?.label;
   return (
     <span
-      className={cn("inline-flex min-w-0 items-center gap-1.5 text-xs", tone)}
-      title={entry.failure_reason ?? entry.store_error}
-    >
-      <span className="sr-only">Review: </span>
-      {entry.status === "generating" ? (
-        <LiveDot />
-      ) : entry.status === "current" ? (
-        <CircleCheckIcon size={14} className="flex-none text-(--status-positive)" />
-      ) : entry.status === "failed" || entry.status === "outdated" ? (
-        <WarningIcon size={14} className="flex-none" />
-      ) : (
-        <CircleDashedIcon size={14} className="flex-none" />
+      title={title}
+      className={cn(
+        "inbox-status inline-flex items-center gap-1.5 text-xs tabular-nums",
+        style?.tone ?? MUTED,
       )}
-      <span>{entry.status.replaceAll("_", " ")}</span>
-      {entry.version_count > 0 ? (
-        <span className="text-(--text-tertiary)">
-          · v{entry.latest?.version ?? entry.version_count}
-        </span>
-      ) : null}
+    >
+      <span className="inbox-cell-label">{column}: </span>
+      {Icon && text ? <Icon size={14} className={cn("flex-none", style?.iconTone)} /> : null}
+      {text ?? "—"}
     </span>
+  );
+}
+function StatusColumns({ entry }: { entry: Entry }) {
+  const unresolved = entry.unresolved;
+  return (
+    <div className="inbox-statuses">
+      <StatusCell
+        column="Review time"
+        label={
+          entry.review_minutes == null ? undefined : `~${formatCount(entry.review_minutes)} min`
+        }
+      />
+      <StatusCell
+        column="Unresolved"
+        style={unresolved == null ? undefined : { label: "", tone: MUTED, icon: CommentsIcon }}
+        label={
+          unresolved == null
+            ? undefined
+            : `${formatCount(unresolved)}${entry.unresolved_capped ? "+" : ""}`
+        }
+        title={
+          unresolved == null
+            ? undefined
+            : entry.unresolved_capped
+              ? `At least ${formatCount(unresolved)} unresolved threads; only the first 100 threads were fetched`
+              : `${formatCount(unresolved)} unresolved threads on GitHub`
+        }
+      />
+      <StatusCell column="Review" style={REVIEW[entry.review]} />
+      <StatusCell column="Checks" style={CHECKS[entry.checks]} />
+      <StatusCell column="Merge" style={MERGE[entry.merge]} />
+    </div>
   );
 }
 function InboxRow({
@@ -267,7 +324,6 @@ function InboxRow({
     pr.repository,
     `#${pr.number}`,
     pr.author,
-    entry.stale ? "Stale discovery" : null,
     !pr.team_membership_known ? "Team requests unknown" : null,
     entry.failure_reason,
     entry.store_error,
@@ -307,35 +363,22 @@ function InboxRow({
         <p title={metadata.join(" · ")} className="inbox-meta text-xs text-(--text-tertiary)">
           {metadata.join(" · ")}
         </p>
-      </div>
-      <div className="inbox-review flex flex-wrap items-center gap-x-3 gap-y-1 md:block">
-        <ReviewState entry={entry} />
-        <span className="text-xs text-(--text-tertiary) md:hidden">
-          Generated {entry.latest?.generated_at ? formatRelative(entry.latest.generated_at) : "—"} ·
-          Cost {cost(entry.latest?.recorded_cost_usd)}
-        </span>
-      </div>
-      <div className="inbox-generation min-w-0 text-xs text-(--text-tertiary)">
-        <span className="md:hidden">Generated </span>
-        <span title={entry.latest?.generated_at}>
-          {entry.latest?.generated_at ? formatRelative(entry.latest.generated_at) : "—"}
-        </span>
-        {entry.latest ? (
-          <div
-            className="inbox-model truncate"
-            title={`${entry.latest.backend} / ${entry.latest.model}`}
+        {entry.status === "generating" ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-(--status-info)">
+            <LiveDot />
+            Generating review
+          </span>
+        ) : entry.status === "failed" ? (
+          <span
+            className="inline-flex items-center gap-1.5 text-xs text-(--status-critical)"
+            title={entry.failure_reason}
           >
-            {entry.latest.backend} / {entry.latest.model}
-          </div>
+            <WarningIcon size={14} />
+            Review failed
+          </span>
         ) : null}
       </div>
-      <div
-        className="inbox-cost text-xs tabular-nums text-(--text-tertiary)"
-        title={entry.latest?.recorded_cost_usd == null ? "Cost was not recorded" : undefined}
-      >
-        <span className="sr-only">Recorded cost: </span>
-        {cost(entry.latest?.recorded_cost_usd)}
-      </div>
+      <StatusColumns entry={entry} />
     </li>
   );
 }
