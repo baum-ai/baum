@@ -138,3 +138,20 @@ test("a document without a context shows none", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Context" })).toHaveCount(0);
 });
+
+test("context rename sources link at the merge base without a host file list", async ({ page }) => {
+  const document = sampleDocument();
+  document.index.hunks[0]!.old_path = "legacy/worker.go";
+  document.index.hunks[0]!.change = "renamed";
+  document.summary.context = {
+    area: { text: "The worker moved.", refs: [{ path: "legacy/worker.go", symbol: null }] },
+  };
+  await serveDocument(page, document);
+  await page.goto("/");
+  const context = page.getByRole("region", { name: "Context" });
+  await context.locator("summary").click();
+  await expect(context.getByRole("link", { name: "legacy/worker.go" })).toHaveAttribute(
+    "href",
+    `https://github.com/${document.review.repository}/blob/${document.review.merge_base}/legacy/worker.go`,
+  );
+});

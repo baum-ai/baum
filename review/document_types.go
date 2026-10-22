@@ -336,6 +336,7 @@ type documentAttachment struct {
 type documentHunk struct {
 	ID        string    `json:"id"`
 	Path      string    `json:"path"`
+	OldPath   string    `json:"old_path,omitempty"`
 	Change    string    `json:"change"`
 	Role      string    `json:"role"`
 	NewRange  []int     `json:"new_range"`

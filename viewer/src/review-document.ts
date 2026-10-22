@@ -265,6 +265,7 @@ export type IndexedHunkLine =
 export type IndexedHunk = {
   id: string;
   path: string;
+  old_path?: string;
   new_range: [number, number];
   additions: number;
   deletions: number;
@@ -1612,18 +1613,18 @@ function encodeSegments(value: string): string {
   return value.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Where a context reference's file or directory reads on GitHub: at the
- *  reviewed head, or at the merge base when the pull request deletes it. A
- *  path counts as deleted when hunks touch it or anything under it and every
- *  one of them removes a file, so a directory the pull request deletes whole
- *  links at the merge base, while a path one stack member removes and a later
- *  member adds back still exists at head. A renamed file's old path links at
- *  head: hunks name only the new path. */
+/** Where a context reference reads on GitHub: at head, or at the merge base
+ *  when every indexed change on or under it removes or renames a file away.
+ *  A surviving new path takes precedence, including stack remove/readd cases.
+ *  Older documents without old_path retain their existing fallback. */
 export function contextRefUrl(document: ReviewDocument, path: string): string {
+  const contains = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
   const touching = document.index.hunks.filter(
-    (hunk) => hunk.path === path || hunk.path.startsWith(`${path}/`),
+    (hunk) => contains(hunk.path) || (hunk.old_path !== undefined && contains(hunk.old_path)),
   );
-  const deleted = touching.length > 0 && touching.every((hunk) => hunk.change === "removed");
+  const deleted =
+    touching.length > 0 &&
+    touching.every((hunk) => hunk.change === "removed" || !contains(hunk.path));
   const { repository, head, merge_base } = document.review;
   return githubBlobUrl(repository, deleted ? merge_base : head, path);
 }

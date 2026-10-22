@@ -388,16 +388,19 @@ describe("sectionHunks", () => {
 describe("contextRefUrl", () => {
   const head = `https://github.com/acme/widgets/blob/${"a".repeat(40)}`;
   const mergeBase = `https://github.com/acme/widgets/blob/${"b".repeat(40)}`;
-  const withHunks = (...hunks: [string, "added" | "modified" | "removed"][]): ReviewDocument => {
+  const withHunks = (
+    ...hunks: [string, "added" | "modified" | "removed" | "renamed", string?][]
+  ): ReviewDocument => {
     const template = document.index.hunks[0]!;
     return {
       ...document,
       index: {
         ...document.index,
-        hunks: hunks.map(([path, change], index) => ({
+        hunks: hunks.map(([path, change, old_path], index) => ({
           ...template,
           id: `h_${index}`,
           path,
+          old_path,
           change,
         })),
       },
@@ -422,6 +425,31 @@ describe("contextRefUrl", () => {
     expect(contextRefUrl(doc, "legacy/sub")).toBe(`${mergeBase}/legacy/sub`);
     // A sibling sharing the prefix is not inside the directory.
     expect(contextRefUrl(doc, "leg")).toBe(`${head}/leg`);
+  });
+
+  it("links a rename source and its old directory at merge base, and the destination at head", () => {
+    const doc = withHunks(["current/a.go", "renamed", "legacy/a.go"]);
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${mergeBase}/legacy/a.go`);
+    expect(contextRefUrl(doc, "legacy")).toBe(`${mergeBase}/legacy`);
+    expect(contextRefUrl(doc, "current/a.go")).toBe(`${head}/current/a.go`);
+    expect(contextRefUrl(doc, "leg")).toBe(`${head}/leg`);
+  });
+
+  it("keeps head for rename sources recreated by a stack or directories with surviving paths", () => {
+    const doc = withHunks(
+      ["current/a.go", "renamed", "legacy/a.go"],
+      ["legacy/a.go", "added"],
+      ["legacy/b.go", "removed"],
+      ["legacy/c.go", "renamed", "legacy/older.go"],
+    );
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${head}/legacy/a.go`);
+    expect(contextRefUrl(doc, "legacy")).toBe(`${head}/legacy`);
+    expect(contextRefUrl(doc, "legacy/older.go")).toBe(`${mergeBase}/legacy/older.go`);
+  });
+
+  it("keeps the existing head fallback for older documents without rename sources", () => {
+    const doc = withHunks(["current/a.go", "renamed"]);
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${head}/legacy/a.go`);
   });
 
   it("links at head a path that is removed and added back, or a directory partly deleted", () => {

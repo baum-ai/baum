@@ -844,7 +844,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		files[h.Path] = true
 		additions += h.Additions
 		deletions += h.Deletions
-		item := documentHunk{ID: h.ID, Path: h.Path, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
+		item := documentHunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
 		if h.DiffURL != "" {
 			item.GitHubURL = &h.DiffURL
 		}

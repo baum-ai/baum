@@ -302,7 +302,9 @@ The stored contract stays strict; leniency exists only in derived views.
   without text and makes reference paths repository-relative; with a
   checkout in the run directory it drops paths that are neither a file nor
   a directory inside either tree, and it never spends a repair on a
-  reference.
+  reference. The host preserves each hunk's rename source as optional
+  `index.hunks[].old_path`, so context links to paths renamed away can use the
+  merge base even without a host file list.
 
 ### History
 

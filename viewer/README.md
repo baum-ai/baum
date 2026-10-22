@@ -141,8 +141,11 @@ holds is labelled, in order Area, How it's reached, Contracts and Related
 code, with its Markdown text and its references as chips (the path, then
 `· symbol` when one is named). A chip opens the review's file view when the
 pull request changes the file, and otherwise GitHub at the reviewed head, or
-at the merge base for a file or directory the pull request deletes: every
-hunk on or under the path removes a file. A document without a context,
+at the merge base for a file or directory the pull request deletes or renames
+away: every hunk on or under the path removes a file or moves it elsewhere.
+The host records rename sources in `index.hunks[].old_path`; older documents
+without that field retain the head fallback for rename sources. A surviving
+new path, including one removed and added back by a stack, still links at head. A document without a context,
 generated before it existed, shows no Context part. Stack reviews show theirs
 the same way.
 
