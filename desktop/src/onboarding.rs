@@ -332,6 +332,8 @@ pub struct AgentHooks {
     settings: PathBuf,
     #[serde(default)]
     installed: bool,
+    #[serde(default, rename = "pluginManaged")]
+    plugin_managed: bool,
     #[serde(default)]
     error: Option<String>,
 }
@@ -736,11 +738,12 @@ mod tests {
     #[test]
     fn reads_the_hooks_status() {
         let hooks: Hooks = last_json(&[
-            r#"{"agents":[{"agent":"claude-code","name":"Claude Code","detected":true,"settings":"/h/.claude/settings.json","installed":true},{"agent":"codex","name":"Codex","detected":false,"settings":"/h/.codex/hooks.json","installed":false,"error":"not valid JSON"}]}"#.into(),
+            r#"{"agents":[{"agent":"claude-code","name":"Claude Code","detected":true,"settings":"/h/.claude/settings.json","installed":false,"pluginManaged":true},{"agent":"codex","name":"Codex","detected":false,"settings":"/h/.codex/hooks.json","installed":false,"error":"not valid JSON"}]}"#.into(),
         ])
         .unwrap();
         assert_eq!(hooks.agents.len(), 2);
-        assert!(hooks.agents[0].installed && hooks.agents[0].detected);
+        assert!(hooks.agents[0].plugin_managed && hooks.agents[0].detected);
+        assert!(!hooks.agents[0].installed);
         assert_eq!(hooks.agents[1].error.as_deref(), Some("not valid JSON"));
         assert!(last_json::<Hooks>(&[]).is_err());
     }

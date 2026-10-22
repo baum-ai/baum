@@ -146,8 +146,8 @@ handshake, in [`apiclient`](../apiclient).
 - Hook configuration comes from the shared [`agenthooks`](../agenthooks/agenthooks.go)
   specs, the same ones the hosted service's onboarding pull request writes, so
   the two never rewrite each other.
-- Setup also installs the user-wide hooks below, once per run, for the agents
-  it detects, but only for a hosted install or a logged-in user, where they
+- Setup also installs the legacy user-wide hooks below, once per run, for the agents
+  it detects that have not migrated to plugins, but only for a hosted install or a logged-in user, where they
   add something today, and not with `--skip-user-hooks` or `--skip-entire`.
   The `--all` plan names the files it will change before asking. An
   open-source user without a login gets them only deliberately, from
@@ -157,6 +157,19 @@ handshake, in [`apiclient`](../apiclient).
   them.
 
 ## User-wide hooks
+
+- Agent-managed [marketplace plugins](../../plugins/README.md) are available
+  for Claude Code and Codex. Run `baum hooks migrate --user [--agent AGENT]`
+  before enabling them, including on a fresh installation. Migration removes
+  only baum's legacy handlers and records the choice; setup then skips those
+  agents, default legacy/desktop installs skip them, and an explicit `--agent`
+  legacy install refuses to recreate their entries.
+  `status --user --json` returns `pluginManaged: true`, with `installed: false`,
+  because actual plugin installation, enablement and trust belong to the agent.
+  The desktop screen respects that choice. Disable/uninstall the plugin before
+  `baum hooks install --user --legacy --agent AGENT` to return to legacy hooks.
+  Plugin checks yield per event to existing baum legacy handlers; the execution
+  and opt-in rules below are shared by both forms.
 
 - `baum hooks install --user` adds baum's hooks to `~/.claude/settings.json`
   (Claude Code) and `~/.codex/hooks.json` (Codex; it also reads inline hooks in

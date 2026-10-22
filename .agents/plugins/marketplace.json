@@ -1,0 +1,20 @@
+{
+  "name": "baum",
+  "interface": {
+    "displayName": "baum"
+  },
+  "plugins": [
+    {
+      "name": "baum",
+      "source": {
+        "source": "local",
+        "path": "./plugins/baum-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

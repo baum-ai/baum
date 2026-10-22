@@ -68,6 +68,9 @@ type Result struct {
 // Install adds baum's user-wide hooks to an agent's settings below home, or
 // brings earlier ones up to date. Running it again changes nothing.
 func Install(home, agent string) (Result, error) {
+	if PluginManaged(home, agent) {
+		return Result{}, fmt.Errorf("%s hooks are managed by the baum plugin; disable/uninstall it before using install --user --legacy", agent)
+	}
 	return update(home, agent, true)
 }
 

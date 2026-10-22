@@ -47,6 +47,12 @@ behind them. GitHub checks, comments and approvals stay connected.
 Start at **[usebaum.com](https://usebaum.com)**. Access is currently limited;
 you can join the waitlist there.
 
+## Agent plugins
+
+Install baum's versioned Claude Code or Codex lifecycle hooks from the public
+Git marketplace. See [installation, migration, trust and compatibility](plugins/README.md).
+The plugins use your existing opt-ins and need the baum command on `PATH`.
+
 ## Install a release
 
 Each tagged release on [GitHub Releases](https://github.com/baum-ai/baum/releases)

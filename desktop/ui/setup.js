@@ -88,6 +88,7 @@ function describeCommand(command) {
 }
 
 function describeAgent(agent) {
+  if (agent.pluginManaged) return `${agent.name}: managed by the baum plugin; inspect installation and trust in your coding agent`;
   if (agent.error) return `${agent.name}: ${agent.error}`;
   if (agent.installed) return `${agent.name}: installed in ${agent.settings}`;
   if (!agent.detected) return `${agent.name}: not found on this computer`;
@@ -120,7 +121,7 @@ function render() {
     }),
   );
   text($("hooks-error"), hooks.error ?? "");
-  const pending = hooks.agents.some((a) => a.detected && !a.installed && !a.error);
+  const pending = hooks.agents.some((a) => a.detected && !a.installed && !a.pluginManaged && !a.error);
   const installed = hooks.agents.some((a) => a.installed);
   const noAgent = !hooks.error && !hooks.agents.some((a) => a.detected);
   if (noAgent)

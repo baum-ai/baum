@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agenthooks"
+	"github.com/baum-ai/baum/hosted/userhooks"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/proc"
@@ -78,6 +79,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(newInstallUserHooksCommand(stdout, stderr))
 	cmd.AddCommand(newUninstallUserHooksCommand(stdout, stderr))
 	cmd.AddCommand(newUserHooksStatusCommand(stdout))
+	cmd.AddCommand(newMigrateUserHooksCommand(stdout, stderr))
 	return cmd
 }
 
@@ -94,15 +96,29 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if args[0] == "--check" {
-				userWide := len(args) > 1 && args[1] == "--user"
+				plugin := len(args) > 1 && args[1] == "--plugin"
+				userWide := len(args) > 1 && (args[1] == "--user" || plugin)
 				if userWide {
 					args = args[1:]
 				}
 				if len(args) != 3 {
-					return errors.New("usage: baum hooks agent --check [--user] AGENT EVENT")
+					return errors.New("usage: baum hooks agent --check [--user|--plugin] AGENT EVENT")
 				}
 				if err := validateAgentHook(args[1], args[2]); err != nil {
 					return err
+				}
+				if plugin {
+					home, err := os.UserHomeDir()
+					if err != nil {
+						return err
+					}
+					legacy, err := userhooks.HasLegacyEvent(home, args[1], args[2])
+					if err != nil {
+						return err
+					}
+					if legacy {
+						return errors.New("legacy baum hook already handles this event")
+					}
 				}
 				if userWide {
 					return userHooksEnabled(cmd.Context(), ".", args[1], args[2])

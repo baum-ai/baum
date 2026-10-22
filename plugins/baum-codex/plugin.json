@@ -1,0 +1,11 @@
+{
+  "name": "baum",
+  "version": "1.0.0",
+  "description": "Run baum hooks with your existing repository opt-ins.",
+  "author": {
+    "name": "baum"
+  },
+  "homepage": "https://usebaum.com",
+  "repository": "https://github.com/baum-ai/baum",
+  "license": "MIT"
+}

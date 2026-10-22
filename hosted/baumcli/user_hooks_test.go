@@ -4,6 +4,7 @@ package baumcli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -593,4 +594,138 @@ func TestSetupAllInstallsPendingUserHooksWhenRepositoriesAreDone(t *testing.T) {
 			t.Error("hooks were installed after declining")
 		}
 	})
+}
+
+func TestPluginHooksYieldToLegacyAndKeepExistingOptIns(t *testing.T) {
+	for _, agent := range []string{"claude-code", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			world := newHookWorld(t)
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			commitEntireSettings(t, world.repo)
+			spec, _ := agenthooks.Lookup(agent)
+			data, err := os.ReadFile(filepath.Join("..", "..", "plugins", "baum-"+agent, "hooks", "hooks.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Hooks map[string][]struct{ Hooks []struct{ Command string } }
+			}
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			command := config.Hooks["Stop"][0].Hooks[0].Command
+			run := func() []string {
+				t.Helper()
+				cmd := exec.Command("sh", "-c", command)
+				cmd.Dir = world.repo
+				cmd.Stdin = strings.NewReader(`{"session_id":"s"}`)
+				if output, err := cmd.CombinedOutput(); err != nil || len(output) != 0 {
+					t.Fatalf("plugin: %v %s", err, output)
+				}
+				_, entire := world.logs(t)
+				return entire
+			}
+			if got := run(); len(got) != 0 {
+				t.Fatalf("no opt-in: Entire=%v", got)
+			}
+			t.Setenv(tokenEnvVar, "provisioned")
+			if got := run(); len(got) != 1 {
+				t.Fatalf("fresh plugin: Entire=%v", got)
+			}
+			home := os.Getenv("HOME")
+			if _, err := userhooks.Install(home, agent); err != nil {
+				t.Fatal(err)
+			}
+			if got := run(); len(got) != 0 {
+				t.Fatalf("plugin duplicated legacy hook: %v", got)
+			}
+			world.runUserDispatcher(t, world.repo, spec, "stop")
+			_, entire := world.logs(t)
+			if len(entire) != 1 {
+				t.Fatalf("legacy hook: %v", entire)
+			}
+			if _, _, err := runCLI(t, "hooks", "migrate", "--user", "--agent", agent); err != nil {
+				t.Fatal(err)
+			}
+			if got := run(); len(got) != 1 {
+				t.Fatalf("migrated plugin: Entire=%v", got)
+			}
+			installUserHooksDuringSetup(io.Discard, io.Discard)
+			if legacy, err := userhooks.HasLegacyEvent(home, agent, "stop"); err != nil || legacy {
+				t.Fatalf("setup restored legacy=%v %v", legacy, err)
+			}
+			statuses, err := userHooksStatuses()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, status := range statuses {
+				if status.Agent == agent && (!status.PluginManaged || status.Installed || status.Error != "") {
+					t.Fatalf("status=%+v", status)
+				}
+			}
+			if _, _, err := runCLI(t, "hooks", "install", "--user", "--agent", agent); err == nil {
+				t.Fatal("install recreated legacy hooks")
+			}
+			if _, _, err := runCLI(t, "hooks", "install", "--user", "--legacy", "--agent", agent); err != nil {
+				t.Fatal(err)
+			}
+			if got := run(); len(got) != 0 {
+				t.Fatalf("rollback duplicated legacy: %v", got)
+			}
+			if world.requests.Load() != 0 {
+				t.Fatal("plugin contacted hosted server")
+			}
+		})
+	}
+}
+
+func TestShippedPluginHooksFailQuietlyWithoutCompatibleCLI(t *testing.T) {
+	for _, agent := range []string{"claude-code", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "plugins", "baum-"+agent, "hooks", "hooks.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Hooks map[string][]struct{ Hooks []struct{ Command string } }
+			}
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			for _, old := range []bool{false, true} {
+				bin := t.TempDir()
+				if err := os.Symlink("/bin/sh", filepath.Join(bin, "sh")); err != nil {
+					t.Fatal(err)
+				}
+				if old {
+					writeExecutable(t, filepath.Join(bin, "baum"), "#!/bin/sh\necho unsupported CLI >&2\nexit 2\n")
+				}
+				cmd := exec.Command("/bin/sh", "-c", config.Hooks["Stop"][0].Hooks[0].Command)
+				cmd.Env = append(os.Environ(), "PATH="+bin)
+				if output, err := cmd.CombinedOutput(); err != nil || len(output) != 0 {
+					t.Fatalf("old=%v: %v %q", old, err, output)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultLegacyInstallSkipsPluginManagedAgents(t *testing.T) {
+	stub := workingEntire(t)
+	addStubAgent(t, stub.dir, "codex")
+	setTempConfigHome(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := os.Getenv("HOME")
+	if _, err := userhooks.Migrate(home, "claude-code"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, "hooks", "install", "--user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("recreated migrated Claude settings: %v", err)
+	}
+	if legacy, err := userhooks.HasLegacyEvent(home, "codex", "stop"); err != nil || !legacy {
+		t.Fatalf("unmigrated Codex legacy=%v %v", legacy, err)
+	}
 }

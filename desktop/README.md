@@ -73,7 +73,11 @@ application menu on macOS, the Background menu elsewhere), both built in
 The screen gets the facts from the bundled baum: `baum daemon login-path
 --json` resolves the login shell's `PATH` as the daemon does and names the
 first `baum` on it (the one hooks run) with its version, and `baum hooks
-status --user --json` reports each agent's hooks.
+status --user --json` reports each agent's hooks. After an explicit
+[`baum hooks migrate --user`](../plugins/README.md), its `pluginManaged` flag
+shows that installation and trust belong to the agent plugin UI; the setup
+screen describes this and excludes that agent from legacy hook installation.
+It does not claim the plugin is installed or trusted.
 
 ### Where the command goes
 
