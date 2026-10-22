@@ -46,7 +46,8 @@ fn supports_markup() -> bool {
 /// Notification servers that render markup would show a title like
 /// `Fix <b>x</b>` as bold text, so its characters are escaped; the title the
 /// user sees is GitHub's, unchanged.
-pub fn escape_markup(text: &str) -> String {
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
+fn escape_markup(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

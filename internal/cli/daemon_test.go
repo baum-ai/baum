@@ -111,17 +111,14 @@ func TestDaemonRunsWithoutAHookEventRecordItCannotOpen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	paths := daemon.Paths{State: dir, Socket: filepath.Join(dir, "d.sock")}
-	// Readable by others: not private.
-	if err = os.MkdirAll(filepath.Join(dir, "events"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Chmod(filepath.Join(dir, "events"), 0o755); err != nil {
+	// A file where the record's directory belongs cannot be opened on any OS.
+	if err = os.WriteFile(filepath.Join(dir, "events"), []byte("blocked"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var log strings.Builder
 	events := openHookEvents(paths, slog.New(slog.NewTextHandler(&log, nil)))
 	if events.service != nil || events.Methods() != nil {
-		t.Fatal("a record in a shared directory was opened")
+		t.Fatal("a record with a blocked directory was opened")
 	}
 	events.Run(t.Context())
 	events.Close()

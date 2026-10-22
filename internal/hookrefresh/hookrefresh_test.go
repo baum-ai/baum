@@ -20,16 +20,14 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 )
 
-const (
-	clonePath = "/work/app"
-	commonDir = "/work/app/.git"
-	repoName  = "acme/app"
-)
+const repoName = "acme/app"
 
 var (
-	oldHead = strings.Repeat("a", 40)
-	newHead = strings.Repeat("b", 40)
-	zeroOID = strings.Repeat("0", 40)
+	clonePath = filepath.Join(os.TempDir(), "baum-hookrefresh-app")
+	commonDir = filepath.Join(clonePath, ".git")
+	oldHead   = strings.Repeat("a", 40)
+	newHead   = strings.Repeat("b", 40)
+	zeroOID   = strings.Repeat("0", 40)
 )
 
 type registry struct {
@@ -334,8 +332,8 @@ func (h *harness) wantRefreshes(pr, want int) {
 
 func TestSessionEndRefreshesTheBranchPullRequest(t *testing.T) {
 	h := newHarness(t)
-	h.worktrees[clonePath+"/sub"] = h.worktrees[clonePath]
-	h.sessionEnd(clonePath + "/sub")
+	h.worktrees[filepath.Join(clonePath, "sub")] = h.worktrees[clonePath]
+	h.sessionEnd(filepath.Join(clonePath, "sub"))
 	h.advance(time.Second)
 	h.wantRefreshes(7, 0)
 	h.advance(Debounce)
@@ -501,13 +499,13 @@ func TestBurstOfEventsCausesBoundedRefreshes(t *testing.T) {
 // the store of every clone a hook names, not only the first.
 func TestEveryCloneOfARepositoryIsRefreshedInItsOwnStore(t *testing.T) {
 	h := newHarness(t)
-	second := repos.Clone{ID: "second", Path: "/work/app2", CommonDir: "/work/app2/.git", Repository: repoName, Available: true}
+	second := repos.Clone{ID: "second", Path: clonePath + "2", CommonDir: filepath.Join(clonePath+"2", ".git"), Repository: repoName, Available: true}
 	h.registry.edit(func(r *registry) { r.clones = append(r.clones, second) })
 	h.worktrees[second.Path] = Worktree{CommonDir: second.CommonDir, Work: prlink.Work{Branch: "feature"}, Pushed: repoName}
 	h.sessionEnd(clonePath)
 	h.sessionEnd(second.Path)
 	h.run(time.Minute)
-	if got := strings.Join(h.refreshed, " "); got != "/work/app:7 /work/app2:7" {
+	if got := strings.Join(h.refreshed, " "); got != clonePath+":7 "+second.Path+":7" {
 		t.Fatalf("refreshes %s", got)
 	}
 }
@@ -533,11 +531,11 @@ func TestTriggerBeforeTheBaselineCatchesNothingUp(t *testing.T) {
 
 func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
 	h := newHarness(t)
-	h.worktrees["/work/app/vendor/lib"] = Worktree{CommonDir: "/work/app/vendor/lib/.git", Work: prlink.Work{Branch: "feature"}, Pushed: repoName}
+	h.worktrees[filepath.Join(clonePath, "vendor", "lib")] = Worktree{CommonDir: filepath.Join(clonePath, "vendor", "lib", ".git"), Work: prlink.Work{Branch: "feature"}, Pushed: repoName}
 	// Not registered: no git runs.
 	h.sessionEnd("/elsewhere/app")
 	// A nested repository inside the clone is not the clone.
-	h.sessionEnd("/work/app/vendor/lib")
+	h.sessionEnd(filepath.Join(clonePath, "vendor", "lib"))
 	// A push to another remote (a fork) changes nothing here.
 	h.prePush("fork", pushLine("feature", newHead, oldHead))
 	// A push to a URL that names no remote: Git passes the URL as the name.
