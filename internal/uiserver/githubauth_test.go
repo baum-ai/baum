@@ -232,10 +232,13 @@ func TestCancellationAfterPersistenceStillPublishesAccountChange(t *testing.T) {
 
 func TestCredentialStoreCanRecoverWithoutNewAuthorization(t *testing.T) {
 	store := &connectionStore{credential: githubauth.Credential{AccessToken: "saved", Login: "alice", ID: 1}, err: errors.New("locked")}
-	a, _, s, _ := connectionFixture(t, store, func(*http.Request) (string, error) { t.Fatal("unnecessary OAuth exchange"); return "", nil })
+	a, manager, s, _ := connectionFixture(t, store, func(*http.Request) (string, error) { t.Fatal("unnecessary OAuth exchange"); return "", nil })
 	status := connectStatus(t, a, "disconnected")
 	if status.Error != "credential_store_unavailable" {
 		t.Fatal(status)
+	}
+	if _, err := manager.Token(context.Background()); err != githubauth.ErrStore {
+		t.Fatal(err)
 	}
 	store.mu.Lock()
 	store.err = nil

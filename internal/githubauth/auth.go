@@ -405,6 +405,13 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	}
 	defer m.unlock()
 	c, err := m.store.Load(ctx)
+	if err == nil || errors.Is(err, ErrNotConnected) {
+		m.healthMu.Lock()
+		if errors.Is(m.health, ErrStore) {
+			m.health = nil
+		}
+		m.healthMu.Unlock()
+	}
 	if errors.Is(err, ErrNotConnected) {
 		return Status{State: "disconnected"}, nil
 	}
