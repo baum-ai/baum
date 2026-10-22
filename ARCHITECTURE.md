@@ -2384,8 +2384,8 @@ and two files:
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
    and `uninstall --user`. Native status queries have a 10-second bound and
-   actions a 90-second total budget; the desktop allows 210 seconds for both
-   agents and process overhead.
+   actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
+   240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
    ("Quit and stop background reviews"), and marks it stopped by the user, so
    hooks do not start it again until `baum daemon ensure`. `baum daemon
@@ -2425,6 +2425,9 @@ with its own narrow capability, from which the user installs the bundled
 stable path of the bundled binary; an AppImage and Windows run and link a
 copy in the app's data directory, which Windows adds to the user `PATH`;
 the password prompt only for root-owned system directories) and the
-user-wide agent hooks; after that the window opens the daemon's diagnostics
-page. It records what it installed in `setup.json` in its configuration
-directory and removes only that. See [`desktop/README.md`](desktop/README.md).
+native `baum@baum` marketplace plugins; after that the window opens the
+daemon's diagnostics page. `setup.json` records onboarding and the command
+links/copies it installed; agent registries own plugin installation and
+enablement. Plugin status/install/removal use the resolved login shell PATH,
+with an inherited-PATH fallback warning if resolution fails. Command removal
+uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).

@@ -13,8 +13,8 @@ error. An installed-but-disabled plugin is reported explicitly.
 
 Each status query is bounded to 10 seconds. Each install/remove, including
 its verification query, has one 90-second budget. Calls execute argument
-arrays without a shell and propagate cancellation. The desktop allows both
-agents' operations plus overhead before its outer timeout.
+arrays without a shell and propagate cancellation. The desktop resolves the login shell PATH before running plugin commands and
+allows 240 seconds total for that resolution, both agents and overhead.
 
 Installation registers the intended public marketplace through the native
 idempotent add command before installing. Removal leaves that marketplace

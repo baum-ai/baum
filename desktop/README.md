@@ -80,7 +80,10 @@ status --user --json` reads each agent's native plugin registry, reporting
 plugin ID, installation and enablement separately. Disabled plugins offer an
 Enable action; trust must be reviewed in the agent. Each native action has a
 90-second bound and status queries have 10 seconds. The desktop gives both
-agents plus process overhead a 210-second outer budget.
+agents, login PATH resolution and process overhead a 240-second total budget.
+Status, install and removal run with the resolved login shell PATH so agents
+installed through Homebrew or npm are found from GUI launchers too. If login
+PATH resolution fails, the app uses its inherited PATH and displays the reason.
 
 ### Where the command goes
 

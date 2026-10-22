@@ -10,6 +10,7 @@
 //! Whether setup ran and what the app installed live in `setup.json` in the
 //! app's configuration directory.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -38,8 +39,8 @@ pub const MENU_LABEL: &str = "Command Line and Hooks…";
 /// `baum daemon login-path` runs the login shell (10 s at most) and the
 /// `--version` of another baum (5 s).
 const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
-// Two native 90-second plugin actions plus process overhead.
-const HOOKS_TIMEOUT: Duration = Duration::from_secs(210);
+// Login PATH resolution (30 s), two native actions (90 s each), and overhead.
+const HOOKS_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -371,12 +372,16 @@ fn login_path(cli: &Path) -> install::LoginPath {
 }
 
 fn hooks_status(cli: &Path) -> Hooks {
-    run(cli, &["hooks", "status", "--user", "--json"], HOOKS_TIMEOUT)
+    run_hooks(cli, &["hooks", "status", "--user", "--json"])
         .and_then(|out| {
             if !out.ok {
                 return Err(out.stderr.join(" "));
             }
-            last_json::<Hooks>(&out.stdout)
+            let mut hooks = last_json::<Hooks>(&out.stdout)?;
+            if !out.stderr.is_empty() {
+                hooks.error = Some(out.stderr.join(" "));
+            }
+            Ok(hooks)
         })
         .unwrap_or_else(|why| Hooks {
             agents: Vec::new(),
@@ -517,7 +522,7 @@ async fn change_hooks(app: AppHandle, action: &'static str) -> Result<Outcome, S
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
-        let out = run(&cli()?, &["hooks", action, "--user"], HOOKS_TIMEOUT)?;
+        let out = run_hooks(&cli()?, &["hooks", action, "--user"])?;
         let mut lines = out.stdout;
         lines.extend(out.stderr);
         Ok(Outcome { ok: out.ok, lines })
@@ -558,7 +563,42 @@ struct Output {
 /// Runs the bundled baum with a deadline, reading its output on separate
 /// threads.
 fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, String> {
-    let mut child = Command::new(cli)
+    run_with_path(cli, args, timeout, None)
+}
+
+// GUI launchers often omit shell/npm/Homebrew paths. Use the same login PATH
+// resolution as command setup, without mutating the app's global environment.
+fn run_hooks(cli: &Path, args: &[&str]) -> Result<Output, String> {
+    let started = Instant::now();
+    let login = login_path(cli);
+    let path = std::env::join_paths(&login.path)
+        .map_err(|e| format!("Cannot use the login shell's PATH for agent plugins: {e}"))?;
+    let mut out = run_with_path(
+        cli,
+        args,
+        HOOKS_TIMEOUT.saturating_sub(started.elapsed()),
+        Some(&path),
+    )?;
+    if let Some(error) = login.error {
+        out.stderr.insert(
+            0,
+            format!("warning: {error} Using the app's inherited PATH for agent plugins."),
+        );
+    }
+    Ok(out)
+}
+
+fn run_with_path(
+    cli: &Path,
+    args: &[&str],
+    timeout: Duration,
+    path: Option<&OsStr>,
+) -> Result<Output, String> {
+    let mut command = Command::new(cli);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -777,6 +817,62 @@ echo '{"shell":"/bin/zsh","login_shell":true,"path":["/home/user/.local/bin","/u
             let login = login_path(&cli);
             assert!(login.baum.is_none());
             assert!(login.error.unwrap().contains("unknown command"));
+        }
+
+        #[test]
+        fn native_plugin_status_install_and_remove_use_the_login_path() {
+            let dir = temp_dir("plugin-login-path");
+            let cli = fake_cli(
+                &dir,
+                r#"
+if [ "$*" = "daemon login-path --json" ]; then
+  echo '{"path":["/resolved/login/agents"]}'
+  exit 0
+fi
+[ "$PATH" = "/resolved/login/agents" ] || { echo 'wrong plugin PATH' >&2; exit 9; }
+case "$*" in
+  'hooks status --user --json') echo '{"agents":[{"agent":"codex","name":"Codex","detected":true,"plugin":"baum@baum","installed":true,"enabled":true}]}' ;;
+  'hooks install --user'|'hooks uninstall --user') echo 'native plugin command saw login PATH' ;;
+  *) exit 8 ;;
+esac
+"#,
+            );
+            let hooks = hooks_status(&cli);
+            assert_eq!(hooks.agents.len(), 1);
+            assert!(hooks.agents[0].detected && hooks.agents[0].enabled);
+            assert!(hooks.error.is_none());
+            for action in ["install", "uninstall"] {
+                let out = run_hooks(&cli, &["hooks", action, "--user"]).unwrap();
+                assert!(out.ok, "{:?}", out.stderr);
+                assert_eq!(out.stdout, ["native plugin command saw login PATH"]);
+            }
+        }
+
+        #[test]
+        fn native_plugins_preserve_status_and_show_login_path_fallback() {
+            let dir = temp_dir("plugin-login-path-fails");
+            let cli = fake_cli(
+                &dir,
+                r#"
+if [ "$*" = "daemon login-path --json" ]; then
+  echo 'login shell unavailable' >&2
+  exit 1
+fi
+printf '%s\n' "$PATH"
+echo '{"agents":[{"agent":"codex","name":"Codex","detected":true,"plugin":"baum@baum","installed":false,"enabled":false}]}'
+"#,
+            );
+            let hooks = hooks_status(&cli);
+            assert_eq!(hooks.agents.len(), 1);
+            let warning = hooks.error.unwrap();
+            assert!(warning.contains("login shell unavailable"));
+            assert!(warning.contains("inherited PATH"));
+            for action in ["install", "uninstall"] {
+                let out = run_hooks(&cli, &["hooks", action, "--user"]).unwrap();
+                assert!(out.ok);
+                assert_eq!(out.stdout[0], std::env::var("PATH").unwrap_or_default());
+                assert!(out.stderr[0].contains("login shell unavailable"));
+            }
         }
 
         #[test]
