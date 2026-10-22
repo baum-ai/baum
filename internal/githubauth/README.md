@@ -28,7 +28,14 @@ item (`desktop-account`), so replacing accounts leaves no previous account item.
 Enterprise device authorization and multiple simultaneous accounts are outside
 this first version. Native keyring operations run in the hidden
 `baum internal github-credential`
-helper with a 20-second deadline. Credentials pass through private pipes.
+helper with a 20-second deadline. Before reading a request or opening the
+keyring, the helper verifies its parent's executable identity using operating
+system process metadata and requires pipe input and output. A shell or coding
+agent invoking the hidden command directly is refused, including save and
+delete requests. Credentials pass through private pipes. This trusts the
+installed baum executable and the OS process metadata; unsupported operating
+systems fail closed. It does not isolate credentials from arbitrary native
+code that can already access the user's keyring or modify the installed binary.
 Cancellation kills the helper process group (including macOS security), waits
 for process termination, then releases the manager lock. Lock acquisition is
 also cancellable. Native keyring code is private to the helper. No detached
