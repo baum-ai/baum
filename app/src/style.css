@@ -464,7 +464,7 @@ select.local-field {
   color: var(--text-tertiary);
 }
 .inbox-title-heading {
-  grid-column: 2 / -1;
+  grid-column: 3;
 }
 .inbox-bucket {
   padding-left: 1.5rem;
@@ -497,21 +497,22 @@ select.local-field {
   margin-top: 0.2rem;
   line-height: 1.5;
 }
-.inbox-time {
-  display: none;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-.inbox-wide {
+.inbox-detail-heading {
   display: none;
 }
-.inbox-status {
+/* Below a wide window the status columns fold into a line under the title. */
+.inbox-statuses {
   grid-column: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
   min-width: 0;
 }
-.inbox-status:empty {
-  display: none;
+.inbox-status {
+  white-space: nowrap;
+}
+.inbox-cell-label {
+  color: var(--text-tertiary);
 }
 .inbox-activity {
   display: inline-flex;
@@ -519,26 +520,23 @@ select.local-field {
   gap: 0.4rem;
   font-size: var(--text-xs);
 }
-@media (width >= 40rem) {
+@media (width >= 72rem) {
   .inbox-columns {
-    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 6rem 10rem;
+    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 5rem 5.5rem 9.5rem 5.5rem 5.5rem;
   }
-  .inbox-title-heading,
-  .inbox-status,
-  .inbox-time {
-    grid-column: auto;
-  }
-  .inbox-time {
-    display: block;
-  }
-  .inbox-wide {
+  .inbox-detail-heading {
     display: inline;
   }
-  .inbox-narrow {
-    display: none;
+  .inbox-statuses {
+    display: contents;
   }
-  .inbox-status:empty {
-    display: block;
+  .inbox-cell-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .inbox-row {
     padding-top: 0.75rem;
@@ -549,11 +547,7 @@ select.local-field {
     align-self: center;
     margin-top: 0;
   }
-  .inbox-pr-title {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+  .inbox-pr-title,
   .inbox-meta {
     white-space: nowrap;
     overflow: hidden;

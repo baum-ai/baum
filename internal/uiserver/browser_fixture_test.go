@@ -176,7 +176,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		review["merge_base"] = repo.MergeBase
 		doc["summary"].(map[string]any)["text"] = fmt.Sprintf("Local fixture review version %d", n)
-		doc["summary"].(map[string]any)["review_minutes"] = 4 + n
+		doc["summary"].(map[string]any)["review_minutes"] = 12
 		id := fmt.Sprintf("att_%032d", n)
 		doc["index"].(map[string]any)["attachments"] = []any{map[string]any{"id": id, "alt": fmt.Sprintf("Captured image v%d", n), "position": 1, "source_url": "https://github.com/user-attachments/assets/fixture", "content_type": "image/png", "width": 1, "height": 1}}
 		for _, section := range doc["sections"].([]any) {
@@ -196,6 +196,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	}
 	write := true
 	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
+	prs[0].Review, prs[0].Checks, prs[0].Merge, prs[0].Unresolved = "approved", "passing", "ready", new(0)
+	prs[1].Review, prs[1].Checks, prs[1].Merge, prs[1].Unresolved = "changes_requested", "failing", "conflict", new(3)
+	prs[2].Review, prs[2].Checks, prs[2].Merge, prs[2].Unresolved = "commented", "running", "blocked", new(6)
+	prs[2].UnresolvedCapped = true
+	prs[3].Review, prs[3].Checks, prs[3].Merge = "unreviewed", "none", "draft"
+
 	// The browser test pushes PR 10 by writing this marker; a marker left by
 	// an earlier run must not count as already seen.
 	pushMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "push-10")

@@ -270,7 +270,7 @@ func TestFreshMetadataOverridesDiscoveryAndRetainsHistoricalPRs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Entries) != 2 || got.Entries[0].Status != "outdated" || got.Entries[0].Checks != "failure" || got.Entries[1].PullRequest.State != "MERGED" || !got.Entries[1].Historical || got.Entries[1].Status != "current" || got.Entries[1].Stale {
+	if len(got.Entries) != 2 || got.Entries[0].Status != "outdated" || got.Entries[0].Checks != "failing" || got.Entries[1].PullRequest.State != "MERGED" || !got.Entries[1].Historical || got.Entries[1].Status != "current" || got.Entries[1].Stale {
 		t.Fatalf("entries %+v", got.Entries)
 	}
 	snapshot.FetchedAt = now.Add(time.Second)
@@ -279,5 +279,51 @@ func TestFreshMetadataOverridesDiscoveryAndRetainsHistoricalPRs(t *testing.T) {
 	got, err = s.Build(ctx)
 	if err != nil || got.Entries[0].PullRequest.HeadSHA != "latest" || got.Entries[0].Checks != "" {
 		t.Fatalf("old observation overwrote discovery %+v %v", got, err)
+	}
+}
+
+func TestInboxStatesForEveryStoreOutcomeAndObservationPrecedence(t *testing.T) {
+	count, minutes := 2, 15
+	now := time.Now()
+	pr := discovery.PullRequest{Number: 1, HeadSHA: "head", State: "OPEN", Review: "approved", Checks: "passing", Merge: "ready", Unresolved: &count, UnresolvedCapped: true}
+	for _, tc := range []struct {
+		name        string
+		reader      Reader
+		wantMinutes bool
+	}{
+		{"no review", fakeReader{}, false},
+		{"saved", fakeReader{{Key: store.Key{Repository: "a/b", Number: 1}, Latest: &store.Metadata{Version: 1, Head: "head"}, ReviewMinutes: &minutes}}, true},
+		{"unreadable", broken{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := discovery.Snapshot{PullRequests: []discovery.PullRequest{pr}, FetchedAt: now}
+			service := Service{Registry: registry{{ID: "clone", Repository: "a/b", CommonDir: "store", Available: true}}, Discovery: source{"a/b": snap}, OpenStore: func(string) (Reader, error) { return tc.reader, nil }}
+			got, err := service.Build(context.Background())
+			if err != nil || len(got.Entries) != 1 {
+				t.Fatal(got, err)
+			}
+			row := got.Entries[0]
+			if row.Review != "approved" || row.Checks != "passing" || row.Merge != "ready" || row.Unresolved == nil || *row.Unresolved != 2 || !row.UnresolvedCapped || (row.ReviewMinutes != nil) != tc.wantMinutes {
+				t.Fatalf("row=%+v", row)
+			}
+			snap.Observations = []discovery.Observation{{Number: 1, HeadSHA: "head", Checks: "failure", FetchedAt: now.Add(-time.Second)}}
+			service.Discovery = source{"a/b": snap}
+			got, err = service.Build(context.Background())
+			if err != nil || got.Entries[0].Checks != "passing" {
+				t.Fatal(got, err)
+			}
+			snap.Observations[0].FetchedAt = now.Add(time.Second)
+			service.Discovery = source{"a/b": snap}
+			got, err = service.Build(context.Background())
+			if err != nil || got.Entries[0].Checks != "failing" || got.Entries[0].Review != "approved" {
+				t.Fatal(got, err)
+			}
+			snap.Observations[0].HeadSHA = "new"
+			service.Discovery = source{"a/b": snap}
+			got, err = service.Build(context.Background())
+			if err != nil || got.Entries[0].Review != "" || got.Entries[0].Merge != "" || got.Entries[0].Unresolved != nil || got.Entries[0].UnresolvedCapped {
+				t.Fatal(got, err)
+			}
+		})
 	}
 }

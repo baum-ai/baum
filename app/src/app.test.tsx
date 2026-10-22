@@ -18,6 +18,11 @@ const entry = (number: number, status = "no_review", historical = false): Entry 
     review_requested_from_me: number === 1,
     author_has_write: true,
     team_membership_known: true,
+    review: "",
+    checks: "",
+    merge: "",
+    unresolved: null,
+    unresolved_capped: false,
   },
   clone_id: "clone",
   status,
@@ -26,6 +31,12 @@ const entry = (number: number, status = "no_review", historical = false): Entry 
   risk_score: { score: 5, status: "assessed" },
   historical,
   stale: false,
+  review: "",
+  checks: "",
+  merge: "",
+  unresolved: null,
+  unresolved_capped: false,
+  review_minutes: null,
 });
 let root: Root;
 let node: HTMLDivElement;
@@ -114,15 +125,115 @@ it("shows actionable launch authorization failure", async () => {
   expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate selected");
 });
-it("says only what needs the reader: a review being generated or one that failed", async () => {
+it("keeps generating and failed indications without old generation columns", async () => {
   entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
   await act(async () => root.render(<App />));
-  const rows = [...node.querySelectorAll('[aria-label="Pull request inbox"] li')];
-  const status = rows.map((row) => row.querySelector(".inbox-status")?.textContent ?? "");
-  expect(status.filter(Boolean).sort()).toEqual(["Generating review", "Review failed"]);
-  expect(node.textContent).not.toContain("outdated");
-  expect(node.textContent).not.toMatch(/\$\d/);
+  const inbox = node.querySelector(".local-inbox")!;
+  expect(inbox.textContent).toContain("Review failed");
+  expect(inbox.textContent).toContain("Generating review");
+  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1/);
+  expect(inbox.textContent).toContain("—");
 });
+it("shows all GitHub state labels, quiet normal states, counts and saved review time", async () => {
+  entries = [entry(1), entry(2), entry(3), entry(4), entry(5)];
+  const values = [
+    { review: "approved", checks: "passing", merge: "ready", unresolved: 0, review_minutes: 1 },
+    {
+      review: "changes_requested",
+      checks: "failing",
+      merge: "conflict",
+      unresolved: 3,
+      review_minutes: 240,
+    },
+    {
+      review: "commented",
+      checks: "running",
+      merge: "blocked",
+      unresolved: 6,
+      unresolved_capped: true,
+    },
+    { review: "unreviewed", checks: "none", merge: "draft" },
+  ] as const;
+  values.forEach((value, index) => Object.assign(entries[index]!, value));
+  await act(async () => root.render(<App />));
+  const rows = Array.from(node.querySelectorAll<HTMLElement>(".inbox-row"));
+  expect(node.querySelector(".inbox-columns-head")!.textContent).toContain(
+    "RiskPull requestReview timeUnresolvedReviewChecksMerge",
+  );
+  expect(rows[0]!.textContent).toContain("~1 min");
+  expect(rows[1]!.textContent).toContain("~240 min");
+  const states = rows.map((row) => Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")));
+  expect(states[0]!.map((cell) => cell.textContent)).toEqual([
+    "Review time: ~1 min",
+    "Unresolved: 0",
+    "Review: Approved",
+    "Checks: Passing",
+    "Merge: Ready",
+  ]);
+  expect(states[1]!.slice(2).map((cell) => cell.textContent)).toEqual([
+    "Review: Changes requested",
+    "Checks: Failing",
+    "Merge: Conflict",
+  ]);
+  for (const cell of states[1]!.slice(2)) expect(cell.className).toContain("status-critical");
+  expect(states[2]!.slice(2).map((cell) => cell.textContent)).toEqual([
+    "Review: Commented",
+    "Checks: Running",
+    "Merge: Blocked",
+  ]);
+  expect(states[3]!.slice(2).map((cell) => cell.textContent)).toEqual([
+    "Review: Unreviewed",
+    "Checks: —",
+    "Merge: Draft",
+  ]);
+  expect(states[4]!.every((cell) => cell.textContent!.endsWith("—"))).toBe(true);
+  expect(states[0]![3]!.className).toContain("text-tertiary");
+  expect(states[0]![3]!.querySelector("svg")!.getAttribute("class")).toContain("status-positive");
+  expect(states[2]![4]!.className).not.toContain("status-critical");
+  expect(states[2]![1]!.textContent).toBe("Unresolved: 6+");
+  expect(states[2]![1]!.title).toContain("At least 6 unresolved threads; only the first 100");
+});
+it.each([
+  { stale: true, error: undefined, remaining: 5000, note: null },
+  {
+    stale: true,
+    error: "offline",
+    remaining: 4999,
+    note: "Couldn't refresh acme/demo from GitHub (offline). Showing what was saved.",
+  },
+  {
+    stale: false,
+    error: undefined,
+    remaining: 0,
+    note: "GitHub's request limit for acme/demo is used up until",
+  },
+])(
+  "shows refresh notes only after failure or allowance exhaustion: %j",
+  async ({ stale, error, remaining, note }) => {
+    entries = [{ ...entry(1), stale }];
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((...args) =>
+      String(args[0]) === "/s/test-ns/api/prs"
+        ? Promise.resolve(
+            Response.json([
+              {
+                repository: "acme/demo",
+                stale,
+                error,
+                rate: { remaining, reset: "2026-10-23T00:00:00Z" },
+              },
+            ]),
+          )
+        : original(...args),
+    );
+    await act(async () => root.render(<App />));
+    expect(node.textContent).toContain("Change 1");
+    expect(node.textContent).not.toContain("Stale discovery");
+    expect(node.textContent).not.toContain("Cached discovery is stale");
+    if (note) expect(node.textContent).toContain(note);
+    else expect(node.textContent).not.toContain("showing cached data");
+  },
+);
 it("filters by requested, authored, review state, repository and saved history", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
   expect(filtered(rows, "requested", "").map((e) => e.pull_request.number)).toEqual([1]);

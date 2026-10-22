@@ -1,4 +1,4 @@
-// Package discovery maintains a private, conditional GitHub inbox cache. It
+// Package discovery maintains a private GitHub inbox cache. It
 // performs no git fetch, generation or write to GitHub.
 package discovery
 
@@ -41,7 +41,12 @@ type PullRequest struct {
 	AuthorHasWrite *bool `json:"author_has_write"`
 	// False means team membership was unavailable; false review-request flags
 	// must not be interpreted as proof that no team requested this viewer.
-	TeamMembershipKnown bool `json:"team_membership_known"`
+	TeamMembershipKnown bool   `json:"team_membership_known"`
+	Review              string `json:"review"`
+	Checks              string `json:"checks"`
+	Merge               string `json:"merge"`
+	Unresolved          *int   `json:"unresolved"`
+	UnresolvedCapped    bool   `json:"unresolved_capped"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -57,6 +62,7 @@ type Observation struct {
 }
 
 type RateLimit struct {
+	Cost      *int      `json:"cost,omitempty"`
 	Remaining *int      `json:"remaining"`
 	Reset     time.Time `json:"reset"`
 	RetryAt   time.Time `json:"retry_at"`
@@ -81,10 +87,11 @@ type cachedResponse struct {
 type diskCache struct {
 	// Format is cacheFormat when the cache was written; a cache of an older
 	// format drops its conditional responses, so they are read in full once.
-	Format    int `json:",omitempty"`
-	Snapshot  Snapshot
-	Responses map[string]cachedResponse
-	Interval  time.Duration
+	Format      int `json:",omitempty"`
+	Snapshot    Snapshot
+	Responses   map[string]cachedResponse
+	GraphQLRate RateLimit
+	Interval    time.Duration
 }
 
 // cacheFormat changes when the minimal responses keep more fields: 1 added
@@ -204,6 +211,7 @@ type poll struct {
 	reader    *github.RESTReader
 	cache     diskCache
 	rate      RateLimit
+	graphRate RateLimit
 	now       time.Time
 	unchanged bool
 	minimum   time.Duration
@@ -212,7 +220,7 @@ type poll struct {
 var errRateLimit = errors.New("GitHub rate limit exhausted")
 
 func (p *poll) get(ctx context.Context, path string, into any) error {
-	if p.ResetIfExhausted().After(p.now) {
+	if rateDeadline(p.rate).After(p.now) {
 		return errRateLimit
 	}
 	old := p.cache.Responses[path]
@@ -318,7 +326,7 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 	return nil, errors.New("GitHub discovery pagination exceeded limit")
 }
 
-// Poll refreshes all pages conditionally and never waits through a rate limit.
+// Poll refreshes GraphQL pull pages and conditional REST metadata without waiting through a rate limit.
 // Callers schedule NextPoll; unchanged results back off from 30s to 15m.
 // Failure returns the last complete snapshot, explicitly stale, and an error.
 func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snapshot, error) {
@@ -327,8 +335,7 @@ func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snaps
 
 // PollNow is Poll without waiting for NextPoll: something local (a push, an
 // agent session ending) says the pull requests changed. It still honors the
-// shared rate budget and its conditional requests, so an unchanged inbox
-// costs only 304 answers.
+// shared REST and GraphQL rate budgets.
 func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	return s.poll(ctx, repository, true)
 }
@@ -364,14 +371,14 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		return Snapshot{}, budgetErr
 	}
 	now := s.now()
-	shared := poll{rate: budget.Snapshot.Rate}
+	shared := poll{rate: budget.Snapshot.Rate, graphRate: budget.GraphQLRate, now: now}
 	if deadline := shared.ResetIfExhausted(); deadline.After(now) {
 		s.setValidated(path, false)
 		snapshot := cache.Snapshot
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
 		snapshot.Error = errRateLimit.Error()
-		snapshot.Rate = shared.rate
+		snapshot.Rate = shared.visibleRate()
 		snapshot.NextPoll = maxTime(snapshot.NextPoll, deadline)
 		return snapshot, errRateLimit
 	}
@@ -381,14 +388,14 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if cache.Responses == nil {
 		cache.Responses = map[string]cachedResponse{}
 	}
-	p := poll{reader: reader, cache: cache, rate: shared.rate, now: now, unchanged: true, minimum: 30 * time.Second}
+	p := poll{reader: reader, cache: cache, rate: shared.rate, graphRate: shared.graphRate, now: now, unchanged: true, minimum: 30 * time.Second}
 	snapshot, err := p.discover(ctx, repository)
 	if err != nil {
 		snapshot = cache.Snapshot
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
 		snapshot.Error = err.Error()
-		snapshot.Rate = p.rate
+		snapshot.Rate = p.visibleRate()
 		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
@@ -399,12 +406,12 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
-		snapshot.Rate = p.rate
+		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
 	}
 	s.setValidated(path, err == nil)
 	p.cache.Snapshot = snapshot
-	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}}); saveErr != nil {
+	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
 	}
 	if saveErr := save(path, p.cache); saveErr != nil {
@@ -413,7 +420,10 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	return snapshot, err
 }
 func (p *poll) ResetIfExhausted() time.Time {
-	resume := p.rate.RetryAt
+	resume := maxTime(p.rate.RetryAt, p.graphRate.RetryAt)
+	if p.graphRate.Remaining != nil && *p.graphRate.Remaining == 0 {
+		resume = maxTime(resume, p.graphRate.Reset)
+	}
 	if p.rate.Remaining != nil && *p.rate.Remaining == 0 {
 		resume = maxTime(resume, p.rate.Reset)
 	}
@@ -422,8 +432,8 @@ func (p *poll) ResetIfExhausted() time.Time {
 
 func (p *poll) discover(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	snapshot := Snapshot{Repository: repository.String(), PullRequests: []PullRequest{}}
-	var viewer actor
-	if err := p.get(ctx, "/user", &viewer); err != nil {
+	prs, viewer, err := p.openPulls(ctx, repository)
+	if err != nil {
 		return snapshot, err
 	}
 	if viewer.Login == "" {
@@ -431,17 +441,18 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 	}
 	snapshot.Viewer = viewer.Login
 	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
-	prs, err := collect[apiPR](ctx, p, prefix+"/pulls?state=open")
-	if err != nil {
-		return snapshot, err
-	}
+
 	teams, teamErr := collect[team](ctx, p, "/user/teams")
+	if errors.Is(teamErr, errRateLimit) {
+		return snapshot, teamErr
+	}
 	membership := map[int64]bool{}
 	for _, team := range teams {
 		membership[team.ID] = true
 	}
 	permissions := map[string]*bool{}
-	for _, pr := range prs {
+	for _, row := range prs {
+		pr := row.legacy()
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
@@ -467,7 +478,9 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 					} `json:"permissions"`
 				} `json:"user"`
 			}
-			if err := p.get(ctx, prefix+"/collaborators/"+url.PathEscape(pr.User.Login)+"/permission", &response); err == nil {
+			if err := p.get(ctx, prefix+"/collaborators/"+url.PathEscape(pr.User.Login)+"/permission", &response); errors.Is(err, errRateLimit) {
+				return snapshot, err
+			} else if err == nil {
 				switch response.Permission {
 				case "admin", "write", "maintain":
 					value := true
@@ -482,6 +495,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 			permissions[key] = permission
 		}
 		item.AuthorHasWrite = permission
+		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil
@@ -523,4 +537,20 @@ func (s *Service) setValidated(path string, value bool) {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
 	s.validated[path] = value
+}
+
+// visibleRate exposes the active limiting budget without combining REST request
+// allowances with GraphQL points, which GitHub accounts independently.
+func (p *poll) visibleRate() RateLimit {
+	if rateDeadline(p.rate).After(p.now) {
+		return p.rate
+	}
+	return p.graphRate
+}
+func rateDeadline(rate RateLimit) time.Time {
+	deadline := rate.RetryAt
+	if rate.Remaining != nil && *rate.Remaining == 0 {
+		deadline = maxTime(deadline, rate.Reset)
+	}
+	return deadline
 }

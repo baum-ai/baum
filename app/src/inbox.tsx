@@ -8,7 +8,17 @@ import {
 } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronRightIcon, WarningIcon } from "@baum/viewer/components/icons";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CircleDashedIcon,
+  CommentsIcon,
+  MergeIcon,
+  WarningIcon,
+  type IconProps,
+} from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
@@ -111,11 +121,13 @@ export function Inbox({
             })
           }
         />
-        <span className="inbox-wide">Risk</span>
-        <span className="inbox-title-heading">
-          Pull request <span className="inbox-narrow">· {formatCount(visible.length)} visible</span>
-        </span>
-        <span className="inbox-wide">Review time</span>
+        <span>Risk</span>
+        <span className="inbox-title-heading">Pull request</span>
+        {["Review time", "Unresolved", "Review", "Checks", "Merge"].map((column) => (
+          <span key={column} className="inbox-detail-heading">
+            {column}
+          </span>
+        ))}
       </div>
       {groups.map((group) => (
         <Bucket
@@ -202,7 +214,7 @@ function Bucket({
 function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.status === "generating")
     return (
-      <span className="inbox-activity text-(--text-secondary)">
+      <span className="inbox-activity text-(--status-info)">
         <LiveDot />
         Generating review
       </span>
@@ -218,6 +230,95 @@ function ReviewActivity({ entry }: { entry: Entry }) {
       </span>
     );
   return null;
+}
+type StateStyle = {
+  label: string;
+  tone: string;
+  icon: ComponentType<IconProps>;
+  iconTone?: string;
+};
+const MUTED = "text-(--text-tertiary)";
+const POSITIVE = "text-(--status-positive)";
+const CRITICAL = "text-(--status-critical)";
+// Red only where something needs the author: changes requested, failing
+// checks, a conflict.
+const REVIEW: Record<string, StateStyle> = {
+  approved: { label: "Approved", tone: POSITIVE, icon: CheckIcon },
+  changes_requested: { label: "Changes requested", tone: CRITICAL, icon: CircleCrossIcon },
+  commented: { label: "Commented", tone: MUTED, icon: CommentsIcon },
+  unreviewed: { label: "Unreviewed", tone: MUTED, icon: CircleDashedIcon },
+};
+const CHECKS: Record<string, StateStyle> = {
+  passing: { label: "Passing", tone: MUTED, iconTone: POSITIVE, icon: CircleCheckIcon },
+  failing: { label: "Failing", tone: CRITICAL, icon: CircleCrossIcon },
+  running: { label: "Running", tone: "text-(--status-caution)", icon: CircleDashedIcon },
+};
+const MERGE: Record<string, StateStyle> = {
+  ready: { label: "Ready", tone: POSITIVE, icon: MergeIcon },
+  conflict: { label: "Conflict", tone: CRITICAL, icon: WarningIcon },
+  blocked: { label: "Blocked", tone: MUTED, icon: CircleCrossIcon },
+  draft: { label: "Draft", tone: MUTED, icon: CircleDashedIcon },
+};
+/** One of the status columns: an icon and a word, or a dash. Its column's
+ *  name is read before it, since the headings are drawn for the eye only. */
+function StatusCell({
+  column,
+  label,
+  style,
+  title,
+}: {
+  column: string;
+  label?: string;
+  style?: StateStyle;
+  title?: string;
+}) {
+  const Icon = style?.icon;
+  const text = label ?? style?.label;
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inbox-status inline-flex items-center gap-1.5 text-xs tabular-nums",
+        style?.tone ?? MUTED,
+      )}
+    >
+      <span className="inbox-cell-label">{column}: </span>
+      {Icon && text ? <Icon size={14} className={cn("flex-none", style?.iconTone)} /> : null}
+      {text ?? "—"}
+    </span>
+  );
+}
+function StatusColumns({ entry }: { entry: Entry }) {
+  const unresolved = entry.unresolved;
+  return (
+    <div className="inbox-statuses">
+      <StatusCell
+        column="Review time"
+        label={
+          entry.review_minutes == null ? undefined : `~${formatCount(entry.review_minutes)} min`
+        }
+      />
+      <StatusCell
+        column="Unresolved"
+        style={unresolved == null ? undefined : { label: "", tone: MUTED, icon: CommentsIcon }}
+        label={
+          unresolved == null
+            ? undefined
+            : `${formatCount(unresolved)}${entry.unresolved_capped ? "+" : ""}`
+        }
+        title={
+          unresolved == null
+            ? undefined
+            : entry.unresolved_capped
+              ? `At least ${formatCount(unresolved)} unresolved threads; only the first 100 threads were fetched`
+              : `${formatCount(unresolved)} unresolved threads on GitHub`
+        }
+      />
+      <StatusCell column="Review" style={REVIEW[entry.review]} />
+      <StatusCell column="Checks" style={CHECKS[entry.checks]} />
+      <StatusCell column="Merge" style={MERGE[entry.merge]} />
+    </div>
+  );
 }
 function InboxRow({
   entry,
@@ -254,7 +355,6 @@ function InboxRow({
             ? "text-(--text-secondary)"
             : "text-(--status-positive)";
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
-  const minutes = entry.review_minutes;
   return (
     <li className={cn("inbox-columns inbox-row", selected && "bg-(--surface-selected)")}>
       <input
@@ -290,21 +390,9 @@ function InboxRow({
         <p title={metadata.join(" · ")} className="inbox-meta text-xs text-(--text-tertiary)">
           {metadata.join(" · ")}
         </p>
-      </div>
-      <span
-        className="inbox-time"
-        title={
-          minutes
-            ? `About ${minutes} ${minutes === 1 ? "minute" : "minutes"} to read the review`
-            : "No review yet"
-        }
-      >
-        <span className="sr-only">Review time: </span>
-        {minutes ? `~${minutes} min` : "—"}
-      </span>
-      <div className="inbox-status">
         <ReviewActivity entry={entry} />
       </div>
+      <StatusColumns entry={entry} />
     </li>
   );
 }

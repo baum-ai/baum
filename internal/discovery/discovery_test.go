@@ -50,13 +50,46 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 	}
 	status := 200
 	body := f.pages[r.URL.RequestURI()]
+	if r.URL.Path == "/graphql" {
+		var request struct{ Variables struct{ Cursor *string } }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			return nil, err
+		}
+		page := 1
+		if request.Variables.Cursor != nil {
+			if _, err := fmt.Sscanf(*request.Variables.Cursor, "page-%d", &page); err != nil {
+				return nil, err
+			}
+		}
+		var rows []apiPR
+		if err := json.Unmarshal([]byte(f.pages[fmt.Sprintf("/repos/acme/app/pulls?state=open&per_page=100&page=%d", page)]), &rows); err != nil {
+			return nil, err
+		}
+		nodes := []map[string]any{}
+		for _, pr := range rows {
+			var head any
+			if pr.Head.Repo != nil {
+				head = map[string]any{"databaseId": pr.Head.Repo.ID, "nameWithOwner": pr.Head.Repo.FullName}
+			}
+			requests := []any{}
+			for _, user := range pr.RequestedReviewers {
+				requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": user.Login}})
+			}
+			for _, team := range pr.RequestedTeams {
+				requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "databaseId": team.ID}})
+			}
+			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
+		}
+		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
+		body = string(encoded)
+	}
 	if body == "" {
 		body = `{}`
 	}
 	if configured := f.status[r.URL.Path]; configured != 0 {
 		status = configured
 	}
-	if f.conditional && r.Header.Get("If-None-Match") != "" {
+	if r.URL.Path != "/graphql" && f.conditional && r.Header.Get("If-None-Match") != "" {
 		status = 304
 		body = ""
 	}
@@ -171,7 +204,7 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 		t.Fatalf("conditional result %#v", second)
 	}
 	for _, request := range f.requests[before:] {
-		if request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
+		if request.URL.Path != "/graphql" && request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
 			t.Errorf("missing ETag %s", request.URL)
 		}
 	}
@@ -508,7 +541,7 @@ func TestPollNowSkipsTheDeadlineButNotTheBudget(t *testing.T) {
 		t.Fatalf("poll now %#v %v requests=%d", got, err, len(f.requests)-before)
 	}
 	for _, request := range f.requests[before:] {
-		if request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
+		if request.URL.Path != "/graphql" && request.URL.Path != "/repos/acme/app/collaborators/unknown/permission" && request.Header.Get("If-None-Match") == "" {
 			t.Errorf("unconditional %s", request.URL)
 		}
 	}
