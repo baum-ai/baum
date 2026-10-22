@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -505,8 +506,12 @@ func TestEveryCloneOfARepositoryIsRefreshedInItsOwnStore(t *testing.T) {
 	h.sessionEnd(clonePath)
 	h.sessionEnd(second.Path)
 	h.run(time.Minute)
-	if got := strings.Join(h.refreshed, " "); got != clonePath+":7 "+second.Path+":7" {
-		t.Fatalf("refreshes %s", got)
+	// Store paths sort differently with Unix and Windows separators.
+	want := []string{clonePath + ":7", second.Path + ":7"}
+	slices.Sort(want)
+	slices.Sort(h.refreshed)
+	if !slices.Equal(h.refreshed, want) {
+		t.Fatalf("refreshes %q, want %q", h.refreshed, want)
 	}
 }
 
