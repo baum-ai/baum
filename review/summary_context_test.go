@@ -177,6 +177,49 @@ func TestNormalizationCleansSummaryContext(t *testing.T) {
 	}
 }
 
+func TestSummaryContextRefsRequireExactPathSpelling(t *testing.T) {
+	directory := t.TempDir()
+	for _, file := range []string{"head/api/handler.go", "head/Mixed/Handler.go", "merge-base/queue/legacy.go"} {
+		path := filepath.Join(directory, file)
+		checkNoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		checkNoError(t, os.WriteFile(path, nil, 0o644))
+	}
+	opened := openCheckout(directory, os.OpenRoot)
+	defer opened.close()
+	for _, path := range []string{"api", "api/handler.go", "head/api/handler.go", "Mixed", "Mixed/Handler.go", "queue/legacy.go", "merge-base/queue/legacy.go"} {
+		if _, ok := contextRefPath(path, opened); !ok {
+			t.Errorf("dropped exactly spelled reference %q", path)
+		}
+	}
+	for _, path := range []string{"API", "API/handler.go", "api/Handler.go", "head/API/handler.go", "mixed/Handler.go", "Mixed/handler.go", "QUEUE/legacy.go", "queue/Legacy.go", "merge-base/queue/Legacy.go"} {
+		if got, ok := contextRefPath(path, opened); ok {
+			t.Errorf("kept incorrectly spelled reference %q as %q", path, got)
+		}
+	}
+
+	// Exercise the filesystem behavior responsible for the bug on Linux too:
+	// a successful Stat must not be sufficient to keep a misspelled link.
+	tree := aliasedStatFS{os.DirFS(filepath.Join(directory, "head"))}
+	for _, path := range []string{"api", "api/handler.go", "API", "API/handler.go", "api/Handler.go", "api./handler.go", "api/handler.go.", "api/handler.go "} {
+		if _, err := fs.Stat(tree, path); err != nil {
+			t.Fatalf("case-insensitive Stat(%q): %v", path, err)
+		}
+		if got, want := statExactPath(tree, path) != nil, path == "api" || path == "api/handler.go"; got != want {
+			t.Errorf("statExactPath(%q) resolved = %v, want %v", path, got, want)
+		}
+	}
+}
+
+type aliasedStatFS struct{ fs.FS }
+
+func (f aliasedStatFS) Stat(path string) (fs.FileInfo, error) {
+	parts := strings.Split(strings.ToLower(path), "/")
+	for i := range parts {
+		parts[i] = strings.TrimRight(parts[i], ". ")
+	}
+	return fs.Stat(f.FS, strings.Join(parts, "/"))
+}
+
 // A checkout tree that exists but cannot be opened still makes the checkout
 // present: it holds nothing, so references are dropped rather than kept
 // unverified. Only a missing tree is absent.
