@@ -1,7 +1,6 @@
 package bundle
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,8 +43,10 @@ type DiffLimits struct {
 	// MaxHunkLines is the per-hunk line cap Fit applies, with its note,
 	// after redaction. Parsing keeps each hunk's leading MaxHunkLines
 	// lines and up to redactionMargin bytes past them: the cap and its note
-	// behave as on the full text, redaction reads a secret the cap runs
-	// through whole, and a long hunk is never held whole.
+	// behave as on the full text, and redaction reads a secret the cap runs
+	// through whole. A file whose hunk other than its last is cut keeps its
+	// whole patch until Redact, which reads each file's hunks as one text;
+	// MaxPatchBytes bounds what is kept.
 	MaxHunkLines int
 }
 
@@ -55,10 +56,12 @@ type DiffLimits struct {
 // decide. A secret's mask can run further: a private key is masked to its
 // end marker however long it is, and a key the margin cuts off is masked to
 // the end of the kept text, so the lines the cap keeps are masked as in the
-// whole patch.
+// whole patch. Only a file's last hunk is ever redacted from its margin:
+// when an earlier hunk is cut, the file's whole patch is kept for Redact,
+// because a key in the lines that hunk drops may run on into the next hunk.
 //
 // It is measured, not derived: goredact does not export its rules'
-// lookahead. In goredact v0.3.0 the longest is 16384 bytes, for the
+// lookahead. In goredact v0.4.0 the longest is 16384 bytes, for the
 // pem-private-key and putty-private-key rules (jwt and
 // supabase-service-role-key read 8192). Re-measure it on every goredact
 // upgrade: TestRedactionMarginCoversTheEngine fails until it is.
@@ -95,7 +98,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 		if limits.MaxPatchBytes > 0 && patchBytes > limits.MaxPatchBytes {
 			return nil, nil, errors.New(BudgetExceededReason("diff bytes"))
 		}
-		fileHunks, textless := parseFileHunks(path, patch, keepLines)
+		fileHunks, filePatch, textless := parseFileHunks(path, patch, keepLines)
 		if textless {
 			fileHunks = []rawHunk{{id: hunkIDFromDigest(newHunkIDDigest(path))}}
 		}
@@ -120,7 +123,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 				hunk.Textless = true
 				hunk.TextlessReason = textlessReason(change, patch)
 			} else {
-				hunk.Patch = raw.text
+				hunk.Patch, hunk.file, hunk.offset = raw.text, filePatch, raw.start
 			}
 			hunks = append(hunks, hunk)
 		}
@@ -160,89 +163,150 @@ type rawHunk struct {
 	id                   string
 	newStart, newCount   int
 	additions, deletions int
+	// start and end bound the kept text in the file's text, before its
+	// trailing newlines are trimmed; cut is set when lines past it were
+	// dropped.
+	start, end int
+	cut        bool
 }
+
+// filePatch is one file's hunks, which Redact reads as one text: a secret
+// may run on from one hunk into the next, past the hunk header between them.
+type filePatch struct {
+	// text is the file's every line from its first hunk header on, each
+	// with its newline (a CRLF line without its CR, as in hunk text), up to
+	// the end of the last hunk's kept text, when the hunk texts joined by
+	// newlines would not be that text: when a hunk other than the last was
+	// cut, or ends in blank lines its text trims. Otherwise it is empty, and
+	// the joined hunk texts are that text.
+	text string
+}
+
+// maxPatchLineBytes is the longest patch line, with its newline, diff
+// parsing reads; a longer one makes the file textless.
+const maxPatchLineBytes = 16 << 20
 
 // parseFileHunks splits a unified diff patch into hunks. textless is true
 // for a binary change (no "@@" hunk headers found in a non-empty patch, or
 // an empty patch for a non-deletion change). keepLines above zero keeps only
 // each hunk's leading lines of text and redactionMargin bytes past them;
-// counts and IDs still cover every line.
-func parseFileHunks(path string, patch []byte, keepLines int) ([]rawHunk, bool) {
+// counts and IDs still cover every line. file groups the hunks for Redact.
+//
+// Lines are read as bufio.ScanLines reads them, without a CR before their
+// newline. Hunk texts are copied out of the patch, so only the kept text is
+// held, and the whole patch too only when filePatch needs it.
+func parseFileHunks(path string, patch []byte, keepLines int) (hunks []rawHunk, file *filePatch, textless bool) {
 	if len(patch) == 0 {
-		return nil, true
+		return nil, nil, true
 	}
 	if isBinaryPatch(patch) {
-		return nil, true
+		return nil, nil, true
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(patch))
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	var hunks []rawHunk
-	var current *rawHunk
-	var body strings.Builder
+	text := patch
+	if bytes.IndexByte(patch, '\r') >= 0 {
+		text = dropLineEndCRs(patch)
+	}
 	var id hash.Hash
-	lines, margin := 0, 0
-	flush := func() {
-		if current == nil {
-			return
-		}
-		current.text = strings.TrimRight(body.String(), "\n")
-		current.id = hunkIDFromDigest(id)
-		hunks = append(hunks, *current)
-		current = nil
-		body.Reset()
-	}
-	keep := func(line string) {
+	first, lines, margin := 0, 0, 0
+	// keep extends the current hunk's kept text over the line at text[at:],
+	// or over the part of it the margin still holds.
+	keep := func(at int, line []byte) {
+		current := &hunks[len(hunks)-1]
+		n := len(line)
 		if keepLines > 0 && lines >= keepLines {
 			if margin >= redactionMargin {
+				current.cut = true
 				return
 			}
-			line = line[:min(len(line), redactionMargin-margin)]
-			margin += len(line) + 1
+			n = min(n, redactionMargin-margin)
+			margin += n + 1
+			current.cut = current.cut || n < len(line)
 		}
 		lines++
-		body.WriteString(line)
-		body.WriteByte('\n')
+		current.end = at + n
 	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "@@ -") {
-			flush()
-			newStart, newCount := parseHunkHeader(line)
-			current = &rawHunk{newStart: newStart, newCount: newCount}
+	for at := 0; at < len(text); {
+		end := bytes.IndexByte(text[at:], '\n')
+		next := at + end + 1
+		if end < 0 {
+			end, next = len(text)-at, len(text)
+		}
+		if end+1 > maxPatchLineBytes {
+			// A line past the limit (e.g. a vendored minified-JS line beyond
+			// git's own 20MiB line limit) is not read: the hunks would be a
+			// partial parse with wrong addition/deletion counts and missing
+			// content. Fail closed the same way a binary change does — one
+			// textless hunk, not a confidently wrong one.
+			return nil, nil, true
+		}
+		line := text[at : at+end]
+		header := bytes.HasPrefix(line, []byte("@@ -"))
+		switch {
+		case header:
+			if len(hunks) == 0 {
+				first = at
+			} else {
+				hunks[len(hunks)-1].id = hunkIDFromDigest(id)
+			}
+			newStart, newCount := parseHunkHeader(string(line))
+			hunks = append(hunks, rawHunk{newStart: newStart, newCount: newCount, start: at})
 			id = newHunkIDDigest(path)
 			lines, margin = 0, 0
-			keep(line)
+		case len(hunks) == 0:
+			at = next
 			continue
 		}
-		if current == nil {
+		keep(at, line)
+		at = next
+		if header {
 			continue
 		}
-		keep(line)
+		current := &hunks[len(hunks)-1]
 		switch {
-		case strings.HasPrefix(line, "+"):
+		case bytes.HasPrefix(line, []byte("+")):
 			current.additions++
-			id.Write([]byte(line))
+			id.Write(line)
 			id.Write([]byte{'\n'})
-		case strings.HasPrefix(line, "-"):
+		case bytes.HasPrefix(line, []byte("-")):
 			current.deletions++
-			id.Write([]byte(line))
+			id.Write(line)
 			id.Write([]byte{'\n'})
 		}
-	}
-	flush()
-	if err := scanner.Err(); err != nil {
-		// A line past the scanner's buffer limit (bufio.ErrTooLong, e.g. a
-		// vendored minified-JS line beyond git's own 20MiB line limit) stops
-		// Scan() early: hunks here would be a silently partial parse with
-		// wrong addition/deletion counts and missing content, not a complete
-		// patch. Fail closed the same way a binary change does — one
-		// textless hunk, not a confidently wrong one.
-		return nil, true
 	}
 	if len(hunks) == 0 {
-		return nil, true
+		return nil, nil, true
 	}
-	return hunks, false
+	hunks[len(hunks)-1].id = hunkIDFromDigest(id)
+	file = &filePatch{}
+	whole := false
+	for i := range hunks {
+		kept := text[hunks[i].start:hunks[i].end]
+		trimmed := bytes.TrimRight(kept, "\n")
+		hunks[i].text = string(trimmed)
+		if i < len(hunks)-1 && (hunks[i].cut || len(trimmed) < len(kept)) {
+			whole = true
+		}
+		hunks[i].start -= first
+	}
+	if whole {
+		// Up to the last hunk's kept text: no hunk follows the lines past
+		// its margin.
+		file.text = string(text[first:hunks[len(hunks)-1].end])
+	}
+	return hunks, file, false
+}
+
+// dropLineEndCRs returns patch without the CR before each newline and at
+// its end, as bufio.ScanLines reads its lines.
+func dropLineEndCRs(patch []byte) []byte {
+	out := make([]byte, 0, len(patch))
+	for i, c := range patch {
+		if c == '\r' && (i+1 == len(patch) || patch[i+1] == '\n') {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // patchOmission classifies a patch that could not be read: one file over the
@@ -288,13 +352,15 @@ func textlessReason(change string, patch []byte) string {
 // --binary. Only lines before the first "@@" count, so a text file whose
 // added or removed lines quote either phrase stays text.
 func isBinaryPatch(patch []byte) bool {
-	for _, line := range strings.Split(string(patch), "\n") {
-		if strings.HasPrefix(line, "@@") {
+	for rest := patch; len(rest) > 0; {
+		line, after, _ := bytes.Cut(rest, []byte("\n"))
+		if bytes.HasPrefix(line, []byte("@@")) {
 			return false
 		}
-		if strings.HasPrefix(line, "Binary files ") || strings.TrimSuffix(line, "\r") == "GIT binary patch" {
+		if bytes.HasPrefix(line, []byte("Binary files ")) || string(bytes.TrimSuffix(line, []byte("\r"))) == "GIT binary patch" {
 			return true
 		}
+		rest = after
 	}
 	return false
 }

@@ -108,6 +108,12 @@ type Hunk struct {
 	Patch          string `json:"patch,omitempty"`
 	Textless       bool   `json:"textless,omitempty"`
 	TextlessReason string `json:"textless_reason,omitempty"`
+
+	// file is the file patch diff parsing took this hunk from, which Redact
+	// reads whole and then clears; offset is where Patch starts in its text.
+	// A hunk with no file is redacted on its own.
+	file   *filePatch
+	offset int
 }
 
 // Check is one check run or commit status for the head.

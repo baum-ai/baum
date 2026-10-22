@@ -220,10 +220,22 @@ backoff, `sources` and the mapping onto the bundle.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
+  The hunks of one file are redacted together, as the file's patch, so the
+  engine follows a key that runs on from one hunk into the next, past the
+  hunk header between them, and masks it in both (goredact v0.4.0 and
+  later); each hunk header keeps its `@@ -a,b +c,d @@` line ranges, while
+  the section heading after them stays masked when it is a line of the key.
+  Patches are also deliberately over-masked for key bodies shown without
+  their armor, as an edit inside a committed key shows them: every run of
+  three or more lines whose content is pure base64 (`[A-Za-z0-9+/=]`) of at
+  least 40 bytes is masked, with a shorter base64 line at either end, and so
+  is every hunk heading that is pure base64 of at least 40 bytes. Embedded
+  base64 data in a diff is masked the same way.
   The per-hunk line cap cuts after redaction: parsing keeps 16 KiB past
-  the cap, so a key the cut runs through is masked whole, as it would be in
-  the full patch. A previous section's code excerpt lines are redacted as
-  one text too.
+  the cap, and keeps a file's whole patch until redaction when the cap cuts
+  a hunk other than its last, so a key the cut runs through is masked
+  whole, as it would be in the full patch. A previous section's code excerpt
+  lines are redacted as one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.

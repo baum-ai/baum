@@ -10,12 +10,21 @@ import (
 
 // Redact masks secrets and e-mail addresses in every bundle string field,
 // after reference extraction (which runs against the unredacted bundle) and
-// before the byte-fit pass and the hunk line cap it starts with. Each field, a
-// whole patch included, is redacted as one text, so a secret spanning lines
-// is found, and keeps its length and lines. A patch still holds the margin
-// diff parsing keeps past the line cap, so a secret the cap runs through is
-// masked whole. MaskedSpanCount is the number of spans masked, e-mail
-// addresses included, and so counts a secret found only in that margin too.
+// before the byte-fit pass and the hunk line cap it starts with. Each field
+// is redacted as one text, so a secret spanning lines is found, and keeps its
+// length and lines. The hunks of one file are redacted together, as the
+// file's patch, so the engine follows a key that runs on from one hunk into
+// the next (goredact v0.4.0 and later mask it in both); each hunk keeps its
+// diff markers and its header's line ranges. Runs of base64 lines and
+// base64 hunk headings are masked as key material too, a deliberate
+// over-mask (redactPatches, base64Masks). A patch still holds the margin
+// diff parsing keeps past the line cap, and the lines an earlier hunk of
+// the file drops are read too, so a secret the cap runs through is masked
+// as in the whole patch. MaskedSpanCount is the number of spans masked,
+// e-mail addresses and base64 runs the engine left included. It counts the
+// spans in the text Redact reads, each file's patch up to its last hunk's
+// margin, so a secret spanning hunks counts once, and one only in lines the
+// cap then drops counts too.
 //
 // Mentions are not rewritten: nothing in the bundle is posted to a code
 // host as it is, and a field may hold code (a patch, a suggestion block, a
@@ -80,15 +89,12 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	}
 	for i := range bundle.Diff {
 		fields = append(fields, &bundle.Diff[i].Path, &bundle.Diff[i].OldPath)
-		if bundle.Diff[i].Patch == "" {
-			continue
-		}
-		redacted, count, err := redactor.RedactString(ctx, bundle.Diff[i].Patch)
-		if err != nil {
-			return err
-		}
-		bundle.Diff[i].Patch, total = keepLineMarkers(bundle.Diff[i].Patch, redacted), total+count
 	}
+	masked, err := redactPatches(ctx, redactor, bundle.Diff)
+	if err != nil {
+		return err
+	}
+	total += masked
 	for i := range bundle.Sessions {
 		session := &bundle.Sessions[i]
 		fields = append(fields, &session.Title, &session.Branch, &session.Vendor)
@@ -217,24 +223,6 @@ func redactLineTexts(ctx context.Context, redactor *Redactor, lines []any, total
 	}
 	*total += count
 	return nil
-}
-
-// keepLineMarkers puts back the first byte of every patch line, its diff
-// marker. A key spanning lines is masked whole, and the mask would turn a
-// context line's leading space into "*", so the line would no longer parse
-// as a diff line. A marker (space, "+", "-" or "\\") is diff syntax, never
-// part of the secret; any other first byte stays masked.
-func keepLineMarkers(patch, redacted string) string {
-	if len(redacted) != len(patch) {
-		return redacted
-	}
-	out := []byte(redacted)
-	for i := 0; i < len(patch); i++ {
-		if (i == 0 || patch[i-1] == '\n') && strings.IndexByte(" +-\\", patch[i]) >= 0 {
-			out[i] = patch[i]
-		}
-	}
-	return string(out)
 }
 
 // Redactor masks bundle text with the redact package's engine, the one
