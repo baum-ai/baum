@@ -24,6 +24,9 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 			}
 			var manifest map[string]any
 			readPluginJSON(t, manifestPath, &manifest)
+			if agent == "codex" && manifest["$schema"] != "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" {
+				t.Fatalf("Codex portable manifest must declare its format: %#v", manifest)
+			}
 			if manifest["name"] != "baum" || manifest["version"] != "1.0.0" || manifest["hooks"] != nil {
 				t.Fatalf("manifest = %#v", manifest)
 			}

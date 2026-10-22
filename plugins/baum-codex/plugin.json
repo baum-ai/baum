@@ -1,4 +1,5 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "baum",
   "version": "1.0.0",
   "description": "Run baum hooks with your existing repository opt-ins.",

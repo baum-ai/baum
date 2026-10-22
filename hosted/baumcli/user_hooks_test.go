@@ -729,3 +729,21 @@ func TestDefaultLegacyInstallSkipsPluginManagedAgents(t *testing.T) {
 		t.Fatalf("unmigrated Codex legacy=%v %v", legacy, err)
 	}
 }
+
+func TestLegacyRollbackValidatesAllAgentsBeforeChangingAny(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if _, err := userhooks.Migrate(home, "claude-code"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, "hooks", "install", "--user", "--legacy", "--agent", "claude-code", "--agent", "unsupported"); err == nil {
+		t.Fatal("accepted unsupported agent")
+	}
+	if !userhooks.PluginManaged(home, "claude-code") {
+		t.Fatal("later invalid agent lost earlier plugin choice")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("modified earlier agent before validating all: %v", err)
+	}
+}

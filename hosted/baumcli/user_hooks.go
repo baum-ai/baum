@@ -58,17 +58,6 @@ first, then use --legacy to return to settings-based hooks.`,
 					return fmt.Errorf("no supported coding agent found; pass --agent (%s)", strings.Join(userhooks.Agents(), " or "))
 				}
 			}
-			if legacy {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return err
-				}
-				for _, agent := range agents {
-					if err := userhooks.RestoreLegacy(home, agent); err != nil {
-						return err
-					}
-				}
-			}
 			if defaultAgents && !legacy {
 				home, err := os.UserHomeDir()
 				if err != nil {
@@ -82,7 +71,7 @@ first, then use --legacy to return to settings-based hooks.`,
 					return true
 				})
 			}
-			return changeUserHooks(agents, true, stdout, stderr)
+			return changeUserHooks(agents, true, legacy, stdout, stderr)
 		},
 	}
 	cmd.Flags().BoolVar(&user, "user", false, "install in your user-wide agent settings")
@@ -116,7 +105,7 @@ hook to its position: hooks of yours that move are listed, to trust again with
 			if len(agents) == 0 {
 				agents = userhooks.Agents()
 			}
-			return changeUserHooks(agents, false, stdout, stderr)
+			return changeUserHooks(agents, false, false, stdout, stderr)
 		},
 	}
 	cmd.Flags().BoolVar(&user, "user", false, "remove from your user-wide agent settings")
@@ -231,10 +220,13 @@ func userHooksStatuses() ([]userHooksStatus, error) {
 
 // changeUserHooks installs or uninstalls for each agent. One agent's failure,
 // such as a settings file baum refuses to edit, does not stop the others.
-func changeUserHooks(agents []string, install bool, stdout, stderr io.Writer) error {
+func changeUserHooks(agents []string, install, legacy bool, stdout, stderr io.Writer) error {
 	change := userhooks.Uninstall
 	if install {
 		change = userhooks.Install
+		if legacy {
+			change = userhooks.RestoreLegacy
+		}
 	}
 	for _, agent := range agents {
 		if !slices.Contains(userhooks.Agents(), agent) {

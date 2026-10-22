@@ -110,8 +110,12 @@ continues to respect the choice.
 
 To return to legacy user-wide hooks, first disable/uninstall the baum plugin,
 then run `baum hooks install --user --legacy --agent AGENT`. This explicitly
-clears that agent's migration marker and installs legacy dispatchers using the
-existing settings editor; trust changed Codex hooks with `/hooks` again. An
+installs legacy dispatchers using the existing settings editor, then clears
+that agent's migration marker only after installation succeeds. A settings or
+write failure retains the plugin choice; repair the reported problem and retry.
+If removing the marker itself fails after installation, the installed legacy
+hooks take precedence over plugin hooks, and the same command safely retries
+marker removal. Unsupported agent names are rejected before any agent changes; trust changed Codex hooks with `/hooks` again. An
 ordinary install refuses to override a migrated choice. Roll back the CLI only
 after restoring legacy hooks if the older CLI lacks plugin support. Do not
 restore an entire settings backup over unrelated edits made since migration.
