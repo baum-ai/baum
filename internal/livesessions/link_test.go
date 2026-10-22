@@ -168,18 +168,19 @@ func (f *failingRegistry) List(context.Context) ([]repos.Clone, error) {
 }
 
 func TestResolverBacksOffAFailingRegistry(t *testing.T) {
+	root := t.TempDir()
 	now := time.Now()
 	reg := &failingRegistry{}
 	r := &Resolver{Registry: reg, Now: func() time.Time { return now }}
 	for i := range 5 {
 		now = now.Add(time.Second + time.Duration(i))
-		r.Link(context.Background(), fmt.Sprintf("/work/%d", i))
+		r.Link(context.Background(), filepath.Join(root, fmt.Sprint(i)))
 	}
 	if reg.calls != 1 {
 		t.Fatalf("listed %d times in 10 seconds", reg.calls)
 	}
 	now = now.Add(clonesFor)
-	r.Link(context.Background(), "/work/later")
+	r.Link(context.Background(), filepath.Join(root, "later"))
 	if reg.calls != 2 {
 		t.Fatalf("listed %d times after the back-off", reg.calls)
 	}

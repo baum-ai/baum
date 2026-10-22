@@ -66,7 +66,11 @@ func TestLoginPathFindsTheBaumHooksRun(t *testing.T) {
 		t.Errorf("path = %q", report.Path)
 	}
 	want := filepath.Join(installed, "baum")
-	if report.Baum == nil || report.Baum.Path != want || report.Baum.Resolved != want || report.Baum.Version != "v9.9.9" || report.Baum.Self {
+	resolved, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Baum == nil || report.Baum.Path != want || report.Baum.Resolved != resolved || report.Baum.Version != "v9.9.9" || report.Baum.Self {
 		t.Errorf("baum = %+v, want %s v9.9.9", report.Baum, want)
 	}
 }

@@ -6,6 +6,9 @@
 # the pinned one Check installs on macOS and Windows.
 set -euo pipefail
 
+# Native jq emits CRLF on Windows.
+jq() { command jq "$@" | tr -d '\r'; }
+
 scripts=$(cd "$(dirname "$0")" && pwd)
 manifest=$scripts/updater-manifest.sh
 work=$(mktemp -d)
@@ -161,5 +164,24 @@ if [ "$(jq -r '.platforms["linux-aarch64"].url' "$dir/latest.json")" != "$base/b
   echo "FAIL the arm64 AppImage or the unsigned macOS app is not listed" >&2
   status=1
 fi
+
+# Reproduce native Windows tool output on Unix too.
+mkdir "$work/crlf-tools"
+export BAUM_TEST_REAL_JQ BAUM_TEST_REAL_MINISIGN
+BAUM_TEST_REAL_JQ=$(type -P jq)
+BAUM_TEST_REAL_MINISIGN=$(command -v "$minisign")
+cat >"$work/crlf-tools/jq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$BAUM_TEST_REAL_JQ" "$@" | awk '{sub(/\r$/, ""); printf "%s\r\n", $0}'
+SH
+cat >"$work/crlf-tools/minisign" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$BAUM_TEST_REAL_MINISIGN" "$@" | awk '{sub(/\r$/, ""); printf "%s\r\n", $0}'
+SH
+chmod +x "$work/crlf-tools/jq" "$work/crlf-tools/minisign"
+pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$manifest" write 1.2.3 "$dir"
+pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$manifest" verify "$dir"
 
 exit "$status"

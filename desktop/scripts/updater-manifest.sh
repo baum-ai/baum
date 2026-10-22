@@ -26,6 +26,9 @@
 # (MINISIGN names another binary) and base64.
 set -euo pipefail
 
+# Native jq emits CRLF on Windows; shell values must use LF on every host.
+jq() { command jq "$@" | tr -d '\r'; }
+
 usage() {
   echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR" >&2
   exit 2
@@ -76,7 +79,7 @@ check() {
     echo "FAIL $(basename "$file"): the signature does not verify with the release key: $(cat "$work/error")" >&2
     return 1
   fi
-  if ! tr '\t' '\n' <<<"$comment" | grep -qxF "version:$version"; then
+  if ! tr -d '\r' <<<"$comment" | tr '\t' '\n' | grep -qxF "version:$version"; then
     echo "FAIL $(basename "$file"): signed for '$comment', not version $version" >&2
     return 1
   fi
