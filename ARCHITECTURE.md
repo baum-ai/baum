@@ -111,7 +111,7 @@ comment or thread has the same identifier in a local and a hosted document.
 ### GitHub source
 
 `internal/github` is the GraphQL client `baum internal bundle` reads GitHub with, and
-the bounded read-only REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
+the bounded read-only GraphQL and REST transport used by local inbox discovery. It reads hosts, repositories, remote URLs, SSH host
 aliases and tokens as the GitHub CLI does, through its library go-gh
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). The requests
 themselves are baum's own, over `shurcooL-graphql`, not go-gh's API client:
@@ -1756,31 +1756,45 @@ run's outcome afterwards is only a warning, and the lease later expires.
 
 ### Local pull request discovery
 
-`internal/discovery` reads all open PR pages, the authenticated user, the user's
-teams and per-author repository permissions through `internal/github.REST`.
-It uses numeric pagination, never an API-provided URL, and refuses redirects.
+`internal/discovery` reads the viewer and open pull requests through one GraphQL
+query per repository per poll, plus cursor pagination with 50 pulls per page.
+Each pull includes review, checks and merge states, and up to 100 review threads.
+Missing state is unknown; unresolved counts are nullable and marked as lower
+bounds when threads exceed the cap. Comment-only reviews use the latest 100
+reviews as a fallback to GitHub's review decision and opinionated reviews.
+The user's teams and per-author repository permissions still use conditional
+REST requests. Truncated review requests fail the refresh rather than concealing
+an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
 authorization. This service has no generation or GitHub mutation capability.
 
 `Service.Cached` resolves the local credential and reads disk without network
-access, always marking the snapshot stale. `Service.Poll` serializes polls,
-honors its next deadline, issues ETag conditional requests for every page and
-backs off for unchanged data, GitHub's polling interval and rate reset. It
-returns rate budget/reset rather than sleeping through an exhausted budget.
-Host-and-credential budget files share exhaustion and secondary retry deadlines
-across repositories and service restarts, before any new request is sent.
-A required request failure preserves the last complete inbox as stale; optional
-team or permission failures keep their fields unknown. Snapshots and minimal
-conditional response bodies are atomically replaced in private cache files,
-partitioned by host/credential fingerprint/repository. The index consumes these
-snapshots; it never treats missing PRs in an open-only snapshot as closed.
-Each pull request keeps its head branch (`head_ref`). A cache records its
-`Format`; one of an older format drops its conditional responses and reads
-them in full once, since a 304 would keep a stored body without the newer
-fields. `Service.PollNow` is `Poll` without waiting for the next deadline, for
-the automatic scheduler's `Trigger`; it still honors the shared rate budget
-and sends conditional requests, so an unchanged inbox costs only 304 answers.
+access. Disk data is stale until a successful poll in the running service.
+`Service.Poll` serializes polls, honors its next deadline, and backs off unchanged
+data from 30 seconds to 15 minutes, respecting GitHub's polling interval and rate
+reset. GraphQL has no ETag; only REST metadata uses conditional requests.
+GraphQL cost, remaining points and reset time map to the public rate projection.
+REST requests and GraphQL points have separate persisted budgets, with the
+currently limiting budget exposed when exhausted. Both budgets and secondary
+retry deadlines are shared by host and credential across repositories and
+service restarts. Discovery never sleeps through an exhausted budget.
+A failed or rate-limited refresh preserves the last complete inbox as stale;
+optional non-rate team or permission failures keep their fields unknown.
+Snapshots and minimal typed response fields are atomically replaced in private
+cache files, partitioned by host/credential fingerprint/repository. The index
+consumes these snapshots; missing PRs in an open-only snapshot are never treated
+as closed. Each pull keeps its head branch (`head_ref`). Old cache formats drop
+conditional REST responses once so newly retained fields can be populated.
+`Service.PollNow` skips the next deadline for local triggers, while honoring both
+shared rate budgets.
+
+The review index exposes discovery states for all open rows, including rows
+without a saved review or with an unreadable store. Saved review time comes from
+`summary.review_minutes` in the existing SQLite summary projection: only whole
+numbers from 1 to 240 are exposed; missing and invalid values remain unknown.
+Newer background observations override checks; a changed head clears discovery
+review, merge and thread states until the next discovery poll.
 
 ### Persistent generation jobs
 

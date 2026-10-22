@@ -1,9 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,9 +18,10 @@ import (
 // RESTReader reads only relative API paths on one validated GitHub host.
 // Its identity partitions private caches without persisting a credential.
 type RESTReader struct {
-	client   *http.Client
-	endpoint *url.URL
-	identity string
+	client          *http.Client
+	endpoint        *url.URL
+	identity        string
+	graphqlEndpoint *url.URL
 }
 
 func (c *Client) REST(ctx context.Context, repository Repository) (*RESTReader, error) {
@@ -39,7 +42,7 @@ func (c *Client) REST(ctx context.Context, repository Repository) (*RESTReader, 
 		endpoint.Path = "/api/v3"
 	}
 	digest := sha256.Sum256([]byte(host + "\x00" + token))
-	return &RESTReader{client: &http.Client{Transport: authTransport{host: endpoint.Host, token: token, base: c.restTransport}, CheckRedirect: refuseRedirect, Timeout: requestTimeout}, endpoint: endpoint, identity: hex.EncodeToString(digest[:])}, nil
+	return &RESTReader{client: &http.Client{Transport: authTransport{host: endpoint.Host, token: token, base: c.restTransport}, CheckRedirect: refuseRedirect, Timeout: requestTimeout}, endpoint: endpoint, identity: hex.EncodeToString(digest[:]), graphqlEndpoint: graphQLEndpoint(host)}, nil
 }
 
 func (r *RESTReader) CacheIdentity() string { return r.identity }
@@ -69,6 +72,30 @@ func (r *RESTReader) Read(ctx context.Context, path, etag string) (int, http.Hea
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20+1))
+	if err != nil || len(body) > 8<<20 {
+		return 0, nil, nil, fmt.Errorf("GitHub discovery response unreadable or too large")
+	}
+	return response.StatusCode, response.Header.Clone(), body, nil
+}
+
+// GraphQL reads one bounded operation without retries or waiting. Discovery owns
+// scheduling and budgets; this uses the same authenticated, redirect-safe client.
+func (r *RESTReader) GraphQL(ctx context.Context, query string, variables map[string]any) (int, http.Header, []byte, error) {
+	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.graphqlEndpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := r.client.Do(request)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("GitHub discovery request failed")
+	}
+	defer response.Body.Close()
+	body, err = io.ReadAll(io.LimitReader(response.Body, 8<<20+1))
 	if err != nil || len(body) > 8<<20 {
 		return 0, nil, nil, fmt.Errorf("GitHub discovery response unreadable or too large")
 	}

@@ -96,13 +96,14 @@ func (s *Store) FinishRun(ctx context.Context, id int64, reason string) error {
 // Summary is the latest document's small index projection and version count.
 // All entries and run records in Snapshot come from one SQLite read snapshot.
 type Summary struct {
-	Key          Key             `json:"key"`
-	Latest       *Metadata       `json:"latest"`
-	VersionCount int             `json:"version_count"`
-	Title        string          `json:"title"`
-	PRState      string          `json:"pr_state"`
-	RiskScore    json.RawMessage `json:"risk_score"`
-	Run          *Run            `json:"run,omitempty"`
+	Key           Key             `json:"key"`
+	Latest        *Metadata       `json:"latest"`
+	VersionCount  int             `json:"version_count"`
+	Title         string          `json:"title"`
+	PRState       string          `json:"pr_state"`
+	ReviewMinutes *int            `json:"review_minutes"`
+	RiskScore     json.RawMessage `json:"risk_score"`
+	Run           *Run            `json:"run,omitempty"`
 }
 
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
@@ -119,7 +120,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
+	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),CASE WHEN json_type(v.document,'$.summary.review_minutes') IN ('integer','real') AND json_extract(v.document,'$.summary.review_minutes') BETWEEN 1 AND 240 AND CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER)=json_extract(v.document,'$.summary.review_minutes') THEN CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER) END,summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
 	if err != nil {
 		return nil, err
 	}
@@ -129,9 +130,14 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		var item Summary
 		var raw []byte
 		var risk sql.NullString
-		if err = rows.Scan(&item.Key.Repository, &item.Key.Number, &raw, &item.Title, &item.PRState, &risk, &item.VersionCount); err != nil {
+		var minutes sql.NullInt64
+		if err = rows.Scan(&item.Key.Repository, &item.Key.Number, &raw, &item.Title, &item.PRState, &risk, &minutes, &item.VersionCount); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		if minutes.Valid {
+			value := int(minutes.Int64)
+			item.ReviewMinutes = &value
 		}
 		item.Latest = &Metadata{}
 		if err = json.Unmarshal(raw, item.Latest); err != nil {

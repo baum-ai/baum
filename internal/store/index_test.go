@@ -165,3 +165,34 @@ func BenchmarkSnapshot(b *testing.B) {
 		}
 	}
 }
+
+func TestSnapshotReviewMinutes(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"1", 1}, {"240", 240}, {"12.0", 12}, {"0", 0}, {"241", 0}, {"1.5", 0}, {`"12"`, 0}, {"null", 0}, {"true", 0}, {"{}", 0}, {"[]", 0}, {"", 0},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			s := opened(t)
+			key := Key{"a/b", 1}
+			v := version(key, 1)
+			summary := "{}"
+			if tc.raw != "" {
+				summary = `{"review_minutes":` + tc.raw + `}`
+			}
+			v.Document = []byte(`{"review":{"repository":"a/b","pull_request":1,"version":1},"summary":` + summary + `}`)
+			if err := s.Put(context.Background(), key, Version{}, v); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := s.Snapshot(context.Background())
+			if err != nil || len(rows) != 1 {
+				t.Fatal(rows, err)
+			}
+			got := rows[0].ReviewMinutes
+			if tc.want == 0 && got != nil || tc.want != 0 && (got == nil || *got != tc.want) {
+				t.Fatalf("minutes=%v want=%d", got, tc.want)
+			}
+		})
+	}
+}

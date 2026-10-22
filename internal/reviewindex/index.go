@@ -48,6 +48,11 @@ type Entry struct {
 	Historical        bool   `json:"historical"`
 	Stale             bool   `json:"stale"`
 	StoreError        string `json:"store_error,omitempty"`
+	Review            string `json:"review"`
+	Merge             string `json:"merge"`
+	Unresolved        *int   `json:"unresolved"`
+	UnresolvedCapped  bool   `json:"unresolved_capped"`
+	ReviewMinutes     *int   `json:"review_minutes"`
 	Checks            string `json:"checks"`
 	MetadataFetchedAt string `json:"metadata_fetched_at,omitempty"`
 }
@@ -149,7 +154,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 				}
 				pr = discovery.PullRequest{Repository: identity, Number: summary.Key.Number, Title: summary.Title, State: state}
 			}
-			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, Historical: !found, Stale: stale[identity] || !found}
+			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale[identity] || !found}
 			if summary.Latest != nil {
 				entry.Status = "outdated"
 				if !found || pr.HeadSHA == "" {
@@ -178,18 +183,45 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 	for i := range out.Entries {
 		entry := &out.Entries[i]
 		key := store.Key{Repository: entry.PullRequest.Repository, Number: entry.PullRequest.Number}
+		entry.Review, entry.Checks, entry.Merge = entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge
+		entry.Unresolved, entry.UnresolvedCapped = entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped
+		if fetched := discoveryFetched[key.Repository]; !fetched.IsZero() && !entry.Historical {
+			entry.MetadataFetchedAt = fetched.UTC().Format(time.RFC3339Nano)
+		}
 		if value, ok := observations[key]; ok {
 			// A newer discovery head wins over a previous metadata fetch. Never
 			// label old-head checks as checks on the current revision.
 			if !entry.Historical && value.FetchedAt.Before(discoveryFetched[key.Repository]) {
 				continue
 			}
+			if value.HeadSHA != entry.PullRequest.HeadSHA {
+				// Observations carry no review/merge/thread state for a changed revision.
+				entry.Review, entry.Merge, entry.Unresolved, entry.UnresolvedCapped = "", "", nil, false
+			}
+			if value.Draft {
+				entry.Merge = "draft"
+			} else if entry.PullRequest.Draft || value.State != "OPEN" {
+				entry.Merge = ""
+			}
 			entry.PullRequest.HeadSHA = value.HeadSHA
 			entry.PullRequest.Title = value.Title
 			entry.PullRequest.State = value.State
 			entry.PullRequest.Draft = value.Draft
 			entry.Stale = stale[key.Repository] || time.Since(value.FetchedAt) > 2*time.Minute
-			entry.Checks = value.Checks
+			switch value.Checks {
+			case "success", "passing":
+				entry.Checks = "passing"
+			case "failure", "failing":
+				entry.Checks = "failing"
+			case "pending", "running":
+				entry.Checks = "running"
+			case "none":
+				entry.Checks = "none"
+			default:
+				entry.Checks = ""
+			}
+			entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge = entry.Review, entry.Checks, entry.Merge
+			entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped = entry.Unresolved, entry.UnresolvedCapped
 			entry.MetadataFetchedAt = value.FetchedAt.UTC().Format(time.RFC3339Nano)
 			if entry.Latest != nil && (entry.Status == "unknown" || entry.Status == "current" || entry.Status == "outdated") {
 				entry.Status = "outdated"
