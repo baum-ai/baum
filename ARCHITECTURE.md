@@ -302,9 +302,7 @@ The stored contract stays strict; leniency exists only in derived views.
   without text and makes reference paths repository-relative; with a
   checkout in the run directory it drops paths that are neither a file nor
   a directory inside either tree, and it never spends a repair on a
-  reference. The host preserves each hunk's rename source as optional
-  `index.hunks[].old_path`, so context links to paths renamed away can use the
-  merge base even without a host file list.
+  reference.
 
 ### History
 
@@ -810,6 +808,11 @@ through props and context:
 
 Optional seams default to absent, and the viewer renders the document alone.
 The viewer never decides who can see a document; that is the host's job.
+
+The host preserves each hunk's rename source as optional
+`index.hunks[].old_path`, so Context links to paths renamed away can use the
+merge base even without a host file list. Stack review generation carries
+that source from each member's stored index into the combined document.
 
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
 defaults to Inter, bundled with the package under the SIL Open Font License.
