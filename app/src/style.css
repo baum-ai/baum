@@ -2,7 +2,7 @@
 @import "../../viewer/src/viewer.css";
 @source "../../viewer/src";
 @source ".";
-/* The application frame, after the hosted app (`ui/app/app.css`): one white
+/* The application frame, after the hosted app: one white
    panel laid on sand beside the sidebar, with rounded controls inside. */
 :root {
   --surface-canvas: #f1e9da;

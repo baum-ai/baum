@@ -5,7 +5,7 @@ it("abbreviates only the current home and expands repository input for native ac
   expect(displayPath("Install /home/user/.local/bin/baum", "/home/user")).toBe(
     "Install $HOME/.local/bin/baum",
   );
-  expect(displayPath("/home/user-other/repo", "/home/user")).toBe("/home/user-other/repo");
+  expect(displayPath("/tmp/home-other/repo", "/tmp/home")).toBe("/tmp/home-other/repo");
   expect(displayPath("/home/user/repo", null)).toBe("/home/user/repo");
   expect(displayPath("C:\\Users\\demo\\repo", "C:\\Users\\demo")).toBe("$HOME\\repo");
   expect(repositoryPath("$HOME/repo", "/home/user")).toBe("/home/user/repo");
