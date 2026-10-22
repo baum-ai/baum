@@ -51,7 +51,10 @@ var forbidden = []struct {
 }
 
 // syntheticHomes are the home directory names that may appear in fixtures.
-var syntheticHomes = map[string]bool{"dev": true, "user": true}
+// alice and will are the made-up account names the decision masking tests
+// use, since the renderer deliberately never masks generic names such as dev
+// and user; will is also an ordinary word, which only joined forms mask.
+var syntheticHomes = map[string]bool{"dev": true, "user": true, "alice": true, "will": true}
 
 func syntheticHome(match []byte) bool {
 	return syntheticHomes[string(bytes.TrimPrefix(match, []byte("/home/")))]

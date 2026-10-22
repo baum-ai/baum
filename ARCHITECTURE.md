@@ -29,7 +29,9 @@ caps, input redaction, byte trimming and digest applied to a bundle,
 `review` holds the document model, validation, history, refresh, output
 redaction and the tile catalogue, and `agent` holds the backend interface,
 request, result, usage and event types, the budgets and the local environment
-allowlist; the Go side of `viewer` only embeds the built app. Until a package
+allowlist, and `decisions` holds the decision schema, the cleaned session
+transcript, the reply parser and the citation validator; the Go side of
+`viewer` only embeds the built app. Until a package
 is complete, its section describes the intended shape.
 
 ## Pipeline
@@ -66,6 +68,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
+| `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, and the citation validator; no prompt |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
@@ -781,6 +784,66 @@ references) in which it found a secret. `RejectSecrets` then rejects such a run
 exactly as the hosted worker does: `ReasonValidationRejected`, the document
 withheld and only its masked copy kept. They are for hosts to call, including
 the local CLI (not yet wired); today only the hosted worker calls them.
+
+## `decisions`
+
+A decision is a choice between plausible alternatives that lands in the
+repository, made by the human, by the agent, or proposed by the agent and
+approved by the human. `decisions` holds everything about extracting them
+that does not depend on where a session is stored or which prompt asks for
+them; the hosted service imports it with its own private prompt.
+
+- **Transcript.** `Render` reduces a session tree
+  (`sessions/session`) to one turn per root-session user input, numbered by
+  the stored input ordinal, never renumbered. A turn keeps the human prompt,
+  the agent's visible text, question, plan and denial dialogue, subagent
+  final reports and the repo-relative files edited during the turn. Tool
+  inputs and outputs, file reads, raw command lines and reasoning are
+  dropped. `WithVendor` and `WithSessionFiles` pass what
+  `linkage/sessioncorrelate` needs to make paths repo-relative.
+- **Masking.** Before text reaches the `Redactor` (secrets and e-mail
+  addresses, `bundle.Redactor`), the tree's recorded repository and worktree
+  roots and working directories are stripped, any other local path becomes
+  `<local path>`, and account names from the tree's home-directory paths are
+  masked as `user` where they are joined to path, host or branch punctuation.
+  Masking runs before any trimming. It is best effort.
+- **Tree.** `NewTree` exposes the rules `Render` applies (dialogue and
+  subagent detection, edited paths, path masking and row order) so another
+  render of the same tree, such as a validation transcript, shares them
+  instead of copying them.
+- **Extraction.** `NewExtractor(systemPrompt)` builds one structured-output
+  request through a `Model` the host implements: the prompt as the system
+  message, `Transcript.Text()` (or an extension's message, below) as the
+  user message, and `ExtractSchema`, a
+  strict JSON Schema whose properties marshal in the order the model should
+  write them. `PromptVersion` is the first 12 hex characters of the SHA-256 of
+  the prompt and the marshalled schema, so cached extractions can be keyed on
+  it. The package ships no prompt.
+- **Reply.** `ParseReply` decodes the reply strictly (unknown, missing or
+  trailing data is an error) and normalizes it. `ValidateCitations` keeps the
+  model's order and removes only what is wrong: turns that are not transcript
+  ordinals, files not edited in a remaining cited turn, an unknown trigger, a
+  decided turn that is not cited, and evidence that is not a verbatim quote of
+  one passage of a cited turn. A decision with no valid turn or an invalid
+  shape is dropped whole. Every removal is reported in `Extraction.Dropped`.
+- **Decision IDs.** A reply never carries an ID and none is derived.
+  `Identified` gives each decision without one a random UUID
+  (`decision_id`); a host calls it when it first stores an extraction and
+  keeps the IDs from then on.
+- **Extension.** When a session grows, an extraction extends the earlier one
+  instead of starting over, so earlier decisions and their IDs stay as they
+  were. `ExtractOptions.Existing` holds the earlier decisions and `Cutoff`
+  the last turn they cover. The user message then lists the existing
+  decisions by handle (`d1`, `d2`, ...; IDs never appear), followed by the
+  whole transcript with a marker line before the first turn after the
+  cutoff. The reply's `superseded_existing` names the handles a new decision
+  reverses; they are marked superseded only when a new decision survives
+  validation. A new decision none of whose turns is after the cutoff is
+  dropped. The result is the existing decisions, then the new ones without
+  IDs. `ContentHash` keys a cached extraction on `Transcript.Text()`;
+  `PrefixHash` hashes the transcript without its open last turn, and
+  `ExtensionCutoff` finds that prefix in the grown transcript to give the
+  cutoff. The host's prompt explains the extension form to the model.
 
 ## `viewer`
 

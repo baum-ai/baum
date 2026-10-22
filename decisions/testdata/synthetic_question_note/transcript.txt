@@ -1,0 +1,9 @@
+## Turn 1
+Human: Make uploads retry on failure
+Agent asked:
+  - Question: Where should retries live?
+    Options: In the worker | In the queue
+    Answer (offered option): In the worker
+    Human note: Cap it at three attempts
+Agent: Retries go in the worker, capped at three attempts.
+Edited files: platform/worker.go
