@@ -138,3 +138,47 @@ test("a document without a context shows none", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Context" })).toHaveCount(0);
 });
+
+test("context rename sources link at the merge base without a host file list", async ({ page }) => {
+  const document = sampleDocument();
+  document.index.hunks[0]!.old_path = "legacy/worker.go";
+  document.index.hunks[0]!.change = "renamed";
+  document.summary.context = {
+    area: { text: "The worker moved.", refs: [{ path: "legacy/worker.go", symbol: null }] },
+  };
+  await serveDocument(page, document);
+  await page.goto("/");
+  const context = page.getByRole("region", { name: "Context" });
+  await context.locator("summary").click();
+  await expect(context.getByRole("link", { name: "legacy/worker.go" })).toHaveAttribute(
+    "href",
+    `https://github.com/${document.review.repository}/blob/${document.review.merge_base}/legacy/worker.go`,
+  );
+});
+
+test("stack context links an intermediate rename source at its member base", async ({ page }) => {
+  const document = sampleDocument();
+  const intermediate = "c".repeat(40);
+  document.stack = { title: "Move the worker", members: [] };
+  document.index.file_comparisons = [
+    {
+      base_revision: document.review.merge_base,
+      changes: [{ path: "middle/worker.go", old_path: "legacy/worker.go", change: "renamed" }],
+    },
+    {
+      base_revision: intermediate,
+      changes: [{ path: "current/worker.go", old_path: "middle/worker.go", change: "renamed" }],
+    },
+  ];
+  document.summary.context = {
+    area: { text: "The worker moved twice.", refs: [{ path: "middle/worker.go", symbol: null }] },
+  };
+  await serveDocument(page, document);
+  await page.goto("/");
+  const context = page.getByRole("region", { name: "Context" });
+  await context.locator("summary").click();
+  await expect(context.getByRole("link", { name: "middle/worker.go" })).toHaveAttribute(
+    "href",
+    `https://github.com/${document.review.repository}/blob/${intermediate}/middle/worker.go`,
+  );
+});

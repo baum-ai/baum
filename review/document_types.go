@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 // SectionTitle is the label of the section at a 0-based position. Validation
@@ -310,13 +312,14 @@ type documentReviewer struct {
 }
 
 type documentIndex struct {
-	Hunks    []documentHunk    `json:"hunks"`
-	Checks   []documentCheck   `json:"checks"`
-	Reports  []documentReport  `json:"reports"`
-	Comments []documentComment `json:"comments"`
-	Threads  []documentThread  `json:"threads"`
-	Sessions []documentSession `json:"sessions"`
-	PRs      json.RawMessage   `json:"prs"`
+	FileComparisons []bundlepkg.FileComparison `json:"file_comparisons,omitempty"`
+	Hunks           []documentHunk             `json:"hunks"`
+	Checks          []documentCheck            `json:"checks"`
+	Reports         []documentReport           `json:"reports"`
+	Comments        []documentComment          `json:"comments"`
+	Threads         []documentThread           `json:"threads"`
+	Sessions        []documentSession          `json:"sessions"`
+	PRs             json.RawMessage            `json:"prs"`
 	// Attachments are the stored description images generation was offered;
 	// a version's images blocks may name only these.
 	Attachments []documentAttachment `json:"attachments,omitempty"`
@@ -336,6 +339,7 @@ type documentAttachment struct {
 type documentHunk struct {
 	ID        string    `json:"id"`
 	Path      string    `json:"path"`
+	OldPath   string    `json:"old_path,omitempty"`
 	Change    string    `json:"change"`
 	Role      string    `json:"role"`
 	NewRange  []int     `json:"new_range"`

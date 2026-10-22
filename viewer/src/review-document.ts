@@ -262,9 +262,15 @@ export type IndexedHunkLine =
   | { kind: "remove"; old_line: number; text: string }
   | { kind: "context"; old_line: number; new_line: number; text: string };
 
+export type FileComparison = {
+  base_revision: string;
+  changes: { path: string; old_path?: string; change: HunkChange }[];
+};
+
 export type IndexedHunk = {
   id: string;
   path: string;
+  old_path?: string;
   new_range: [number, number];
   additions: number;
   deletions: number;
@@ -483,6 +489,7 @@ export type ReviewDocument = {
   unassigned_hunks: string[];
   index: {
     hunks: IndexedHunk[];
+    file_comparisons?: FileComparison[];
     checks: IndexedCheck[];
     reports: IndexedReport[];
     comments: IndexedComment[];
@@ -1612,18 +1619,45 @@ function encodeSegments(value: string): string {
   return value.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Where a context reference's file or directory reads on GitHub: at the
- *  reviewed head, or at the merge base when the pull request deletes it. A
- *  path counts as deleted when hunks touch it or anything under it and every
- *  one of them removes a file, so a directory the pull request deletes whole
- *  links at the merge base, while a path one stack member removes and a later
- *  member adds back still exists at head. A renamed file's old path links at
- *  head: hunks name only the new path. */
+/** Where a context reference reads on GitHub: at head, or at the merge base
+ *  when every indexed change on or under it removes or renames a file away.
+ *  Stack file comparisons preserve member boundaries and source revisions,
+ *  independently of the evidence index's hunk-ID deduplication. Older stack
+ *  documents without comparison history retain the original fallback. */
 export function contextRefUrl(document: ReviewDocument, path: string): string {
+  const contains = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+  if (document.stack && document.index.file_comparisons) {
+    const paths = new Map<string, { present: boolean; revision: string }>();
+    for (const comparison of document.index.file_comparisons) {
+      const revision = comparison.base_revision;
+      for (const change of comparison.changes) {
+        if (change.old_path && change.old_path !== change.path) {
+          paths.set(change.old_path, { present: false, revision });
+        }
+        if (change.change === "removed") {
+          paths.set(change.path, { present: false, revision });
+        }
+      }
+      for (const change of comparison.changes) {
+        if (change.change !== "removed") {
+          paths.set(change.path, { present: true, revision });
+        }
+      }
+    }
+    const touching = [...paths].filter(([candidate]) => contains(candidate));
+    const removed = touching.find(([, state]) => !state.present);
+    const revision =
+      removed && touching.every(([, state]) => !state.present)
+        ? removed[1].revision
+        : document.review.head;
+    return githubBlobUrl(document.review.repository, revision, path);
+  }
   const touching = document.index.hunks.filter(
-    (hunk) => hunk.path === path || hunk.path.startsWith(`${path}/`),
+    (hunk) => contains(hunk.path) || (hunk.old_path !== undefined && contains(hunk.old_path)),
   );
-  const deleted = touching.length > 0 && touching.every((hunk) => hunk.change === "removed");
+  const deleted =
+    touching.length > 0 &&
+    touching.every((hunk) => hunk.change === "removed" || !contains(hunk.path));
   const { repository, head, merge_base } = document.review;
   return githubBlobUrl(repository, deleted ? merge_base : head, path);
 }

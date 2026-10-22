@@ -17,6 +17,7 @@ import {
   livePullRequestState,
   normalizeReviewDocument,
   type FindingSeverity,
+  type FileComparison,
   type ReviewDocument,
   type RiskScore,
   type Risk,
@@ -385,19 +386,30 @@ describe("sectionHunks", () => {
   });
 });
 
+function stackWithComparisons(...comparisons: FileComparison[]): ReviewDocument {
+  return {
+    ...document,
+    stack: { title: "Move the worker", members: [] },
+    index: { ...document.index, file_comparisons: comparisons },
+  };
+}
+
 describe("contextRefUrl", () => {
   const head = `https://github.com/acme/widgets/blob/${"a".repeat(40)}`;
   const mergeBase = `https://github.com/acme/widgets/blob/${"b".repeat(40)}`;
-  const withHunks = (...hunks: [string, "added" | "modified" | "removed"][]): ReviewDocument => {
+  const withHunks = (
+    ...hunks: [string, "added" | "modified" | "removed" | "renamed", string?][]
+  ): ReviewDocument => {
     const template = document.index.hunks[0]!;
     return {
       ...document,
       index: {
         ...document.index,
-        hunks: hunks.map(([path, change], index) => ({
+        hunks: hunks.map(([path, change, old_path], index) => ({
           ...template,
           id: `h_${index}`,
           path,
+          old_path,
           change,
         })),
       },
@@ -422,6 +434,116 @@ describe("contextRefUrl", () => {
     expect(contextRefUrl(doc, "legacy/sub")).toBe(`${mergeBase}/legacy/sub`);
     // A sibling sharing the prefix is not inside the directory.
     expect(contextRefUrl(doc, "leg")).toBe(`${head}/leg`);
+  });
+
+  it("links a rename source and its old directory at merge base, and the destination at head", () => {
+    const doc = withHunks(["current/a.go", "renamed", "legacy/a.go"]);
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${mergeBase}/legacy/a.go`);
+    expect(contextRefUrl(doc, "legacy")).toBe(`${mergeBase}/legacy`);
+    expect(contextRefUrl(doc, "current/a.go")).toBe(`${head}/current/a.go`);
+    expect(contextRefUrl(doc, "leg")).toBe(`${head}/leg`);
+  });
+
+  it("keeps head for rename sources recreated by a stack or directories with surviving paths", () => {
+    const doc = withHunks(
+      ["current/a.go", "renamed", "legacy/a.go"],
+      ["legacy/a.go", "added"],
+      ["legacy/b.go", "removed"],
+      ["legacy/c.go", "renamed", "legacy/older.go"],
+    );
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${head}/legacy/a.go`);
+    expect(contextRefUrl(doc, "legacy")).toBe(`${head}/legacy`);
+    expect(contextRefUrl(doc, "legacy/older.go")).toBe(`${mergeBase}/legacy/older.go`);
+  });
+
+  it("keeps the existing head fallback for older documents without rename sources", () => {
+    const doc = withHunks(["current/a.go", "renamed"]);
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${head}/legacy/a.go`);
+  });
+
+  it("resolves stack rename chains at the tree containing each source", () => {
+    const intermediate = "c".repeat(40);
+    const doc = stackWithComparisons(
+      {
+        base_revision: "b".repeat(40),
+        changes: [{ path: "middle/b.go", old_path: "legacy/a.go", change: "renamed" }],
+      },
+      {
+        base_revision: intermediate,
+        changes: [{ path: "current/c.go", old_path: "middle/b.go", change: "renamed" }],
+      },
+    );
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${mergeBase}/legacy/a.go`);
+    expect(contextRefUrl(doc, "middle/b.go")).toBe(
+      `https://github.com/acme/widgets/blob/${intermediate}/middle/b.go`,
+    );
+    expect(contextRefUrl(doc, "middle")).toBe(
+      `https://github.com/acme/widgets/blob/${intermediate}/middle`,
+    );
+    expect(contextRefUrl(doc, "current/c.go")).toBe(`${head}/current/c.go`);
+  });
+
+  it("applies simultaneous rename sources before destinations within each member", () => {
+    const changes: FileComparison["changes"] = [
+      { path: "b.go", old_path: "a.go", change: "renamed" },
+      { path: "c.go", old_path: "b.go", change: "renamed" },
+    ];
+    const simultaneous = stackWithComparisons({ base_revision: "b".repeat(40), changes });
+    expect(contextRefUrl(simultaneous, "b.go")).toBe(`${head}/b.go`);
+    const sequential = stackWithComparisons(
+      { base_revision: "b".repeat(40), changes: [changes[0]!] },
+      { base_revision: "b".repeat(40), changes: [changes[1]!] },
+    );
+    expect(contextRefUrl(sequential, "b.go")).toBe(`${mergeBase}/b.go`);
+  });
+
+  it("retains every rename source when evidence hunk IDs share a destination", () => {
+    const lastBase = "d".repeat(40);
+    const doc = stackWithComparisons(
+      {
+        base_revision: "b".repeat(40),
+        changes: [{ path: "b.go", old_path: "a.go", change: "renamed" }],
+      },
+      {
+        base_revision: "c".repeat(40),
+        changes: [{ path: "c.go", old_path: "b.go", change: "renamed" }],
+      },
+      { base_revision: lastBase, changes: [{ path: "b.go", old_path: "d.go", change: "renamed" }] },
+    );
+    expect(contextRefUrl(doc, "a.go")).toBe(`${mergeBase}/a.go`);
+    expect(contextRefUrl(doc, "b.go")).toBe(`${head}/b.go`);
+    expect(contextRefUrl(doc, "d.go")).toBe(
+      `https://github.com/acme/widgets/blob/${lastBase}/d.go`,
+    );
+  });
+
+  it("follows remove/readd/remove history and final directory survivors", () => {
+    const lastBase = "d".repeat(40);
+    const doc = stackWithComparisons(
+      { base_revision: "b".repeat(40), changes: [{ path: "store/a.go", change: "removed" }] },
+      {
+        base_revision: "c".repeat(40),
+        changes: [
+          { path: "store/a.go", change: "added" },
+          { path: "store/b.go", change: "modified" },
+        ],
+      },
+    );
+    expect(contextRefUrl(doc, "store/a.go")).toBe(`${head}/store/a.go`);
+    doc.index.file_comparisons!.push({
+      base_revision: lastBase,
+      changes: [{ path: "store/a.go", change: "removed" }],
+    });
+    expect(contextRefUrl(doc, "store/a.go")).toBe(
+      `https://github.com/acme/widgets/blob/${lastBase}/store/a.go`,
+    );
+    expect(contextRefUrl(doc, "store")).toBe(`${head}/store`);
+  });
+
+  it("retains the legacy fallback for a stack without comparison history", () => {
+    const doc = withHunks(["current/a.go", "renamed", "legacy/a.go"]);
+    doc.stack = { title: "Move the worker", members: [] };
+    expect(contextRefUrl(doc, "legacy/a.go")).toBe(`${mergeBase}/legacy/a.go`);
   });
 
   it("links at head a path that is removed and added back, or a directory partly deleted", () => {

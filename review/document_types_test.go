@@ -114,6 +114,31 @@ func TestCompleteStoresAuthoritativeHunkDiff(t *testing.T) {
 	}
 }
 
+func TestCompleteStoresAuthoritativeRenameSource(t *testing.T) {
+	validator, err := sharedValidator()
+	checkNoError(t, err)
+	bundle := contextBundle()
+	bundle.Diff[0].Change = "renamed"
+	bundle.Diff[0].OldPath = "legacy.go"
+	bundle.FileComparisons = []bundlepkg.FileComparison{{BaseRevision: "ccccccc", Changes: []bundlepkg.ComparedFile{{Path: "main.go", OldPath: "legacy.go", Change: "renamed"}}}}
+	published, findings := validator.Complete(authoredFixture(), bundle, "", "fixture-model", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if findings != "" {
+		t.Fatal(findings)
+	}
+	document, err := decodeObject(published, "published")
+	checkNoError(t, err)
+	hunk := document["index"].(map[string]any)["hunks"].([]any)[0].(map[string]any)
+	checkEqual(t, "legacy.go", hunk["old_path"])
+	comparison := document["index"].(map[string]any)["file_comparisons"].([]any)[0].(map[string]any)
+	checkEqual(t, "ccccccc", comparison["base_revision"])
+	checkEqual(t, "legacy.go", comparison["changes"].([]any)[0].(map[string]any)["old_path"])
+	decoded, err := validator.decodeFullDocument(published)
+	checkNoError(t, err)
+	roundTrip, err := validator.encodeFullDocument(decoded)
+	checkNoError(t, err)
+	assertSameDocumentJSON(t, published, roundTrip)
+}
+
 func TestCompleteRecordsReviewPolicyChange(t *testing.T) {
 	validator, err := sharedValidator()
 	if err != nil {
