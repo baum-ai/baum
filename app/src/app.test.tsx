@@ -2,7 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
-import { App, blockedReasonText, estimateReasonText } from "./app";
+import { App } from "./app";
+import { blockedReasonText, estimateReasonText } from "./api";
 import { appBase, cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {

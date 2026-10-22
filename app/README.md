@@ -1,5 +1,13 @@
 # Local application
 
+For desktop UI development, run `just desktop::dev` from the repository root
+on a Wayland session. Vite serves React and CSS with hot reload while proxying
+login and namespaced API requests to an isolated container daemon. Changes to
+this app and `../viewer` appear in the native window without rebuilding Go or
+Rust. See [desktop development](../desktop/README.md#development) for details.
+`just local_app::e2e` checks both the built app and the development proxy;
+the latter covers login, CSRF, event streaming and React/CSS hot reload.
+
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
 `credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
