@@ -35,12 +35,15 @@ type Local struct {
 }
 
 type identityVersions struct {
-	*store.Store
+	generate.Versions
 	manager *githubauth.Manager
 }
 
 func (v identityVersions) Put(ctx context.Context, key store.Key, previous, next store.Version) error {
-	return v.manager.WithIdentity(ctx, func() error { return v.Store.Put(ctx, key, previous, next) })
+	if v.manager == nil {
+		return v.Versions.Put(ctx, key, previous, next)
+	}
+	return v.manager.WithIdentity(ctx, func() error { return v.Versions.Put(ctx, key, previous, next) })
 }
 
 func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
@@ -156,16 +159,25 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	return nil
 }
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
-	ctx, cancel := config.GitHubAuth.IdentityContext(ctx)
-	defer cancel()
-	if e := l.confirmed(ctx, p); e != nil {
-		return nil, e
-	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
 		return nil, e
 	}
 	cfg := c.Settings.Resolve(l.Config)
+	repository, e := github.ParseRepository(c.Repository)
+	if e != nil {
+		return nil, e
+	}
+	var manager *githubauth.Manager
+	if token, _ := cfg.ExplicitGitHubTokenSource(repository.Host); repository.Host == config.GitHubHost && token == "" {
+		manager = config.GitHubAuth
+		var cancel context.CancelFunc
+		ctx, cancel = manager.IdentityContext(ctx)
+		defer cancel()
+	}
+	if e := l.confirmed(ctx, p); e != nil {
+		return nil, e
+	}
 	caps, e := cfg.EffectiveCaps()
 	if e != nil {
 		return nil, e
@@ -176,10 +188,6 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	}
 	defer func() { _ = clone.Close() }()
 	versions, e := store.Open(clone.CommonDir(), "", true)
-	if e != nil {
-		return nil, e
-	}
-	repository, e := github.ParseRepository(c.Repository)
 	if e != nil {
 		return nil, e
 	}
@@ -200,7 +208,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// An assembly which observes a changed head must stop before calling a model.
 	guarded := headAssembler{Assembler: assembler, head: p.HeadSHA}
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, identityVersions{versions, config.GitHubAuth}, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := generate.Publish(ctx, identityVersions{versions, manager}, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass

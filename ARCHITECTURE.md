@@ -143,7 +143,9 @@ backoff, `sources` and the mapping onto the bundle.
   per request; discovery readers fail if their credential partition changes.
   The protected local `/api/github-auth` API exposes safe status and public
   device codes while Go owns polling. Account changes cancel discovery and
-  evidence work, fence publication, and reset automatic scheduling baselines.
+  evidence work using the saved GitHub.com identity, fence its publication, and
+  reset automatic scheduling baselines. Reviews using explicit credentials or
+  Enterprise authentication are unaffected by saved-account changes.
   See [`internal/githubauth`](internal/githubauth/README.md).
 - **Requests.** The token goes only to the host's derived API endpoint, the
   client follows no redirect at all, and requests identify `User-Agent: baum`.

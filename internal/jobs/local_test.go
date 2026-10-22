@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/config"
@@ -23,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/store"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -49,6 +51,102 @@ func registeredClone(t *testing.T) (*repos.Registry, repos.Clone) {
 		t.Fatal(e)
 	}
 	return registry, clone
+}
+
+func TestExecutionFencesOnlySavedGitHubCredentials(t *testing.T) {
+	for _, source := range []string{"saved", "config", "GITHUB_TOKEN", "GH_TOKEN", "enterprise"} {
+		t.Run(source, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", "")
+			t.Setenv("GH_TOKEN", "")
+			original := config.GitHubAuth
+			t.Cleanup(func() { config.GitHubAuth = original })
+			config.GitHubAuth = githubauth.New(&jobAccountStore{})
+			registry, clone := registeredClone(t)
+			local := localRunner(registry, "owner/repo", "write", 200)
+			switch source {
+			case "config":
+				local.Config.GitHubToken = "explicit-token"
+			case "GITHUB_TOKEN", "GH_TOKEN":
+				t.Setenv(source, "explicit-token")
+			case "enterprise":
+				t.Setenv("GH_HOST", "git.example.com")
+				t.Setenv("GH_ENTERPRISE_TOKEN", "enterprise-token")
+				cmd := exec.Command("git", "remote", "set-url", "origin", "https://git.example.com/owner/repo")
+				cmd.Dir = clone.Path
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatal(err, string(out))
+				}
+				if _, err := registry.Add(context.Background(), clone.Path, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var executionCtx context.Context
+			local.Client = github.New(func(ctx context.Context, _ string) (string, error) {
+				if executionCtx == nil {
+					executionCtx = ctx
+					if err := config.GitHubAuth.Disconnect(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					if source == "saved" {
+						select {
+						case <-ctx.Done():
+						case <-time.After(time.Second):
+							t.Fatal("saved-account work was not canceled")
+						}
+					}
+				}
+				return "fixture-token", nil
+			}, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if err := r.Context().Err(); err != nil {
+					return nil, err
+				}
+				body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+				if strings.HasSuffix(r.URL.Path, "/permission") {
+					body = `{"permission":"write"}`
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})})
+			// The deliberately empty clone cannot generate a review. Inspect the
+			// live request context during revalidation, before that later failure.
+			_, _ = local.Execute(context.Background(), prepared, func(Progress) {})
+			if executionCtx == nil {
+				t.Fatal("execution did not revalidate credentials")
+			}
+			if canceled := executionCtx.Err() != nil; canceled != (source == "saved") {
+				t.Fatalf("saved-account disconnect canceled %s work: %v", source, executionCtx.Err())
+			}
+		})
+	}
+}
+
+type publicationProbe struct {
+	generate.Versions
+	called bool
+}
+
+func (p *publicationProbe) Put(context.Context, store.Key, store.Version, store.Version) error {
+	p.called = true
+	return nil
+}
+
+func TestPublicationFenceDoesNotAffectExplicitCredentials(t *testing.T) {
+	manager := githubauth.New(&jobAccountStore{})
+	ctx, cancel := manager.IdentityContext(context.Background())
+	defer cancel()
+	if err := manager.Disconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	probe := &publicationProbe{}
+	if err := (identityVersions{probe, manager}).Put(ctx, store.Key{}, store.Version{}, store.Version{}); err == nil || probe.called {
+		t.Fatal("saved-account work published after disconnect", err)
+	}
+	if err := (identityVersions{probe, nil}).Put(context.Background(), store.Key{}, store.Version{}, store.Version{}); err != nil || !probe.called {
+		t.Fatal("explicit-credential work could not publish after disconnect", err)
+	}
 }
 func localRunner(registry *repos.Registry, headRepository, permission string, status int) *Local {
 	cfg := config.Default()

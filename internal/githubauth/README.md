@@ -70,8 +70,11 @@ cancel/error expiry. An effective account change establishes fresh PR baselines
 without generating historical work. Existing preferences, daily spending limits,
 pauses and saved reviews remain. In-flight discovery is cancelled and obsolete
 snapshots/observations cannot enter the new account's partition. Final review
-publication is serialized against account replacement. Persistence attempts are
-conservatively treated as identity changes even on failure: a native helper may
+publication using the saved GitHub.com account is serialized against account
+replacement. Reviews using explicit environment/config or Enterprise credentials
+keep running and may publish when the unrelated saved account changes.
+Persistence attempts are conservatively treated as identity changes even on
+failure: a native helper may
 commit a write before its reply is lost. A failed write may require retrying the
 store or reconnecting; baum never assumes the durable state was unchanged.
 
