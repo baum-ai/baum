@@ -245,6 +245,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/review-cancelled.png", animations: "disabled" });
   await page.getByRole("link", { name: "Jobs", exact: true }).click();
   await expect(page.getByText(/cancelled/i).first()).toBeVisible();
+  await page.screenshot({ path: "test-results/jobs-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 720, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
+  await page.screenshot({ path: "test-results/jobs-narrow.png", animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   // Adding offers itself only for a clone the daemon would register.
   const add = page.getByRole("textbox", { name: "Local clone path" });

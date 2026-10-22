@@ -77,7 +77,7 @@ separate acknowledgement that baum cannot estimate it. The app sends it as
 `confirm_unpriced`, and the server refuses such a run without it. Exclusion and
 estimate reasons are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
-rebuilds the inbox and jobs. Jobs can be cancelled. Existing reviews stay readable
+rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation

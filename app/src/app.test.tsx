@@ -778,6 +778,13 @@ it("marks automatically started jobs in the jobs list", async () => {
     "Started automatically again: the daemon stopped during the previous automatic run",
   );
   expect(text.match(/Started automatically/g)).toHaveLength(4);
+  expect([...node.querySelectorAll(".local-job-row")].map((row) => row.id)).toEqual([
+    "job-c",
+    "job-e",
+    "job-d",
+    "job-b",
+    "job-a",
+  ]);
 });
 it("shows a diagnostics error with a retry that recovers", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");

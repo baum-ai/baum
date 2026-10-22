@@ -572,17 +572,20 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
         </div>
       ) : (
         <ul className="local-panel local-job-list">
-          {jobs.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              cancel={() =>
-                void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
-                  .then(changed)
-                  .catch((e) => setError(errorText(e)))
-              }
-            />
-          ))}
+          {jobs
+            .slice()
+            .reverse()
+            .map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                cancel={() =>
+                  void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+                    .then(changed)
+                    .catch((e) => setError(errorText(e)))
+                }
+              />
+            ))}
         </ul>
       )}
     </section>
@@ -608,9 +611,6 @@ function JobState({ job }: { job: Job }) {
     <span className={`local-job-state ${state.tone}`}>
       <Icon size={14} className={state.tone === "running" ? "local-spin" : undefined} />
       {state.label}
-      {state.tone === "running" && job.phase ? (
-        <span className="local-job-phase">· {job.phase}</span>
-      ) : null}
     </span>
   );
 }
