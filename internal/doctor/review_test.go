@@ -353,16 +353,18 @@ wait`)
 		t.Skip("no /proc to look at the child in")
 	}
 	// A dead child may linger as a zombie until its new parent reaps it.
-	alive := func() bool {
-		stat, err := os.ReadFile("/proc/" + pid + "/stat")
-		return err == nil && !strings.Contains(string(stat), ") Z")
-	}
+	// Read errors during exit can be transient; retry them, and do not read
+	// again after observing that the child is gone or a zombie.
 	deadline := time.Now().Add(3 * time.Second)
-	for alive() && time.Now().Before(deadline) {
+	for {
+		stat, err := os.ReadFile("/proc/" + pid + "/stat")
+		if os.IsNotExist(err) || (err == nil && strings.Contains(string(stat), ") Z")) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the child %s outlived its tool: stat = %q, err = %v", pid, stat, err)
+		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	if alive() {
-		t.Errorf("the child %s outlived its tool", pid)
 	}
 }
 
