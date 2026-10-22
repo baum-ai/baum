@@ -751,7 +751,7 @@ func TestLegacyRollbackValidatesAllAgentsBeforeChangingAny(t *testing.T) {
 
 func TestPartialLegacyRollbackReportsTrustGuidanceBeforeError(t *testing.T) {
 	var stdout, stderr strings.Builder
-	result := userhooks.Result{Agent: "codex", Path: "/home/example/.codex/hooks.json", Changed: true, Backup: "/state/baum/backups/codex-hooks.json", Shifted: []string{"Stop: user-hook"}}
+	result := userhooks.Result{Agent: "codex", Path: "/home/user/.codex/hooks.json", Changed: true, Backup: "/state/baum/backups/codex-hooks.json", Shifted: []string{"Stop: user-hook"}}
 	if reportUserHooksChange(&stdout, &stderr, "codex", result, errors.New("legacy hooks installed; could not clear plugin choice"), true) {
 		t.Fatal("reported partial failure as success")
 	}
