@@ -223,7 +223,7 @@ func TestDiagnosticsResponseHasNoPlantedSecrets(t *testing.T) {
 			tokenCheck = &body.Report.Checks[i]
 		}
 	}
-	if tokenCheck == nil || tokenCheck.Status != doctor.StatusOK || !strings.Contains(tokenCheck.Source, "gh") {
+	if tokenCheck == nil || tokenCheck.Status != doctor.StatusWarning || tokenCheck.Source != "" {
 		t.Fatalf("token check %+v in %s", tokenCheck, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "PLANTED") {

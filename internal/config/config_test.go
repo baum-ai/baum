@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -222,36 +221,23 @@ func TestSaveTightensExistingPermissions(t *testing.T) {
 }
 
 func TestResolveGitHubTokenKeepsBaumSourcesForGitHubCom(t *testing.T) {
-	restore := ghToken
-	t.Cleanup(func() { ghToken = restore })
-	var asked []string
-	ghToken = func(_ context.Context, host string) (string, string, error) {
-		asked = append(asked, host)
-		return map[string]string{"github.com": "gho_from_gh\n", "ghe.example.com": "ghe_from_gh"}[host], "stand-in", nil
+	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST"} {
+		t.Setenv(name, "")
 	}
 	ctx := context.Background()
-
-	if token, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "github.com"); err != nil || token != "ghp_configured" {
-		t.Errorf("configured token: %q, %v", token, err)
+	if token, err := (Config{GitHubToken: "configured"}).ResolveGitHubToken(ctx, "API.GitHub.com"); err != nil || token != "configured" {
+		t.Fatalf("explicit credential: %q %v", token, err)
 	}
-	if len(asked) != 0 {
-		t.Errorf("gh was asked for %v although baum had a token", asked)
+	t.Setenv("GH_ENTERPRISE_TOKEN", "enterprise")
+	if _, err := (Config{GitHubToken: "configured"}).ResolveGitHubToken(ctx, "ghe.example.com"); !errors.Is(err, ErrNoGitHubToken) {
+		t.Fatalf("unselected Enterprise host: %v", err)
 	}
-	if token, err := (Config{}).ResolveGitHubToken(ctx, "API.GitHub.com"); err != nil || token != "gho_from_gh" {
-		t.Errorf("gh fallback: token = %q, err = %v", token, err)
-	}
-	// baum's token belongs to github.com: another host gets only its own.
-	if token, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_gh" {
-		t.Errorf("Enterprise host: token = %q, err = %v", token, err)
-	}
-	if _, err := (Config{GitHubToken: "ghp_configured"}).ResolveGitHubToken(ctx, "other.example.com"); !errors.Is(err, ErrNoGitHubToken) {
-		t.Errorf("unknown host: err = %v, want ErrNoGitHubToken", err)
-	}
-	if want := []string{"github.com", "ghe.example.com", "other.example.com"}; !slices.Equal(asked, want) {
-		t.Errorf("gh asked for %v, want %v", asked, want)
+	t.Setenv("GH_HOST", "ghe.example.com")
+	if token, err := (Config{}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "enterprise" {
+		t.Fatalf("selected Enterprise host: %q %v", token, err)
 	}
 	if _, err := (Config{}).ResolveGitHubToken(ctx, ""); !errors.Is(err, ErrNoGitHubToken) {
-		t.Errorf("no host: err = %v, want ErrNoGitHubToken", err)
+		t.Fatal(err)
 	}
 }
 
@@ -280,58 +266,36 @@ func standInGH(t *testing.T, wantArgs, token string) {
 // TestGHTokenIsAskedForTheRepositoryHost runs a stand-in gh that prints a
 // token only when asked for the requested host's, as GH_HOST pointing
 // elsewhere would otherwise switch the account.
-func TestGHTokenIsAskedForTheRepositoryHost(t *testing.T) {
-	standInGH(t, "auth token --secure-storage --hostname github.com", "gho_github_com")
-	t.Setenv("GH_HOST", "github.example.com")
-	token, err := (Config{}).ResolveGitHubToken(context.Background(), "github.com")
-	if err != nil || token != "gho_github_com" {
-		t.Fatalf("token = %q, err = %v; want github.com's token", token, err)
+func TestGitHubCLIIsNeverUsed(t *testing.T) {
+	standInGH(t, "auth token --secure-storage --hostname github.com", "gho_never_used")
+	if _, err := (Config{}).ResolveGitHubToken(context.Background(), "github.com"); !errors.Is(err, ErrNoGitHubToken) {
+		t.Fatalf("unexpected gh fallback: %v", err)
 	}
 }
 
-func TestGHTokenForAnEnterpriseHost(t *testing.T) {
-	standInGH(t, "auth token --secure-storage --hostname ghe.example.com", "ghe_from_keyring")
-	ctx := context.Background()
-	if token, err := (Config{GitHubToken: "ghp_github_com"}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_keyring" {
-		t.Fatalf("token = %q, err = %v; want the Enterprise host's", token, err)
+func TestEnterpriseCloudRequiresExplicitHost(t *testing.T) {
+	t.Setenv("GH_TOKEN", "tenant-token")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_HOST", "")
+	if _, err := (Config{}).ResolveGitHubToken(context.Background(), "acme.ghe.com"); !errors.Is(err, ErrNoGitHubToken) {
+		t.Fatal(err)
 	}
-	t.Setenv("GH_ENTERPRISE_TOKEN", "ghe_from_env")
-	t.Setenv("GITHUB_TOKEN", "ghp_github_com")
-	if token, err := (Config{}).ResolveGitHubToken(ctx, "ghe.example.com"); err != nil || token != "ghe_from_env" {
-		t.Fatalf("token = %q, err = %v; want GH_ENTERPRISE_TOKEN", token, err)
+	t.Setenv("GH_HOST", "acme.ghe.com")
+	if token, err := (Config{}).ResolveGitHubToken(context.Background(), "acme.ghe.com"); err != nil || token != "tenant-token" {
+		t.Fatalf("%q %v", token, err)
 	}
 }
 
 // TestGHKeyringLookupStopsWhenCancelled runs a stand-in gh that waits, as a
 // locked keyring would, and checks cancelling the context ends the lookup
 // promptly with the context's error.
-func TestGHKeyringLookupStopsWhenCancelled(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in gh is a shell script")
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+func TestCredentialLookupHonoursCancellation(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (Config{}).ResolveGitHubToken(ctx, "github.com"); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
-	}
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep binary")
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+filepath.Dir(sleep))
-	t.Setenv("GH_PATH", "")
-	t.Setenv("GH_CONFIG_DIR", t.TempDir())
-	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
-		t.Setenv(name, "")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err = (Config{}).ResolveGitHubToken(ctx, "github.com")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want the context's deadline", err)
-	}
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		t.Errorf("the lookup took %v after cancellation", elapsed)
 	}
 }
 

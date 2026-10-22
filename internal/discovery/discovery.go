@@ -52,6 +52,7 @@ type PullRequest struct {
 // Observation contains only safe current GitHub metadata, never description
 // bodies, signed image URLs or session contents.
 type Observation struct {
+	Identity  string    `json:"-"`
 	Number    int       `json:"number"`
 	HeadSHA   string    `json:"head_sha"`
 	Title     string    `json:"title"`
@@ -69,6 +70,7 @@ type RateLimit struct {
 }
 
 type Snapshot struct {
+	Epoch        uint64        `json:"-"`
 	Repository   string        `json:"repository"`
 	Observations []Observation `json:"observations,omitempty"`
 	Viewer       string        `json:"viewer"`
@@ -111,6 +113,26 @@ type Service struct {
 	liveMu    sync.Mutex
 	now       func() time.Time
 	validated map[string]bool
+	epoch     uint64
+	active    context.CancelFunc
+}
+
+// ResetIdentity cancels the old transaction and invalidates live discovery.
+// Disk partitions remain private and are keyed by their original credential.
+func (s *Service) ResetIdentity() {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	s.epoch++
+	if s.active != nil {
+		s.active()
+		s.active = nil
+	}
+	s.validated = map[string]bool{}
+}
+func (s *Service) Epoch() uint64 {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	return s.epoch
 }
 
 // New uses directory as a dedicated private cache directory. An empty path
@@ -191,6 +213,7 @@ func save(path string, cache diskCache) error {
 // partitions results by credential, so changing accounts cannot reuse an inbox.
 // Disk snapshots are always stale until a successful conditional poll.
 func (s *Service) Cached(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	epoch := s.Epoch()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err
@@ -204,6 +227,10 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 		return Snapshot{}, err
 	}
 	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.isValidated(path) || !s.now().Before(cache.Snapshot.NextPoll)
+	if epoch != s.Epoch() {
+		return Snapshot{}, github.ErrIdentityChanged
+	}
+	cache.Snapshot.Epoch = epoch
 	return cache.Snapshot, nil
 }
 
@@ -343,6 +370,12 @@ func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Sn
 func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.liveMu.Lock()
+	epoch := s.epoch
+	s.active = cancel
+	s.liveMu.Unlock()
 	budgetMu.Lock()
 	defer budgetMu.Unlock()
 	reader, err := s.client.REST(ctx, repository)
@@ -357,6 +390,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return Snapshot{}, loadErr
 	}
+	cache.Snapshot.Epoch = epoch
 	if cache.Format < cacheFormat {
 		cache.Responses = nil
 	}
@@ -409,7 +443,13 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
 	}
-	s.setValidated(path, err == nil)
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	if s.epoch != epoch || ctx.Err() != nil {
+		return Snapshot{}, github.ErrIdentityChanged
+	}
+	s.validated[path] = err == nil
+	snapshot.Epoch = epoch
 	p.cache.Snapshot = snapshot
 	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
@@ -509,6 +549,9 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return err
+	}
+	if value.Identity != "" && value.Identity != reader.CacheIdentity() {
+		return github.ErrIdentityChanged
 	}
 	path, err := s.path(reader.CacheIdentity(), repository.String())
 	if err != nil {

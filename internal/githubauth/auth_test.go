@@ -329,3 +329,99 @@ func TestRetainedRotationRefreshUsesLatestToken(t *testing.T) {
 		t.Fatal(token, err, *calls, s.c.ExpiresAt)
 	}
 }
+
+func TestRuntimeHealthIgnoresOldCredentialAndRateLimits(t *testing.T) {
+	store := &memoryStore{c: Credential{AccessToken: "old", Login: "alice", ID: 1}}
+	m := New(store)
+	token, err := m.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ObserveResponse(token, 401, http.Header{})
+	if !errors.Is(m.Health(), ErrReconnect) {
+		t.Fatal(m.Health())
+	}
+	store.c.AccessToken = "new"
+	if _, err = m.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m.ObserveResponse("old", 401, http.Header{})
+	if m.Health() != nil {
+		t.Fatal("old response poisoned new credential")
+	}
+	m.ObserveResponse("new", 403, http.Header{"X-Ratelimit-Remaining": []string{"0"}})
+	if m.Health() != nil {
+		t.Fatal("rate limit was treated as authorization failure")
+	}
+	m.ObserveResponse("new", 403, http.Header{"X-Github-Sso": []string{"required; url=https://private"}})
+	if !errors.Is(m.Health(), ErrSSO) {
+		t.Fatal(m.Health())
+	}
+	m.ObserveResponse("new", 200, http.Header{})
+	if m.Health() != nil {
+		t.Fatal("successful request did not recover health")
+	}
+}
+
+func TestIdentityPublicationCannotCrossDisconnect(t *testing.T) {
+	m := New(&memoryStore{c: Credential{AccessToken: "old", ID: 1, Login: "alice"}})
+	old, cancel := m.IdentityContext(context.Background())
+	defer cancel()
+	if err := m.Disconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := m.WithIdentity(old, func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("old work published: %v", err)
+	}
+	current, stop := m.IdentityContext(context.Background())
+	defer stop()
+	if err := m.WithIdentity(current, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("new work rejected: %v", err)
+	}
+}
+
+func TestAmbiguousDeleteInvalidatesOldPublication(t *testing.T) {
+	store := &memoryStore{c: Credential{AccessToken: "old", Login: "alice", ID: 1}}
+	m := New(store)
+	old, cancel := m.IdentityContext(context.Background())
+	defer cancel()
+	store.err = errors.New("reply lost after delete")
+	if err := m.Disconnect(context.Background()); !errors.Is(err, ErrStore) {
+		t.Fatal(err)
+	}
+	if err := m.WithIdentity(old, func() error { t.Fatal("old work survived ambiguous delete"); return nil }); err == nil {
+		t.Fatal("missing publication fence")
+	}
+}
+
+func TestIssuedAccountIdentitySurvivesRotationButNeverMovesOldTokens(t *testing.T) {
+	store := &memoryStore{c: Credential{AccessToken: "first", Login: "alice", ID: 1}}
+	m := New(store)
+	if _, err := m.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if id := m.AccountForToken("first"); id != 1 {
+		t.Fatal(id)
+	}
+	store.c.AccessToken = "rotated"
+	if _, err := m.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if id := m.AccountForToken("rotated"); id != 1 {
+		t.Fatal(id)
+	}
+	if id := m.AccountForToken("first"); id != 0 {
+		t.Fatal("old token acquired identity", id)
+	}
+	store.c = Credential{AccessToken: "replacement", Login: "bob", ID: 2}
+	if _, err := m.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if id := m.AccountForToken("replacement"); id != 2 {
+		t.Fatal(id)
+	}
+	if id := m.AccountForToken("rotated"); id != 0 {
+		t.Fatal("old token inherited new account", id)
+	}
+}

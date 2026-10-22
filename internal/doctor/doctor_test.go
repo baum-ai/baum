@@ -180,7 +180,7 @@ func TestReportCoversEveryItem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
 	report := run(t, Options{Daemon: func(context.Context) Daemon { return Daemon{State: "/state"} }})
-	for _, id := range []string{"git", "gh", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "baum-command", "path"} {
+	for _, id := range []string{"git", "claude", "codex", "cursor-agent", "backend-auto", "github-token-github.com", "anthropic-api-key", "prices", "config", "registry", "jobs", "discovery", "daemon", "baum-command", "path"} {
 		find(t, report, id)
 	}
 }
@@ -217,41 +217,15 @@ func TestGit(t *testing.T) {
 	})
 }
 
-func TestGH(t *testing.T) {
-	t.Run("missing is a warning", func(t *testing.T) {
-		newMachine(t)
-		c := find(t, run(t, Options{}), "gh")
-		wantStatus(t, c, StatusWarning)
-		wantContains(t, "fix", c.Fix, "gh auth login", "GH_PATH")
-	})
-	t.Run("on PATH", func(t *testing.T) {
-		m := newMachine(t)
-		path := m.install("gh", `echo "gh version 2.40.1 (2024-01-01)"`)
-		c := find(t, run(t, Options{}), "gh")
-		wantStatus(t, c, StatusOK)
-		if c.Path != path || c.Version != "2.40.1" || c.Source != "PATH" {
-			t.Errorf("%+v", c)
+func TestGitHubCLIIsNotChecked(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	report := run(t, Options{})
+	for _, check := range report.Checks {
+		if check.ID == "gh" {
+			t.Fatal("GitHub CLI is no longer required")
 		}
-	})
-	t.Run("GH_PATH wins over PATH", func(t *testing.T) {
-		m := newMachine(t)
-		m.install("gh", `echo "gh version 1.0.0"`)
-		other := m.script(t.TempDir(), "gh-custom", `echo "gh version 2.50.0"`)
-		t.Setenv("GH_PATH", other)
-		c := find(t, run(t, Options{}), "gh")
-		wantStatus(t, c, StatusOK)
-		if c.Path != other || c.Version != "2.50.0" || c.Source != "GH_PATH" {
-			t.Errorf("%+v", c)
-		}
-	})
-	t.Run("GH_PATH to a missing file", func(t *testing.T) {
-		m := newMachine(t)
-		m.install("gh", `echo "gh version 1.0.0"`)
-		t.Setenv("GH_PATH", filepath.Join(t.TempDir(), "missing"))
-		c := find(t, run(t, Options{}), "gh")
-		wantStatus(t, c, StatusWarning)
-		wantContains(t, "fix", c.Fix, "GH_PATH")
-	})
+	}
 }
 
 func TestClaudeAndCodexMissing(t *testing.T) {
@@ -553,11 +527,6 @@ func TestCursorAgent(t *testing.T) {
 }
 
 func TestGitHubTokenSources(t *testing.T) {
-	// fakeGH returns a gh that prints a token for `gh auth token --secure-storage`.
-	fakeGH := func(t *testing.T, m *machine) string {
-		m.install("gh", `echo "gh version 2.40.1"`)
-		return m.script(t.TempDir(), "gh-keyring", `[ "$1 $2 $3" = "auth token --secure-storage" ] && echo `+plantedKeyringTok)
-	}
 	tests := []struct {
 		name   string
 		setup  func(t *testing.T, m *machine)
@@ -566,7 +535,6 @@ func TestGitHubTokenSources(t *testing.T) {
 		{"GITHUB_TOKEN", func(t *testing.T, m *machine) { t.Setenv("GITHUB_TOKEN", plantedEnvToken) }, "environment variable GITHUB_TOKEN"},
 		{"GH_TOKEN", func(t *testing.T, m *machine) { t.Setenv("GH_TOKEN", plantedGHToken) }, "environment variable GH_TOKEN"},
 		{"config file", func(t *testing.T, m *machine) { m.writeConfig("github_token = '" + plantedFileToken + "'\n") }, "config file"},
-		{"gh keyring", func(t *testing.T, m *machine) { t.Setenv("GH_PATH", fakeGH(t, m)) }, config.SourceGHKeyring},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -586,13 +554,13 @@ func TestGitHubTokenSources(t *testing.T) {
 		m.git()
 		c := find(t, run(t, Options{}), "github-token-github.com")
 		wantStatus(t, c, StatusWarning)
-		wantContains(t, "fix", c.Fix, "GITHUB_TOKEN", "github_token", "gh auth login")
+		wantContains(t, "fix", c.Fix, "GITHUB_TOKEN", "github_token", "connect GitHub")
 	})
 
 	t.Run("gh environment and hosts file labels pass through", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		for _, source := range []string{"environment variable GH_ENTERPRISE_TOKEN", config.SourceGHHostsFile} {
+		for _, source := range []string{"environment variable GH_ENTERPRISE_TOKEN", config.SourceBaum} {
 			c := find(t, run(t, Options{GitHubToken: func(context.Context, config.Config, string) (string, string, error) {
 				return "t", source, nil
 			}}), "github-token-github.com")
@@ -609,7 +577,7 @@ func TestGitHubTokenSources(t *testing.T) {
 			return "", "", errors.New("keyring locked")
 		}}), "github-token-github.com")
 		wantStatus(t, c, StatusProblem)
-		wantContains(t, "fix", c.Fix, "gh auth status")
+		wantContains(t, "fix", c.Fix, "reconnect GitHub")
 	})
 }
 
@@ -646,8 +614,8 @@ func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 	}
 	ent := find(t, report, "github-token-ghe.example.com")
 	wantStatus(t, ent, StatusProblem)
-	wantContains(t, "detail", ent.Detail, "GH_HOST", "hosts.yml")
-	wantContains(t, "fix", ent.Fix, "set GH_HOST=ghe.example.com or run `gh auth login --hostname ghe.example.com`")
+	wantContains(t, "detail", ent.Detail, "GH_HOST")
+	wantContains(t, "fix", ent.Fix, "set GH_HOST=ghe.example.com and GH_ENTERPRISE_TOKEN")
 
 	wantStatus(t, find(t, report, "store-a"), StatusInfo)
 	gone := find(t, report, "store-c")
@@ -721,7 +689,7 @@ func TestNoSecretAppearsInTheReport(t *testing.T) {
 	report := run(t, Options{})
 	data, _ := json.Marshal(report)
 	c := find(t, report, "github-token-github.com")
-	if c.Source != config.SourceGHKeyring || strings.Contains(string(data), plantedKeyringTok) {
+	if c.Status != StatusWarning || strings.Contains(string(data), plantedKeyringTok) {
 		t.Errorf("%+v", c)
 	}
 }

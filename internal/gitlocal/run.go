@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/proc"
 	"github.com/baum-ai/baum/internal/textclean"
 )
 
@@ -197,6 +198,7 @@ func run(ctx context.Context, spec runSpec, args ...string) ([]byte, error) {
 	}
 	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
+	proc.Configure(cmd)
 	cmd.Dir = spec.dir
 	cmd.Env = spec.env
 	cmd.WaitDelay = waitDelay

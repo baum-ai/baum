@@ -1,7 +1,7 @@
 # GitHub device authentication
 
-This package is the daemon foundation for GitHub.com authentication. It is not
-connected to the desktop UI or token resolution yet. `Manager` owns one active
+This package owns the daemon's GitHub.com connection, local authentication API
+and token resolution. The desktop sign-in UI is implemented separately. `Manager` owns one active
 device authorization and one selected account. Its public `Device` and `Status`
 values exclude tokens and the device secret. `Credential` and `Token` are only
 for trusted daemon code, never API responses, logs or model environments.
@@ -40,3 +40,46 @@ pair before validation and persistence resume. A daemon crash before successful
 persistence can require reconnecting; credentials are never cached on disk.
 
 Run `just oss-go test -race ./internal/githubauth` from the repository root.
+
+The daemon shares one manager with configuration, GitHub HTTP clients and the
+local authentication controller. Explicit environment/config credentials take
+precedence. No GitHub CLI executable, token store or host registry is consulted.
+Enterprise credentials require an explicit matching `GH_HOST`; device sign-in
+is GitHub.com only. Cached GraphQL clients resolve credentials on every request;
+a discovery reader aborts if its credential partition changes mid-transaction.
+
+The local `/api/github-auth` namespace uses the existing Host, session, Origin
+and CSRF boundary. GET observes safe status (`state`, `host`, `login`, `source`,
+`override`, `saved`, optional public `pending`, `error`, `message`). POST `/start`,
+`/cancel`, `/disconnect` and `/retry` mutate the connection. Go owns token polling;
+the browser never receives access/refresh tokens or device secrets. `/retry`
+rechecks a recovered credential store without starting a new authorization.
+Error codes include `credential_store_unavailable`, `auth_request_failed`,
+`reconnect_required`, `insufficient_scopes`, `sso_required` and
+`permission_denied`. Terminal device states include denied, expired and cancelled.
+
+Automatic scheduling is fenced while device sign-in is pending and resumes on
+cancel/error expiry. An effective account change establishes fresh PR baselines
+without generating historical work. Existing preferences, daily spending limits,
+pauses and saved reviews remain. In-flight discovery is cancelled and obsolete
+snapshots/observations cannot enter the new account's partition. Final review
+publication is serialized against account replacement. Persistence attempts are
+conservatively treated as identity changes even on failure: a native helper may
+commit a write before its reply is lost. A failed write may require retrying the
+store or reconnecting; baum never assumes the durable state was unchanged.
+
+HTTPS Git fetches use the selected host credential through Git's private child
+environment, scoped to the exact remote URL. Credential helpers are disabled for
+that fetch, redirects are refused, and neither argv nor disk configuration holds
+the token. Authenticated Git failure messages discard upstream stderr. SSH
+fetches retain the user's working configuration. Native credential-store and
+live GitHub OAuth smoke tests still require each supported OS and a real account.
+
+Queued review confirmations include the credential partition inside the existing
+configuration digest. A job admitted just before switching accounts cannot start
+with the replacement account, including after daemon restart. Baum-issued
+credentials use the validated account ID for their private partition, so
+same-account refresh preserves queued confirmations. Explicit overrides use a
+token fingerprint and require a fresh estimate when replaced. A discovery reader
+still refuses an exact token change mid-transaction and retries with a new reader;
+a late old-token identity lookup cannot inherit a replacement account's ID.

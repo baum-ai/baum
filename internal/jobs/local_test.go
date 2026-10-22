@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
@@ -18,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -274,5 +277,143 @@ func TestLocalRecheckRefusesAnAutomaticJobOfADraft(t *testing.T) {
 	}
 	if e = local.confirmed(ctx, p); e != nil {
 		t.Fatalf("confirmed job of a draft refused: %v", e)
+	}
+}
+
+// The queued confirmation is the durable origin fence, including the interval
+// between worker admission and Execute capturing its cancellation context.
+func TestQueuedJobCannotExecuteWithAnotherAccount(t *testing.T) {
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	source := "original-account"
+	base := local.Client
+	local.Client = github.New(func(context.Context, string) (string, error) { return source, nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		reader, err := base.REST(r.Context(), github.Repository{Host: "github.com", Owner: "owner", Name: "repo"})
+		if err != nil {
+			return nil, err
+		}
+		status, headers, body, err := reader.Read(r.Context(), r.URL.RequestURI(), "")
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader(string(body))), Request: r}, nil
+	})})
+	prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source = "replacement-account"
+	changed, _, err := local.Prepare(context.Background(), prepared.Item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.ConfigDigest == changed.ConfigDigest {
+		t.Fatal("credential identity absent from durable confirmation")
+	}
+	if _, err := local.Execute(context.Background(), prepared, func(Progress) {}); err == nil || !strings.Contains(err.Error(), "generation inputs changed") {
+		t.Fatalf("old confirmation executed: %v", err)
+	}
+}
+
+func TestWorkerRejectsIdentitySwitchAfterAdmissionBeforeExecute(t *testing.T) {
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	source := atomic.Value{}
+	source.Store("original-account")
+	local.Client = github.New(func(context.Context, string) (string, error) { return source.Load().(string), nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})})
+	state := t.TempDir()
+	if err := os.Chmod(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Open(filepath.Join(state, "jobs.json"), local, 1, func(job Job) {
+		if job.State == "running" {
+			source.Store("replacement-account")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	estimated, err := q.Estimate(context.Background(), []Item{{Clone: clone.ID, PR: 1}}, "single")
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := q.SubmitConfirmed(context.Background(), estimated.ID, Confirmation{Estimate: true, Isolation: true, Unpriced: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := waitState(t, q, submitted[0].ID, "failed")
+	if failed.Calls != 0 {
+		t.Fatal("model ran under replacement account", failed.Calls)
+	}
+}
+
+type jobAccountStore struct {
+	mu         sync.Mutex
+	credential githubauth.Credential
+}
+
+func (s *jobAccountStore) Load(context.Context) (githubauth.Credential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.credential, nil
+}
+func (s *jobAccountStore) Save(_ context.Context, c githubauth.Credential) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credential = c
+	return nil
+}
+func (s *jobAccountStore) Delete(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credential = githubauth.Credential{}
+	return nil
+}
+
+func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	original := config.GitHubAuth
+	t.Cleanup(func() { config.GitHubAuth = original })
+	store := &jobAccountStore{credential: githubauth.Credential{AccessToken: "first", Login: "alice", ID: 1}}
+	config.GitHubAuth = githubauth.New(store)
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	local.Client = github.NewFromConfig(config.Config{}, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})})
+	prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "rotated", Login: "alice", ID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := local.Prepare(context.Background(), prepared.Item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ConfigDigest != prepared.ConfigDigest {
+		t.Fatal("same-account refresh invalidated queued confirmation")
+	}
+	if err := local.confirmed(context.Background(), prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "replacement", Login: "bob", ID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := local.Execute(context.Background(), prepared, func(Progress) {}); err == nil || !strings.Contains(err.Error(), "generation inputs changed") {
+		t.Fatalf("replacement account executed old confirmation: %v", err)
 	}
 }

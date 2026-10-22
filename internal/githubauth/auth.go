@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +24,8 @@ var ErrStore = errors.New("GitHub credential store unavailable; unlock your oper
 var ErrRequest = errors.New("GitHub authentication request failed; try again")
 var ErrReconnect = errors.New("GitHub authorization expired or was revoked; reconnect GitHub")
 var ErrScopes = errors.New("GitHub authorization requires repo and read:org access")
+var ErrSSO = errors.New("authorize baum for your organization's GitHub SSO and retry")
+var ErrPermissions = errors.New("check repository access and GitHub authorization permissions")
 
 // Credential is daemon-only state and must never be exposed by a public API.
 // JSON is reserved for persistence in the operating system credential store.
@@ -66,18 +70,109 @@ type pending struct {
 // Poll performs at most one exchange; callers can poll freely without exceeding
 // GitHub's requested interval. Only one device authorization is active at a time.
 type Manager struct {
-	gate       chan struct{}
-	store      Store
-	client     *http.Client
-	oauth, api string
-	now        func() time.Time
-	pending    *pending
-	rotated    *tokenResponse
-	rotatedID  int64
+	revision        atomic.Uint64
+	healthMu        sync.Mutex
+	issuedToken     string
+	issuedAccountID int64
+	health          error
+	identity        context.Context
+	identityCancel  context.CancelFunc
+	gate            chan struct{}
+	store           Store
+	client          *http.Client
+	oauth, api      string
+	now             func() time.Time
+	pending         *pending
+	rotated         *tokenResponse
+	rotatedID       int64
 }
 
-func New(store Store) *Manager {
-	return &Manager{gate: make(chan struct{}, 1), store: store, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, oauth: "https://github.com", api: "https://api.github.com", now: time.Now}
+type Options struct{ Transport http.RoundTripper }
+
+func New(store Store) *Manager { return NewWithOptions(store, Options{}) }
+
+func NewWithOptions(store Store, opts Options) *Manager {
+	identity, cancel := context.WithCancel(context.Background())
+	return &Manager{identity: identity, identityCancel: cancel, gate: make(chan struct{}, 1), store: store, client: &http.Client{Transport: opts.Transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, oauth: "https://github.com", api: "https://api.github.com", now: time.Now}
+}
+
+// IdentityContext cancels evidence work when the selected account changes.
+// Token refresh does not cancel work because it retains the same identity.
+func (m *Manager) IdentityContext(ctx context.Context) (context.Context, func()) {
+	child, cancel := context.WithCancel(ctx)
+	if m.lock(ctx) != nil {
+		cancel()
+		return child, cancel
+	}
+	child = context.WithValue(child, identityKey{}, m.identity)
+	stop := context.AfterFunc(m.identity, cancel)
+	m.unlock()
+	return child, func() { stop(); cancel() }
+}
+
+type identityKey struct{}
+
+// WithIdentity serializes final local publication with account replacement.
+// No network or model work may run inside publish.
+func (m *Manager) WithIdentity(ctx context.Context, publish func() error) error {
+	if err := m.lock(ctx); err != nil {
+		return err
+	}
+	defer m.unlock()
+	if ctx.Value(identityKey{}) != m.identity {
+		return ErrReconnect
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return publish()
+}
+func (m *Manager) changedIdentity() {
+	m.revision.Add(1)
+	m.healthMu.Lock()
+	m.issuedToken = ""
+	m.issuedAccountID = 0
+	m.health = nil
+	m.healthMu.Unlock()
+	m.identityCancel()
+	m.identity, m.identityCancel = context.WithCancel(context.Background())
+}
+func (m *Manager) Revision() uint64 { return m.revision.Load() }
+
+// AccountForToken identifies only the credential most recently issued by Token.
+// A late lookup for an older token never inherits the replacement account ID.
+func (m *Manager) AccountForToken(token string) int64 {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if token == "" || token != m.issuedToken {
+		return 0
+	}
+	return m.issuedAccountID
+}
+
+// ObserveResponse ignores late failures for a credential no longer in use.
+// Upstream bodies and header values are never retained or exposed.
+func (m *Manager) ObserveResponse(token string, status int, headers http.Header) {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if token == "" || token != m.issuedToken {
+		return
+	}
+	switch {
+	case status == 401:
+		m.health = ErrReconnect
+	case status == 403 && headers.Get("X-GitHub-SSO") != "":
+		m.health = ErrSSO
+	case status == 403 && headers.Get("X-RateLimit-Remaining") != "0" && headers.Get("Retry-After") == "":
+		m.health = ErrPermissions
+	case status >= 200 && status < 300:
+		m.health = nil
+	}
+}
+func (m *Manager) Health() error {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	return m.health
 }
 func (m *Manager) request(ctx context.Context, endpoint string, form url.Values, token string, out any) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -214,6 +309,9 @@ func (m *Manager) Poll(ctx context.Context, id string) (Status, error) {
 		if err != nil {
 			return Status{}, err
 		}
+		// A helper may commit before a cancelled pipe loses its reply. Fence
+		// old work before attempting persistence, including ambiguous failures.
+		m.changedIdentity()
 		if m.store.Save(ctx, c) != nil {
 			return Status{}, ErrStore
 		}
@@ -267,6 +365,7 @@ func (m *Manager) Poll(ctx context.Context, id string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	m.changedIdentity()
 	if m.store.Save(ctx, c) != nil {
 		return Status{}, ErrStore
 	}
@@ -321,17 +420,35 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 	defer m.unlock()
 	m.pending = nil
 	m.rotated = nil
+	m.changedIdentity()
 	if m.store.Delete(ctx) != nil {
 		return ErrStore
 	}
 	return nil
 }
-func (m *Manager) Token(ctx context.Context) (string, error) {
+func (m *Manager) Token(ctx context.Context) (token string, returnedErr error) {
 	if err := m.lock(ctx); err != nil {
 		return "", err
 	}
 	defer m.unlock()
+	var accountID int64
+	defer func() {
+		m.healthMu.Lock()
+		defer m.healthMu.Unlock()
+		if returnedErr != nil {
+			if !errors.Is(returnedErr, ErrNotConnected) && !errors.Is(returnedErr, context.Canceled) && !errors.Is(returnedErr, context.DeadlineExceeded) {
+				m.health = returnedErr
+			}
+			return
+		}
+		if token != m.issuedToken {
+			m.issuedToken = token
+			m.health = nil
+		}
+		m.issuedAccountID = accountID
+	}()
 	if m.rotated != nil {
+		accountID = m.rotatedID
 		return m.persistRotation(ctx)
 	}
 	c, err := m.store.Load(ctx)
@@ -341,6 +458,7 @@ func (m *Manager) Token(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", ErrStore
 	}
+	accountID = c.ID
 	if c.ExpiresAt == 0 || m.now().Unix()+60 < c.ExpiresAt {
 		return c.AccessToken, nil
 	}

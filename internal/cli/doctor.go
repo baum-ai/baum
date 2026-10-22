@@ -31,17 +31,17 @@ func newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Show why a backend or GitHub token is not found, with a fix for each problem",
 		Long: `Doctor reports what baum found on this machine: the path and version of git,
-gh, claude, codex and cursor-agent; which backend --backend auto would pick and
+claude, codex and cursor-agent; which backend --backend auto would pick and
 why; where the GitHub token comes from (the environment, the config file or
-gh), never the token itself; whether ANTHROPIC_API_KEY is set; where the price
+baum's operating system credential store), never the token itself; whether ANTHROPIC_API_KEY is set; where the price
 list comes from; and where the config file, repository registry, job queue,
 discovery cache and review stores live. Every problem and warning has a fix
 line, for example setting backend_paths.claude in the config file.
 
-It runs --version on git and gh, the same checks "baum internal generate" runs for
+It runs --version on git, the same checks "baum internal generate" runs for
 claude, codex (including codex's read-only sandbox check, which makes and
 removes a temporary directory) and cursor-agent (its --help and --version)
-and, when no token is configured, "gh auth token". It creates no files of its own and opens the registry
+and reads baum's operating system credential store when no token is configured. It creates no files of its own and opens the registry
 read-only. Its one network request is the signed price list; --offline skips
 it.
 

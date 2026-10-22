@@ -55,7 +55,7 @@ sandbox) shift 4; case "$1" in cat) /bin/cat "$2";; sh) echo baum-write-blocked;
 esac`)
 	run(t, Options{})
 
-	for _, tool := range []string{"git", "gh", "claude", "cursor-agent", "codex"} {
+	for _, tool := range []string{"git", "claude", "cursor-agent", "codex"} {
 		data, err := os.ReadFile(envFile(tool))
 		if err != nil {
 			t.Fatalf("%s did not run: %v", tool, err)
@@ -101,7 +101,7 @@ func TestAnUnknownEnterpriseHostIsAProblem(t *testing.T) {
 	}})
 	unknown := find(t, report, "github-token-ghe.example.com")
 	wantStatus(t, unknown, StatusProblem)
-	wantContains(t, "fix", unknown.Fix, "set GH_HOST=ghe.example.com or run `gh auth login --hostname ghe.example.com`")
+	wantContains(t, "fix", unknown.Fix, "set GH_HOST=ghe.example.com and GH_ENTERPRISE_TOKEN")
 	if unknown.Source != "" {
 		t.Errorf("a refused host has a source: %+v", unknown)
 	}
@@ -128,7 +128,7 @@ func TestAConfigThatDoesNotLoadSaysItsTokenWasNotRead(t *testing.T) {
 	if strings.Contains(c.Fix, "add github_token") {
 		t.Errorf("fix tells the user to add a github_token that is already there: %q", c.Fix)
 	}
-	wantContains(t, "fix", c.Fix, "config check", "GITHUB_TOKEN", "gh auth login")
+	wantContains(t, "fix", c.Fix, "config check", "GITHUB_TOKEN", "connect GitHub")
 
 	// A token from the environment is still found, and the note stays.
 	t.Setenv("GITHUB_TOKEN", plantedEnvToken)
@@ -376,7 +376,7 @@ func TestAKeyringThatWaitsForAPromptGetsATailoredFix(t *testing.T) {
 	}}), "github-token-github.com")
 	wantStatus(t, c, StatusProblem)
 	wantContains(t, "detail", c.Detail, "timed out after 30s")
-	wantContains(t, "fix", c.Fix, "unlock", "allow", "run `gh auth token` once", "GITHUB_TOKEN")
+	wantContains(t, "fix", c.Fix, "unlock", "allow", "unlock the operating system credential store", "GITHUB_TOKEN")
 	if tokenTimeout != 30*time.Second {
 		t.Errorf("the keyring step is bounded at %v, want 30s", tokenTimeout)
 	}

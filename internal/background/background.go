@@ -50,17 +50,30 @@ type Service struct {
 	// error. The daemon passes them to its automatic generation scheduler
 	// (internal/automatic), which alone decides whether to queue a job; this
 	// service never enqueues or invokes generation itself.
-	Discovered func(context.Context, discovery.Snapshot)
-	Changed    func()
-	Now        func() time.Time
-	Interval   time.Duration
-	runMu      sync.Mutex
-	mu         sync.Mutex
-	states     map[string]State
-	hostPause  map[string]time.Time
-	cursors    map[string]int
-	nextRepo   string
+	Discovered  func(context.Context, discovery.Snapshot)
+	Changed     func()
+	Now         func() time.Time
+	Interval    time.Duration
+	runMu       sync.Mutex
+	mu          sync.Mutex
+	states      map[string]State
+	hostPause   map[string]time.Time
+	cursors     map[string]int
+	nextRepo    string
+	epoch       uint64
+	cursorEpoch uint64
 }
+
+// ResetIdentity drops credential-dependent backoff without waiting for an old
+// network pass. Its late state/rate writes are fenced by the captured epoch.
+func (s *Service) ResetIdentity() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.epoch++
+	s.states = nil
+	s.hostPause = nil
+}
+func (s *Service) identityEpoch() uint64 { s.mu.Lock(); defer s.mu.Unlock(); return s.epoch }
 
 func (s *Service) now() time.Time {
 	if s.Now != nil {
@@ -79,9 +92,12 @@ func (s *Service) state(repository string) State {
 	defer s.mu.Unlock()
 	return s.states[repository]
 }
-func (s *Service) put(state State) {
+func (s *Service) put(state State, epoch uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if epoch != s.epoch {
+		return
+	}
 	if s.states == nil {
 		s.states = map[string]State{}
 	}
@@ -129,6 +145,12 @@ func (s *Service) Run(ctx context.Context) {
 func (s *Service) Sync(ctx context.Context) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
+	epoch := s.identityEpoch()
+	if s.cursorEpoch != epoch {
+		s.cursors = nil
+		s.nextRepo = ""
+		s.cursorEpoch = epoch
+	}
 	clones, err := s.Registry.List(ctx)
 	if err != nil {
 		return
@@ -258,7 +280,7 @@ func (s *Service) Sync(ctx context.Context) {
 							// it can starve every second target when each window funds one PR.
 							s.cursors[name] = (cursor + i) % len(targets)
 							next = maxTime(next, limited.ResumeAt)
-							s.setPause(repo.Host, next)
+							s.setPause(repo.Host, next, epoch)
 							s.nextRepo = names[(repoIndex+1)%len(names)]
 							break
 						}
@@ -276,7 +298,7 @@ func (s *Service) Sync(ctx context.Context) {
 			}
 		}
 		state.NextRefresh = next
-		s.put(state)
+		s.put(state, epoch)
 		if s.Changed != nil {
 			s.Changed()
 		}
@@ -290,9 +312,12 @@ func (s *Service) pause(host string) time.Time {
 	return s.hostPause[host]
 }
 
-func (s *Service) setPause(host string, until time.Time) {
+func (s *Service) setPause(host string, until time.Time, epoch uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if epoch != s.epoch {
+		return
+	}
 	if s.hostPause == nil {
 		s.hostPause = map[string]time.Time{}
 	}
@@ -305,6 +330,7 @@ func (s *Service) setPause(host string, until time.Time) {
 // extends for Sync too, and returns the observations it made. It never
 // enqueues or invokes generation.
 func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []int) ([]discovery.Observation, error) {
+	epoch := s.identityEpoch()
 	repo, err := github.ParseRepository(clone.Repository)
 	if err != nil {
 		return nil, err
@@ -330,7 +356,7 @@ func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []i
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			errs = append(errs, err)
 			if limited, ok := errors.AsType[*github.RateLimitedError](err); ok {
-				s.setPause(repo.Host, limited.ResumeAt)
+				s.setPause(repo.Host, limited.ResumeAt, epoch)
 				break
 			}
 		}

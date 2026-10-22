@@ -399,7 +399,13 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// Notices are what the desktop app turns into notifications; they
 		// carry the pull request's title and risk score, read when they happen.
 		notify := &notices.Service{Registry: registry, Index: index.Build, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
+		var identityMu sync.RWMutex
 		worker.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
+			identityMu.RLock()
+			defer identityMu.RUnlock()
+			if snapshot.Epoch != discover.Epoch() {
+				return
+			}
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
@@ -433,7 +439,24 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		if live != nil {
 			liveAPI = live.Handler()
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Changed: settingsChanged,
+		beginIdentityChange := func() func(bool) {
+			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
+				return func(bool) {}
+			}
+			finish := scheduler.BeginIdentityChange()
+			return func(changedAccount bool) {
+				identityMu.Lock()
+				defer identityMu.Unlock()
+				if changedAccount {
+					discover.ResetIdentity()
+					worker.ResetIdentity()
+					notify.ResetIdentity()
+				}
+				finish(changedAccount)
+			}
+		}
+		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,

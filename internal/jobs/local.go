@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
@@ -31,6 +32,15 @@ type Local struct {
 	// RefreshPrices downloads and installs the signed price list; nil disables
 	// the refresh for jobs confirmed against a newer list than the active one.
 	RefreshPrices func(context.Context) error
+}
+
+type identityVersions struct {
+	*store.Store
+	manager *githubauth.Manager
+}
+
+func (v identityVersions) Put(ctx context.Context, key store.Key, previous, next store.Version) error {
+	return v.manager.WithIdentity(ctx, func() error { return v.Store.Put(ctx, key, previous, next) })
 }
 
 func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
@@ -104,7 +114,11 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 		Budgets config.Budgets
 		Caps    map[string]int
 		Version string
-	}{cfg.Budgets, cfg.Caps, selected.Version})
+		// Bind persisted confirmations to the originating credential partition.
+		// This closes the admission-to-Execute window across account changes
+		// and daemon restarts without exposing a separate credential fingerprint.
+		Identity string
+	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
 	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), Draft: pr.Draft}
@@ -142,6 +156,8 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	return nil
 }
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+	ctx, cancel := config.GitHubAuth.IdentityContext(ctx)
+	defer cancel()
 	if e := l.confirmed(ctx, p); e != nil {
 		return nil, e
 	}
@@ -184,7 +200,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// An assembly which observes a changed head must stop before calling a model.
 	guarded := headAssembler{Assembler: assembler, head: p.HeadSHA}
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, versions, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := generate.Publish(ctx, identityVersions{versions, config.GitHubAuth}, store.Key{Repository: p.Repository, Number: p.PR}, generate.Options{PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: p.PR, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass

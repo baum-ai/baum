@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -91,7 +92,43 @@ type Scheduler struct {
 	// observed is when the newest snapshot Observe took for each repository
 	// was fetched. Background refresh and Trigger observe from different
 	// goroutines, so an older snapshot can arrive after a newer one.
-	observed map[string]time.Time
+	observed         map[string]time.Time
+	resetAt          time.Time
+	identitySince    atomic.Int64
+	identityChanging atomic.Bool
+}
+
+// ResetIdentity forgets account-dependent PR baselines while preserving daily
+// spending limits, pauses, repository preferences and saved reviews.
+func (s *Scheduler) ResetIdentity() {
+	finish := s.BeginIdentityChange()
+	finish(true)
+}
+
+// BeginIdentityChange stops submission before credentials change. The returned
+// function must be called once to release the fence, even on failed sign-in.
+func (s *Scheduler) BeginIdentityChange() func(bool) {
+	s.runMu.Lock()
+	s.identityChanging.Store(true)
+	return func(changed bool) {
+		defer s.runMu.Unlock()
+		defer s.identityChanging.Store(false)
+		if !changed {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.resetAt = s.now().UTC()
+		s.identitySince.Store(s.resetAt.UnixNano())
+		for _, repository := range s.load().Repositories {
+			repository.Since = s.resetAt
+			repository.PRs = map[int]*prState{}
+			repository.AwaitingBaseline = true
+		}
+		s.observed = map[string]time.Time{}
+		s.save()
+		s.Wake()
+	}
 }
 
 // Status is one repository's automatic generation as the app shows it.
@@ -342,6 +379,9 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	name := strings.ToLower(snapshot.Repository)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if snapshot.FetchedAt.Before(s.resetAt) {
+		return
+	}
 	if snapshot.FetchedAt.Before(s.observed[name]) {
 		return
 	}
@@ -715,6 +755,14 @@ const (
 // reads only the registry database and the clock, never the scheduler's state
 // or the queue: the queue's mutex is held.
 func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
+	if s.identityChanging.Load() {
+		return jobs.Admission{Reason: GateOff}
+	}
+	since := s.identitySince.Load()
+	obsolete := since != 0 && j.CreatedAt.UnixNano() < since
+	if obsolete {
+		return jobs.Admission{Reason: GateOff}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	prefs, err := s.Registry.Preferences(ctx)

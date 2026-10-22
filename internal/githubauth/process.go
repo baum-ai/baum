@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/internal/proc"
@@ -45,6 +46,11 @@ func (s ProcessStore) call(ctx context.Context, op string, c Credential) (Creden
 		executable, err = os.Executable()
 		if err != nil {
 			return Credential{}, ErrStore
+		}
+		// A package test binary cannot dispatch the hidden CLI helper. Never
+		// re-execute it: that would recursively run its entire suite.
+		if strings.HasSuffix(executable, ".test") || strings.HasSuffix(executable, ".test.exe") {
+			return Credential{}, ErrNotConnected
 		}
 	}
 	input, err := json.Marshal(storeRequest{op, c})

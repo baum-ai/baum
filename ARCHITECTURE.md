@@ -112,8 +112,8 @@ comment or thread has the same identifier in a local and a hosted document.
 
 `internal/github` provides the GraphQL client `baum internal bundle` reads
 GitHub with and the bounded read-only GraphQL and REST transport local inbox
-discovery uses. It reads hosts, repositories, remote URLs, SSH host aliases and
-tokens as the GitHub CLI does, through its library go-gh
+discovery uses. It parses repositories, remote URLs and SSH host aliases
+through the go-gh library
 (`github.com/cli/go-gh/v2`: `auth`, `repository` and `ssh`). Bundle requests use
 `shurcooL-graphql`; discovery sends bounded requests through `RESTReader`,
 including its `GraphQL` method. Neither uses go-gh's API client, which sends
@@ -125,28 +125,26 @@ backoff, `sources` and the mapping onto the bundle.
 
 - **Hosts.** github.com, GitHub Enterprise Cloud with data residency
   (`*.ghe.com`) and GitHub Enterprise Server are all supported. A host is
-  read only when gh treats it as GitHub: github.com, a `*.ghe.com` tenant, a
-  host in gh's `hosts.yml` (one `gh auth login` was run for), or the one
-  `GH_HOST` names. That holds for `--repo host/owner/name` as for a remote:
+  read only when baum recognizes it: github.com, a `*.ghe.com` tenant, or the
+  Enterprise host explicitly named by `GH_HOST`. That holds for `--repo host/owner/name` as for a remote:
   any other host is refused before a token is looked up, and is never sent
   one. The endpoint is derived as gh derives it: `api.github.com` for
   github.com, `api.<tenant>.ghe.com` for a tenant, and
   `https://<host>/api/graphql` for an Enterprise Server. An `api_host`
-  override in gh's `hosts.yml` is not honoured, since go-gh does not expose
-  it outside its own API client.
-- **Tokens.** A token is asked for, and sent to, only the host of the
-  repository being read. For github.com baum's own sources come first, as
-  documented: `GITHUB_TOKEN`, then `GH_TOKEN`, then `github_token` in the
-  config file. After them, and for any other host only, the GitHub CLI's:
-  go-gh's `auth.TokenFromEnvOrConfig` (`GH_TOKEN` and `GITHUB_TOKEN` for
-  github.com and `*.ghe.com` tenants, gh's own rule; `GH_ENTERPRISE_TOKEN`
-  and `GITHUB_ENTERPRISE_TOKEN` for an Enterprise Server; then gh's
-  `hosts.yml`), then the system keyring through `gh auth token
-  --secure-storage --hostname <host>`. baum runs that last step itself,
-  under the command's context, so cancelling stops a keyring that waits to
-  be unlocked. go-gh's own order puts `GH_TOKEN` before `GITHUB_TOKEN`;
-  baum keeps its documented order and uses go-gh only for the GitHub CLI's
-  part.
+  override in GitHub CLI configuration is not honoured.
+- **Tokens.** Credentials are resolved only for the repository host. GitHub.com
+  uses `GITHUB_TOKEN`, `GH_TOKEN`, `github_token` in configuration, then baum's
+  own OS credential store. Device authorization and refresh are owned by
+  `internal/githubauth`; no GitHub CLI process or credential registry is read.
+  Enterprise credentials require an explicit matching `GH_HOST`:
+  `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` for Enterprise Server, or
+  `GH_TOKEN`/`GITHUB_TOKEN` for a `*.ghe.com` tenant. Public GitHub credentials
+  never flow to another host by default. Cached GraphQL clients resolve tokens
+  per request; discovery readers fail if their credential partition changes.
+  The protected local `/api/github-auth` API exposes safe status and public
+  device codes while Go owns polling. Account changes cancel discovery and
+  evidence work, fence publication, and reset automatic scheduling baselines.
+  See [`internal/githubauth`](internal/githubauth/README.md).
 - **Requests.** The token goes only to the host's derived API endpoint, the
   client follows no redirect at all, and requests identify `User-Agent: baum`.
   REST discovery also sends the JSON accept header, a pinned API version and

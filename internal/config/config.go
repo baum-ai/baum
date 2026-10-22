@@ -1,7 +1,7 @@
 // Package config resolves baum settings from flags, the environment,
 // the XDG config file and defaults, in that order of precedence.
 //
-// baum has no server, no login and no telemetry; the file holds the
+// Local review commands contact no baum server and send no telemetry; the file holds the
 // backend choice, optional tokens and generation budgets, nothing else.
 package config
 
@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -19,9 +18,10 @@ import (
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/auth"
-	"github.com/cli/safeexec"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
+
+	"github.com/baum-ai/baum/internal/githubauth"
 )
 
 // Environment variables read by Load.
@@ -400,105 +400,62 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// ghToken is the GitHub CLI's token for host, as gh resolves it: GH_TOKEN and
-// GITHUB_TOKEN for github.com and GitHub Enterprise Cloud with data
-// residency (*.ghe.com), GH_ENTERPRISE_TOKEN and GITHUB_ENTERPRISE_TOKEN for
-// an Enterprise Server, then gh's hosts.yml, then the system keyring. source
-// says which of them answered. A variable so tests can stand in for it.
-var ghToken = func(ctx context.Context, host string) (token, source string, err error) {
-	if token, name := auth.TokenFromEnvOrConfig(host); token != "" {
-		return token, ghSourceLabel(name), nil
-	}
-	token, err = ghKeyringToken(ctx, host)
-	if token != "" {
-		source = SourceGHKeyring
-	}
-	return token, source, err
-}
+// GitHubAuth is shared by every token consumer and the local authentication API.
+var GitHubAuth = githubauth.New(githubauth.ProcessStore{})
 
-// Sources of a token that gh resolved, as ResolveGitHubTokenSource reports
-// them. An environment variable is "environment variable NAME".
-const (
-	SourceGHHostsFile = "gh hosts.yml"
-	SourceGHKeyring   = "gh keyring (gh auth token)"
-)
+const SourceBaum = "baum credential store"
 
-// ghSourceLabel turns go-gh's source, an environment variable name or the
-// hosts.yml key, into a label.
-func ghSourceLabel(name string) string {
-	if strings.HasSuffix(name, "_TOKEN") {
-		return "environment variable " + name
-	}
-	return SourceGHHostsFile
-}
-
-// ghKeyringWaitDelay bounds how long a cancelled `gh auth token` may keep
-// its output open, for instance through a helper it started.
-const ghKeyringWaitDelay = time.Second
-
-// ghKeyringToken asks gh for host's token from the system keyring, as go-gh
-// does, but under ctx: a keyring that waits for the user to unlock it must
-// not outlive a cancelled command. gh is GH_PATH or the gh on PATH; no gh, or
-// no token, is "".
-func ghKeyringToken(ctx context.Context, host string) (string, error) {
-	gh := os.Getenv("GH_PATH")
-	if gh == "" {
-		var err error
-		if gh, err = safeexec.LookPath("gh"); err != nil {
-			return "", nil
-		}
-	}
-	cmd := exec.CommandContext(ctx, gh, "auth", "token", "--secure-storage", "--hostname", host)
-	cmd.WaitDelay = ghKeyringWaitDelay
-	out, err := cmd.Output()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return "", fmt.Errorf("asking gh for the token of %s: %w", host, ctxErr)
-	}
-	if err != nil {
-		return "", nil
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// ErrNoGitHubToken is returned when no token is configured for a host and gh
-// has none either.
 var ErrNoGitHubToken = errors.New("no GitHub token")
 
-// ResolveGitHubToken returns the token for the GitHub host whose repository
-// is read, and never another host's. For github.com baum's own sources come
-// first: GITHUB_TOKEN, GH_TOKEN, then github_token in the config file. After
-// them, and for any other host only, the GitHub CLI's token for that host
-// (see ghToken). Cancelling ctx stops a keyring lookup still waiting.
+// ExplicitGitHubTokenSource resolves overrides without opening the keyring.
+// Enterprise credentials apply only to the explicitly selected GH_HOST.
+func (c Config) ExplicitGitHubTokenSource(host string) (string, string) {
+	host = auth.NormalizeHostname(strings.TrimSpace(host))
+	if host == GitHubHost {
+		if c.GitHubToken != "" {
+			if c.GitHubTokenSource == EnvGitHubToken || c.GitHubTokenSource == EnvGHToken {
+				return c.GitHubToken, "environment variable " + c.GitHubTokenSource
+			}
+			return c.GitHubToken, SourceConfigFile
+		}
+		for _, name := range []string{EnvGitHubToken, EnvGHToken} {
+			if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+				return token, "environment variable " + name
+			}
+		}
+	} else if host != "" && host == auth.NormalizeHostname(strings.TrimSpace(os.Getenv("GH_HOST"))) {
+		names := []string{"GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+		if auth.IsTenancy(host) {
+			names = []string{EnvGHToken, EnvGitHubToken}
+		}
+		for _, name := range names {
+			if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+				return token, "environment variable " + name
+			}
+		}
+	}
+	return "", ""
+}
+
 func (c Config) ResolveGitHubToken(ctx context.Context, host string) (string, error) {
 	token, _, err := c.ResolveGitHubTokenSource(ctx, host)
 	return token, err
 }
 
-// ResolveGitHubTokenSource is ResolveGitHubToken that also says where the
-// token came from: "environment variable GITHUB_TOKEN" (or GH_TOKEN),
-// "config file", gh's environment variable, "gh hosts.yml" or
-// "gh keyring (gh auth token)". The label never holds any part of the token.
-func (c Config) ResolveGitHubTokenSource(ctx context.Context, host string) (token, source string, err error) {
+func (c Config) ResolveGitHubTokenSource(ctx context.Context, host string) (string, string, error) {
 	host = auth.NormalizeHostname(strings.TrimSpace(host))
-	if host == "" {
-		return "", "", fmt.Errorf("%w: no host given", ErrNoGitHubToken)
-	}
-	if host == GitHubHost && c.GitHubToken != "" {
-		switch c.GitHubTokenSource {
-		case EnvGitHubToken, EnvGHToken:
-			return c.GitHubToken, "environment variable " + c.GitHubTokenSource, nil
-		}
-		return c.GitHubToken, SourceConfigFile, nil
-	}
-	token, source, err = ghToken(ctx, host)
-	if err != nil {
-		return "", "", err
-	}
-	if token = strings.TrimSpace(token); token != "" {
+	if token, source := c.ExplicitGitHubTokenSource(host); token != "" {
 		return token, source, nil
 	}
 	if host == GitHubHost {
-		return "", "", fmt.Errorf("%w for %s: set GITHUB_TOKEN, add github_token to the config file, or run `gh auth login`", ErrNoGitHubToken, host)
+		token, err := GitHubAuth.Token(ctx)
+		if err == nil {
+			return token, SourceBaum, nil
+		}
+		if !errors.Is(err, githubauth.ErrNotConnected) {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("%w for github.com: connect GitHub in baum Settings, set GITHUB_TOKEN, or add github_token to the config file", ErrNoGitHubToken)
 	}
-	return "", "", fmt.Errorf("%w for %s: set GH_ENTERPRISE_TOKEN or run `gh auth login --hostname %s`", ErrNoGitHubToken, host, host)
+	return "", "", fmt.Errorf("%w: set GH_HOST to the repository host and GH_ENTERPRISE_TOKEN for Enterprise access", ErrNoGitHubToken)
 }
