@@ -155,3 +155,30 @@ test("context rename sources link at the merge base without a host file list", a
     `https://github.com/${document.review.repository}/blob/${document.review.merge_base}/legacy/worker.go`,
   );
 });
+
+test("stack context links an intermediate rename source at its member base", async ({ page }) => {
+  const document = sampleDocument();
+  const intermediate = "c".repeat(40);
+  document.stack = { title: "Move the worker", members: [] };
+  document.index.file_comparisons = [
+    {
+      base_revision: document.review.merge_base,
+      changes: [{ path: "middle/worker.go", old_path: "legacy/worker.go", change: "renamed" }],
+    },
+    {
+      base_revision: intermediate,
+      changes: [{ path: "current/worker.go", old_path: "middle/worker.go", change: "renamed" }],
+    },
+  ];
+  document.summary.context = {
+    area: { text: "The worker moved twice.", refs: [{ path: "middle/worker.go", symbol: null }] },
+  };
+  await serveDocument(page, document);
+  await page.goto("/");
+  const context = page.getByRole("region", { name: "Context" });
+  await context.locator("summary").click();
+  await expect(context.getByRole("link", { name: "middle/worker.go" })).toHaveAttribute(
+    "href",
+    `https://github.com/${document.review.repository}/blob/${intermediate}/middle/worker.go`,
+  );
+});

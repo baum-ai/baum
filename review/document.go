@@ -833,7 +833,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	for i := range doc.Sections {
 		normalizeEvidence(doc.Sections[i].Evidence, b, directory)
 	}
-	index := documentIndex{Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
+	index := documentIndex{FileComparisons: b.FileComparisons, Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
 	hunks := map[string]bundlepkg.Hunk{}
 	hunksByPath := map[string][]string{}
 	files := map[string]bool{}

@@ -120,6 +120,7 @@ func TestCompleteStoresAuthoritativeRenameSource(t *testing.T) {
 	bundle := contextBundle()
 	bundle.Diff[0].Change = "renamed"
 	bundle.Diff[0].OldPath = "legacy.go"
+	bundle.FileComparisons = []bundlepkg.FileComparison{{BaseRevision: "ccccccc", Changes: []bundlepkg.ComparedFile{{Path: "main.go", OldPath: "legacy.go", Change: "renamed"}}}}
 	published, findings := validator.Complete(authoredFixture(), bundle, "", "fixture-model", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if findings != "" {
 		t.Fatal(findings)
@@ -128,6 +129,9 @@ func TestCompleteStoresAuthoritativeRenameSource(t *testing.T) {
 	checkNoError(t, err)
 	hunk := document["index"].(map[string]any)["hunks"].([]any)[0].(map[string]any)
 	checkEqual(t, "legacy.go", hunk["old_path"])
+	comparison := document["index"].(map[string]any)["file_comparisons"].([]any)[0].(map[string]any)
+	checkEqual(t, "ccccccc", comparison["base_revision"])
+	checkEqual(t, "legacy.go", comparison["changes"].([]any)[0].(map[string]any)["old_path"])
 	decoded, err := validator.decodeFullDocument(published)
 	checkNoError(t, err)
 	roundTrip, err := validator.encodeFullDocument(decoded)

@@ -39,9 +39,25 @@ type Bundle struct {
 	// MaskedSpanCount is not part of the encoded bundle a model reads: it is
 	// recorded with the stored version.
 	MaskedSpanCount int `json:"-"`
+	// FileComparisons preserve each stack member's path changes before hunk-ID
+	// deduplication, for derived links into the member's comparison base.
+	FileComparisons []FileComparison `json:"-"`
 	// Digest is the bundle digest, computed from the encoded, redacted,
 	// trimmed bundle, and stored with the version.
 	Digest string `json:"-"`
+}
+
+// FileComparison is one stack member's file changes, in member order.
+type FileComparison struct {
+	BaseRevision string         `json:"base_revision"`
+	Changes      []ComparedFile `json:"changes"`
+}
+
+// ComparedFile records a file's names and presence across a comparison.
+type ComparedFile struct {
+	Path    string `json:"path"`
+	OldPath string `json:"old_path,omitempty"`
+	Change  string `json:"change"`
 }
 
 type PullRequest struct {

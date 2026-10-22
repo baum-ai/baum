@@ -811,8 +811,12 @@ The viewer never decides who can see a document; that is the host's job.
 
 The host preserves each hunk's rename source as optional
 `index.hunks[].old_path`, so Context links to paths renamed away can use the
-merge base even without a host file list. Stack review generation carries
-that source from each member's stored index into the combined document.
+merge base even without a host file list. Stack review generation also stores
+`index.file_comparisons`: each member's comparison base and file changes,
+independently of hunk-ID deduplication. The viewer applies all removals before
+surviving destinations within each comparison, in member order. Paths renamed
+away or removed link into the member tree that contains them; paths still
+present link at the stack head. Older stacks retain their fallback.
 
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
 defaults to Inter, bundled with the package under the SIL Open Font License.
