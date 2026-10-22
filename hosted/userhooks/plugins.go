@@ -33,11 +33,15 @@ func Migrate(home, agent string) (Result, error) {
 // installation fails, the choice is retained. If marker removal fails, the
 // installed hooks are safe (plugins yield to them) and retrying is idempotent.
 func RestoreLegacy(home, agent string) (Result, error) {
+	return restoreLegacy(home, agent, os.Remove)
+}
+
+func restoreLegacy(home, agent string, removeMarker func(string) error) (Result, error) {
 	result, err := update(home, agent, true)
 	if err != nil {
 		return result, err
 	}
-	err = os.Remove(filepath.Join(stateDir(home), "user-hooks", agent+".plugin"))
+	err = removeMarker(filepath.Join(stateDir(home), "user-hooks", agent+".plugin"))
 	if os.IsNotExist(err) {
 		err = nil
 	}

@@ -240,17 +240,27 @@ func changeUserHooks(agents []string, install, legacy bool, stdout, stderr io.Wr
 	failed := 0
 	for _, agent := range slices.Compact(slices.Clone(agents)) {
 		result, err := change(home, agent)
-		if err != nil {
+		if !reportUserHooksChange(stdout, stderr, agent, result, err, install) {
 			failed++
-			_, _ = fmt.Fprintf(stderr, "error: %s hooks: %v\n", agentDisplayName(agent), err)
-			continue
 		}
-		reportUserHooks(stdout, stderr, result, install)
 	}
 	if failed > 0 {
 		return fmt.Errorf("could not change the user-wide hooks of %d %s", failed, agentNoun(failed))
 	}
 	return nil
+}
+
+// A marker error can follow a successful settings write. Report that change
+// now: a retry cannot recover its Codex trust and shifted-hook guidance.
+func reportUserHooksChange(stdout, stderr io.Writer, agent string, result userhooks.Result, err error, install bool) bool {
+	if err == nil || result.Changed {
+		reportUserHooks(stdout, stderr, result, install)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %s hooks: %v\n", agentDisplayName(agent), err)
+		return false
+	}
+	return true
 }
 
 func reportUserHooks(stdout, stderr io.Writer, result userhooks.Result, install bool) {

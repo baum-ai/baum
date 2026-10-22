@@ -4,6 +4,7 @@ package baumcli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -745,5 +746,23 @@ func TestLegacyRollbackValidatesAllAgentsBeforeChangingAny(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("modified earlier agent before validating all: %v", err)
+	}
+}
+
+func TestPartialLegacyRollbackReportsTrustGuidanceBeforeError(t *testing.T) {
+	var stdout, stderr strings.Builder
+	result := userhooks.Result{Agent: "codex", Path: "/home/example/.codex/hooks.json", Changed: true, Backup: "/state/baum/backups/codex-hooks.json", Shifted: []string{"Stop: user-hook"}}
+	if reportUserHooksChange(&stdout, &stderr, "codex", result, errors.New("legacy hooks installed; could not clear plugin choice"), true) {
+		t.Fatal("reported partial failure as success")
+	}
+	for _, want := range []string{"Installed baum's Codex hooks", "Previous file saved as", "Codex runs a new or changed hook only after you trust it", "/hooks"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q in stdout: %s", want, stdout.String())
+		}
+	}
+	for _, want := range []string{"hooks of yours", "Stop: user-hook", "trust them again with /hooks", "could not clear plugin choice"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("missing %q in stderr: %s", want, stderr.String())
+		}
 	}
 }
