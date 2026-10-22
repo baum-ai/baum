@@ -276,7 +276,7 @@ func (c checkout) holds(path string) bool {
 
 func statExactPath(tree fs.FS, path string) fs.FileInfo {
 	info, err := fs.Stat(tree, path)
-	if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
+	if err != nil || !info.Mode().IsRegular() && !info.IsDir() {
 		return nil
 	}
 	// Stat accepts different casing on some filesystems. GitHub links need
