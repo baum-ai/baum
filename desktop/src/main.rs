@@ -244,6 +244,11 @@ fn fail(app: &AppHandle, state: &State, attempt: u64, failure: daemon::Failure) 
 
 /// Returns the window to the bundled screen unless it is already there.
 fn show_screen(app: &AppHandle) {
+    // The initial setup navigation may still be pending when connecting starts.
+    // Preserve it: attachment also waits until the user finishes setup.
+    if onboarding::is_open(app) {
+        return;
+    }
     let Some(window) = app.get_webview_window(MAIN) else {
         return;
     };
