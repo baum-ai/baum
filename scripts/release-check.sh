@@ -44,7 +44,21 @@ done
 previous=$(git -c versionsort.suffix=- tag --list 'v*' --sort=v:refname |
   grep -B1 -xF "$tag" | head -n1)
 if [ -n "$previous" ] && [ "$previous" != "$tag" ]; then
-  previous_base=$(git rev-parse "$previous^{commit}^")
+  previous_base=$(git rev-parse "$previous^{commit}")
+  # Legacy tags point directly at source commits. Strip the generated parent
+  # only when the tag carries both apps above a source tree without them.
+  if [ "$(git rev-list --no-walk --parents "$previous_base" | wc -w)" -eq 2 ]; then
+    parent=$(git rev-parse "$previous_base^")
+    extra=$(git diff --no-renames --name-only "$parent" "$previous_base" |
+      grep -v -e '^internal/viewer/dist/' -e '^internal/localapp/dist/' || true)
+    if [ -z "$extra" ] &&
+      git cat-file -e "$previous_base:internal/viewer/dist/index.html" 2>/dev/null &&
+      git cat-file -e "$previous_base:internal/localapp/dist/index.html" 2>/dev/null &&
+      ! git cat-file -e "$parent:internal/viewer/dist/index.html" 2>/dev/null &&
+      ! git cat-file -e "$parent:internal/localapp/dist/index.html" 2>/dev/null; then
+      previous_base=$parent
+    fi
+  fi
   if ! git merge-base --is-ancestor "$previous_base" "$base"; then
     fail "$tag ($base) does not come after $previous ($previous_base)"
   fi
