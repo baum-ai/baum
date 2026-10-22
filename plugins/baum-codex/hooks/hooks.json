@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex session-start >/dev/null 2>&1; then exec baum hooks agent --user codex session-start; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex session-start >/dev/null 2>&1; then exec baum hooks agent --user codex session-start; fi'",
             "timeout": 30
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex user-prompt-submit >/dev/null 2>&1; then exec baum hooks agent --user codex user-prompt-submit; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex user-prompt-submit >/dev/null 2>&1; then exec baum hooks agent --user codex user-prompt-submit; fi'",
             "timeout": 30
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex post-tool-use >/dev/null 2>&1; then exec baum hooks agent --user codex post-tool-use; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex post-tool-use >/dev/null 2>&1; then exec baum hooks agent --user codex post-tool-use; fi'",
             "timeout": 30
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex stop >/dev/null 2>&1; then exec baum hooks agent --user codex stop; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex stop >/dev/null 2>&1; then exec baum hooks agent --user codex stop; fi'",
             "timeout": 30
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex session-end >/dev/null 2>&1; then exec baum hooks agent --user codex session-end; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex session-end >/dev/null 2>&1; then exec baum hooks agent --user codex session-end; fi'",
             "timeout": 3
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex subagent-start >/dev/null 2>&1; then exec baum hooks agent --user codex subagent-start; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex subagent-start >/dev/null 2>&1; then exec baum hooks agent --user codex subagent-start; fi'",
             "timeout": 30
           }
         ]
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --plugin codex subagent-stop >/dev/null 2>&1; then exec baum hooks agent --user codex subagent-stop; fi'",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex subagent-stop >/dev/null 2>&1; then exec baum hooks agent --user codex subagent-stop; fi'",
             "timeout": 30
           }
         ]

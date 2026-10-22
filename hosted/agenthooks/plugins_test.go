@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -32,7 +31,7 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 			}
 			expected := map[string][]map[string]any{}
 			for _, p := range settings.Placements {
-				handler := map[string]any{"type": "command", "command": strings.Replace(UserDispatcher(spec, p.Event), "--check --user", "--check --plugin", 1)}
+				handler := map[string]any{"type": "command", "command": UserDispatcher(spec, p.Event)}
 				if p.Timeout != 0 {
 					handler["timeout"] = float64(p.Timeout)
 				}

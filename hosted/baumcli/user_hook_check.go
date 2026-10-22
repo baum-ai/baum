@@ -43,7 +43,7 @@ func defaultClaudeManagedDir() string {
 }
 
 // userHooksEnabled answers `baum hooks agent --check --user`, the gate of the
-// hooks `baum hooks install --user` puts in the user-wide agent settings,
+// marketplace hooks `baum hooks install --user` installs through the agent,
 // which the agent runs in every directory. They run baum only where the
 // committed hooks would and only where nothing else already hands the event
 // to Entire:

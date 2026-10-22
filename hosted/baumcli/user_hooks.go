@@ -1,159 +1,79 @@
 package baumcli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/baum-ai/baum/hosted/agenthooks"
-	"github.com/baum-ai/baum/hosted/userhooks"
+	"github.com/baum-ai/baum/hosted/agentplugins"
 )
 
 func newInstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
-	var (
-		user   bool
-		legacy bool
-		agents []string
-	)
-	cmd := &cobra.Command{
-		Use:   "install --user [--agent AGENT]...",
-		Short: "Install baum's hooks in your user-wide Claude Code and Codex settings",
-		Long: `Adds baum's hooks to ~/.claude/settings.json (Claude Code) and
-~/.codex/hooks.json (Codex), so the agents run them in every repository. Your
-other settings and hooks are kept, and baum's go after yours; the previous
-file is saved in baum's state directory ($XDG_STATE_HOME/baum/backups, or
-~/.local/state/baum/backups). Running it again changes nothing, and reverts
-edits made to baum's own entries.
-
-The hooks run baum only in a Git repository with Entire enabled where no other
-hook the agent runs already hands the event to Entire, and only where the
-committed hooks would run baum: after baum login, in a clone set up with baum
-setup, or, for a hosted install, in an onboarded repository, where they hand
-the event to Entire; or where you run the baum daemon, where they only record
-the event locally. Everywhere else they do nothing. They never contact a baum
-server. Hooks an earlier baum installed are updated when you run this again.
-
-Without --agent, it installs for the coding agents found on this machine.
-Codex runs a new or changed hook only after you trust it with /hooks.
-
-After hooks migrate --user, default installs skip that agent. An explicit
---agent refuses to replace the plugin choice; disable/uninstall the plugin
-first, then use --legacy to return to settings-based hooks.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !user {
-				return errors.New("pass --user: this installs hooks in your user-wide agent settings (baum setup installs a repository's)")
-			}
-			defaultAgents := len(agents) == 0
-			if defaultAgents {
-				agents = detectedUserHookAgents()
-				if len(agents) == 0 {
-					return fmt.Errorf("no supported coding agent found; pass --agent (%s)", strings.Join(userhooks.Agents(), " or "))
-				}
-			}
-			if defaultAgents && !legacy {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return err
-				}
-				agents = slices.DeleteFunc(agents, func(agent string) bool {
-					if !userhooks.PluginManaged(home, agent) {
-						return false
-					}
-					_, _ = fmt.Fprintf(stdout, "%s hooks are managed by the baum plugin; inspect installation and trust in your agent.\n", agentDisplayName(agent))
-					return true
-				})
-			}
-			return changeUserHooks(agents, true, legacy, stdout, stderr)
-		},
-	}
-	cmd.Flags().BoolVar(&user, "user", false, "install in your user-wide agent settings")
-	cmd.Flags().BoolVar(&legacy, "legacy", false, "restore legacy hooks after disabling/uninstalling the baum plugin")
-	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(userhooks.Agents(), " or ")+" (repeatable; default: those found)")
-	cmd.SetOut(stdout)
-	cmd.SetErr(stderr)
-	return cmd
+	return newChangeUserPluginsCommand(true, stdout, stderr)
+}
+func newUninstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
+	return newChangeUserPluginsCommand(false, stdout, stderr)
 }
 
-func newUninstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
-	var (
-		user   bool
-		agents []string
-	)
-	cmd := &cobra.Command{
-		Use:   "uninstall --user [--agent AGENT]...",
-		Short: "Remove baum's hooks from your user-wide Claude Code and Codex settings",
-		Long: `Removes the hooks baum hooks install --user added to
-~/.claude/settings.json and ~/.codex/hooks.json and nothing else; the previous
-file is saved in baum's state directory, and a file baum created is removed
-once it holds nothing else. Hooks committed to repositories are not touched.
-Without --agent, it removes them for every agent. Codex keys its trust in a
-hook to its position: hooks of yours that move are listed, to trust again with
-/hooks.`,
-		Args: cobra.NoArgs,
+func newChangeUserPluginsCommand(install bool, stdout, stderr io.Writer) *cobra.Command {
+	var user bool
+	var agents []string
+	action := "install"
+	if !install {
+		action = "uninstall"
+	}
+	cmd := &cobra.Command{Use: action + " --user [--agent AGENT]...", Short: strings.ToUpper(action[:1]) + action[1:] + " baum's user-scoped agent marketplace plugins", Long: `Uses Claude Code or Codex's native plugin CLI to manage baum@baum.
+Installation registers the public baum-ai/baum Git marketplace, downloads the
+plugin and enables it. The agent owns plugin settings; baum edits no hook files.
+Review hook trust in the agent afterwards (Codex: /hooks). Installed and enabled
+do not mean trusted. No baum sign-in is needed and no baum server is contacted.
+Without --agent, uses supported coding-agent CLIs found on PATH.`, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !user {
-				return errors.New("pass --user: this removes hooks from your user-wide agent settings")
+				return errors.New("pass --user to manage user-scoped agent marketplace plugins")
 			}
 			if len(agents) == 0 {
-				agents = userhooks.Agents()
+				agents = detectedUserHookAgents()
+				if len(agents) == 0 {
+					return errors.New("no supported coding-agent CLI on PATH; install/update Claude Code or Codex, then retry")
+				}
 			}
-			return changeUserHooks(agents, false, false, stdout, stderr)
-		},
-	}
-	cmd.Flags().BoolVar(&user, "user", false, "remove from your user-wide agent settings")
-	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(userhooks.Agents(), " or ")+" (repeatable; default: all)")
+			return changeUserHooks(cmd.Context(), agents, install, stdout, stderr)
+		}}
+	cmd.Flags().BoolVar(&user, "user", false, "manage user-scoped agent marketplace plugins")
+	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(agentplugins.Agents(), " or ")+" (default: CLIs found on PATH)")
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
 }
 
-// userHooksStatus is one agent's line of `baum hooks status --user`.
 type userHooksStatus struct {
-	Agent         string `json:"agent"`
-	PluginManaged bool   `json:"pluginManaged,omitempty"`
-	Name          string `json:"name"`
-	// Detected reports that the agent was found on this machine, so install
-	// without --agent includes it.
-	Detected bool `json:"detected"`
-	// Settings is the user-wide settings file.
-	Settings string `json:"settings"`
-	// Installed reports that baum's hooks are in it and up to date, so an
-	// install would change nothing.
-	Installed bool `json:"installed"`
-	// Error is why the file cannot be read or edited.
-	Error string `json:"error,omitempty"`
+	Agent     string `json:"agent"`
+	Name      string `json:"name"`
+	Detected  bool   `json:"detected"`
+	Plugin    string `json:"plugin"`
+	Installed bool   `json:"installed"`
+	Enabled   bool   `json:"enabled"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 func newUserHooksStatusCommand(stdout io.Writer) *cobra.Command {
-	var (
-		user   bool
-		asJSON bool
-	)
-	cmd := &cobra.Command{
-		Use:   "status --user [--json]",
-		Short: "Show whether baum's hooks are in your user-wide Claude Code and Codex settings",
-		Long: `Shows, for each coding agent that has user-wide hooks, whether it was found on
-this machine, its settings file, and whether baum's hooks are installed there
-and up to date, or whether you chose plugin management with hooks migrate.
-It cannot assert plugin installation, enablement or trust: inspect those in
-the agent. It reads the files and changes nothing.`,
-		Args: cobra.NoArgs,
+	var user, asJSON bool
+	cmd := &cobra.Command{Use: "status --user [--json]", Short: "Show native agent plugin installation and enablement", Long: `Reads Claude Code and Codex's native plugin registries. Reports baum@baum's
+user installation, enablement and version separately. Trust belongs to the
+agent: inspect its hooks UI. This does not edit hook settings.`, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !user {
-				return errors.New("pass --user: this reports on your user-wide agent settings")
+				return errors.New("pass --user to inspect user-scoped agent plugins")
 			}
-			statuses, err := userHooksStatuses()
-			if err != nil {
-				return err
-			}
+			statuses := userHooksStatuses(cmd.Context())
 			if asJSON {
 				return json.NewEncoder(stdout).Encode(struct {
 					Agents []userHooksStatus `json:"agents"`
@@ -162,216 +82,117 @@ the agent. It reads the files and changes nothing.`,
 			for _, s := range statuses {
 				state := "not installed"
 				switch {
-				case s.PluginManaged:
-					state = "managed by plugin (inspect in agent)"
 				case s.Error != "":
 					state = "error: " + s.Error
+				case !s.Detected:
+					state = "CLI not found on PATH"
+				case s.Installed && !s.Enabled:
+					state = "installed, disabled"
 				case s.Installed:
-					state = "installed"
+					state = "installed, enabled (review hook trust in agent)"
 				}
-				found := "found"
-				if !s.Detected {
-					found = "not found"
-				}
-				_, _ = fmt.Fprintf(stdout, "%s (%s): %s in %s\n", s.Name, found, state, homeRelative(s.Settings))
+				_, _ = fmt.Fprintf(stdout, "%s: %s %s\n", s.Name, s.Plugin, state)
 			}
 			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&user, "user", false, "report on your user-wide agent settings")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the status as one JSON line")
+		}}
+	cmd.Flags().BoolVar(&user, "user", false, "inspect user-scoped agent marketplace plugins")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print status as one JSON line")
 	cmd.SetOut(stdout)
 	return cmd
 }
 
-func userHooksStatuses() ([]userHooksStatus, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("find the home directory: %w", err)
-	}
-	detected := detectedUserHookAgents()
+func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	statuses := []userHooksStatus{}
-	for _, agent := range userhooks.Agents() {
-		settings, ok := agenthooks.LookupUserWide(agent)
-		if !ok {
-			return nil, fmt.Errorf("%s has no user-wide hooks", agent)
+	client := agentplugins.New()
+	for _, agent := range agentplugins.Agents() {
+		s := userHooksStatus{Agent: agent, Name: agentDisplayName(agent), Plugin: agentplugins.Plugin}
+		_, err := lookPath(agentplugins.Binary(agent))
+		s.Detected = err == nil
+		if s.Detected {
+			status, err := client.Status(ctx, agent)
+			if err != nil {
+				s.Error = err.Error()
+			} else {
+				s.Installed = status.Installed
+				s.Enabled = status.Enabled
+				s.Version = status.Version
+			}
 		}
-		status := userHooksStatus{
-			Agent:    agent,
-			Name:     agentDisplayName(agent),
-			Detected: slices.Contains(detected, agent),
-			Settings: filepath.Join(home, filepath.FromSlash(settings.SettingsFile)),
+		statuses = append(statuses, s)
+	}
+	return statuses
+}
+
+func changeUserHooks(ctx context.Context, agents []string, install bool, stdout, stderr io.Writer) error {
+	for _, agent := range agents {
+		if !slices.Contains(agentplugins.Agents(), agent) {
+			return fmt.Errorf("unsupported coding agent %q; use %s", agent, strings.Join(agentplugins.Agents(), " or "))
 		}
-		if userhooks.PluginManaged(home, agent) {
-			status.PluginManaged = true
-			statuses = append(statuses, status)
+	}
+	client := agentplugins.New()
+	change := client.Uninstall
+	if install {
+		change = client.Install
+	}
+	var failures []error
+	for _, agent := range slices.Compact(slices.Clone(agents)) {
+		status, err := change(ctx, agent)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", agentDisplayName(agent), err))
+			_, _ = fmt.Fprintf(stderr, "error: %s plugin: %v\n", agentDisplayName(agent), err)
 			continue
 		}
-		pending, err := userhooks.Pending(home, agent)
-		if err != nil {
-			status.Error = err.Error()
+		if install {
+			_, _ = fmt.Fprintf(stdout, "Installed and enabled %s for %s", agentplugins.Plugin, agentDisplayName(agent))
+			if status.Version != "" {
+				_, _ = fmt.Fprintf(stdout, " (%s)", status.Version)
+			}
+			_, _ = fmt.Fprintln(stdout, ". Review hook trust in the agent before relying on the hooks (Codex: /hooks).")
 		} else {
-			status.Installed = !pending
+			_, _ = fmt.Fprintf(stdout, "%s is not installed for %s. The marketplace and other plugins are unchanged.\n", agentplugins.Plugin, agentDisplayName(agent))
 		}
-		statuses = append(statuses, status)
 	}
-	return statuses, nil
+	return errors.Join(failures...)
 }
 
-// changeUserHooks installs or uninstalls for each agent. One agent's failure,
-// such as a settings file baum refuses to edit, does not stop the others.
-func changeUserHooks(agents []string, install, legacy bool, stdout, stderr io.Writer) error {
-	change := userhooks.Uninstall
-	if install {
-		change = userhooks.Install
-		if legacy {
-			change = userhooks.RestoreLegacy
-		}
-	}
-	for _, agent := range agents {
-		if !slices.Contains(userhooks.Agents(), agent) {
-			return fmt.Errorf("unsupported coding agent %q; use %s", agent, strings.Join(userhooks.Agents(), " or "))
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("find the home directory: %w", err)
-	}
-	failed := 0
-	for _, agent := range slices.Compact(slices.Clone(agents)) {
-		result, err := change(home, agent)
-		if !reportUserHooksChange(stdout, stderr, agent, result, err, install) {
-			failed++
-		}
-	}
-	if failed > 0 {
-		return fmt.Errorf("could not change the user-wide hooks of %d %s", failed, agentNoun(failed))
-	}
-	return nil
-}
-
-// A marker error can follow a successful settings write. Report that change
-// now: a retry cannot recover its Codex trust and shifted-hook guidance.
-func reportUserHooksChange(stdout, stderr io.Writer, agent string, result userhooks.Result, err error, install bool) bool {
-	if err == nil || result.Changed {
-		reportUserHooks(stdout, stderr, result, install)
-	}
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "error: %s hooks: %v\n", agentDisplayName(agent), err)
-		return false
-	}
-	return true
-}
-
-func reportUserHooks(stdout, stderr io.Writer, result userhooks.Result, install bool) {
-	name, path := agentDisplayName(result.Agent), homeRelative(result.Path)
-	switch {
-	case install && result.Changed:
-		_, _ = fmt.Fprintf(stdout, "Installed baum's %s hooks in %s.\n", name, path)
-	case install:
-		_, _ = fmt.Fprintf(stdout, "baum's %s hooks in %s are up to date.\n", name, path)
-	case result.Removed:
-		_, _ = fmt.Fprintf(stdout, "Removed baum's %s hooks and %s, which baum had created.\n", name, path)
-	case result.Changed:
-		_, _ = fmt.Fprintf(stdout, "Removed baum's %s hooks from %s.\n", name, path)
-	default:
-		_, _ = fmt.Fprintf(stdout, "No baum %s hooks in %s.\n", name, path)
-	}
-	if result.Backup != "" {
-		_, _ = fmt.Fprintf(stdout, "  Previous file saved as %s.\n", homeRelative(result.Backup))
-	}
-	if install && result.Changed && result.Agent == "codex" {
-		_, _ = fmt.Fprintln(stdout, "  Codex runs a new or changed hook only after you trust it: start Codex and review baum's hooks with /hooks.")
-	}
-	if len(result.Shifted) > 0 {
-		_, _ = fmt.Fprintf(stderr, "warning: these %s hooks of yours in %s moved, and %s keys its trust in a hook to its position, so it skips them until you trust them again with /hooks:\n", name, path, name)
-		for _, hook := range result.Shifted {
-			_, _ = fmt.Fprintf(stderr, "  %s\n", hook)
-		}
-	}
-}
-
-// installUserHooksDuringSetup is setup's step for the user-wide hooks, run
-// once per invocation. Failures are warnings: the repository's own hooks are
-// what setup is for.
-func installUserHooksDuringSetup(stdout, stderr io.Writer) {
+func installUserHooksDuringSetup(ctx context.Context, stdout, stderr io.Writer) {
 	agents := detectedUserHookAgents()
 	if len(agents) == 0 {
 		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: could not install baum's user-wide hooks: %v\n", err)
-		return
-	}
-	for _, agent := range agents {
-		if userhooks.PluginManaged(home, agent) {
-			continue
-		}
-		result, err := userhooks.Install(home, agent)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: could not install baum's user-wide %s hooks: %v\nRun `baum hooks install --user` once it is fixed.\n", agentDisplayName(agent), err)
-			continue
-		}
-		if result.Changed {
-			reportUserHooks(stdout, stderr, result, true)
-		}
+	if err := changeUserHooks(ctx, agents, true, stdout, stderr); err != nil {
+		_, _ = fmt.Fprintln(stderr, "warning: could not install all agent plugins; update the agent CLI or use its plugin UI, then retry `baum hooks install --user`.")
 	}
 }
 
-// setupInstallsUserHooks reports whether setup installs the user-wide hooks:
-// for a hosted install or a logged-in user, where they add something today.
-// An open-source user gets them deliberately, from `baum hooks install
-// --user` or the desktop app's onboarding.
-func setupInstallsUserHooks() bool {
-	return hostedInstall() || loggedIn()
-}
+func setupInstallsUserHooks() bool { return hostedInstall() || loggedIn() }
 
-// userHooksPendingForSetup reports whether setup would change any detected
-// agent's user-wide settings.
-func userHooksPendingForSetup() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	for _, agent := range detectedUserHookAgents() {
-		if userhooks.PluginManaged(home, agent) {
-			continue
-		}
-		if pending, err := userhooks.Pending(home, agent); err == nil && pending {
+func userHooksPendingForSetup(ctx context.Context) bool {
+	for _, s := range userHooksStatuses(ctx) {
+		if s.Detected && (!s.Installed || !s.Enabled) {
 			return true
 		}
 	}
 	return false
 }
 
-// writeUserHooksPlan names the files outside the repositories that setup is
-// about to change, before it asks to go ahead.
-func writeUserHooksPlan(stdout io.Writer) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	var paths []string
-	for _, agent := range detectedUserHookAgents() {
-		if userhooks.PluginManaged(home, agent) {
-			continue
-		}
-		if pending, err := userhooks.Pending(home, agent); err == nil && pending {
-			settings, _ := agenthooks.LookupUserWide(agent)
-			paths = append(paths, homeRelative(filepath.Join(home, filepath.FromSlash(settings.SettingsFile))))
+func writeUserHooksPlan(ctx context.Context, stdout io.Writer) {
+	var names []string
+	for _, s := range userHooksStatuses(ctx) {
+		if s.Detected && (!s.Installed || !s.Enabled) {
+			names = append(names, s.Name)
 		}
 	}
-	if len(paths) > 0 {
-		_, _ = fmt.Fprintf(stdout, "Setup also adds baum's user-wide hooks to %s (--skip-user-hooks leaves them alone).\n", strings.Join(paths, " and "))
+	if len(names) > 0 {
+		_, _ = fmt.Fprintf(stdout, "Setup also registers the public %s Git marketplace and installs/enables %s for %s (network download; --skip-user-hooks skips plugins). Review hook trust afterwards.\n", agentplugins.Marketplace, agentplugins.Plugin, strings.Join(names, " and "))
 	}
 }
 
 func detectedUserHookAgents() []string {
 	var agents []string
-	for _, agent := range detectEntireAgents() {
-		if slices.Contains(userhooks.Agents(), agent.Slug) {
-			agents = append(agents, agent.Slug)
+	for _, agent := range agentplugins.Agents() {
+		if _, err := lookPath(agentplugins.Binary(agent)); err == nil {
+			agents = append(agents, agent)
 		}
 	}
 	return agents
@@ -384,61 +205,4 @@ func agentDisplayName(slug string) string {
 		}
 	}
 	return slug
-}
-
-// homeRelative writes a path below the home directory from "~", as the
-// agents' documentation names their settings files.
-func homeRelative(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
-	}
-	if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		return filepath.Join("~", rel)
-	}
-	return path
-}
-
-func agentNoun(count int) string {
-	if count == 1 {
-		return "agent"
-	}
-	return "agents"
-}
-
-func newMigrateUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
-	var user bool
-	var agents []string
-	cmd := &cobra.Command{Use: "migrate --user [--agent AGENT]...", Short: "Remove legacy baum hooks and use the agent-managed plugin", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !user {
-				return errors.New("pass --user to migrate user-wide hooks to plugins")
-			}
-			if len(agents) == 0 {
-				agents = userhooks.Agents()
-			}
-			for _, agent := range agents {
-				if !slices.Contains(userhooks.Agents(), agent) {
-					return fmt.Errorf("unsupported coding agent %q", agent)
-				}
-			}
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return err
-			}
-			var failures []error
-			for _, agent := range agents {
-				result, err := userhooks.Migrate(home, agent)
-				if err != nil {
-					failures = append(failures, fmt.Errorf("%s: %w", agent, err))
-					continue
-				}
-				reportUserHooks(stdout, stderr, result, false)
-				_, _ = fmt.Fprintf(stdout, "%s: legacy installation disabled; install/enable and trust the baum plugin in your agent.\n", agentDisplayName(agent))
-			}
-			return errors.Join(failures...)
-		}}
-	cmd.Flags().BoolVar(&user, "user", false, "migrate user-wide hooks")
-	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent (default: all)")
-	return cmd
 }

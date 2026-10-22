@@ -18,25 +18,6 @@ func TestUserDispatcherIsFrozen(t *testing.T) {
 	}
 }
 
-func TestUserDispatcherEventRecognisesOnlyTheUserWideCommand(t *testing.T) {
-	spec, _ := agenthooks.Lookup("codex")
-	agent, event, ok := agenthooks.UserDispatcherEvent(agenthooks.UserDispatcher(spec, "subagent-stop"))
-	if !ok || agent != "codex" || event != "subagent-stop" {
-		t.Errorf("UserDispatcherEvent = %q %q %v", agent, event, ok)
-	}
-	for _, command := range []string{
-		agenthooks.Dispatcher(spec, "stop"),
-		agenthooks.EntireCommand(spec, "stop"),
-		"baum hooks agent --check --user codex stop",
-	} {
-		if _, _, ok := agenthooks.UserDispatcherEvent(command); ok {
-			t.Errorf("recognised %q as a user-wide command", command)
-		}
-	}
-}
-
-// Every event a user-wide agent has gets exactly one placement, so the
-// user-wide hooks cover what a committed configuration does.
 func TestUserWidePlacementsCoverEveryEvent(t *testing.T) {
 	for _, spec := range agenthooks.All() {
 		settings, ok := agenthooks.LookupUserWide(spec.Slug)

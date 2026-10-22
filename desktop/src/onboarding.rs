@@ -1,7 +1,7 @@
 //! First run and the "Command Line and Hooks" screen. Agent hooks run `baum`
 //! by name, so on first run the app shows a bundled setup screen that
 //! installs its bundled `baum` as the user's command (see `install`) and adds
-//! baum's hooks to the user-wide Claude Code and Codex settings (the bundled
+//! baum's marketplace plugins through the Claude Code and Codex CLIs (the bundled
 //! `baum hooks install --user`). The user starts each change on that screen;
 //! the Rust side makes it. When the user continues, the window attaches to
 //! the daemon and, the first time, opens its diagnostics page. The menu item
@@ -38,7 +38,8 @@ pub const MENU_LABEL: &str = "Command Line and Hooks…";
 /// `baum daemon login-path` runs the login shell (10 s at most) and the
 /// `--version` of another baum (5 s).
 const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
-const HOOKS_TIMEOUT: Duration = Duration::from_secs(60);
+// Two native 90-second plugin actions plus process overhead.
+const HOOKS_TIMEOUT: Duration = Duration::from_secs(210);
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -314,7 +315,7 @@ pub struct View {
     hooks: Hooks,
 }
 
-/// The user-wide hooks, from `baum hooks status --user --json`.
+/// Native marketplace plugin installation and enablement, from `baum hooks status --user --json`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Hooks {
     #[serde(default)]
@@ -329,11 +330,11 @@ pub struct AgentHooks {
     name: String,
     #[serde(default)]
     detected: bool,
-    settings: PathBuf,
+    plugin: String,
     #[serde(default)]
     installed: bool,
-    #[serde(default, rename = "pluginManaged")]
-    plugin_managed: bool,
+    #[serde(default)]
+    enabled: bool,
     #[serde(default)]
     error: Option<String>,
 }
@@ -738,12 +739,13 @@ mod tests {
     #[test]
     fn reads_the_hooks_status() {
         let hooks: Hooks = last_json(&[
-            r#"{"agents":[{"agent":"claude-code","name":"Claude Code","detected":true,"settings":"/h/.claude/settings.json","installed":false,"pluginManaged":true},{"agent":"codex","name":"Codex","detected":false,"settings":"/h/.codex/hooks.json","installed":false,"error":"not valid JSON"}]}"#.into(),
+            r#"{"agents":[{"agent":"claude-code","name":"Claude Code","detected":true,"plugin":"baum@baum","installed":true,"enabled":false},{"agent":"codex","name":"Codex","detected":false,"plugin":"baum@baum","installed":false,"error":"not valid JSON"}]}"#.into(),
         ])
         .unwrap();
         assert_eq!(hooks.agents.len(), 2);
-        assert!(hooks.agents[0].plugin_managed && hooks.agents[0].detected);
-        assert!(!hooks.agents[0].installed);
+        assert!(hooks.agents[0].installed && hooks.agents[0].detected);
+        assert!(!hooks.agents[0].enabled);
+        assert_eq!(hooks.agents[0].plugin, "baum@baum");
         assert_eq!(hooks.agents[1].error.as_deref(), Some("not valid JSON"));
         assert!(last_json::<Hooks>(&[]).is_err());
     }

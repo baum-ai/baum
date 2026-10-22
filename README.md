@@ -50,7 +50,7 @@ you can join the waitlist there.
 ## Agent plugins
 
 Install baum's versioned Claude Code or Codex lifecycle hooks from the public
-Git marketplace. See [installation, migration, trust and compatibility](plugins/README.md).
+Git marketplace. See [installation, trust and compatibility](plugins/README.md).
 The plugins use your existing opt-ins and need the baum command on `PATH`.
 
 ## Install a release

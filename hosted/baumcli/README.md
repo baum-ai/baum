@@ -2,7 +2,7 @@
 
 The hosted service commands of the `baum` binary: login, logout, whoami,
 setup, upload, the hook dispatchers that agents and Git call, and the
-installer of the user-wide agent hooks. The open-source
+installer of user-scoped agent marketplace plugins. The open-source
 commands and these ship as one binary, built from `cmd/baum`; `--help` lists
 these under "Hosted service". Local session discovery lives in
 [`sessions/collector`](../../sessions/collector); the archive rules are in
@@ -110,9 +110,11 @@ handshake, in [`apiclient`](../apiclient).
 
 ## Setup
 
-- Setup is local by default: it never reads credentials for auth, calls the
-  server or starts the device flow. It installs hooks (and Entire unless
-  `--skip-entire`). Re-running changes nothing.
+- Setup needs no baum sign-in: it never reads credentials for auth, calls a
+  baum server or starts the device flow by default. It installs repository
+  hooks (and Entire unless `--skip-entire`); user plugin installation fetches
+  the public GitHub marketplace through the native agent CLI. Re-running
+  uses the native idempotent installation commands.
 - The completion marker means "hooks configured". It is written only when
   Entire setup ran, succeeded and found a coding agent to configure; with
   `--skip-entire`, no detected agent or after an Entire failure (a warning)
@@ -146,10 +148,11 @@ handshake, in [`apiclient`](../apiclient).
 - Hook configuration comes from the shared [`agenthooks`](../agenthooks/agenthooks.go)
   specs, the same ones the hosted service's onboarding pull request writes, so
   the two never rewrite each other.
-- Setup also installs the legacy user-wide hooks below, once per run, for the agents
-  it detects that have not migrated to plugins, but only for a hosted install or a logged-in user, where they
+- Setup also installs the user-scoped marketplace plugins below, once per run, for the agents
+  it detects, but only for a hosted install or a logged-in user, where they
   add something today, and not with `--skip-user-hooks` or `--skip-entire`.
-  The `--all` plan names the files it will change before asking. An
+  The `--all` plan names the agents, public marketplace and network download
+  before asking. An
   open-source user without a login gets them only deliberately, from
   `baum hooks install --user` or the desktop app's onboarding, once a daemon
   makes them useful there. Setup keeps writing the repository's own hooks:
@@ -158,58 +161,36 @@ handshake, in [`apiclient`](../apiclient).
 
 ## User-wide hooks
 
-- Agent-managed [marketplace plugins](../../plugins/README.md) are available
-  for Claude Code and Codex. Run `baum hooks migrate --user [--agent AGENT]`
-  before enabling them, including on a fresh installation. Migration removes
-  only baum's legacy handlers and records the choice; setup then skips those
-  agents, default legacy/desktop installs skip them, and an explicit `--agent`
-  legacy install refuses to recreate their entries.
-  `status --user --json` returns `pluginManaged: true`, with `installed: false`,
-  because actual plugin installation, enablement and trust belong to the agent.
-  The desktop screen respects that choice. Disable/uninstall the plugin before
-  `baum hooks install --user --legacy --agent AGENT` to return to legacy hooks.
-  Plugin checks yield per event to existing baum legacy handlers; the execution
-  and opt-in rules below are shared by both forms.
-
-- `baum hooks install --user` adds baum's hooks to `~/.claude/settings.json`
-  (Claude Code) and `~/.codex/hooks.json` (Codex; it also reads inline hooks in
-  `config.toml`, which baum leaves alone), for the detected agents or those
-  named with `--agent`; `uninstall --user` removes them. The editing lives in
-  [`userhooks`](../userhooks/userhooks.go), the events, matchers, timeouts and
-  command in [`agenthooks`](../agenthooks/userwide.go). `baum hooks status
-  --user [--json]` changes nothing and reports, for each of those agents,
-  whether it was found on this machine, its settings file, and whether baum's
-  hooks there are installed and up to date (an install would change nothing)
-  or why the file cannot be edited. The desktop app's setup screen runs these
-  three commands, and installs the bundled baum as the `baum` command the
-  hooks call.
-- The files belong to the user. Only handlers whose command is baum's
-  user-wide dispatcher are added, rewritten or removed; every other byte
-  stays, CRLF line endings included. An install with nothing to change writes
-  nothing; uninstalling right after installing restores the original bytes,
-  and a file baum created is removed once only an empty object is left. A
-  file that is not JSON, or whose `hooks` are not event → list of groups →
-  list of handler objects, is refused and left alone. The previous file is
-  saved as `$XDG_STATE_HOME/baum/backups/<agent>-<file>` (default
-  `~/.local/state/baum`, mode 0600), never beside a symbolic link's target,
-  where a dotfiles repository could commit it; the link itself is kept. The
-  new file is renamed into place unless the file changed meanwhile. Root
-  editing another user's home (sudo with `HOME` kept) is refused.
-- baum's entries are baum's: an edit made to one of them, such as a longer
-  timeout, is reverted the next time setup or install runs.
-- Codex keys its trust in a hook to its file, event and position (group and
-  handler index), so moving a hook makes Codex skip it until the user trusts
-  it again with `/hooks`. baum appends its groups after the user's and never
-  moves one it placed; when an uninstall, or the relocation of a misplaced
-  baum handler, moves hooks of the user's, the command lists them with that
-  instruction (`Result.Shifted`).
-- The command is `sh -c 'if command -v baum … && baum hooks agent --check
-  --user AGENT EVENT …; then exec baum hooks agent --user AGENT EVENT; fi'`.
-  Unlike the committed dispatcher it never falls through to Entire. It is
-  pinned by a test, because Codex asks the user to trust a hook again once its
-  definition changes. The form without `--user` on the run, which earlier
-  builds installed, is baum's too and is rewritten by the next install or
-  setup.
+- `baum hooks install --user` registers the public `baum-ai/baum` Git
+  marketplace and installs/enables `baum@baum` through Claude Code or Codex's
+  native CLI, for executable agents on `PATH` or those named with `--agent`.
+  `uninstall --user` removes that user plugin through the native CLI, leaving
+  the marketplace and other plugins. No raw hook settings are edited and no
+  migration markers or compatibility cleanup are maintained. Installation
+  downloads from GitHub; it needs no baum sign-in and calls no baum server.
+- [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude
+  uses user-scope plugin install/list/uninstall; Codex uses plugin add/list/
+  remove. Successful commands are verified with native list JSON. A missing
+  or unsupported CLI, unexpected JSON or unverified result is an actionable
+  error; install/update the agent or use its plugin UI. Each native action has
+  a 90-second budget, each status read 10 seconds, with cancellation of child
+  processes where supported. One failing agent does not stop the other.
+- `baum hooks status --user [--json]` reads native registries without changing
+  them. It reports detection of the CLI, plugin ID, installation, enablement
+  and version separately; installed and enabled never imply trusted. A config
+  directory alone is not an executable agent. The desktop setup screen uses
+  these commands, shows disabled plugins separately and offers installation/
+  enablement. It allows both agents' action budgets plus process overhead.
+- Review hook trust through the agent after installing or changing plugins;
+  Codex uses `/hooks`. The native registry owns installation/enablement, and
+  the agent owns trust. See [manual installation, updates and removal](../../plugins/README.md).
+- The events, matchers, timeouts and dispatcher are shared in
+  [`agenthooks`](../agenthooks/userwide.go). The command is
+  `sh -c 'if command -v baum … && baum hooks agent --check --user AGENT EVENT
+  …; then exec baum hooks agent --user AGENT EVENT; fi'`. A missing/older CLI
+  rejecting the check quietly does nothing. Unlike committed dispatchers it
+  never falls through to Entire. The command is pinned by a test because a
+  definition change requires renewed Codex trust.
 - `baum hooks agent --user` runs the hook as before where the hosted opt-in
   holds. Where `--check --user` passed only because a baum daemon ran, it only
   records the event: no Entire, no bootstrap, no output, exit status 0, as

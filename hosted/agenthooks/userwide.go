@@ -3,7 +3,6 @@ package agenthooks
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 )
 
 // Placement says where the user-wide hook for one Entire event goes in an
@@ -18,12 +17,9 @@ type Placement struct {
 	Timeout   int
 }
 
-// UserWide describes an agent's user-wide hook settings: the file below the
-// home directory that holds them, where each event goes, and every file in a
-// project that can carry hooks of the agent's own, which the user-wide hooks
-// yield to.
+// UserWide describes the agent events a user-scoped marketplace plugin runs,
+// and project hook files that take precedence over those hooks.
 type UserWide struct {
-	SettingsFile string
 	Placements   []Placement
 	ProjectFiles []string
 }
@@ -32,7 +28,6 @@ func matcher(value string) *string { return &value }
 
 var userWide = map[string]UserWide{
 	"claude-code": {
-		SettingsFile: ".claude/settings.json",
 		Placements: []Placement{
 			{Event: "session-start", HookEvent: "SessionStart", Matcher: matcher("")},
 			{Event: "user-prompt-submit", HookEvent: "UserPromptSubmit", Matcher: matcher("")},
@@ -46,10 +41,6 @@ var userWide = map[string]UserWide{
 		ProjectFiles: []string{".claude/settings.json", ".claude/settings.local.json"},
 	},
 	"codex": {
-		// Codex also reads inline [hooks] tables from config.toml, but the
-		// JSON file keeps baum's edits away from the TOML the user writes
-		// by hand, and Codex merges both.
-		SettingsFile: ".codex/hooks.json",
 		Placements: []Placement{
 			{Event: "session-start", HookEvent: "SessionStart", Timeout: 30},
 			{Event: "user-prompt-submit", HookEvent: "UserPromptSubmit", Timeout: 30},
@@ -71,7 +62,7 @@ func LookupUserWide(agent string) (UserWide, bool) {
 }
 
 // UserDispatcher renders the hook command baum installs in an agent's
-// user-wide settings for one event. Like the committed Dispatcher it runs
+// marketplace plugin for one event. Like the committed Dispatcher it runs
 // baum only when `--check` succeeds, but with `--user`, and it never falls
 // through to Entire: a repository whose own settings run Entire for the
 // event already gets it from them, and one without them never asked for it.
@@ -87,20 +78,6 @@ func UserDispatcher(spec Spec, event string) string {
 
 func userPrefix(agent, event string) string {
 	return `sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user ` + agent + " " + event + " "
-}
-
-var userDispatcherPattern = regexp.MustCompile(`^sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user ([a-z0-9-]+) ([a-z0-9-]+) `)
-
-// UserDispatcherEvent reports the agent and event of a user-wide hook command
-// baum installed, of this or an earlier form, so that install replaces and
-// uninstall removes it. The event is returned even when this baum no longer
-// knows it.
-func UserDispatcherEvent(command string) (agent, event string, ok bool) {
-	match := userDispatcherPattern.FindStringSubmatch(command)
-	if match == nil {
-		return "", "", false
-	}
-	return match[1], match[2], true
 }
 
 // HandlesEvent reports whether a project's agent hook file runs Entire for
