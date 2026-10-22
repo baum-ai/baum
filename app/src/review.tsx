@@ -1,4 +1,3 @@
-import { UsageDetails } from "./usage";
 import {
   Component,
   type ReactNode,
@@ -280,27 +279,17 @@ export function LocalReview({
               </div>
             )
           }
+          detailsFooter={(document) => (
+            <GeneratedBy
+              saved={provenance.find((p) => p.version === document.review.version)}
+              entry={entry}
+              version={document.review.version}
+              job={job}
+            />
+          )}
           notices={
             <>
               <LiveSessions sessions={running} />
-              {viewedDocument
-                ? (() => {
-                    const saved = provenance.find(
-                      (p) => p.version === viewedDocument.review.version,
-                    );
-                    return saved ? (
-                      <details className="mb-3 local-panel">
-                        <summary>Saved review usage · {saved.model}</summary>
-                        <UsageDetails
-                          accounting={saved.accounting}
-                          charged={saved.accounting?.charged_tokens ?? saved.tokens}
-                          amount={saved.recorded_cost_usd}
-                          reason={saved.cost_reason}
-                        />
-                      </details>
-                    ) : null;
-                  })()
-                : null}
               {job && isActiveJob(job) && doc ? (
                 <ReviewJob key={job.id} job={job} changed={changed} />
               ) : job && doc && job.state !== "completed" ? (
@@ -354,6 +343,45 @@ class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolea
   }
 }
 
+/** Where the review being read came from, at the foot of its Details: the
+ *  harness and model, and the job that generated it while the jobs list
+ *  still has it. */
+function GeneratedBy({
+  saved,
+  entry,
+  version,
+  job,
+}: {
+  saved: Provenance | undefined;
+  entry: Entry;
+  version: number;
+  job: Job | undefined;
+}) {
+  if (!saved) return null;
+  const latest = version === entry.latest?.version;
+  const made = latest && job?.state === "completed" ? job : null;
+  return (
+    <p className="local-generated-by">
+      Generated with {latest && entry.latest ? `${entry.latest.backend} · ` : ""}
+      {saved.model}
+      {made ? (
+        <>
+          {" · "}
+          <a
+            href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
+            onClick={(event) => {
+              event.preventDefault();
+              window.history.pushState(null, "", event.currentTarget.href);
+              dispatchEvent(new PopStateEvent("popstate"));
+            }}
+          >
+            View job
+          </a>
+        </>
+      ) : null}
+    </p>
+  );
+}
 /** What became of the PR's last generation that did not complete: what
  *  happened in a sentence, and the generator's own words behind a toggle. */
 function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {

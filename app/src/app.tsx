@@ -499,28 +499,6 @@ function Workspace({ url }: { url: UrlState }) {
               ) : null}
             </>
           )}
-          {jobs.some(
-            (j) =>
-              isActiveJob(j) &&
-              (!selectedEntry ||
-                j.repository.toLowerCase() !==
-                  selectedEntry.pull_request.repository.toLowerCase() ||
-                j.pr !== selectedEntry.pull_request.number),
-          ) && page !== "jobs" ? (
-            <div className="local-page-body">
-              <Jobs
-                jobs={jobs.filter(
-                  (j) =>
-                    isActiveJob(j) &&
-                    (!selectedEntry ||
-                      j.repository.toLowerCase() !==
-                        selectedEntry.pull_request.repository.toLowerCase() ||
-                      j.pr !== selectedEntry.pull_request.number),
-                )}
-                changed={reload}
-              />
-            </div>
-          ) : null}
           {generationError ? <Alert>{generationError}</Alert> : null}
           {fork ? (
             <ForkConfirmation
@@ -577,6 +555,13 @@ function ForkConfirmation({
 }
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
+  // A link from a review opens the job that generated it.
+  useEffect(() => {
+    if (location.hash.startsWith("#job-"))
+      document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({
+        block: "center",
+      });
+  }, []);
   return (
     <section aria-label="Generation jobs" className="local-jobs">
       {error ? <Alert>{error}</Alert> : null}
@@ -636,7 +621,7 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
     job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
   }`;
   return (
-    <li className="local-job-row">
+    <li id={`job-${job.id}`} className="local-job-row">
       <JobState job={job} />
       <div className="min-w-0">
         <LocalLink

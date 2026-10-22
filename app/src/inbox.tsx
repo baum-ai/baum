@@ -57,6 +57,10 @@ export function inboxGroups(rows: Entry[]): Group[] {
           : 2;
     groups[index]!.rows.push(row);
   }
+  // Saved history reads most recently reviewed first; a review without a
+  // generation time goes last.
+  const reviewed = (row: Entry) => Date.parse(row.latest?.generated_at ?? "") || 0;
+  groups[3]!.rows.sort((a, b) => reviewed(b) - reviewed(a));
   return groups.filter((group) => group.rows.length > 0);
 }
 export function Inbox({

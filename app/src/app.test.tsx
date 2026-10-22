@@ -223,14 +223,25 @@ it("groups requested PRs before authored PRs once and keeps saved history separa
   const mine = entry(2);
   const other = entry(3);
   const history = entry(4, "current", true);
-  const groups = inboxGroups([history, other, mine, requested]);
+  const older = entry(5, "current", true);
+  const at = (time: string) => ({
+    version: 1,
+    generated_at: time,
+    backend: "claude",
+    model: "m",
+    recorded_cost_usd: null,
+  });
+  history.latest = at("2026-10-22T10:00:00+01:00");
+  older.latest = at("2026-10-22T09:30:00Z");
+  const groups = inboxGroups([older, history, other, mine, requested]);
   expect(
     groups.map((group) => [group.id, group.rows.map((row) => row.pull_request.number)]),
   ).toEqual([
     ["requested", [1]],
     ["mine", [2]],
     ["other", [3]],
-    ["history", [4]],
+    // Most recently reviewed first, whatever the offset.
+    ["history", [5, 4]],
   ]);
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {

@@ -176,9 +176,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  await page.getByText("Saved review usage · claude-sonnet-4-5", { exact: true }).click();
-  await expect(page.getByText(/Total processed tokens 1,000/)).toBeVisible();
-  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  // The review links to the job that generated it, where its usage is.
+  await page.getByRole("link", { name: "View job", exact: true }).click();
   const job = page.getByRole("region", { name: "Generation jobs" }).getByRole("listitem").first();
   await expect(job.getByText("Completed")).toBeVisible();
   await expect(job.getByText("1 call", { exact: true })).toBeVisible();
