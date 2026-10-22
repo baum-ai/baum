@@ -430,12 +430,30 @@ just desktop::build         # Linux bundle (deb by default) in target/release/bu
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
+just desktop::dev           # same, with Vite hot reload for the React app
 just desktop::icons         # regenerate icons/ from icons/source.svg
 ```
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
 bundled one.
+
+For UI work, use `just desktop::dev`. It starts Vite and the native app in
+separate Docker containers sharing a loopback network. Saving React components
+or CSS in `oss/app` or the shared `oss/viewer` updates the window; React Fast
+Refresh preserves component state when possible. Ctrl-C stops both containers
+and their isolated daemon. This runs against the development container's data,
+not your host daemon or repositories. Native Rust changes and the bundled
+setup/connecting screens still require restarting the command.
+Both development containers run with the invoking user's UID and GID so they
+can access the private shared directory and create files owned by that user.
+
+Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
+on port 5173. That directory shares the daemon's origin with Vite, never its
+launch capability. Vite proxies the normal login exchange and namespaced API,
+including event streams, rewriting the expected development Origin for CSRF
+validation. Release builds ignore the override. No development ports are
+published to the host.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple

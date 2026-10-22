@@ -327,3 +327,22 @@ export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
     job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase();
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
 }
+
+// estimateReasons explains, in words, why an item has no estimate on purpose.
+const estimateReasons: Record<string, string> = {
+  billed_by_cursor_subscription:
+    "Cost is billed by your Cursor subscription; baum can't estimate it.",
+};
+// blockedReasons explains why an item is left out of the generation.
+const blockedReasons: Record<string, string> = {
+  unknown_model_price:
+    "No price is known for this model. Choose a priced model in repository settings.",
+  isolation_confirmation_required:
+    "A fork or an author without known write access needs its own confirmation: generate this pull request on its own.",
+};
+export function estimateReasonText(reason: string): string {
+  return estimateReasons[reason] ?? "baum can't estimate the cost of this run.";
+}
+export function blockedReasonText(reason: string): string {
+  return blockedReasons[reason] ?? "It cannot be generated with the current settings.";
+}

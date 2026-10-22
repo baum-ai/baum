@@ -17,6 +17,7 @@
     "format:check": "biome format .",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
+    "test:development": "playwright test --config playwright.development.config.ts",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {
@@ -27,8 +28,10 @@
     "@types/pluralize": "^0.0.33",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "4.1.10",
     "ajv": "^8.20.0",
+    "http-proxy-3": "^2.0.1",
     "jsdom": "30.1.0",
     "json-schema-to-typescript": "^16.0.0",
     "oxlint": "1.73.0",
