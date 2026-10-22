@@ -89,7 +89,7 @@ func ExtensionCutoff(t *Transcript, prefixHash string) (int, bool) {
 			b.WriteString("\n")
 		}
 		writeTurn(&b, turn)
-		io.WriteString(hash, b.String())
+		_, _ = io.WriteString(hash, b.String()) // a hash.Hash never returns an error
 		if hex.EncodeToString(hash.Sum(nil)) == prefixHash {
 			return turn.Ordinal, true
 		}
