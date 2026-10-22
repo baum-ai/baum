@@ -12,6 +12,7 @@
 mod autostart;
 mod client;
 mod daemon;
+mod development;
 mod install;
 mod lifecycle;
 mod navigation;
@@ -118,13 +119,27 @@ fn connect(app: &AppHandle, why: Attach) {
             Ok(launch) => launch,
             Err(failure) => return fail(&app, &state, attempt, failure),
         };
+        let frontend = match development::frontend(&launch.url) {
+            Ok(url) => url,
+            Err(message) => {
+                return fail(
+                    &app,
+                    &state,
+                    attempt,
+                    daemon::Failure {
+                        message,
+                        details: Vec::new(),
+                    },
+                );
+            }
+        };
         {
             let mut shared = state.lock();
             if shared.attempt != attempt {
                 return;
             }
             shared.connection = Connection::Connected;
-            shared.daemon = Some(launch.origin.clone());
+            shared.daemon = Some(frontend.origin());
         }
         eprintln!(
             "baum desktop: attached to baum daemon {} (pid {})",
@@ -135,7 +150,7 @@ fn connect(app: &AppHandle, why: Attach) {
             return;
         };
         // The setup screen stays until the user leaves it, which attaches again.
-        let Some(navigated) = onboarding::attach(&app, &window, &launch.url) else {
+        let Some(navigated) = onboarding::attach(&app, &window, &frontend) else {
             return watch(&app, &state, attempt, &launch, why);
         };
         if let Err(e) = navigated {
