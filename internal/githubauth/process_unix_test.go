@@ -6,10 +6,25 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestCredentialHelperRejectsShellParent(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", `"$1" -test.run=^TestCredentialHelperParent$; result=$?; exit "$result"`, "shell", executable)
+	cmd.Env = append(os.Environ(), "BAUM_TEST_CREDENTIAL_PARENT=deny")
+	cmd.Stdin = strings.NewReader(`{"operation":"load"}`)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatal(err, string(output))
+	}
+}
 
 func TestProcessStoreCancellation(t *testing.T) {
 	dir := t.TempDir()

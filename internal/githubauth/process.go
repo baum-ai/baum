@@ -96,6 +96,9 @@ func (s ProcessStore) Delete(ctx context.Context) error {
 // runs synchronously here; ProcessStore owns this process's deadline and waits
 // for termination before releasing its caller's serialization lock.
 func ServeCredentialHelper(ctx context.Context, input io.Reader, output io.Writer) error {
+	if err := authorizeCredentialHelper(); err != nil {
+		return err
+	}
 	b, err := io.ReadAll(io.LimitReader(input, 64*1024+1))
 	if err != nil || len(b) > 64*1024 {
 		return ErrStore
@@ -126,6 +129,40 @@ func ServeCredentialHelper(ctx context.Context, input io.Reader, output io.Write
 	}
 	if json.NewEncoder(output).Encode(reply) != nil {
 		return ErrStore
+	}
+	return nil
+}
+
+// The executable's OS credential-store grant must not become a general CLI
+// credential export. Only another instance of this executable may invoke the
+// helper, over anonymous pipes created by ProcessStore. Neither argv nor an
+// environment variable is evidence of the caller's identity.
+func authorizeCredentialHelper() error {
+	parent := os.Getppid()
+	if parent <= 1 {
+		return ErrStore
+	}
+	path, err := parentExecutable(parent)
+	if err != nil {
+		return ErrStore
+	}
+	caller, err := os.Stat(path)
+	if err != nil {
+		return ErrStore
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return ErrStore
+	}
+	self, err := os.Stat(executable)
+	if err != nil || !os.SameFile(caller, self) || os.Getppid() != parent {
+		return ErrStore
+	}
+	for _, file := range []*os.File{os.Stdin, os.Stdout} {
+		info, err := file.Stat()
+		if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+			return ErrStore
+		}
 	}
 	return nil
 }
