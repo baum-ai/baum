@@ -3,7 +3,7 @@ module github.com/baum-ai/baum
 go 1.26.6
 
 require (
-	github.com/baum-ai/goredact v0.3.0
+	github.com/baum-ai/goredact v0.4.0
 	github.com/cli/go-gh/v2 v2.16.1
 	github.com/cli/safeexec v1.0.1
 	github.com/cli/shurcooL-graphql v0.0.4

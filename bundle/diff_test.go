@@ -592,15 +592,13 @@ func syntheticPuTTYKey() (lines, private []string) {
 // file's whole patch, so the bundle masks it as one text would, in both
 // hunks and in the second hunk's header, whose line ranges are put back.
 // That holds with the cap cutting a long first hunk short, so the key's
-// first lines sit only in the text the cap drops. goredact v0.3.0 ends a
-// key at a hunk header even in one text, and the base64 runs mask the body
-// lines it leaves; later versions follow the key across, armor included.
+// first lines sit only in the text the cap drops. goredact follows the key
+// across hunk headers, armor included.
 func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	acrossHunks := goredactVersion(t) != "v0.3.0"
 	pem := syntheticKeyLines()
 	ppk, private := syntheticPuTTYKey()
 	keys := []struct {
@@ -639,9 +637,7 @@ func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 						if b.Diff[1].StartLine != 36 || b.Diff[1].LineCount != 7 {
 							t.Fatalf("%s: second hunk = %+v", where, b.Diff[1])
 						}
-						// goredact v0.3.0 leaves the second hunk's key lines and
-						// the heading to base64Masks, whose runs count apart.
-						if b.MaskedSpanCount != 1 && (acrossHunks || b.MaskedSpanCount < 1) {
+						if b.MaskedSpanCount != 1 {
 							t.Fatalf("%s: masked %d spans, want the one key", where, b.MaskedSpanCount)
 						}
 						text := strings.Join(got, "\n")
@@ -650,7 +646,7 @@ func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
 								t.Fatalf("%s: key line %q survives:\n%s", where, line, text)
 							}
 						}
-						if acrossHunks && strings.Contains(text, "PRIVATE KEY") {
+						if strings.Contains(text, "PRIVATE KEY") {
 							t.Fatalf("%s: the armor survives:\n%s", where, text)
 						}
 						if header, _, _ := strings.Cut(got[1], "\n"); heading != "" && !strings.HasPrefix(header, "@@ -36,7 +36,7 @@ ") {
@@ -810,7 +806,7 @@ func TestRedactionMarginAtItsBoundary(t *testing.T) {
 // goredact upgrade must re-measure redactionMargin against its rules'
 // lookaheads (see its comment), then update the version pinned here.
 func TestRedactionMarginCoversTheEngine(t *testing.T) {
-	if goredactVersion(t) != "v0.3.0" {
+	if goredactVersion(t) != "v0.4.0" {
 		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
 	}
 	redactor, err := NewRedactor()

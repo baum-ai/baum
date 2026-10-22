@@ -61,7 +61,7 @@ type DiffLimits struct {
 // because a key in the lines that hunk drops may run on into the next hunk.
 //
 // It is measured, not derived: goredact does not export its rules'
-// lookahead. In goredact v0.3.0 the longest is 16384 bytes, for the
+// lookahead. In goredact v0.4.0 the longest is 16384 bytes, for the
 // pem-private-key and putty-private-key rules (jwt and
 // supabase-service-role-key read 8192). Re-measure it on every goredact
 // upgrade: TestRedactionMarginCoversTheEngine fails until it is.
