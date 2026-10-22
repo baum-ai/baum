@@ -445,6 +445,8 @@ Refresh preserves component state when possible. Ctrl-C stops both containers
 and their isolated daemon. This runs against the development container's data,
 not your host daemon or repositories. Native Rust changes and the bundled
 setup/connecting screens still require restarting the command.
+Both development containers run with the invoking user's UID and GID so they
+can access the private shared directory and create files owned by that user.
 
 Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
 on port 5173. That directory shares the daemon's origin with Vite, never its

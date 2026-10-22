@@ -6,6 +6,8 @@ cd "$root"
 export BAUM_OP_RUN=0
 compose="$root/dev-compose.sh"
 shared=$(mktemp -d /tmp/baum-desktop-dev.XXXXXX)
+# Match the private directory's owner even when Compose defaults to UID 1000.
+container_user="$(id -u):$(id -g)"
 desktop=
 frontend=
 cleanup() {
@@ -20,7 +22,7 @@ trap 'exit 143' TERM
 : "${WAYLAND_DISPLAY:?A Wayland session is required}"
 "$compose" build desktop-test desktop-dev-frontend
 desktop="baum-desktop-dev-${shared##*.}"
-"$compose" run -d --no-deps --name "$desktop" \
+"$compose" run -d --no-deps --user "$container_user" --name "$desktop" \
     -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
     -v "$shared:/desktop-dev" \
     -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
@@ -28,7 +30,7 @@ desktop="baum-desktop-dev-${shared##*.}"
     desktop-test sleep infinity
 export BAUM_DESKTOP_DEV_CONTAINER="$desktop"
 frontend="baum-desktop-vite-${shared##*.}"
-"$compose" run -d --no-deps --name "$frontend" \
+"$compose" run -d --no-deps --user "$container_user" --name "$frontend" \
     -v "$shared:/desktop-dev" \
     -e BAUM_DESKTOP_DEV_DIR=/desktop-dev --workdir /oss/app \
     desktop-dev-frontend sh -ec 'pnpm generate; exec pnpm exec vite'
