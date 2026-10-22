@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/uibuild"
 )
 
 var (
@@ -26,13 +28,8 @@ func readIndex(t *testing.T) string {
 	return string(index)
 }
 
-func TestIndexExists(t *testing.T) {
-	if _, err := fs.Stat(Assets(), "index.html"); err != nil {
-		t.Fatalf("index.html: %v", err)
-	}
-}
-
 func TestIndexReferencesAreSameOriginFiles(t *testing.T) {
+	uibuild.Require(t, Assets())
 	assets := Assets()
 	matches := reference.FindAllStringSubmatch(readIndex(t), -1)
 	if len(matches) == 0 {
@@ -53,6 +50,7 @@ func TestIndexReferencesAreSameOriginFiles(t *testing.T) {
 // The server sends a strict default-src 'self' policy, which blocks inline
 // scripts and styles.
 func TestIndexHasNoInlineCode(t *testing.T) {
+	uibuild.Require(t, Assets())
 	index := readIndex(t)
 	for _, match := range inline.FindAllStringSubmatch(index, -1) {
 		if strings.TrimSpace(match[1]) != "" {
@@ -65,6 +63,7 @@ func TestIndexHasNoInlineCode(t *testing.T) {
 }
 
 func TestChunkImportsResolve(t *testing.T) {
+	uibuild.Require(t, Assets())
 	assets := Assets()
 	checked := 0
 	err := fs.WalkDir(assets, "assets", func(name string, entry fs.DirEntry, err error) error {
@@ -93,6 +92,7 @@ func TestChunkImportsResolve(t *testing.T) {
 }
 
 func TestNoSourceMaps(t *testing.T) {
+	uibuild.Require(t, Assets())
 	err := fs.WalkDir(Assets(), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -112,6 +112,7 @@ func TestNoSourceMaps(t *testing.T) {
 // does this when it compiles a schema, so the viewer ships precompiled
 // validators; see scripts/review-tile-validators.mjs in the viewer package.
 func TestNoRuntimeCodeGeneration(t *testing.T) {
+	uibuild.Require(t, Assets())
 	evaluates := regexp.MustCompile(`new Function\(|(?:^|[^\w$.])eval\(|Error compiling schema`)
 	err := fs.WalkDir(Assets(), "assets", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(name, ".js") {

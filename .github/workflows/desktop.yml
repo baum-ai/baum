@@ -19,6 +19,10 @@ on:
         description: Artifact holding goreleaser's dist/baum_<os>_<arch>*/ binaries; empty builds them from source
         type: string
         default: ""
+      apps-artifact:
+        description: For a build from source, the artifact holding the built viewer/dist and localapp/dist, which only a release commit carries
+        type: string
+        default: ""
       finalize-macos:
         description: Also run macos-finalize.sh (ad hoc signing, disk image, updater archive) in the bundle job
         type: boolean
@@ -70,6 +74,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+
+      # Without them, the bundled daemon would answer the app's window with a
+      # note that it was built without its web app.
+      - name: Download the built apps
+        if: inputs.cli-artifact == '' && inputs.apps-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.apps-artifact }}
+          path: internal
 
       - name: Build the bundled baum binaries
         if: inputs.cli-artifact == ''

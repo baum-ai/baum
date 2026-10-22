@@ -17,11 +17,18 @@ go test ./...
 
 `just check` runs the same steps CI runs: `gofmt` check, `go mod tidy -diff`,
 vet, build, tests with the race detector and `golangci-lint`. Run it before
-opening a pull request. The built viewer in `internal/viewer/dist` is committed,
-and CI fails when it differs from a fresh build: after changing the viewer's
-source, run `just viewer-build` and commit the result, and `just viewer-fresh`
-runs the same check CI does. `just --list` shows the other recipes, including `release-snapshot`
-(a local goreleaser build for every target).
+opening a pull request. The built viewer and local app (`internal/viewer/dist`,
+`internal/localapp/dist`) are not committed: only a release commit, the commit
+a `v*` tag points at, carries them, so `go install` of a tagged version needs
+nothing but Go. Run `just viewer-build` before building a binary with a working
+UI or running the tests that read the built apps, which skip without it; a
+binary built without it says so in place of each app. Because release commits
+sit beside `main` rather than on it, `go install …@main` (or any untagged
+commit) gets such a binary, and its pseudo-version derives from an older tag
+than the latest release; install a tagged version (`@latest`). The precompiled tile
+validators are committed, and `just viewer-fresh` fails when they differ from a
+fresh build, as CI does. `just --list` shows the other recipes, including
+`release-snapshot` (a local goreleaser build for every target).
 
 `CGO_ENABLED=0` must keep working; release binaries are built that way for
 linux, macOS and Windows.

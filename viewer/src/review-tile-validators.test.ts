@@ -11,7 +11,7 @@ describe("precompiled tile validators", () => {
     // them would bury the message.
     expect(
       (await committed()) === (await buildReviewTileValidators()),
-      "src/precompiled/review-tile-validators.js is out of date: run `pnpm generate:validators`, rebuild the app with `pnpm build:app` and commit the results",
+      "src/precompiled/review-tile-validators.js is out of date: run `pnpm generate:validators` and commit the result",
     ).toBe(true);
   });
 

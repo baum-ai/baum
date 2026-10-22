@@ -18,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/baum-ai/baum/internal/uibuild"
 	"github.com/baum-ai/baum/internal/viewer"
 	"github.com/baum-ai/baum/schema"
 )
@@ -229,6 +230,7 @@ func TestServesDocumentBytesUnchanged(t *testing.T) {
 }
 
 func TestSampleServesExampleAndIndex(t *testing.T) {
+	uibuild.Require(t, viewer.Assets())
 	_, base := start(t, Options{Document: schema.Example})
 	if got := fetchDocument(t, base); got != string(schema.Example) {
 		t.Error("/api/document is not schema.Example")
@@ -248,6 +250,7 @@ func TestSampleServesExampleAndIndex(t *testing.T) {
 }
 
 func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
+	uibuild.Require(t, viewer.Assets())
 	_, base := start(t, Options{Document: []byte(fixture)})
 	index, _ := fs.ReadFile(viewer.Assets(), "index.html")
 
@@ -283,7 +286,24 @@ func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
 	}
 }
 
+func TestUnbuiltAppSaysSo(t *testing.T) {
+	_, base := start(t, Options{Document: []byte(fixture), Assets: fstest.MapFS{".gitkeep": {}}})
+	for _, p := range []string{"/", "/foo"} {
+		resp, body := get(t, base+p)
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "built without its web app") {
+			t.Errorf("%s: status %d, body %.60q", p, resp.StatusCode, body)
+		}
+	}
+	if resp, _ := get(t, base+"/assets/app.js"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("asset: status %d, want 404", resp.StatusCode)
+	}
+	if got := fetchDocument(t, base); got != fixture {
+		t.Errorf("/api/document = %q", got)
+	}
+}
+
 func TestFontContentType(t *testing.T) {
+	uibuild.Require(t, viewer.Assets())
 	_, base := start(t, Options{Document: []byte(fixture)})
 	entries, err := fs.Glob(viewer.Assets(), "assets/*.woff2")
 	if err != nil || len(entries) == 0 {
@@ -379,10 +399,7 @@ func TestTraversalNeverReachesDisk(t *testing.T) {
 	// come back is the index or a 404. The paths include files that exist
 	// relative to this test's working directory, which a handler serving from
 	// disk would return.
-	index, err := fs.ReadFile(viewer.Assets(), "index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
+	index, _ := fs.ReadFile(viewer.Assets(), "index.html")
 	tests := []struct {
 		name   string
 		assets fs.FS
@@ -423,6 +440,9 @@ func TestTraversalNeverReachesDisk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.assets == nil {
+				uibuild.Require(t, viewer.Assets())
+			}
 			_, base := start(t, Options{Document: []byte(fixture), Assets: tt.assets})
 			port := base[strings.LastIndex(base, ":")+1:]
 			for _, p := range paths {

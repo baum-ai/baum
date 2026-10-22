@@ -8,10 +8,11 @@ before:
   hooks:
     # Fail instead of rewriting go.mod after goreleaser checked the tree is clean.
     - go mod tidy -diff
-    # Rebuild the viewer and fail when the result differs from the committed
-    # internal/viewer/dist, which go build embeds, so no archive ships a stale
-    # bundle. Needs Node.js and pnpm; the release workflow sets
-    # BAUM_SKIP_VIEWER_FRESH because a read-only job has checked it.
+    # Build the viewer and local app, which go build embeds, so a snapshot
+    # ships them; on a release commit, which carries them, fail when they
+    # differ from the fresh build, so no archive ships a stale bundle. Needs
+    # Node.js and pnpm; the release workflow sets BAUM_SKIP_VIEWER_FRESH
+    # because a read-only job has checked the release commit.
     - sh scripts/viewer-fresh.sh
 
 builds:
