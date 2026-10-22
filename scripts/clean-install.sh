@@ -3,10 +3,12 @@
 # no Node.js on PATH, then smoke test the installed binary.
 #
 # This proves that "go install github.com/baum-ai/baum/cmd/baum@version"
-# needs nothing but Go: the viewer bundle under internal/viewer/dist is
-# committed, so the module zip carries it. The zip is built from the committed
-# files at HEAD only, as the module proxy builds it from a tag; uncommitted
-# changes are not installed. Runs on Linux, macOS and Windows (Git Bash).
+# needs nothing but Go: a v* tag points at a release commit, which carries the
+# built viewer and local app, so the module zip does too. The zip is built from
+# a release commit, as the module proxy builds it from a tag: HEAD when HEAD is
+# one, otherwise HEAD plus the apps built in this checkout (run
+# "just viewer-build" first). Other uncommitted changes are not installed. Runs
+# on Linux, macOS and Windows (Git Bash).
 set -euo pipefail
 
 module=github.com/baum-ai/baum
@@ -52,11 +54,22 @@ fail() {
 proxy_dir=$work/proxy/$module/@v
 mkdir -p "$proxy_dir" "$work/bin" "$work/gopath"
 
-step "build the module zip from the committed files at HEAD"
+step "build the module zip from a release commit"
 # The zip builder only accepts a repository whose .git is a directory, which a
 # linked worktree's is not, so it reads a local clone. Nothing is checked out:
 # the zip is built from the commit, as the module proxy builds it from a tag.
 git clone --quiet --no-checkout "$repo_root" "$work/src"
+if git -C "$work/src" cat-file -e "HEAD:${subdir:+$subdir/}internal/viewer/dist/index.html" 2>/dev/null; then
+  echo "HEAD is a release commit"
+else
+  # As a release does: HEAD plus the built apps, which must be built here
+  # already (just viewer-build). Only the clone's HEAD moves.
+  release=$(GIT_AUTHOR_NAME=clean-install GIT_AUTHOR_EMAIL=clean-install@localhost \
+    GIT_COMMITTER_NAME=clean-install GIT_COMMITTER_EMAIL=clean-install@localhost \
+    sh "$module_dir/scripts/release-commit.sh" "$work/src/.git" HEAD "${subdir:+$subdir/}" "clean-install release")
+  git -C "$work/src" update-ref HEAD "$release"
+  echo "made release commit $release on top of HEAD"
+fi
 go -C "$module_dir/scripts/zipmod" run . \
   "$module" "$version" "$(native "$work/src")" "$subdir" \
   "$(native "$proxy_dir")/$version.zip" internal/viewer/dist/index.html

@@ -14,6 +14,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // Who records which party a decision belongs to.
@@ -101,6 +103,22 @@ type Decision struct {
 	Evidence            string   `json:"evidence,omitempty"`
 	EvidenceTurn        int      `json:"evidence_turn,omitempty"`
 	Files               []string `json:"files"`
+	// ID is the decision's ID, given by the host when it first stores the
+	// extraction holding it (Identified); empty in a model reply.
+	ID string `json:"decision_id,omitempty"`
+}
+
+// Identified returns decisions with a random ID given to each one without
+// one. The model never supplies an ID and none is derived, so a host calls it
+// once, when it first stores an extraction, and keeps the IDs from then on.
+func Identified(decisions []Decision) []Decision {
+	identified := slices.Clone(decisions)
+	for i := range identified {
+		if identified[i].ID == "" {
+			identified[i].ID = uuid.NewString()
+		}
+	}
+	return identified
 }
 
 // SessionDecisions is the decisions extracted from one root session.

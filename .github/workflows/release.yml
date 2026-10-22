@@ -1,5 +1,22 @@
 name: Release
 
+# On a version tag of a release commit: a commit on main plus the built
+# viewer and local app, which no other commit carries, so go install of the tag
+# needs only Go. The monorepo's "Tag an open-source release" workflow makes it.
+#
+#   test, viewer-dist, desktop-test
+#     -> release (goreleaser: CLI archives into a draft GitHub release)
+#     -> desktop (desktop.yml: unsigned bundles, no secrets)
+#     -> sign-macos, sign-windows, sign-linux (environment "release")
+#     -> desktop-manifest (latest.json, checksums; read-only)
+#     -> desktop-publish (attach, then publish the draft)
+#
+# Signing secrets live only in the "release" environment, which needs an
+# approval and accepts only v* tags. Only the three sign jobs use it, and
+# they compile nothing: they run Apple's and Microsoft's signing tools, a
+# pinned minisign and this repository's scripts on bundles built without
+# secrets. Actions are pinned to commits. See desktop/README.md.
+
 on:
   push:
     tags:
@@ -15,15 +32,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # No caches anywhere in this workflow: a release never restores files
+      # another run saved.
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
 
       - name: Check go.mod is tidy
         run: go mod tidy -diff
@@ -31,66 +50,137 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The release commit carries the built apps, so their tests must run.
+      # Skips the second a race-enabled binary sleeps as it exits; see check.yml.
       - name: Test
+        env:
+          BAUM_REQUIRE_UI: "1"
+          GORACE: atexit_sleep_ms=0
         run: go test -race ./...
 
   viewer-dist:
-    # The tag must carry the viewer bundle its sources build to.
+    # The tag must carry the viewer and local app its sources build to.
     name: Viewer bundle is fresh
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.0.8
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: viewer/pnpm-lock.yaml
 
       - name: Rebuild and compare
+        env:
+          BAUM_RELEASE_COMMIT: "1"
         run: sh scripts/viewer-fresh.sh
+
+  desktop-test:
+    # The tag's desktop code passes the checks Check runs on pull requests.
+    name: Desktop tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install WebKitGTK and GTK development packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev libssl-dev minisign
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.99.1
+
+      - name: Build the bundled baum binary
+        working-directory: .
+        run: sh desktop/scripts/sidecar.sh
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Updater signing and manifest checks
+        run: bash scripts/updater-manifest-test.sh
 
   release:
     name: Release
-    needs: [test, viewer-dist]
-    runs-on: ubuntu-latest
+    needs: [test, viewer-dist, desktop-test]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"
+
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # goreleaser derives the changelog from the previous tag.
           fetch-depth: 0
           # goreleaser calls the release API with GITHUB_TOKEN from the
           # environment and never pushes, so no credentials stay in the clone.
           persist-credentials: false
 
+      # Only a reviewed commit is released: the tag must point at a release
+      # commit whose one parent is on main, past the previous release, and
+      # which adds nothing but the built apps. viewer-dist checks those match
+      # their sources. The tagging workflow ran the same checks before
+      # pushing the tag.
+      - name: The tag is a release commit of a commit on main, newer than the last release
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          sh scripts/release-check.sh "$GITHUB_REF_NAME" origin/main
+
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
+
+      - name: Verify module downloads
+        run: go mod verify
 
       # Builds linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and
       # windows/amd64 with CGO off, archives them, writes checksums.txt and
-      # creates the GitHub release. See .goreleaser.yaml.
+      # creates a draft GitHub release with empty notes (see .goreleaser.yaml);
+      # desktop-publish publishes it.
       - name: goreleaser release
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.18.3
           args: release --clean
         env:
           # The viewer-dist job, which has a read-only token, already checked
@@ -98,3 +188,490 @@ jobs:
           # runs while this job holds a token that can write to the repository.
           BAUM_SKIP_VIEWER_FRESH: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The desktop bundles carry these exact binaries.
+      - name: Keep the baum binaries for the desktop app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-binaries
+          path: |
+            dist/baum_*/baum
+            dist/baum_*/baum.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop:
+    # No secrets: this compiles the app.
+    name: Desktop
+    needs: release
+    uses: ./.github/workflows/desktop.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+      cli-artifact: cli-binaries
+
+  sign-macos:
+    # Apple's tools, a pinned minisign and this repository's scripts only.
+    name: Sign the macOS app
+    needs: [release, desktop]
+    environment: release
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
+    outputs:
+      updater: ${{ steps.signing.outputs.updater }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the unsigned app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-darwin-universal
+          path: unsigned
+
+      - name: Signing configuration
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          has() { if [ -n "$1" ]; then echo true; else echo false; fi; }
+          {
+            echo "updater=$(has "$TAURI_SIGNING_PRIVATE_KEY")"
+            echo "apple=$(has "$APPLE_CERTIFICATE")"
+            echo "apple-api-key=$(has "$APPLE_API_PRIVATE_KEY")"
+          } >>"$GITHUB_OUTPUT"
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::APPLE_CERTIFICATE is set without APPLE_SIGNING_IDENTITY"
+            exit 1
+          fi
+
+      - name: Import the Developer ID certificate
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          (umask 077; printf '%s' "$APPLE_CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.p12")
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+      - name: Write the App Store Connect API key
+        if: steps.signing.outputs.apple == 'true' && steps.signing.outputs.apple-api-key == 'true'
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          (umask 077; printf '%s\n' "$APPLE_API_PRIVATE_KEY" >"$RUNNER_TEMP/AuthKey.p8")
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >>"$GITHUB_ENV"
+
+      - name: Sign, notarise and package
+        env:
+          APPLE: ${{ steps.signing.outputs.apple }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Without the certificate nothing Apple-related applies: ad hoc.
+          if [ "$APPLE" != true ]; then
+            unset APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH \
+              APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+          bash desktop/scripts/macos-finalize.sh unsigned/baum-desktop-darwin-universal.app.tar \
+            "$VERSION" signed
+
+      - name: Install minisign
+        if: steps.signing.outputs.updater == 'true'
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
+
+      - name: Sign the updater archive
+        if: steps.signing.outputs.updater == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash desktop/scripts/updater-sign.sh "$VERSION" signed/*.app.tar.gz
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/certificate.p12"
+          if [ -f "$RUNNER_TEMP/signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          fi
+
+      - name: Keep the signed files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-darwin-universal
+          path: signed/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-windows:
+    # Microsoft's signtool, a pinned minisign and this repository's scripts only.
+    name: Sign the Windows installer
+    needs: [release, desktop]
+    environment: release
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
+    outputs:
+      updater: ${{ steps.signing.outputs.updater }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the unsigned installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-windows-amd64
+          path: unsigned
+
+      - name: Signing configuration
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+        run: |
+          has() { if [ -n "$1" ]; then echo true; else echo false; fi; }
+          {
+            echo "updater=$(has "$TAURI_SIGNING_PRIVATE_KEY")"
+            echo "windows=$(has "$WINDOWS_CERTIFICATE$AZURE_TRUSTED_SIGNING_ACCOUNT")"
+          } >>"$GITHUB_OUTPUT"
+          mkdir -p signed
+          name=baum-desktop-windows-amd64-unsigned-setup.exe
+          if [ -n "$WINDOWS_CERTIFICATE$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+            name=baum-desktop-windows-amd64-setup.exe
+          fi
+          cp unsigned/baum-desktop-windows-amd64-setup.exe "signed/$name"
+
+      - name: Write the code signing certificate
+        if: steps.signing.outputs.windows == 'true'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          if [ -n "$WINDOWS_CERTIFICATE" ]; then
+            printf '%s' "$WINDOWS_CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.pfx"
+            echo "WINDOWS_CERTIFICATE_PATH=$RUNNER_TEMP/certificate.pfx" >>"$GITHUB_ENV"
+          fi
+
+      - name: Sign the installer
+        if: steps.signing.outputs.windows == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+        run: ./desktop/scripts/windows-sign.ps1 -Path signed/baum-desktop-windows-amd64-setup.exe
+
+      - name: Install minisign
+        if: steps.signing.outputs.updater == 'true'
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
+
+      # After the Authenticode signature: the updater signs the final file.
+      - name: Sign the updater installer
+        if: steps.signing.outputs.updater == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash desktop/scripts/updater-sign.sh "$VERSION" signed/*-setup.exe
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/certificate.pfx"
+
+      - name: Keep the signed files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-windows-amd64
+          path: signed/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-linux:
+    # A pinned minisign and this repository's scripts only.
+    name: Sign the Linux AppImages
+    needs: [release, desktop]
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      # updater-sign.sh and updater-manifest.sh then use only the pinned
+      # minisign (MINISIGN), never one on PATH.
+      BAUM_RELEASE_SIGNING: "1"
+    outputs:
+      updater: ${{ steps.signing.outputs.updater }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the x86_64 bundles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-linux-amd64
+          path: unsigned/linux-amd64
+
+      # Missing when the optional arm64 build failed.
+      - name: Download the arm64 bundles
+        id: arm64
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-linux-arm64
+          path: unsigned/linux-arm64
+
+      # Each platform's own files only, so no artifact can supply another's.
+      - name: Take the bundles
+        env:
+          ARM64: ${{ steps.arm64.outcome }}
+        run: |
+          mkdir signed
+          cp unsigned/linux-amd64/baum-desktop-linux-amd64.deb unsigned/linux-amd64/baum-desktop-linux-amd64.AppImage signed/
+          if [ "$ARM64" = success ]; then
+            cp unsigned/linux-arm64/baum-desktop-linux-arm64.deb unsigned/linux-arm64/baum-desktop-linux-arm64.AppImage signed/
+          fi
+
+      - name: Signing configuration
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "updater=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "updater=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Install minisign
+        if: steps.signing.outputs.updater == 'true'
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
+
+      - name: Sign the AppImages
+        if: steps.signing.outputs.updater == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash desktop/scripts/updater-sign.sh "$VERSION" signed/*.AppImage
+
+      - name: Keep the signed files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-linux
+          path: signed/
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop-manifest:
+    # Read-only: writes latest.json and checksums, and checks every bundle
+    # against the release key and the version before anything is published.
+    name: Desktop updater manifest
+    needs: [release, sign-macos, sign-windows, sign-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      BAUM_RELEASE_SIGNING: "1"
+      # Whether the release environment holds the updater key, as each sign
+      # job saw it.
+      UPDATER: ${{ needs.sign-linux.outputs.updater }}
+      UPDATER_MACOS: ${{ needs.sign-macos.outputs.updater }}
+      UPDATER_WINDOWS: ${{ needs.sign-windows.outputs.updater }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the signed macOS files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-darwin-universal
+          path: signed/darwin-universal
+
+      - name: Download the signed Windows files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-windows-amd64
+          path: signed/windows-amd64
+
+      - name: Download the signed Linux files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-linux
+          path: signed/linux
+
+      # Each platform contributes only its own names, and no name twice.
+      - name: Collect the release files
+        run: |
+          mkdir release
+          status=0
+          take() {
+            local platform=$1 pattern=$2 file name
+            for file in "signed/$platform"/*; do
+              name=$(basename "$file")
+              if ! [[ $name =~ $pattern ]]; then
+                echo "::error::signed-$platform holds $name, which is not one of its files"
+                status=1
+              elif [ -e "release/$name" ]; then
+                echo "::error::$name comes from more than one artifact"
+                status=1
+              else
+                cp "$file" release/
+              fi
+            done
+          }
+          take darwin-universal '^baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)$'
+          take windows-amd64 '^baum-desktop-windows-amd64(-unsigned)?-setup\.exe(\.sig)?$'
+          take linux '^baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)$'
+          exit "$status"
+
+      - name: Install minisign
+        run: |
+          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
+          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
+
+      - name: Write and verify latest.json
+        run: |
+          shopt -s nullglob
+          signatures=(release/*.sig)
+          if [ "$UPDATER" != "$UPDATER_MACOS" ] || [ "$UPDATER" != "$UPDATER_WINDOWS" ]; then
+            echo "::error::the sign jobs disagree on whether the updater key is configured"
+            exit 1
+          fi
+          if [ "$UPDATER" != true ]; then
+            if [ "${#signatures[@]}" -ne 0 ]; then
+              echo "::error::updater signatures exist although the updater key is not configured"
+              exit 1
+            fi
+            echo "::warning::The release environment has no TAURI_SIGNING_PRIVATE_KEY: publishing without latest.json, so installed apps are not offered this release."
+            exit 0
+          fi
+          # Fails unless every required bundle carries a signature.
+          bash desktop/scripts/updater-manifest.sh write "$VERSION" release
+          {
+            echo "### Updater manifest"
+            echo
+            echo '```json'
+            cat release/latest.json
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Write checksums
+        working-directory: release
+        run: sha256sum -- * >desktop-checksums.txt
+
+      - name: Keep the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop-publish:
+    # The only desktop job with a token that can write: it runs no build
+    # tooling, only gh and the attestation action.
+    name: Publish the release
+    needs: desktop-manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-release
+          path: release
+
+      # Only the files a release ships, and every one it must ship.
+      - name: Check the files
+        run: |
+          allowed='^(baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)|baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)|baum-desktop-windows-amd64(-unsigned)?-setup\.exe(\.sig)?|desktop-checksums\.txt|latest\.json)$'
+          status=0
+          for file in release/*; do
+            if ! [[ $(basename "$file") =~ $allowed ]]; then
+              echo "::error::unexpected file $(basename "$file")"
+              status=1
+            fi
+          done
+          # Exactly one of each, so no bundle is shipped under two names.
+          for required in 'baum-desktop-darwin-universal*.dmg' 'baum-desktop-darwin-universal*.app.tar.gz' \
+            'baum-desktop-linux-amd64.deb' 'baum-desktop-linux-amd64.AppImage' \
+            'baum-desktop-windows-amd64*-setup.exe' desktop-checksums.txt; do
+            mapfile -t matches < <(compgen -G "release/$required" || true)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::expected one $required, found ${#matches[@]}"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: release/baum-desktop-*
+
+      # latest.json goes last, so an app never reads a manifest whose
+      # bundles are not there yet; the draft is published only after it.
+      - name: Attach and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          files=()
+          for file in release/*; do
+            if [ "$(basename "$file")" != latest.json ]; then files+=("$file"); fi
+          done
+          gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          if [ -f release/latest.json ]; then
+            gh release upload "$TAG" release/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

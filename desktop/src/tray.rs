@@ -23,7 +23,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::daemon::Launch;
 use crate::status::{self, Icon, Link, Observed, Tracker, View};
-use crate::{autostart, client, lifecycle, notifications};
+use crate::{autostart, client, lifecycle, notifications, onboarding};
 
 const BUSY_INTERVAL: Duration = Duration::from_secs(3);
 const IDLE_INTERVAL: Duration = Duration::from_secs(10);
@@ -64,7 +64,8 @@ impl Entry {
 }
 
 /// The tray menu for a view: Open, what the daemon is doing, anything needing
-/// attention, pause or resume, start at login, Quit, and Quit and stop.
+/// attention, pause or resume, start at login, Command Line and Hooks…, Quit,
+/// and Quit and stop.
 pub fn menu_spec(view: &View, login: bool) -> Vec<Entry> {
     let separator = |id: &str| Entry {
         id: id.into(),
@@ -95,6 +96,7 @@ pub fn menu_spec(view: &View, login: bool) -> Vec<Entry> {
         kind: Kind::Check(login),
         enabled: true,
     });
+    entries.push(Entry::item("setup", onboarding::MENU_LABEL, true));
     entries.push(separator("separator-2"));
     entries.push(Entry::item("quit", "Quit", true));
     entries.push(Entry::item(
@@ -348,11 +350,29 @@ pub fn background_submenu(
 }
 
 /// Sets the window's menu bar: the platform default plus Background and
-/// Notifications.
+/// Notifications, and "Command Line and Hooks…" in the application menu on
+/// macOS, in Background elsewhere.
 fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry>, String> {
     let e = |e: tauri::Error| e.to_string();
     let (background, item) = background_submenu(app, login).map_err(e)?;
     let window_menu = Menu::default(app).map_err(e)?;
+    let setup = onboarding::menu_item(app).map_err(e)?;
+    let application = window_menu
+        .items()
+        .map_err(e)?
+        .into_iter()
+        .next()
+        .and_then(|i| i.as_submenu().cloned());
+    match application {
+        // After "About baum" and its separator.
+        Some(application) if cfg!(target_os = "macos") => {
+            application.insert(&setup, 2).map_err(e)?;
+            application
+                .insert(&PredefinedMenuItem::separator(app).map_err(e)?, 3)
+                .map_err(e)?;
+        }
+        _ => background.append(&setup).map_err(e)?,
+    }
     window_menu.append(&background).map_err(e)?;
     if let Some(notifications) = notifications::submenu(app).map_err(e)? {
         window_menu.append(&notifications).map_err(e)?;
@@ -440,6 +460,8 @@ enum Action {
     Open,
     Pause,
     Login,
+    /// "Command Line and Hooks…", in the tray and the window's menu bar.
+    Setup,
     Quit,
     QuitStop,
     Notification,
@@ -451,6 +473,7 @@ fn route(id: &str) -> Action {
         "open" => Action::Open,
         "pause" => Action::Pause,
         "login" | MENU_LOGIN => Action::Login,
+        "setup" | onboarding::MENU_ID => Action::Setup,
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
@@ -463,6 +486,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         Action::Open => lifecycle::show_window(app),
         Action::Pause => toggle_pause(app),
         Action::Login => toggle_login(app),
+        Action::Setup => onboarding::show(app),
         Action::Quit => lifecycle::quit(app),
         Action::QuitStop => lifecycle::quit_and_stop(app),
         Action::Notification => {
@@ -723,7 +747,7 @@ mod tests {
         let ids = menu_spec(&View::default(), false)
             .into_iter()
             .map(|e| e.id)
-            .chain([MENU_LOGIN.to_string()])
+            .chain([MENU_LOGIN.to_string(), onboarding::MENU_ID.to_string()])
             .chain(notifications::menu_ids().map(String::from));
         for id in ids {
             let action = route(&id);
@@ -731,6 +755,7 @@ mod tests {
                 "open" => Action::Open,
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
+                "setup" | onboarding::MENU_ID => Action::Setup,
                 "quit" => Action::Quit,
                 "quit-stop" => Action::QuitStop,
                 _ if id.starts_with("notifications:") => Action::Notification,
@@ -765,6 +790,7 @@ mod tests {
                 "2 running",
                 "Pause automatic reviews",
                 "Start at login",
+                "Command Line and Hooks…",
                 "Quit",
                 "Quit and stop background reviews"
             ]
@@ -778,6 +804,7 @@ mod tests {
                 "separator-1",
                 "pause",
                 "login",
+                "setup",
                 "separator-2",
                 "quit",
                 "quit-stop"

@@ -4,7 +4,8 @@ A [Tauri](https://tauri.app) v2 shell around the user's `baum daemon`. The
 shell adds no review features: the daemon serves the local application
 (`../app`) over loopback HTTP, and the window shows it. The shell handles only
 what the operating system has to: the window, the tray, start at login,
-notifications, and later installing the CLI, signing and updates.
+notifications, installing the `baum` command and the user-wide agent hooks,
+and later signing and updates.
 
 The app bundles the release `baum` binary next to its executable. `baum`
 itself is unchanged and stays `CGO_ENABLED=0`.
@@ -32,12 +33,159 @@ may start it, and it outlives the app: quitting the app leaves it running.
      screen. That screen shows the last lines of `daemon.log` and `daemon.out`
      from the state directory, and a button to start the daemon again.
    - While that screen shows, the app watches the credential file. When
-     another client starts a new daemon (hooks run `baum daemon ensure` on
-     every event), the app attaches to it.
+     another client starts a new daemon (a hook that finds none running starts
+     one in the background, except after `baum daemon stop`), the app
+     attaches to it.
    - The app never restarts the daemon on its own, so a crashing daemon
      cannot restart in a loop.
 
 A second launch focuses the existing window instead of opening another one.
+
+## First run: the baum command and the hooks
+
+Agent hooks run `baum` by name, so the app's first run sets up two things
+before the window attaches to the daemon (which starts meanwhile). The window
+opens on a bundled setup screen (`ui/setup.html`) that shows what is on this
+computer and what installing would change; nothing changes until the user
+clicks Install. The Rust side then makes each change:
+
+1. The `baum` command: the bundled binary, linked onto the login shell's
+   `PATH` (below). One binary and one version: the terminal, the hooks and
+   the daemon all run the app's baum, and updating the app updates them.
+2. The user-wide Claude Code and Codex hooks: the bundled
+   `baum hooks install --user`, for the agents it finds. Its output (files
+   changed, backups, Codex's `/hooks` trust step) is shown.
+
+"Skip for now" is there too, and so is "Keep my baum, install the hooks" when
+a different baum is in the way. Leaving the screen records that setup ran
+(`setup.json` in the app's configuration directory, with the link the app
+created), attaches to the daemon and opens its diagnostics page, which lists
+each problem with its fix. Later, every page of the app shows a notice with
+a link to that page while the diagnostics find a problem (see
+[`../app/README.md`](../app/README.md)).
+
+"Command Line and Hooks…" reopens the same screen: what is installed,
+Update, Replace, Remove, and Install or Remove hooks. "Done" attaches to the
+daemon again. The item is in the tray menu and in the window's menu bar (the
+application menu on macOS, the Background menu elsewhere), both built in
+`tray.rs`; it calls `onboarding::show`.
+
+The screen gets the facts from the bundled baum: `baum daemon login-path
+--json` resolves the login shell's `PATH` as the daemon does and names the
+first `baum` on it (the one hooks run) with its version, and `baum hooks
+status --user --json` reports each agent's hooks.
+
+### Where the command goes
+
+- **macOS and Linux:** a symbolic link named `baum` to the baum the app runs.
+  - If a different `baum` comes first on the `PATH` (`go install`, a release
+    archive), the screen shows its path and version, and replaces it only
+    when the user clicks "Replace <path>": that file is moved aside to
+    `<path>.replaced-by-baum-app` and the link takes its place, so it keeps
+    its position on the `PATH`. One a package manager owns (Homebrew's
+    `Cellar`, the Nix store, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, or an
+    asdf or mise `shims` directory) is not replaced: the screen says to remove
+    it with that manager (for example `brew uninstall baum`).
+  - Otherwise the link goes in the first of `~/.local/bin` and `~/bin` that
+    is on the `PATH`, else in `/usr/local/bin`, else in `~/.local/bin` with a
+    note to add it to the `PATH`.
+  - A directory the user cannot write is changed through the system's
+    password prompt (`osascript` with administrator privileges on macOS,
+    `/usr/bin/pkexec` on Linux) only when it is a system directory: outside
+    the home directory, existing or with an existing parent, reached without
+    symbolic links, owned by root and writable by no one else, below
+    directories that are root's and not writable by others either (sticky
+    ones such as `/tmp` aside); in practice `/usr/local/bin`. Anywhere else
+    the screen says what is in the way instead.
+  - Root runs a fixed script that receives the paths as arguments. It
+    refuses (exit 4) anything but absolute paths, the link `<dir>/baum` and
+    a backup `<dir>/baum.replaced-by-baum-app` with at most a numeric suffix.
+    It changes into the parent and then the directory (creating only the
+    last one), checks that the physical path is the one named and that root
+    owns it and no one else can write it, and then works by relative names
+    with `--`, so a directory swapped in after the app's check is never
+    followed. Uninstalling also requires the link to be a symbolic link to
+    the recorded target (exit 3 otherwise). If placing the link fails, the
+    replaced baum is put back. These scripts were exercised as root in a
+    container against path traversal, newlines, option injection, relative
+    paths, an empty target and a directory swapped for a symbolic link.
+  - The link never needs a password when it would point into the home
+    directory (an AppImage's copy, an app in `~/Applications`): the user can
+    rewrite that file, and a root-owned link to it would put it on every
+    user's `PATH` and on sudo's `secure_path`. Such a link goes in
+    `~/.local/bin` (created if needed, with the note to add it to the
+    `PATH`); if a baum in a system directory would still come first, the
+    screen says to remove it or reorder the `PATH`.
+  - The link points at a stable path: the binary inside the installed app
+    bundle (`baum.app/Contents/MacOS/baum`, or `/usr/bin/baum` from the deb),
+    which updates replace in place. On macOS an app still on its disk image
+    or translocated by Gatekeeper must be moved to Applications first.
+  - An AppImage runs from a mount that disappears when it quits. The app
+    keeps a copy of its baum in its data directory (`bin/baum`, mode 0755),
+    checks it before every run of baum and copies again when the stamp
+    beside it (`baum.stamp`: the bundled binary's size and modification time
+    and the copy's modification time) does not match, so a changed app or a
+    rewritten copy heals; the new file is renamed into place, so a daemon
+    running the old one keeps it. It runs that copy for everything: the
+    daemon, `login-path` and the hooks commands. A copy that cannot be made
+    is an error on the connecting screen, whose Retry tries again; the app
+    never falls back to the binary in the mount. The link points at the copy,
+    and removing the command leaves the copy. The app counts as an
+    AppImage only when `APPIMAGE` and `APPDIR` are set and its executable is
+    under `APPDIR`, since programs started from an AppImage inherit
+    `APPIMAGE`.
+  - The deb's `/usr/bin/baum` already is the app's binary: the screen shows
+    it as installed and leaves it to the package manager.
+  - A link the app made whose app was since deleted points nowhere; shells
+    and the hooks' `command -v baum` skip it, so the hooks do nothing. The
+    next install replaces such a broken link without asking, and the app's
+    own link to an older copy of the app is updated without asking.
+- **Windows:** the app keeps a copy of its `baum.exe`, alone in `bin` in its
+  local (not roaming) data directory and refreshed the same way (a running
+  copy is renamed aside under a name of its own, and earlier ones are
+  removed once they no longer run), runs that copy, and adds the directory to the front of the
+  user's `PATH` (the registry value, keeping unexpanded variables, compared
+  with them expanded so `%LOCALAPPDATA%\…` counts as the same directory;
+  refused if the value would pass 32,000 characters). New terminals pick it
+  up. A `baum` in a system `PATH` directory still comes first; the screen
+  says so.
+
+`setup.json` is the user's file, so the app uses a record only when it has
+this shape (a link named `baum`, a backup named as above, an absolute target
+named `baum`), still blocks a package manager's baum and asks before
+replacing anything it did not itself link, and asks for a password to remove
+a link only when the record names the baum the app runs now. Remove deletes only what the app recorded: the link, while it
+still points where the app put it (a link someone changed since is left
+alone, and the screen names a backup still beside it), and puts back a baum
+it had replaced; on Windows it takes the directory off the user `PATH`.
+`setup.json` lists every link the app made and has not removed: installing
+in a new place removes the earlier one, and one that cannot be removed (a
+cancelled password prompt) stays listed, shown on the screen, until Remove
+succeeds for it. Updating the app's own link keeps the backup of the baum it
+replaced, so Remove still puts that back. (A `setup.json` of the first
+release, with a single `command`, is read as a one-item list.)
+Hooks are removed with the bundled `baum hooks uninstall --user`, which
+removes only baum's own entries.
+
+### Restarts into the app's baum
+
+A busy older daemon restarts into a newer baum only if it trusts the
+executable (`internal/daemon/trust.go`): its own, or the `baum` on its login
+shell's `PATH` after resolving links, owned by the user or root and not
+group- or world-writable, in directories that pass the same test up to `/`.
+Installing the link makes the bundled binary the `baum` on the `PATH`, so:
+
+- Linux deb (`/usr/bin/baum`) and the AppImage's copy in the user's data
+  directory are trusted (the copy only while the home directory and
+  `~/.local/share` are not group-writable, which a umask of 002 can cause).
+  The binary inside an AppImage's mount (under `/tmp`) never would be, which
+  is one more reason the app runs the copy.
+- macOS: `/Applications` is `root:admin`, mode 0775. The trust check accepts
+  a directory that only the admin group may also write (its members can
+  become root anyway), so an app there or in `~/Applications` is trusted, as
+  is Intel Homebrew's `/usr/local/bin`.
+- Windows checks only that the file is the daemon's own or the `PATH` baum,
+  which the user `PATH` entry makes it for daemons started after the change.
 
 ## Tray, closing and quitting
 
@@ -57,8 +205,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   tray library that fails to load leaves the app running without a tray.
 - **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
   1 queued"); anything needing attention; Pause or Resume automatic reviews;
-  Start at login; a Notifications submenu (see "Notifications"); Quit; Quit
-  and stop background reviews.
+  Start at login; Command Line and Hooks… (see "First run"); a Notifications
+  submenu (see "Notifications"); Quit; Quit and stop background reviews.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -105,7 +253,7 @@ Two channels, each the least that does the job:
 
 Notifications read the events stream separately (see "Notifications").
 
-No new Tauri capability exists, and none names a remote URL: the tray, the
+The tray adds no Tauri capability, and none names a remote URL: the tray, the
 dialogs and the autostart entry are used from Rust only, so pages the daemon
 serves still reach no command or plugin.
 
@@ -205,20 +353,68 @@ title is not interpreted.
 
 ## What pages may do
 
-- The window loads only the bundled screen and the attached daemon's origin.
+- The window loads only the bundled screens and the attached daemon's origin.
+  Of the bundled files it shows exactly `/` and `/index.html`, and
+  `/setup.html` only while the app shows the setup screen; any other path,
+  including other spellings the asset server maps to a page (`/setup`,
+  `/setup.html/`, percent-encoded names), is refused. The bundled pages'
+  content security policy has `frame-ancestors 'none'`.
   `http` and `https` links to other hosts open in the default browser. Other
   loopback servers, other schemes and new-window requests are refused.
 - Tauri treats the daemon's pages as remote, and no capability names a remote
   URL, so they cannot call any Tauri command or plugin. `withGlobalTauri` is
   off.
-- The bundled screen has one capability, `connecting-screen`, which allows
-  only the app's `connection` and `reconnect` commands.
-- The opener plugin is used only from Rust, to open links in the browser. No
-  page is granted its commands.
+- The bundled screens have two capabilities, for the main window's bundled
+  origin only: `connecting-screen` allows the app's `connection` and
+  `reconnect` commands, and `setup-screen` the setup commands
+  (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
+  `uninstall_hooks` and `finish_setup`). Every change they make runs in the
+  Rust side and only when the user clicked it on the setup screen;
+  replacing a different baum also needs the screen to name the path the
+  user confirmed. The daemon's pages cannot call any of them.
+- The opener plugin is used only from Rust, to open links in the browser. The
+  dialog and updater plugins are used only from Rust too (see Updates). No
+  page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
-daemon. Notifications use the operating system's notification service
-(`notify-rust`) only from Rust.
+daemon and the update checks below. Outside its own configuration and data
+directories it writes only what the setup screen installs: the `baum` link
+(or the user `PATH` entry on Windows), and, through the bundled baum, the
+user-wide hook entries. Notifications use the operating system's
+notification service (`notify-rust`) only from Rust.
+
+## Updates
+
+A release build checks for a newer release about 30 seconds after it starts
+and then once a day (by the wall clock, so a computer that slept through the
+day checks when it wakes). It reads `latest.json` from the latest GitHub
+release of baum-ai/baum. Local and snapshot builds (version 0.0.0) and debug
+builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+
+- The macOS app, the Linux AppImage and the Windows installer update
+  themselves. The app downloads the update in the background; the download
+  must carry a signature from the release key whose public half is
+  `plugins.updater.pubkey` in `tauri.conf.json`, made for the version the
+  manifest announces (`requireSignedVersion`), or it is discarded. While the
+  daemon runs a generation job (`baum daemon status`, then `GET /api/jobs`;
+  queued jobs survive a restart), the app waits. Then it asks; **Restart now**
+  installs and restarts the app, **Later** keeps the download and asks again
+  at the next daily check. A download that receives nothing for two minutes
+  is abandoned until the next check. On Windows the app stops the daemon
+  first, and the installer (whose hook stops it too) closes the app, updates
+  it for the current user and starts it again; the updated app refreshes its
+  copy of `baum.exe` and starts the daemon. An updated AppImage refreshes its
+  copy of `baum` in the data directory on the next start, renaming the new
+  file into place, so a daemon still running the old copy keeps it until the
+  updated app's `baum daemon ensure` replaces that daemon.
+- A deb install, or any copy the updater cannot replace (an AppImage in a
+  directory the user cannot write, an app on a read-only volume), only says
+  that a new version exists, once per version and app start, and offers to
+  open its release page. Updating it is the user's job, as with any package.
+  A version whose installation failed is remembered (`updates.json` in the
+  app's config directory) and from then on only announced this way.
+- Restarting the app does not stop the daemon. The first client to run the
+  new `baum` replaces an older daemon, as after any upgrade.
 
 ## Development
 
@@ -227,17 +423,37 @@ WebKitGTK and GTK development packages, and the Tauri CLI). The bundled
 binary is built in `oss-test`. From the repository root:
 
 ```sh
-just desktop::check     # cargo fmt --check, clippy -D warnings, tests
-just desktop::test      # tests only; pass cargo test arguments after it
-just desktop::sidecar   # build binaries/baum-<target triple>
-just desktop::build     # Linux bundle (deb by default) in target/release/bundle
-just desktop::run       # run the app on this Wayland session's display
-just desktop::icons     # regenerate icons/ from icons/source.svg
+just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
+just desktop::test          # tests only; pass cargo test arguments after it
+just desktop::sidecar       # build binaries/baum-<target triple>
+just desktop::build         # Linux bundle (deb by default) in target/release/bundle
+just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::updater-test  # updater manifest checks reject tampered releases
+just desktop::run           # run the app on this Wayland session's display
+just desktop::dev           # same, with Vite hot reload for the React app
+just desktop::icons         # regenerate icons/ from icons/source.svg
 ```
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
 bundled one.
+
+For UI work, use `just desktop::dev`. It starts Vite and the native app in
+separate Docker containers sharing a loopback network. Saving React components
+or CSS in `oss/app` or the shared `oss/viewer` updates the window; React Fast
+Refresh preserves component state when possible. Ctrl-C stops both containers
+and their isolated daemon. This runs against the development container's data,
+not your host daemon or repositories. Native Rust changes and the bundled
+setup/connecting screens still require restarting the command.
+Both development containers run with the invoking user's UID and GID so they
+can access the private shared directory and create files owned by that user.
+
+Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
+on port 5173. That directory shares the daemon's origin with Vite, never its
+launch capability. Vite proxies the normal login exchange and namespaced API,
+including event streams, rewriting the expected development Origin for CSRF
+validation. Release builds ignore the override. No development ports are
+published to the host.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple
@@ -245,5 +461,242 @@ as an argument and defaults to the Go host). Every build, including
 `cargo check`, needs it. `binaries/`, `target/` and the generated `gen/` are
 ignored.
 
-Signed and notarised macOS bundles, the Linux AppImage and deb, Windows
-installers and updates from GitHub Releases are later work.
+## Releases
+
+The desktop app is released with the CLI, from the same `v*` tag, to the same
+GitHub release. Pushing the tag to baum-ai/baum runs
+`.github/workflows/release.yml`:
+
+```text
+test, viewer-dist, desktop-test          checks of the tagged release commit
+  └─ release                             parent on main? goreleaser: CLI archives, draft release
+       └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
+            ├─ sign-macos    ┐
+            ├─ sign-windows  ├─ environment "release": sign what desktop built
+            └─ sign-linux    ┘
+                 └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
+                      └─ desktop-publish attach files, latest.json last, publish the draft
+```
+
+- A tag points at a release commit: a commit on `main` plus the built viewer
+  and local app (`internal/viewer/dist`, `internal/localapp/dist`), which no
+  other commit carries, so `go install` of the tag needs only Go.
+  `viewer-dist` rebuilds both from the tagged sources and fails unless they
+  match what the release commit carries.
+- `release` fails unless the tagged commit has one parent, that parent is on
+  `main`, the commit changes nothing outside the two built directories, and
+  the previous `v*` tag in version order was made from a commit in the
+  parent's history (both with `git merge-base --is-ancestor`; the same
+  parent is allowed, so a release candidate can be promoted). goreleaser creates the release as a draft with empty
+  notes (a re-run reuses that draft), and keeps its `baum` binaries as the
+  artifact `cli-binaries`.
+- `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
+  on Linux in this directory's Docker image. This is where third-party code
+  runs: hundreds of crates' build scripts and macros, and the bundler's
+  downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
+  run if a signing variable is set. It produces the deb and AppImage, the
+  unsigned macOS app (as a tar) and the unsigned Windows installer.
+- The three sign jobs use the `release` environment, the only place the
+  signing secrets live. Each waits for a reviewer's approval (all three
+  together), and the environment accepts only `v*` tags. They compile
+  nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
+  `hdiutil`) through `scripts/macos-finalize.sh`, Microsoft's `signtool`
+  through `scripts/windows-sign.ps1`, and minisign 0.12 (the official binary,
+  pinned by SHA-256 in `scripts/install-minisign.sh`) through
+  `scripts/updater-sign.sh`, which signs each updater bundle for the release
+  version. OS signing comes first, so the updater signature covers the final
+  file. Each job downloads only its own platform's artifact, by name, and
+  takes only that platform's file names from it; `updater-sign.sh` and
+  `updater-manifest.sh` refuse any minisign but the pinned one there.
+- `desktop-manifest` downloads each sign job's artifact by name, accepts
+  only that platform's file names and fails if two artifacts carry the same
+  name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
+  every bundle in it against the release key, the version and its expected
+  download URL. If the environment holds the updater key but a
+  signature is missing, it fails. It also writes `desktop-checksums.txt`.
+- `desktop-publish`, the only job besides `release` with a token that can
+  write, attests the files' build provenance, uploads exactly the expected
+  files (`latest.json` last), and only then publishes the draft.
+
+To release, run the private monorepo's "Tag an open-source release" workflow
+(`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
+clone of this repository at the commit published for that `main`, it builds
+the apps, makes the release commit, and runs this workflow's checks on it
+(`scripts/release-check.sh`, `viewer-fresh`, the tests) before pushing only
+the tag: the Go module proxy keeps a version for good once anyone fetches it,
+so nothing unchecked may get that far. To promote a release candidate, give
+its `base` input the commit the candidate was made from (`git rev-parse
+v1.2.3-rc.1^`); otherwise later commits on `main` would come along. The
+reviewer then works through the checklist below
+before approving the `release` environment. Write the release notes on the draft while the run waits
+for the environment approval; the draft is published, with those notes, when
+the desktop files are attached. A tag with a pre-release suffix
+(`v1.2.3-rc.1`) becomes a GitHub pre-release, which apps do not update to:
+they read the latest full release.
+
+If a job fails, re-run the failed jobs: uploads replace files of the same
+name, and nothing is public until `desktop-publish` finishes, because the
+release stays a draft. A failure before the sign jobs needs no approval to
+re-run; a sign job asks again. To give up on a tag, delete the draft and the
+tag. Publishing the draft by hand without the desktop files is possible but
+leaves installed apps without the release.
+
+### Approving a release
+
+The approval releases the signing keys to that run, so check, in the run's
+summary and a local clone of baum-ai/baum:
+
+1. The run is for the commit you meant to release. Its SHA is a release
+   commit whose parent is on `main` and does not predate the previous
+   release, and it adds only the built apps; the `release` job checks all
+   three, so it must have passed.
+2. The release machinery has not changed unexpectedly since the previous
+   release. Read the changes to the workflows and the signing scripts:
+
+   ```sh
+   git fetch --tags origin
+   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
+   ```
+
+   and that the release commit itself adds only the built apps:
+
+   ```sh
+   git diff --stat RUN_SHA^ RUN_SHA
+   ```
+
+3. The settings still hold: the `release` environment's deployment policy is
+   the tag pattern `v*` (not branches); a tag ruleset restricts who may create
+   or move `v*` tags (recommended; the publish deploy key the tagging workflow
+   pushes with needs a bypass for creating them); with more than one reviewer, "prevent
+   self-review" is on; and the repository has no signing secrets of its own
+   (Settings → Secrets and variables → Actions → Repository secrets), only the
+   environment's.
+4. The draft release has its notes.
+
+### Snapshots
+
+Each pull request and push to `main` also runs `desktop.yml` from `check.yml`
+with version 0.0.0, packaging the macOS app ad hoc with `macos-finalize.sh`,
+so the bundling and packaging scripts are exercised before a tag. Those
+snapshot bundles are kept as workflow artifacts for 14 days.
+
+### Files on a release
+
+| File | What it is |
+| --- | --- |
+| `baum-desktop-darwin-universal.dmg` | macOS disk image, Apple silicon and Intel, macOS 12 or newer |
+| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | macOS app the updater installs |
+| `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
+| `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
+| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
+| `baum-desktop-windows-amd64-setup.exe` (`.sig`) | Windows x64 installer; also what the updater runs |
+| `desktop-checksums.txt` | SHA-256 of the desktop files |
+| `latest.json` | the updater manifest |
+
+The desktop files also carry a GitHub build provenance attestation
+(`gh attestation verify FILE --repo baum-ai/baum`).
+
+A macOS bundle that is not signed with a Developer ID is named
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); an unsigned
+Windows installer is `…-unsigned-setup.exe`. Gatekeeper and SmartScreen warn
+about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64` (both
+the universal app), `linux-x86_64`, `windows-x86_64` and, when built,
+`linux-aarch64`, each at
+`https://github.com/baum-ai/baum/releases/download/vVERSION/<its file>`.
+
+### Signing
+
+Signing runs only in the sign jobs, on a `v*` tag, after a reviewer approves
+the `release` environment, and each kind is skipped while its secrets are
+unset. Add them as secrets of the `release` environment of baum-ai/baum,
+never as repository secrets.
+
+| Secrets | What they enable |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
+| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
+| `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
+| `WINDOWS_CERTIFICATE` (base64 `.pfx`), `WINDOWS_CERTIFICATE_PASSWORD` | Windows signing with a code signing certificate |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT`, `AZURE_TRUSTED_SIGNING_PROFILE` | Windows signing with Azure Artifact Signing instead |
+
+The updater key's public half is `plugins.updater.pubkey` in
+`tauri.conf.json`; a test fails if it is not a minisign key or the manifest
+URL changes, and `updater-sign.sh` refuses a signature that key does not
+verify. Rotating the key means shipping a release with the new public key,
+signed with the old private key, before signing with the new one.
+
+### macOS
+
+One universal app (`--target universal-apple-darwin`, built with
+`--no-sign`) bundles a universal `baum` that `lipo` makes from goreleaser's
+darwin/arm64 and darwin/amd64 binaries. With the Apple secrets, `sign-macos`
+imports the certificate into a temporary keychain, and `macos-finalize.sh`
+signs the bundled `baum` and then the app with the hardened runtime and no
+entitlements (no App Sandbox), checks that both executables carry the
+Developer ID and hardened runtime, notarises and staples the app, builds the
+disk image with `hdiutil`, signs, notarises and staples it, and checks both
+with `stapler validate` and `spctl`. Before extracting the unsigned app, it
+rejects any archive entry that is not a regular file or directory inside
+`baum.app/`. Two passwords still reach a command line, on the ephemeral
+runner only: `security import` takes the certificate's password only as an
+argument (`-P`), and notarising with an Apple ID passes the app-specific
+password to `notarytool`; the App Store Connect API key avoids the second.
+The keychain's own password is random per run. Without them the app is signed ad hoc,
+so it runs on Apple silicon once the user allows it in System Settings. The
+updater archive is the finished app in a gzipped tar, as Tauri's bundler
+makes it.
+
+### Linux
+
+The Linux bundles are built in this directory's Docker image, on Debian 12
+(the base image pinned by digest), so they need glibc 2.34 or newer and
+WebKitGTK 2.38 or newer with the 4.1 API (`libwebkit2gtk-4.1-0`; Debian 12,
+Ubuntu 22.04 and newer). The deb declares that dependency and installs
+`baum-desktop` and `baum` in `/usr/bin`. The AppImage carries its own
+WebKitGTK and updates itself in place, so keep it in a directory you can
+write (for example `~/Applications`). There is no Flatpak or Snap. x86_64 is
+the supported architecture; arm64 is built on GitHub's arm64 runners and
+published when that build succeeds. Linux bundles are not OS-signed; the
+AppImage carries the updater signature.
+
+### Windows
+
+An NSIS installer for the current user (no administrator rights), which
+installs the WebView2 runtime with Microsoft's bootstrapper when it is
+missing. With signing secrets, `windows-sign.ps1` signs the installer with
+`signtool`: a certificate is imported into the current user's store for the
+signature and removed afterwards, so its password never appears on a command
+line; Azure Artifact Signing uses Microsoft's `signtool` plug-in from a
+NuGet package pinned by SHA-256. The app and the bundled `baum.exe` inside
+the installer, and the uninstaller, stay unsigned: signing them would mean
+running the Tauri bundler, which downloads and runs NSIS, in a job holding
+the secrets. Signing the installer is what SmartScreen checks on download.
+
+The installer's hooks (`windows/installer-hooks.nsh`) run `baum daemon stop`
+before installing or uninstalling, with the installed `baum.exe` and the
+app's copy in its local data directory, whichever exist; the command reaches
+the running daemon whichever binary it runs from. An in-app update stops it
+too, after waiting for running jobs, and the updated app starts it again.
+This is untested on Windows so far.
+
+On Windows the daemon finds `gh` and the agent CLIs on the `PATH` a new
+logon would get (the system `Path`, then the user's, from the registry), so
+tools installed after the app or the agent started are found.
+
+### What is checked where
+
+- `cargo test`: the updater configuration (key, manifest URL,
+  `requireSignedVersion`, Windows passive install), that the key rejects
+  another key's signature, and the record of failed installs.
+- `scripts/updater-manifest-test.sh` (Check on Linux, and with the pinned
+  minisign on macOS and Windows; the release's `desktop-test`; and `just
+  desktop::check`): `updater-sign.sh` signs with a password-protected key
+  read from standard input and refuses a wrong password or key, and both
+  scripts refuse an unpinned minisign in release mode; a correctly
+  signed release passes; a tampered bundle, a signature of another bundle or
+  from another key, another platform's bundle, a foreign host, another tag,
+  plain `http`, an unknown platform, an announced version the bundles were
+  not signed for, an older release's bundle, a missing platform and an
+  unsigned bundle are all rejected.
+- The release runs the same verification on the real bundles before
+  anything is attached, and the app verifies each download again.

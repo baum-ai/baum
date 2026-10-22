@@ -111,7 +111,7 @@ is already running.`,
 			return shellenv.PrintEnv(cmd.OutOrStdout(), args[0])
 		},
 	}
-	cmd.AddCommand(ensure, status, stop, run, printEnv)
+	cmd.AddCommand(ensure, status, stop, run, printEnv, newLoginPathCommand())
 	return cmd
 }
 
@@ -335,6 +335,10 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 		log.Info("using the inherited environment", "reason", err.Error())
 	case err != nil:
 		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error())
+	case result.Shell == "":
+		// Windows: the inherited environment with the registry's PATH.
+		resolved = result.Env
+		log.Info("read PATH from the registry")
 	default:
 		resolved = result.Env
 		log.Info("read the login shell environment", "shell", result.Shell)

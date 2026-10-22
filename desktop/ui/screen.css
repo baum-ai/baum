@@ -111,3 +111,73 @@ pre {
     animation: none;
   }
 }
+
+/* The setup screen (setup.html). */
+
+.setup {
+  place-items: start center;
+}
+
+.setup section {
+  text-align: left;
+}
+
+.setup h1 {
+  margin-bottom: 16px;
+}
+
+.setup h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.panel {
+  margin: 0 0 16px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.panel p,
+.panel ul {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.panel ul {
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.note {
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.footer {
+  margin-top: 8px;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+pre.failed {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+code {
+  font-size: 0.95em;
+}
+
+[hidden] {
+  display: none !important;
+}

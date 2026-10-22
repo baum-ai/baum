@@ -27,6 +27,14 @@ except line breaks and, in a diff, each line's leading `+`, `-` or space.
 An address such as `ada.lovelace@example.com` is sent as
 `xxx.xxxxxxxx@xxxxxxx.xxx`. @mentions are left as written.
 
+The diff is masked more than that, on purpose: an edit inside a committed
+private key shows key lines without the key's armor, so every run of three
+or more diff lines that are pure base64 (`A-Z a-z 0-9 + / =`) of 40
+characters or more is masked, with a shorter base64 line at either end, and
+so is a hunk's section heading that is pure base64 of that length. Base64
+data embedded in a file, such as an inline image or a test fixture, is
+masked the same way.
+
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your
@@ -551,12 +559,19 @@ environment and SSH agent, while the process that named it may be an agent
 hook run from a sandboxed command that can write files in a workspace. So it
 accepts the executable only from a client of a newer version than its own,
 and only when, after resolving symbolic links, the file is the daemon's own
-executable (an upgrade in place) or the `baum` on its login shell's `PATH`;
+executable (an upgrade in place) or the `baum` on its login shell's `PATH`
+(which the desktop app's link makes its bundled baum);
 it must be a regular, executable file owned by you or root and not group- or
 world-writable, in directories up to `/` that are all the same (none may be
-world-writable, not even sticky like `/tmp`). It checks again just before
-starting it. A refused executable is logged and the daemon keeps running; a
-newer baum then replaces it the next time it finds the daemon idle. On
+world-writable, not even sticky like `/tmp`). On macOS a directory owned by
+root or you that only the admin group may also write (group `admin`, as
+`/Applications` and Intel Homebrew's `/usr/local/bin` are) passes too: admin
+users can become root anyway, so it lets in no one a root-owned file would
+keep out. The staff group, to which every local user belongs, does not count,
+and the executable itself must still be writable by its owner only. It checks
+again just before starting it. A refused executable is logged and the daemon
+keeps running; a newer baum then replaces it the next time it finds the
+daemon idle. On
 Windows, where owners and mode bits do not describe access, only the first
 two rules apply.
 
@@ -594,7 +609,9 @@ socket and ssh command git uses, the desktop session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
 `GITHUB_ENTERPRISE_TOKEN`) and gh settings, `ANTHROPIC_API_KEY`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `BAUM_*`. A token set only in an agent's
-environment is therefore not used. Your home, XDG and temporary directories
+environment is therefore not used. Windows has no login shell: there the
+daemon keeps those variables from the starting environment, except `PATH`,
+which it reads from the registry (the system `Path`, then yours). Your home, XDG and temporary directories
 come only from the starting environment, never from the shell, because they
 decide which state directory, lock and job journal the daemon uses. The SSH
 agent socket is the starting environment's, else the shell's; it is used only
@@ -687,13 +704,18 @@ daemon's launch URL from a credential file in the daemon's state directory.
 It accepts the file only when it is private to you and names a
 `127.0.0.1` launch URL for that daemon, and it never logs that URL.
 
-The window loads only its bundled connecting screen and the attached daemon's
+The window loads only its bundled screens and the attached daemon's
 loopback origin. Links to other web hosts open in your default browser; other
 loopback servers, other schemes and new windows are refused. The daemon's
 pages get no Tauri capability, so they cannot call the app's commands or any
-plugin. The bundled screen may only read the connection state and ask to
-reconnect. The app makes no network requests other than loopback requests
-to the daemon. Quitting it leaves the daemon running, and so does closing
+plugin. The bundled connecting screen may only read the connection state and
+ask to reconnect. The bundled setup screen may also read what is installed and
+install or remove the `baum` command and the user-wide agent hooks; it does
+so only when you click the button for that change, and a change that would
+replace a different `baum` needs you to confirm that file's path first. The
+app makes no network requests other than loopback requests to the daemon
+and the update check described below.
+Quitting it leaves the daemon running, and so does closing
 its window, which hides it into the tray. The tray reads the daemon's job
 list, automatic generation status and diagnostics, and can pause automatic
 generation, with the same launch capability the window uses, sent as a bearer
@@ -703,3 +725,69 @@ is off until you turn it on; it adds one per-user entry (an XDG autostart file,
 a LaunchAgent or a Run key value) that starts the app hidden, which starts
 your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
+
+On first run, and from "Command Line and Hooks…" in its menu, the app
+installs its bundled `baum` as your `baum` command, because agent hooks run
+`baum` by name:
+
+- On macOS and Linux it creates one symbolic link named `baum` to the bundled
+  binary, in `~/.local/bin` or `~/bin` when one is on your login shell's
+  `PATH`, else in `/usr/local/bin`. Writing to a directory you cannot write
+  goes through the system password prompt (`osascript` on macOS, `pkexec` on
+  Linux) only for a system directory: outside your home directory, reached
+  without symbolic links, owned by root and writable by no one else, below
+  directories that are root's and not writable by others (in practice
+  `/usr/local/bin`), and only for a link to a baum outside your home
+  directory (a baum in your home directory gets a link in `~/.local/bin`
+  instead). Root then runs a fixed shell script that takes the paths as
+  arguments, refuses any link not named `baum` in that directory and any
+  backup not named as the app names them, and checks the directory again
+  from inside it before it changes anything, so a directory swapped in while
+  the prompt shows is refused. A password-prompted link to an app in
+  `/Applications` (as other developer tools install their commands) puts
+  that app's binary on every user's `PATH` and on sudo's `secure_path`; it
+  is only as safe as the app bundle, which on macOS the admin group can
+  rewrite. A different `baum` first on your `PATH` is
+  replaced only after you confirm, and is kept beside it as
+  `baum.replaced-by-baum-app`; one a package manager owns (Homebrew, Nix,
+  the system directories, asdf or mise shims) is never replaced. An AppImage
+  links to a copy of its baum in the app's data directory, which the app also
+  runs, since its own files vanish when it quits.
+- On Windows it keeps a copy of its `baum.exe` alone in a directory of its
+  data directory and adds that directory to the front of your user `PATH`.
+- It records what it created in `setup.json` in its configuration directory.
+  Removing the command deletes only that link, and only while it still points
+  at the app's baum, and puts back a baum it replaced; on Windows it removes
+  the `PATH` entry. Since you (and your programs) can edit that file, the app
+  asks for the password to remove a link only when the record has the shape
+  the app writes and names the baum the app runs now.
+
+The user-wide hooks are installed and removed by the bundled `baum hooks
+install --user` and `uninstall --user` (see "Hosted service commands"). To see
+what is on your `PATH`, the app runs the bundled `baum daemon login-path`,
+which starts your login shell the way the daemon does and runs the first
+`baum` it finds with `--version`.
+
+Besides loopback requests to the daemon, the app makes one kind of network
+request: a release build checks GitHub Releases for a newer version of
+baum-ai/baum when it starts and once a day (`BAUM_DESKTOP_UPDATES=0` turns
+this off). The check is a plain HTTPS download of `latest.json`; it carries
+no token or data of yours. The app installs an update only when the
+downloaded bundle carries a minisign signature from the release key built
+into the app, made for the version the manifest announces, so neither a
+changed bundle nor an older signed release served as a newer one is
+installed. It waits while the daemon runs a generation job and restarts only
+after you confirm.
+
+The signing keys (the updater key, and Apple's and Windows' code signing
+credentials once they exist) are secrets of the `release` environment of
+baum-ai/baum, not of the repository. GitHub releases them only to a job of
+the release workflow that names that environment, only for a `v*` tag (the
+environment's deployment policy), and only after a required reviewer
+approves that run. The release workflow also stops unless the tagged commit
+is on `main`. The jobs that use the environment build nothing: they sign
+bundles that an earlier job compiled without any secret, using Apple's and
+Microsoft's signing tools and a minisign binary pinned by checksum. The
+release workflow verifies every updater signature, version and download URL
+before it publishes the manifest, and the release stays a draft until it
+has. See `desktop/README.md` for the jobs.

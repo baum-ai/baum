@@ -55,7 +55,9 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 		}
 	}
 	// New model-authored decisions always have a compact title; stored
-	// documents keep it optional so earlier reviews still validate.
+	// documents keep it optional so earlier reviews still validate. The
+	// decision ID is the host's, set on the items it attaches, so the model
+	// is not offered it.
 	walkSchema(lenient, func(node map[string]any) {
 		properties, _ := node["properties"].(map[string]any)
 		kind, _ := properties["kind"].(map[string]any)
@@ -68,6 +70,7 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 		if !containsString(stringSlice(required), "title") {
 			decision["required"] = append(required, "title")
 		}
+		omitProperties(decision, "decision_id")
 	})
 	relaxSchema(lenient, defs)
 	for _, def := range defs {

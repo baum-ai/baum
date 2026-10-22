@@ -8,10 +8,11 @@ before:
   hooks:
     # Fail instead of rewriting go.mod after goreleaser checked the tree is clean.
     - go mod tidy -diff
-    # Rebuild the viewer and fail when the result differs from the committed
-    # internal/viewer/dist, which go build embeds, so no archive ships a stale
-    # bundle. Needs Node.js and pnpm; the release workflow sets
-    # BAUM_SKIP_VIEWER_FRESH because a read-only job has checked it.
+    # Build the viewer and local app, which go build embeds, so a snapshot
+    # ships them; on a release commit, which carries them, fail when they
+    # differ from the fresh build, so no archive ships a stale bundle. Needs
+    # Node.js and pnpm; the release workflow sets BAUM_SKIP_VIEWER_FRESH
+    # because a read-only job has checked the release commit.
     - sh scripts/viewer-fresh.sh
 
 builds:
@@ -45,6 +46,7 @@ archives:
         formats: [zip]
     files:
       - LICENSE
+      - THIRD_PARTY_NOTICES.txt
       - README.md
 
 checksum:
@@ -54,17 +56,19 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
 
+# Commit subjects are not release notes (and may name internal tracking
+# identifiers); a person writes the notes on the draft release.
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude:
-      - "^chore"
-      - "^ci"
+  disable: true
 
 release:
   github:
     owner: baum-ai
     name: baum
-  draft: false
+  # The release workflow attaches the desktop app and then publishes the
+  # draft, so nobody sees a release without it. A re-run reuses the draft
+  # and replaces its files instead of creating a second one.
+  draft: true
+  use_existing_draft: true
+  replace_existing_artifacts: true
   prerelease: auto

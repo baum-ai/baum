@@ -2,7 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
-import { App, blockedReasonText, estimateReasonText } from "./app";
+import { App } from "./app";
+import { blockedReasonText, estimateReasonText } from "./api";
 import { appBase, cost, filtered, type Entry } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
@@ -439,6 +440,51 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   expect(button().disabled).toBe(true);
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().disabled).toBe(false);
+});
+it("points every page at the diagnostics when they find a problem", async () => {
+  const calls = stubDiagnostics(async () =>
+    Response.json({ local: true, report: diagnosticsReport }),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain(
+    "baum cannot fully work on this computer: diagnostics found 1 problem. Show the fixes",
+  );
+  expect(calls.count).toBe(1);
+  const link = [...node.querySelectorAll("a")].find((a) => a.textContent === "Show the fixes")!;
+  expect(link.getAttribute("href")).toBe("/s/test-ns/?page=diagnostics");
+  await act(async () => link.click());
+  expect(location.search).toBe("?page=diagnostics");
+  const text = node.textContent ?? "";
+  expect(text).toContain("Check this computer");
+  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).not.toContain("Show the fixes");
+  // The page ran the checks again; the inbox does not rerun them.
+  expect(calls.count).toBe(2);
+});
+it("shows no diagnostics notice when nothing is a problem", async () => {
+  const calls = stubDiagnostics(async () =>
+    Response.json({
+      local: true,
+      report: {
+        status: "warning",
+        checks: diagnosticsReport.checks.filter((c) => c.status !== "problem"),
+      },
+    }),
+  );
+  await act(async () => root.render(<App />));
+  expect(calls.count).toBe(1);
+  expect(node.textContent).not.toContain("diagnostics found");
+});
+it("opens the diagnostics page from its address, as the desktop app's first run does", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  const calls = stubDiagnostics(async () =>
+    Response.json({ local: true, report: diagnosticsReport }),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Check this computer");
+  expect(node.textContent).toContain("Overall: Problem. 1 problem found.");
+  expect(node.textContent).not.toContain("Show the fixes");
+  expect(calls.count).toBe(1);
 });
 const demoClone = {
   id: "clone",

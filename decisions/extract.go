@@ -7,6 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 // Model makes one structured-output call. Provider clients implement it.
@@ -76,6 +80,15 @@ type ExtractOptions struct {
 	// MaxOutputTokens is passed to ModelRequest.MaxOutputTokens; zero means
 	// the provider client's default.
 	MaxOutputTokens int64
+	// Existing and Cutoff extend an earlier extraction of the same session
+	// instead of starting over, so its decisions and their IDs stay as they
+	// were. Existing are its decisions, shown to the model by handle (d1, d2,
+	// ...) and returned first; Cutoff is the last turn whose decisions they
+	// cover, 0 for none. Either one set extends. A cutoff is usually the turn
+	// before the earlier extraction's last turn (ExtensionCutoff), since an
+	// open last turn keeps growing.
+	Existing []Decision
+	Cutoff   int
 }
 
 // ErrTranscriptTooLarge reports a transcript over ExtractOptions.MaxInputTokens.
@@ -126,13 +139,57 @@ func (e *Extractor) PromptVersion() string { return e.version }
 func (e *Extractor) SystemPrompt() string { return e.system }
 
 // EstimateTokens is EstimateTokens of the request Extract would send for
-// transcript, the figure ExtractOptions.MaxInputTokens is compared with.
-func (e *Extractor) EstimateTokens(transcript *Transcript) int64 {
-	return EstimateTokens(e.system, transcript.Text())
+// transcript and opts, the figure ExtractOptions.MaxInputTokens is compared
+// with.
+func (e *Extractor) EstimateTokens(transcript *Transcript, opts ExtractOptions) int64 {
+	return EstimateTokens(e.system, userMessage(transcript, opts))
 }
 
-// Request is the request Extract sends for user, a rendered transcript's
-// text.
+// existingHeader starts the user message of an extension.
+const existingHeader = "# Existing decisions\n"
+
+// userMessage is the user message Extract sends: the transcript's text, or
+// for an extension "# Existing decisions" with one line per existing decision
+// by handle, then "# Transcript" and the text with a marker line before the
+// first turn after a positive cutoff. Decision IDs never appear in it. A
+// host's prompt explains the extension form to the model.
+func userMessage(transcript *Transcript, opts ExtractOptions) string {
+	if len(opts.Existing) == 0 && opts.Cutoff <= 0 {
+		return transcript.Text()
+	}
+	var b strings.Builder
+	b.WriteString(existingHeader)
+	for i, decision := range opts.Existing {
+		turns := make([]string, len(decision.Turns))
+		for j, turn := range decision.Turns {
+			turns[j] = strconv.Itoa(turn)
+		}
+		state := ""
+		if decision.Superseded {
+			state = "; superseded"
+		}
+		text := decision.Summary
+		if decision.Title != "" {
+			text = decision.Title + ": " + text
+		}
+		fmt.Fprintf(&b, "- %s (turns %s%s): %s\n", existingHandle(i), strings.Join(turns, ", "), state, strings.Join(strings.Fields(text), " "))
+	}
+	if len(opts.Existing) == 0 {
+		b.WriteString("(none)\n")
+	}
+	b.WriteString("\n# Transcript\n\n")
+	b.WriteString(transcript.text(opts.Cutoff))
+	return b.String()
+}
+
+// existingHandle is the handle of the i-th existing decision in the user
+// message: d1, d2, ...
+func existingHandle(i int) string {
+	return "d" + strconv.Itoa(i+1)
+}
+
+// Request is the request Extract sends for user, Extract's user message
+// (userMessage): a rendered transcript's text, extended or not.
 func (e *Extractor) Request(user string, maxOutputTokens int64) ModelRequest {
 	return ModelRequest{
 		System:          e.system,
@@ -151,34 +208,37 @@ func (e *Extractor) IsRequest(req ModelRequest) bool {
 }
 
 // MaxTokens is an upper bound on the prompt tokens of the request Extract
-// would send for transcript, for reserving its cost before the call.
+// would send for transcript and opts, for reserving its cost before the call.
 // Byte-level BPE tokenizers never produce more tokens than the text has
-// bytes, so it counts one token per byte of the system prompt, the transcript
-// and the marshalled schema, plus FramingTokens. It is about four times
+// bytes, so it counts one token per byte of the system prompt, the user
+// message and the marshalled schema, plus FramingTokens. It is about four times
 // EstimateTokens for English text, and holds for text with fewer bytes per
 // token, such as CJK.
-func (e *Extractor) MaxTokens(transcript *Transcript) int64 {
+func (e *Extractor) MaxTokens(transcript *Transcript, opts ExtractOptions) int64 {
 	schema, err := json.Marshal(ExtractSchema())
 	if err != nil {
 		panic(fmt.Sprintf("marshal extraction schema: %v", err))
 	}
-	return int64(len(e.system)) + int64(len(transcript.Text())) + int64(len(schema)) + FramingTokens
+	return int64(len(e.system)) + int64(len(userMessage(transcript, opts))) + int64(len(schema)) + FramingTokens
 }
 
 // Extract asks model for the decisions in transcript and validates their
 // citations against it (ValidateCitations). A transcript with no turns has no
-// decisions and does not call the model.
+// new decisions and does not call the model. An extension returns
+// opts.Existing first, unchanged but for Superseded, then the new decisions,
+// which have no IDs; a new decision none of whose turns is after opts.Cutoff
+// is dropped.
 func (e *Extractor) Extract(ctx context.Context, model Model, transcript *Transcript, opts ExtractOptions) (Extraction, error) {
 	if transcript == nil {
 		return Extraction{}, errors.New("transcript is nil")
 	}
 	if len(transcript.Turns) == 0 {
 		return Extraction{
-			SessionDecisions: SessionDecisions{SessionID: transcript.SessionID, Decisions: []Decision{}},
+			SessionDecisions: SessionDecisions{SessionID: transcript.SessionID, Decisions: extended(opts.Existing, nil, []Decision{})},
 			PromptVersion:    e.version,
 		}, nil
 	}
-	user := transcript.Text()
+	user := userMessage(transcript, opts)
 	if estimate := EstimateTokens(e.system, user); opts.MaxInputTokens > 0 && estimate > opts.MaxInputTokens {
 		return Extraction{}, fmt.Errorf("%w: about %d tokens, cap %d", ErrTranscriptTooLarge, estimate, opts.MaxInputTokens)
 	}
@@ -186,16 +246,41 @@ func (e *Extractor) Extract(ctx context.Context, model Model, transcript *Transc
 	if err != nil {
 		return Extraction{}, err
 	}
-	decisions, err := ParseReply(response.JSON)
+	decisions, superseded, err := ParseReply(response.JSON)
 	if err != nil {
 		return Extraction{}, err
 	}
-	kept, dropped := ValidateCitations(decisions, transcript)
+	kept, dropped := ValidateCitations(decisions, transcript, opts.Cutoff)
 	return Extraction{
-		SessionDecisions: SessionDecisions{SessionID: transcript.SessionID, Decisions: kept},
+		SessionDecisions: SessionDecisions{SessionID: transcript.SessionID, Decisions: extended(opts.Existing, superseded, kept)},
 		PromptVersion:    e.version,
 		Model:            response.Model,
 		Usage:            response.Usage,
 		Dropped:          dropped,
 	}, nil
 }
+
+// extended is existing, with Superseded set on those whose handle is in
+// superseded, followed by found. A handle is read from its leading
+// d<digits>, in any case; unknown ones are ignored. Without a new decision
+// nothing replaces an existing one, so nothing is superseded.
+func extended(existing []Decision, superseded []string, found []Decision) []Decision {
+	if len(existing) == 0 {
+		return found
+	}
+	decisions := slices.Clone(existing)
+	for _, handle := range superseded {
+		match := handlePattern.FindStringSubmatch(strings.ToLower(handle))
+		if match == nil || len(found) == 0 {
+			continue
+		}
+		if n, err := strconv.Atoi(match[1]); err == nil && n >= 1 && n <= len(decisions) {
+			decisions[n-1].Superseded = true
+		}
+	}
+	return append(decisions, found...)
+}
+
+// handlePattern is an existing decision's handle at the start of a reply's
+// superseded_existing entry.
+var handlePattern = regexp.MustCompile(`^d(\d+)`)

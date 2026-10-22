@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -497,10 +498,24 @@ func TestRedactionReadsPastTheHunkLineCap(t *testing.T) {
 	}
 }
 
-// cutAfterRedaction runs patch, one file's diff, through the assembly order
-// (diff index within the line cap, ApplyCaps, Redact, Fit) and returns the
-// kept patch and notes, with want: the whole patch redacted, then capped.
+// cutAfterRedaction runs patch, one file's diff of one hunk, through the
+// assembly order and returns the kept patch and notes, with want: the whole
+// patch redacted, then capped.
 func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int) (got, want string, notes []string) {
+	t.Helper()
+	hunks, wants, b := assembleFilePatch(t, redactor, patch, limit)
+	if len(hunks) != 1 || len(wants) != 1 {
+		t.Fatalf("want one hunk, got %d and %d", len(hunks), len(wants))
+	}
+	return hunks[0], wants[0], b.Truncated
+}
+
+// assembleFilePatch runs patch, one file's diff, through the assembly order
+// (diff index within the line cap, ApplyCaps, Redact, Fit) and returns each
+// hunk's kept patch and the bundle, with want: the whole patch redacted as
+// one text, its base64 runs masked and its diff syntax kept, split into
+// hunks, then capped. A limit of 0 caps nothing.
+func assembleFilePatch(t *testing.T, redactor *Redactor, patch string, limit int) (got, want []string, b *Bundle) {
 	t.Helper()
 	ctx := context.Background()
 	comparison := Comparison{Files: []FileChange{{NewPath: "key.pem", Status: "modified"}}}
@@ -509,7 +524,7 @@ func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &Bundle{Diff: hunks}
+	b = &Bundle{Diff: hunks}
 	ApplyCaps(b, caps)
 	if err := Redact(ctx, b, redactor); err != nil {
 		t.Fatal(err)
@@ -517,12 +532,237 @@ func cutAfterRedaction(t *testing.T, redactor *Redactor, patch string, limit int
 	if err := Fit(b, caps); err != nil {
 		t.Fatal(err)
 	}
-	whole := &Bundle{Diff: []Hunk{{Patch: strings.TrimRight(patch, "\n")}}}
-	if err := Redact(ctx, whole, redactor); err != nil {
+	for _, hunk := range b.Diff {
+		got = append(got, hunk.Patch)
+	}
+	// Diff parsing reads lines as bufio.ScanLines does, dropping a CR before
+	// each newline.
+	text := strings.TrimRight(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
+	if !strings.HasPrefix(text, "@@ -") {
+		// The text from the first hunk header on, without git's file header.
+		text = text[strings.Index(text, "\n@@ -")+1:]
+	}
+	redacted, _, err := redactor.RedactString(ctx, text)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ = capPatchLines(whole.Diff[0].Patch, limit)
-	return b.Diff[0].Patch, want, b.Truncated
+	masks, _ := base64Masks(text)
+	redacted = maskRange(text, redacted, masks, 0, len(text))
+	for _, hunk := range strings.Split(redacted, "\n@@ -") {
+		if !strings.HasPrefix(hunk, "@@ -") {
+			hunk = "@@ -" + hunk
+		}
+		if limit > 0 {
+			hunk, _ = capPatchLines(hunk, limit)
+		}
+		want = append(want, strings.TrimRight(hunk, "\n"))
+	}
+	return got, want, b
+}
+
+// goredactVersion returns the goredact version go.mod pins.
+func goredactVersion(t *testing.T) string {
+	t.Helper()
+	gomod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(gomod), "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "github.com/baum-ai/goredact" {
+			return fields[1]
+		}
+	}
+	t.Fatal("go.mod pins no goredact version")
+	return ""
+}
+
+// syntheticPuTTYKey returns a PuTTY private key file, one line per
+// element, and its private lines: synthetic base64, not key material.
+func syntheticPuTTYKey() (lines, private []string) {
+	body := keyBody(5)
+	return []string{
+		"PuTTY-User-Key-File-3: ssh-rsa", "Encryption: none", "Comment: rsa-key-20261020",
+		"Public-Lines: 2", body[0], body[1],
+		"Private-Lines: 3", body[2], body[3], body[4],
+		"Private-MAC: " + strings.Repeat("0a1b2c3d", 8),
+	}, body[2:]
+}
+
+// A key that runs on from one hunk into the next is redacted with the
+// file's whole patch, so the bundle masks it as one text would, in both
+// hunks and in the second hunk's header, whose line ranges are put back.
+// That holds with the cap cutting a long first hunk short, so the key's
+// first lines sit only in the text the cap drops. goredact follows the key
+// across hunk headers, armor included.
+func TestRedactionFollowsAKeyAcrossHunks(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem := syntheticKeyLines()
+	ppk, private := syntheticPuTTYKey()
+	keys := []struct {
+		name          string
+		lines, secret []string
+		// split is how many of the key's lines the first hunk holds.
+		split int
+	}{
+		{"pem", pem, pem[1 : len(pem)-1], 4},
+		{"putty", ppk, private, 8},
+	}
+	for _, key := range keys {
+		for _, marker := range []string{" ", "+"} {
+			for _, heading := range []string{"", "func load() {", key.lines[key.split-1]} {
+				// A long first hunk puts the key past the cap and its margin.
+				for _, long := range []bool{false, true} {
+					for _, limit := range []int{0, 3} {
+						where := fmt.Sprintf("%s %q heading %q long %t cap %d", key.name, marker, heading, long, limit)
+						second := "@@ -36,7 +36,7 @@"
+						if heading != "" {
+							second += " " + heading
+						}
+						context := " context\n"
+						if long {
+							context = strings.Repeat(" "+strings.Repeat("context ", 8)+"\n", 2*redactionMargin/65)
+						}
+						patch := "@@ -1,6 +1,6 @@\n" + context + prefixLines(marker, strings.Join(key.lines[:key.split], "\n")) + "\n" +
+							second + "\n" + prefixLines(marker, strings.Join(key.lines[key.split:], "\n")) + "\n-after\n+after 2\n"
+						got, want, b := assembleFilePatch(t, redactor, patch, limit)
+						if strings.Join(got, "\n") != strings.Join(want, "\n") {
+							t.Fatalf("%s: the bundle's hunks differ from the whole patch's:\n%s\nwant\n%s", where, strings.Join(got, "\n"), strings.Join(want, "\n"))
+						}
+						if len(got) != 2 || !strings.HasPrefix(got[0], "@@ -1,6 +1,6 @@\n") || !strings.HasPrefix(got[1], "@@ -36,7 +36,7 @@") {
+							t.Fatalf("%s: hunk headers lost their ranges:\n%s", where, strings.Join(got, "\n"))
+						}
+						if b.Diff[1].StartLine != 36 || b.Diff[1].LineCount != 7 {
+							t.Fatalf("%s: second hunk = %+v", where, b.Diff[1])
+						}
+						if b.MaskedSpanCount != 1 {
+							t.Fatalf("%s: masked %d spans, want the one key", where, b.MaskedSpanCount)
+						}
+						text := strings.Join(got, "\n")
+						for _, line := range key.secret {
+							if strings.Contains(text, line) {
+								t.Fatalf("%s: key line %q survives:\n%s", where, line, text)
+							}
+						}
+						if strings.Contains(text, "PRIVATE KEY") {
+							t.Fatalf("%s: the armor survives:\n%s", where, text)
+						}
+						if header, _, _ := strings.Cut(got[1], "\n"); heading != "" && !strings.HasPrefix(header, "@@ -36,7 +36,7 @@ ") {
+							t.Fatalf("%s: the header lost the space before its heading: %q", where, header)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// keepDiffSyntax puts back a hunk header's line ranges a mask spanning it
+// overwrote, and the diff marker of every line, and leaves the rest masked:
+// a section heading that is a line of the key, and a line that only looks
+// like a header.
+func TestKeepDiffSyntaxRestoresHunkHeaders(t *testing.T) {
+	line := keyBody(1)[0]
+	stars := strings.Repeat("*", len(line))
+	patch := "@@ -1,3 +1,3 @@ func a() {\n context\n+" + line + "\n" +
+		"@@ -36,7 +36,7 @@ " + line + "\n " + line + "\n" +
+		"@@ -50 +50 @@\n-" + line + "\n" +
+		"@@ -x +1 @@ " + line + "\n\\ No newline at end of file"
+	// The format-preserving mask, as the engine writes it over a key that
+	// spans every line after the first context line.
+	maskedHeader := "@@*-99*9*+99*9*@@*"
+	redacted := "@@ -1,3 +1,3 @@ func a() {\n context\n*" + stars + "\n" +
+		maskedHeader + stars + "\n*" + stars + "\n" +
+		"@@*-99*+99*@@\n*" + stars + "\n" +
+		"@@*-X*+9*@@*" + stars + "\n*" + strings.Repeat("*", len(" No newline at end of file"))
+	if len(redacted) != len(patch) {
+		t.Fatalf("the simulated mask is %d bytes, the patch %d", len(redacted), len(patch))
+	}
+	want := "@@ -1,3 +1,3 @@ func a() {\n context\n+" + stars + "\n" +
+		"@@ -36,7 +36,7 @@ " + stars + "\n " + stars + "\n" +
+		"@@ -50 +50 @@\n-" + stars + "\n" +
+		"@@*-X*+9*@@*" + stars + "\n\\" + strings.Repeat("*", len(" No newline at end of file"))
+	if got := keepDiffSyntax(patch, redacted); got != want {
+		t.Fatalf("keepDiffSyntax:\n%s\nwant\n%s", got, want)
+	}
+	for header, n := range map[string]int{
+		"@@ -1,3 +1,3 @@ func a() {": len("@@ -1,3 +1,3 @@ "),
+		"@@ -0,0 +1 @@":              len("@@ -0,0 +1 @@"),
+		"@@ -1, +1 @@":               0,
+		"@@ -1 +1 @":                 0,
+		" @@ -1 +1 @@":               0,
+	} {
+		if got := hunkHeaderLen(header); got != n {
+			t.Errorf("hunkHeaderLen(%q) = %d, want %d", header, got, n)
+		}
+	}
+}
+
+// For any file patch and line cap, the bundle's hunks are the whole patch
+// redacted as one text, split into hunks, then capped: whichever hunks the
+// cap cuts, and wherever keys lie across hunk headers, the margin and the
+// file text diff parsing keeps give Redact what it needs. Hunk headers keep
+// their line ranges.
+func TestCappedRedactionMatchesTheWholePatch(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ppk, _ := syntheticPuTTYKey()
+	keys := [][]string{syntheticKeyLines(), syntheticEncryptedKeyLines(), ppk, pgpKeyLines(20 << 10)}
+	random := rand.New(rand.NewPCG(1414, 0))
+	for run := range 60 {
+		// The file's lines in order, before hunk headers split them.
+		var stream []string
+		for range 1 + random.IntN(3) {
+			for range random.IntN(30) {
+				switch random.IntN(10) {
+				case 0:
+					stream = append(stream, strings.Repeat("filler ", 300+random.IntN(3000)))
+				case 1:
+					stream = append(stream, "contact: dev@example.com")
+				default:
+					stream = append(stream, fmt.Sprintf("line %d", len(stream)))
+				}
+			}
+			stream = append(stream, keys[random.IntN(len(keys))]...)
+		}
+		var patch strings.Builder
+		var headers []string
+		for i, line := range stream {
+			if i == 0 || random.IntN(12) == 0 {
+				header := fmt.Sprintf("@@ -%d,%d +%d,%d @@", i+1, 9, i+3, 9)
+				switch random.IntN(3) {
+				case 1:
+					header += " func f() {"
+				case 2:
+					header += " " + stream[max(i-1, 0)]
+				}
+				headers = append(headers, header)
+				patch.WriteString(header + "\n")
+			}
+			patch.WriteString(string(" +-"[random.IntN(3)]) + line)
+			if random.IntN(8) == 0 {
+				patch.WriteByte('\r')
+			}
+			patch.WriteByte('\n')
+		}
+		limit := []int{0, 1, 3, 20}[random.IntN(4)]
+		got, want, _ := assembleFilePatch(t, redactor, patch.String(), limit)
+		if len(got) != len(headers) || len(want) != len(headers) {
+			t.Fatalf("run %d: %d hunks, want %d (%d split from the whole patch)", run, len(got), len(headers), len(want))
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("run %d, cap %d, hunk %d: redaction differs from the whole patch's:\n%.2000s\nwant\n%.2000s", run, limit, i, got[i], want[i])
+			}
+			if n := hunkHeaderLen(headers[i]); n == 0 || !strings.HasPrefix(got[i], headers[i][:n]) {
+				t.Fatalf("run %d, hunk %d: header %q lost its line ranges: %.200q", run, i, headers[i], got[i])
+			}
+		}
+	}
 }
 
 // keyBody returns n distinct 64-byte base64 lines of key material.
@@ -566,11 +806,7 @@ func TestRedactionMarginAtItsBoundary(t *testing.T) {
 // goredact upgrade must re-measure redactionMargin against its rules'
 // lookaheads (see its comment), then update the version pinned here.
 func TestRedactionMarginCoversTheEngine(t *testing.T) {
-	gomod, err := os.ReadFile(filepath.Join("..", "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gomod), "github.com/baum-ai/goredact v0.3.0\n") {
+	if goredactVersion(t) != "v0.4.0" {
 		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
 	}
 	redactor, err := NewRedactor()
@@ -658,14 +894,8 @@ func TestRedactionMasksAPuTTYKeyInAHunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := keyBody(5)
-	public, private := lines[:2], lines[2:]
-	ppk := []string{
-		"PuTTY-User-Key-File-3: ssh-rsa", "Encryption: none", "Comment: rsa-key-20261020",
-		"Public-Lines: 2", public[0], public[1],
-		"Private-Lines: 3", private[0], private[1], private[2],
-		"Private-MAC: " + strings.Repeat("0a1b2c3d", 8),
-	}
+	ppk, private := syntheticPuTTYKey()
+	public := ppk[4:6]
 	patch := "@@ -0,0 +1,11 @@\n" + prefixLines("+", strings.Join(ppk, "\n"))
 	b := &Bundle{Diff: []Hunk{{Patch: patch}}}
 	if err := Redact(context.Background(), b, redactor); err != nil {

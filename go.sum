@@ -1,7 +1,7 @@
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
 github.com/MakeNowJust/heredoc v1.0.0/go.mod h1:mG5amYoWBHf8vpLOuehzbGGw0EHxpZZ6lCpQ4fNJ8LE=
-github.com/baum-ai/goredact v0.3.0 h1:iOOD0spy8lkHlmMNIAW1SJvEqTTSs00jmGwS7IoaD5c=
-github.com/baum-ai/goredact v0.3.0/go.mod h1:Oa1ch8d8lECmn+z3Baej/T1RvoFM1oWOlig6AiEzduA=
+github.com/baum-ai/goredact v0.4.0 h1:M7xGfKRv256tEDCaOz/fMpf+jkQxdIyMbkwrFbMvmew=
+github.com/baum-ai/goredact v0.4.0/go.mod h1:Oa1ch8d8lECmn+z3Baej/T1RvoFM1oWOlig6AiEzduA=
 github.com/cli/go-gh/v2 v2.16.1 h1:t8s29LToBmYjXeDXUnK7Wdm7NkYSyzGZK3t4Doa6GX0=
 github.com/cli/go-gh/v2 v2.16.1/go.mod h1:OaJTFtHJapQq670h/3L0vqm4NwZGoJmSAVctWiY+3pQ=
 github.com/cli/safeexec v1.0.1 h1:e/C79PbXF4yYTN/wauC4tviMxEV13BwljGj0N9j+N00=

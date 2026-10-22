@@ -392,6 +392,11 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := fs.ReadFile(s.assets, name)
 	if err != nil {
+		if name == "index.html" {
+			// A binary built from a checkout without the built app.
+			viewer.NotBuilt(w)
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}

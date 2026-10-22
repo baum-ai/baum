@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
-# Rebuild the committed viewer bundle (internal/viewer/dist) and the
-# precompiled tile validators (viewer/src/precompiled). Runs from any directory.
+# Build the viewer bundle (internal/viewer/dist), the local app
+# (internal/localapp/dist) and the precompiled tile validators
+# (viewer/src/precompiled). Runs from any directory.
 set -eu
 
 cd "$(dirname "$0")/.."

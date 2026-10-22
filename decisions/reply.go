@@ -56,28 +56,30 @@ func replyText(s string) string {
 // decision: text trimmed and NUL-free, turns sorted and deduplicated, files
 // cleaned and deduplicated, evidence whitespace collapsed. Who and category
 // are not checked here, so a bad value drops one decision in
-// ValidateCitations, not the reply.
-func ParseReply(data []byte) ([]Decision, error) {
+// ValidateCitations, not the reply. It also returns the superseded_existing
+// handles, trimmed; a reply without them supersedes nothing.
+func ParseReply(data []byte) ([]Decision, []string, error) {
 	var reply struct {
-		Decisions *[]replyDecision `json:"decisions"`
+		Decisions          *[]replyDecision `json:"decisions"`
+		SupersededExisting []string         `json:"superseded_existing"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&reply); err != nil {
-		return nil, fmt.Errorf("decode model reply: %w", err)
+		return nil, nil, fmt.Errorf("decode model reply: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("decode model reply: trailing data after the JSON value")
+		return nil, nil, errors.New("decode model reply: trailing data after the JSON value")
 	}
 	if reply.Decisions == nil {
-		return nil, errors.New("decode model reply: decisions is missing")
+		return nil, nil, errors.New("decode model reply: decisions is missing")
 	}
 	decisions := make([]Decision, 0, len(*reply.Decisions))
 	for i, item := range *reply.Decisions {
 		if item.Summary == nil || item.Who == nil || item.Category == nil || item.Trigger == nil ||
 			item.Rationale == nil || item.RejectedAlternative == nil || item.Superseded == nil ||
 			item.Turns == nil || item.DecidedTurn == nil || item.Evidence == nil || item.Files == nil {
-			return nil, fmt.Errorf("decode model reply: decision %d is missing a field", i)
+			return nil, nil, fmt.Errorf("decode model reply: decision %d is missing a field", i)
 		}
 		turns := slices.Clone(*item.Turns)
 		slices.Sort(turns)
@@ -102,7 +104,11 @@ func ParseReply(data []byte) ([]Decision, error) {
 			Files:               files,
 		})
 	}
-	return decisions, nil
+	superseded := make([]string, len(reply.SupersededExisting))
+	for i, handle := range reply.SupersededExisting {
+		superseded[i] = replyText(handle)
+	}
+	return decisions, superseded, nil
 }
 
 // minEvidenceWords is the fewest words a quote needs to be kept, so a lone
@@ -167,8 +173,10 @@ func unquoted(s string) string {
 // not edited in a remaining cited turn. A decision is dropped whole when no
 // turn remains or its own shape is invalid. An unknown trigger, a decided
 // turn that is not a remaining cited turn, and evidence not quoted from one
-// are removed on their own. Order is kept, and each removal is reported.
-func ValidateCitations(decisions []Decision, transcript *Transcript) ([]Decision, []Dropped) {
+// are removed on their own. With a positive cutoff, a decision none of whose
+// remaining turns is after it is dropped: an extension's existing decisions
+// already hold it. Order is kept, and each removal is reported.
+func ValidateCitations(decisions []Decision, transcript *Transcript, cutoff int) ([]Decision, []Dropped) {
 	edited := make(map[int][]string, len(transcript.Turns))
 	for _, turn := range transcript.Turns {
 		edited[turn.Ordinal] = turn.EditedFiles
@@ -198,6 +206,10 @@ func ValidateCitations(decisions []Decision, transcript *Transcript) ([]Decision
 		}
 		if len(turns) == 0 {
 			drop(noValidTurnReason(decision.Turns))
+			continue
+		}
+		if cutoff > 0 && turns[len(turns)-1] <= cutoff {
+			drop(fmt.Sprintf("no cited turn is after the cutoff turn %d", cutoff))
 			continue
 		}
 		files := make([]string, 0, len(decision.Files))

@@ -108,6 +108,12 @@ type Hunk struct {
 	Patch          string `json:"patch,omitempty"`
 	Textless       bool   `json:"textless,omitempty"`
 	TextlessReason string `json:"textless_reason,omitempty"`
+
+	// file is the file patch diff parsing took this hunk from, which Redact
+	// reads whole and then clears; offset is where Patch starts in its text.
+	// A hunk with no file is redacted on its own.
+	file   *filePatch
+	offset int
 }
 
 // Check is one check run or commit status for the head.
@@ -228,7 +234,10 @@ type Prompt struct {
 // Trigger is what prompted it (request, review, failure, finding or
 // initiative), Rationale why as the session states it, DecidedTurn the turn
 // the choice was made, and Evidence a verbatim quote from EvidenceTurn
-// showing it; each is empty when not extracted.
+// showing it; each is empty when not extracted. DecisionID is the host's
+// stable ID of the decision, empty when it has none; it is not part of the
+// encoded bundle, so the model never reads it, and a host that needs it after
+// decoding a bundle sets it again (SetDecisionIDs).
 type SessionDecision struct {
 	Title               string   `json:"title,omitempty"`
 	Summary             string   `json:"summary"`
@@ -243,6 +252,48 @@ type SessionDecision struct {
 	Evidence            string   `json:"evidence,omitempty"`
 	EvidenceTurn        int      `json:"evidence_turn,omitempty"`
 	Files               []string `json:"files,omitempty"`
+	DecisionID          string   `json:"-"`
+}
+
+// DecisionIDs returns, by root session ID, the DecisionID of each decision
+// of each session that carries decisions, in the session's order; nil when
+// no decision has one.
+func (b *Bundle) DecisionIDs() map[string][]string {
+	var ids map[string][]string
+	for _, session := range b.Sessions {
+		if session.Decisions == nil {
+			continue
+		}
+		list := make([]string, len(*session.Decisions))
+		has := false
+		for i, decision := range *session.Decisions {
+			list[i] = decision.DecisionID
+			has = has || decision.DecisionID != ""
+		}
+		if !has {
+			continue
+		}
+		if ids == nil {
+			ids = map[string][]string{}
+		}
+		ids[session.RootSessionID] = list
+	}
+	return ids
+}
+
+// SetDecisionIDs sets each session's decisions' DecisionID from ids, as
+// DecisionIDs returned them for the same bundle. A session whose decisions
+// do not number as many as its IDs gets none.
+func (b *Bundle) SetDecisionIDs(ids map[string][]string) {
+	for _, session := range b.Sessions {
+		list, ok := ids[session.RootSessionID]
+		if !ok || session.Decisions == nil || len(*session.Decisions) != len(list) {
+			continue
+		}
+		for i := range *session.Decisions {
+			(*session.Decisions)[i].DecisionID = list[i]
+		}
+	}
 }
 
 // CommandEvent is one execute tool use.

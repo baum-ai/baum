@@ -1,5 +1,13 @@
 # Local application
 
+For desktop UI development, run `just desktop::dev` from the repository root
+on a Wayland session. Vite serves React and CSS with hot reload while proxying
+login and namespaced API requests to an isolated container daemon. Changes to
+this app and `../viewer` appear in the native window without rebuilding Go or
+Rust. See [desktop development](../desktop/README.md#development) for details.
+`just local_app::e2e` checks both the built app and the development proxy;
+the latter covers login, CSRF, event streaming and React/CSS hot reload.
+
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
 `credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
@@ -95,14 +103,24 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) are a
+section of Repositories & settings and a page of their own,
+`?page=diagnostics`, which the desktop app opens after its first-run setup
+(the bootstrap page carries `page=diagnostics` from the launch URL's
+fragment). Each warning and problem shows its fix. The app runs the
+diagnostics once when it opens on any other page and, while they find a
+problem, shows a notice on every page linking to the diagnostics page; the
+settings and diagnostics pages update it when they run the checks again.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
 after an explicit generation request and spend confirmation.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
-`pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes committed assets
-to `../internal/localapp/dist`; the common `viewer-build` / `viewer-fresh` recipes
-also build/check this bundle, so `go install` needs no Node.js.
+`pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes the assets the
+daemon embeds to `../internal/localapp/dist`, which only a release commit (the
+commit a `v*` tag points at) carries, so `go install` of a tagged version needs
+no Node.js. The common `viewer-build` recipe also builds this bundle; a binary
+built without it answers the application's page with a note saying so.
 
 Browser tests run the actual daemon (`daemon.Run`, with its lock, credential
 file and control socket in a temporary directory) serving a `uiserver.Server`,

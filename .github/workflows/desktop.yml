@@ -1,0 +1,197 @@
+name: Desktop bundles
+
+# Builds the desktop app's bundles, unsigned, on each platform with
+# desktop/scripts/bundle.sh and uploads them as the artifact
+# desktop-<platform>. Check calls it on pull requests and main for snapshots;
+# Release calls it on a version tag with the bundled baum binaries goreleaser
+# built. This workflow takes no secrets: compiling runs hundreds of crates'
+# build scripts and the bundler's downloads, so signing happens later, in
+# Release jobs that build nothing. See desktop/README.md.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version without the leading v; 0.0.0 for snapshots, which never check for updates
+        type: string
+        required: true
+      cli-artifact:
+        description: Artifact holding goreleaser's dist/baum_<os>_<arch>*/ binaries; empty builds them from source
+        type: string
+        default: ""
+      apps-artifact:
+        description: For a build from source, the artifact holding the built viewer/dist and localapp/dist, which only a release commit carries
+        type: string
+        default: ""
+      finalize-macos:
+        description: Also run macos-finalize.sh (ad hoc signing, disk image, updater archive) in the bundle job
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Desktop bundle (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+            optional: false
+          # Free for public repositories; a failure here does not hold up
+          # the other platforms or the updater manifest.
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            optional: true
+          - platform: darwin-universal
+            runner: macos-15
+            optional: false
+          - platform: windows-amd64
+            runner: windows-2025
+            optional: false
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.optional }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.version }}
+      PLATFORM: ${{ matrix.platform }}
+      CLI_ARTIFACT: ${{ inputs.cli-artifact }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        if: inputs.cli-artifact == ''
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # Without them, the bundled daemon would answer the app's window with a
+      # note that it was built without its web app.
+      - name: Download the built apps
+        if: inputs.cli-artifact == '' && inputs.apps-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.apps-artifact }}
+          path: internal
+
+      - name: Build the bundled baum binaries
+        if: inputs.cli-artifact == ''
+        run: |
+          case "$PLATFORM" in
+            linux-amd64) sh desktop/scripts/sidecar.sh x86_64-unknown-linux-gnu ;;
+            linux-arm64) sh desktop/scripts/sidecar.sh aarch64-unknown-linux-gnu ;;
+            darwin-universal)
+              sh desktop/scripts/sidecar.sh aarch64-apple-darwin
+              sh desktop/scripts/sidecar.sh x86_64-apple-darwin
+              ;;
+            windows-amd64) sh desktop/scripts/sidecar.sh x86_64-pc-windows-msvc ;;
+          esac
+
+      - name: Download the release's baum binaries
+        if: inputs.cli-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.cli-artifact }}
+          path: cli-dist
+
+      # The app bundles the very binaries the CLI release archives hold.
+      - name: Use the release's baum binaries
+        if: inputs.cli-artifact != ''
+        run: |
+          shopt -s nullglob
+          mkdir -p desktop/binaries
+          # goreleaser puts each build in dist/baum_<os>_<arch>[_<variant>]/.
+          take() {
+            local found=(cli-dist/baum_"$1"*/baum"$3")
+            if [ "${#found[@]}" -ne 1 ]; then
+              echo "::error::expected one baum binary for $1 in $CLI_ARTIFACT, found ${#found[@]}"
+              exit 1
+            fi
+            cp "${found[0]}" "desktop/binaries/baum-$2$3"
+            chmod 0755 "desktop/binaries/baum-$2$3"
+          }
+          case "$PLATFORM" in
+            linux-amd64) take linux_amd64 x86_64-unknown-linux-gnu "" ;;
+            linux-arm64) take linux_arm64 aarch64-unknown-linux-gnu "" ;;
+            darwin-universal)
+              take darwin_arm64 aarch64-apple-darwin ""
+              take darwin_amd64 x86_64-apple-darwin ""
+              ;;
+            windows-amd64) take windows_amd64 x86_64-pc-windows-msvc .exe ;;
+          esac
+
+      - name: Combine the macOS binaries
+        if: matrix.platform == 'darwin-universal'
+        working-directory: desktop/binaries
+        run: |
+          lipo -create -output baum-universal-apple-darwin baum-aarch64-apple-darwin baum-x86_64-apple-darwin
+          lipo baum-universal-apple-darwin -verify_arch arm64 x86_64
+
+      - name: Set up Rust
+        if: runner.os != 'Linux'
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          if [ "$PLATFORM" = darwin-universal ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+
+      # Snapshots reuse the Tauri CLI; release builds compile it afresh.
+      - name: Cache the Tauri CLI
+        if: runner.os != 'Linux' && inputs.cli-artifact == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri*
+          key: tauri-cli-2.12.3-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install the Tauri CLI
+        if: runner.os != 'Linux'
+        run: |
+          if ! cargo tauri --version 2>/dev/null | grep -qx 'tauri-cli 2.12.3'; then
+            cargo install --locked tauri-cli --version 2.12.3
+          fi
+
+      # Linux bundles are built on Debian 12 so they run on older systems
+      # too, in the same image as `just desktop::bundle`.
+      - name: Build the Linux build image
+        if: runner.os == 'Linux'
+        run: docker build --tag baum-desktop-build desktop
+
+      - name: Build the bundles (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --volume "$PWD:/oss" --workdir /oss/desktop \
+            baum-desktop-build scripts/bundle.sh "$PLATFORM" "$VERSION" target/release-bundles
+          sudo chown -R "$(id -u):$(id -g)" desktop/target
+
+      - name: Build the bundles
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        run: bash scripts/bundle.sh "$PLATFORM" "$VERSION" target/release-bundles
+
+      # Exercises the release's macOS packaging on every snapshot; without
+      # Apple secrets it signs ad hoc.
+      - name: Package the macOS app
+        if: matrix.platform == 'darwin-universal' && inputs.finalize-macos
+        working-directory: desktop
+        run: |
+          bash scripts/macos-finalize.sh target/release-bundles/baum-desktop-darwin-universal.app.tar \
+            "$VERSION" target/release-bundles
+
+      - name: Upload the bundles
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: desktop/target/release-bundles/
+          if-no-files-found: error
+          retention-days: 14

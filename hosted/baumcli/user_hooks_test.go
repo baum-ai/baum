@@ -3,6 +3,7 @@
 package baumcli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -404,6 +405,59 @@ func TestHooksInstallAndUninstallUser(t *testing.T) {
 
 	if _, _, err := runCLI(t, "hooks", "install", "--user", "--agent", "cursor"); err == nil {
 		t.Error("install accepted cursor")
+	}
+}
+
+// The desktop app reads the status as JSON: which agents were found, where
+// their settings live and whether baum's hooks are there and up to date.
+func TestHooksStatusUser(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := func() map[string]userHooksStatus {
+		t.Helper()
+		stdout, _, err := runCLI(t, "hooks", "status", "--user", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct{ Agents []userHooksStatus }
+		if err := json.Unmarshal([]byte(stdout), &body); err != nil {
+			t.Fatalf("%v: %s", err, stdout)
+		}
+		byAgent := map[string]userHooksStatus{}
+		for _, s := range body.Agents {
+			byAgent[s.Agent] = s
+		}
+		return byAgent
+	}
+	before := status()
+	claude, codex := before["claude-code"], before["codex"]
+	if !claude.Detected || claude.Installed || claude.Settings != filepath.Join(home, ".claude", "settings.json") || claude.Name != "Claude Code" {
+		t.Errorf("claude-code before install = %+v", claude)
+	}
+	if codex.Detected || codex.Installed {
+		t.Errorf("codex before install = %+v", codex)
+	}
+	if _, _, err := runCLI(t, "hooks", "install", "--user"); err != nil {
+		t.Fatal(err)
+	}
+	after := status()
+	if !after["claude-code"].Installed || after["codex"].Installed {
+		t.Errorf("after installing for the detected agents = %+v", after)
+	}
+	writeAgentSettings(t, home, ".codex/hooks.json", `{"hooks": `)
+	if got := status()["codex"]; got.Installed || !strings.Contains(got.Error, "not valid JSON") {
+		t.Errorf("codex with a malformed file = %+v", got)
+	}
+	if _, _, err := runCLI(t, "hooks", "status"); err == nil || !strings.Contains(err.Error(), "--user") {
+		t.Errorf("status without --user: err = %v", err)
+	}
+	stdout, _, err := runCLI(t, "hooks", "status", "--user")
+	if err != nil || !strings.Contains(stdout, "Claude Code (found): installed in ~/.claude/settings.json") {
+		t.Errorf("text status: %v\n%s", err, stdout)
 	}
 }
 

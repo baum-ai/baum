@@ -67,3 +67,88 @@ func TestRestartRechecksTheExecutableBeforeRunningIt(t *testing.T) {
 	}
 	keptRunning(t, paths, respawned)
 }
+
+// On macOS a directory group-writable only by the admin group, such as
+// /Applications, is accepted; the staff group, files, world-writable and
+// sticky directories are not.
+func TestAdminGroupDirectories(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		dir  bool
+		gid  uint32
+		mode os.FileMode
+		ok   bool
+	}{
+		{"admin directory", true, 80, os.ModeDir | 0o775, true},
+		{"staff directory", true, 20, os.ModeDir | 0o775, false},
+		{"other group", true, 81, os.ModeDir | 0o775, false},
+		{"world-writable", true, 80, os.ModeDir | 0o777, false},
+		{"sticky", true, 80, os.ModeDir | os.ModeSticky | 0o775, false},
+		{"file", false, 80, 0o775, false},
+	} {
+		if got := adminWritableOnly(c.dir, c.gid, c.mode); got != c.ok {
+			t.Errorf("%s: accepted = %v, want %v", c.name, got, c.ok)
+		}
+	}
+	// Even if the admin group were the staff group, it is refused.
+	old := adminGID
+	adminGID = staffGID
+	defer func() { adminGID = old }()
+	if adminWritableOnly(true, staffGID, os.ModeDir|0o775) {
+		t.Error("accepted the staff group")
+	}
+}
+
+// Through the policy: with the allowance on and the directory's group taken
+// as the admin group, a group-writable directory above the executable passes,
+// and without the allowance (other platforms) it does not.
+func TestAdminGroupDirectoryAboveTheExecutable(t *testing.T) {
+	var gid uint32
+	for _, g := range mustGroups(t) {
+		if g != staffGID {
+			gid = uint32(g)
+			break
+		}
+	}
+	if gid == 0 {
+		t.Skip("no group other than staff to test with")
+	}
+	dir := safeDir(t)
+	baum := executableIn(t, dir, "Applications/baum")
+	apps := filepath.Join(dir, "Applications")
+	if err := os.Chown(apps, -1, int(gid)); err != nil {
+		t.Skipf("cannot change the group: %v", err)
+	}
+	if err := os.Chmod(apps, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	oldOn, oldGID := adminGroupDirectories, adminGID
+	defer func() { adminGroupDirectories, adminGID = oldOn, oldGID }()
+	adminGroupDirectories, adminGID = false, gid
+	if _, err := policyFor(dir, baum).trusted(baum); err == nil {
+		t.Fatal("accepted a group-writable directory without the allowance")
+	}
+	adminGroupDirectories = true
+	if _, err := policyFor(dir, baum).trusted(baum); err != nil {
+		t.Fatalf("refused the admin group's directory: %v", err)
+	}
+	// The executable itself never gets the allowance.
+	if err := os.Chown(baum, -1, int(gid)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(baum, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policyFor(dir, baum).trusted(baum); err == nil {
+		t.Fatal("accepted a group-writable executable")
+	}
+}
+
+func mustGroups(t *testing.T) []int {
+	t.Helper()
+	groups, err := os.Getgroups()
+	if err != nil {
+		t.Skipf("no groups: %v", err)
+	}
+	return append(groups, os.Getgid())
+}

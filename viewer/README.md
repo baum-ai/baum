@@ -173,6 +173,8 @@ member number and a link to that member's exact review version, section and
 decision, where the decision expands and highlights on arrival.
 Repeated decisions with identical text, source sessions and attribution appear
 once in a stack, linking to the first member where they are referenced.
+A decision item's optional `decision_id`, the host's stable ID of the
+extracted decision it reports, is accepted and not shown.
 Quotes with a readable session source have a quiet “View in session” link below
 the quote, in the link color, leading to the cited turn. Decision and session jumps center their target in 400 ms. The visible target
 highlights for 2 seconds, fading without a persistent border; background
@@ -446,13 +448,15 @@ URL's search parameters, and has no file picker, no upload and no requests to
 any other host.
 
 `pnpm build:app` builds it with Vite into `../internal/viewer/dist`, the Go
-package that embeds it. That output is committed, so `go install` needs
-nothing but Go: run `just viewer-build` from the module root and commit the
-result whenever the viewer's source or the schema changes. It runs
-`pnpm generate:validators` and `pnpm build:app`, and `just viewer-fresh` fails
-when the committed output differs from a fresh build, as CI does. The
-build writes no sourcemaps, and two builds of the same source are
-byte-identical.
+package that embeds it. That output is not committed: only a release commit,
+the commit a `v*` tag points at, carries it, so `go install` of a tagged
+version needs nothing but Go (see `scripts/release-commit.sh`). Elsewhere, run
+`just viewer-build` from the module root before building a binary whose
+viewer works; one built without it answers each page with a note saying so.
+`just viewer-build` runs `pnpm generate:validators` and `pnpm build:app`, and
+`just viewer-fresh` also fails when the committed validators, or on a release
+commit the built app, differ from a fresh build, as CI does. The build writes
+no sourcemaps, and two builds of the same source are byte-identical.
 
 ## Development
 
@@ -493,8 +497,7 @@ payloads, with no model call. It renders every tile it finds with the same
 document), where it came from, and a filter by kind and source. It is served
 by Vite's dev server, with hot module replacement, from its own config
 (`vite.gallery.config.ts`): the standalone app's build roots at `app/` and
-never sees it, so it is not in `just viewer-build` output and
-`just viewer-fresh` stays clean.
+never sees it, so it is not in `just viewer-build` output.
 
 ```sh
 just viewer::gallery                  # http://127.0.0.1:5180, GALLERY_PORT=... to move it

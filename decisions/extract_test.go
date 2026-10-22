@@ -114,7 +114,7 @@ func TestPromptVersionCoversPromptAndSchema(t *testing.T) {
 
 func TestExtractTokenCap(t *testing.T) {
 	transcript := citationTranscript()
-	estimate := testExtractor.EstimateTokens(transcript)
+	estimate := testExtractor.EstimateTokens(transcript, ExtractOptions{})
 	if estimate != EstimateTokens(testPrompt, transcript.Text()) {
 		t.Fatalf("estimate = %d", estimate)
 	}
@@ -139,7 +139,7 @@ func TestMaxTokensBoundsTextWithFewBytesPerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	bytes := int64(len(request.System) + len(request.User) + len(schema))
-	if got := testExtractor.MaxTokens(transcript); got < bytes+FramingTokens || got < 4*testExtractor.EstimateTokens(transcript)-4 {
+	if got := testExtractor.MaxTokens(transcript, ExtractOptions{}); got < bytes+FramingTokens || got < 4*testExtractor.EstimateTokens(transcript, ExtractOptions{})-4 {
 		t.Fatalf("MaxTokens = %d, want at least the request's %d bytes plus framing", got, bytes)
 	}
 	if !testExtractor.IsRequest(request) || testExtractor.IsRequest(ModelRequest{System: "other", SchemaName: ExtractSchemaName}) {
@@ -471,5 +471,158 @@ func TestExtractRejectsMalformedReplies(t *testing.T) {
 				t.Error("want an error")
 			}
 		})
+	}
+}
+
+func extensionTranscript() *Transcript {
+	return &Transcript{SessionID: "s1", Turns: []Turn{
+		{Ordinal: 1, Human: "add a gate", EditedFiles: []string{"a.go"}},
+		{Ordinal: 2, Human: "use a header", EditedFiles: []string{"b.go"}},
+		{Ordinal: 3, Human: "drop the header, use a cookie", EditedFiles: []string{"b.go"}},
+		{Ordinal: 5, Human: "add tests", EditedFiles: []string{"b_test.go"}},
+	}}
+}
+
+func existingDecisions() []Decision {
+	return []Decision{
+		{ID: "0f9e8d7c-0000-4000-8000-000000000001", Title: "Gate the API", Summary: "Gate the API with a middleware.",
+			Who: WhoHuman, Category: CategoryArchitecture, Superseded: true, Turns: []int{1}, Files: []string{"a.go"}},
+		{ID: "0f9e8d7c-0000-4000-8000-000000000002", Summary: "Authenticate with a header.",
+			Who: WhoHuman, Category: CategoryInterface, Turns: []int{2, 3}, Files: []string{"b.go"}},
+	}
+}
+
+func TestExtractExtendsExistingDecisions(t *testing.T) {
+	transcript := extensionTranscript()
+	existing := existingDecisions()
+	model := &fakeModel{reply: `{"decisions":[
+		{"summary":"Authenticate with a header again.","who":"human","category":"interface","trigger":"request","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"",
+		 "superseded":false,"turns":[2,9],"files":[]},
+		{"summary":"Authenticate with a cookie.","who":"human","category":"interface","trigger":"request","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"",
+		 "superseded":false,"turns":[2,3],"files":["b.go"]},
+		{"summary":"Test the cookie.","who":"agent","category":"testing","trigger":"initiative","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"",
+		 "superseded":false,"turns":[5],"files":["b_test.go"]}
+	],"superseded_existing":["D2 (turns 2, 3)","d9","x"]}`}
+	opts := ExtractOptions{Existing: existing, Cutoff: 2}
+	got, err := testExtractor.Extract(context.Background(), model, transcript, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := "--- Decisions through turn 2 are already extracted; decisions after this line may already be listed ---\n\n"
+	wantUser := "# Existing decisions\n" +
+		"- d1 (turns 1; superseded): Gate the API: Gate the API with a middleware.\n" +
+		"- d2 (turns 2, 3): Authenticate with a header.\n" +
+		"\n# Transcript\n\n" + strings.Replace(transcript.Text(), "## Turn 3\n", marker+"## Turn 3\n", 1)
+	user := model.requests[0].User
+	if user != wantUser {
+		t.Errorf("user message =\n%s\nwant\n%s", user, wantUser)
+	}
+	if strings.Contains(user, "0f9e8d7c") {
+		t.Error("user message shows a decision ID")
+	}
+	cookie := Decision{Summary: "Authenticate with a cookie.", Who: WhoHuman, Category: CategoryInterface, Trigger: TriggerRequest, Turns: []int{2, 3}, Files: []string{"b.go"}}
+	tests := Decision{Summary: "Test the cookie.", Who: WhoAgent, Category: CategoryTesting, Trigger: TriggerInitiative, Turns: []int{5}, Files: []string{"b_test.go"}}
+	superseded := existingDecisions()[1]
+	superseded.Superseded = true
+	want := []Decision{existingDecisions()[0], superseded, cookie, tests}
+	if !reflect.DeepEqual(got.Decisions, want) {
+		t.Errorf("decisions = %+v", got.Decisions)
+	}
+	if !reflect.DeepEqual(existing, existingDecisions()) {
+		t.Error("Extract changed opts.Existing")
+	}
+	wantDropped := []Dropped{
+		{Decision: 0, Summary: "Authenticate with a header again.", Reason: "no cited turn is after the cutoff turn 2"},
+	}
+	if !reflect.DeepEqual(got.Dropped, wantDropped) {
+		t.Errorf("dropped = %+v", got.Dropped)
+	}
+	if estimate := testExtractor.EstimateTokens(transcript, opts); estimate != EstimateTokens(testPrompt, user) {
+		t.Errorf("EstimateTokens = %d, want the sent message's %d", estimate, EstimateTokens(testPrompt, user))
+	}
+	if max := testExtractor.MaxTokens(transcript, opts); max <= testExtractor.MaxTokens(transcript, ExtractOptions{}) {
+		t.Errorf("MaxTokens = %d, not more than the plain text's", max)
+	}
+	opts.MaxInputTokens = testExtractor.EstimateTokens(transcript, ExtractOptions{})
+	if _, err := testExtractor.Extract(context.Background(), model, transcript, opts); !errors.Is(err, ErrTranscriptTooLarge) {
+		t.Errorf("cap of the plain text: err = %v, want ErrTranscriptTooLarge", err)
+	}
+}
+
+func TestExtractWithExistingAndNoCutoff(t *testing.T) {
+	transcript := extensionTranscript()
+	model := &fakeModel{reply: `{"decisions":[
+		{"summary":"Name the gate middleware.","who":"agent","category":"implementation","trigger":"initiative","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"",
+		 "superseded":false,"turns":[1],"files":["a.go"]}
+	],"superseded_existing":["d1"]}`}
+	got, err := testExtractor.Extract(context.Background(), model, transcript, ExtractOptions{Existing: existingDecisions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := model.requests[0].User
+	if !strings.HasPrefix(user, "# Existing decisions\n- d1 ") || !strings.HasSuffix(user, "\n# Transcript\n\n"+transcript.Text()) {
+		t.Errorf("user message =\n%s", user)
+	}
+	if len(got.Decisions) != 3 || got.Decisions[2].Summary != "Name the gate middleware." || !got.Decisions[0].Superseded || got.Decisions[1].Superseded {
+		t.Errorf("decisions = %+v", got.Decisions)
+	}
+}
+
+func TestExtractWithCutoffAndNoExisting(t *testing.T) {
+	transcript := extensionTranscript()
+	model := &fakeModel{reply: `{"decisions":[],"superseded_existing":[]}`}
+	if _, err := testExtractor.Extract(context.Background(), model, transcript, ExtractOptions{Cutoff: 5}); err != nil {
+		t.Fatal(err)
+	}
+	// A cutoff at the last turn puts the marker after all of them.
+	want := "# Existing decisions\n(none)\n\n# Transcript\n\n" + transcript.Text() +
+		"\n--- Decisions through turn 5 are already extracted; decisions after this line may already be listed ---\n\n"
+	if user := model.requests[0].User; user != want {
+		t.Errorf("user message =\n%s\nwant\n%s", user, want)
+	}
+}
+
+func TestExtractPlainIgnoresSupersededHandles(t *testing.T) {
+	transcript := extensionTranscript()
+	model := &fakeModel{reply: `{"decisions":[],"superseded_existing":["d1"]}`}
+	got, err := testExtractor.Extract(context.Background(), model, transcript, ExtractOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.requests[0].User != transcript.Text() || len(got.Decisions) != 0 {
+		t.Errorf("user message = %q, decisions = %+v", model.requests[0].User, got.Decisions)
+	}
+	empty, err := testExtractor.Extract(context.Background(), model, &Transcript{SessionID: "s0"}, ExtractOptions{Existing: existingDecisions()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(empty.Decisions, existingDecisions()) {
+		t.Errorf("no turns: decisions = %+v, want the existing ones", empty.Decisions)
+	}
+}
+
+func TestExtractSupersedesOnlyWithANewDecision(t *testing.T) {
+	// The only new decision is at the cutoff and dropped, so nothing
+	// replaces d2.
+	model := &fakeModel{reply: `{"decisions":[
+		{"summary":"Authenticate with a header again.","who":"human","category":"interface","trigger":"request","rationale":"","decided_turn":0,"evidence":"","rejected_alternative":"",
+		 "superseded":false,"turns":[2],"files":[]}
+	],"superseded_existing":["d2"]}`}
+	got, err := testExtractor.Extract(context.Background(), model, extensionTranscript(), ExtractOptions{Existing: existingDecisions(), Cutoff: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Decisions, existingDecisions()) {
+		t.Errorf("decisions = %+v, want the existing ones unchanged", got.Decisions)
+	}
+}
+
+func TestExtendedReadsHandles(t *testing.T) {
+	found := []Decision{{Summary: "new"}}
+	for handle, want := range map[string]bool{"d2": true, "D2": true, "d2 (turns 2, 3)": true, "d02": true, "d3": false, "d0": false, "x2": false, " d2": false} {
+		got := extended(existingDecisions(), []string{handle}, found)
+		if got[1].Superseded != want || got[0].Superseded != true {
+			t.Errorf("%q: decisions = %+v", handle, got)
+		}
 	}
 }

@@ -19,8 +19,10 @@ import {
 } from "@baum/viewer/navigation";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
-import { DiagnosticsSection } from "./diagnostics";
+import { DiagnosticsSection, useDiagnosticProblems } from "./diagnostics";
 import {
+  estimateReasonText,
+  blockedReasonText,
   appBase,
   appURL,
   request,
@@ -35,6 +37,7 @@ import {
   type Automatic,
   type AutomaticStatus,
   type Clone,
+  type DiagnosticReport,
   type Entry,
   type Snapshot,
   type Estimate,
@@ -232,6 +235,8 @@ function Workspace({ url }: { url: UrlState }) {
         entry.pull_request.repository.toLowerCase() === requestedRepository.toLowerCase(),
     );
   const page = url.search.get("page") ?? "inbox";
+  // The pages that show the diagnostics run them themselves.
+  const diagnostics = useDiagnosticProblems(page !== "settings" && page !== "diagnostics");
   const generate = async (entries: Entry[], mode: "single" | "batch") => {
     if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
       setEstimateError("A review of a selected pull request is already queued or running.");
@@ -293,6 +298,13 @@ function Workspace({ url }: { url: UrlState }) {
             {status.repository}: {automaticNotice(status)}
           </Alert>
         ))}
+      {diagnostics.problems > 0 && page !== "diagnostics" ? (
+        <Alert>
+          baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
+          {diagnostics.problems === 1 ? "problem" : "problems"}.{" "}
+          <LocalLink href={appURL("?page=diagnostics")}>Show the fixes</LocalLink>
+        </Alert>
+      ) : null}
       <main className="local-main">
         {error ? (
           <Alert>
@@ -300,7 +312,20 @@ function Workspace({ url }: { url: UrlState }) {
           </Alert>
         ) : null}
         {page === "settings" ? (
-          <Settings clones={clones} automatic={automatic} changed={reload} />
+          <Settings
+            clones={clones}
+            automatic={automatic}
+            changed={reload}
+            onDiagnostics={diagnostics.update}
+          />
+        ) : page === "diagnostics" ? (
+          <>
+            <h1 className="text-2xl mb-4">Check this computer</h1>
+            <p className="mb-4">
+              What baum needs on this computer, what it found, and how to fix each problem.
+            </p>
+            <DiagnosticsSection onReport={diagnostics.update} />
+          </>
         ) : page === "jobs" ? (
           <Jobs jobs={jobs} changed={reload} />
         ) : selectedEntry ? (
@@ -475,24 +500,6 @@ function Workspace({ url }: { url: UrlState }) {
     </>
   );
 }
-// estimateReasons explains, in words, why an item has no estimate on purpose.
-const estimateReasons: Record<string, string> = {
-  billed_by_cursor_subscription:
-    "Cost is billed by your Cursor subscription; baum can't estimate it.",
-};
-// blockedReasons explains why an item is left out of the generation.
-const blockedReasons: Record<string, string> = {
-  unknown_model_price:
-    "No price is known for this model. Choose a priced model in repository settings.",
-  isolation_confirmation_required:
-    "A fork or an author without known write access needs its own confirmation: generate this pull request on its own.",
-};
-export function estimateReasonText(reason: string): string {
-  return estimateReasons[reason] ?? "baum can't estimate the cost of this run.";
-}
-export function blockedReasonText(reason: string): string {
-  return blockedReasons[reason] ?? "It cannot be generated with the current settings.";
-}
 function Confirmation({
   estimate,
   error,
@@ -641,10 +648,12 @@ function Settings({
   clones,
   automatic,
   changed,
+  onDiagnostics,
 }: {
   clones: Clone[];
   automatic: Automatic | null;
   changed: () => Promise<void>;
+  onDiagnostics: (report: DiagnosticReport | null) => void;
 }) {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
@@ -719,7 +728,7 @@ function Settings({
           </Button>
         </div>
       ))}
-      <DiagnosticsSection />
+      <DiagnosticsSection onReport={onDiagnostics} />
     </section>
   );
 }

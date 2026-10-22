@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup-screen",
+  "description": "The bundled setup screen may read what is installed, install or remove the baum command and the user-wide agent hooks when the user asks, and leave setup. It has no remote URLs, so pages the daemon serves cannot call these commands.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-setup-state",
+    "allow-install-command",
+    "allow-uninstall-command",
+    "allow-install-hooks",
+    "allow-uninstall-hooks",
+    "allow-finish-setup"
+  ]
+}

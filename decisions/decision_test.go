@@ -1,6 +1,10 @@
 package decisions
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestDecisionValidate(t *testing.T) {
 	valid := Decision{Summary: "s", Category: CategoryScope, Who: WhoAgent, Turns: []int{1, 3}, Files: []string{"platform/a.go"}}
@@ -35,5 +39,19 @@ func TestDecisionValidate(t *testing.T) {
 		if d.Validate() == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestIdentifiedKeepsExistingIDs(t *testing.T) {
+	decisions := []Decision{{Summary: "kept", ID: "0f9e8d7c-0000-4000-8000-000000000001"}, {Summary: "new"}, {Summary: "other"}}
+	got := Identified(decisions)
+	if got[0].ID != decisions[0].ID {
+		t.Errorf("existing ID changed to %q", got[0].ID)
+	}
+	if _, err := uuid.Parse(got[1].ID); err != nil || got[1].ID == got[2].ID {
+		t.Errorf("new IDs = %q, %q", got[1].ID, got[2].ID)
+	}
+	if decisions[1].ID != "" {
+		t.Error("Identified changed its argument")
 	}
 }

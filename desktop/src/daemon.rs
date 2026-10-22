@@ -86,12 +86,39 @@ impl Failure {
     }
 }
 
-/// The `baum` binary the app runs: the one bundled next to the executable,
-/// or `BAUM_DESKTOP_BAUM` while developing.
+/// The `baum` binary the app runs: `BAUM_DESKTOP_BAUM` while developing, else
+/// the stable copy where the app keeps one, else the one bundled next to the
+/// executable.
 pub fn cli_path() -> Result<PathBuf, Failure> {
     if let Some(path) = std::env::var_os("BAUM_DESKTOP_BAUM") {
         return Ok(PathBuf::from(path));
     }
+    if let Some(stable) = STABLE_CLI.get() {
+        return stable().map_err(Failure::new);
+    }
+    bundled_cli_path()
+}
+
+/// Where the app keeps a stable copy of the bundled binary (an AppImage's
+/// mount vanishes when it quits; see `onboarding::start`), a function that
+/// refreshes the copy if needed and returns it. Every run of baum goes
+/// through it, so a copy that could not be made is an error the connecting
+/// screen shows and Retry tries again, never a fall back to the binary that
+/// would vanish. Set once, at startup, before anything runs baum.
+type StableCli = Box<dyn Fn() -> Result<PathBuf, String> + Send + Sync>;
+static STABLE_CLI: std::sync::OnceLock<StableCli> = std::sync::OnceLock::new();
+
+pub fn use_stable_cli(stable: impl Fn() -> Result<PathBuf, String> + Send + Sync + 'static) {
+    let _ = STABLE_CLI.set(Box::new(stable));
+}
+
+/// Whether `BAUM_DESKTOP_BAUM` names the baum to run (development).
+pub fn cli_overridden() -> bool {
+    std::env::var_os("BAUM_DESKTOP_BAUM").is_some()
+}
+
+/// The binary bundled next to the app's executable.
+pub fn bundled_cli_path() -> Result<PathBuf, Failure> {
     let exe = std::env::current_exe()
         .map_err(|e| Failure::new(format!("Cannot locate the app executable: {e}")))?;
     let name = if cfg!(windows) { "baum.exe" } else { "baum" };
@@ -357,6 +384,21 @@ pub fn log_tail(state: &Path, max: usize) -> Vec<String> {
     out
 }
 
+/// How many generation jobs the user's daemon is running, so an update can
+/// wait for them. `baum daemon status` finds the daemon without starting one;
+/// when it reports none, no job can be running and the answer is 0. Queued
+/// jobs wait in the daemon's journal and resume after a restart; only a
+/// running one would be interrupted.
+pub fn running_jobs(cli: &Path, timeout: Duration) -> Result<usize, String> {
+    let Ok(output) = run(cli, &["daemon", "status", "--json"], timeout) else {
+        return Ok(0);
+    };
+    let status = parse_status(&output.stdout)?;
+    let launch = read_credential(&status.state)?;
+    let body = crate::client::jobs(&launch)?;
+    Ok(crate::status::parse_jobs(&body)?.running)
+}
+
 /// A launch on a local test server, for other modules' tests.
 #[cfg(test)]
 pub fn test_launch(port: u16) -> Launch {
@@ -373,6 +415,27 @@ pub fn test_launch(port: u16) -> Launch {
         url,
         token,
     }
+}
+
+/// A stand-in for the bundled baum in tests, running `script` with sh. It is
+/// written under another name and copied into place by `cp`: a file this
+/// process held open for writing could still be open in a child another test
+/// thread forks at that moment, and running it would then fail with ETXTBSY
+/// (renaming would not help; the inode stays the same).
+#[cfg(all(test, unix))]
+pub fn fake_cli(dir: &Path, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let source = dir.join("baum.source");
+    fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = dir.join("baum");
+    let copied = Command::new("cp")
+        .arg("-p")
+        .arg(&source)
+        .arg(&path)
+        .status();
+    assert!(copied.unwrap().success());
+    path
 }
 
 #[cfg(test)]
@@ -542,7 +605,6 @@ mod tests {
     #[cfg(unix)]
     mod cli {
         use super::*;
-        use std::os::unix::fs::PermissionsExt;
         use std::sync::{Mutex, MutexGuard};
 
         /// Held by every test that writes or runs a fake CLI. A child another
@@ -554,14 +616,6 @@ mod tests {
             SPAWN
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-        }
-
-        /// A stand-in for the bundled baum binary.
-        fn fake_cli(dir: &Path, script: &str) -> PathBuf {
-            let path = dir.join("baum");
-            fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-            path
         }
 
         #[test]
@@ -650,6 +704,37 @@ echo '{{"app":"http://127.0.0.1:4100","state":"{}"}}'"#,
             let started = Instant::now();
             assert!(ensure(&cli, Duration::from_secs(5)).is_ok());
             assert!(started.elapsed() < Duration::from_secs(5));
+        }
+
+        #[test]
+        fn running_jobs_asks_the_daemon_status_reports() {
+            let _serial = serial();
+            let (port, server) = serve_once(
+                "HTTP/1.1 200 OK\r\n\r\n{\"jobs\":[{\"state\":\"running\"},{\"state\":\"queued\"}]}",
+            );
+            let dir = temp_dir("jobs");
+            write_private(
+                &dir.join(CREDENTIAL_FILE),
+                &format!(r#"{{"url":"http://127.0.0.1:{port}/#token={TOKEN}"}}"#),
+            );
+            let cli = fake_cli(
+                &dir,
+                &format!(
+                    r#"[ "$*" = "daemon status --json" ] || exit 9
+echo '{{"app":"http://127.0.0.1:{port}","state":"{}"}}'"#,
+                    dir.display()
+                ),
+            );
+            assert_eq!(running_jobs(&cli, Duration::from_secs(5)), Ok(1));
+            server.join().unwrap();
+        }
+
+        #[test]
+        fn no_daemon_means_no_running_jobs() {
+            let _serial = serial();
+            let dir = temp_dir("jobs-no-daemon");
+            let cli = fake_cli(&dir, "echo 'the baum daemon is not running' >&2; exit 1");
+            assert_eq!(running_jobs(&cli, Duration::from_secs(5)), Ok(0));
         }
 
         #[test]

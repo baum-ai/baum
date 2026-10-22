@@ -29,7 +29,8 @@ vet:
 build:
     CGO_ENABLED=0 go build ./...
 
-# Build the binary into ./bin
+# Build the binary into ./bin; run viewer-build first for a binary whose
+# viewer and local app work
 install:
     CGO_ENABLED=0 go build -o ./bin/ ./cmd/baum
 
@@ -37,22 +38,25 @@ install:
 privacy:
     go test ./internal/privacyguard/
 
+# GORACE skips the second a race-enabled binary sleeps as it exits; the tests
+# run their own binary as a fake baum or cursor-agent hundreds of times.
 test *args:
-    go test -race ./... {{ args }}
+    GORACE=atexit_sleep_ms=0 go test -race ./... {{ args }}
 
 lint:
     golangci-lint run ./...
 
-# Rebuild the committed viewer bundle and the precompiled tile validators
+# Build the viewer bundle, the local app and the precompiled tile validators
 viewer-build:
     sh scripts/viewer-build.sh
 
-# Fail when the committed viewer bundle or validators differ from a fresh build
+# Build, then fail when the committed validators (and, on a release commit,
+# the built apps) differ from the fresh build
 viewer-fresh:
     sh scripts/viewer-fresh.sh
 
 # Build release archives for every target locally without publishing; the
-# goreleaser before-hook runs viewer-fresh first
+# goreleaser before-hook runs viewer-fresh first, which builds the apps
 release-snapshot:
     go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
 
@@ -60,6 +64,19 @@ release-snapshot:
 release-verify:
     bash scripts/release-verify.sh
 
-# Install baum from a module-proxy-shaped source tree with no Node, then smoke test it
+# Install baum from a module-proxy-shaped release commit with no Node, then smoke
+# test it; needs the apps built (viewer-build) unless HEAD is a release commit
 clean-install:
     bash scripts/clean-install.sh
+
+# Regenerate third_party/go.txt (the Go modules' licences) and assemble
+# THIRD_PARTY_NOTICES.txt from it and the npm and Rust parts. The npm and Rust
+# parts need their own containers: from the monorepo root run
+# "just third-party-notices" instead.
+notices-go:
+    sh scripts/third-party-notices.sh go
+    sh scripts/third-party-notices.sh assemble
+
+# Fail when the committed Go notices or an assembled notices file is stale
+notices-check:
+    sh scripts/third-party-notices.sh check

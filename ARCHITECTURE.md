@@ -223,10 +223,22 @@ backoff, `sources` and the mapping onto the bundle.
   free-text and URL field, with the `redact` engine: secrets and e-mail
   addresses are masked in place over the whole text of each field, so a key
   spanning lines is found and a patch keeps its lines and diff markers.
+  The hunks of one file are redacted together, as the file's patch, so the
+  engine follows a key that runs on from one hunk into the next, past the
+  hunk header between them, and masks it in both (goredact v0.4.0 and
+  later); each hunk header keeps its `@@ -a,b +c,d @@` line ranges, while
+  the section heading after them stays masked when it is a line of the key.
+  Patches are also deliberately over-masked for key bodies shown without
+  their armor, as an edit inside a committed key shows them: every run of
+  three or more lines whose content is pure base64 (`[A-Za-z0-9+/=]`) of at
+  least 40 bytes is masked, with a shorter base64 line at either end, and so
+  is every hunk heading that is pure base64 of at least 40 bytes. Embedded
+  base64 data in a diff is masked the same way.
   The per-hunk line cap cuts after redaction: parsing keeps 16 KiB past
-  the cap, so a key the cut runs through is masked whole, as it would be in
-  the full patch. A previous section's code excerpt lines are redacted as
-  one text too.
+  the cap, and keeps a file's whole patch until redaction when the cap cuts
+  a hunk other than its last, so a key the cut runs through is masked
+  whole, as it would be in the full patch. A previous section's code excerpt
+  lines are redacted as one text too.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
@@ -801,7 +813,8 @@ them; the hosted service imports it with its own private prompt.
   instead of copying them.
 - **Extraction.** `NewExtractor(systemPrompt)` builds one structured-output
   request through a `Model` the host implements: the prompt as the system
-  message, `Transcript.Text()` as the user message, and `ExtractSchema`, a
+  message, `Transcript.Text()` (or an extension's message, below) as the
+  user message, and `ExtractSchema`, a
   strict JSON Schema whose properties marshal in the order the model should
   write them. `PromptVersion` is the first 12 hex characters of the SHA-256 of
   the prompt and the marshalled schema, so cached extractions can be keyed on
@@ -813,6 +826,24 @@ them; the hosted service imports it with its own private prompt.
   decided turn that is not cited, and evidence that is not a verbatim quote of
   one passage of a cited turn. A decision with no valid turn or an invalid
   shape is dropped whole. Every removal is reported in `Extraction.Dropped`.
+- **Decision IDs.** A reply never carries an ID and none is derived.
+  `Identified` gives each decision without one a random UUID
+  (`decision_id`); a host calls it when it first stores an extraction and
+  keeps the IDs from then on.
+- **Extension.** When a session grows, an extraction extends the earlier one
+  instead of starting over, so earlier decisions and their IDs stay as they
+  were. `ExtractOptions.Existing` holds the earlier decisions and `Cutoff`
+  the last turn they cover. The user message then lists the existing
+  decisions by handle (`d1`, `d2`, ...; IDs never appear), followed by the
+  whole transcript with a marker line before the first turn after the
+  cutoff. The reply's `superseded_existing` names the handles a new decision
+  reverses; they are marked superseded only when a new decision survives
+  validation. A new decision none of whose turns is after the cutoff is
+  dropped. The result is the existing decisions, then the new ones without
+  IDs. `ContentHash` keys a cached extraction on `Transcript.Text()`;
+  `PrefixHash` hashes the transcript without its open last turn, and
+  `ExtensionCutoff` finds that prefix in the grown transcript to give the
+  cutoff. The host's prompt explains the extension form to the model.
 
 ## `viewer`
 
@@ -849,7 +880,12 @@ hosted service sets its own licensed face this way.
 The components and their seams are in [`viewer/`](viewer/README.md). The
 package also builds the standalone app (`viewer/app/`) with `pnpm build:app`
 into `internal/viewer/dist`, which the `internal/viewer` Go package embeds. The
-built output is committed.
+built output is committed only in a release commit, the commit a `v*` tag
+points at: the tag's commit on `main` plus the built viewer and local app, so
+`go install` of a tagged version needs nothing but Go. Any other checkout
+embeds an empty directory (its `.gitkeep`) until `just viewer-build` runs, and
+a binary built from it answers each app page with `viewer.NotBuilt`, a 503
+naming the fix.
 
 `baum internal view`'s app fills the `sessions` and `commits` slots from
 `GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
@@ -1798,7 +1834,8 @@ acknowledgement. Unknown actual usage remains null.
 
 ### Local application presentation
 
-`app/` builds into the committed `internal/localapp/dist` embed.
+`app/` builds into the `internal/localapp/dist` embed, which, like the
+viewer's, only a release commit carries.
 `localapp.Handler` is the daemon's `App.Assets`, mounted as `uiserver`'s
 `Options.App`, so the application's files
 are served only under the authenticated `/s/<namespace>/` path; the public
@@ -1901,11 +1938,15 @@ records it only from a client newer than itself and only if
 `executablePolicy` (`trust.go`) accepts it, and checks it again just before
 `Respawn` (which gets the resolved path): after `filepath.EvalSymlinks` it
 must be the daemon's own `os.Executable()`, the `baum` that `exec.LookPath`
-finds on the login shell's `PATH`, or one of `daemon.TrustedExecutables`
-(empty; for the desktop app's bundled baum later), a regular executable file
+finds on the login shell's `PATH` (the desktop app links its bundled baum
+there; see `desktop/README.md` for which install locations pass the checks
+below), or one of `daemon.TrustedExecutables` (empty), a regular executable file
 owned by the user or root and not group- or world-writable, under
 directories up to `/` that pass the same owner and mode test (sticky
-world-writable ones such as `/tmp` fail). On Windows only the allowlist
+world-writable ones such as `/tmp` fail; on macOS a directory group-writable
+only by the admin group, gid 80, such as `/Applications`, passes, since its
+writers can become root, but never the staff group, gid 20, or a file). On
+Windows only the allowlist
 applies. A refusal is logged; the daemon keeps running without
 `restart_pending`, and is replaced when a newer client next finds it idle.
 A daemon speaking a newer protocol is an
@@ -1979,7 +2020,10 @@ journal. Every other kept variable comes from a resolved shell environment,
 so a token only the agent's environment had is dropped. When the shell is
 slow, fails or prints nothing,
 the kept variables come from the inherited environment. Windows has no login
-shell and always uses the inherited one. The log records the shell, the
+shell: there `shellenv.Resolve` returns the inherited environment with the
+`PATH` a new logon of the user gets, the system `Path` and then the user's
+from the registry (`CreateEnvironmentBlock`), so `gh` and agent CLIs
+installed after the starting process are found. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
 way to name a backend executable explicitly.
 
@@ -2376,7 +2420,10 @@ and two files:
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the
-   session cookie. The token stays valid for any number of exchanges for the
+   session cookie. A `page=diagnostics` member beside the token
+   (`#token=…&page=diagnostics`, which the app adds after first-run setup)
+   opens `?page=diagnostics` under the namespace; no other value is carried
+   over. The token stays valid for any number of exchanges for the
    daemon's whole life, so the app can be relaunched against one daemon; a new
    daemon writes a new token atomically, and the old one then gets 401 (or no
    answer, if the port changed). The token also works as
@@ -2384,7 +2431,19 @@ and two files:
 3. `<state>/daemon.log` is the daemon's log (it rotates at 1 MiB, keeping
    `daemon.log.1` and `.2`); `<state>/daemon.out` holds what a detached daemon
    wrote before its log opened, or a crash.
-4. `baum daemon stop` stops the daemon gracefully and waits for it to exit
+4. The setup screen reads two reports, neither of which changes anything:
+   `baum daemon login-path --json` (hidden) resolves the login shell's
+   environment as a starting daemon does (`shellenv.Resolve`, then
+   `shellenv.Merge` over the inherited one) and prints
+   `{"shell","login_shell","error","path":[…],"baum":{"path","resolved","version","self"}|null}`,
+   `baum` being the first executable `baum` on that `PATH` (relative entries
+   skipped), with its links resolved and its `--version` (5 s timeout; its
+   own version when it is this executable). `baum hooks status --user --json`
+   prints `{"agents":[{"agent","name","detected","settings","installed","error"}]}`
+   for each agent with user-wide hooks, `installed` meaning an install would
+   change nothing (`userhooks.Pending`). It installs and removes the hooks
+   with `baum hooks install --user` and `uninstall --user`.
+5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
    ("Quit and stop background reviews"), and marks it stopped by the user, so
    hooks do not start it again until `baum daemon ensure`. `baum daemon
    status [--json]` prints the same status, or exits non-zero when none runs.
@@ -2397,7 +2456,12 @@ and two files:
 `baum internal doctor` reports the daemon (`daemon` check): its state directory, and
 when it runs its version, process id, uptime, protocol and socket; a warning
 when it is older than the doctor's baum, speaks a newer protocol, or holds the
-lock without answering.
+lock without answering. The `baum-command` check looks up `baum` on `PATH`
+(in the daemon, the login shell's), which is what the agent hooks run: OK when
+it resolves to the reporting executable (`Options.Executable`), a warning
+naming its path and `--version` when it is a different baum, and a warning
+when there is none; both fixes point at the desktop app's "Command Line and
+Hooks…".
 
 ## Desktop app
 
@@ -2411,4 +2475,13 @@ the window's close and quit behaviour and start at login; the daemon serves
 `app/` to it like any loopback client. Besides `ensure` and `stop`, the tray
 reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
 `PUT /api/automatic` with the launch token as a bearer, over the app API the
-window uses. See [`desktop/README.md`](desktop/README.md).
+window uses. It also owns first-run setup
+(`src/onboarding.rs`, `src/install.rs`, `ui/setup.html`): a bundled screen,
+with its own narrow capability, from which the user installs the bundled
+`baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a
+stable path of the bundled binary; an AppImage and Windows run and link a
+copy in the app's data directory, which Windows adds to the user `PATH`;
+the password prompt only for root-owned system directories) and the
+user-wide agent hooks; after that the window opens the daemon's diagnostics
+page. It records what it installed in `setup.json` in its configuration
+directory and removes only that. See [`desktop/README.md`](desktop/README.md).

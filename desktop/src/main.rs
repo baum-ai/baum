@@ -12,11 +12,15 @@
 mod autostart;
 mod client;
 mod daemon;
+mod development;
+mod install;
 mod lifecycle;
 mod navigation;
 mod notifications;
+mod onboarding;
 mod status;
 mod tray;
+mod updater;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -115,13 +119,27 @@ fn connect(app: &AppHandle, why: Attach) {
             Ok(launch) => launch,
             Err(failure) => return fail(&app, &state, attempt, failure),
         };
+        let frontend = match development::frontend(&launch.url) {
+            Ok(url) => url,
+            Err(message) => {
+                return fail(
+                    &app,
+                    &state,
+                    attempt,
+                    daemon::Failure {
+                        message,
+                        details: Vec::new(),
+                    },
+                );
+            }
+        };
         {
             let mut shared = state.lock();
             if shared.attempt != attempt {
                 return;
             }
             shared.connection = Connection::Connected;
-            shared.daemon = Some(launch.origin.clone());
+            shared.daemon = Some(frontend.origin());
         }
         eprintln!(
             "baum desktop: attached to baum daemon {} (pid {})",
@@ -131,7 +149,11 @@ fn connect(app: &AppHandle, why: Attach) {
         let Some(window) = app.get_webview_window(MAIN) else {
             return;
         };
-        if let Err(e) = window.navigate(launch.url.clone()) {
+        // The setup screen stays until the user leaves it, which attaches again.
+        let Some(navigated) = onboarding::attach(&app, &window, &frontend) else {
+            return watch(&app, &state, attempt, &launch, why);
+        };
+        if let Err(e) = navigated {
             let failure = daemon::Failure {
                 message: format!("Cannot open the baum daemon: {e}"),
                 details: Vec::new(),
@@ -193,8 +215,9 @@ fn watch(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch, 
 }
 
 /// While the error screen shows a daemon that stopped, waits for another
-/// client (a coding-agent hook runs `baum daemon ensure` on every event) to
-/// start a new one, and attaches to it. The app itself starts nothing; the
+/// client (a coding-agent hook that finds no daemon starts one in the
+/// background, except after `baum daemon stop`) to start a new one, and
+/// attaches to it. The app itself starts nothing; the
 /// wait ends when the user restarts the daemon from the screen.
 fn await_replacement(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch) {
     loop {
@@ -236,6 +259,11 @@ fn fail(app: &AppHandle, state: &State, attempt: u64, failure: daemon::Failure) 
 
 /// Returns the window to the bundled screen unless it is already there.
 fn show_screen(app: &AppHandle) {
+    // The initial setup navigation may still be pending when connecting starts.
+    // Preserve it: attachment also waits until the user finishes setup.
+    if onboarding::is_open(app) {
+        return;
+    }
     let Some(window) = app.get_webview_window(MAIN) else {
         return;
     };
@@ -265,8 +293,20 @@ fn main() {
         // Used only from Rust; no page is granted their commands.
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Updates are driven from Rust only (see updater.rs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![connection, reconnect])
+        .manage(onboarding::Setup::default())
+        .invoke_handler(tauri::generate_handler![
+            connection,
+            reconnect,
+            onboarding::setup_state,
+            onboarding::install_command,
+            onboarding::uninstall_command,
+            onboarding::install_hooks,
+            onboarding::uninstall_hooks,
+            onboarding::finish_setup,
+        ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -274,14 +314,16 @@ fn main() {
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             tray::setup(app.handle());
-            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+            let page = onboarding::start(app.handle());
+            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App(page.into()))
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .visible(!hidden)
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
-                    match navigation::decide(url, daemon.as_ref()) {
+                    let setup = onboarding::is_open(&handle);
+                    match navigation::decide(url, daemon.as_ref(), setup) {
                         Decision::Allow => true,
                         Decision::OpenInBrowser => {
                             open_externally(&handle, url);
@@ -300,6 +342,7 @@ fn main() {
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
+            updater::start(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -318,30 +361,42 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They must get no capability,
-    /// so the only one is the bundled screen's, with exactly its two commands.
+    /// so the only ones are the bundled screens', with exactly their commands
+    /// and no remote URL.
     #[test]
-    fn only_the_bundled_screen_has_a_capability() {
-        let entries: Vec<_> =
-            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .collect();
-        assert_eq!(entries.len(), 1, "{entries:?}");
-        let capability: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&entries[0]).unwrap()).unwrap();
-        assert_eq!(capability["identifier"], "connecting-screen");
-        assert!(capability.get("remote").is_none());
-        assert_eq!(
-            capability["permissions"],
-            serde_json::json!(["allow-connection", "allow-reconnect"])
-        );
+    fn only_the_bundled_screens_have_capabilities() {
+        let expected = serde_json::json!({
+            "connecting-screen": ["allow-connection", "allow-reconnect"],
+            "setup-screen": [
+                "allow-setup-state",
+                "allow-install-command",
+                "allow-uninstall-command",
+                "allow-install-hooks",
+                "allow-uninstall-hooks",
+                "allow-finish-setup"
+            ],
+        });
+        let mut found = serde_json::Map::new();
+        for entry in
+            std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities")).unwrap()
+        {
+            let capability: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
+            assert!(capability.get("remote").is_none(), "{capability}");
+            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            found.insert(
+                capability["identifier"].as_str().unwrap().to_string(),
+                capability["permissions"].clone(),
+            );
+        }
+        assert_eq!(serde_json::Value::Object(found), expected);
         let config: serde_json::Value = serde_json::from_slice(
             &std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen"])
+            serde_json::json!(["connecting-screen", "setup-screen"])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

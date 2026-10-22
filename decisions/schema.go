@@ -42,9 +42,10 @@ func (o orderedObject) MarshalJSON() ([]byte, error) {
 }
 
 // ExtractSchema returns the JSON Schema of the model's reply,
-// {"decisions": [...]}. It is valid under OpenAI strict structured outputs, so
-// optional values have an empty form: "" for no rationale, rejected
-// alternative or evidence, and decided_turn 0 for none.
+// {"decisions": [...], "superseded_existing": [...]}. It is valid under
+// OpenAI strict structured outputs, so optional values have an empty form: ""
+// for no rationale, rejected alternative or evidence, decided_turn 0 for none
+// and superseded_existing [] outside an extension.
 // Each "properties" value is an orderedObject, so the fields marshal in the
 // order the model should write them.
 func ExtractSchema() map[string]any {
@@ -90,9 +91,10 @@ func ExtractSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []any{"decisions"},
+		"required":             []any{"decisions", "superseded_existing"},
 		"properties": orderedObject{
 			{"decisions", map[string]any{"type": "array", "items": decision}},
+			{"superseded_existing", stringArray},
 		},
 	}
 }
