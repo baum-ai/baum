@@ -173,6 +173,8 @@ member number and a link to that member's exact review version, section and
 decision, where the decision expands and highlights on arrival.
 Repeated decisions with identical text, source sessions and attribution appear
 once in a stack, linking to the first member where they are referenced.
+A decision item's optional `decision_id`, the host's stable ID of the
+extracted decision it reports, is accepted and not shown.
 Quotes with a readable session source have a quiet “View in session” link below
 the quote, in the link color, leading to the cited turn. Decision and session jumps center their target in 400 ms. The visible target
 highlights for 2 seconds, fading without a persistent border; background

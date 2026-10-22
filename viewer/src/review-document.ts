@@ -123,6 +123,8 @@ export type Decision = {
   evidence?: string;
   /** Only on an agent decision a human explicitly accepted. */
   approved_by_human?: true;
+  /** The host's stable ID of the extracted decision, on items it attached. */
+  decision_id?: string;
   anchors: Anchor[];
 };
 
