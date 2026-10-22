@@ -19,6 +19,7 @@ import {
 } from "@baum/viewer/navigation";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
+import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection, useDiagnosticProblems } from "./diagnostics";
 import {
   estimateReasonText,
@@ -142,6 +143,7 @@ function Workspace({ url }: { url: UrlState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [estimating, setEstimating] = useState(false);
@@ -210,6 +212,10 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("reset", refresh);
     return () => source.close();
   }, [reload, reloadLive]);
+  const authChanged = () => {
+    setAuthRevision((n) => n + 1);
+    void reload();
+  };
   const cloneFor = (e: Entry) =>
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
@@ -317,6 +323,8 @@ function Workspace({ url }: { url: UrlState }) {
             automatic={automatic}
             changed={reload}
             onDiagnostics={diagnostics.update}
+            authRevision={authRevision}
+            authChanged={authChanged}
           />
         ) : page === "diagnostics" ? (
           <>
@@ -324,7 +332,8 @@ function Workspace({ url }: { url: UrlState }) {
             <p className="mb-4">
               What baum needs on this computer, what it found, and how to fix each problem.
             </p>
-            <DiagnosticsSection onReport={diagnostics.update} />
+            <GitHubConnectionSection onChanged={authChanged} />
+            <DiagnosticsSection key={authRevision} onReport={diagnostics.update} />
           </>
         ) : page === "jobs" ? (
           <Jobs jobs={jobs} changed={reload} />
@@ -657,11 +666,15 @@ function Settings({
   automatic,
   changed,
   onDiagnostics,
+  authRevision,
+  authChanged,
 }: {
   clones: Clone[];
   automatic: Automatic | null;
   changed: () => Promise<void>;
   onDiagnostics: (report: DiagnosticReport | null) => void;
+  authRevision: number;
+  authChanged: () => void;
 }) {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
@@ -677,6 +690,7 @@ function Settings({
   return (
     <section className="space-y-4">
       <h1 className="text-2xl">Repositories & settings</h1>
+      <GitHubConnectionSection onChanged={authChanged} />
       <p>
         Global backend and credentials come from your local baum configuration. Overrides below are
         shared by this repository’s registered clones.
@@ -736,7 +750,7 @@ function Settings({
           </Button>
         </div>
       ))}
-      <DiagnosticsSection onReport={onDiagnostics} />
+      <DiagnosticsSection key={authRevision} onReport={onDiagnostics} />
     </section>
   );
 }

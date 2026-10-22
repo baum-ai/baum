@@ -70,15 +70,17 @@ beforeEach(() => {
       if (fail || !path.startsWith("/s/test-ns/"))
         return new Response("unauthorized", { status: 401 });
       return Response.json(
-        path.includes("/s/test-ns/api/index")
-          ? { entries, problems: [] }
-          : path === "/s/test-ns/api/repos"
-            ? []
-            : path === "/s/test-ns/api/prs"
+        path === "/s/test-ns/api/github-auth"
+          ? { state: "disconnected", host: "github.com", saved: false, override: false }
+          : path.includes("/s/test-ns/api/index")
+            ? { entries, problems: [] }
+            : path === "/s/test-ns/api/repos"
               ? []
-              : path === "/s/test-ns/api/jobs"
-                ? { jobs: [] }
-                : {},
+              : path === "/s/test-ns/api/prs"
+                ? []
+                : path === "/s/test-ns/api/jobs"
+                  ? { jobs: [] }
+                  : {},
       );
     }),
   );
@@ -503,7 +505,7 @@ const diagnosticsReport = {
       status: "problem",
       detail: "No token found.",
       source: "none",
-      fix: "Run gh auth login.",
+      fix: "Connect GitHub in baum Settings.",
     },
   ],
 };
@@ -525,7 +527,7 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   expect(text).toContain("Diagnostics");
   expect(text).toContain("Overall: Problem. 1 problem found.");
   for (const word of ["OK", "Warning", "Problem"]) expect(text).toContain(word);
-  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).toContain("Fix: Upgrade gh.");
   expect(text).toContain("/usr/bin/git");
   expect(text).toContain("2.40.0");
@@ -539,7 +541,9 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Checking this machine…");
   const button = () =>
-    [...node.querySelectorAll("button")].find((b) => /Check/.test(b.textContent ?? ""))!;
+    [
+      ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
+    ].find((b) => /Check/.test(b.textContent ?? ""))!;
   expect(button().disabled).toBe(true);
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().textContent).toBe("Check again");
@@ -566,7 +570,7 @@ it("points every page at the diagnostics when they find a problem", async () => 
   expect(location.search).toBe("?page=diagnostics");
   const text = node.textContent ?? "";
   expect(text).toContain("Check this computer");
-  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).not.toContain("Show the fixes");
   // The page ran the checks again; the inbox does not rerun them.
   expect(calls.count).toBe(2);
@@ -835,5 +839,5 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   await act(async () => retry.click());
   expect(calls.count).toBe(2);
   expect(node.textContent).not.toContain("boom");
-  expect(node.textContent).toContain("Fix: Run gh auth login.");
+  expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
 });

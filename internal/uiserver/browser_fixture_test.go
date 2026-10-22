@@ -67,8 +67,8 @@ func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository
 func browserDiagnostics(context.Context) doctor.Report {
 	return doctor.Report{Status: doctor.StatusProblem, Checks: []doctor.Check{
 		{ID: "git", Label: "git", Status: doctor.StatusOK, Detail: "git is available.", Path: "/usr/bin/git", Version: "2.43.0"},
-		{ID: "gh", Label: "GitHub CLI", Status: doctor.StatusWarning, Detail: "gh is older than the version baum was tested with.", Path: "/usr/local/bin/gh", Version: "2.40.0", Fix: "Upgrade gh to 2.45.0 or newer."},
-		{ID: "github-token", Label: "GitHub token", Status: doctor.StatusProblem, Detail: "No GitHub token was found in the environment, the config file or gh.", Fix: "Run gh auth login, or set github_token in ~/.config/baum/a-deliberately-long-directory-name/for-narrow-layouts/config.toml."},
+		{ID: "backend", Label: "Model backend", Status: doctor.StatusWarning, Detail: "The model backend is older than the version baum was tested with.", Path: "/usr/local/bin/claude", Version: "2.40.0", Fix: "Upgrade the model backend to 2.45.0 or newer."},
+		{ID: "github-token", Label: "GitHub token", Status: doctor.StatusProblem, Detail: "No GitHub connection was found.", Fix: "Connect GitHub in baum Settings, or set github_token in ~/.config/baum/a-deliberately-long-directory-name/for-narrow-layouts/config.toml."},
 		{ID: "price-list", Label: "Price list", Status: doctor.StatusInfo, Detail: "Using the built-in price list.", Source: "built-in"},
 	}}
 }
@@ -118,6 +118,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
 	}
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
 	home := t.TempDir()
 	if err := os.Chmod(home, 0o700); err != nil {
 		t.Fatal(err)
@@ -213,7 +215,17 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
-	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: browserTransport(func(r *http.Request) (*http.Response, error) {
+	client := github.New(cfg.ResolveGitHubToken, github.Options{Transport: browserTransport(func(r *http.Request) (*http.Response, error) {
+		// The synthetic private repository boundary still requires the real
+		// manager's saved credential, resolved through production config.
+		authorization := strings.TrimPrefix(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "token ")
+		if !strings.HasPrefix(authorization, "fixture-access-") {
+			return &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("unauthorized")), Request: r}, nil
+		}
+		account := strings.TrimPrefix(authorization, "fixture-access-")
+		if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "github-consumed-account"), []byte(account), 0600); err != nil {
+			return nil, err
+		}
 		var body any
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			body = map[string]any{"permission": "write"}
@@ -268,7 +280,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	liveMarker := filepath.Join(state, "live-session")
 	_ = os.Remove(liveMarker)
 	_ = os.RemoveAll(filepath.Join(state, "events"))
-	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(_ context.Context, server *uiserver.Server) (daemon.App, error) {
+	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
 		if err != nil {
 			return daemon.App{}, err
@@ -288,7 +300,13 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		scheduler.Queue = runner
 		runner.SetAutomaticGate(scheduler.Gate)
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		auth := browserAuthentication(t, appCtx, state, cfg, func() { _ = server.Publish("index", struct{}{}) }, func() func(bool) {
+			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
+				return func(bool) {}
+			}
+			return scheduler.BeginIdentityChange()
+		})
+		api := uiserver.LocalAPI{GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.

@@ -111,6 +111,18 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+GitHub connection is available in Repositories & settings and the first-run
+diagnostics page. Sign in with GitHub starts device authorization through the
+daemon: copy the code and open the fixed `https://github.com/login/device`
+page in your browser. The panel observes only safe local connection status;
+Go polls GitHub even after the window closes. Denial, expiry, network failures,
+missing scopes, revoked authorization and locked credential stores have retry
+or reconnect controls. An explicit environment/config credential is shown
+separately from the saved desktop account and continues to take precedence.
+Disconnect removes only baum's saved credential, not the explicit override or
+GitHub's authorization. Cached inbox entries and saved reviews remain readable
+without signing in. Credentials never reach the UI.
+
 Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) are a
 section of Repositories & settings and a page of their own,
 `?page=diagnostics`, which the desktop app opens after its first-run setup
@@ -171,3 +183,11 @@ The confirmation amount is budget planning, not a PR-sized prediction. It shows
 the configured charged-token and backend-call limits and assumes one
 budget-sized cache read per call at the highest listed rates. Cached reads and
 provider overshoot can exceed those assumptions, so this is not a dollar cap.
+
+GitHub browser scenarios use the real auth manager/controller and mocked GitHub
+HTTP and credential-store boundaries. The `github-auth-mode` marker selects
+pending, alice/bob approval, denial, expiry, network failure, insufficient scopes
+or locked persistence. Tests cover copy/open, background completion, reload,
+account replacement, disconnect with saved-review access, recovery and the local
+session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
+`test-results/` for PR attachments.

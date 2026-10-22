@@ -282,9 +282,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(diagnostics.getByText(/Overall: Problem/)).toBeVisible();
   const problem = diagnostics.getByRole("listitem").filter({ hasText: "GitHub token" });
   await expect(problem.getByText("Problem", { exact: true })).toBeVisible();
-  await expect(problem.getByText(/Run gh auth login, or set github_token/)).toBeVisible();
   await expect(
-    diagnostics.getByRole("listitem").filter({ hasText: "GitHub CLI" }).getByText("Warning"),
+    problem.getByText(/Connect GitHub in baum Settings, or set github_token/),
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByRole("listitem").filter({ hasText: "Model backend" }).getByText("Warning"),
   ).toBeVisible();
   await expect(
     diagnostics.getByRole("listitem").filter({ hasText: "git is available" }).getByText("OK"),

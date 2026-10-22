@@ -354,3 +354,22 @@ export function estimateReasonText(reason: string): string {
 export function blockedReasonText(reason: string): string {
   return blockedReasons[reason] ?? "It cannot be generated with the current settings.";
 }
+
+/** Safe daemon-owned GitHub connection state; credentials never reach the app. */
+export type GitHubConnection = {
+  state: string;
+  host: string;
+  login?: string;
+  source?: string;
+  override: boolean;
+  saved: boolean;
+  pending?: {
+    id: string;
+    user_code: string;
+    verification_uri: string;
+    expires_at: string;
+    interval: number;
+  };
+  error?: string;
+  message?: string;
+};

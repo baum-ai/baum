@@ -63,7 +63,12 @@ clicks Install. The Rust side then makes each change:
 a different baum is in the way. Leaving the screen records that setup ran
 (`setup.json` in the app's configuration directory, with the link the app
 created), attaches to the daemon and opens its diagnostics page, which lists
-each problem with its fix. Later, every page of the app shows a notice with
+each problem with its fix and offers GitHub device sign-in. The same GitHub
+connection panel is in Repositories & settings: copy the code, then open GitHub
+in the default browser. The daemon completes sign-in independently of this
+window and saves credentials in the operating system credential store.
+Disconnect removes the saved credential; explicit environment/config overrides
+remain effective, and saved reviews stay readable. Later, every page of the app shows a notice with
 a link to that page while the diagnostics find a problem (see
 [`../app/README.md`](../app/README.md)).
 
