@@ -26,9 +26,6 @@
 # (MINISIGN names another binary) and base64.
 set -euo pipefail
 
-# Native jq emits CRLF on Windows; shell values must use LF on every host.
-jq() { command jq "$@" | tr -d '\r'; }
-
 usage() {
   echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR" >&2
   exit 2
@@ -51,7 +48,7 @@ if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
   fi
 fi
 minisign=${MINISIGN:-minisign}
-pubkey=${UPDATER_PUBKEY:-$(jq -er '.plugins.updater.pubkey' "$here/tauri.conf.json")}
+pubkey=${UPDATER_PUBKEY:-$(jq -ej '.plugins.updater.pubkey' "$here/tauri.conf.json")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
@@ -79,7 +76,7 @@ check() {
     echo "FAIL $(basename "$file"): the signature does not verify with the release key: $(cat "$work/error")" >&2
     return 1
   fi
-  if ! tr -d '\r' <<<"$comment" | tr '\t' '\n' | grep -qxF "version:$version"; then
+  if ! tr '\t' '\n' <<<"${comment%$'\r'}" | grep -qxF "version:$version"; then
     echo "FAIL $(basename "$file"): signed for '$comment', not version $version" >&2
     return 1
   fi
@@ -90,13 +87,14 @@ verify() {
   local dir=$1
   local manifest=$dir/latest.json
   local version
-  version=$(jq -er '.version | strings' "$manifest")
+  # Join-output adds no line ending, preserving raw values even with native Windows jq.
+  version=$(jq -ej '.version | strings' "$manifest")
   local base=$releases/v$version
   local status=0
   local platforms
-  platforms=$(jq -er '.platforms | keys[]' "$manifest")
+  platforms=$(jq -ej '.platforms | keys | join(" ")' "$manifest")
   for required in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
-    if ! grep -qxF "$required" <<<"$platforms"; then
+    if [[ " $platforms " != *" $required "* ]]; then
       echo "FAIL latest.json has no $required" >&2
       status=1
     fi
@@ -109,8 +107,8 @@ verify() {
       status=1
       continue
     fi
-    url=$(jq -er --arg p "$platform" '.platforms[$p].url | strings' "$manifest")
-    signature=$(jq -er --arg p "$platform" '.platforms[$p].signature | strings' "$manifest")
+    url=$(jq -ej --arg p "$platform" '.platforms[$p].url | strings' "$manifest")
+    signature=$(jq -ej --arg p "$platform" '.platforms[$p].signature | strings' "$manifest")
     file=${url#"$base/"}
     if [ "$file" = "$url" ] || ! [[ $file =~ ^$expected$ ]]; then
       echo "FAIL $platform: $url is not $base/ followed by its bundle" >&2

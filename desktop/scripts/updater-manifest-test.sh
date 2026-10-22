@@ -6,9 +6,6 @@
 # the pinned one Check installs on macOS and Windows.
 set -euo pipefail
 
-# Native jq emits CRLF on Windows.
-jq() { command jq "$@" | tr -d '\r'; }
-
 scripts=$(cd "$(dirname "$0")" && pwd)
 manifest=$scripts/updater-manifest.sh
 work=$(mktemp -d)
@@ -83,12 +80,12 @@ fail "release verification without the pinned minisign" "must be the absolute pa
   env -u MINISIGN BAUM_RELEASE_SIGNING=1 "$manifest" verify "$dir"
 
 pass "$manifest" write 1.2.3 "$dir"
-keys=$(jq -c '.platforms | keys' "$dir/latest.json")
+keys=$(jq -cj '.platforms | keys' "$dir/latest.json")
 if [ "$keys" != '["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]' ]; then
   echo "FAIL unexpected platforms $keys" >&2
   status=1
 fi
-url=$(jq -r '.platforms["linux-x86_64"].url' "$dir/latest.json")
+url=$(jq -j '.platforms["linux-x86_64"].url' "$dir/latest.json")
 if [ "$url" != "$base/baum-desktop-linux-amd64.AppImage" ]; then
   echo "FAIL unexpected URL $url" >&2
   status=1
@@ -145,6 +142,15 @@ fail "older release's bundle" "not version 1.2.3" "$manifest" verify "$dir"
 cp "$work/darwin" "$darwin"
 cp "$work/darwin.sig" "$darwin.sig"
 
+for field in version url platform; do
+  case "$field" in
+    version) edit '.version += "\r"' ;;
+    url) edit '.platforms["linux-x86_64"].url |= sub("linux"; "li\rnux")' ;;
+    platform) edit '.platforms["linux-x86_64\r"] = .platforms["linux-x86_64"] | del(.platforms["linux-x86_64"])' ;;
+  esac
+  fail "carriage return in $field" "FAIL" "$manifest" verify "$dir"
+done
+
 edit 'del(.platforms["windows-x86_64"])'
 fail "missing Windows" "has no windows-x86_64" "$manifest" verify "$dir"
 
@@ -159,8 +165,8 @@ mv "$darwin.sig" "$dir/baum-desktop-darwin-universal-unsigned.app.tar.gz.sig"
 head -c 4096 /dev/urandom >"$dir/baum-desktop-linux-arm64.AppImage"
 sign "$release_key" "release password" 1.2.3 "$dir/baum-desktop-linux-arm64.AppImage"
 pass "$manifest" write 1.2.3 "$dir"
-if [ "$(jq -r '.platforms["linux-aarch64"].url' "$dir/latest.json")" != "$base/baum-desktop-linux-arm64.AppImage" ] ||
-  [ "$(jq -r '.platforms["darwin-x86_64"].url' "$dir/latest.json")" != "$base/baum-desktop-darwin-universal-unsigned.app.tar.gz" ]; then
+if [ "$(jq -j '.platforms["linux-aarch64"].url' "$dir/latest.json")" != "$base/baum-desktop-linux-arm64.AppImage" ] ||
+  [ "$(jq -j '.platforms["darwin-x86_64"].url' "$dir/latest.json")" != "$base/baum-desktop-darwin-universal-unsigned.app.tar.gz" ]; then
   echo "FAIL the arm64 AppImage or the unsigned macOS app is not listed" >&2
   status=1
 fi
@@ -173,6 +179,12 @@ BAUM_TEST_REAL_MINISIGN=$(command -v "$minisign")
 cat >"$work/crlf-tools/jq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# Join-output has no generated line ending to translate.
+for arg in "$@"; do
+  case "$arg" in
+    --join-output | -*j*) exec "$BAUM_TEST_REAL_JQ" "$@" ;;
+  esac
+done
 "$BAUM_TEST_REAL_JQ" "$@" | awk '{sub(/\r$/, ""); printf "%s\r\n", $0}'
 SH
 cat >"$work/crlf-tools/minisign" <<'SH'
