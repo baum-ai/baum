@@ -61,7 +61,7 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 	budgets := task.Budgets
 	repairs := max(budgets.MaxRepairAttempts, 1)
 	for attempt := 0; ; attempt++ {
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: true}, &outcome, &stalls)
 		if callErr != nil {
 			if attempt > 0 {
 				outcome.RejectedDocument = RetainedDocument(document)

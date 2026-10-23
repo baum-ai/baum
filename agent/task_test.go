@@ -26,7 +26,7 @@ func TestRunTaskRepairsSchemaAndCheckRejections(t *testing.T) {
 	dir := t.TempDir()
 	replies := []string{`{"features":"one"}`, `{"features":["Secret feature"]}`, `{"features":["search"]}`}
 	backend := &stubBackend{run: func(_ context.Context, request Request, n int) (Result, error) {
-		if request.Directory != dir || string(request.Schema) != taskSchema {
+		if request.Directory != dir || string(request.Schema) != taskSchema || !request.Task {
 			t.Errorf("request %d: directory %q schema %q", n, request.Directory, request.Schema)
 		}
 		return Result{Document: []byte(replies[n]), Model: "fixture-model", Calls: 1, Tokens: 10}, nil

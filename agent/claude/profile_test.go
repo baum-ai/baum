@@ -129,6 +129,11 @@ func TestIsolatedArgumentsAndEnvironmentAreStable(t *testing.T) {
 	if defaulted := (&Backend{}).args(agent.Request{MaxCalls: 7}); slices.Contains(defaulted, "--model") {
 		t.Errorf("an empty Model passed --model: %q", defaulted)
 	}
+	// A generic task gets its own system prompt, without review wording.
+	task := backend.args(agent.Request{MaxCalls: 7, Task: true})
+	if i := slices.Index(task, "--system-prompt"); i < 0 || task[i+1] != taskSystemPrompt || strings.Contains(task[i+1], "review") {
+		t.Errorf("task args = %q", task)
+	}
 
 	env := backend.environment("/run/1", &agent.Endpoint{BaseURL: "https://proxy/anthropic", Key: "tok"})
 	wantEnv := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/run/1/home", "CLAUDE_CONFIG_DIR=/run/1/home", "ANTHROPIC_API_KEY=tok",
