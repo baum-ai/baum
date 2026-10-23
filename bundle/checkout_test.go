@@ -197,8 +197,15 @@ func TestWriteArchiveWithoutMergeBaseHasHeadOnly(t *testing.T) {
 	t.Cleanup(func() {
 		_ = filepath.WalkDir(dir, func(name string, _ os.DirEntry, _ error) error { return os.Chmod(name, 0o700) })
 	})
-	if err := UnpackCheckout(context.Background(), path, dir, config); err != nil {
-		t.Fatalf("UnpackCheckout: %v", err)
+	reviewDir := t.TempDir()
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(reviewDir, func(name string, _ os.DirEntry, _ error) error { return os.Chmod(name, 0o700) })
+	})
+	if err := UnpackCheckout(context.Background(), path, reviewDir, config); !errors.Is(err, ErrInvalidArchive) {
+		t.Fatalf("UnpackCheckout of a head-only archive = %v, want ErrInvalidArchive", err)
+	}
+	if err := UnpackHeadCheckout(context.Background(), path, dir, config); err != nil {
+		t.Fatalf("UnpackHeadCheckout: %v", err)
 	}
 	var got []string
 	_ = filepath.WalkDir(dir, func(name string, _ os.DirEntry, _ error) error {

@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -379,16 +380,25 @@ func (c CheckoutConfig) MaxArchiveBytes() int64 {
 }
 
 // UnpackCheckout writes a gzip-compressed checkout archive into dir as the
-// read-only head/ and, when the archive has one, merge-base/ trees, enforcing
-// caps again so a run never reads more than the builder was allowed to
-// write. An archive that does not have the shape WriteArchive produces fails
-// with ErrInvalidArchive; one over a budget fails with BudgetExceededReason
-// naming it, and so does a zero cap.
+// read-only head/ and merge-base/ trees, enforcing caps again so a run never
+// reads more than the builder was allowed to write. An archive that does not
+// have the shape WriteArchive produces fails with ErrInvalidArchive; one over
+// a budget fails with BudgetExceededReason naming it, and so does a zero cap.
 //
 // The caller must bound the archive's size before calling (see
 // MaxArchiveBytes): the gzip stream is drained after the tar trailer without
 // a limit, and directory entries do not count toward MaxTotalFiles.
 func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig) error {
+	return unpackCheckout(ctx, archive, dir, caps, []string{"head", "merge-base"})
+}
+
+// UnpackHeadCheckout is UnpackCheckout for an archive written without a merge
+// base: it holds head/ alone.
+func UnpackHeadCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig) error {
+	return unpackCheckout(ctx, archive, dir, caps, []string{"head"})
+}
+
+func unpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig, roots []string) error {
 	file, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -419,7 +429,7 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 			return ErrInvalidArchive
 		}
 		parts := strings.Split(name, "/")
-		if parts[0] != "head" && parts[0] != "merge-base" {
+		if !slices.Contains(roots, parts[0]) {
 			return ErrInvalidArchive
 		}
 		for _, part := range parts {
@@ -471,12 +481,9 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 	if _, err := io.Copy(io.Discard, compressed); err != nil {
 		return ErrInvalidArchive
 	}
-	for _, name := range []string{"head", "merge-base"} {
-		root := filepath.Join(dir, name)
+	for _, root := range roots {
+		root := filepath.Join(dir, root)
 		if _, err := os.Stat(root); err != nil {
-			if name == "merge-base" && errors.Is(err, os.ErrNotExist) {
-				continue
-			}
 			return ErrInvalidArchive
 		}
 		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
