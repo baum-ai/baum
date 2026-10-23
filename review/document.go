@@ -883,7 +883,6 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	}
 	sessions, vendors, models := sessionIndex(b)
 	index.Sessions = sessions
-	setValidation(&doc.reviewDocument, b)
 	summary := &doc.Summary
 	summary.Title = b.PullRequest.Title
 	association := b.PullRequest.AuthorAssociation
@@ -932,7 +931,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		GenerationState: "current", GeneratedAt: now.UTC().Format(time.RFC3339Nano), EvidenceRefreshedAt: now.UTC().Format(time.RFC3339Nano),
 		Relations: doc.Relations,
 		Generator: documentReviewGenerator{Model: model, ReviewMD: reviewMD, ReviewMDChanged: reviewMDChanged, Truncated: notes, SchemaRevision: v.Revision, PromptVersion: promptVersion},
-		Sources:   documentReviewSources{SessionValidation: doc.Review.Sources.SessionValidation, Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD != nil},
+		Sources:   documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD != nil},
 	}
 	tiers := []string{"mechanical", "unrated", "low", "medium", "high", "critical"}
 	rank := func(tier string) int { return slices.Index(tiers, tier) }
@@ -1077,10 +1076,10 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		}
 		riskLOC[tier] += lines
 	}
-	validationStats := doc.Stats.Validation
-	doc.Stats = documentStats{Validation: validationStats, Sections: len(doc.Sections), Files: len(files), Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
+	doc.Stats = documentStats{Sections: len(doc.Sections), Files: len(files), Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
 	summary.RiskScore = riskScore(doc.Sections, b.Diff)
 	doc.Index, doc.AgentReviews, doc.UnassignedHunks = index, agentReviews(b, doc.Sections, doc.Review.Head), unassigned
+	setValidation(&doc.reviewDocument, b)
 	doc.Review.Sources.AgentReviews = len(doc.AgentReviews)
 	countFindings(&doc.reviewDocument)
 	doc.Review.Generator.Truncated = notes

@@ -81,3 +81,28 @@ func TestValidationNonCommandEventIsIndexedAtActualTime(t *testing.T) {
 		t.Fatalf("wrong indexed tool events: %+v", sessions)
 	}
 }
+
+func TestCompletionStoresValidationIndexAndCounts(t *testing.T) {
+	validator, b, _ := refreshFixture(t)
+	items := []bundlepkg.SessionValidation{{ID: "val_completion", Method: "browser", Checked: "Mobile layout", Outcome: "passed", EvidenceClass: "observed", CommitLabel: bundlepkg.ValidationCommitLabel{State: "head", SHA: b.PullRequest.HeadSHA, Reason: "Same revision"}, EventIDs: []string{"event"}}}
+	b.Sessions[0].Validations = &items
+	b.Sessions[0].NotVerified = []bundlepkg.ValidationGap{{What: "Windows"}}
+	b.Sessions[0].SetAside = []bundlepkg.ValidationSetAside{{What: "Timeout", StatedReason: "Unrelated"}}
+	published, findings := validator.Complete(authoredFixture(), b, "", "model", time.Now())
+	if findings != "" {
+		t.Fatal(findings)
+	}
+	var doc reviewDocument
+	if err := json.Unmarshal(published, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Index.Validation) != 1 || doc.Index.Validation[0].ID != "val_completion" || doc.Index.Validation[0].Session != "session" {
+		t.Fatalf("completion lost validation index: %s", published)
+	}
+	if doc.Stats.Validation == nil || doc.Stats.Validation.Head != 1 || doc.Stats.Validation.NotVerified != 1 || doc.Stats.Validation.SetAside != 1 || doc.Review.Sources.SessionValidation == nil || *doc.Review.Sources.SessionValidation != 1 {
+		t.Fatalf("completion lost validation counts: %s", published)
+	}
+	if len(doc.Index.Sessions[0].NotVerified) != 1 || len(doc.Index.Sessions[0].SetAside) != 1 {
+		t.Fatal("completion lost validation gaps")
+	}
+}
