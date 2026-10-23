@@ -36,6 +36,14 @@ func (r *Repo) fetchCredentials(ctx context.Context, env []string) ([]string, bo
 		}
 		return nil, false, err
 	}
+	return withCredential(env, u, token), true, nil
+}
+
+// withCredential returns env with token set as the HTTPS credential for u
+// alone: inherited Git configuration and tracing variables are dropped, the
+// global extra header and credential helper are cleared, and redirects are
+// refused.
+func withCredential(env []string, u *url.URL, token string) []string {
 	out := make([]string, 0, len(env)+20)
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
@@ -51,5 +59,5 @@ func (r *Repo) fetchCredentials(ctx context.Context, env []string) ([]string, bo
 	for i, pair := range pairs {
 		out = append(out, "GIT_CONFIG_KEY_"+strconv.Itoa(i)+"="+pair[0], "GIT_CONFIG_VALUE_"+strconv.Itoa(i)+"="+pair[1])
 	}
-	return out, true, nil
+	return out
 }
