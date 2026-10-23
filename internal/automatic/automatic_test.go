@@ -282,6 +282,32 @@ func TestOnlyRequestedAndAuthoredPRsGetJobsForNewHeadsAfterEnabling(t *testing.T
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#3@c2:review_requested", "org/repo#7@g1:new_head")
 }
 
+// Narrowing the pull requests to authored or requested ones leaves the others
+// without automatic jobs, including a pending one.
+func TestPullRequestsPreferenceNarrowsWhatGetsJobs(t *testing.T) {
+	for _, tc := range []struct {
+		choice string
+		want   []string
+	}{
+		{repos.PullRequestsAuthored, []string{"org/repo#2@b2:new_head"}},
+		{repos.PullRequestsRequested, []string{"org/repo#1@a2:new_head"}},
+	} {
+		t.Run(tc.choice, func(t *testing.T) {
+			h := newHarness(t)
+			_, _ = h.registry.UpdatePreferences(context.Background(), func(p repos.Preferences) repos.Preferences {
+				p.PullRequests = tc.choice
+				return p
+			})
+			open := []pr{{number: 1, head: "a1", requested: true}, {number: 2, head: "b1", authored: true}}
+			h.observe(open...)
+			open[0].head, open[1].head = "a2", "b2"
+			h.observe(open...)
+			h.pass()
+			h.want(tc.want...)
+		})
+	}
+}
+
 // A team request that only became visible because team membership became
 // readable is not a new request; a direct request is, even without it.
 func TestTeamMembershipBecomingKnownIsNotANewRequest(t *testing.T) {
@@ -391,23 +417,17 @@ func TestDailyCapDayFollowsTheClockZoneNearMidnight(t *testing.T) {
 	}
 }
 
-func TestCursorAgentNeedsTheAcknowledgement(t *testing.T) {
+// cursor-agent, whose cost baum cannot estimate, runs like any backend.
+func TestCursorAgentRunsWithoutAnAcknowledgement(t *testing.T) {
 	h := newHarness(t)
 	h.exec.backend = agent.BackendCursorAgent
 	h.observe(pr{number: 1, head: "a1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true})
 	h.pass()
-	h.want()
-	if len(h.notices) != 1 || h.notices[0].Notice != jobs.ReasonCursorAgentConsent {
+	h.want("org/repo#1@a2:new_head")
+	if len(h.notices) != 0 {
 		t.Fatalf("notice %+v", h.notices)
 	}
-	// Acknowledging does not catch up the refused head; the next one runs.
-	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.CursorAgentAcknowledged = true })
-	h.pass()
-	h.want()
-	h.observe(pr{number: 1, head: "a3", authored: true})
-	h.pass()
-	h.want("org/repo#1@a3:new_head")
 }
 
 func TestTurningOffStopsNewJobsKeepsRunningOnesAndReenablingDoesNotCatchUp(t *testing.T) {
@@ -455,7 +475,6 @@ func TestRepositoryOffAndWithdrawnAcknowledgementCancelQueuedJobs(t *testing.T) 
 		reason  string
 	}{
 		{"repository off", "", func(_ *repos.Preferences, s *repos.Settings) { s.Automatic = new(false) }, GateRepositoryOff},
-		{"acknowledgement withdrawn", agent.BackendCursorAgent, func(p *repos.Preferences, _ *repos.Settings) { p.CursorAgentAcknowledged = false }, jobs.ReasonCursorAgentConsent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -640,6 +659,30 @@ func TestHandlerUpdatesPreferences(t *testing.T) {
 	}
 	o, _ = h.scheduler.Overview(context.Background())
 	if o.Enabled || !o.CursorAgentAcknowledged || o.Repositories[0].Enabled {
+		t.Fatalf("%+v", o)
+	}
+}
+
+// The settings page chooses the backend, model and pull requests; a bad
+// value changes nothing, and choosing cursor-agent acknowledges its cost.
+func TestHandlerSavesReviewChoices(t *testing.T) {
+	h := newHarness(t)
+	for _, body := range []string{`{"backend":"nope"}`, `{"pull_requests":"everyone"}`} {
+		if code := put(h.scheduler, body); code != 400 {
+			t.Fatalf("%s: %d", body, code)
+		}
+	}
+	if code := put(h.scheduler, `{"backend":"cursor-agent","model":"composer-2.5","pull_requests":"requested"}`); code != 200 {
+		t.Fatal(code)
+	}
+	prefs, _ := h.registry.Preferences(context.Background())
+	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested || !prefs.CursorAgentAcknowledged {
+		t.Fatalf("%+v", prefs)
+	}
+	if code := put(h.scheduler, `{"pull_requests":"both"}`); code != 200 {
+		t.Fatal(code)
+	}
+	if o, _ := h.scheduler.Overview(context.Background()); o.PullRequests != "both" {
 		t.Fatalf("%+v", o)
 	}
 }

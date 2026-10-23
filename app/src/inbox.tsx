@@ -9,15 +9,15 @@ import {
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatCount } from "@baum/viewer/components/format";
 import {
-  ChevronRightIcon,
   CheckIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
   CircleCrossIcon,
+  CircleDashedIcon,
   CommentsIcon,
   MergeIcon,
-  type IconProps,
-  CircleCheckIcon,
-  CircleDashedIcon,
   WarningIcon,
+  type IconProps,
 } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -67,6 +67,10 @@ export function inboxGroups(rows: Entry[]): Group[] {
           : 2;
     groups[index]!.rows.push(row);
   }
+  // Saved history reads most recently reviewed first; a review without a
+  // generation time goes last.
+  const reviewed = (row: Entry) => Date.parse(row.latest?.generated_at ?? "") || 0;
+  groups[3]!.rows.sort((a, b) => reviewed(b) - reviewed(a));
   return groups.filter((group) => group.rows.length > 0);
 }
 export function Inbox({
@@ -96,7 +100,10 @@ export function Inbox({
       return next;
     });
   return (
-    <section aria-label="Pull request inbox" className="local-inbox">
+    <section
+      aria-label="Pull request inbox"
+      className={cn("local-inbox", selection.size > 0 && "selecting")}
+    >
       <div className="inbox-columns inbox-columns-head">
         <input
           type="checkbox"
@@ -201,6 +208,29 @@ function Bucket({
     </section>
   );
 }
+/** The baum review's state, only when it asks for something: a review being
+ *  generated, or one that failed. A current or outdated review needs nothing
+ *  from the reader here; its risk is in the first column. */
+function ReviewActivity({ entry }: { entry: Entry }) {
+  if (entry.status === "generating")
+    return (
+      <span className="inbox-activity text-(--status-info)">
+        <LiveDot />
+        Generating review
+      </span>
+    );
+  if (entry.status === "failed")
+    return (
+      <span
+        className="inbox-activity text-(--status-critical)"
+        title={entry.failure_reason ?? entry.store_error}
+      >
+        <WarningIcon size={14} className="flex-none" />
+        Review failed
+      </span>
+    );
+  return null;
+}
 type StateStyle = {
   label: string;
   tone: string;
@@ -210,6 +240,8 @@ type StateStyle = {
 const MUTED = "text-(--text-tertiary)";
 const POSITIVE = "text-(--status-positive)";
 const CRITICAL = "text-(--status-critical)";
+// Red only where something needs the author: changes requested, failing
+// checks, a conflict.
 const REVIEW: Record<string, StateStyle> = {
   approved: { label: "Approved", tone: POSITIVE, icon: CheckIcon },
   changes_requested: { label: "Changes requested", tone: CRITICAL, icon: CircleCrossIcon },
@@ -227,6 +259,8 @@ const MERGE: Record<string, StateStyle> = {
   blocked: { label: "Blocked", tone: MUTED, icon: CircleCrossIcon },
   draft: { label: "Draft", tone: MUTED, icon: CircleDashedIcon },
 };
+/** One of the status columns: an icon and a word, or a dash. Its column's
+ *  name is read before it, since the headings are drawn for the eye only. */
 function StatusCell({
   column,
   label,
@@ -320,14 +354,7 @@ function InboxRow({
           : score === 3
             ? "text-(--text-secondary)"
             : "text-(--status-positive)";
-  const metadata = [
-    pr.repository,
-    `#${pr.number}`,
-    pr.author,
-    !pr.team_membership_known ? "Team requests unknown" : null,
-    entry.failure_reason,
-    entry.store_error,
-  ].filter(Boolean);
+  const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
   return (
     <li className={cn("inbox-columns inbox-row", selected && "bg-(--surface-selected)")}>
       <input
@@ -363,20 +390,7 @@ function InboxRow({
         <p title={metadata.join(" · ")} className="inbox-meta text-xs text-(--text-tertiary)">
           {metadata.join(" · ")}
         </p>
-        {entry.status === "generating" ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-(--status-info)">
-            <LiveDot />
-            Generating review
-          </span>
-        ) : entry.status === "failed" ? (
-          <span
-            className="inline-flex items-center gap-1.5 text-xs text-(--status-critical)"
-            title={entry.failure_reason}
-          >
-            <WarningIcon size={14} />
-            Review failed
-          </span>
-        ) : null}
+        <ReviewActivity entry={entry} />
       </div>
       <StatusColumns entry={entry} />
     </li>

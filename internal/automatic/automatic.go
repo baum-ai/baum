@@ -7,6 +7,7 @@
 package automatic
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -149,9 +149,12 @@ type Status struct {
 
 // Overview is GET /api/automatic.
 type Overview struct {
-	Enabled                 bool     `json:"enabled"`
-	CursorAgentAcknowledged bool     `json:"cursor_agent_acknowledged"`
-	Repositories            []Status `json:"repositories"`
+	Enabled                 bool `json:"enabled"`
+	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
+	// PullRequests is which pull requests get automatic reviews: both,
+	// authored or requested.
+	PullRequests string   `json:"pull_requests"`
+	Repositories []Status `json:"repositories"`
 }
 
 type fileState struct {
@@ -357,11 +360,20 @@ func (s *Scheduler) enable(name string) *repoState {
 	return rs
 }
 
-// eligible: the viewer's review is requested or the viewer wrote it, and it
-// is not a draft, not from a fork and not by an author without known write
-// access.
-func eligible(pr discovery.PullRequest) bool {
-	return !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && (pr.ReviewRequestedFromMe || pr.AuthoredByMe)
+// eligible: the viewer's review is requested or the viewer wrote it, as
+// the preferences narrow that, and it is not a draft, not from a fork and not
+// by an author without known write access.
+func eligible(pr discovery.PullRequest, prefs repos.Preferences) bool {
+	var wanted bool
+	switch prefs.PullRequests {
+	case repos.PullRequestsAuthored:
+		wanted = pr.AuthoredByMe
+	case repos.PullRequestsRequested:
+		wanted = pr.ReviewRequestedFromMe
+	default:
+		wanted = pr.ReviewRequestedFromMe || pr.AuthoredByMe
+	}
+	return wanted && !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite
 }
 
 // Observe records a complete discovery snapshot. The first one after a
@@ -417,7 +429,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			// A run interrupted before this baseline (before an off, say) is
 			// not retried for the head it recorded: re-enabling catches up on
 			// nothing.
-			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Retried: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr)}
+			rs.PRs[pr.Number] = &prState{Head: pr.HeadSHA, Retried: pr.HeadSHA, Requested: pr.ReviewRequestedFromMe, TeamKnown: pr.TeamMembershipKnown, Draft: pr.Draft, Eligible: eligible(pr, v.prefs)}
 		}
 		rs.AwaitingBaseline = false
 		s.save()
@@ -440,7 +452,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		// Marking a draft ready for review counts as a trigger.
 		ready := previous.Head != "" && previous.Draft && !pr.Draft
 		previous.Head, previous.Requested, previous.TeamKnown, previous.Draft = pr.HeadSHA, pr.ReviewRequestedFromMe, pr.TeamMembershipKnown, pr.Draft
-		previous.Eligible = eligible(pr)
+		previous.Eligible = eligible(pr, v.prefs)
 		switch {
 		case (newHead || newRequest || ready) && previous.Eligible && pr.HeadSHA != previous.Done:
 			previous.Pending, previous.Attempts, previous.RetryAt = pr.HeadSHA, 0, time.Time{}
@@ -452,7 +464,7 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			default:
 				previous.Trigger = jobs.TriggerReadyForReview
 			}
-		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr)):
+		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr, v.prefs)):
 			previous.Pending, previous.Trigger = "", ""
 		}
 		pending = pending || previous.Pending != ""
@@ -614,7 +626,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		err = jobs.ErrDuplicate
 	} else {
 		day := startOfDay(now)
-		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger, AllowUnpriced: v.prefs.CursorAgentAcknowledged, DailyCap: w.repo.settings.DailyCap, Day: day})
+		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger, DailyCap: w.repo.settings.DailyCap, Day: day})
 	}
 	s.mu.Lock()
 	rs := s.load().Repositories[w.name]
@@ -718,7 +730,7 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 		return Overview{}, err
 	}
 	now := s.now()
-	o := Overview{Enabled: v.prefs.Automatic, CursorAgentAcknowledged: v.prefs.CursorAgentAcknowledged, Repositories: []Status{}}
+	o := Overview{Enabled: v.prefs.Automatic, CursorAgentAcknowledged: v.prefs.CursorAgentAcknowledged, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Repositories: []Status{}}
 	names := make([]string, 0, len(v.repos))
 	for name := range v.repos {
 		names = append(names, name)
@@ -779,8 +791,6 @@ func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
 		return jobs.Admission{Reason: GateRepositoryRemoved}
 	case !settings.AutomaticEnabled(prefs):
 		return jobs.Admission{Reason: GateRepositoryOff}
-	case (j.Backend == agent.BackendCursorAgent || (j.EstimateUSD == nil && j.BlockedReason == "")) && !prefs.CursorAgentAcknowledged:
-		return jobs.Admission{Reason: jobs.ReasonCursorAgentConsent}
 	}
 	return jobs.Admission{DailyCap: settings.DailyCap, Day: startOfDay(s.now())}
 }

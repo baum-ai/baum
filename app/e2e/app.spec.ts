@@ -128,27 +128,20 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(requested).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);
   await requested.click();
-  await page.getByRole("combobox").first().selectOption("mine");
+  const views = page.getByRole("group", { name: "Show" });
+  await views.getByRole("button", { name: /^Mine/ }).click();
   await expect(page.getByRole("link", { name: /without a review/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);
-  await page.getByRole("combobox").first().selectOption("all");
+  await views.getByRole("button", { name: /^Open/ }).click();
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
   await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("needs its own confirmation");
-  await expect(
-    page.getByRole("button", { name: "Confirm estimate and generate", exact: true }),
-  ).toBeDisabled();
+  // Only a fork asks before generating, in a batch as on its own page.
+  await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).uncheck();
   await page.getByRole("link", { name: /A fork requiring confirmation/ }).click();
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
-  await expect(
-    page.getByRole("button", { name: "Confirm estimate and generate", exact: true }),
-  ).toBeDisabled();
-  await page.getByRole("dialog").getByRole("checkbox").check();
-  await expect(
-    page.getByRole("button", { name: "Confirm estimate and generate", exact: true }),
-  ).toBeEnabled();
+  await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
@@ -201,19 +194,12 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  // Generate starts the review at once: no estimate, no confirmation.
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByText(/Budget planning amount:/)).toBeVisible();
-  await expect(
-    page.getByText(/Assumes 2,000,000 charged tokens and 40 backend calls/),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Confirm estimate and generate" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(progress).toBeVisible();
-  await expect(page.getByText("No generated review yet.", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: /Generating review|Review queued/ }),
-  ).toBeDisabled();
+  await expect(page.getByText("No review yet", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Generate review", exact: true })).toHaveCount(0);
   await expect(progress.getByRole("button", { name: "Cancel job", exact: true })).toBeVisible();
   await page.screenshot({
@@ -224,11 +210,13 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  await page.getByText("Saved review usage · claude-sonnet-4-5", { exact: true }).click();
-  await expect(page.getByText(/Total processed tokens 1,000/)).toBeVisible();
-  await page.getByRole("link", { name: "Jobs", exact: true }).click();
-  await expect(page.getByText(/completed/)).toBeVisible();
-  await expect(page.getByText(/Calls 1 · Repairs 0/)).toBeVisible();
+  // The review links to the job that generated it, where its usage is.
+  await page.getByRole("link", { name: "View job", exact: true }).click();
+  const job = page.getByRole("region", { name: "Generation jobs" }).getByRole("listitem").first();
+  await expect(job.getByText("Completed")).toBeVisible();
+  await expect(job.getByText("1 call", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/jobs.png", animations: "disabled" });
+  await job.getByText("Usage", { exact: true }).click();
   await expect(
     page.getByText(
       /Provider-reported usage: Input 60 · Output 40 · Cache reads 900 · Cache creation 0/,
@@ -245,7 +233,6 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm estimate and generate", exact: true }).click();
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible();
@@ -254,31 +241,58 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toBeDisabled();
   await page.getByRole("button", { name: "Cancel job", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
-  await expect(page.getByText("Review generation cancelled", { exact: true })).toBeVisible();
+  await expect(page.getByText("Review generation was cancelled", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/review-cancelled.png", animations: "disabled" });
   await page.getByRole("link", { name: "Jobs", exact: true }).click();
-  await expect(page.getByText(/cancelled/).first()).toBeVisible();
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
-  const settings = page.getByRole("region", { name: "Repository acme/demo", exact: true });
-  await expect(
-    settings.getByText(/Model generation runs when you request and confirm it, or automatically/),
-  ).toBeVisible();
+  await expect(page.getByText(/cancelled/i).first()).toBeVisible();
+  await page.screenshot({ path: "test-results/jobs-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 720, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
+  await page.screenshot({ path: "test-results/jobs-narrow.png", animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  // Adding offers itself only for a clone the daemon would register.
+  const add = page.getByRole("textbox", { name: "Local clone path" });
+  await add.fill("/nowhere/at/all");
+  await expect(page.getByText(/not a git working tree/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add repo" })).toBeDisabled();
+  const demoPath = await page
+    .getByRole("listitem")
+    .filter({ hasText: "acme/demo" })
+    .locator("p")
+    .first()
+    .textContent();
+  await add.fill(demoPath ?? "");
+  await expect(page.getByText("acme/demo is already added.")).toBeVisible();
+  await add.fill("");
+  await page.getByRole("button", { name: "Settings for acme/demo" }).click();
+  const settings = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
   // Automatic reviews are on by default: the repository follows the global
-  // setting and has no daily cap.
+  // setting.
   await expect(settings.getByRole("combobox", { name: /Automatic reviews/ })).toHaveValue(
     "default",
   );
-  await expect(settings.getByRole("spinbutton", { name: /Daily automatic cap/ })).toHaveValue("");
+  // The repository picks its model with the dropdown the desktop setup uses.
+  await settings
+    .getByRole("combobox", { name: "Model for this repository" })
+    .selectOption("Custom…");
+  await settings.getByRole("textbox", { name: "Custom model" }).fill("claude-sonnet-4-5");
+  await page.screenshot({ path: "test-results/repository-dialog.png", animations: "disabled" });
+  await settings.getByRole("button", { name: "Save repository settings" }).click();
+  await expect(settings).toBeHidden();
+  await expect(page.getByText(/claude-sonnet-4-5/)).toBeVisible();
+  await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
     page
-      .getByRole("region", { name: "Automatic reviews", exact: true })
-      .getByRole("checkbox", { name: /Generate reviews automatically/ }),
+      .getByRole("region", { name: "Reviews", exact: true })
+      .getByRole("switch", { name: /Review pull requests automatically/ }),
   ).toBeChecked();
-  await settings.getByRole("textbox", { name: "Model override" }).fill("claude-sonnet-4-5");
-  await settings.getByRole("button", { name: "Save repository settings" }).click();
-  await expect(settings.getByRole("textbox", { name: "Model override" })).toHaveValue(
-    "claude-sonnet-4-5",
-  );
-  const diagnostics = page.getByRole("region", { name: "Diagnostics", exact: true });
+  await page.screenshot({ path: "test-results/settings.png", animations: "disabled" });
+  await page.getByRole("button", { name: /Check this computer/ }).click();
+  const diagnostics = page
+    .getByRole("dialog")
+    .getByRole("region", { name: "Diagnostics", exact: true });
   await expect(diagnostics.getByText(/Overall: Problem/)).toBeVisible();
   const problem = diagnostics.getByRole("listitem").filter({ hasText: "GitHub token" });
   await expect(problem.getByText("Problem", { exact: true })).toBeVisible();
@@ -320,12 +334,12 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   const pr = page.getByRole("link", { name: /An automatically reviewed change/ });
   await expect(pr).toBeVisible();
   await pr.click();
-  await expect(page.getByText("No generated review yet.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No review yet", { exact: true })).toBeVisible();
   // The fixture's discovery reports PR 10's new head once this marker exists.
   await writeFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "push-10"), "");
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(
-    progress.getByText("Started automatically because new commits were pushed", { exact: true }),
+    progress.getByText(/Started automatically because new commits were pushed/),
   ).toBeVisible({ timeout: 15000 });
   await page.screenshot({ path: "test-results/automatic-review.png", animations: "disabled" });
   await expect(
@@ -336,24 +350,31 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(
     jobs.getByText("Started automatically because new commits were pushed", { exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
-  const automatic = page.getByRole("region", { name: "Automatic reviews", exact: true });
-  const toggle = automatic.getByRole("checkbox", { name: /Generate reviews automatically/ });
-  // The checkbox shows the saved preference, so it changes once the server answers.
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  const automatic = page.getByRole("region", { name: "Reviews", exact: true });
+  const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
+  const save = automatic.getByRole("button", { name: "Save review settings" });
+  // The switch shows the saved preference once saving answers.
   await toggle.click();
+  await save.click();
+  await expect(save).toBeDisabled();
   await expect(toggle).not.toBeChecked();
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
   await expect(automatic).toBeVisible({ timeout: 15000 });
   await expect(toggle).not.toBeChecked();
-  await expect(
-    page
-      .getByRole("region", { name: "Repository acme/demo", exact: true })
-      .getByText("Automatic reviews are paused by the global switch."),
-  ).toBeVisible();
   await page.screenshot({ path: "test-results/automatic-settings.png", animations: "disabled" });
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Settings for acme/demo" }).click();
+  const repository = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
+  await expect(
+    repository.getByText(/Automatic reviews are paused by the global switch/),
+  ).toBeVisible();
+  await repository.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await toggle.click();
+  await save.click();
   await expect(toggle).toBeChecked();
   expect(errors).toEqual([]);
 });

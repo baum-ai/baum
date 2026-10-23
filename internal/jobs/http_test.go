@@ -10,35 +10,44 @@ import (
 	"github.com/baum-ai/baum/agent"
 )
 
-// POST /api/jobs passes confirm_unpriced through: an unpriced estimate is
-// refused without it and queued with it.
-func TestHTTPSubmitWiresTheUnpricedAcknowledgement(t *testing.T) {
+// POST /api/jobs with items generates at once; a fork waits for the
+// isolation confirmation, which the answer asks for.
+func TestHTTPGeneratesDirectly(t *testing.T) {
 	q, f := newQueue(t)
 	f.mu.Lock()
-	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
+	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
 	f.mu.Unlock()
 	handler := q.Handler()
-	post := func(path, body string) *httptest.ResponseRecorder {
+	post := func(body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(body)))
 		return w
 	}
-	w := post("/api/jobs/estimate", `{"items":[{"clone":"clone","pr":1}],"mode":"single"}`)
-	var e Estimate
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &e) != nil || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
-		t.Fatalf("estimate: %d %s", w.Code, w.Body)
+	items := `"items":[{"clone":"clone","pr":1}],"mode":"single"`
+	w := post(`{` + items + `}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"isolation_required":true`) {
+		t.Fatalf("fork without confirmation: %d %s", w.Code, w.Body)
 	}
-	if !strings.Contains(w.Body.String(), `"estimate_reason":"billed_by_cursor_subscription"`) || !strings.Contains(w.Body.String(), `"estimate_usd":null`) {
-		t.Errorf("estimate JSON: %s", w.Body)
+	if len(q.List()) != 0 {
+		t.Fatalf("queued %+v", q.List())
 	}
-	if w = post("/api/jobs", `{"estimate_id":"`+e.ID+`","confirm_estimate":true,"confirm_isolation":false}`); w.Code != http.StatusConflict {
-		t.Fatalf("without confirm_unpriced: %d %s", w.Code, w.Body)
+	w = post(`{` + items + `,"confirm_isolation":true}`)
+	var answer struct{ Jobs []Job }
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &answer) != nil || len(answer.Jobs) != 1 || answer.Jobs[0].Backend != agent.BackendCursorAgent {
+		t.Fatalf("confirmed: %d %s", w.Code, w.Body)
 	}
-	if w = post("/api/jobs", `{"estimate_id":"`+e.ID+`","confirm_estimate":true,"confirm_isolation":false,"confirm_unpriced":false}`); w.Code != http.StatusConflict {
-		t.Fatalf("with confirm_unpriced false: %d %s", w.Code, w.Body)
-	}
-	if w = post("/api/jobs", `{"estimate_id":"`+e.ID+`","confirm_estimate":true,"confirm_isolation":false,"confirm_unpriced":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"backend":"cursor-agent"`) {
-		t.Fatalf("with confirm_unpriced: %d %s", w.Code, w.Body)
+	<-f.started
+	close(f.release)
+	// In a batch too, the confirmation lets the fork in rather than leaving
+	// it out.
+	q, f = newQueue(t)
+	f.mu.Lock()
+	f.restricted = true
+	f.mu.Unlock()
+	handler = q.Handler()
+	w = post(`{"items":[{"clone":"clone","pr":1}],"mode":"batch","confirm_isolation":true}`)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &answer) != nil || len(answer.Jobs) != 1 {
+		t.Fatalf("confirmed batch: %d %s", w.Code, w.Body)
 	}
 	<-f.started
 	close(f.release)

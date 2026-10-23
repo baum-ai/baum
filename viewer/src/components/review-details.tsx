@@ -32,10 +32,13 @@ import { Badge } from "./ui";
 export function ReviewDetails({
   document,
   checks,
+  footer,
 }: {
   document: ReviewDocument;
   /** Replaces the Checks part; null leaves it out. */
   checks?: ReactNode;
+  /** Drawn last, after the change size. */
+  footer?: ReactNode;
 }) {
   const { summary, stats } = document;
   const implemented = implementsGroups(summary.implements);
@@ -156,6 +159,7 @@ export function ReviewDetails({
           </div>
         )}
       </Part>
+      {footer}
     </div>
   );
 }

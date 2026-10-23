@@ -214,6 +214,9 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
    *  such as checks gathered from elsewhere; null content leaves the part
    *  out. */
   detailsChecks?: (document: ReviewDocument) => ReviewDetailsChecks;
+  /** Closes the Details tab, for the document it describes: a host's own
+   *  note on where the review came from. */
+  detailsFooter?: (document: ReviewDocument) => ReactNode;
   /** A stack's member reviews for the Activity tab to gather, for the
    *  document it describes, in place of the document's own activity. */
   activityMembers?: (document: ReviewDocument) => ActivityMembers;
@@ -342,6 +345,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   commits,
   conversation,
   detailsChecks,
+  detailsFooter,
   activityMembers,
   hideActivity = false,
   focusConversation,
@@ -1508,6 +1512,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                       <ReviewDetails
                         document={barDocument}
                         checks={hideActivity ? (barChecks ? barChecks.content : undefined) : null}
+                        footer={detailsFooter?.(barDocument)}
                       />
                     </>
                   ) : (

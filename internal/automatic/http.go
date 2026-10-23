@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -26,8 +28,11 @@ func (s *Scheduler) Handler() http.Handler {
 	mux.HandleFunc("GET /api/automatic", write)
 	mux.HandleFunc("PUT /api/automatic", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Enabled                 *bool `json:"enabled"`
-			CursorAgentAcknowledged *bool `json:"cursor_agent_acknowledged"`
+			Enabled                 *bool   `json:"enabled"`
+			CursorAgentAcknowledged *bool   `json:"cursor_agent_acknowledged"`
+			Backend                 *string `json:"backend"`
+			Model                   *string `json:"model"`
+			PullRequests            *string `json:"pull_requests"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 		d := json.NewDecoder(r.Body)
@@ -36,17 +41,49 @@ func (s *Scheduler) Handler() http.Handler {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return
 		}
+		var invalid error
 		_, err := s.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			next := p
 			if input.Enabled != nil {
-				p.Automatic = *input.Enabled
+				next.Automatic = *input.Enabled
 			}
 			if input.CursorAgentAcknowledged != nil {
-				p.CursorAgentAcknowledged = *input.CursorAgentAcknowledged
+				next.CursorAgentAcknowledged = *input.CursorAgentAcknowledged
 			}
-			return p
+			if input.Backend != nil {
+				backend, err := config.ParseBackend(*input.Backend)
+				if err != nil {
+					invalid = err
+					return p
+				}
+				next.Backend = &backend
+				// Choosing cursor-agent is the acknowledgement that its cost
+				// cannot be estimated, as in the desktop app's setup.
+				if backend == config.BackendCursorAgent {
+					next.CursorAgentAcknowledged = true
+				}
+			}
+			if input.Model != nil {
+				model := strings.TrimSpace(*input.Model)
+				next.Model = &model
+			}
+			if input.PullRequests != nil {
+				next.PullRequests = *input.PullRequests
+				if next.PullRequests == "both" {
+					next.PullRequests = ""
+				}
+			}
+			if invalid = next.Validate(); invalid != nil {
+				return p
+			}
+			return next
 		})
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		if invalid != nil {
+			http.Error(w, invalid.Error(), http.StatusBadRequest)
 			return
 		}
 		// Turning off (the tray's pause included) cancels queued automatic

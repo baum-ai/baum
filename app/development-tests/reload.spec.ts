@@ -56,7 +56,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
       .toBe("ready");
     await writeFile(
       componentPath,
-      component.replace(">Pull requests</h1>", ">Hot reload works</h1>"),
+      component.replace('title="Pull requests"', 'title="Hot reload works"'),
     );
     await expect(page.getByRole("heading", { name: "Hot reload works" })).toBeVisible();
     expect(await page.evaluate(() => Reflect.get(window, "hotReloadMarker"))).toBe("preserved");

@@ -43,45 +43,57 @@ A second launch focuses the existing window instead of opening another one.
 
 ## First run: the baum command and the hooks
 
-Agent hooks run `baum` by name, so the app's first run sets up two things
-before the window attaches to the daemon (which starts meanwhile). The window
-opens on a bundled setup screen (`ui/setup.html`) that shows what is on this
-computer and what installing would change; nothing changes until the user
-clicks Install. The Rust side then makes each change:
+First run uses a four-step setup in the landing page's sand, espresso and green
+palette, with bundled Studio Feixen fonts. The screen is a typed React entry in
+`../app/src/desktop/`, built alongside the local application by its Vite build.
+Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
+native assets in `dist/`, keeping the connecting page from `ui/`. Tauri embeds
+`dist/` so setup stays on its local origin with the existing native permissions;
+daemon-served pages may only open the native folder picker (below). Each step is optional and has Back
+and Continue controls; changes happen only when the user selects an install
+or add action. Displayed paths abbreviate the current home directory as
+`$HOME`; actions still use the full path:
 
-1. The `baum` command: the bundled binary, linked onto the login shell's
-   `PATH` (below). One binary and one version: the terminal, the hooks and
-   the daemon all run the app's baum, and updating the app updates them.
-2. The Claude Code and Codex marketplace plugins: the bundled
-   `baum hooks install --user`, for executable agents it finds on `PATH`.
-   The native CLI registers the public `baum-ai/baum` Git marketplace and
-   downloads/installs/enables `baum@baum`. Installation calls no baum server,
-   but does fetch the public marketplace. Its output and hook trust guidance
-   (Codex: `/hooks`) are shown. Installed and enabled do not mean trusted.
+1. Install the bundled `baum` command onto the login shell's `PATH` (below).
+   The step states in one line where baum will be installed, or which other
+   baum it replaces; PATH and administrator warnings show beneath it.
+2. Connect the agents you use, with separate install or enable buttons. The
+   Codex marketplace plugin is installed with `baum hooks install
+   --user --agent codex`. The screen explains reviewing trust with `/hooks`.
+   The Claude Code plugin is installed separately with `--agent claude-code`.
+   Both use the native agent CLI to fetch the public marketplace. Installation
+   and enablement do not mean the user has trusted the hooks.
+3. Add one or more existing local GitHub clones. Choosing a folder in the
+   native picker adds it straight away; an absolute path can be pasted instead.
+   Each is registered with `baum internal repos add`;
+   this does not change repository hooks. Repositories follow the review
+   settings of the next step.
+4. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
+   the Anthropic API), its model (the harness default, a listed model or a
+   custom one), whether reviews run automatically and, if so, for which pull
+   requests (authored, requested, or both). The screen reads them with
+   `baum internal reviews show` and saves changes with `baum internal reviews
+   set` when the user opens baum. They are stored as app preferences in the
+   repository registry, which the daemon rereads for every job.
 
-"Skip for now" is there too, and so is "Keep my baum, install the hooks" when
-a different baum is in the way. Leaving the screen records that setup ran
-(`setup.json` in the app's configuration directory, with the link the app
-created), attaches to the daemon and opens its diagnostics page, which lists
-each problem with its fix and offers GitHub device sign-in. The same GitHub
-connection panel is in Repositories & settings: copy the code, then open GitHub
-in the default browser. The daemon completes sign-in independently of this
-window and saves credentials in the operating system credential store.
+Failed actions leave the user on the step with their output and a retry action.
+"Check again" rereads the installed state. Finishing records `setup.json`,
+attaches to the daemon and opens diagnostics. Later, "Command Line and Hooks…"
+in the tray, or the menu bar on macOS, reopens the same steps, with removal controls for
+the command and each agent plugin.
+
+Diagnostics and Settings offer GitHub device sign-in: copy the code and open
+GitHub in the default browser. The daemon completes sign-in independently of
+the window and saves credentials in the operating system credential store.
 Disconnect removes the saved credential; explicit environment/config overrides
-remain effective, and saved reviews stay readable. Later, every page of the app shows a notice with
-a link to that page while the diagnostics find a problem (see
-[`../app/README.md`](../app/README.md)).
-
-"Command Line and Hooks…" reopens the same screen: what is installed,
-Update, Replace, Remove, and Install or Remove hooks. "Done" attaches to the
-daemon again. The item is in the tray menu and in the window's menu bar (the
-application menu on macOS, the Background menu elsewhere), both built in
-`tray.rs`; it calls `onboarding::show`.
+remain effective, and saved reviews stay readable.
 
 The screen gets the facts from the bundled baum: `baum daemon login-path
 --json` resolves the login shell's `PATH` as the daemon does and names the
-first `baum` on it (the one hooks run) with its version, and `baum hooks
-status --user --json` reads each agent's native plugin registry, reporting
+first `baum` on it (the one hooks run) with its version. On Unix, the login
+shell’s PATH comes first and inherited PATH directories are appended without
+duplicates, preserving tools available to the process that launched the app.
+`baum hooks status --user --json` reads each agent's native plugin registry, reporting
 plugin ID, installation and enablement separately. Disabled plugins offer an
 Enable action; trust must be reviewed in the agent. Each native action has a
 90-second bound and status queries have 10 seconds. The desktop gives both
@@ -313,7 +325,7 @@ daemon's `GET /api/events` stream itself (`src/notifications/`), so they
 arrive while the window is hidden (closing it hides it) or minimised, for as
 long as the app runs. Where no tray exists, closing the window quits the app
 (see "Tray, closing and quitting"), and notifications stop with it. Pages the
-daemon serves are not involved and get no capability.
+daemon serves are not involved.
 
 | Notification | Daemon event |
 | --- | --- |
@@ -350,8 +362,8 @@ title is not interpreted.
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
 - **Settings.** Each kind is on by default. A "Notifications" submenu with one
-  check item per kind is in the window's menu bar and in the tray menu (the
-  tray reaches Linux and Windows users without a menu bar). The choices, the
+  check item per kind is in the macOS menu bar and in the tray menu. Linux and
+  Windows windows have no menu bar, so there the tray holds them. The choices, the
   permission answer, and the daily-cap pauses already announced (so a restart
   or a replaced daemon does not announce one again) are saved in
   `notifications.json` in the app's config directory
@@ -377,17 +389,21 @@ title is not interpreted.
   content security policy has `frame-ancestors 'none'`.
   `http` and `https` links to other hosts open in the default browser. Other
   loopback servers, other schemes and new-window requests are refused.
-- Tauri treats the daemon's pages as remote, and no capability names a remote
-  URL, so they cannot call any Tauri command or plugin. `withGlobalTauri` is
-  off.
+- Tauri treats the daemon's pages as remote. One capability names them,
+  `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows only
+  `choose_repository`, the native folder picker the Repositories page's Browse
+  button opens, which changes nothing and returns only the chosen folder. The
+  page registers it through the daemon's own API. They can call no other Tauri
+  command or plugin. `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
   origin only: `connecting-screen` allows the app's `connection` and
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
-  `uninstall_hooks` and `finish_setup`). Every change they make runs in the
+  `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
+  `save_review_settings` and `finish_setup`). Every change they make runs in the
   Rust side and only when the user clicked it on the setup screen;
   replacing a different baum also needs the screen to name the path the
-  user confirmed. The daemon's pages cannot call any of them.
+  user confirmed. The daemon's pages can call none of them but the picker.
 - The opener plugin is used only from Rust, to open links in the browser. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
@@ -434,7 +450,9 @@ builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
 
 ## Development
 
-Builds and checks run in the `desktop-test` Docker service (Rust, the
+`just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
+Desktop check, test, build, bundle, run and dev recipes build that frontend first.
+Rust builds and checks run in the `desktop-test` Docker service (Rust, the
 WebKitGTK and GTK development packages, and the Tauri CLI). The bundled
 binary is built in `oss-test`. From the repository root:
 
@@ -446,7 +464,7 @@ just desktop::build         # Linux bundle (deb by default) in target/release/bu
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
-just desktop::dev           # same, with Vite hot reload for the React app
+just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # regenerate icons/ from icons/source.svg
 ```
 
@@ -454,22 +472,44 @@ just desktop::icons         # regenerate icons/ from icons/source.svg
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
 bundled one.
 
-For UI work, use `just desktop::dev`. It starts Vite and the native app in
-separate Docker containers sharing a loopback network. Saving React components
-or CSS in `oss/app` or the shared `oss/viewer` updates the window; React Fast
-Refresh preserves component state when possible. Ctrl-C stops both containers
-and their isolated daemon. This runs against the development container's data,
-not your host daemon or repositories. Native Rust changes and the bundled
-setup/connecting screens still require restarting the command.
-Both development containers run with the invoking user's UID and GID so they
-can access the private shared directory and create files owned by that user.
+For UI work and host integration, use `just desktop::dev` on Linux in a
+Wayland or X11 session. Vite, dependencies and generated frontend code stay in
+Docker; the CLI sidecar is built in `oss-test`. The native Rust app is compiled
+and run on the host, with separate output in `target/host-dev`. This is an
+intentional host execution exception: a container cannot resolve the host user's
+login environment, installed agent CLIs, repository paths, credential agents or
+native desktop services faithfully by mounting a display socket. The launcher
+uses your real home directory and the shared host daemon, so installation and
+repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
+when set; otherwise it atomically refreshes `target/host-dev/bin/baum` from the
+freshly built sidecar and runs that copy. This gives installation a stable target
+named `baum`, as the install-record validation requires; the platform-suffixed
+sidecar filename is only the build artifact. Existing daemons can finish using
+the previous executable after the copy is replaced.
+
+The host needs Rust (at least the version in `Cargo.toml`), a C toolchain,
+pkg-config and the Tauri GTK/WebKit development libraries. On Debian/Ubuntu,
+install `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
+libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. Docker continues
+to own checks and release builds. This launcher currently requires Linux host
+networking; macOS and Windows need a different loopback bridge.
+
+Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window,
+including the setup screen. Native Rust and connecting screen changes require
+restarting the command. Ctrl-C removes the Vite container and its private shared directory;
+the host daemon continues running, just as when the normal desktop app closes.
 
 Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
-on port 5173. That directory shares the daemon's origin with Vite, never its
-launch capability. Vite proxies the normal login exchange and namespaced API,
-including event streams, rewriting the expected development Origin for CSRF
-validation. Release builds ignore the override. No development ports are
-published to the host.
+on port 5173. The private directory shares only the daemon origin with Vite,
+never its launch capability. Vite uses Docker host networking and binds only
+`127.0.0.1`, allowing the host window and the container proxy to reach the host
+daemon without exposing a development port beyond loopback. It proxies the normal
+login exchange and namespaced API, including event streams, rewriting the expected
+development Origin for CSRF validation. The setup screen also loads from Vite,
+at `http://localhost:5173/setup.html`. Tauri grants commands by origin, not
+path, so setup uses `localhost` while the daemon's pages use `127.0.0.1`; a
+capability added at runtime grants only the `localhost` origin the setup
+commands, and the window may navigate only to the setup page there. Release builds ignore the override.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple
@@ -716,3 +756,8 @@ tools installed after the app or the agent started are found.
   unsigned bundle are all rejected.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
+
+The onboarding browser regression runs against the compiled React bundle
+mounted through `ui-test`: `pnpm --dir /oss/app test:desktop` after building the app. It uses mocked native
+IPC and checks separate agent actions, retries, multiple repositories, back/skip,
+completion and the minimum window width. Screenshots go to a temporary directory, or `ONBOARDING_SCREENSHOT_DIR` when set.

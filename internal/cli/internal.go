@@ -27,6 +27,7 @@ and the agent hooks.`,
 		newRefreshCommand(),
 		newSessionsCommand(),
 		newReposCommand(),
+		newReviewsCommand(),
 		newDoctorCommand(),
 		newGitHubCredentialCommand(),
 	)

@@ -33,9 +33,6 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	defer f.mu.Unlock()
 	f.prepared++
 	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted, Draft: f.draft}
-	if f.price == nil && f.backend != agent.BackendCursorAgent {
-		p.BlockedReason = "unknown_model_price"
-	}
 	return p, "2026-10-01", nil
 }
 
@@ -104,8 +101,8 @@ func TestAutomaticJobRunsThroughTheQueueMarkedAutomatic(t *testing.T) {
 }
 
 // What a person must confirm is never generated automatically: forks and
-// authors without known write access, unpriced models, cursor-agent without
-// the acknowledgement; and a head that moved since the trigger.
+// authors without known write access; nor a head that moved since the
+// trigger. A model without a price, cursor-agent included, runs.
 func TestAutomaticRefusesWhatNeedsAPerson(t *testing.T) {
 	q, f := newAutoQueue(t)
 	ctx := context.Background()
@@ -115,29 +112,16 @@ func TestAutomaticRefusesWhatNeedsAPerson(t *testing.T) {
 	}
 	f.restricted = false
 	f.price = nil
-	if _, err := q.SubmitAutomatic(ctx, auto(1, "a1")); reason(err) != "unknown_model_price" {
-		t.Fatalf("unpriced model: %v", err)
-	}
 	f.backend = agent.BackendCursorAgent
-	if _, err := q.SubmitAutomatic(ctx, auto(1, "a1")); reason(err) != ReasonCursorAgentConsent {
-		t.Fatalf("cursor-agent without acknowledgement: %v", err)
-	}
-	price := 2.0
-	f.price = &price
-	if _, err := q.SubmitAutomatic(ctx, auto(1, "a1")); reason(err) != ReasonCursorAgentConsent {
-		t.Fatalf("priced cursor-agent without acknowledgement: %v", err)
-	}
 	if _, err := q.SubmitAutomatic(ctx, auto(1, "stale")); !errors.Is(err, ErrHeadChanged) {
 		t.Fatalf("changed head: %v", err)
 	}
 	if len(q.List()) != 0 {
 		t.Fatalf("refused requests queued jobs: %+v", q.List())
 	}
-	r := auto(1, "a1")
-	r.AllowUnpriced = true
-	j, err := q.SubmitAutomatic(ctx, r)
+	j, err := q.SubmitAutomatic(ctx, auto(1, "a1"))
 	if err != nil || j.Backend != agent.BackendCursorAgent {
-		t.Fatalf("acknowledged cursor-agent: %+v %v", j, err)
+		t.Fatalf("unpriced cursor-agent: %+v %v", j, err)
 	}
 }
 

@@ -1,4 +1,3 @@
-import { UsageDetails } from "./usage";
 import {
   Component,
   type ReactNode,
@@ -11,7 +10,8 @@ import {
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
@@ -26,10 +26,12 @@ import {
   type Job,
   isActiveJob,
   automaticLabel,
+  jobReasonText,
   liveFor,
   type LiveSession,
   type Provenance,
 } from "./api";
+import { Notice } from "./shell";
 import { LiveSessions } from "./live";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
@@ -225,60 +227,75 @@ export function LocalReview({
             },
             back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
-            beside: (
-              <Button disabled={generating} onClick={generate}>
+            // Without a review, the button in the page's middle generates it.
+            beside: doc ? (
+              <Button variant="secondary" size="compact" disabled={generating} onClick={generate}>
                 {generating
                   ? job?.state === "queued"
                     ? "Review queued"
                     : "Generating review…"
-                  : doc
-                    ? "Regenerate review"
-                    : "Generate review"}
+                  : "Regenerate review"}
               </Button>
-            ),
+            ) : null,
           }}
           placeholder={
-            <div className="p-4 space-y-3">
-              {generating ? (
-                <p role="status">
-                  {job?.state === "queued"
-                    ? "Review generation is queued."
-                    : "Generating review… This page will update when it is ready."}
+            generating ? (
+              <section aria-label="Review generation" className="local-review-empty">
+                <LiveDot />
+                <h2 role="status">
+                  {job?.state === "queued" ? "Review queued" : "Generating the review"}
+                </h2>
+                <p>
+                  {job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This page updates
+                  when it is ready.
                 </p>
-              ) : failed && entry.version_count > 0 ? (
-                <Alert>
-                  Review could not be read.{" "}
-                  <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
-                </Alert>
-              ) : (
-                <p>{entry.version_count === 0 ? "No generated review yet." : "Loading review…"}</p>
-              )}
-              {!generating ? <Button onClick={generate}>Generate review</Button> : null}
-            </div>
+                {job ? <CancelJob job={job} changed={changed} /> : null}
+              </section>
+            ) : failed && entry.version_count > 0 ? (
+              <div className="local-review-empty">
+                <h2>The saved review couldn't be read</h2>
+                <Button size="compact" onClick={() => setRetry((n) => n + 1)}>
+                  Retry review
+                </Button>
+              </div>
+            ) : entry.version_count > 0 ? (
+              <div className="local-review-empty">
+                <p role="status">Loading review…</p>
+              </div>
+            ) : job && job.state !== "completed" && !isActiveJob(job) ? (
+              <div className="local-review-empty">
+                <GenerationOutcome job={job} />
+                <Button size="compact" onClick={generate}>
+                  {job.state === "failed" ? "Try again" : "Generate review"}
+                </Button>
+              </div>
+            ) : (
+              <div className="local-review-empty">
+                <h2>No review yet</h2>
+                <p>Generate one to see this pull request's summary, risks and changes.</p>
+                <Button size="compact" onClick={generate}>
+                  Generate review
+                </Button>
+              </div>
+            )
           }
+          detailsFooter={(document) => (
+            <GeneratedBy
+              saved={provenance.find((p) => p.version === document.review.version)}
+              entry={entry}
+              version={document.review.version}
+              job={job}
+            />
+          )}
           notices={
             <>
               <LiveSessions sessions={running} />
-              {viewedDocument
-                ? (() => {
-                    const saved = provenance.find(
-                      (p) => p.version === viewedDocument.review.version,
-                    );
-                    return saved ? (
-                      <details className="mb-3 local-panel">
-                        <summary>Saved review usage · {saved.model}</summary>
-                        <UsageDetails
-                          accounting={saved.accounting}
-                          charged={saved.accounting?.charged_tokens ?? saved.tokens}
-                          amount={saved.recorded_cost_usd}
-                          reason={saved.cost_reason}
-                        />
-                      </details>
-                    ) : null;
-                  })()
-                : null}
-              {job && (job.state !== "completed" || !doc) ? (
+              {job && isActiveJob(job) && doc ? (
                 <ReviewJob key={job.id} job={job} changed={changed} />
+              ) : job && doc && job.state !== "completed" ? (
+                <div className="local-job-outcome">
+                  <GenerationOutcome job={job} compact />
+                </div>
               ) : null}
               {failed && doc ? (
                 <Alert>
@@ -287,13 +304,10 @@ export function LocalReview({
                 </Alert>
               ) : null}
               {generating && doc ? (
-                <Alert>
+                <Notice>
                   A new review is being generated. This saved version remains available while it
                   runs.
-                </Alert>
-              ) : null}
-              {entry.stale ? (
-                <Alert>Discovery is stale. Refresh the inbox to check the current head.</Alert>
+                </Notice>
               ) : null}
             </>
           }
@@ -329,54 +343,117 @@ class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolea
   }
 }
 
-function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+/** Where the review being read came from, at the foot of its Details: the
+ *  harness and model, and the job that generated it while the jobs list
+ *  still has it. */
+function GeneratedBy({
+  saved,
+  entry,
+  version,
+  job,
+}: {
+  saved: Provenance | undefined;
+  entry: Entry;
+  version: number;
+  job: Job | undefined;
+}) {
+  if (!saved) return null;
+  const latest = version === entry.latest?.version;
+  const made = latest && job?.state === "completed" ? job : null;
+  return (
+    <p className="local-generated-by">
+      Generated with {latest && entry.latest ? `${entry.latest.backend} · ` : ""}
+      {saved.model}
+      {made ? (
+        <>
+          {" · "}
+          <a
+            href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
+            onClick={(event) => {
+              event.preventDefault();
+              window.history.pushState(null, "", event.currentTarget.href);
+              dispatchEvent(new PopStateEvent("popstate"));
+            }}
+          >
+            View job
+          </a>
+        </>
+      ) : null}
+    </p>
+  );
+}
+/** What became of the PR's last generation that did not complete: what
+ *  happened in a sentence, and the generator's own words behind a toggle. */
+function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
+  const failed = job.state === "failed";
+  const title = failed
+    ? compact
+      ? "The latest regeneration failed"
+      : "The review couldn't be generated"
+    : job.state === "interrupted"
+      ? "Review generation was interrupted"
+      : "Review generation was cancelled";
+  const started = automaticLabel(job);
+  return (
+    <section aria-label="Review generation" className="local-outcome">
+      <span className={failed ? "local-outcome-icon failed" : "local-outcome-icon"}>
+        <WarningIcon size={16} />
+      </span>
+      <div className="min-w-0">
+        <h2 role="status">{title}</h2>
+        {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
+        {started ? <p className="local-outcome-meta">{started}</p> : null}
+        {job.detail ? (
+          <details>
+            <summary>What happened</summary>
+            <pre>{job.detail}</pre>
+          </details>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+/** Stops the PR's queued or running job. */
+function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
-  const active = isActiveJob(job);
-  const title =
-    job.state === "queued"
-      ? "Review queued"
-      : job.state === "running"
-        ? "Generating review"
-        : job.state === "completed"
-          ? "Review completed; loading the saved review…"
-          : `Review generation ${job.state}`;
   return (
-    <section aria-label="Review generation" className="mb-3 local-panel space-y-2">
-      <p role="status">
-        <strong>{title}</strong>
-        {active ? ` · ${job.phase}` : ""}
-      </p>
-      {automaticLabel(job) ? (
-        <p className="text-xs font-semibold text-(--text-secondary)">{automaticLabel(job)}</p>
-      ) : null}
-      <p className="text-xs text-(--text-tertiary)">
-        Calls {job.calls} · Repairs {job.repairs}
-      </p>
-      <UsageDetails
-        accounting={job.accounting}
-        charged={job.tokens}
-        amount={job.actual_cost_usd}
-        reason={job.cost_reason}
-      />
-      {job.reason ? <p>{job.reason}</p> : null}
+    <>
+      <Button
+        variant="ghost"
+        size="compact"
+        disabled={cancelling}
+        onClick={() => {
+          setCancelling(true);
+          setError("");
+          void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+            .then(changed)
+            .catch(() => setError("The job could not be cancelled. Try again."))
+            .finally(() => setCancelling(false));
+        }}
+      >
+        {cancelling ? "Cancelling…" : "Cancel job"}
+      </Button>
       {error ? <Alert>{error}</Alert> : null}
-      {active ? (
-        <Button
-          variant="secondary"
-          disabled={cancelling}
-          onClick={() => {
-            setCancelling(true);
-            setError("");
-            void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
-              .then(changed)
-              .catch(() => setError("The job could not be cancelled. Try again."))
-              .finally(() => setCancelling(false));
-          }}
-        >
-          {cancelling ? "Cancelling…" : "Cancel job"}
-        </Button>
-      ) : null}
+    </>
+  );
+}
+/** A new version being generated above the review the reader is on. */
+function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+  const started = automaticLabel(job);
+  return (
+    <section aria-label="Review generation" className="local-job-outcome">
+      <LiveDot />
+      <div className="min-w-0 flex-1">
+        <p role="status" className="font-medium">
+          {job.state === "queued" ? "New version queued" : "Generating a new version"}
+          {job.state === "running" && job.phase ? (
+            <span className="font-normal text-(--text-tertiary)"> · {job.phase}</span>
+          ) : null}
+        </p>
+        {started ? <p className="text-(--text-tertiary)">{started}</p> : null}
+      </div>
+      <CancelJob job={job} changed={changed} />
     </section>
   );
 }

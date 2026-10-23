@@ -101,7 +101,10 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 			trusted = permission.Permission == "write" || permission.Permission == "maintain" || permission.Permission == "admin"
 		}
 	}
-	cfg := c.Settings.Resolve(l.Config)
+	cfg, e := l.resolve(ctx, c)
+	if e != nil {
+		return Prepared{}, "", e
+	}
 	backends := l.Backends
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
@@ -125,13 +128,9 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
 	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head.SHA, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name), Draft: pr.Draft}
-	// A backend billed by its own subscription has no estimate, rather than
-	// one at API rates, and says why; it runs after its own acknowledgement.
-	// An unpriced model is blocked.
+	// The estimate is informational: a backend billed by its own subscription,
+	// or a model the price list does not know, has none and still runs.
 	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
-	if p.EstimateUSD == nil && p.EstimateReason == "" {
-		p.BlockedReason = "unknown_model_price"
-	}
 	return p, list.Version(), nil
 }
 
@@ -158,12 +157,27 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	}
 	return nil
 }
+
+// resolve layers the config file, the app's preferences and the
+// repository's settings, reading the preferences for every job so a change
+// in the app applies without restarting the daemon.
+func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, error) {
+	prefs, e := l.Registry.Preferences(ctx)
+	if e != nil {
+		return config.Config{}, e
+	}
+	return c.Settings.Resolve(prefs.Resolve(l.Config)), nil
+}
+
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
 		return nil, e
 	}
-	cfg := c.Settings.Resolve(l.Config)
+	cfg, e := l.resolve(ctx, c)
+	if e != nil {
+		return nil, e
+	}
 	repository, e := github.ParseRepository(c.Repository)
 	if e != nil {
 		return nil, e

@@ -5,7 +5,7 @@
   "version": "0.0.0",
   "identifier": "com.usebaum.desktop",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "dist"
   },
   "app": {
     "windows": [],
@@ -19,7 +19,7 @@
         "connect-src": "ipc: http://ipc.localhost",
         "frame-ancestors": "'none'"
       },
-      "capabilities": ["connecting-screen", "setup-screen"]
+      "capabilities": ["connecting-screen", "setup-screen", "daemon-pages"]
     }
   },
   "bundle": {

@@ -2049,7 +2049,10 @@ come from the starting process and stay unset when it lacks them: the daemon
 resolved its lock and socket from them before reading the shell, and a state
 directory only the shell named would let a second daemon share its job
 journal. Every other kept variable comes from a resolved shell environment,
-so a token only the agent's environment had is dropped. When the shell is
+so a token only the agent's environment had is dropped. On Unix, PATH is the
+exception: login-shell directories come first, followed by inherited directories
+not already present; empty entries are omitted when merging. This preserves tools
+from the launching terminal without changing login-shell tool precedence. When the shell is
 slow, fails or prints nothing,
 the kept variables come from the inherited environment. Windows has no login
 shell: there `shellenv.Resolve` returns the inherited environment with the
@@ -2511,7 +2514,7 @@ the window's close and quit behaviour and start at login; the daemon serves
 reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
 `PUT /api/automatic` with the launch token as a bearer, over the app API the
 window uses. It also owns first-run setup
-(`src/onboarding.rs`, `src/install.rs`, `ui/setup.html`): a bundled screen,
+(`src/onboarding.rs`, `src/install.rs`, `../app/src/desktop/setup.tsx`): a bundled screen,
 with its own narrow capability, from which the user installs the bundled
 `baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a
 stable path of the bundled binary; an AppImage and Windows run and link a

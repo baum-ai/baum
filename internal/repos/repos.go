@@ -71,6 +71,46 @@ type Preferences struct {
 	// cursor-agent runs have no cost estimate; automatic generation uses
 	// cursor-agent only once it is set.
 	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
+	// Backend and Model, when set, replace the config file's for generation
+	// in the app; a repository's own settings still override them.
+	Backend *config.Backend `json:"backend,omitempty"`
+	Model   *string         `json:"model,omitempty"`
+	// PullRequests narrows which pull requests get automatic reviews:
+	// PullRequestsAuthored, PullRequestsRequested, or empty for both.
+	PullRequests string `json:"pull_requests,omitempty"`
+}
+
+// The PullRequests choices besides both.
+const (
+	PullRequestsAuthored  = "authored"
+	PullRequestsRequested = "requested"
+)
+
+// Validate accepts an empty Model, unlike Settings: it means the backend's
+// default even when the config file names a model.
+func (p Preferences) Validate() error {
+	if p.Backend != nil && !p.Backend.Valid() {
+		return errors.New("invalid backend")
+	}
+	if p.Model != nil && len(*p.Model) > 256 {
+		return errors.New("model must be at most 256 bytes")
+	}
+	switch p.PullRequests {
+	case "", PullRequestsAuthored, PullRequestsRequested:
+		return nil
+	}
+	return fmt.Errorf("unknown pull requests choice %q; use %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested)
+}
+
+// Resolve overlays the app's backend and model on the config file's.
+func (p Preferences) Resolve(global config.Config) config.Config {
+	if p.Backend != nil {
+		global.Backend = *p.Backend
+	}
+	if p.Model != nil {
+		global.Model = strings.TrimSpace(*p.Model)
+	}
+	return global
 }
 
 // DefaultPreferences apply until the user changes them: automatic generation
@@ -284,6 +324,11 @@ func OpenReadOnly(path string) (*Registry, error) {
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
+
+// Inspect reports the clone a path would register as, or why it cannot be
+// registered, without registering it.
+func Inspect(ctx context.Context, path string) (Clone, error) { return inspect(ctx, path) }
+
 func inspect(ctx context.Context, path string) (Clone, error) {
 	repo, e := gitlocal.Open(ctx, path, gitlocal.Options{})
 	if e != nil {

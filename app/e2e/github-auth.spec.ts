@@ -70,12 +70,13 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
     attempt,
   );
   // Closing the panel cannot stop Go-owned polling.
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await mode("alice");
   await expect
     .poll(async () => (await (await page.request.get(`${base}api/github-auth`)).json()).login)
     .toBe("alice");
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(panel).toContainText("Saved GitHub account: alice");
   await page.reload();
   await expect(panel).toContainText("Saved GitHub account: alice");
@@ -85,10 +86,9 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm estimate and generate", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("alice");
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await mode("pending");
   await panel.getByRole("button", { name: "Reconnect GitHub", exact: true }).click();
   await expect(panel.getByLabel("GitHub sign-in code")).toBeVisible();
@@ -98,16 +98,15 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm estimate and generate", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("bob");
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await panel.getByRole("button", { name: "Disconnect saved account" }).click();
   await expect(panel).toContainText("No GitHub account saved");
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText(/Local fixture review version/).first()).toBeVisible();
-  await page.getByRole("link", { name: "Repositories & settings" }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   for (const [scenario, text] of [
     ["denied", "sign-in was denied"],
     ["expired", "code expired"],

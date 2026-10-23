@@ -10,4 +10,4 @@ build:
 e2e:
     {{ heavy }} pnpm build
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
-    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:development'
+    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:development && pnpm test:desktop'

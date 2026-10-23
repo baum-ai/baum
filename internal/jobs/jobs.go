@@ -65,7 +65,7 @@ func (p Prepared) sameConfirmedInputs(o Prepared) bool {
 // estimate: the same amount, or the same reason it has none.
 func sameEstimate(current, confirmed Prepared) bool {
 	if current.EstimateUSD == nil || confirmed.EstimateUSD == nil {
-		return current.EstimateUSD == nil && confirmed.EstimateUSD == nil && current.EstimateReason != "" && current.EstimateReason == confirmed.EstimateReason
+		return current.EstimateUSD == nil && confirmed.EstimateUSD == nil && current.EstimateReason == confirmed.EstimateReason
 	}
 	return *current.EstimateUSD == *confirmed.EstimateUSD
 }
@@ -85,17 +85,20 @@ type Job struct {
 	// Automatic marks a job the daemon's scheduler queued without a person
 	// confirming it; Trigger says why (TriggerNewHead or
 	// TriggerReviewRequested).
-	Automatic     bool      `json:"automatic,omitempty"`
-	Trigger       string    `json:"trigger,omitempty"`
-	State         string    `json:"state"`
-	Phase         string    `json:"phase"`
-	Calls         int       `json:"calls"`
-	Tokens        int       `json:"tokens"`
-	Repairs       int       `json:"repairs"`
-	ActualCostUSD *float64  `json:"actual_cost_usd"`
-	Reason        string    `json:"reason,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	Automatic     bool     `json:"automatic,omitempty"`
+	Trigger       string   `json:"trigger,omitempty"`
+	State         string   `json:"state"`
+	Phase         string   `json:"phase"`
+	Calls         int      `json:"calls"`
+	Tokens        int      `json:"tokens"`
+	Repairs       int      `json:"repairs"`
+	ActualCostUSD *float64 `json:"actual_cost_usd"`
+	Reason        string   `json:"reason,omitempty"`
+	// Detail is the failure in words, from a generation error, whose text is
+	// redacted before it is built; other errors leave it empty.
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
@@ -327,6 +330,12 @@ func (q *Queue) List() []Job {
 	return out
 }
 func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estimate, error) {
+	return q.estimate(ctx, items, mode, false)
+}
+
+// estimate prepares items. In a batch, a fork or an author without known
+// write access is left out unless isolation was already confirmed for it.
+func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolation bool) (Estimate, error) {
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
@@ -344,20 +353,17 @@ func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estima
 			continue
 		}
 		seen[key] = true
-		if mode == "batch" && p.RequiresIsolationConfirmation {
+		if mode == "batch" && p.RequiresIsolationConfirmation && !isolation {
 			p.BlockedReason = "isolation_confirmation_required"
 		}
 		if p.BlockedReason == "unknown_model_price" {
 			known = false
 		}
 		if p.BlockedReason == "" {
-			if p.EstimateUSD == nil && p.EstimateReason != "" {
-				// Billed elsewhere: the total is unknown, the item is not
-				// blocked, and Submit asks for its acknowledgement.
+			if p.EstimateUSD == nil {
+				// Billed elsewhere or not in the price list: the total is
+				// unknown, and the item runs anyway.
 				known = false
-			} else if p.EstimateUSD == nil {
-				known = false
-				p.BlockedReason = "unknown_model_price"
 			} else {
 				total += *p.EstimateUSD
 			}
@@ -390,12 +396,32 @@ func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estima
 // itself, running an agent on a fork or an author without known write access,
 // and running items baum cannot estimate because another service bills them.
 type Confirmation struct {
-	Estimate, Isolation, Unpriced bool
+	Estimate, Isolation bool
 }
 
-// Submit is SubmitConfirmed without acknowledging unpriced items.
+// Submit is SubmitConfirmed with its two confirmations.
 func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolation bool) ([]Job, error) {
 	return q.SubmitConfirmed(ctx, estimateID, Confirmation{Estimate: confirmed, Isolation: isolation})
+}
+
+// ErrIsolationRequired is a direct generation that includes a fork or an
+// author without known write access, which needs its own confirmation.
+var ErrIsolationRequired = errors.New("isolation confirmation required")
+
+// Generate prepares and queues items in one step: the user asked for the
+// reviews, and only a fork or an author without known write access needs
+// their confirmation (isolation) first.
+func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
+	e, err := q.estimate(ctx, items, mode, isolation)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range e.Items {
+		if p.RequiresIsolationConfirmation && !isolation {
+			return nil, ErrIsolationRequired
+		}
+	}
+	return q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
 }
 
 // SubmitConfirmed queues the unblocked items of a current estimate. An item
@@ -416,9 +442,6 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		}
 		if p.RequiresIsolationConfirmation && !isolation {
 			return nil, errors.New("separate isolation confirmation is required")
-		}
-		if p.EstimateReason != "" && !c.Unpriced {
-			return nil, errors.New("acknowledging that the cost cannot be estimated is required")
 		}
 		current, version, err := q.executor.Prepare(ctx, p.Item)
 		if err != nil {
@@ -620,6 +643,13 @@ func (q *Queue) worker() {
 				current.Reason = string(generate.CategoryOf(err))
 				if current.Reason == "" {
 					current.Reason = "internal"
+				}
+				var failure *generate.Error
+				if errors.As(err, &failure) {
+					current.Detail = failure.Error()
+					if len(current.Detail) > 500 {
+						current.Detail = current.Detail[:500] + "…"
+					}
 				}
 			}
 			if err != nil && ctx.Err() != nil {

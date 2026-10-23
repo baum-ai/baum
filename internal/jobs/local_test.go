@@ -257,6 +257,38 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 	}
 }
 
+// The app's backend and model replace the config file's for every job, read
+// when the job is prepared; a repository's own model still wins.
+func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	local.Backends.CursorAgent = func(string) generate.CheckedBackend {
+		return &generatetest.Backend{BackendName: agent.BackendCursorAgent, Version: "2026.10.16"}
+	}
+	backend, model := config.BackendCursorAgent, "app-model"
+	if _, e := registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
+		p.Backend, p.Model = &backend, &model
+		return p
+	}); e != nil {
+		t.Fatal(e)
+	}
+	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
+		t.Fatalf("prepared = %+v, %v", p, e)
+	}
+	if _, e = registry.AddPatch(ctx, clone.Path, func(s repos.Settings) (repos.Settings, error) {
+		repository := "repository-model"
+		s.Model = &repository
+		return s, nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if p, _, e = local.Prepare(ctx, Item{clone.ID, 1}); e != nil || p.Model != "repository-model" {
+		t.Fatalf("prepared = %+v, %v", p, e)
+	}
+}
+
 // A cursor-agent job has no estimate at API rates, whatever its model is
 // called: Cursor bills it through the user's subscription. It is not blocked:
 // it says why the estimate is unknown. Its progress and recorded cost stay
@@ -442,7 +474,7 @@ func TestWorkerRejectsIdentitySwitchAfterAdmissionBeforeExecute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	submitted, err := q.SubmitConfirmed(context.Background(), estimated.ID, Confirmation{Estimate: true, Isolation: true, Unpriced: true})
+	submitted, err := q.SubmitConfirmed(context.Background(), estimated.ID, Confirmation{Estimate: true, Isolation: true})
 	if err != nil {
 		t.Fatal(err)
 	}

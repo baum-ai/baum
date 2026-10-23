@@ -291,12 +291,18 @@ pub fn setup(app: &AppHandle) {
     // window's and the tray's, so no menu registers a second one (a second
     // would run each click twice, and a toggle would flip back).
     app.on_menu_event(|app, event| on_menu(app, event.id().as_ref()));
-    let menu_login = match install_window_menu(app, login) {
-        Ok(item) => Some(item),
-        Err(e) => {
-            eprintln!("baum desktop: no window menu: {e}");
-            None
+    // Only macOS gets a menu bar, its global one; on Linux and Windows the
+    // window has none, and the tray and the app hold these choices.
+    let menu_login = if cfg!(target_os = "macos") {
+        match install_window_menu(app, login) {
+            Ok(item) => Some(item),
+            Err(e) => {
+                eprintln!("baum desktop: no window menu: {e}");
+                None
+            }
         }
+    } else {
+        None
     };
     // A missing libayatana-appindicator panics in the tray library; the app
     // runs on without a tray instead of crashing.

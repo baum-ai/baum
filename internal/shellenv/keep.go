@@ -48,8 +48,9 @@ var keptWindows = []string{
 // Merge builds a background process's environment. The Locations only ever
 // come from inherited, and stay unset when it lacks them. With a resolved
 // login shell environment, every other kept variable comes from it, and one
-// only the inherited environment has is dropped, so the result does not
-// depend on who started the process. Without one (resolved is nil), kept
+// only the inherited environment has is dropped, except that Unix PATH appends
+// inherited directories after the login shell directories. Without a resolved
+// environment (resolved is nil), kept
 // variables come from inherited.
 func Merge(inherited []string, resolved map[string]string) []string {
 	windows := runtime.GOOS == "windows"
@@ -93,6 +94,20 @@ func merge(windows bool, inherited []string, resolved map[string]string) []strin
 	for _, entry := range inherited {
 		name, value, ok := strings.Cut(entry, "=")
 		if !ok || !kept(name) {
+			continue
+		}
+		if !windows && resolved != nil && name == "PATH" {
+			dirs := []string{}
+			seen := map[string]bool{}
+			for _, path := range []string{out["PATH"], value} {
+				for _, dir := range strings.Split(path, ":") {
+					if dir != "" && !seen[dir] {
+						dirs = append(dirs, dir)
+						seen[dir] = true
+					}
+				}
+			}
+			put("PATH", strings.Join(dirs, ":"))
 			continue
 		}
 		if resolved == nil || location(name) || slices.Contains(preferInherited, name) {

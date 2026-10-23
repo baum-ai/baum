@@ -1,9 +1,28 @@
-import { writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { desktopDevelopment } from "./vite.development.ts";
+
+// The same build supplies the daemon app and Tauri's local setup assets.
+function desktopBundle(): Plugin {
+  let output = "";
+  return {
+    name: "desktop-bundle",
+    apply: "build",
+    configResolved(config) {
+      output = resolve(config.root, config.build.outDir);
+    },
+    closeBundle() {
+      const destination = resolve(import.meta.dirname, "../desktop/dist");
+      rmSync(destination, { recursive: true, force: true });
+      mkdirSync(destination, { recursive: true });
+      cpSync(output, destination, { recursive: true });
+      cpSync(resolve(import.meta.dirname, "../desktop/ui"), destination, { recursive: true });
+    },
+  };
+}
 
 // Vite empties the output directory first; this puts back the tracked, empty
 // .gitkeep that keeps the directory, which go:embed needs, in a checkout
@@ -30,10 +49,22 @@ export default defineConfig({
     react(),
     tailwindcss(),
     keepPlaceholder(),
+    desktopBundle(),
     ...(process.env.BAUM_DESKTOP_DEV_DIR
       ? [desktopDevelopment(process.env.BAUM_DESKTOP_DEV_DIR)]
       : []),
   ],
-  build: { outDir: "../internal/localapp/dist", emptyOutDir: true, sourcemap: false },
+  build: {
+    assetsInlineLimit: 0,
+    outDir: "../internal/localapp/dist",
+    emptyOutDir: true,
+    sourcemap: false,
+    rolldownOptions: {
+      input: {
+        app: resolve(import.meta.dirname, "index.html"),
+        setup: resolve(import.meta.dirname, "setup.html"),
+      },
+    },
+  },
   resolve: { dedupe: ["react", "react-dom"] },
 });

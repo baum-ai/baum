@@ -90,13 +90,18 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
 	mux.Handle("/api/jobs", provider(a.Jobs, "runner_unavailable"))
 	mux.Handle("/api/jobs/", provider(a.Jobs, "runner_unavailable"))
-	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		// The app's backend and model, chosen during setup, override the file.
+		cfg := a.Config
+		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
+			cfg = prefs.Resolve(cfg)
+		}
 		writeJSON(w, struct {
 			Backend config.Backend `json:"backend"`
 			Model   string         `json:"model"`
 			Budgets config.Budgets `json:"budgets"`
 			Caps    map[string]int `json:"caps"`
-		}{a.Config.Backend, a.Config.Model, a.Config.Budgets, a.Config.Caps})
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps})
 	})
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated

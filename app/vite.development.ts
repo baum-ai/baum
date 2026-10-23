@@ -23,7 +23,13 @@ export function desktopDevelopment(directory: string): Plugin {
           host: "127.0.0.1",
           port: 5173,
           strictPort: true,
-          fs: { allow: [resolve(import.meta.dirname), resolve(import.meta.dirname, "../viewer")] },
+          fs: {
+            allow: [
+              resolve(import.meta.dirname),
+              resolve(import.meta.dirname, "../viewer"),
+              resolve(import.meta.dirname, "../desktop/ui"),
+            ],
+          },
         },
       };
     },

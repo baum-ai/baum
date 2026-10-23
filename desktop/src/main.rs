@@ -305,6 +305,10 @@ fn main() {
             onboarding::uninstall_command,
             onboarding::install_hooks,
             onboarding::uninstall_hooks,
+            onboarding::choose_repository,
+            onboarding::add_repository,
+            onboarding::review_settings,
+            onboarding::save_review_settings,
             onboarding::finish_setup,
         ])
         .on_window_event(lifecycle::on_window_event)
@@ -315,7 +319,16 @@ fn main() {
             notifications::install(app.handle())?;
             tray::setup(app.handle());
             let page = onboarding::start(app.handle());
-            WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App(page.into()))
+            development::grant_setup(app.handle())?;
+            let page = if page == onboarding::SETUP_PAGE {
+                match development::setup_page() {
+                    Some(url) => WebviewUrl::External(url),
+                    None => WebviewUrl::App(page.into()),
+                }
+            } else {
+                WebviewUrl::App(page.into())
+            };
+            WebviewWindowBuilder::new(app, MAIN, page)
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
@@ -323,6 +336,9 @@ fn main() {
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
                     let setup = onboarding::is_open(&handle);
+                    if setup && development::is_setup_page(url) {
+                        return true;
+                    }
                     match navigation::decide(url, daemon.as_ref(), setup) {
                         Decision::Allow => true,
                         Decision::OpenInBrowser => {
@@ -360,19 +376,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    /// The daemon's pages are remote to Tauri. They must get no capability,
-    /// so the only ones are the bundled screens', with exactly their commands
-    /// and no remote URL.
+    /// The daemon's pages are remote to Tauri. They get only the folder
+    /// picker, on loopback; the bundled screens get exactly their commands and
+    /// no remote URL.
     #[test]
     fn only_the_bundled_screens_have_capabilities() {
         let expected = serde_json::json!({
             "connecting-screen": ["allow-connection", "allow-reconnect"],
+            "daemon-pages": ["allow-choose-repository"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",
                 "allow-uninstall-command",
                 "allow-install-hooks",
                 "allow-uninstall-hooks",
+                "allow-choose-repository",
+                "allow-add-repository",
+                "allow-review-settings",
+                "allow-save-review-settings",
                 "allow-finish-setup"
             ],
         });
@@ -382,13 +403,25 @@ mod tests {
         {
             let capability: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
-            assert!(capability.get("remote").is_none(), "{capability}");
+            if capability["identifier"] == "daemon-pages" {
+                assert_eq!(
+                    capability["remote"],
+                    serde_json::json!({ "urls": ["http://127.0.0.1:*/*"] })
+                );
+                assert_eq!(capability["local"], false);
+            } else {
+                assert!(capability.get("remote").is_none(), "{capability}");
+            }
             assert_eq!(capability["windows"], serde_json::json!(["main"]));
             found.insert(
                 capability["identifier"].as_str().unwrap().to_string(),
                 capability["permissions"].clone(),
             );
         }
+        assert_eq!(
+            found["setup-screen"],
+            serde_json::json!(crate::onboarding::SETUP_PERMISSIONS)
+        );
         assert_eq!(serde_json::Value::Object(found), expected);
         let config: serde_json::Value = serde_json::from_slice(
             &std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json")).unwrap(),
@@ -396,7 +429,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen", "setup-screen"])
+            serde_json::json!(["connecting-screen", "setup-screen", "daemon-pages"])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

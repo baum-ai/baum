@@ -1,15 +1,13 @@
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
+import {
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CircleDashedIcon,
+  RefreshIcon,
+} from "@baum/viewer/components/icons";
 import { Button, Alert } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
@@ -19,29 +17,26 @@ import {
 } from "@baum/viewer/navigation";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
-import { GitHubConnectionSection } from "./github-connection";
-import { DiagnosticsSection, useDiagnosticProblems } from "./diagnostics";
+import { useDiagnosticProblems } from "./diagnostics";
+import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
+import { Notice, PageBar, Sidebar } from "./shell";
 import {
-  estimateReasonText,
-  blockedReasonText,
   appBase,
+  generateReviews,
   appURL,
   request,
   reviewJob,
   isActiveJob,
   filtered,
   rowKey,
-  cost,
   automaticLabel,
+  jobReasonText,
   automaticNotice,
   parseLive,
   type Automatic,
-  type AutomaticStatus,
   type Clone,
-  type DiagnosticReport,
   type Entry,
   type Snapshot,
-  type Estimate,
   type Job,
   type LiveSession,
 } from "./api";
@@ -120,8 +115,8 @@ export function App() {
         {auth === "ready" ? (
           <Workspace url={url} />
         ) : (
-          <main className="local-main">
-            <h1 className="text-2xl">baum local</h1>
+          <main className="local-connecting">
+            <LogoMark size={40} />
             {auth === "loading" ? (
               <p role="status">Connecting to the local application…</p>
             ) : (
@@ -145,10 +140,10 @@ function Workspace({ url }: { url: UrlState }) {
   const [revision, setRevision] = useState(0);
   const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
-  const [estimating, setEstimating] = useState(false);
-  const [estimateError, setEstimateError] = useState("");
-  const [isolation, setIsolation] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+  // A generation that includes a fork, waiting for the user's confirmation.
+  const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   const [rates, setRates] = useState<
     {
       repository: string;
@@ -158,6 +153,7 @@ function Workspace({ url }: { url: UrlState }) {
     }[]
   >([]);
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
+  const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
   const lastLive = useRef(0);
   // Sessions in progress change far more often than the rest, so the live
@@ -172,7 +168,7 @@ function Workspace({ url }: { url: UrlState }) {
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
     try {
-      const [repos, index, jobList, discovery, sync, auto] = await Promise.all([
+      const [repos, index, jobList, discovery, sync, auto, settings] = await Promise.all([
         request<Clone[]>("api/repos"),
         request<Snapshot>("api/index?history=1"),
         request<{ jobs?: Job[] }>("api/jobs"),
@@ -180,6 +176,7 @@ function Workspace({ url }: { url: UrlState }) {
         request<typeof background>("api/background"),
         // A daemon without automatic generation answers without repositories.
         request<Partial<Automatic>>("api/automatic").catch(() => null),
+        request<ReviewDefaults>("api/settings").catch(() => null),
       ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
@@ -188,6 +185,7 @@ function Workspace({ url }: { url: UrlState }) {
       setRates(discovery);
       setBackground(Array.isArray(sync) ? sync : []);
       setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
+      setDefaults(settings);
       setError("");
       setRevision((n) => n + 1);
     } catch (e) {
@@ -226,6 +224,7 @@ function Workspace({ url }: { url: UrlState }) {
     isActiveJob(reviewJob(entry, jobs)) ? { ...entry, status: "generating" } : entry,
   );
   const rows = filtered(indexedEntries, filter, repo);
+  const repositories = Array.from(new Set(clones.map((c) => c.repository)));
   const requestedNumber = Number(url.search.get("pr"));
   const requestedClone = url.search.get("clone");
   const requestedRepository = clones.find((clone) => clone.id === requestedClone)?.repository;
@@ -242,27 +241,32 @@ function Workspace({ url }: { url: UrlState }) {
     );
   const page = url.search.get("page") ?? "inbox";
   // The pages that show the diagnostics run them themselves.
-  const diagnostics = useDiagnosticProblems(page !== "settings" && page !== "diagnostics");
-  const generate = async (entries: Entry[], mode: "single" | "batch") => {
+  // The diagnostics dialog runs them itself while it is open.
+  const diagnostics = useDiagnosticProblems(page !== "diagnostics");
+  const generate = async (entries: Entry[], mode: "single" | "batch", isolation = false) => {
     if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
-      setEstimateError("A review of a selected pull request is already queued or running.");
+      setGenerationError("A review of a selected pull request is already queued or running.");
       return;
     }
-    setEstimate(null);
-    setEstimateError("");
-    setIsolation(false);
-    setEstimating(true);
+    setGenerationError("");
+    setGenerating(true);
     try {
-      setEstimate(
-        await request<Estimate>("api/jobs/estimate", {
-          items: entries.map((e) => ({ clone: cloneFor(e), pr: e.pull_request.number })),
-          mode,
-        }),
+      const answer = await generateReviews(
+        entries.map((e) => ({ clone: cloneFor(e), pr: e.pull_request.number })),
+        mode,
+        isolation,
       );
+      if (answer === "isolation") {
+        setFork({ entries, mode });
+        return;
+      }
+      setFork(null);
+      setSelection(new Set());
+      await reload();
     } catch (e) {
-      setEstimateError(errorText(e));
+      setGenerationError(errorText(e));
     } finally {
-      setEstimating(false);
+      setGenerating(false);
     }
   };
   const refresh = async () => {
@@ -279,337 +283,278 @@ function Workspace({ url }: { url: UrlState }) {
     }
   };
   return (
-    <>
-      <header className="local-chrome">
-        <LogoMark className="h-7 w-7" />
-        <strong>baum local</strong>
-        <LocalLink href={appURL()}>Inbox</LocalLink>
-        <LocalLink href={appURL("?page=jobs")}>Jobs</LocalLink>
-        <LocalLink href={appURL("?page=settings")}>Repositories & settings</LocalLink>
-        <span className="text-xs text-(--text-tertiary)">On this machine</span>
-      </header>
-      {background
-        .filter((state) => state.error)
-        .map((state) => (
-          <Alert key={state.repository}>
-            {state.repository}: background metadata refresh is unavailable ({state.error}). Cached
-            reviews remain readable. Next retry: {new Date(state.next_refresh).toLocaleTimeString()}
-            .
-          </Alert>
-        ))}
-      {(automatic?.repositories ?? [])
-        .filter((status) => status.enabled && status.paused_until)
-        .map((status) => (
-          <Alert key={`automatic-${status.repository}`}>
-            {status.repository}: {automaticNotice(status)}
-          </Alert>
-        ))}
-      {diagnostics.problems > 0 && page !== "diagnostics" ? (
-        <Alert>
-          baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
-          {diagnostics.problems === 1 ? "problem" : "problems"}.{" "}
-          <LocalLink href={appURL("?page=diagnostics")}>Show the fixes</LocalLink>
-        </Alert>
-      ) : null}
-      <main className="local-main">
-        {error ? (
-          <Alert>
-            {error} <Button onClick={() => void reload()}>Retry</Button>
-          </Alert>
-        ) : null}
-        {page === "settings" ? (
-          <Settings
-            clones={clones}
-            automatic={automatic}
-            changed={reload}
-            onDiagnostics={diagnostics.update}
-            authRevision={authRevision}
-            authChanged={authChanged}
-          />
-        ) : page === "diagnostics" ? (
-          <>
-            <h1 className="text-2xl mb-4">Check this computer</h1>
-            <p className="mb-4">
-              What baum needs on this computer, what it found, and how to fix each problem.
-            </p>
-            <GitHubConnectionSection onChanged={authChanged} />
-            <DiagnosticsSection key={authRevision} onReport={diagnostics.update} />
-          </>
-        ) : page === "jobs" ? (
-          <Jobs jobs={jobs} changed={reload} />
-        ) : selectedEntry ? (
-          <LocalReview
-            key={rowKey(selectedEntry)}
-            entry={selectedEntry}
-            clone={cloneFor(selectedEntry)}
-            revision={revision}
-            job={reviewJob(selectedEntry, jobs)}
-            changed={reload}
-            live={live}
-            generate={() => void generate([selectedEntry], "single")}
-          />
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <h1 className="text-2xl mr-auto">Pull requests</h1>
-              <Button variant="secondary" disabled={loading} onClick={() => void refresh()}>
-                Refresh from GitHub
-              </Button>
-              <Button
-                disabled={
-                  selection.size === 0 ||
-                  estimating ||
-                  indexedEntries.some(
-                    (entry) => selection.has(rowKey(entry)) && isActiveJob(reviewJob(entry, jobs)),
-                  )
-                }
-                onClick={() =>
-                  void generate(
-                    snapshot.entries.filter((e) => selection.has(rowKey(e))),
-                    "batch",
-                  )
-                }
-              >
-                Generate selected ({selection.size})
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-3 mb-4">
-              <label>
-                Show{" "}
-                <select
-                  className="local-field"
-                  value={filter}
-                  onChange={(e) => {
-                    setSelection(new Set());
-                    url.update((current) => {
-                      current.set("filter", e.target.value);
-                      return current;
-                    });
-                  }}
-                >
-                  {[
-                    ["all", "Open pull requests"],
-                    ["requested", "Review requested"],
-                    ["mine", "Authored by me"],
-                    ["outdated", "Outdated"],
-                    ["no_review", "No review"],
-                    ["history", "Saved history"],
-                  ].map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Repository{" "}
-                <select
-                  className="local-field"
-                  value={repo}
-                  onChange={(e) => {
-                    setSelection(new Set());
-                    url.update((current) => {
-                      if (e.target.value) current.set("repo", e.target.value);
-                      else current.delete("repo");
-                      return current;
-                    });
-                  }}
-                >
-                  <option value="">All repositories</option>
-                  {Array.from(new Set(clones.map((c) => c.repository))).map((name) => (
-                    <option key={name}>{name}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {rates
-              .filter((r) => r.error || r.rate.remaining === 0)
-              .map((r) => (
-                <p
-                  key={r.repository}
-                  role="status"
-                  className="rounded-(--radius-sm) bg-(--surface-wash) px-3 py-2 text-base text-(--text-secondary)"
-                >
-                  {r.repository}:{" "}
-                  {r.error
-                    ? "GitHub refresh failed; showing cached data"
-                    : "GitHub request allowance used up; showing cached data"}
-                  . GitHub allowance remaining: {r.rate.remaining ?? "unknown"}; reset:{" "}
-                  {r.rate.reset}.
-                </p>
-              ))}
-            {snapshot.problems.map((p) => (
-              <Alert key={p.clone_id + p.reason}>
-                {clones.find((c) => c.id === p.clone_id)?.repository ?? "Clone"}: {p.reason}
-              </Alert>
+    <div className="local-shell">
+      <Sidebar
+        page={
+          page === "jobs" || page === "repositories"
+            ? page
+            : page === "settings" || page === "diagnostics"
+              ? "settings"
+              : "inbox"
+        }
+        activeJobs={jobs.filter(isActiveJob).length}
+        problems={diagnostics.problems}
+        Link={LocalLink}
+      />
+      <div className="local-frame">
+        <div className="local-notices">
+          {background
+            .filter((state) => state.error)
+            .map((state) => (
+              <Notice key={state.repository}>
+                {state.repository}: background metadata refresh is unavailable ({state.error}).
+                Cached reviews remain readable. Next retry:{" "}
+                {new Date(state.next_refresh).toLocaleTimeString()}.
+              </Notice>
             ))}
-            {loading ? (
-              <p role="status">Loading local inbox…</p>
-            ) : rows.length === 0 ? (
-              <div className="local-panel">
-                <h2 className="text-lg">No pull requests here</h2>
-                <p>
-                  {clones.length
-                    ? "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."
-                    : "Register a local clone in Repositories & settings to get started."}
-                </p>
-              </div>
-            ) : (
-              <Inbox
-                rows={rows}
-                cloneFor={cloneFor}
-                selection={selection}
-                setSelection={setSelection}
-                Link={LocalLink}
-                live={live}
-              />
-            )}
-          </>
-        )}
-        {jobs.some(
-          (j) =>
-            isActiveJob(j) &&
-            (!selectedEntry ||
-              j.repository.toLowerCase() !== selectedEntry.pull_request.repository.toLowerCase() ||
-              j.pr !== selectedEntry.pull_request.number),
-        ) && page !== "jobs" ? (
-          <div className="mt-4">
-            <Jobs
-              jobs={jobs.filter(
-                (j) =>
-                  isActiveJob(j) &&
-                  (!selectedEntry ||
-                    j.repository.toLowerCase() !==
-                      selectedEntry.pull_request.repository.toLowerCase() ||
-                    j.pr !== selectedEntry.pull_request.number),
-              )}
+          {(automatic?.repositories ?? [])
+            .filter((status) => status.enabled && status.paused_until)
+            .map((status) => (
+              <Notice key={`automatic-${status.repository}`}>
+                {status.repository}: {automaticNotice(status)}
+              </Notice>
+            ))}
+          {diagnostics.problems > 0 && page !== "diagnostics" ? (
+            <Notice>
+              baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
+              {diagnostics.problems === 1 ? "problem" : "problems"}.{" "}
+              <LocalLink href={appURL("?page=diagnostics")}>Show the fixes</LocalLink>
+            </Notice>
+          ) : null}
+        </div>
+        <main className="local-main">
+          {error ? (
+            <Alert>
+              {error} <Button onClick={() => void reload()}>Retry</Button>
+            </Alert>
+          ) : null}
+          {page === "repositories" ? (
+            <RepositoriesPage
+              clones={clones}
+              automatic={automatic}
+              defaults={defaults}
               changed={reload}
             />
-          </div>
-        ) : null}
-        {estimating ? <p role="status">Estimating generation cost…</p> : null}
-        {estimateError ? <Alert>{estimateError}</Alert> : null}
-        {estimate ? (
-          <Confirmation
-            estimate={estimate}
-            error={estimateError}
-            isolation={isolation}
-            setIsolation={setIsolation}
-            close={() => setEstimate(null)}
-            confirm={async (unpriced) => {
-              try {
-                await request("api/jobs", {
-                  estimate_id: estimate.id,
-                  confirm_estimate: true,
-                  confirm_isolation: isolation,
-                  confirm_unpriced: unpriced,
-                });
-                setEstimate(null);
-                setSelection(new Set());
-                await reload();
-              } catch (e) {
-                setEstimateError(errorText(e));
+          ) : page === "settings" || page === "diagnostics" ? (
+            <SettingsPage
+              authRevision={authRevision}
+              authChanged={authChanged}
+              automatic={automatic}
+              defaults={defaults}
+              changed={reload}
+              problems={diagnostics.problems}
+              diagnosticsOpen={page === "diagnostics"}
+              setDiagnosticsOpen={(open) =>
+                url.update((current) => {
+                  current.set("page", open ? "diagnostics" : "settings");
+                  return current;
+                })
               }
-            }}
-          />
-        ) : null}
-      </main>
-    </>
+              onDiagnostics={diagnostics.update}
+            />
+          ) : page === "jobs" ? (
+            <>
+              <PageBar title="Jobs" detail="Reviews generated on this computer" />
+              <div className="local-page-body">
+                <Jobs jobs={jobs} changed={reload} />
+              </div>
+            </>
+          ) : selectedEntry ? (
+            <LocalReview
+              key={rowKey(selectedEntry)}
+              entry={selectedEntry}
+              clone={cloneFor(selectedEntry)}
+              revision={revision}
+              job={reviewJob(selectedEntry, jobs)}
+              changed={reload}
+              live={live}
+              generate={() => void generate([selectedEntry], "single")}
+            />
+          ) : (
+            <>
+              <PageBar
+                title="Pull requests"
+                detail={loading ? null : `${formatCount(rows.length)} shown`}
+                actions={
+                  <>
+                    {selection.size > 0 ? (
+                      <Button
+                        size="compact"
+                        disabled={
+                          generating ||
+                          indexedEntries.some(
+                            (entry) =>
+                              selection.has(rowKey(entry)) && isActiveJob(reviewJob(entry, jobs)),
+                          )
+                        }
+                        onClick={() =>
+                          void generate(
+                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
+                            "batch",
+                          )
+                        }
+                      >
+                        Generate selected ({selection.size})
+                      </Button>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label="Refresh from GitHub"
+                      title="Refresh from GitHub"
+                      disabled={loading}
+                      onClick={() => void refresh()}
+                      className="local-icon-button"
+                    >
+                      <RefreshIcon size={16} className={loading ? "local-spin" : undefined} />
+                    </button>
+                  </>
+                }
+              />
+              <div className="local-filter-bar">
+                <div role="group" aria-label="Show" className="local-tabs">
+                  {(
+                    [
+                      ["all", "Open"],
+                      ["requested", "Requested"],
+                      ["mine", "Mine"],
+                      ["no_review", "Not reviewed"],
+                      ["history", "Saved history"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={filter === value}
+                      className="local-tab"
+                      onClick={() => {
+                        setSelection(new Set());
+                        url.update((current) => {
+                          current.set("filter", value);
+                          return current;
+                        });
+                      }}
+                    >
+                      {label}
+                      <span className="local-tab-count">
+                        {formatCount(filtered(indexedEntries, value, repo).length)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {repositories.length > 1 ? (
+                  <label className="local-repo-filter">
+                    <span className="sr-only">Repository</span>
+                    <select
+                      value={repo}
+                      onChange={(e) => {
+                        setSelection(new Set());
+                        url.update((current) => {
+                          if (e.target.value) current.set("repo", e.target.value);
+                          else current.delete("repo");
+                          return current;
+                        });
+                      }}
+                    >
+                      <option value="">All repositories</option>
+                      {repositories.map((name) => (
+                        <option key={name}>{name}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+              <div className="local-page-body">
+                {/* A cache older than the poll interval is normal; only a failed refresh
+                    or a spent GitHub allowance is worth a word. */}
+                {rates
+                  .filter((r) => r.error || r.rate.remaining === 0)
+                  .map((r) => (
+                    <Notice key={r.repository}>
+                      {r.error
+                        ? `Couldn't refresh ${r.repository} from GitHub (${r.error}).`
+                        : `GitHub's request limit for ${r.repository} is used up until ${new Date(r.rate.reset).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`}{" "}
+                      Showing what was saved.
+                    </Notice>
+                  ))}
+                {snapshot.problems.map((p) => (
+                  <Notice key={p.clone_id + p.reason}>
+                    {clones.find((c) => c.id === p.clone_id)?.repository ?? "Clone"}: {p.reason}
+                  </Notice>
+                ))}
+                {loading ? (
+                  <p role="status">Loading local inbox…</p>
+                ) : rows.length === 0 ? (
+                  <div className="local-empty">
+                    <h2>No pull requests here</h2>
+                    <p>
+                      {clones.length
+                        ? "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."
+                        : "Register a local clone in Repositories to get started."}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              {!loading && rows.length > 0 ? (
+                <Inbox
+                  rows={rows}
+                  cloneFor={cloneFor}
+                  selection={selection}
+                  setSelection={setSelection}
+                  Link={LocalLink}
+                  live={live}
+                />
+              ) : null}
+            </>
+          )}
+          {generationError ? <Alert>{generationError}</Alert> : null}
+          {fork ? (
+            <ForkConfirmation
+              entries={fork.entries}
+              close={() => setFork(null)}
+              confirm={() => void generate(fork.entries, fork.mode, true)}
+              pending={generating}
+            />
+          ) : null}
+        </main>
+      </div>
+    </div>
   );
 }
-function Confirmation({
-  estimate,
-  error,
-  isolation,
-  setIsolation,
+/** The one confirmation generation still asks for: an agent runs with code
+ *  from a fork, or from an author without known write access. */
+function ForkConfirmation({
+  entries,
   close,
   confirm,
+  pending,
 }: {
-  estimate: Estimate;
-  error: string;
-  isolation: boolean;
-  setIsolation: (value: boolean) => void;
+  entries: Entry[];
   close: () => void;
-  confirm: (unpriced: boolean) => Promise<void>;
+  confirm: () => void;
+  pending: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [pending, setPending] = useState(false);
-  const [unpriced, setUnpriced] = useState(false);
-  const needed = estimate.items.some((i) => i.requires_isolation_confirmation && !i.blocked_reason);
-  const allowed = estimate.items.some((i) => !i.blocked_reason);
-  const unpricedNeeded = estimate.items.some((i) => i.estimate_reason && !i.blocked_reason);
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
   return (
-    <dialog ref={dialog} onCancel={close} aria-labelledby="estimate-title">
-      <h2 id="estimate-title" className="text-lg">
-        Confirm review generation
+    <dialog ref={dialog} onCancel={close} aria-labelledby="fork-title">
+      <h2 id="fork-title" className="text-lg font-semibold">
+        Review code from outside your team?
       </h2>
-      {error ? <Alert>{error}</Alert> : null}
-      <p>
-        Budget planning amount: <strong>{cost(estimate.estimate_usd)}</strong>. This uses configured
-        budgets, not the size of this pull request, and is not a spending limit or a prediction of
-        its cost.
+      <p className="my-3">
+        {entries.length === 1
+          ? "This pull request comes from a fork or from an author without write access."
+          : "One of these pull requests comes from a fork or from an author without write access."}{" "}
+        Generating the review runs your agent on its code. Only continue if you trust it, or if your
+        agent runs in an isolated environment.
       </p>
-      <p className="text-xs">
-        Prices: {estimate.price_version}. Expires{" "}
-        {new Date(estimate.expires_at).toLocaleTimeString()}.
-      </p>
-      <ul className="my-3 space-y-2">
-        {estimate.items.map((item) => (
-          <li key={`${item.clone}:${item.pr}`}>
-            #{item.pr}: {item.backend} / {item.model || "No model configured"} —{" "}
-            {item.estimate_reason ? "cost unknown" : cost(item.estimate_usd)}
-            {item.estimate_reason ? (
-              <p>{estimateReasonText(item.estimate_reason)}</p>
-            ) : (
-              <p>
-                Assumes {formatCount(item.max_tokens)} charged tokens and {item.max_calls} backend
-                calls, with one budget-sized cache read per call at the highest listed rates. Cache
-                reads can exceed this assumption.
-              </p>
-            )}
-            {item.blocked_reason ? (
-              <p role="alert">Excluded: {blockedReasonText(item.blocked_reason)}</p>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      {needed ? (
-        <label className="block my-3">
-          <input
-            type="checkbox"
-            checked={isolation}
-            onChange={(e) => setIsolation(e.target.checked)}
-          />{" "}
-          I confirm running an agent with repository content from a fork or author without known
-          write access in the configured isolation environment.
-        </label>
-      ) : null}
-      {unpricedNeeded ? (
-        <label className="block my-3">
-          <input
-            type="checkbox"
-            checked={unpriced}
-            onChange={(e) => setUnpriced(e.target.checked)}
-          />{" "}
-          I understand that baum can't estimate the cost of these runs: my Cursor subscription bills
-          them.
-        </label>
-      ) : null}
-      <div className="flex gap-3">
-        <Button
-          disabled={pending || !allowed || (needed && !isolation) || (unpricedNeeded && !unpriced)}
-          onClick={() => {
-            setPending(true);
-            void confirm(unpricedNeeded && unpriced).finally(() => setPending(false));
-          }}
-        >
-          {pending ? "Starting…" : "Confirm estimate and generate"}
-        </Button>
-        <Button variant="secondary" onClick={close}>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="compact" onClick={close}>
           Cancel
+        </Button>
+        <Button size="compact" disabled={pending} onClick={confirm}>
+          {pending ? "Starting…" : "Generate anyway"}
         </Button>
       </div>
     </dialog>
@@ -617,355 +562,106 @@ function Confirmation({
 }
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
+  // A link from a review opens the job that generated it.
+  useEffect(() => {
+    if (location.hash.startsWith("#job-"))
+      document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({
+        block: "center",
+      });
+  }, []);
   return (
-    <section aria-label="Generation jobs" className="local-panel space-y-3">
-      <h2 className="text-lg">Generation jobs</h2>
+    <section aria-label="Generation jobs" className="local-jobs">
       {error ? <Alert>{error}</Alert> : null}
       {jobs.length === 0 ? (
-        <p>No generation jobs yet.</p>
+        <div className="local-empty">
+          <h2>No reviews generated yet</h2>
+          <p>Reviews you generate, or that run automatically, show here.</p>
+        </div>
       ) : (
-        jobs.map((job) => (
-          <div key={job.id} className="border-b border-(--border-default) pb-3">
-            <strong>
-              {job.repository} #{job.pr}
-            </strong>{" "}
-            — {job.state} · {job.phase}
-            {automaticLabel(job) ? (
-              <p className="text-xs font-semibold text-(--text-secondary)">{automaticLabel(job)}</p>
-            ) : null}
-            <p>
-              Calls {job.calls} · Repairs {job.repairs}
-            </p>
-            <UsageDetails
-              accounting={job.accounting}
-              charged={job.tokens}
-              amount={job.actual_cost_usd}
-              reason={job.cost_reason}
-            />
-            {job.reason ? <p role="status">{job.reason}</p> : null}
-            {job.state === "queued" || job.state === "running" ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
+        <ul className="local-panel local-job-list">
+          {jobs
+            .slice()
+            .reverse()
+            .map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                cancel={() =>
                   void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
                     .then(changed)
-                    .catch((e) => setError(errorText(e)));
-                }}
-              >
-                Cancel job
-              </Button>
-            ) : null}
-          </div>
-        ))
+                    .catch((e) => setError(errorText(e)))
+                }
+              />
+            ))}
+        </ul>
       )}
     </section>
   );
 }
-function Settings({
-  clones,
-  automatic,
-  changed,
-  onDiagnostics,
-  authRevision,
-  authChanged,
-}: {
-  clones: Clone[];
-  automatic: Automatic | null;
-  changed: () => Promise<void>;
-  onDiagnostics: (report: DiagnosticReport | null) => void;
-  authRevision: number;
-  authChanged: () => void;
-}) {
-  const [path, setPath] = useState("");
-  const [error, setError] = useState("");
-  const action = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn();
-      setError("");
-      await changed();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  };
+const jobStates: Record<string, { label: string; tone: string }> = {
+  queued: { label: "Queued", tone: "waiting" },
+  running: { label: "Running", tone: "running" },
+  completed: { label: "Completed", tone: "done" },
+  failed: { label: "Failed", tone: "failed" },
+  cancelled: { label: "Cancelled", tone: "stopped" },
+  interrupted: { label: "Interrupted", tone: "stopped" },
+};
+function JobState({ job }: { job: Job }) {
+  const state = jobStates[job.state] ?? { label: job.state, tone: "stopped" };
+  const Icon =
+    state.tone === "done"
+      ? CircleCheckIcon
+      : state.tone === "failed" || state.tone === "stopped"
+        ? CircleCrossIcon
+        : CircleDashedIcon;
   return (
-    <section className="space-y-4">
-      <h1 className="text-2xl">Repositories & settings</h1>
-      <GitHubConnectionSection onChanged={authChanged} />
-      <p>
-        Global backend and credentials come from your local baum configuration. Overrides below are
-        shared by this repository’s registered clones.
-      </p>
-      {error ? <Alert>{error}</Alert> : null}
-      {automatic ? (
-        <AutomaticSettings
-          automatic={automatic}
-          save={(patch) => action(() => request("api/automatic", patch, "PUT"))}
-        />
-      ) : null}
-      <form
-        className="flex flex-wrap gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void action(() => request("api/repos", { path })).then(() => setPath(""));
-        }}
-      >
-        <label>
-          Local clone path{" "}
-          <input
-            required
-            className="local-field"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-          />
-        </label>
-        <Button type="submit">Register clone</Button>
-      </form>
-      {clones.map((clone) => (
-        <div
-          role="region"
-          aria-label={`Repository ${clone.repository}`}
-          className="local-panel space-y-3"
-          key={clone.id}
+    <span className={`local-job-state ${state.tone}`}>
+      <Icon size={14} className={state.tone === "running" ? "local-spin" : undefined} />
+      {state.label}
+    </span>
+  );
+}
+function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
+  const started = automaticLabel(job);
+  const active = job.state === "queued" || job.state === "running";
+  const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
+    job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
+  }`;
+  return (
+    <li id={`job-${job.id}`} className="local-job-row">
+      <JobState job={job} />
+      <div className="min-w-0">
+        <LocalLink
+          href={appURL(`?clone=${encodeURIComponent(job.clone)}&pr=${job.pr}`)}
+          className="local-job-title"
         >
-          <h2 className="text-lg">{clone.repository}</h2>
-          <p className="[overflow-wrap:anywhere]">
-            {clone.path} — {clone.available ? "Available" : "Unavailable; history retained"}
+          {job.repository} <span>#{job.pr}</span>
+        </LocalLink>
+        <p className="local-job-meta">{started ?? "Started by you"}</p>
+        {job.reason ? (
+          <p role="status" className="local-job-meta">
+            {jobReasonText(job.reason)}
           </p>
-          <RepositorySettings
-            key={JSON.stringify(clone.settings)}
-            clone={clone}
-            automatic={automatic}
-            status={automatic?.repositories.find(
-              (status) => status.repository === clone.repository.toLowerCase(),
-            )}
-            save={(settings) =>
-              action(() => request(`api/repos/${clone.id}/settings`, settings, "PUT"))
-            }
-          />
-          <Button
-            variant="secondary"
-            onClick={() => void action(() => request(`api/repos/${clone.id}`, {}, "DELETE"))}
-          >
-            Remove registration
-          </Button>
-        </div>
-      ))}
-      <DiagnosticsSection key={authRevision} onReport={onDiagnostics} />
-    </section>
-  );
-}
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1">
-      {label}
-      {children}
-    </label>
-  );
-}
-/** The global automatic generation switch and the one-time cursor-agent
- * acknowledgement. The server enforces both. */
-function AutomaticSettings({
-  automatic,
-  save,
-}: {
-  automatic: Automatic;
-  save: (patch: Partial<Omit<Automatic, "repositories">>) => Promise<void>;
-}) {
-  const [pending, setPending] = useState(false);
-  const update = (patch: Partial<Omit<Automatic, "repositories">>) => {
-    setPending(true);
-    void save(patch).finally(() => setPending(false));
-  };
-  return (
-    <section aria-label="Automatic reviews" className="local-panel space-y-3">
-      <h2 className="text-lg">Automatic reviews</h2>
-      <label className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={automatic.enabled}
-          disabled={pending}
-          onChange={(e) => update({ enabled: e.target.checked })}
-        />
-        <span>
-          Generate reviews automatically
-          <span className="block text-xs text-(--text-tertiary)">
-            When a pull request you wrote or were asked to review gets new commits or a new review
-            request, the daemon generates its review with the configured backend and budgets, and
-            your provider bills it. Pull requests from forks or authors without write access always
-            need your confirmation. Pull requests already open when this is turned on are not caught
-            up. Turning this off pauses automatic reviews in every repository, including those set
-            to On; while it is on, a repository can be turned off below.
-          </span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={automatic.cursor_agent_acknowledged}
-          disabled={pending}
-          onChange={(e) => update({ cursor_agent_acknowledged: e.target.checked })}
-        />
-        <span>
-          Allow automatic reviews with cursor-agent
-          <span className="block text-xs text-(--text-tertiary)">
-            cursor-agent is billed by Cursor and baum cannot estimate or cap its cost. Without this
-            acknowledgement automatic generation skips repositories that use it.
-          </span>
-        </span>
-      </label>
-      <p className="text-xs">
-        The daemon keeps generating after you close this window. Quit the desktop app with “Quit and
-        stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
-      </p>
-    </section>
-  );
-}
-function RepositorySettings({
-  clone,
-  automatic,
-  status,
-  save,
-}: {
-  clone: Clone;
-  automatic: Automatic | null;
-  status?: AutomaticStatus;
-  save: (settings: Clone["settings"]) => Promise<void>;
-}) {
-  const [backend, setBackend] = useState(clone.settings.backend ?? "");
-  const [model, setModel] = useState(clone.settings.model ?? "");
-  const [mode, setMode] = useState(
-    clone.settings.automatic === null || clone.settings.automatic === undefined
-      ? "default"
-      : clone.settings.automatic
-        ? "on"
-        : "off",
-  );
-  const [cap, setCap] = useState(
-    clone.settings.daily_cap === null || clone.settings.daily_cap === undefined
-      ? ""
-      : String(clone.settings.daily_cap),
-  );
-  // Removing the cap is an explicit choice: an empty or unreadable amount is
-  // an error, never "no cap".
-  const [noCap, setNoCap] = useState(
-    clone.settings.daily_cap === null || clone.settings.daily_cap === undefined,
-  );
-  const [capError, setCapError] = useState("");
-  const [pending, setPending] = useState(false);
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const amount = cap.trim() === "" ? Number.NaN : Number(cap);
-    if (automatic && !noCap && !(Number.isFinite(amount) && amount >= 0)) {
-      setCapError("Enter a daily cap of 0 or more in USD, or choose No daily cap.");
-      return;
-    }
-    setCapError("");
-    setPending(true);
-    void save({
-      automatic: mode === "default" ? null : mode === "on",
-      daily_cap: !automatic ? (clone.settings.daily_cap ?? null) : noCap ? null : amount,
-      backend: backend || null,
-      model: model || null,
-    }).finally(() => setPending(false));
-  };
-  const notice = status ? automaticNotice(status) : null;
-  return (
-    // The form validates the cap itself, with one message for every invalid
-    // amount, rather than the browser's range bubble.
-    <form onSubmit={submit} className="space-y-3" noValidate>
-      {automatic ? (
-        <div className="flex flex-wrap gap-3">
-          <Field label="Automatic reviews">
-            <select className="local-field" value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="default">Global setting ({automatic.enabled ? "on" : "off"})</option>
-              <option value="on">
-                {automatic.enabled
-                  ? "On for this repository"
-                  : "On for this repository (paused by the global switch)"}
-              </option>
-              <option value="off">Off for this repository</option>
-            </select>
-          </Field>
-          <Field label="Daily automatic cap (USD)">
-            <input
-              className="local-field"
-              type="number"
-              min="0"
-              step="0.01"
-              value={noCap ? "" : cap}
-              disabled={noCap}
-              aria-invalid={capError ? true : undefined}
-              onChange={(e) => {
-                setCap(e.target.value);
-                setCapError("");
-              }}
-              placeholder={noCap ? "No cap" : "0.00"}
-            />
-          </Field>
-          <label className="flex items-center gap-2 self-end pb-2">
-            <input
-              type="checkbox"
-              checked={noCap}
-              onChange={(e) => {
-                setNoCap(e.target.checked);
-                setCapError("");
-              }}
-            />
-            No daily cap
-          </label>
-        </div>
-      ) : null}
-      {capError ? <Alert>{capError}</Alert> : null}
-      {status ? (
-        <p className="text-xs" role="status">
-          {status.enabled
-            ? "Automatic reviews are on for this repository."
-            : clone.settings.automatic === false
-              ? "Automatic reviews are off for this repository."
-              : `Automatic reviews are paused by the global switch${
-                  clone.settings.automatic ? ", although this repository is set to On" : ""
-                }. Turn on “Generate reviews automatically” above to resume them.`}
-          {status.enabled
-            ? ` Spent automatically today: ${status.spent_known ? "" : "at least "}${cost(status.spent_today)}${
-                status.daily_cap === null ? "" : ` of ${cost(status.daily_cap)}`
-              }.`
-            : ""}
-          {status.pending ? ` ${status.pending} waiting to start.` : ""}
-        </p>
-      ) : null}
-      {notice ? <Alert>{notice}</Alert> : null}
-      <div className="flex flex-wrap gap-3">
-        <Field label="Backend">
-          <select
-            className="local-field"
-            value={backend}
-            onChange={(e) => setBackend(e.target.value)}
-          >
-            <option value="">Global default</option>
-            {["auto", "codex", "claude", "anthropic", "cursor-agent"].map((name) => (
-              <option key={name}>{name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Model override">
-          <input
-            className="local-field"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="Global default"
-          />
-        </Field>
+        ) : null}
       </div>
-      <p className="text-xs">
-        GitHub metadata and saved review evidence refresh in the background without model calls.
-        Model generation runs when you request and confirm it, or automatically as set above. Every
-        run stays within the configured budgets.
-      </p>
-      <Button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save repository settings"}
-      </Button>
-    </form>
+      <span className="local-job-figure">{calls}</span>
+      <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
+      <div className="local-job-actions">
+        {active ? (
+          <Button variant="secondary" size="compact" onClick={cancel}>
+            Cancel job
+          </Button>
+        ) : null}
+      </div>
+      <details className="local-job-usage">
+        <summary>Usage</summary>
+        <UsageDetails
+          accounting={job.accounting}
+          charged={job.tokens}
+          amount={job.actual_cost_usd}
+          reason={job.cost_reason}
+        />
+      </details>
+    </li>
   );
 }
