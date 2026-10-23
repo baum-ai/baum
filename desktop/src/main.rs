@@ -378,13 +378,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
-    /// picker, on loopback; the bundled screens get exactly their commands and
-    /// no remote URL.
+    /// picker and CLI/hook management, on loopback; the bundled screens get
+    /// exactly their commands and no remote URL.
     #[test]
-    fn only_the_bundled_screens_have_capabilities() {
+    fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
             "connecting-screen": ["allow-connection", "allow-reconnect"],
-            "daemon-pages": ["allow-choose-repository"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",

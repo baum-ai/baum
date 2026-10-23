@@ -93,6 +93,10 @@ bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
 The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
+In the desktop app, Settings has separate Command line and Agent hooks sections
+with inline CLI install, update and removal controls, plus installation,
+enablement and removal for each agent. Home paths are displayed with `~`.
+It shows the installed state, paths, trust guidance and action results.
 Settings holds the global review settings in the same form as the desktop
 setup's last step: the harness, its model (a listed model or a custom name),
 whether reviews run automatically and for which pull requests (authored,
@@ -159,8 +163,8 @@ without signing in. Credentials never reach the UI.
 Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) open
 in a dialog from Settings' "Check this computer" button, which shows how many
 problems they found. `?page=diagnostics` opens Settings with the dialog open;
-the desktop app opens it after its first-run setup (the bootstrap page carries
-`page=diagnostics` from the launch URL's fragment). Each warning and problem
+the bootstrap page can carry `page=diagnostics` from the launch URL's
+fragment. Desktop setup opens the inbox instead. Each warning and problem
 shows its fix. The app runs the diagnostics once when it opens and, while they
 find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only

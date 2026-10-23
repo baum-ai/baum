@@ -25,18 +25,22 @@ function GitHubLogo() {
 export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) => void }) {
   const { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy } =
     useGitHubConnection(viaApp);
-  const connected = Boolean(connection?.saved && !connection.error);
+  // An explicit credential (environment or config) is in use and wins over a
+  // saved account, so it counts as connected.
+  const connected = Boolean((connection?.saved || connection?.override) && !connection.error);
   const known = connection !== undefined;
   useEffect(() => {
     if (known) onConnected(connected);
   }, [known, connected, onConnected]);
   const state = connection?.saved
     ? `Signed in as ${connection.login}.`
-    : pending
-      ? "Waiting for you to enter the code on GitHub."
-      : connection
-        ? "Not connected."
-        : "Checking the GitHub connection…";
+    : connection?.override
+      ? `Using the GitHub credential from ${connection.source}.`
+      : pending
+        ? "Waiting for you to enter the code on GitHub."
+        : connection
+          ? "Not connected."
+          : "Checking the GitHub connection…";
   return (
     <div id="github-panel">
       <div className="setup-card agent-list">
@@ -105,12 +109,12 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
             {connection?.error
               ? (messages[connection.error] ?? "GitHub connection needs attention. Try again.")
               : error || terminal[connection!.state]}
-            {error && (
+            {(error || connection?.error) && (
               <button
                 type="button"
                 className="quiet"
-                disabled={checking}
-                onClick={() => void recheck()}
+                disabled={checking || busy}
+                onClick={() => void (error ? recheck() : action("retry"))}
               >
                 {checking ? "Checking…" : "Check again"}
               </button>
