@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
-import { appBase, cost, filtered, type Entry } from "./api";
+import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -73,7 +73,7 @@ beforeEach(() => {
           ? { state: "disconnected", host: "github.com", saved: false, override: false }
           : path.includes("/s/test-ns/api/index")
             ? { entries, problems: [] }
-            : path === "/s/test-ns/api/repos"
+            : path === "/s/test-ns/api/repos" || path === "/s/test-ns/api/repositories"
               ? []
               : path === "/s/test-ns/api/prs"
                 ? []
@@ -592,7 +592,10 @@ const automaticOverview = {
   ],
 };
 /** Serves api/repos, api/automatic and api/settings, and records PUT bodies. */
-function stubAutomatic(clone: object = demoClone, overview: object = automaticOverview) {
+function stubAutomatic(
+  clone: Omit<Clone, "settings"> & { settings: Partial<Clone["settings"]> } = demoClone,
+  overview: object = automaticOverview,
+) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const puts: { path: string; body: unknown }[] = [];
   vi.mocked(fetch).mockImplementation((...args) => {
@@ -603,6 +606,12 @@ function stubAutomatic(clone: object = demoClone, overview: object = automaticOv
       return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
+    if (path === "/s/test-ns/api/repositories")
+      return Promise.resolve(
+        Response.json([
+          { repository: clone.repository, settings: clone.settings, clones: [clone] },
+        ]),
+      );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings")
       return Promise.resolve(Response.json({ backend: "auto", model: "" }));
@@ -649,7 +658,7 @@ it("sets automatic reviews per repository and clears an old daily cap", async ()
       .click(),
   );
   expect(puts).toContainEqual({
-    path: "/s/test-ns/api/repos/clone/settings",
+    path: "/s/test-ns/api/repositories/acme/demo/settings",
     body: { automatic: false, daily_cap: null, backend: null, model: null },
   });
 });
@@ -664,50 +673,44 @@ function typeInto(input: HTMLInputElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
-it("adds a repository only once the daemon says the path is a clone it would register", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+it("keeps an explicit local folder fallback and shows daemon validation failures", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  const puts = stubAutomatic();
+  stubAutomatic();
+  const original = vi.mocked(fetch).getMockImplementation()!;
   const posts: unknown[] = [];
-  const stubbed = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) => {
     const path = String(args[0]);
     const init = args[1] as RequestInit | undefined;
-    if (path.startsWith("/s/test-ns/api/repos/check?"))
-      return Promise.resolve(
-        Response.json(
-          path.includes("good")
-            ? { valid: true, repository: "acme/new" }
-            : { valid: false, reason: "path is unavailable or is not a git working tree" },
-        ),
-      );
+    if (path.startsWith("/s/test-ns/api/github/repositories"))
+      return Promise.resolve(Response.json({ repositories: [] }));
     if (path === "/s/test-ns/api/repos" && init?.method === "POST") {
-      posts.push(JSON.parse(String(init.body)));
-      return Promise.resolve(Response.json({}));
+      const body = JSON.parse(String(init.body));
+      posts.push(body);
+      return Promise.resolve(
+        body.path.endsWith("bad")
+          ? new Response("cannot register path", { status: 400 })
+          : Response.json({}),
+      );
     }
-    return stubbed(...args);
+    return original(...args);
   });
   await act(async () => root.render(<App />));
+  await act(async () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Add repositories")!.click(),
+  );
   const input = node.querySelector<HTMLInputElement>(
     'input[placeholder="/path/to/a/local/clone"]',
   )!;
-  const button = () => node.querySelector<HTMLButtonElement>(".local-add-repo button")!;
-  // Outside the desktop app there is no folder picker to browse with.
-  expect(button().textContent).toBe("Add repo");
-  expect(button().disabled).toBe(true);
+  const submit = () =>
+    node.querySelector<HTMLButtonElement>(".repository-fallback button[type=submit]")!;
+  expect(submit().disabled).toBe(true);
   await act(async () => typeInto(input, "/work/bad"));
-  await act(async () => vi.advanceTimersByTimeAsync(300));
-  expect(node.textContent).toContain("Path is unavailable or is not a git working tree.");
-  expect(button().disabled).toBe(true);
+  await act(async () => submit().click());
+  expect(node.textContent).toContain("cannot register path");
   await act(async () => typeInto(input, "/work/good"));
-  await act(async () => vi.advanceTimersByTimeAsync(300));
-  expect(node.textContent).toContain("GitHub repository acme/new");
-  expect(button().disabled).toBe(false);
-  await act(async () => button().click());
-  expect(posts).toEqual([{ path: "/work/good" }]);
-  expect(puts).toEqual([]);
-  vi.useRealTimers();
+  await act(async () => submit().click());
+  expect(posts).toEqual([{ path: "/work/bad" }, { path: "/work/good" }]);
 });
 it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
@@ -731,7 +734,7 @@ it("saves a repository without a cap as explicit null when automatic settings ar
       .click(),
   );
   expect(puts).toContainEqual({
-    path: "/s/test-ns/api/repos/clone/settings",
+    path: "/s/test-ns/api/repositories/acme/demo/settings",
     body: { automatic: null, daily_cap: null, backend: null, model: null },
   });
 });
@@ -876,4 +879,48 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
+});
+
+it("opens clone-less PR deep links by repository and refreshes picked repositories", async () => {
+  const row = { ...entry(7), clone_id: undefined, needs_clone: true };
+  entries = [row];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const posts: unknown[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    const init = args[1] as RequestInit | undefined;
+    if (path === "/s/test-ns/api/repositories")
+      return Promise.resolve(
+        Response.json([
+          {
+            repository: "acme/demo",
+            settings: { automatic: null, daily_cap: null, backend: null, model: null },
+            clones: [],
+          },
+        ]),
+      );
+    if (path === "/s/test-ns/api/prs/refresh") {
+      posts.push(JSON.parse(String(init?.body)));
+      return Promise.resolve(Response.json({}));
+    }
+    return original(...args);
+  });
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Needs a local clone");
+  expect(
+    node.querySelector<HTMLInputElement>('input[aria-label="Select acme/demo #7"]')!.disabled,
+  ).toBe(true);
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Refresh from GitHub"]')!.click(),
+  );
+  expect(posts).toEqual([{ repository: "acme/demo" }]);
+  const link = [...node.querySelectorAll("a")].find((a) => a.textContent === "Change 7")!;
+  expect(link.search).toContain("repository=acme%2Fdemo");
+  await act(async () => link.click());
+  expect(node.querySelector("h2")!.textContent).toBe("Needs a local clone");
+  expect(node.textContent).toContain("Choose folder");
+  expect(node.textContent).toContain("Clone it");
+  expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path).includes("api/document"))).toBe(
+    false,
+  );
 });

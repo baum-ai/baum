@@ -251,20 +251,6 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/jobs-narrow.png", animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
-  // Adding offers itself only for a clone the daemon would register.
-  const add = page.getByRole("textbox", { name: "Local clone path" });
-  await add.fill("/nowhere/at/all");
-  await expect(page.getByText(/not a git working tree/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add repo" })).toBeDisabled();
-  const demoPath = await page
-    .getByRole("listitem")
-    .filter({ hasText: "acme/demo" })
-    .locator("p")
-    .first()
-    .textContent();
-  await add.fill(demoPath ?? "");
-  await expect(page.getByText("acme/demo is already added.")).toBeVisible();
-  await add.fill("");
   await page.getByRole("button", { name: "Settings for acme/demo" }).click();
   const settings = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
   // Automatic reviews are on by default: the repository follows the global
@@ -447,4 +433,61 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
   await expect(hooks).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("settings-narrow.png"), fullPage: true });
+});
+
+test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
+  await page.goto(await launchURL());
+  const missing = page.getByRole("link", {
+    name: "A GitHub pull request waiting for a clone",
+    exact: true,
+  });
+  await expect(missing).toBeVisible();
+  await expect(missing.locator("xpath=ancestor::li")).toContainText("Needs a local clone");
+  await missing.click();
+  await expect(
+    page.getByRole("heading", { name: "Needs a local clone", exact: true }),
+  ).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("repository")).toBe("acme/missing");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Choose folder", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate review", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "test-results/needs-clone-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/needs-clone-narrow.png", animations: "disabled" });
+  await page.getByRole("button", { name: "Choose folder", exact: true }).click();
+  await page.getByRole("textbox", { name: "Local clone path", exact: true }).fill("/not/a/clone");
+  await page.getByRole("button", { name: "Use folder", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("cannot register path");
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Add repositories", exact: true }).click();
+  const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
+  await expect(picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true })).toBeChecked();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: "test-results/repositories-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(
+    await picker.evaluate((element) => element.getBoundingClientRect().right),
+  ).toBeLessThanOrEqual(390);
+  expect(
+    await picker
+      .locator("input[type=search]")
+      .evaluate((element) => element.getBoundingClientRect().right),
+  ).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/repositories-narrow.png", animations: "disabled" });
+  await picker.getByRole("searchbox", { name: "Search repositories" }).fill("clone-me");
+  await picker.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).click();
+  await expect(
+    picker.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }),
+  ).toBeChecked();
+  const row = picker.getByRole("listitem").filter({ hasText: "acme/clone-me" });
+  await row.getByRole("button", { name: "Clone it", exact: true }).click();
+  await expect(row.getByRole("textbox", { name: "Clone into" })).toHaveValue(
+    /code\/acme\/clone-me/,
+  );
+  await row.getByRole("button", { name: "Clone repository", exact: true }).click();
+  await expect(row).toContainText("✓", { timeout: 15000 });
+  await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
+  await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });

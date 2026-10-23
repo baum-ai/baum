@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
+	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -24,6 +26,8 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubrepos"
+	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -44,6 +48,9 @@ type browserDiscovery struct {
 }
 
 func (d browserDiscovery) Cached(_ context.Context, repository github.Repository) (discovery.Snapshot, error) {
+	if repository.String() == "acme/missing" {
+		return discovery.Snapshot{Repository: repository.String(), PullRequests: []discovery.PullRequest{{Repository: repository.String(), Number: 42, Title: "A GitHub pull request waiting for a clone", State: "OPEN", URL: "https://github.com/acme/missing/pull/42", ReviewRequestedFromMe: true}}, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, nil
+	}
 	if repository.String() != "acme/demo" {
 		return discovery.Snapshot{Repository: repository.String(), PullRequests: []discovery.PullRequest{{Repository: repository.String(), Number: 1, Title: "Other repository change", State: "OPEN", TeamMembershipKnown: true}}, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, nil
 	}
@@ -61,6 +68,14 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 }
 func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	return d.Cached(ctx, repository)
+}
+
+// The account listing boundary is synthetic; routing, picking and cloning state
+// still use the production local repository service.
+type browserRepositoryLister struct{}
+
+func (browserRepositoryLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
+	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}}, nil
 }
 
 // browserDiagnostics is a fixed report: no machine is inspected.
@@ -142,6 +157,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	other := assembletest.NewRepo(t, assembletest.Options{})
 	assembletest.Git(t, other.Dir, "remote", "add", "origin", "https://github.com/acme/other")
 	if _, err := registry.Add(context.Background(), other.Dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
 		t.Fatal(err)
 	}
 	versions, err := store.Open(clone.CommonDir, "", true)
@@ -306,11 +324,24 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return scheduler.BeginIdentityChange()
 		})
-		api := uiserver.LocalAPI{GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		changed := func() { scheduler.Wake(); _ = server.Publish("index", struct{}{}) }
+		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
+		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Found: finder.Snapshot, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
+			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
+				return err
+			}
+			cmd := exec.CommandContext(ctx, "git", "clone", "--no-hardlinks", "--", repo.Dir, opts.Dir)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("fixture clone: %v: %s", err, output)
+			}
+			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
+		}}
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.
 			Run: func(ctx context.Context) {
+				go repositoryService.Run(ctx)
 				go scheduler.Run(ctx)
 				go live.Run(ctx)
 				go feedLiveSession(ctx, events, liveMarker)

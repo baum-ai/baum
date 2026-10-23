@@ -58,6 +58,8 @@ impl Kind {
 pub enum Route {
     /// A pull request's page in the clone the daemon named.
     Pr { clone: String, number: u64 },
+    /// A picked repository that has no clone yet.
+    RepositoryPr { repository: String, number: u64 },
     /// The jobs list.
     Jobs,
 }
@@ -75,6 +77,10 @@ impl Route {
                     query.append_pair("clone", clone);
                     query.append_pair("pr", &number.to_string());
                 }
+                Route::RepositoryPr { repository, number } => {
+                    query.append_pair("repository", repository);
+                    query.append_pair("pr", &number.to_string());
+                }
                 Route::Jobs => {
                     query.append_pair("page", "jobs");
                 }
@@ -87,6 +93,7 @@ impl Route {
     pub fn pr(&self) -> Option<(&str, u64)> {
         match self {
             Route::Pr { clone, number } => Some((clone, *number)),
+            Route::RepositoryPr { repository, number } => Some((repository, *number)),
             Route::Jobs => None,
         }
     }
@@ -195,6 +202,10 @@ fn from_notice(n: Notice) -> Option<Toast> {
     let route = match n.clone.filter(|c| !c.is_empty()) {
         Some(clone) => Route::Pr {
             clone,
+            number: n.pr,
+        },
+        None if !n.repository.is_empty() => Route::RepositoryPr {
+            repository: n.repository,
             number: n.pr,
         },
         None => Route::Jobs,
@@ -322,10 +333,22 @@ mod tests {
     }
 
     #[test]
-    fn a_notice_without_a_clone_opens_the_jobs_list() {
+    fn a_notice_without_a_clone_opens_the_repository_pull_request() {
         let data = r#"{"kind":"review_requested","repository":"acme/widgets","pr":7}"#;
         let t = from_event("notice", data).unwrap();
-        assert_eq!(t.route, Route::Jobs);
+        assert_eq!(
+            t.route,
+            Route::RepositoryPr {
+                repository: "acme/widgets".into(),
+                number: 7
+            }
+        );
+        assert_eq!(
+            t.route
+                .url(&Url::parse("http://127.0.0.1:1234/s/ns/").unwrap())
+                .query(),
+            Some("repository=acme%2Fwidgets&pr=7")
+        );
         assert_eq!(t.body, "acme/widgets #7");
     }
 

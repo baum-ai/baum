@@ -6,8 +6,10 @@ import {
   type Automatic,
   type AutomaticStatus,
   type Clone,
+  type Repository,
   type DiagnosticReport,
 } from "./api";
+import { RepositoryPicker, CloneActions, skipFoundRepository } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
@@ -421,16 +423,17 @@ function DiagnosticsDialog({
 }
 
 export function RepositoriesPage({
-  clones,
+  repositories,
   automatic,
   defaults,
   changed,
 }: {
-  clones: Clone[];
+  repositories: Repository[];
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   changed: () => Promise<void>;
 }) {
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const action = async (fn: () => Promise<unknown>) => {
     try {
@@ -445,27 +448,40 @@ export function RepositoriesPage({
     <section>
       <PageBar
         title="Repositories"
-        detail="Local clones baum reviews; settings here apply to every clone of a repository"
+        detail="GitHub repositories baum follows on this computer"
+        actions={
+          <Button size="compact" onClick={() => setAdding(!adding)}>
+            {adding ? "Done" : "Add repositories"}
+          </Button>
+        }
       />
       <div className="local-page-body">
         {error ? <Alert>{error}</Alert> : null}
-        <AddRepository add={(path) => action(() => request("api/repos", { path }))} />
-        {clones.length === 0 ? (
+        {adding ? <RepositoryPicker changed={changed} /> : null}
+        {repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
-            <p>Register a local clone of a GitHub repository to review its pull requests.</p>
+            <p>
+              Pick GitHub repositories to see their pull requests. baum finds their local clones for
+              you.
+            </p>
           </div>
         ) : null}
-        {clones.length > 0 ? (
+        {repositories.length > 0 ? (
           <ul className="local-panel local-repo-list">
-            {clones.map((clone) => (
+            {repositories.map((repository) => (
               <RepositoryRow
-                key={clone.id}
-                clone={clone}
+                key={repository.repository}
+                repository={repository}
                 automatic={automatic}
                 defaults={defaults}
                 changed={changed}
-                remove={() => action(() => request(`api/repos/${clone.id}`, {}, "DELETE"))}
+                remove={() => {
+                  skipFoundRepository(repository.repository);
+                  return action(() =>
+                    request(`api/repositories/${repository.repository}`, {}, "DELETE"),
+                  );
+                }}
               />
             ))}
           </ul>
@@ -601,19 +617,28 @@ function RepositorySettings({
 /** One registered repository: what it does at a glance, and its settings in a
  *  dialog. */
 function RepositoryRow({
-  clone,
+  repository,
   automatic,
   defaults,
   changed,
   remove,
 }: {
-  clone: Clone;
+  repository: Repository;
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   changed: () => Promise<void>;
   remove: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [cloneError, setCloneError] = useState("");
+  const clone: Clone = repository.clones.find((c) => c.available) ??
+    repository.clones[0] ?? {
+      id: repository.repository,
+      path: "Needs a local clone",
+      repository: repository.repository,
+      available: false,
+      settings: repository.settings,
+    };
   const status = automatic?.repositories.find(
     (item) => item.repository === clone.repository.toLowerCase(),
   );
@@ -635,7 +660,40 @@ function RepositoryRow({
         </p>
       </div>
       <p className="local-repo-summary">{summary.join(" · ")}</p>
-      {clone.available ? null : <span className="local-pill">Unavailable</span>}
+      {cloneError ? <p role="alert">{cloneError}</p> : null}
+      {clone.available ? null : <span className="local-pill">Needs a local clone</span>}
+      {!clone.available ? (
+        <CloneActions repository={repository.repository} changed={changed} />
+      ) : null}
+      {repository.clones.length > 0 ? (
+        <details className="text-xs">
+          <summary>Change local clone</summary>
+          <p>
+            Keep the clone you want baum to use registered. Removing a registration leaves its files
+            and saved reviews on disk.
+          </p>
+          {repository.clones.map((c) => (
+            <div key={c.id}>
+              <p>
+                {c.path}
+                {c.available ? "" : " · unavailable"}
+              </p>
+              <Button
+                size="compact"
+                variant="ghost"
+                onClick={() =>
+                  void request(`api/repos/${c.id}`, {}, "DELETE")
+                    .then(changed)
+                    .catch((e) => setCloneError(errorText(e)))
+                }
+              >
+                Remove this clone registration
+              </Button>
+            </div>
+          ))}
+          <CloneActions repository={repository.repository} changed={changed} />
+        </details>
+      ) : null}
       <Button
         variant="secondary"
         size="compact"
@@ -707,7 +765,7 @@ function RepositoryDialog({
         remove={() => void remove().then(close)}
         save={async (settings) => {
           try {
-            await request(`api/repos/${clone.id}/settings`, settings, "PUT");
+            await request(`api/repositories/${clone.repository}/settings`, settings, "PUT");
 
             await changed();
             close();
@@ -720,93 +778,7 @@ function RepositoryDialog({
   );
 }
 
-type PathCheck = { valid: boolean; repository?: string; registered?: boolean; reason?: string };
-
-/** A path and one button: Browse opens the desktop app's folder picker until
- *  the path is a clone the daemon would register, then the button adds it. */
-function AddRepository({ add }: { add: (path: string) => Promise<void> }) {
-  const [path, setPath] = useState("");
-  const [check, setCheck] = useState<PathCheck | null>(null);
-  const [pending, setPending] = useState(false);
-  const picker = hasFolderPicker();
-  useEffect(() => {
-    const trimmed = path.trim();
-    setCheck(null);
-    if (!trimmed) return;
-    let active = true;
-    // Typing settles before the daemon looks at the folder.
-    const timer = setTimeout(() => {
-      request<PathCheck>(`api/repos/check?path=${encodeURIComponent(trimmed)}`).then(
-        (answer) => {
-          if (active) setCheck(answer);
-        },
-        () => {
-          if (active) setCheck(null);
-        },
-      );
-    }, 250);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [path]);
-  const addable = check?.valid && !check.registered;
-  const browse = async () => {
-    const chosen = await invoke<string | null>("choose_repository").catch(() => null);
-    if (chosen) setPath(chosen);
-  };
-  return (
-    <form
-      className="local-add-repo"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!addable) return;
-        setPending(true);
-        void add(path.trim())
-          .then(() => setPath(""))
-          .finally(() => setPending(false));
-      }}
-    >
-      <div className="local-inline-form">
-        <label className="local-grow">
-          <span className="sr-only">Local clone path</span>
-          <input
-            className="local-field w-full"
-            placeholder="/path/to/a/local/clone"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-          />
-        </label>
-        {addable ? (
-          <Button type="submit" size="compact" disabled={pending}>
-            {pending ? "Adding…" : "Add repo"}
-          </Button>
-        ) : picker ? (
-          <Button type="button" variant="secondary" size="compact" onClick={() => void browse()}>
-            Browse…
-          </Button>
-        ) : (
-          <Button type="submit" size="compact" disabled>
-            Add repo
-          </Button>
-        )}
-      </div>
-      {path.trim() && check ? (
-        <p className={check.valid && !check.registered ? "local-add-hint ok" : "local-add-hint"}>
-          {check.registered
-            ? `${check.repository} is already added.`
-            : check.valid
-              ? `GitHub repository ${check.repository}`
-              : check.reason
-                ? `${check.reason.charAt(0).toUpperCase()}${check.reason.slice(1)}.`
-                : null}
-        </p>
-      ) : null}
-    </form>
-  );
-}
-
-/** Whether the page runs in the desktop app, which lends it the folder picker. */
+/** Whether the daemon page runs in the desktop app. */
 function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }

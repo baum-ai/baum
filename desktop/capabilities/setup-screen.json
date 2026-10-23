@@ -14,6 +14,7 @@
     "allow-review-settings",
     "allow-save-review-settings",
     "allow-github-connection",
+    "allow-repositories",
     "allow-finish-setup"
   ]
 }

@@ -1,0 +1,161 @@
+.repository-picker,
+.repository-actions {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+.repository-picker {
+  --repo-border: var(--border-subtle, #ddbf8e);
+  --repo-muted: var(--text-secondary, #6b4a33);
+  --repo-panel: var(--surface-card, #fff8ea);
+  --repo-action: var(--action-primary, #2e7d3e);
+}
+.repository-picker p,
+.repository-actions p {
+  margin: 0;
+}
+.repository-help,
+.repository-clone,
+.repository-description {
+  color: var(--repo-muted, var(--text-secondary, #6b4a33));
+  font-size: var(--text-xs, 0.875rem);
+  overflow-wrap: anywhere;
+}
+.repository-picker label,
+.repository-actions form label {
+  display: grid;
+  gap: 0.5rem;
+}
+.repository-picker input:not([type="checkbox"]),
+.repository-actions input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--repo-border, var(--border-subtle, #ddbf8e));
+  border-radius: 0.4rem;
+  background: var(--repo-panel, var(--surface-card, #fff8ea));
+  color: inherit;
+  font: inherit;
+}
+.repository-choices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--repo-border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+.repository-choices:empty {
+  display: none;
+}
+.repository-choices > li {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--repo-border);
+}
+.repository-choices > li:last-child {
+  border: 0;
+}
+.repository-picker .repository-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  cursor: pointer;
+}
+.repository-choice input {
+  margin-top: 0.25rem;
+  accent-color: var(--repo-action);
+  flex: none;
+}
+.repository-choice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.repository-choice small {
+  margin-left: 0.6rem;
+  font-size: var(--text-xs, 0.875rem);
+  color: var(--repo-muted);
+}
+.repository-description {
+  display: block;
+  margin-top: 0.3rem;
+}
+.repository-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.repository-picker button,
+.repository-actions button {
+  font: inherit;
+  font-size: var(--text-xs, 0.875rem);
+  border: 1px solid var(--repo-border, var(--border-subtle, #ddbf8e));
+  border-radius: 0.4rem;
+  background: transparent;
+  color: inherit;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+}
+.repository-picker button:hover,
+.repository-actions button:hover {
+  background: var(--surface-hover, #f2dcad);
+}
+.repository-picker button:disabled,
+.repository-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.repository-picker button:focus-visible,
+.repository-actions button:focus-visible,
+.repository-picker input:focus-visible,
+.repository-actions input:focus-visible {
+  outline: 2px solid var(--repo-action, var(--action-primary, #2e7d3e));
+  outline-offset: 2px;
+}
+.repository-actions form,
+.repository-fallback form {
+  display: grid;
+  gap: 0.7rem;
+}
+.repository-fallback summary {
+  cursor: pointer;
+  color: var(--repo-muted);
+  font-size: var(--text-xs, 0.875rem);
+}
+.repository-fallback form {
+  margin-top: 1rem;
+}
+.repository-actions [role="alert"],
+.repository-picker [role="alert"] {
+  color: var(--status-critical, #a03120);
+  overflow-wrap: anywhere;
+}
+
+.local-page-body:has(.repository-picker) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.local-repo-list {
+  min-width: 0;
+}
+.local-repo-row > details {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.repository-picker > * {
+  min-width: 0;
+}
+
+.repository-picker {
+  width: 100%;
+  text-align: left;
+}
+.repository-choice input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border-radius: 0.2rem;
+}

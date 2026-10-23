@@ -4,7 +4,6 @@ import {
   describeAgent,
   describeCommand,
   displayPath,
-  repositoryPath,
   withModel,
   type Outcome,
   type ReviewSettings,
@@ -12,6 +11,7 @@ import {
 } from "./setup-model";
 import { ReviewSettingsForm } from "./reviews";
 import { GitHubStep } from "./github-step";
+import { RepositoryPicker, setupRepositoryCall } from "../repositories";
 import logo from "./logo.svg";
 import codexLogo from "./codex.svg";
 import claudeLogo from "./claude-code.svg";
@@ -37,9 +37,9 @@ const steps = [
   ],
   [
     "Add repositories",
-    "Choose local clones of GitHub repositories. You can add as many as you like.",
+    "Pick your GitHub repositories. baum finds their local clones for you.",
     "Add repositories",
-    "Local GitHub clones",
+    "Your GitHub repositories",
   ],
   [
     "Set up reviews",
@@ -75,21 +75,12 @@ function autoBackend(view: SetupView | null) {
   return detected("codex") ? "codex" : "claude";
 }
 
-function FolderIcon() {
-  return (
-    <svg className="folder-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.38a1.5 1.5 0 0 1 1.06.44L11.5 7h8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" />
-    </svg>
-  );
-}
-
 export function Setup() {
   const [view, setView] = useState<SetupView | null>(null);
   const [step, setStep] = useState(0);
   const [pending, setPending] = useState<string | null>("initial");
   const [error, setError] = useState("");
-  const [path, setPath] = useState("");
-  const [repositories, setRepositories] = useState<string[]>([]);
+  const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
   const [github, setGitHub] = useState(false);
@@ -163,17 +154,6 @@ export function Setup() {
     if (!outcome.ok) setError(outcome.lines.join("\n"));
     await refresh();
   }
-  async function addRepository(fullPath: string) {
-    const outcome = await invoke<Outcome>("add_repository", { path: fullPath });
-    if (!outcome.ok) {
-      setError(outcome.lines.join("\n"));
-      return;
-    }
-    setRepositories((previous) =>
-      previous.includes(fullPath) ? previous : [...previous, fullPath],
-    );
-    setPath("");
-  }
   function button(
     id: string,
     children: ReactNode,
@@ -203,7 +183,7 @@ export function Setup() {
         Boolean(command?.ok),
         view.hooks.agents.length > 0 &&
           view.hooks.agents.every((a) => a.installed && a.enabled && !a.error),
-        repositories.length > 0,
+        pickedCount > 0,
         true,
       ][step]
     : false;
@@ -214,7 +194,7 @@ export function Setup() {
         github,
         Boolean(command?.ok),
         view.hooks.agents.some((a) => a.installed),
-        repositories.length > 0,
+        pickedCount > 0,
         true,
       ][step]
     : false;
@@ -391,76 +371,13 @@ export function Setup() {
               </div>
             )}
             {step === 3 && (
-              <div id="repo-panel">
-                <div className="setup-card repo-card">
-                  <button
-                    id="browse"
-                    type="button"
-                    disabled={busy}
-                    className={`repo-pick${pending === "browse" ? " loading" : ""}`}
-                    aria-busy={pending === "browse" || undefined}
-                    onClick={() =>
-                      void run("browse", async () => {
-                        const chosen = await invoke<string | null>("choose_repository");
-                        if (chosen) await addRepository(chosen);
-                      })
-                    }
-                  >
-                    <FolderIcon />
-                    <span>
-                      Choose a repository folder
-                      <small>A local clone with a GitHub origin</small>
-                    </span>
-                  </button>
-                  <form
-                    id="repo-form"
-                    className="path-row"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const fullPath = repositoryPath(path.trim(), view.home);
-                      if (!fullPath) return;
-                      void run("repo-add", () => addRepository(fullPath));
-                    }}
-                  >
-                    <label htmlFor="repo-path" className="visually-hidden">
-                      Repository folder
-                    </label>
-                    <input
-                      id="repo-path"
-                      placeholder="Or paste a path, like /path/to/repository"
-                      required
-                      value={path}
-                      disabled={busy}
-                      onChange={(event) => setPath(event.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      className={`secondary${pending === "repo-add" ? " loading" : ""}`}
-                      aria-busy={pending === "repo-add" || undefined}
-                    >
-                      Add
-                    </button>
-                  </form>
-                  {repositories.length > 0 && (
-                    <ul id="repo-list" aria-live="polite">
-                      {repositories.map((repository) => (
-                        <li key={repository}>
-                          <FolderIcon />
-                          <div>
-                            <strong>{repository.split(/[\\/]/).filter(Boolean).pop()}</strong>
-                            <span>{display(repository)}</span>
-                          </div>
-                          <em>✓ Added</em>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <p className="repo-note">
-                  New repositories follow the review settings in the next step. You can set a daily
-                  spending limit for each one in Settings.
-                </p>
+              <div id="repo-panel" className="setup-card">
+                <RepositoryPicker
+                  call={setupRepositoryCall}
+                  home={view.home ?? undefined}
+                  connected={github}
+                  onPicked={setPickedCount}
+                />
               </div>
             )}
             {step === last && reviews && (

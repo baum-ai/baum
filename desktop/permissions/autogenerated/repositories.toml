@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-repositories"
+description = "Enables the repositories command without any pre-configured scope."
+commands.allow = ["repositories"]
+
+[[permission]]
+identifier = "deny-repositories"
+description = "Denies the repositories command without any pre-configured scope."
+commands.deny = ["repositories"]

@@ -13,6 +13,14 @@ export type Clone = {
     model: string | null;
   };
 };
+export type Repository = { repository: string; settings: Clone["settings"]; clones: Clone[] };
+export class LocalRequestError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
 export type GitHubState = {
   review: "" | "approved" | "changes_requested" | "commented" | "unreviewed";
   checks: "" | "passing" | "failing" | "running" | "none";
@@ -293,10 +301,21 @@ export async function request<T>(
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
-  if (!response.ok)
-    throw Error(
-      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
+  if (!response.ok) {
+    const text = (await response.text()).slice(0, 240);
+    let body: { code?: string; message?: string; needs_clone?: boolean } = {};
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* The daemon also returns plain text. */
+    }
+    throw new LocalRequestError(
+      body.needs_clone
+        ? "Needs a local clone"
+        : (body.message ?? `Local request failed (${response.status}): ${text}`),
+      body.needs_clone ? "needs_clone" : body.code,
     );
+  }
   if (response.status === 204) return undefined as T;
   return response.json();
 }
@@ -307,7 +326,7 @@ export async function generateReviews(
   items: { clone: string; pr: number }[],
   mode: "single" | "batch",
   confirmIsolation = false,
-): Promise<"queued" | "isolation"> {
+): Promise<"queued" | "isolation" | "needs_clone"> {
   const response = await fetch(appURL("api/jobs"), {
     method: "POST",
     cache: "no-store",
@@ -317,6 +336,7 @@ export async function generateReviews(
   if (response.status === 409) {
     const body = await response.json().catch(() => null);
     if (body?.isolation_required) return "isolation";
+    if (body?.needs_clone) return "needs_clone";
   }
   if (!response.ok)
     throw Error(

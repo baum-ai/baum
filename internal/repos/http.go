@@ -108,8 +108,9 @@ func (r *Registry) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/repos", func(w http.ResponseWriter, req *http.Request) {
 		var input struct {
-			Path     string    `json:"path"`
-			Settings *Settings `json:"settings"`
+			Path       string    `json:"path"`
+			Repository string    `json:"repository"`
+			Settings   *Settings `json:"settings"`
 		}
 		if !decode(w, req, &input) {
 			return
@@ -124,7 +125,13 @@ func (r *Registry) Handler() http.Handler {
 				return
 			}
 		}
-		c, e := r.Add(req.Context(), input.Path, input.Settings)
+		var c Clone
+		var e error
+		if input.Repository != "" {
+			c, e = r.AddFor(req.Context(), input.Path, input.Repository, input.Settings)
+		} else {
+			c, e = r.Add(req.Context(), input.Path, input.Settings)
+		}
 		if e != nil {
 			http.Error(w, "cannot register path: check that it is an existing git working tree with a GitHub remote", 400)
 			return

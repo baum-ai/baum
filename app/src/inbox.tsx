@@ -91,7 +91,9 @@ export function Inbox({
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const groups = inboxGroups(rows);
-  const visible = groups.flatMap((group) => (collapsed.has(group.id) ? [] : group.rows));
+  const visible = groups
+    .flatMap((group) => (collapsed.has(group.id) ? [] : group.rows))
+    .filter((row) => !row.needs_clone);
   const toggle = (key: string, checked: boolean) =>
     setSelection((previous) => {
       const next = new Set(previous);
@@ -212,6 +214,7 @@ function Bucket({
  *  generated, or one that failed. A current or outdated review needs nothing
  *  from the reader here; its risk is in the first column. */
 function ReviewActivity({ entry }: { entry: Entry }) {
+  if (entry.needs_clone) return <span className="inbox-activity">Needs a local clone</span>;
   if (entry.status === "generating")
     return (
       <span className="inbox-activity text-(--status-info)">
@@ -361,6 +364,7 @@ function InboxRow({
         type="checkbox"
         aria-label={`Select ${pr.repository} #${pr.number}`}
         checked={selected}
+        disabled={entry.needs_clone}
         onChange={(e) => toggle(e.target.checked)}
       />
       <span
@@ -377,7 +381,9 @@ function InboxRow({
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
           <Link
-            href={appURL(`?clone=${encodeURIComponent(clone)}&pr=${pr.number}`)}
+            href={appURL(
+              `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
+            )}
             title={pr.title}
             className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
           >

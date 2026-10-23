@@ -64,7 +64,7 @@ fn pr_of(url: &Url, daemon: &url::Origin) -> Option<(String, u64)> {
     let (mut clone, mut number) = (None, None);
     for (key, value) in url.query_pairs() {
         match &*key {
-            "clone" => clone = Some(value.into_owned()),
+            "clone" | "repository" => clone = Some(value.into_owned()),
             "pr" => number = value.parse().ok(),
             _ => {}
         }

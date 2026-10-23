@@ -20,6 +20,25 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
+Setup and Repositories list the signed-in GitHub account's repositories, with
+search and clone status. Found clones are selected automatically the first time;
+unpicking one is respected when the picker reopens. A picked repository can have
+no clone: its pull requests remain in the inbox and link by repository and PR
+number. Its page says **Needs a local clone**, with **Choose folder** and
+**Clone it**; generating waits for a clone. Clone it shows an editable default
+folder and polls the daemon's background clone, including after reopening.
+Without GitHub sign-in, setup offers the local folder fallback instead.
+
+Repository settings apply once per repository, including one with no clone.
+**Change local clone** lists registrations and lets the person remove one or
+choose another folder; files and saved review stores are left on disk. Keep the
+clone baum should use registered. An explicitly chosen fork clone may be filed
+under its matching upstream remote. A repository can be skipped without a clone.
+The picker explains local discovery and, on macOS, offers **Also look in
+Documents** after an explicit click. Later automatic attachments show a notice.
+Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
+The relay permits only named repository actions and never exposes credentials.
+
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
 `credential.json` (see "Local daemon" in ARCHITECTURE.md). It uses only the
@@ -110,23 +129,19 @@ desktop tray's pause sets it): off stops automatic generation everywhere. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
 `true`, `false`); only "Off" differs while the global switch is on, and while
 it is off a repository set to "On" is shown as paused by the global switch.
-Repositories adds a clone from a path: `GET api/repos/check?path=` says
-whether the daemon would register it (and as which GitHub repository, or why
-not), and only then does the button read "Add repo". Until then, in the
-desktop app, it reads "Browse…" and opens the native folder picker, the one
-Tauri command daemon pages may call; in a plain browser it stays a disabled
-"Add repo". The page lists each registered clone with its own automatic choice, daily
-cap, and harness and model overrides (the same tiles and dropdown, with a
-"Global setting" choice that inherits). Turning automatic generation off, for
-everything or one repository, cancels the affected automatic
-jobs that have not started (the jobs list shows the reason); a running job
-finishes. Each repository also has a daily automatic cap in USD (0 permits no
-automatic spending) or an explicit "No daily cap" checkbox; an empty,
-negative or unreadable amount is an error and is not saved, never read as no
-cap. It shows today's automatic spend, how many triggered pull requests wait
-to start and the latest notice: a daily-cap pause until the next day or until
-the cap is raised or removed (also a banner on every page), cursor-agent not
-acknowledged, an unpriced model, or GitHub unavailable. The jobs list and the PR page mark an automatic job "Started
+Repositories lists picked GitHub repositories and their clones. Add repositories
+opens the searchable account picker; its local folder fallback can register a
+path without GitHub sign-in. Explicit per-repository folder attachment uses any
+matching remote, including an upstream remote in a fork clone. Settings apply
+to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
+automatic generation and harness/model overrides. Saving clears an old daily
+spending cap. Removing a repository unpicks it but leaves its files and saved
+reviews on disk. Change local clone offers the existing clone registrations and
+lets the person remove one or register another folder. Explicit unpicks are
+remembered locally across picker reopens and app reloads; picking it again is
+always available.
+
+The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or

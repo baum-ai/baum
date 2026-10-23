@@ -71,11 +71,17 @@ or add action. Displayed paths abbreviate the current home directory as
    The Claude Code plugin is installed separately with `--agent claude-code`.
    Both use the native agent CLI to fetch the public marketplace. Installation
    and enablement do not mean the user has trusted the hooks.
-4. Add one or more existing local GitHub clones. Choosing a folder in the
-   native picker adds it straight away; an absolute path can be pasted instead.
-   Each is registered with `baum internal repos add`;
-   this does not change repository hooks. Repositories follow the review
-   settings of the next step.
+4. Pick GitHub repositories from the signed-in account, with search. baum
+   finds local clones from agent activity and common code folders and preselects
+   found repositories. Missing clones offer Choose folder, Clone it (with an
+   editable default folder) and Skip. A picked repository without a clone still
+   lists its pull requests; generating waits for a clone. Without sign-in the
+   step offers Choose folder or an absolute path instead. On macOS, Also look
+   in Documents starts a single opt-in scan. The setup `repositories` command
+   relays only allowlisted list, pick/unpick, discovery, folder registration and
+   clone actions to the daemon. It cannot provide arbitrary HTTP routes or see
+   a GitHub token. Explicit folder attachment may file a fork under its upstream
+   repository when a remote matches it.
 5. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
    the Anthropic API), its model (the harness default, a listed model or a
    custom one), whether reviews run automatically and, if so, for which pull

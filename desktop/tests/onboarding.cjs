@@ -14,6 +14,9 @@ const assert = require('node:assert/strict');
   let fail = false;
   const disconnected = { state: 'disconnected', host: 'github.com', saved: false, override: false };
   let github = disconnected;
+  const picked = new Set();
+  const localClones = new Map([["acme/found", "/workspace/sample/found"]]);
+  let cloning = false;
   let reviews = { backend: 'auto', model: '', automatic: true, pull_requests: 'both' };
   const state = { first_run: true, home: '/workspace/sample', command: { installed: false, target: '/app/baum', plan: { link: '/workspace/sample/.local/bin/baum', on_path: true } }, hooks: { agents: ['codex', 'claude-code'].map(agent => ({ agent, name: agent === 'codex' ? 'Codex' : 'Claude Code', detected: true, installed: false, enabled: false, plugin: 'baum@baum' })) } };
   await page.exposeFunction('nativeInvoke', async (command, args) => {
@@ -22,6 +25,21 @@ const assert = require('node:assert/strict');
     if (command === 'github_connection') {
       if (args.action === 'start') github = { ...disconnected, state: 'pending', pending: { id: 'attempt', user_code: 'ABCD-EFGH', verification_uri: 'https://github.com/login/device', expires_at: '2030-01-01T12:00:00Z', interval: 1 } };
       return github;
+    }
+    if (command === 'repositories') {
+      const repo = args.repository;
+      switch(args.action) {
+        case 'list': return {repositories: ['acme/found','acme/clone','acme/folder','acme/skip'].map(repository=>({repository,description:'',picked:picked.has(repository),clone:localClones.get(repository)||''}))};
+        case 'picked': return [...picked].map(repository=>({repository,settings:{},clones:[]}));
+        case 'found': return {running:false,scanned_at:'2026-10-23',repositories:{},attached:[]};
+        case 'pick': picked.add(repo); return {};
+        case 'unpick': picked.delete(repo); return null;
+        case 'target': return {dir:'/workspace/sample/code/acme/clone'};
+        case 'clone': cloning=true; picked.add(repo); return {state:'running',dir:args.dir};
+        case 'status': if(cloning&&repo==='acme/clone'){localClones.set(repo,'/workspace/sample/code/acme/clone');return {state:'done',dir:localClones.get(repo)};} throw Error('No clone started');
+        case 'attach': picked.add(repo||'acme/fallback');localClones.set(repo||'acme/fallback',args.path);return {};
+        case 'refresh': return {started:true,running:false};
+      }
     }
     if (command === 'review_settings') return reviews;
     if (command === 'save_review_settings') { reviews = args.settings; return { ok: true, lines: [] }; }
@@ -82,15 +100,24 @@ const assert = require('node:assert/strict');
   await page.locator('#claude-code-install').click();
   await page.locator('#continue').click();
   await page.screenshot({ path: `${screenshots}/onboarding-repositories-empty.png` });
-  await page.locator('#browse').click();
-  await page.waitForFunction(() => document.querySelectorAll('#repo-list li').length === 1);
-  await page.locator('#repo-path').fill('/workspace/sample/another');
-  await page.locator('#repo-form button[type=submit]').click();
-  await page.waitForFunction(() => document.querySelectorAll('#repo-list li').length === 2);
-  assert((await page.locator('#repo-list').textContent()).includes('~/project'));
-  assert.deepEqual(calls.filter(([c]) => c === 'add_repository').map(([, a]) => a.path), ['/workspace/sample/project', '/workspace/sample/another']);
-  assert.equal(calls.find(([c]) => c === 'add_repository')[1].path, '/workspace/sample/project');
+  await expect(page.getByRole('checkbox',{name:'Pick acme/found',exact:true})).toBeChecked();
+  assert(await page.locator('.repository-choice input').first().evaluate(element=>element.getBoundingClientRect().width<24),'Repository checkbox must stay compact under setup input styles');
+  await page.getByRole('checkbox',{name:'Pick acme/clone',exact:true}).check();
+  const cloneRow=page.locator('.repository-choices > li').filter({hasText:'acme/clone'});
+  await cloneRow.getByRole('button',{name:'Clone it',exact:true}).click();
+  await expect(cloneRow.getByLabel('Clone into')).toHaveValue('/workspace/sample/code/acme/clone');
+  await cloneRow.getByRole('button',{name:'Clone repository',exact:true}).click();
+  await expect(cloneRow).toContainText('~/code/acme/clone');
+  await page.getByRole('checkbox',{name:'Pick acme/folder',exact:true}).check();
+  await page.locator('.repository-choices > li').filter({hasText:'acme/folder'}).getByRole('button',{name:'Choose folder',exact:true}).click();
+  await expect.poll(()=>localClones.get('acme/folder')).toBe('/workspace/sample/project');
+  await page.getByRole('checkbox',{name:'Pick acme/skip',exact:true}).check();
+  await page.locator('.repository-choices > li').filter({hasText:'acme/skip'}).getByRole('button',{name:'Skip',exact:true}).click();
+  assert(!picked.has('acme/skip'));
+  assert(calls.some(([c,a])=>c==='repositories'&&a.action==='clone'&&a.dir==='/workspace/sample/code/acme/clone'));
+  assert(calls.some(([c,a])=>c==='repositories'&&a.action==='attach'&&a.repository==='acme/folder'));
   assert.deepEqual(calls.filter(([c]) => c === 'install_hooks').map(([,a]) => a.agent), ['codex', 'codex', 'claude-code']);
+  await page.evaluate(()=>window.scrollTo(0,0));
   await page.screenshot({ path: `${screenshots}/onboarding-repositories.png` });
   for (const width of [720, 1000]) {
     await page.setViewportSize({ width, height: 800 });
@@ -139,6 +166,14 @@ const assert = require('node:assert/strict');
   await page.locator('#continue').click();
   await expect.poll(() => calls.filter(([c]) => c === 'finish_setup').length).toBe(2);
   assert.equal(calls.filter(([c]) => c === 'save_review_settings').length, 1, 'Unchanged settings were saved again');
+  github=disconnected;
+  await page.reload();
+  await page.locator('[data-step] button').nth(3).click();
+  await expect(page.getByText('Connect GitHub to list your repositories, or choose a local folder below.')).toBeVisible();
+  const fallback=page.locator('.repository-fallback');
+  await expect(fallback.getByRole('button',{name:'Choose folder',exact:true})).toBeVisible();
+  await fallback.getByRole('button',{name:'Choose folder',exact:true}).click();
+  assert(calls.some(([c,a])=>c==='repositories'&&a.action==='attach'&&!a.repository&&a.path==='/workspace/sample/project'));
   assert.deepEqual(errors, []);
   await browser.close();
   console.log('Onboarding: GitHub sign-in, separate agent installs, retry, multiple repositories, back/skip, review settings, finish and minimum window width passed.');

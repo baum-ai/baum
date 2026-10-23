@@ -101,7 +101,7 @@ beforeEach(() => {
             ? Response.json(example)
             : path.startsWith("/s/test-ns/api/versions")
               ? Response.json([])
-              : path === "/s/test-ns/api/repos"
+              : path === "/s/test-ns/api/repos" || path === "/s/test-ns/api/repositories"
                 ? Response.json([
                     {
                       id: "clone",

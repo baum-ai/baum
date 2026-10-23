@@ -15,6 +15,7 @@ import {
   type UrlState,
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
+import { CloneActions, type FoundClones } from "./repositories";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
@@ -36,6 +37,7 @@ import {
   type GitHubConnection,
   type Automatic,
   type Clone,
+  type Repository,
   type Entry,
   type Snapshot,
   type Job,
@@ -131,6 +133,9 @@ export function App() {
 }
 function Workspace({ url }: { url: UrlState }) {
   const [clones, setClones] = useState<Clone[]>([]);
+  const [picked, setPicked] = useState<Repository[]>([]);
+  const [attached, setAttached] = useState<FoundClones["attached"]>([]);
+  const seenAttachments = useRef<Set<string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>({ entries: [], problems: [] });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [background, setBackground] = useState<
@@ -170,20 +175,42 @@ function Workspace({ url }: { url: UrlState }) {
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
     try {
-      const [repos, index, jobList, discovery, sync, auto, settings, connection] =
-        await Promise.all([
-          request<Clone[]>("api/repos"),
-          request<Snapshot>("api/index?history=1"),
-          request<{ jobs?: Job[] }>("api/jobs"),
-          request<typeof rates>("api/prs"),
-          request<typeof background>("api/background"),
-          // A daemon without automatic generation answers without repositories.
-          request<Partial<Automatic>>("api/automatic").catch(() => null),
-          request<ReviewDefaults>("api/settings").catch(() => null),
-          request<GitHubConnection>("api/github-auth").catch(() => null),
-        ]);
+      const [
+        repos,
+        index,
+        jobList,
+        discovery,
+        sync,
+        auto,
+        settings,
+        connection,
+        repositories,
+        found,
+      ] = await Promise.all([
+        request<Clone[]>("api/repos"),
+        request<Snapshot>("api/index?history=1"),
+        request<{ jobs?: Job[] }>("api/jobs"),
+        request<typeof rates>("api/prs"),
+        request<typeof background>("api/background"),
+        // A daemon without automatic generation answers without repositories.
+        request<Partial<Automatic>>("api/automatic").catch(() => null),
+        request<ReviewDefaults>("api/settings").catch(() => null),
+        request<GitHubConnection>("api/github-auth").catch(() => null),
+        request<Repository[]>("api/repositories"),
+        request<FoundClones>("api/clones/found").catch(() => null),
+      ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
+      setPicked(Array.isArray(repositories) ? repositories : []);
+      if (Array.isArray(found?.attached)) {
+        const keys = found.attached.map((a) => `${a.repository}:${a.at}`);
+        if (seenAttachments.current)
+          setAttached((previous) => [
+            ...previous,
+            ...found.attached.filter((_, i) => !seenAttachments.current!.has(keys[i]!)),
+          ]);
+        seenAttachments.current = new Set(keys);
+      }
       setSnapshot(index);
       setJobs(jobList.jobs ?? []);
       setRates(discovery);
@@ -229,14 +256,22 @@ function Workspace({ url }: { url: UrlState }) {
     isActiveJob(reviewJob(entry, jobs)) ? { ...entry, status: "generating" } : entry,
   );
   const rows = filtered(indexedEntries, filter, repo);
-  const repositories = Array.from(new Set(clones.map((c) => c.repository)));
+  const repositories = Array.from(
+    new Set([
+      ...picked.map((r) => r.repository),
+      ...indexedEntries.map((e) => e.pull_request.repository),
+    ]),
+  );
   const requestedNumber = Number(url.search.get("pr"));
   const requestedClone = url.search.get("clone");
-  const requestedRepository = clones.find((clone) => clone.id === requestedClone)?.repository;
+  const requestedRepository =
+    url.search.get("repository") ?? clones.find((clone) => clone.id === requestedClone)?.repository;
   const selectedEntry =
     indexedEntries.find(
       (entry) =>
-        entry.pull_request.number === requestedNumber && cloneFor(entry) === requestedClone,
+        entry.pull_request.number === requestedNumber &&
+        !!requestedClone &&
+        cloneFor(entry) === requestedClone,
     ) ??
     indexedEntries.find(
       (entry) =>
@@ -253,6 +288,12 @@ function Workspace({ url }: { url: UrlState }) {
       setGenerationError("A review of a selected pull request is already queued or running.");
       return;
     }
+    if (entries.some((e) => e.needs_clone || !cloneFor(e))) {
+      setGenerationError(
+        "Needs a local clone. Choose a folder or clone the repository in Repositories.",
+      );
+      return;
+    }
     setGenerationError("");
     setGenerating(true);
     try {
@@ -261,6 +302,13 @@ function Workspace({ url }: { url: UrlState }) {
         mode,
         isolation,
       );
+      if (answer === "needs_clone") {
+        setGenerationError(
+          "Needs a local clone. Choose a folder or clone the repository in Repositories.",
+        );
+        await reload();
+        return;
+      }
       if (answer === "isolation") {
         setFork({ entries, mode });
         return;
@@ -287,10 +335,8 @@ function Workspace({ url }: { url: UrlState }) {
   const refresh = async () => {
     setLoading(true);
     try {
-      for (const clone of clones.filter(
-        (c, i, list) => list.findIndex((r) => r.repository === c.repository) === i,
-      ))
-        await request("api/prs/refresh", { clone: clone.id });
+      for (const repository of picked)
+        await request("api/prs/refresh", { repository: repository.repository });
       await reload();
     } catch (e) {
       setError(errorText(e));
@@ -313,6 +359,12 @@ function Workspace({ url }: { url: UrlState }) {
       />
       <div className="local-frame">
         <div className="local-notices">
+          {attached.map((a) => (
+            <Notice key={`${a.repository}:${a.at}`}>
+              Found a local clone for {a.repository}.{" "}
+              <LocalLink href={appURL("?page=repositories")}>View repositories</LocalLink>
+            </Notice>
+          ))}
           {unsynced.length > 0 && page !== "settings" ? (
             <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
               {syncNotice(github, unsynced)}
@@ -341,7 +393,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
           {page === "repositories" ? (
             <RepositoriesPage
-              clones={clones}
+              repositories={picked}
               automatic={automatic}
               defaults={defaults}
               changed={reload}
@@ -370,6 +422,25 @@ function Workspace({ url }: { url: UrlState }) {
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
+          ) : selectedEntry?.needs_clone && !cloneFor(selectedEntry) ? (
+            <section>
+              <PageBar
+                title={selectedEntry.pull_request.title}
+                detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
+              />
+              <div className="local-page-body local-stack">
+                <LocalLink href={appURL()}>Inbox</LocalLink>
+                <h2>Needs a local clone</h2>
+                <p>
+                  Pull requests are available from GitHub. Choose a local folder before generating a
+                  review.
+                </p>
+                <CloneActions repository={selectedEntry.pull_request.repository} changed={reload} />
+                <a href={selectedEntry.pull_request.url} target="_blank" rel="noreferrer">
+                  Open on GitHub
+                </a>
+              </div>
+            </section>
           ) : selectedEntry ? (
             <LocalReview
               key={rowKey(selectedEntry)}
@@ -395,7 +466,8 @@ function Workspace({ url }: { url: UrlState }) {
                           generating ||
                           indexedEntries.some(
                             (entry) =>
-                              selection.has(rowKey(entry)) && isActiveJob(reviewJob(entry, jobs)),
+                              selection.has(rowKey(entry)) &&
+                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
                           )
                         }
                         onClick={() =>
@@ -500,7 +572,7 @@ function Workspace({ url }: { url: UrlState }) {
                     <p>
                       {clones.length
                         ? "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."
-                        : "Register a local clone in Repositories to get started."}
+                        : "Pick GitHub repositories in Repositories to get started."}
                     </p>
                   </div>
                 ) : null}
@@ -643,7 +715,9 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
       <JobState job={job} />
       <div className="min-w-0">
         <LocalLink
-          href={appURL(`?clone=${encodeURIComponent(job.clone)}&pr=${job.pr}`)}
+          href={appURL(
+            `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+          )}
           className="local-job-title"
         >
           {job.repository} <span>#{job.pr}</span>

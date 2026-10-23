@@ -14,6 +14,7 @@ fn main() {
         "review_settings",
         "save_review_settings",
         "github_connection",
+        "repositories",
         "finish_setup",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

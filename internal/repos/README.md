@@ -44,7 +44,7 @@ authenticated host and origin checks. JSON is decoded strictly.
 | --- | --- |
 | `GET /api/repos` | clones |
 | `GET /api/repos/check?path=` | whether a path can be registered |
-| `POST /api/repos` `{"path","settings"}` | register a clone |
+| `POST /api/repos` `{"path","settings"?,"repository"?}` | register a clone; optional repository uses any matching remote |
 | `DELETE /api/repos/{id}` | remove a clone (204, 404) |
 | `PUT /api/repos/{id}/settings` | replace the repository's settings |
 | `GET /api/repositories` | picked repositories, `[{"repository","settings","clones":[]}]` |
@@ -72,6 +72,10 @@ contacts nothing): `GET /api/repositories/{owner}/{name}/clone-target` (the
 default folder), `POST /api/repositories/{owner}/{name}/clone` `{"dir"?}` (picks
 the repository if needed, clones in the background and registers the clone with
 `AddFor`; 202, 400, 409) and `GET .../clone` (the current or last state).
+
+The explicit Choose folder action supplies `repository` to `POST /api/repos`,
+which calls `AddFor` and rejects a folder without a matching remote. Omitting
+it preserves the standalone path registration behavior.
 
 `AddFor` moves a path already registered to another repository to the new
 one. The daemon's clone finder uses `AttachFound` instead, which never changes

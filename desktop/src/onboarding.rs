@@ -41,6 +41,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-review-settings",
     "allow-save-review-settings",
     "allow-github-connection",
+    "allow-repositories",
     "allow-finish-setup",
 ];
 /// The bundled connecting screen.
@@ -679,6 +680,163 @@ pub async fn github_connection(
             .map_err(|e| format!("Cannot read the GitHub connection: {e}"))
     })
     .await
+}
+
+/// The bundled repository step reaches only these local API actions; it cannot
+/// provide an arbitrary HTTP path, method or credential.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn repositories(
+    app: AppHandle,
+    action: String,
+    repository: Option<String>,
+    query: Option<String>,
+    path: Option<String>,
+    dir: Option<String>,
+    include_documents: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    blocking(move || {
+        let (method, route, body) = repository_request(
+            &action,
+            repository.as_deref(),
+            query.as_deref(),
+            path.as_deref(),
+            dir.as_deref(),
+            include_documents.unwrap_or(false),
+        )?;
+        let launch =
+            crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;
+        let body = body.map(|b| b.to_string());
+        let response = crate::client::request(
+            &launch,
+            method,
+            &route,
+            body.as_deref(),
+            Duration::from_secs(130),
+        )?;
+        if !(200..300).contains(&response.status) {
+            let value: serde_json::Value =
+                serde_json::from_slice(&response.body).unwrap_or_default();
+            return Err(value["message"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    format!(
+                        "The baum daemon answered {}: {}",
+                        response.status,
+                        String::from_utf8_lossy(&response.body).trim()
+                    )
+                }));
+        }
+        if response.status == 204 {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&response.body).map_err(|e| format!("Cannot read repositories: {e}"))
+    })
+    .await
+}
+
+fn repository_request(
+    action: &str,
+    repository: Option<&str>,
+    query: Option<&str>,
+    path: Option<&str>,
+    dir: Option<&str>,
+    documents: bool,
+) -> Result<(&'static str, String, Option<serde_json::Value>), String> {
+    use serde_json::json;
+    let identity = || -> Result<&str, String> {
+        let name = repository.ok_or("Choose a GitHub repository.")?;
+        let parts: Vec<_> = name.split('/').collect();
+        if parts.len() != 2
+            || parts.iter().any(|p| {
+                p.is_empty()
+                    || *p == "."
+                    || *p == ".."
+                    || !p
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+            })
+        {
+            return Err("Invalid GitHub repository.".into());
+        }
+        Ok(name)
+    };
+    let base = || identity().map(|name| format!("/api/repositories/{name}"));
+    Ok(match action {
+        "list" => (
+            "GET",
+            format!(
+                "/api/github/repositories?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("query", query.unwrap_or(""))
+                    .finish()
+            ),
+            None,
+        ),
+        "picked" => ("GET", "/api/repositories".into(), None),
+        "found" => ("GET", "/api/clones/found".into(), None),
+        "refresh" => (
+            "POST",
+            "/api/clones/found/refresh".into(),
+            Some(json!({"include_documents": documents})),
+        ),
+        "pick" => (
+            "POST",
+            "/api/repositories".into(),
+            Some(json!({"repository": identity()?})),
+        ),
+        "unpick" => ("DELETE", base()?, Some(json!({}))),
+        "target" => ("GET", format!("{}/clone-target", base()?), None),
+        "status" => ("GET", format!("{}/clone", base()?), None),
+        "clone" => (
+            "POST",
+            format!("{}/clone", base()?),
+            Some(dir.map(|d| json!({"dir":d})).unwrap_or(json!({}))),
+        ),
+        "attach" => {
+            let mut body = json!({"path":path.ok_or("Choose a local folder.")?});
+            if repository.is_some() {
+                body["repository"] = json!(identity()?);
+            }
+            ("POST", "/api/repos".into(), Some(body))
+        }
+        _ => return Err("Unknown repository action.".into()),
+    })
+}
+
+#[cfg(test)]
+mod repository_relay_tests {
+    use super::*;
+    #[test]
+    fn relay_allows_only_named_actions_and_safe_identities() {
+        assert!(repository_request("DELETE", None, None, None, None, false).is_err());
+        for name in [
+            "../repo",
+            "owner/../repo",
+            "owner/repo\r\nX: a",
+            "owner/repo?x",
+            "owner/",
+        ] {
+            assert!(repository_request("clone", Some(name), None, None, None, false).is_err());
+        }
+        let (_, route, _) =
+            repository_request("list", None, Some("x\r\nHeader: bad"), None, None, false).unwrap();
+        assert!(!route.contains('\r') && !route.contains('\n'));
+        let (method, route, body) = repository_request(
+            "attach",
+            Some("owner/repo"),
+            None,
+            Some("/work/code/fork"),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(method, "POST");
+        assert_eq!(route, "/api/repos");
+        assert_eq!(body.unwrap()["repository"], "owner/repo");
+        let (_, _, body) = repository_request("refresh", None, None, None, None, true).unwrap();
+        assert_eq!(body.unwrap()["include_documents"], true);
+    }
 }
 
 /// Leaves the setup screen (a synchronous command, so on the main thread):

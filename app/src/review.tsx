@@ -31,6 +31,7 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
+import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./live";
 function Transcript({ id, query }: { id: string; query: string }) {
@@ -229,7 +230,12 @@ export function LocalReview({
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
             beside: doc ? (
-              <Button variant="secondary" size="compact" disabled={generating} onClick={generate}>
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={generating || entry.needs_clone}
+                onClick={generate}
+              >
                 {generating
                   ? job?.state === "queued"
                     ? "Review queued"
@@ -239,7 +245,12 @@ export function LocalReview({
             ) : null,
           }}
           placeholder={
-            generating ? (
+            entry.needs_clone ? (
+              <div className="local-review-empty">
+                <h2>Needs a local clone</h2>
+                <CloneActions repository={pr.repository} changed={changed} />
+              </div>
+            ) : generating ? (
               <section aria-label="Review generation" className="local-review-empty">
                 <LiveDot />
                 <h2 role="status">
@@ -290,6 +301,12 @@ export function LocalReview({
           notices={
             <>
               <LiveSessions sessions={running} />
+              {entry.needs_clone && doc ? (
+                <Notice>
+                  Needs a local clone. This saved review remains available.
+                  <CloneActions repository={pr.repository} changed={changed} />
+                </Notice>
+              ) : null}
               {job && isActiveJob(job) && doc ? (
                 <ReviewJob key={job.id} job={job} changed={changed} />
               ) : job && doc && job.state !== "completed" ? (
