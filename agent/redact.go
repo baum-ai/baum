@@ -109,6 +109,15 @@ func RedactOutput(ctx context.Context, validator *review.DocumentValidator, reda
 	return redacted, closed, nil
 }
 
+// RedactTaskOutput masks secret spans in everything RunTask returned, as
+// RedactOutput does for a review, before any of it is stored, uploaded or
+// shown. A task's document has no review contract, so every string in it, keys
+// included, is free text and none is a closed value.
+func RedactTaskOutput(ctx context.Context, redactor *bundle.Redactor, document []byte, outcome *Outcome) ([]byte, error) {
+	redacted, _, err := RedactOutput(ctx, nil, redactor, document, nil, nil, outcome)
+	return redacted, err
+}
+
 // RejectSecrets rejects a run whose output had a secret masked in a closed
 // value, as RedactOutput counts them in closed. The masked document may still
 // be valid, so the rejection is explicit: it sets ReasonValidationRejected,
