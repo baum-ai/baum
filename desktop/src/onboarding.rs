@@ -40,6 +40,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-add-repository",
     "allow-review-settings",
     "allow-save-review-settings",
+    "allow-github-connection",
     "allow-finish-setup",
 ];
 /// The bundled connecting screen.
@@ -55,6 +56,8 @@ pub const MENU_LABEL: &str = "Command Line and Hooks…";
 const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
 // Login PATH resolution (30 s), two native actions (90 s each), and overhead.
 const HOOKS_TIMEOUT: Duration = Duration::from_secs(240);
+/// Starting a GitHub sign-in asks GitHub for a device code.
+const GITHUB_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -655,6 +658,48 @@ pub async fn save_review_settings(
         let mut lines = out.stdout;
         lines.extend(out.stderr);
         Ok(Outcome { ok: out.ok, lines })
+    })
+    .await
+}
+
+/// The GitHub step signs in through the attached daemon's own API, which runs
+/// the device flow and keeps the credential, so the screen never holds a
+/// token. It reads the connection, or starts, cancels or rechecks a sign-in;
+/// disconnecting stays in the app's settings.
+#[tauri::command]
+pub async fn github_connection(
+    app: AppHandle,
+    action: Option<String>,
+) -> Result<serde_json::Value, String> {
+    blocking(move || {
+        let launch =
+            crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;
+        let response = match action.as_deref() {
+            None => crate::client::request(
+                &launch,
+                "GET",
+                "/api/github-auth",
+                None,
+                crate::client::POLL_TIMEOUT,
+            )?,
+            Some(name @ ("start" | "cancel" | "retry")) => crate::client::request(
+                &launch,
+                "POST",
+                &format!("/api/github-auth/{name}"),
+                Some("{}"),
+                GITHUB_TIMEOUT,
+            )?,
+            Some(other) => return Err(format!("Unknown GitHub action: {other}")),
+        };
+        if response.status != 200 {
+            return Err(format!(
+                "The baum daemon answered {}: {}",
+                response.status,
+                String::from_utf8_lossy(&response.body).trim()
+            ));
+        }
+        serde_json::from_slice(&response.body)
+            .map_err(|e| format!("Cannot read the GitHub connection: {e}"))
     })
     .await
 }

@@ -619,6 +619,20 @@ dialog.local-dialog-wide {
   background: #f8efdc;
   color: #6b4a1f;
   font-size: var(--text-xs);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+.local-notice p {
+  margin: 0;
+}
+.local-notice-action a {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  white-space: nowrap;
 }
 /* The review form brings its own section padding. */
 .local-panel.review-card {
@@ -932,4 +946,74 @@ dialog.local-dialog-wide {
   padding-right: 0.75rem;
   border-radius: var(--radius-md);
   background: var(--surface-selected, #f5ecdb);
+}
+
+/* Settings: one column at a readable width. */
+.local-settings {
+  max-width: 52rem;
+  gap: 1.25rem;
+}
+/* The review form keeps the desktop setup's markup but takes the app's
+   palette here, so both settings panels read as one page. */
+.settings-card .settings-form {
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-card .review-section {
+  padding: 1.25rem;
+}
+.settings-card .review-section + .review-section {
+  border-top-color: var(--border-subtle);
+}
+.settings-card .review-label,
+.settings-card .review-section legend {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.settings-card .review-note,
+.settings-card .switch-row small {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.settings-card .switch-row {
+  font-size: var(--text-base);
+}
+.settings-card .harness-tile,
+.settings-card .select select,
+.settings-card .model-row input,
+.settings-card .segmented {
+  border-color: var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-primary);
+}
+.settings-card .harness-tile small {
+  color: var(--text-tertiary);
+}
+.settings-card .harness-option:hover .harness-tile,
+.settings-card .select select:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+.settings-card .harness-option input:checked + .harness-tile {
+  border-color: var(--action-primary);
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 1px var(--action-primary);
+}
+.settings-card .select::after {
+  border-color: var(--text-secondary);
+}
+.settings-card .segmented span {
+  color: var(--text-secondary);
+}
+.settings-card .segmented input:checked + span {
+  background: var(--action-primary);
+  color: var(--text-inverse);
+}
+.settings-card .switch-row input[role="switch"] {
+  background: var(--border-strong);
+}
+.settings-card .switch-row input[role="switch"]:checked {
+  background: var(--action-primary);
+}
+.settings-card .switch-row input[role="switch"]::after {
+  background: var(--surface-card);
 }

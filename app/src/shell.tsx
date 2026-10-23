@@ -119,10 +119,51 @@ export function PageBar({
 
 /** Something worth knowing that is not a failure: a pause, a refresh that
  *  will retry, a problem on the computer. Errors stay `Alert`s. */
-export function Notice({ children }: { children: ReactNode }) {
+export function Notice({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <p role="status" className="local-notice">
-      {children}
-    </p>
+    <div role="status" className="local-notice">
+      <p>{children}</p>
+      {action ? <span className="local-notice-action">{action}</span> : null}
+    </div>
+  );
+}
+
+/** The header of a settings panel: a glyph, a title with an optional state
+ *  beside it, a line of detail, and the panel's actions on the right. */
+export function PanelHeader({
+  id,
+  icon,
+  title,
+  badge,
+  detail,
+  actions,
+}: {
+  id: string;
+  icon: ReactNode;
+  title: ReactNode;
+  badge?: ReactNode;
+  detail?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-3 p-5">
+      <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3">
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-(--radius-md) bg-(--surface-wash) text-(--text-primary)">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 id={id} className="text-base font-semibold">
+              {title}
+            </h2>
+            {badge}
+          </div>
+          {detail ? <p className="mt-0.5 text-xs text-(--text-secondary)">{detail}</p> : null}
+        </div>
+      </div>
+      {actions ? (
+        <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>
+      ) : null}
+    </header>
   );
 }

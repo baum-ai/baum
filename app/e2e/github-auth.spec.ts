@@ -43,17 +43,21 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(
     panel.getByRole("button", { name: "Sign in with GitHub", exact: true }),
   ).toBeEnabled();
+  await context.route("https://github.com/login/device", (route) =>
+    route.fulfill({ contentType: "text/html", body: "GitHub device page" }),
+  );
+  // Signing in opens GitHub's device page straight away.
+  const signInPopup = page.waitForEvent("popup");
   await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
+  await expect(await signInPopup).toHaveURL("https://github.com/login/device");
+  await (await signInPopup).close();
   await expect(panel.getByLabel("GitHub sign-in code")).toHaveText("ABCD-EFGH");
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await panel.getByRole("button", { name: "Copy code", exact: true }).click();
   await expect(panel.getByText("Code copied.", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("ABCD-EFGH");
-  await context.route("https://github.com/login/device", (route) =>
-    route.fulfill({ contentType: "text/html", body: "GitHub device page" }),
-  );
   const popupPromise = page.waitForEvent("popup");
-  await panel.getByRole("link", { name: "Open GitHub device sign-in" }).click();
+  await panel.getByRole("link", { name: "Open GitHub" }).click();
   const popup = await popupPromise;
   await expect(popup).toHaveURL("https://github.com/login/device");
   await popup.close();
@@ -77,9 +81,13 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
     .poll(async () => (await (await page.request.get(`${base}api/github-auth`)).json()).login)
     .toBe("alice");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(panel).toContainText("Saved GitHub account: alice");
+  await expect(panel).toContainText("Signed in as alice");
+  await panel.screenshot({
+    path: "test-results/github-auth-connected.png",
+    animations: "disabled",
+  });
   await page.reload();
-  await expect(panel).toContainText("Saved GitHub account: alice");
+  await expect(panel).toContainText("Signed in as alice");
   await expect(panel).toContainText("baum credential store");
   // A private GitHub read used by generation must resolve this saved account
   // through production config; the mocked external boundary rejects other tokens.
@@ -90,10 +98,10 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("alice");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await mode("pending");
-  await panel.getByRole("button", { name: "Reconnect GitHub", exact: true }).click();
+  await panel.getByRole("button", { name: "Reconnect", exact: true }).click();
   await expect(panel.getByLabel("GitHub sign-in code")).toBeVisible();
   await mode("bob");
-  await expect(panel).toContainText("Saved GitHub account: bob");
+  await expect(panel).toContainText("Signed in as bob");
   await expect(panel.getByLabel("GitHub sign-in code")).toHaveCount(0);
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
@@ -101,8 +109,8 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("bob");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await panel.getByRole("button", { name: "Disconnect saved account" }).click();
-  await expect(panel).toContainText("No GitHub account saved");
+  await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(panel).toContainText("Not connected");
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText(/Local fixture review version/).first()).toBeVisible();
@@ -119,23 +127,23 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
   await expect(panel).toContainText("Check your connection");
   await mode("alice");
-  await expect(panel).toContainText("Saved GitHub account: alice");
-  await panel.getByRole("button", { name: "Disconnect saved account" }).click();
+  await expect(panel).toContainText("Signed in as alice");
+  await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
   await mode("scopes");
   await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
   await expect(panel).toContainText("grant both permissions");
   await panel.getByRole("button", { name: "Cancel sign-in" }).click();
   await mode("locked");
-  await panel.getByRole("button", { name: "Check connection again" }).click();
+  await panel.getByRole("button", { name: "Check connection", exact: true }).click();
   await expect(panel).toContainText("Unlock your operating system");
   await mode("pending");
-  await panel.getByRole("button", { name: "Check connection again" }).click();
+  await panel.getByRole("button", { name: "Check connection", exact: true }).click();
   await expect(panel.getByText(/Unlock your operating system/)).toHaveCount(0);
   await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
   await mode("locked");
   await expect(panel).toContainText("Unlock your operating system");
   await mode("alice");
-  await expect(panel).toContainText("Saved GitHub account: alice");
+  await expect(panel).toContainText("Signed in as alice");
 
   // Every endpoint uses the real session namespace and mutation boundary.
   const anonymous = await browser.newContext();

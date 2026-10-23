@@ -201,7 +201,7 @@ it.each([
     stale: true,
     error: "offline",
     remaining: 4999,
-    note: "Couldn't refresh acme/demo from GitHub (offline). Showing what was saved.",
+    note: "GitHub is not connected, so baum cannot refresh pull requests.",
   },
   {
     stale: false,
@@ -419,11 +419,40 @@ it("shows failed background refresh without hiding cached reviews", async () => 
       : original(...args),
   );
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain(
-    "background metadata refresh is unavailable (metadata_unavailable)",
-  );
-  expect(node.textContent).toContain("Cached reviews remain readable");
+  expect(node.textContent).toContain("GitHub is not connected");
+  expect(node.textContent).toContain("Saved reviews are still available");
   expect(node.querySelector('[aria-label="Select acme/demo #1"]')).not.toBeNull();
+});
+
+it("folds every repository GitHub could not refresh into one notice with one action", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const failed = (repository: string) => ({
+    repository,
+    error: "discovery_unavailable",
+    next_refresh: "2026-10-15T12:01:00Z",
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/background"
+      ? Promise.resolve(Response.json([failed("acme/demo"), failed("acme/other")]))
+      : String(args[0]) === "/s/test-ns/api/github-auth"
+        ? Promise.resolve(
+            Response.json({
+              state: "connected",
+              host: "github.com",
+              saved: true,
+              login: "octocat",
+              override: false,
+            }),
+          )
+        : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const notices = [...node.querySelectorAll(".local-notice")];
+  expect(notices).toHaveLength(1);
+  expect(notices[0]!.textContent).toContain("could not refresh 2 repositories from GitHub");
+  expect(notices[0]!.querySelector("a")!.textContent).toBe("Open settings");
+  expect(notices[0]!.querySelector("a")!.getAttribute("href")).toContain("page=settings");
 });
 
 const diagnosticsReport = {

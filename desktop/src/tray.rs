@@ -542,6 +542,12 @@ fn toggle_pause(app: &AppHandle) {
 }
 
 /// `main` attached to a daemon.
+/// The attached daemon's launch credential, while one is attached.
+pub fn launch(app: &AppHandle) -> Option<Launch> {
+    let shared = shared(app)?;
+    lock(&shared.0.launch).clone()
+}
+
 pub fn attached(app: &AppHandle, launch: &Launch) {
     let Some(shared) = shared(app) else { return };
     *lock(&shared.0.launch) = Some(launch.clone());

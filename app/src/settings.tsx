@@ -11,7 +11,8 @@ import {
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, PanelHeader } from "./shell";
+import { SlidersIcon } from "@baum/viewer/components/icons";
 import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
 import {
   modelPresets,
@@ -83,7 +84,7 @@ export function SettingsPage({
           authChanged={authChanged}
         />
       ) : null}
-      <div className="local-page-body">
+      <div className="local-page-body local-settings">
         {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
         {automatic && defaults ? (
           <ReviewSettingsSection
@@ -95,7 +96,7 @@ export function SettingsPage({
         ) : (
           <p role="status">Reading your review settings…</p>
         )}
-        <p className="text-xs text-(--text-tertiary)">
+        <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
           and stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
         </p>
@@ -146,28 +147,39 @@ function ReviewSettingsSection({
     }
   };
   return (
-    <section aria-label="Reviews" className="local-stack">
-      {error ? <Alert>{error}</Alert> : null}
+    <section aria-labelledby="review-settings-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="review-settings-heading"
+        icon={<SlidersIcon size={20} />}
+        title="Reviews"
+        detail="The agent that writes reviews, and which pull requests baum reviews on its own."
+      />
+      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
       <ReviewSettingsForm
         settings={draft}
         disabled={pending}
         onChange={setDraft}
-        className="local-panel"
+        className="settings-form"
       />
-      <div className="local-inline-form">
-        <Button
-          size="compact"
-          disabled={!dirty || pending || !draft.model.trim()}
-          onClick={() => void save()}
-        >
-          {pending ? "Saving…" : "Save review settings"}
-        </Button>
-        {dirty ? (
-          <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
-            Discard changes
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <p className="text-xs text-(--text-tertiary)">
+          {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty ? (
+            <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
+              Discard changes
+            </Button>
+          ) : null}
+          <Button
+            size="compact"
+            disabled={!dirty || pending || !draft.model.trim()}
+            onClick={() => void save()}
+          >
+            {pending ? "Saving…" : "Save review settings"}
           </Button>
-        ) : null}
-      </div>
+        </div>
+      </footer>
     </section>
   );
 }

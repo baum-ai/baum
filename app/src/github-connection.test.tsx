@@ -33,6 +33,7 @@ beforeEach(() => {
   root = createRoot(node);
   status = { ...disconnected };
   calls = [];
+  vi.stubGlobal("open", vi.fn());
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, options?: RequestInit) => {
@@ -54,9 +55,12 @@ async function click(label: string) {
   await act(async () => button!.click());
 }
 it("starts and cancels with namespaced JSON mutations; opens only the fixed GitHub URL", async () => {
+  const open = vi.fn();
+  vi.stubGlobal("open", open);
   await render();
   status = pending;
   await click("Sign in with GitHub");
+  expect(open).toHaveBeenCalledWith("https://github.com/login/device", "_blank", "noreferrer");
   expect(node.textContent).toContain("ABCD-EFGH");
   expect(node.querySelector("a")!.href).toBe("https://github.com/login/device");
   expect(calls.at(-1)).toMatchObject({
@@ -68,6 +72,29 @@ it("starts and cancels with namespaced JSON mutations; opens only the fixed GitH
   expect(node.textContent).toContain("sign-in was cancelled");
   expect(node.textContent).not.toContain("ABCD-EFGH");
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/cancel");
+});
+it("copies the new code as part of the sign-in click", async () => {
+  const write = vi.fn(async (items: ClipboardItem[]) => {
+    expect(await items[0]!.getType("text/plain").then((b) => b.text())).toBe("ABCD-EFGH");
+  });
+  vi.stubGlobal("navigator", { clipboard: { write } });
+  vi.stubGlobal(
+    "ClipboardItem",
+    class {
+      items: Record<string, Promise<string>>;
+      constructor(items: Record<string, Promise<string>>) {
+        this.items = items;
+      }
+      async getType(type: string) {
+        return new Blob([await this.items[type]!]);
+      }
+    },
+  );
+  await render();
+  status = pending;
+  await click("Sign in with GitHub");
+  expect(write).toHaveBeenCalledOnce();
+  expect(node.textContent).toContain("Code copied. Paste it on GitHub.");
 });
 it("copies the displayed code and explains clipboard failure", async () => {
   status = pending;
@@ -104,9 +131,9 @@ it("keeps the effective override distinct from the saved account on disconnect",
   };
   await render();
   expect(node.textContent).toContain("explicit credential from environment");
-  expect(node.textContent).toContain("saved-cat (not currently used)");
+  expect(node.textContent).toContain("saved-cat on github.com (not currently used)");
   status = { ...disconnected, override: true, source: "environment" };
-  await click("Disconnect saved account");
+  await click("Disconnect");
   expect(node.textContent).toContain("explicit credential from environment");
   expect(node.textContent).not.toContain("saved-cat");
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/disconnect");
@@ -123,7 +150,7 @@ it.each([
   await render();
   expect(node.textContent).toContain(text);
   status = { ...disconnected, state: "connected", saved: true, login: "recovered" };
-  await click("Check connection again");
+  await click("Check connection");
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/retry");
   expect(node.textContent).toContain("recovered");
 });
@@ -158,7 +185,7 @@ it("ignores an old GET that finishes after a new authorization starts", async ()
 it("recovers from a local transport failure", async () => {
   vi.mocked(fetch).mockRejectedValueOnce(Error("offline"));
   await render();
-  expect(node.textContent).toContain("Could not check");
+  expect(node.textContent).toContain("Could not check the GitHub connection. offline.");
   await click("Check again");
   expect(node.textContent).toContain("Sign in with GitHub");
 });

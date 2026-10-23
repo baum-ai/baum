@@ -64,8 +64,10 @@ Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership
 remains explicit. Cached discovery keeps the inbox readable when refresh fails;
-a calm notice appears for a failed refresh or exhausted GitHub allowance,
-never merely because the cache is old. Refresh asks
+one notice covers every repository GitHub could not refresh, says whether
+GitHub is disconnected or needs attention, and links to Settings; another
+covers an exhausted GitHub allowance. Neither appears merely because the cache
+is old. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
 restricted fork/author entries are excluded from batches and require explicit
 isolation confirmation when generated individually. Generation confirms an
@@ -137,10 +139,13 @@ transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
 
-GitHub connection is available in Settings and the first-run
-diagnostics dialog. Sign in with GitHub starts device authorization through the
-daemon: copy the code and open the fixed `https://github.com/login/device`
-page in your browser. The panel observes only safe local connection status;
+GitHub connection is available in Settings, the first-run
+diagnostics dialog and the desktop setup's first step, which share
+`src/github-auth.ts`. Sign in with GitHub starts device authorization through
+the daemon and, in the same click, opens the fixed
+`https://github.com/login/device` page in the browser and copies the code once
+the daemon returns it (a clipboard write given a promise, since by then the
+click no longer counts and the window has lost focus). The panel observes only safe local connection status;
 Go polls GitHub even after the window closes. Denial, expiry, network failures,
 missing scopes, revoked authorization and locked credential stores have retry
 or reconnect controls. An explicit environment/config credential is shown

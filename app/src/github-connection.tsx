@@ -1,220 +1,230 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button } from "@baum/viewer/components/ui";
-import { request, type GitHubConnection } from "./api";
+import type { ReactNode } from "react";
+import {
+  ActionLink,
+  Alert,
+  Badge,
+  Button,
+  LiveDot,
+  Spinner,
+  type BadgeTone,
+} from "@baum/viewer/components/ui";
+import { ExternalLinkIcon, GitHubIcon } from "@baum/viewer/components/icons";
+import type { GitHubConnection } from "./api";
+import {
+  DEVICE_URL,
+  daemonGitHubAuth,
+  messages,
+  terminal,
+  useGitHubConnection,
+} from "./github-auth";
+import { PanelHeader } from "./shell";
 
-const messages: Record<string, string> = {
-  credential_store_unavailable: "Unlock your operating system credential store, then try again.",
-  reconnect_required: "GitHub authorization expired or was revoked. Reconnect GitHub.",
-  insufficient_scopes:
-    "GitHub needs repository and organization read access. Reconnect and grant both permissions.",
-  sso_required:
-    "Authorize baum for your organization's GitHub SSO, then check the connection again.",
-  permission_denied: "Check your repository access and GitHub authorization permissions.",
-  auth_request_failed: "GitHub could not be reached. Check your connection and try again.",
-};
-const terminal: Record<string, string> = {
-  denied: "GitHub sign-in was denied. You can try again when you are ready.",
-  expired: "This sign-in code expired. Start again for a new code.",
-  cancelled: "GitHub sign-in was cancelled.",
-};
-
-/** The daemon performs OAuth polling even while this panel is closed. This
- * panel only observes its safe status, never GitHub's token endpoint. */
 export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void } = {}) {
-  const [connection, setConnection] = useState<GitHubConnection>();
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState("");
-  const sequence = useRef(0);
-  const alive = useRef(false);
-  const mutating = useRef(false);
-  const previous = useRef<string | undefined>(undefined);
-  const changed = useRef(onChanged);
-  useEffect(() => {
-    changed.current = onChanged;
-  });
-  useEffect(() => {
-    if (!connection) return;
-    const identity = JSON.stringify([
-      connection.saved,
-      connection.login,
-      connection.source,
-      connection.error,
-    ]);
-    if (previous.current !== undefined && previous.current !== identity) changed.current?.();
-    previous.current = identity;
-  }, [connection]);
-  const read = useCallback(async () => {
-    if (mutating.current) return;
-    const mine = ++sequence.current;
-    try {
-      const body = await request<GitHubConnection>("api/github-auth");
-      if (alive.current && mine === sequence.current) {
-        setConnection(body);
-        setError("");
-      }
-    } catch {
-      if (alive.current && mine === sequence.current)
-        setError("Could not check the GitHub connection. Try again.");
-    }
-  }, []);
-  useEffect(() => {
-    alive.current = true;
-    void read();
-    return () => {
-      alive.current = false;
-      sequence.current++;
-    };
-  }, [read]);
-  useEffect(() => {
-    const timer = setInterval(
-      () => void read(),
-      connection?.pending || connection?.state === "loading" ? 1500 : 10000,
-    );
-    const focus = () => void read();
-    addEventListener("focus", focus);
-    return () => {
-      clearInterval(timer);
-      removeEventListener("focus", focus);
-    };
-  }, [connection?.pending?.id, connection?.state, read]);
-  const action = async (name: string) => {
-    mutating.current = true;
-    const mine = ++sequence.current;
-    setBusy(true);
-    setCopied("");
-    try {
-      const body = await request<GitHubConnection>(`api/github-auth/${name}`, {});
-      if (alive.current && mine === sequence.current) {
-        setConnection(body);
-        setError("");
-      }
-    } catch {
-      if (alive.current && mine === sequence.current)
-        setError("Could not update the GitHub connection. Check the connection and try again.");
-    } finally {
-      mutating.current = false;
-      if (alive.current) setBusy(false);
-    }
-  };
-  const pending = connection?.pending;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(pending?.user_code ?? "");
-      if (alive.current) setCopied("Code copied.");
-    } catch {
-      if (alive.current) setCopied("Could not copy. Select and copy the code above.");
-    }
-  };
+  const { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy } =
+    useGitHubConnection(daemonGitHubAuth, onChanged);
+  const status = connection ? describe(connection) : null;
+  const idle = connection && !pending;
+  const notes =
+    connection &&
+    (connection.override || connection.error || terminal[connection.state] || pending);
   return (
-    <section aria-labelledby="github-connection-heading" className="local-panel space-y-3">
-      <h2 id="github-connection-heading" className="text-lg">
-        GitHub connection
-      </h2>
-      <p>
-        Connect GitHub.com to discover pull requests and refresh reviews. Saved reviews remain
-        available when disconnected.
-      </p>
-      {!connection && !error ? <p role="status">Checking GitHub connection…</p> : null}
-      {error ? (
-        <Alert>
-          {error}{" "}
-          <Button disabled={busy} onClick={() => void read()}>
-            Check again
-          </Button>
-        </Alert>
-      ) : null}
-      {connection ? (
-        <>
-          <p className="text-xs">
-            Host: {connection.host}. Credential source: {connection.source || "none"}.
-          </p>
-          {connection.override ? (
-            <p role="status">
+    <section aria-labelledby="github-connection-heading" className="local-panel p-0!">
+      <PanelHeader
+        id="github-connection-heading"
+        icon={<GitHubIcon size={20} />}
+        title="GitHub connection"
+        badge={status ? <Badge tone={status.tone}>{status.label}</Badge> : null}
+        detail={
+          connection?.saved ? (
+            <>
+              Signed in as <strong className="text-(--text-primary)">{connection.login}</strong> on{" "}
+              {connection.host}
+              {connection.override ? " (not currently used)" : ""}.
+            </>
+          ) : pending ? (
+            "Enter the code below on GitHub to finish signing in."
+          ) : (
+            "Connect GitHub.com to discover pull requests and refresh reviews."
+          )
+        }
+        actions={
+          idle ? (
+            <>
+              <Button
+                variant="ghost"
+                size="compact"
+                disabled={busy}
+                onClick={() => void action("retry")}
+              >
+                Check connection
+              </Button>
+              <Button
+                variant={connection.saved ? "secondary" : "primary"}
+                size="compact"
+                className="gap-2"
+                disabled={busy || connection.state === "loading"}
+                onClick={signIn}
+              >
+                {busy ? (
+                  "Working…"
+                ) : connection.saved || connection.error === "reconnect_required" ? (
+                  "Reconnect"
+                ) : (
+                  <>
+                    <GitHubIcon />
+                    Sign in with GitHub
+                  </>
+                )}
+              </Button>
+            </>
+          ) : null
+        }
+      />
+      {!connection || error || notes ? (
+        <div className="space-y-4 border-t border-(--border-subtle) p-5">
+          {!connection && !error ? (
+            <p role="status" className="flex items-center gap-2 text-(--text-secondary)">
+              <Spinner /> Checking GitHub connection…
+            </p>
+          ) : null}
+          {error ? (
+            <Alert className="flex flex-wrap items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={busy || checking}
+                onClick={() => void recheck()}
+              >
+                {checking ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Spinner /> Checking…
+                  </span>
+                ) : (
+                  "Check again"
+                )}
+              </Button>
+            </Alert>
+          ) : null}
+          {connection?.override ? (
+            <Callout>
               Using an explicit credential from {connection.source}. It takes precedence over
               desktop sign-in. Remove that override from your environment or configuration to use
               the saved account.
-            </p>
+            </Callout>
           ) : null}
-          {connection.saved ? (
-            <p role="status">
-              Saved GitHub account: <strong>{connection.login}</strong>
-              {connection.override ? " (not currently used)." : "."}
-            </p>
-          ) : !pending ? (
-            <p>No GitHub account saved in baum.</p>
-          ) : null}
-          {connection.error ? (
+          {connection?.error ? (
             <Alert>
               {messages[connection.error] ?? "GitHub connection needs attention. Try again."}
             </Alert>
           ) : null}
-          {terminal[connection.state] ? <p role="status">{terminal[connection.state]}</p> : null}
+          {connection && terminal[connection.state] ? (
+            <p role="status" className="text-(--text-secondary)">
+              {terminal[connection.state]}
+            </p>
+          ) : null}
           {pending ? (
-            <>
-              <p>Enter this code on GitHub to authorize baum:</p>
-              <p
-                className="text-2xl font-mono select-all break-all"
-                aria-label="GitHub sign-in code"
-              >
-                {pending.user_code}
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button variant="secondary" onClick={() => void copy()}>
-                  Copy code
-                </Button>
-                <a href="https://github.com/login/device" target="_blank" rel="noreferrer">
-                  Open GitHub device sign-in
-                </a>
-                <Button variant="secondary" disabled={busy} onClick={() => void action("cancel")}>
+            <div className="space-y-4">
+              <div className="rounded-(--radius-md) border border-(--border-default) bg-(--surface-wash) px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p
+                    className="font-mono text-2xl font-semibold tracking-[0.2em] select-all break-all"
+                    aria-label="GitHub sign-in code"
+                  >
+                    {pending.user_code}
+                  </p>
+                  <Button variant="secondary" size="compact" onClick={() => void copy()}>
+                    Copy code
+                  </Button>
+                </div>
+                <p
+                  role="status"
+                  className="mt-3 flex items-center gap-2 text-xs text-(--text-secondary)"
+                >
+                  <LiveDot className="text-(--status-positive)" />
+                  {copied || "Waiting for you to enter this code on GitHub."}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <ActionLink
+                  href={DEVICE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="compact"
+                  className="gap-2"
+                  onClick={() => void copy()}
+                >
+                  Open GitHub <ExternalLinkIcon size={14} />
+                </ActionLink>
+                <Button
+                  variant="ghost"
+                  size="compact"
+                  disabled={busy}
+                  onClick={() => void action("cancel")}
+                >
                   Cancel sign-in
                 </Button>
               </div>
-              {copied ? <p role="status">{copied}</p> : null}
-              <p role="status">
-                Waiting for GitHub authorization… You can close this window and return later.
+              <p className="text-xs text-(--text-tertiary)">
+                The code expires at{" "}
+                {new Date(pending.expires_at).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                . Grant repository and organization read access.
               </p>
-              <p className="text-xs">
-                Code expires {new Date(pending.expires_at).toLocaleTimeString()}. Grant repository
-                and organization read access. Credentials are saved in your operating system
-                credential store.
-              </p>
-            </>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              <Button
-                disabled={busy || connection.state === "loading"}
-                onClick={() => void action("start")}
-              >
-                {busy
-                  ? "Working…"
-                  : connection.saved || connection.error === "reconnect_required"
-                    ? "Reconnect GitHub"
-                    : "Sign in with GitHub"}
-              </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => void action("retry")}>
-                Check connection again
-              </Button>
-              {connection.saved ? (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void action("disconnect")}
-                >
-                  Disconnect saved account
-                </Button>
-              ) : null}
             </div>
-          )}
-          {connection.saved ? (
-            <p className="text-xs">
-              Disconnect removes baum's saved credential from this computer.{" "}
-              {connection.override ? "The explicit credential remains active. " : ""}It does not
-              revoke access on GitHub.
-            </p>
           ) : null}
-        </>
+        </div>
+      ) : null}
+      {connection ? (
+        <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-(--border-subtle) px-5 py-3 text-xs text-(--text-tertiary)">
+          <div className="space-y-1">
+            <p>
+              Pull requests are downloaded to this computer and shared only with your model
+              provider, never with baum.
+            </p>
+            {connection.saved ? (
+              <p>
+                Credential: {connection.source || "none"}.{" "}
+                {connection.override
+                  ? "The explicit credential stays active if you disconnect. "
+                  : ""}
+                Disconnecting does not revoke access on GitHub.
+              </p>
+            ) : null}
+          </div>
+          {connection.saved && !pending ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void action("disconnect")}
+              className="cursor-pointer text-(--status-critical) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Disconnect
+            </button>
+          ) : null}
+        </footer>
       ) : null}
     </section>
   );
+}
+
+function Callout({ children }: { children: ReactNode }) {
+  return (
+    <p
+      role="status"
+      className="rounded-(--radius-sm) bg-(--status-info-bg) px-3 py-2 text-(--status-info)"
+    >
+      {children}
+    </p>
+  );
+}
+
+function describe(connection: GitHubConnection): { label: string; tone: BadgeTone } {
+  if (connection.pending) return { label: "Waiting for GitHub", tone: "caution" };
+  if (connection.error) return { label: "Needs attention", tone: "critical" };
+  if (connection.override) return { label: "Explicit credential", tone: "info" };
+  if (connection.saved) return { label: "Connected", tone: "positive" };
+  return { label: "Not connected", tone: "neutral" };
 }

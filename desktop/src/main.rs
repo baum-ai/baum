@@ -309,6 +309,7 @@ fn main() {
             onboarding::add_repository,
             onboarding::review_settings,
             onboarding::save_review_settings,
+            onboarding::github_connection,
             onboarding::finish_setup,
         ])
         .on_window_event(lifecycle::on_window_event)
@@ -394,6 +395,7 @@ mod tests {
                 "allow-add-repository",
                 "allow-review-settings",
                 "allow-save-review-settings",
+                "allow-github-connection",
                 "allow-finish-setup"
             ],
         });
