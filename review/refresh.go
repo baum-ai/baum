@@ -36,6 +36,7 @@ func (v *DocumentValidator) Refresh(document []byte, b *bundlepkg.Bundle, now ti
 	sessions, vendors, models := sessionIndex(b)
 	carryPrompts(sessions, index.Sessions, review.GeneratedAt)
 	index.Checks, index.Sessions, index.Threads = checks, sessions, threadIndex(b)
+	setValidation(doc, b)
 	refreshConversation(index, b.Conversation)
 	summary := &doc.Summary
 
@@ -152,7 +153,7 @@ func refreshSection(section *documentSection, sources refreshEvidence) {
 	counts := map[string]int{}
 	for i := range section.Evidence {
 		evidence := &section.Evidence[i]
-		if status := sources.status(evidence.Kind, evidence.Anchors); status != "" {
+		if status := sources.status(evidence.Kind, evidence.Anchors, evidence.Status); status != "" {
 			evidence.Status = status
 			if status == "verified" && evidence.Granularity == nil {
 				evidence.Granularity = new("job")
@@ -171,8 +172,10 @@ func refreshSection(section *documentSection, sources refreshEvidence) {
 
 // An empty status preserves the authored assessment. Missing sources override
 // check results; otherwise failures, pending and skipped checks take precedence.
-func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
+func (e refreshEvidence) status(kind string, anchors []documentAnchor, current string) string {
 	failed, pending, skipped, success, test := false, false, false, false, false
+	staleValidation := false
+	sessionEvidence := false
 	for _, anchor := range anchors {
 		switch anchor.Type {
 		case "check":
@@ -190,7 +193,28 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 			default:
 				failed = true
 			}
-		case "prompt", "session_event":
+		case "session_event":
+			sessionEvidence = true
+			for _, session := range e.bundle.Sessions {
+				if session.Restricted || session.RootSessionID != valueOrEmpty(anchor.Session) {
+					continue
+				}
+				for _, item := range validationItems(session) {
+					if !slices.Contains(item.EventIDs, valueOrEmpty(anchor.Event)) {
+						continue
+					}
+					if item.Outcome == "failed" || item.EvidenceClass == "contradicted" {
+						failed = true
+					}
+					if item.CommitLabel.State != "head" || !e.currentHead {
+						staleValidation = true
+					}
+				}
+			}
+			if !resolveDocumentAnchor(anchor, e.bundle, "") {
+				return "asserted"
+			}
+		case "prompt":
 			if !resolveDocumentAnchor(anchor, e.bundle, "") && !e.indexedPrompt(anchor) {
 				return "asserted"
 			}
@@ -206,6 +230,10 @@ func (e refreshEvidence) status(kind string, anchors []documentAnchor) string {
 	switch {
 	case failed:
 		return "failed"
+	case staleValidation && current == "observed":
+		return "asserted"
+	case sessionEvidence && current == "verified" && !success:
+		return "asserted"
 	case pending:
 		return "pending"
 	case skipped:

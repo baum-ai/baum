@@ -327,7 +327,27 @@ export type IndexedThread = {
 export type SessionEvent = { id: string; at: string; verb: string; summary: string };
 export type SessionPrompt = { index: number; id: string; at: string; text: string };
 
+export type ValidationGap = { what: string; event_ids?: string[]; turns?: number[] };
+export type ValidationSetAside = ValidationGap & { stated_reason: string };
+export type IndexedValidation = {
+  id: string;
+  session: string;
+  method: string;
+  checked: string;
+  outcome: "passed" | "failed" | "issues_found" | "inconclusive";
+  evidence_class: "observed" | "reported_only" | "contradicted";
+  caveats?: string;
+  commit_label: {
+    state: "head" | "earlier" | "uncommitted" | "unknown";
+    sha?: string;
+    reason: string;
+  };
+  event_ids: string[];
+};
 export type IndexedSession = {
+  not_verified?: ValidationGap[];
+  set_aside?: ValidationSetAside[];
+  validation_unavailable?: string;
   id: string;
   vendor: string;
   models?: string[];
@@ -483,11 +503,16 @@ export type ReviewDocument = {
     role_loc: Partial<Record<HunkRole, number>>;
     checks: { required_failed: number; optional_failed: number; pending: number; skipped: number };
     agent_findings: Record<FindingState, number>;
+    validation?: Record<
+      "head" | "earlier" | "uncommitted" | "unknown" | "set_aside" | "not_verified",
+      number
+    >;
   };
   sections: Section[];
   agent_reviews: AgentReview[];
   unassigned_hunks: string[];
   index: {
+    validation?: IndexedValidation[];
     hunks: IndexedHunk[];
     file_comparisons?: FileComparison[];
     checks: IndexedCheck[];

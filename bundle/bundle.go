@@ -201,15 +201,16 @@ type Thread struct {
 // the pull request's repository is not a connected member: only RootSessionID
 // and Vendor are populated, everywhere in the bundle.
 type Session struct {
-	RootSessionID string     `json:"id"`
-	Vendor        string     `json:"vendor"`
-	Restricted    bool       `json:"restricted"`
-	Models        []string   `json:"models,omitempty"`
-	Title         string     `json:"title,omitempty"`
-	Branch        string     `json:"branch,omitempty"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	Outcome       string     `json:"outcome,omitempty"`
+	ValidationEvents []SessionEvent `json:"validation_events,omitempty"`
+	RootSessionID    string         `json:"id"`
+	Vendor           string         `json:"vendor"`
+	Restricted       bool           `json:"restricted"`
+	Models           []string       `json:"models,omitempty"`
+	Title            string         `json:"title,omitempty"`
+	Branch           string         `json:"branch,omitempty"`
+	StartedAt        *time.Time     `json:"started_at,omitempty"`
+	EndedAt          *time.Time     `json:"ended_at,omitempty"`
+	Outcome          string         `json:"outcome,omitempty"`
 
 	Prompts       []Prompt       `json:"prompts,omitempty"`
 	CommandEvents []CommandEvent `json:"command_events,omitempty"`
@@ -218,6 +219,11 @@ type Session struct {
 	// failed or skipped); a non-nil empty list means the session was
 	// extracted and made none. A restricted session never carries them.
 	Decisions *[]SessionDecision `json:"decisions,omitempty"`
+	// Nil means extraction did not run; an empty list means it found no checks.
+	Validations           *[]SessionValidation `json:"validations,omitempty"`
+	NotVerified           []ValidationGap      `json:"not_verified,omitempty"`
+	SetAside              []ValidationSetAside `json:"set_aside,omitempty"`
+	ValidationUnavailable string               `json:"validation_unavailable,omitempty"`
 
 	// Confidence, HasStartedAt and StartedAtValue are the sort keys used when
 	// capping and ordering sessions; not part of the encoded bundle.
@@ -403,3 +409,39 @@ type PreviousSection struct {
 
 // Sources records which bundle parts had data available.
 type Sources map[string]bool
+
+// SessionValidation is a cited check, with deterministic coverage of the reviewed head.
+type SessionValidation struct {
+	ID            string                `json:"id"`
+	Method        string                `json:"method"`
+	Checked       string                `json:"checked"`
+	Outcome       string                `json:"outcome"`
+	EvidenceClass string                `json:"evidence_class"`
+	Caveats       string                `json:"caveats,omitempty"`
+	CommitLabel   ValidationCommitLabel `json:"commit_label"`
+	EventIDs      []string              `json:"event_ids"`
+}
+type ValidationCommitLabel struct {
+	State  string `json:"state"`
+	SHA    string `json:"sha,omitempty"`
+	Reason string `json:"reason"`
+}
+type ValidationGap struct {
+	What     string   `json:"what"`
+	EventIDs []string `json:"event_ids,omitempty"`
+	Turns    []int    `json:"turns,omitempty"`
+}
+type ValidationSetAside struct {
+	What         string   `json:"what"`
+	StatedReason string   `json:"stated_reason"`
+	EventIDs     []string `json:"event_ids,omitempty"`
+	Turns        []int    `json:"turns,omitempty"`
+}
+
+// SessionEvent is a cited non-command tool event retained for anchor resolution.
+type SessionEvent struct {
+	ID      string     `json:"id"`
+	Time    *time.Time `json:"time,omitempty"`
+	Verb    string     `json:"verb"`
+	Summary string     `json:"summary"`
+}

@@ -234,6 +234,7 @@ func fitContent(bundle *Bundle, caps Caps) error {
 		{cutReviewConfigContent, "REVIEW.md content omitted to fit the size limit"},
 		{cutAssistantReplies, "assistant replies omitted to fit the size limit"},
 		{cutOlderPrompts, olderPromptsNote},
+		{cutLowerPriorityValidations, "validation items omitted (inconclusive and earlier-commit checks first) to fit the size limit"},
 		{cutCommandEvents, "command paraphrases omitted to fit the size limit"},
 		{cutOldestComments, "older comments omitted to fit the size limit; review verdicts are kept"},
 		{cutGeneratedOrVendoredPatches, "generated and vendored patch text omitted to fit the size limit"},
@@ -584,4 +585,23 @@ func SetDigest(bundle *Bundle) error {
 	sum := sha256.Sum256(encoded)
 	bundle.Digest = hex.EncodeToString(sum[:])
 	return nil
+}
+
+func cutLowerPriorityValidations(b *Bundle) bool {
+	for _, state := range []string{"inconclusive", "earlier", "unknown", "uncommitted", "head"} {
+		for i := len(b.Sessions) - 1; i >= 0; i-- {
+			items := b.Sessions[i].Validations
+			if items == nil {
+				continue
+			}
+			for j := len(*items) - 1; j >= 0; j-- {
+				item := (*items)[j]
+				if (state == "inconclusive" && item.Outcome == state) || (state != "inconclusive" && item.CommitLabel.State == state) {
+					*items = append(slices.Clone((*items)[:j]), (*items)[j+1:]...)
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
