@@ -18,6 +18,9 @@ func (r *Registry) Handler() http.Handler {
 		if errors.Is(err, ErrNotFound) {
 			status = http.StatusNotFound
 		}
+		if errors.Is(err, ErrInvalidRepository) {
+			status = http.StatusBadRequest
+		}
 		http.Error(w, http.StatusText(status), status)
 	}
 	write := func(w http.ResponseWriter, v any) {
@@ -34,6 +37,34 @@ func (r *Registry) Handler() http.Handler {
 			return false
 		}
 		return true
+	}
+	// decodeSettings reads the whole settings object of a PUT.
+	decodeSettings := func(w http.ResponseWriter, req *http.Request) (Settings, bool) {
+		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
+		raw, err := io.ReadAll(req.Body)
+		var fields map[string]json.RawMessage
+		if err != nil || json.Unmarshal(raw, &fields) != nil {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return Settings{}, false
+		}
+		// The whole settings object is replaced, so removing the cap or the
+		// automatic choice must be explicit: null, never a missing field.
+		for _, name := range []string{"automatic", "daily_cap"} {
+			if _, ok := fields[name]; !ok {
+				http.Error(w, name+" is required (null for the default)", http.StatusBadRequest)
+				return Settings{}, false
+			}
+		}
+		req.Body = io.NopCloser(bytes.NewReader(raw))
+		var s Settings
+		if !decode(w, req, &s) {
+			return Settings{}, false
+		}
+		if e := s.Validate(); e != nil {
+			http.Error(w, e.Error(), 400)
+			return Settings{}, false
+		}
+		return s, true
 	}
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, req *http.Request) {
 		list, e := r.List(req.Context())
@@ -108,31 +139,59 @@ func (r *Registry) Handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /api/repos/{id}/settings", func(w http.ResponseWriter, req *http.Request) {
-		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
-		raw, err := io.ReadAll(req.Body)
-		var fields map[string]json.RawMessage
-		if err != nil || json.Unmarshal(raw, &fields) != nil {
-			http.Error(w, "invalid JSON request", http.StatusBadRequest)
-			return
-		}
-		// The whole settings object is replaced, so removing the cap or the
-		// automatic choice must be explicit: null, never a missing field.
-		for _, name := range []string{"automatic", "daily_cap"} {
-			if _, ok := fields[name]; !ok {
-				http.Error(w, name+" is required (null for the default)", http.StatusBadRequest)
-				return
-			}
-		}
-		req.Body = io.NopCloser(bytes.NewReader(raw))
-		var s Settings
-		if !decode(w, req, &s) {
-			return
-		}
-		if e := s.Validate(); e != nil {
-			http.Error(w, e.Error(), 400)
+		s, ok := decodeSettings(w, req)
+		if !ok {
 			return
 		}
 		if e := r.Update(req.Context(), req.PathValue("id"), s); e != nil {
+			fail(w, e)
+			return
+		}
+		write(w, s)
+	})
+	// Picked repositories, with or without a local clone.
+	mux.HandleFunc("GET /api/repositories", func(w http.ResponseWriter, req *http.Request) {
+		list, e := r.Repositories(req.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		write(w, list)
+	})
+	mux.HandleFunc("POST /api/repositories", func(w http.ResponseWriter, req *http.Request) {
+		var input struct {
+			Repository string    `json:"repository"`
+			Settings   *Settings `json:"settings"`
+		}
+		if !decode(w, req, &input) {
+			return
+		}
+		if input.Settings != nil {
+			if e := input.Settings.Validate(); e != nil {
+				http.Error(w, e.Error(), 400)
+				return
+			}
+		}
+		v, e := r.Pick(req.Context(), input.Repository, input.Settings)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		write(w, v)
+	})
+	mux.HandleFunc("DELETE /api/repositories/{owner}/{name}", func(w http.ResponseWriter, req *http.Request) {
+		if e := r.Unpick(req.Context(), req.PathValue("owner")+"/"+req.PathValue("name")); e != nil {
+			fail(w, e)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("PUT /api/repositories/{owner}/{name}/settings", func(w http.ResponseWriter, req *http.Request) {
+		s, ok := decodeSettings(w, req)
+		if !ok {
+			return
+		}
+		if e := r.UpdateRepository(req.Context(), req.PathValue("owner")+"/"+req.PathValue("name"), s); e != nil {
 			fail(w, e)
 			return
 		}

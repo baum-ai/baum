@@ -107,6 +107,49 @@ func newReposCommand() *cobra.Command {
 		return nil
 	}}
 	list.Flags().Bool("json", false, "print structured clone records and settings")
-	root.AddCommand(add, remove, list)
+	pick := &cobra.Command{Use: "pick <owner/name>", Short: "Pick a github.com repository without a local clone", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		r, e := open()
+		if e != nil {
+			return e
+		}
+		defer func() { _ = r.Close() }()
+		v, e := r.Pick(cmd.Context(), args[0], nil)
+		if e != nil {
+			return e
+		}
+		_, e = fmt.Fprintln(cmd.OutOrStdout(), v.Repository)
+		return e
+	}}
+	unpick := &cobra.Command{Use: "unpick <owner/name>", Short: "Unpick a repository and remove its registered clones", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		r, e := open()
+		if e != nil {
+			return e
+		}
+		defer func() { _ = r.Close() }()
+		return r.Unpick(cmd.Context(), args[0])
+	}}
+	repositories := &cobra.Command{Use: "repositories", Short: "List picked repositories, including those without a clone", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		r, e := open()
+		if e != nil {
+			return e
+		}
+		defer func() { _ = r.Close() }()
+		list, e := r.Repositories(cmd.Context())
+		if e != nil {
+			return e
+		}
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(list)
+		}
+		for _, v := range list {
+			data, _ := json.Marshal(v.Settings)
+			if _, e = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%d\t%s\n", v.Repository, len(v.Clones), data); e != nil {
+				return e
+			}
+		}
+		return nil
+	}}
+	repositories.Flags().Bool("json", false, "print structured repository records, settings and clones")
+	root.AddCommand(add, remove, list, pick, unpick, repositories)
 	return root
 }

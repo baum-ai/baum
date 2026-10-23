@@ -445,6 +445,8 @@ runs the model's tool calls in-process:
 `baum internal repos` stores clone paths, git common directories, normalized GitHub
 identities and generation preferences in a 0600 SQLite database beside the XDG
 config file. Remote URLs and their credentials are never persisted or returned.
+A repository can also be picked by its `owner/name` alone, without a local
+clone; that stores only the name, reads no local git and contacts nothing.
 Registration and availability checks read local git metadata only; they do not
 resolve tokens, clone, fetch or contact GitHub/model providers. Registration
 starts nothing by itself, but automatic generation is on by default: once the
@@ -453,7 +455,7 @@ and review requests can start paid runs (see "The baum daemon"). The registry
 also holds the global preferences that control this.
 
 The registry HTTP handler is mounted by the baum daemon behind its authenticated
-Host/Origin boundary: its write routes can register local paths, remove records
+Host/Origin boundary: its write routes can register local paths, pick repositories, remove records
 and change settings. `baum internal view` exposes none of these routes.
 
 ## Reporting a vulnerability

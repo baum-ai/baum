@@ -23,7 +23,11 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
-var ErrNotFound = errors.New("registered clone not found")
+// ErrNotFound reports a clone or picked repository the registry does not hold.
+var ErrNotFound = errors.New("registered clone or picked repository not found")
+
+// ErrInvalidRepository reports a name that is not a github.com owner/name.
+var ErrInvalidRepository = errors.New("repository must be a github.com owner/name")
 
 // Settings are shared by all clones of a repository. Nil overrides inherit
 // global settings. Automatic is the repository's choice under the global
@@ -140,17 +144,21 @@ type Registry struct {
 	db *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
-	// legacy marks a read-only registry not yet migrated to schemaVersion,
+	// legacy marks a read-only registry not yet migrated to schema version 1,
 	// whose stored automatic=false only ever meant the old default.
 	legacy bool
+	// noPicked marks a read-only registry from before version 2: its picked
+	// repositories are the ones with a clone.
+	noPicked bool
 	// noPreferences marks a read-only registry without saved preferences.
 	noPreferences bool
 }
 
 // schemaVersion is the registry's PRAGMA user_version. Version 1 makes a null
 // automatic setting follow the global preference; before it, registration
-// stored automatic=false for every repository.
-const schemaVersion = 1
+// stored automatic=false for every repository. Version 2 adds the picked
+// table, backfilled with every repository that has a clone.
+const schemaVersion = 2
 
 func Path() (string, error) {
 	p, e := config.Path()
@@ -191,7 +199,7 @@ func Open(path string) (*Registry, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
+	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE);`)
 	if e == nil {
 		e = migrate(context.Background(), db)
 	}
@@ -206,7 +214,9 @@ func Open(path string) (*Registry, error) {
 // transaction, so concurrent processes migrate it exactly once. Before
 // version 1 the app had no automatic control and registration stored
 // automatic=false for every repository, so a stored false becomes "follow the
-// global preference"; a stored true was an explicit choice and stays.
+// global preference"; a stored true was an explicit choice and stays. Before
+// version 2 a repository was registered only through a clone, so every
+// repository with a clone becomes picked.
 func migrate(ctx context.Context, db *sql.DB) (err error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -226,7 +236,12 @@ func migrate(ctx context.Context, db *sql.DB) (err error) {
 		return err
 	}
 	if version < schemaVersion {
-		if err = migrateAutomatic(ctx, conn); err != nil {
+		if version < 1 {
+			if err = migrateAutomatic(ctx, conn); err != nil {
+				return err
+			}
+		}
+		if _, err = conn.ExecContext(ctx, "INSERT OR IGNORE INTO picked SELECT DISTINCT repository FROM clones"); err != nil {
 			return err
 		}
 		if _, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
@@ -307,7 +322,7 @@ func OpenReadOnly(path string) (*Registry, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	var tables, preferences, version int
+	var tables, preferences, picked, version int
 	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
 		_ = db.Close()
 		return nil, e
@@ -316,11 +331,15 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
+	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='picked'`).Scan(&picked); e != nil {
+		_ = db.Close()
+		return nil, e
+	}
 	if e = db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil {
 		_ = db.Close()
 		return nil, e
 	}
-	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion}, nil
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < 1, noPicked: picked == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -430,6 +449,9 @@ func (r *Registry) AddPatch(ctx context.Context, path string, edit func(Settings
 	if e != nil {
 		return Clone{}, e
 	}
+	if _, e = tx.ExecContext(ctx, "INSERT INTO picked VALUES (?) ON CONFLICT DO NOTHING", c.Repository); e != nil {
+		return Clone{}, e
+	}
 	return c, tx.Commit()
 }
 
@@ -442,15 +464,28 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if resolved, e := filepath.EvalSymlinks(p); e == nil {
 		p = resolved
 	}
-	result, e := r.db.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	// The repository stays picked, even when an older baum registered the
+	// clone without a picked row.
+	if _, e = tx.ExecContext(ctx, "INSERT INTO picked SELECT DISTINCT repository FROM clones WHERE id=? OR path=? ON CONFLICT DO NOTHING", idOrPath, p); e != nil {
+		return e
+	}
+	result, e := tx.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
 	if e != nil {
 		return e
 	}
 	n, e := result.RowsAffected()
-	if e == nil && n == 0 {
+	if e != nil {
+		return e
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
-	return e
+	return tx.Commit()
 }
 func (r *Registry) List(ctx context.Context) ([]Clone, error) {
 	if r.noSchema {
@@ -482,14 +517,19 @@ func (r *Registry) List(ctx context.Context) ([]Clone, error) {
 	if e != nil {
 		return nil, e
 	}
-	for i := range result {
-		if e = ctx.Err(); e != nil {
-			return nil, e
+	return result, probe(ctx, result)
+}
+
+// probe sets Available on each clone from its current working tree.
+func probe(ctx context.Context, clones []Clone) error {
+	for i := range clones {
+		if e := ctx.Err(); e != nil {
+			return e
 		}
-		current, err := inspect(ctx, result[i].Path)
-		result[i].Available = err == nil && current.Path == result[i].Path && current.CommonDir == result[i].CommonDir && current.Repository == result[i].Repository
+		current, err := inspect(ctx, clones[i].Path)
+		clones[i].Available = err == nil && current.Path == clones[i].Path && current.CommonDir == clones[i].CommonDir && current.Repository == clones[i].Repository
 	}
-	return result, nil
+	return nil
 }
 
 // Update replaces shared repository settings without needing an available clone.
@@ -513,14 +553,15 @@ func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
 }
 
 // RepositorySettings reads one repository's shared settings without probing
-// its clones; false means no clone of it is registered.
+// its clones; false means the repository is not picked: it has neither a
+// picked row nor a registered clone.
 func (r *Registry) RepositorySettings(ctx context.Context, repository string) (Settings, bool, error) {
 	var s Settings
 	if r.noSchema {
 		return s, false, nil
 	}
 	var raw string
-	e := r.db.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity)`, strings.ToLower(repository)).Scan(&raw)
+	e := r.db.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND (`+r.pickedSQL()+`)`, strings.ToLower(repository)).Scan(&raw)
 	if errors.Is(e, sql.ErrNoRows) {
 		return s, false, nil
 	}
@@ -585,4 +626,169 @@ func mustJSON(v any) string {
 		panic(e)
 	}
 	return string(data)
+}
+
+// pickedSQL is the condition, over repositories aliased r, for a picked
+// repository: a picked row, or a clone (which an older baum may have added
+// without a picked row).
+func (r *Registry) pickedSQL() string {
+	const clones = "EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity)"
+	if r.noPicked {
+		return clones
+	}
+	return "EXISTS (SELECT 1 FROM picked p WHERE p.identity=r.identity) OR " + clones
+}
+
+// Repository is a picked repository with its settings and registered clones,
+// of which there may be none.
+type Repository struct {
+	Repository string   `json:"repository"`
+	Settings   Settings `json:"settings"`
+	Clones     []Clone  `json:"clones"`
+}
+
+// Pick registers a github.com repository by owner/name without a local
+// clone. Nil settings keep the existing settings, or the default for a new
+// repository; explicit settings replace them. Picking again is a no-op.
+func (r *Registry) Pick(ctx context.Context, repository string, settings *Settings) (Repository, error) {
+	gh, e := github.ParseRepository(repository)
+	if e != nil || gh.Host != config.GitHubHost {
+		return Repository{}, ErrInvalidRepository
+	}
+	identity := strings.ToLower(gh.String())
+	if settings != nil {
+		if e = settings.Validate(); e != nil {
+			return Repository{}, e
+		}
+	}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Repository{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, e = tx.ExecContext(ctx, "INSERT INTO repositories VALUES (?,?) ON CONFLICT DO NOTHING", identity, `{"automatic":null}`); e != nil {
+		return Repository{}, e
+	}
+	if settings != nil {
+		if _, e = tx.ExecContext(ctx, "UPDATE repositories SET settings=? WHERE identity=?", mustJSON(*settings), identity); e != nil {
+			return Repository{}, e
+		}
+	}
+	if _, e = tx.ExecContext(ctx, "INSERT INTO picked VALUES (?) ON CONFLICT DO NOTHING", identity); e != nil {
+		return Repository{}, e
+	}
+	if e = tx.Commit(); e != nil {
+		return Repository{}, e
+	}
+	list, e := r.repositories(ctx, identity)
+	if e != nil {
+		return Repository{}, e
+	}
+	if len(list) != 1 {
+		return Repository{}, ErrNotFound
+	}
+	return list[0], nil
+}
+
+// Unpick removes a picked repository's clones and its picked row. The
+// repositories row stays, as in Remove, so its settings survive a later pick.
+func (r *Registry) Unpick(ctx context.Context, repository string) error {
+	identity := strings.ToLower(repository)
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	deleted, e := tx.ExecContext(ctx, "DELETE FROM clones WHERE repository=?", identity)
+	if e != nil {
+		return e
+	}
+	clones, e := deleted.RowsAffected()
+	if e != nil {
+		return e
+	}
+	unpicked, e := tx.ExecContext(ctx, "DELETE FROM picked WHERE identity=?", identity)
+	if e != nil {
+		return e
+	}
+	rows, e := unpicked.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if clones == 0 && rows == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+// Repositories lists every picked repository by identity, with its clones
+// probed for availability as List does.
+func (r *Registry) Repositories(ctx context.Context) ([]Repository, error) {
+	return r.repositories(ctx, "")
+}
+
+func (r *Registry) repositories(ctx context.Context, only string) ([]Repository, error) {
+	result := []Repository{}
+	if r.noSchema {
+		return result, nil
+	}
+	query := "SELECT r.identity,r.settings FROM repositories r WHERE (" + r.pickedSQL() + ")"
+	var args []any
+	if only != "" {
+		query += " AND r.identity=?"
+		args = append(args, only)
+	}
+	rows, e := r.db.QueryContext(ctx, query+" ORDER BY r.identity", args...)
+	if e != nil {
+		return nil, e
+	}
+	byIdentity := map[string]int{}
+	for rows.Next() {
+		var v Repository
+		var raw string
+		if e = rows.Scan(&v.Repository, &raw); e == nil {
+			e = json.Unmarshal([]byte(raw), &v.Settings)
+		}
+		if e != nil {
+			_ = rows.Close()
+			return nil, e
+		}
+		if r.legacy && v.Settings.Automatic != nil && !*v.Settings.Automatic {
+			v.Settings.Automatic = nil
+		}
+		v.Clones = []Clone{}
+		byIdentity[v.Repository] = len(result)
+		result = append(result, v)
+	}
+	e = rows.Err()
+	_ = rows.Close()
+	if e != nil {
+		return nil, e
+	}
+	clones, e := r.List(ctx)
+	if e != nil {
+		return nil, e
+	}
+	for _, c := range clones {
+		if i, ok := byIdentity[c.Repository]; ok {
+			result[i].Clones = append(result[i].Clones, c)
+		}
+	}
+	return result, nil
+}
+
+// UpdateRepository replaces a picked repository's shared settings by identity.
+func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
+	if e := s.Validate(); e != nil {
+		return e
+	}
+	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
+	if e != nil {
+		return e
+	}
+	n, e := res.RowsAffected()
+	if e == nil && n == 0 {
+		return ErrNotFound
+	}
+	return e
 }

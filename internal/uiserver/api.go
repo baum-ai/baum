@@ -68,6 +68,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	})
 	mux.Handle("/api/repos", mutate)
 	mux.Handle("/api/repos/", mutate)
+	mux.Handle("/api/repositories", mutate)
+	mux.Handle("/api/repositories/", mutate)
 	provider := func(h http.Handler, code string) http.Handler {
 		if h != nil {
 			return h

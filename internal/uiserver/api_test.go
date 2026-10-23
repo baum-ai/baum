@@ -16,6 +16,33 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
+// Picking and unpicking a repository reach the registry and wake the
+// scheduler like clone changes do.
+func TestRepositoriesRoutesNotifyOnWrites(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	changed := 0
+	handler := LocalAPI{Registry: registry, Config: config.Default(), Changed: func() { changed++ }}.Handler()
+	defer handler.Close()
+	for _, tt := range []struct {
+		method, path, body string
+		code, changed      int
+	}{
+		{"POST", "/api/repositories", `{"repository":"owner/repo"}`, 200, 1},
+		{"GET", "/api/repositories", "", 200, 1},
+		{"DELETE", "/api/repositories/owner/repo", "", 204, 2},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(tt.method, "http://local"+tt.path, strings.NewReader(tt.body)))
+		if w.Code != tt.code || changed != tt.changed {
+			t.Fatalf("%s %s: %d %s, changed %d", tt.method, tt.path, w.Code, w.Body.String(), changed)
+		}
+	}
+}
+
 func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	ctx := context.Background()
 	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
@@ -54,7 +81,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	for _, tt := range []struct {
 		path string
 		code int
-	}{{"/api/repos", 200}, {"/api/settings", 200}, {"/api/diagnostics", 200}, {"/api/document" + selector, 200}, {"/api/versions" + selector, 200}, {"/api/sessions" + selector, 200}, {"/api/attachments/" + id + selector, 200}, {"/api/document?clone=/tmp&pr=7", 404}, {"/api/document?clone=" + clone.ID + "&pr=8", 404}, {"/api/document?pr=7", 400}, {"/api/attachments/att_ffffffffffffffffffffffffffffffff" + selector, 404}, {"/api/jobs", 200}} {
+	}{{"/api/repos", 200}, {"/api/repositories", 200}, {"/api/settings", 200}, {"/api/diagnostics", 200}, {"/api/document" + selector, 200}, {"/api/versions" + selector, 200}, {"/api/sessions" + selector, 200}, {"/api/attachments/" + id + selector, 200}, {"/api/document?clone=/tmp&pr=7", 404}, {"/api/document?clone=" + clone.ID + "&pr=8", 404}, {"/api/document?pr=7", 400}, {"/api/attachments/att_ffffffffffffffffffffffffffffffff" + selector, 404}, {"/api/jobs", 200}} {
 		t.Run(tt.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local"+tt.path, nil))

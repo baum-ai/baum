@@ -5,10 +5,50 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/repos"
 )
+
+func TestReposCLIPickAndUnpick(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	run := func(args ...string) (string, error) {
+		var out, errOut bytes.Buffer
+		e := Run(append([]string{"internal", "repos"}, args...), nil, &out, &errOut)
+		return out.String(), e
+	}
+	if out, e := run("pick", "Owner/Repo"); e != nil || out != "owner/repo\n" {
+		t.Fatalf("%q %v", out, e)
+	}
+	if _, e := run("pick", "a/b/c"); e == nil {
+		t.Fatal("invalid name accepted")
+	}
+	raw, e := run("repositories", "--json")
+	if e != nil || !strings.HasPrefix(raw, `[{"repository":"owner/repo"`) || !strings.Contains(raw, `"clones":[]`) {
+		t.Fatalf("%s %v", raw, e)
+	}
+	var list []repos.Repository
+	if e = json.Unmarshal([]byte(raw), &list); e != nil || len(list) != 1 {
+		t.Fatalf("%s %v", raw, e)
+	}
+	if out, e := run("repositories"); e != nil || !strings.HasPrefix(out, "owner/repo\t0\t") {
+		t.Fatalf("%q %v", out, e)
+	}
+	// Clones are unchanged by picking.
+	if out, e := run("list", "--json"); e != nil || out != "[]\n" {
+		t.Fatalf("%q %v", out, e)
+	}
+	if _, e = run("unpick", "owner/repo"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = run("unpick", "owner/repo"); e == nil {
+		t.Fatal("unpicked twice")
+	}
+	if out, e := run("repositories", "--json"); e != nil || out != "[]\n" {
+		t.Fatalf("%q %v", out, e)
+	}
+}
 
 func TestReposCLI(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
