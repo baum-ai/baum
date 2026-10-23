@@ -204,3 +204,118 @@ func TestCloneFailureWithATokenIsSanitized(t *testing.T) {
 		t.Error("failed clone left its folder")
 	}
 }
+
+func TestCloneForcesCertificateVerificationWithAToken(t *testing.T) {
+	var spec runSpec
+	original := cloneRun
+	t.Cleanup(func() { cloneRun = original })
+	cloneRun = func(_ context.Context, s runSpec, _ ...string) ([]byte, error) { spec = s; return nil, nil }
+	t.Setenv("GIT_SSL_NO_VERIFY", "1")
+	dir := filepath.Join(t.TempDir(), "repo")
+	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToUpper(strings.Join(spec.env, "\n")), "GIT_SSL_NO_VERIFY") || !contains(spec.config, "http.sslVerify=true") {
+		t.Errorf("env %v config %v", spec.env, spec.config)
+	}
+}
+
+func TestCloneWithATokenLeavesNoCredentialInTheClone(t *testing.T) {
+	f := newFixture(t)
+	allowFileCloneURL = true
+	t.Cleanup(func() { allowFileCloneURL = false })
+	const token = "SUPER_SECRET_CLONE_TOKEN"
+	dir := filepath.Join(t.TempDir(), "repo")
+	if err := Clone(context.Background(), CloneOptions{URL: "file://" + f.dir, Dir: dir, Token: token}); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	err := filepath.WalkDir(filepath.Join(dir, ".git"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		for _, bad := range []string{token, encoded, "Authorization"} {
+			if strings.Contains(string(b), bad) {
+				t.Errorf("%s contains %q", p, bad)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := os.ReadFile(filepath.Join(dir, ".git", "config"))
+	for _, bad := range []string{"extraHeader", "credential", "hooksPath"} {
+		if strings.Contains(string(cfg), bad) {
+			t.Errorf(".git/config contains %q:\n%s", bad, cfg)
+		}
+	}
+}
+
+func TestCloneRefusesAGitConfigurationThatRewritesToSSH(t *testing.T) {
+	requireGit(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	write(t, filepath.Dir(global), filepath.Base(global), "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n", 0o644)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	original := cloneRun
+	t.Cleanup(func() { cloneRun = original })
+	cloneRun = func(context.Context, runSpec, ...string) ([]byte, error) { t.Error("git clone ran"); return nil, nil }
+	root := t.TempDir()
+	dir := filepath.Join(root, "new", "repo")
+	err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: "t"})
+	if !errors.Is(err, ErrURLRewritten) {
+		t.Fatalf("err = %v, want ErrURLRewritten", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "new")); statErr == nil {
+		t.Error("created folders before refusing")
+	}
+	// A rewrite to another HTTPS github.com URL is fine.
+	write(t, filepath.Dir(global), filepath.Base(global), "[url \"https://github.com/\"]\n\tinsteadOf = gh:\n", 0o644)
+	cloneRun = func(context.Context, runSpec, ...string) ([]byte, error) { return nil, nil }
+	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloneNeverRemovesWhatItDidNotCreate(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	original := cloneRun
+	t.Cleanup(func() { cloneRun = original })
+	// Someone puts a file in the target after baum looked at it and before git runs.
+	cloneRun = func(_ context.Context, s runSpec, args ...string) ([]byte, error) {
+		dir := args[len(args)-1]
+		if err := os.WriteFile(filepath.Join(dir, "precious.txt"), []byte("mine"), 0o644); err != nil {
+			t.Error(err)
+		}
+		return nil, errors.New("fatal: destination path already exists and is not an empty directory")
+	}
+	for name, preexisting := range map[string]bool{"existing-empty-folder": true, "folder-baum-created": false} {
+		dir := filepath.Join(root, name)
+		if preexisting {
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir}); err == nil {
+			t.Fatalf("%s: no error", name)
+		}
+		if b, err := os.ReadFile(filepath.Join(dir, "precious.txt")); err != nil || string(b) != "mine" {
+			t.Errorf("%s: the file was removed", name)
+		}
+	}
+	// A target that is not empty is refused and untouched.
+	full := filepath.Join(root, "full")
+	write(t, full, "keep.txt", "x", 0o644)
+	cloneRun = original
+	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: full}); !errors.Is(err, ErrCloneTargetExists) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(full, "keep.txt")); err != nil {
+		t.Error("a refused target was touched")
+	}
+}

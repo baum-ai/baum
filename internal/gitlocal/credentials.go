@@ -47,7 +47,10 @@ func withCredential(env []string, u *url.URL, token string) []string {
 	out := make([]string, 0, len(env)+20)
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "GIT_CONFIG_") || strings.HasPrefix(key, "GIT_TRACE") || key == "GIT_CURL_VERBOSE" {
+		// The user's config file pointers (GIT_CONFIG_GLOBAL and the like) stay;
+		// injected settings and tracing go.
+		if strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") || key == "GIT_CONFIG_COUNT" ||
+			key == "GIT_CONFIG_PARAMETERS" || strings.HasPrefix(key, "GIT_TRACE") || key == "GIT_CURL_VERBOSE" {
 			continue
 		}
 		out = append(out, entry)
