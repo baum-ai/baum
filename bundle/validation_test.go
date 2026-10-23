@@ -2,9 +2,10 @@ package bundle
 
 import (
 	"context"
-	"github.com/baum-ai/baum/internal/goldentest"
 	"path/filepath"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/goldentest"
 )
 
 func TestValidationBundleGolden(t *testing.T) {

@@ -2,10 +2,11 @@ package review
 
 import (
 	"encoding/json"
-	bundlepkg "github.com/baum-ai/baum/bundle"
 	"reflect"
 	"testing"
 	"time"
+
+	bundlepkg "github.com/baum-ai/baum/bundle"
 )
 
 func TestValidationRefresh(t *testing.T) {
@@ -29,7 +30,9 @@ func TestValidationRefresh(t *testing.T) {
 			if err := json.Unmarshal(refreshed, &doc); err != nil {
 				t.Fatal(err)
 			}
-			json.Unmarshal(published, &old)
+			if err := json.Unmarshal(published, &old); err != nil {
+				t.Fatal(err)
+			}
 			if got := doc.Sections[0].Evidence[1].Status; got != tc.want {
 				t.Fatalf("status %s, want %s", got, tc.want)
 			}
@@ -58,7 +61,9 @@ func TestValidationRestrictionAndLegacyDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc reviewDocument
-	json.Unmarshal(refreshed, &doc)
+	if err := json.Unmarshal(refreshed, &doc); err != nil {
+		t.Fatal(err)
+	}
 	if len(doc.Index.Validation) != 0 || doc.Stats.Validation != nil || len(doc.Index.Sessions[0].NotVerified) != 0 {
 		t.Fatal("restricted validation leaked")
 	}
