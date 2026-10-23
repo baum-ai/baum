@@ -1717,6 +1717,26 @@ handler exposes registry operations only; `internal/uiserver` owns listening,
 instance lifecycle, authentication and host/origin validation and mounts the
 handler behind that middleware. The existing document viewer does not mount it.
 
+### Finding clones of picked repositories
+
+`internal/clonefind` finds local clones of GitHub repositories without
+prompting, so a picked repository gets a clone attached and the setup screens
+can pre-select repositories already on the machine. `Find` collects directories
+from agent hook events and the Claude Code, Codex and Cursor session stores
+(cheap working-directory probes, no transcript parsing), resolves each to its
+working tree with `gitlocal.Probe` (two read-only git commands; `Open` would
+create a private mirror per candidate), then walks the usual code folders and
+the folders around the clones agents used, to four levels, with the exclusions
+`baum setup --all` uses (`internal/scanskip`). Candidates are grouped by the
+lowercase `owner/name` of every github.com remote, linked worktrees collapsing
+into their main clone. The daemon's `Service` keeps the result in memory,
+rescans at start, after a registry write and hourly while a picked repository
+has none, attaches the best candidate with `Registry.Add` (a fork the registry
+would file under another name is skipped), and attaches the clone of an agent
+event's directory at once. `GET /api/clones/found` and
+`POST /api/clones/found/refresh` serve it. It makes no network request. See
+its [README](internal/clonefind/README.md).
+
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,

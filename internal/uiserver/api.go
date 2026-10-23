@@ -31,7 +31,9 @@ type LocalAPI struct {
 	// and per-repository status.
 	Automatic http.Handler
 	// Live serves /api/live-sessions: the agent sessions in progress.
-	Live    http.Handler
+	Live http.Handler
+	// Clones serves /api/clones/found: the local clones found without asking.
+	Clones  http.Handler
 	Changed func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
@@ -87,6 +89,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
+	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))

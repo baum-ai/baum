@@ -458,6 +458,29 @@ The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, pick repositories, remove records
 and change settings. `baum internal view` exposes none of these routes.
 
+### Finding clones on this computer
+
+The daemon looks for local clones of the repositories you pick, so you are not
+asked for their folders. It makes no network request for this and sends nothing
+about your folders anywhere. It reads: the working directories recorded in the
+hook event record and in the Claude Code (`~/.claude/projects`), Codex
+(`~/.codex/sessions`, `~/.codex/archived_sessions`) and Cursor (`state.vscdb`)
+session stores, without parsing the transcripts; the folders `~/code`, `~/src`,
+`~/dev`, `~/projects`, `~/workspace`, `~/repos`, `~/git` and
+`~/go/src/github.com`, to four levels deep, without following symlinks; the
+folders that contain the clones agents worked in, when they are below your home
+directory; and, in each candidate clone, the remote URLs of its git
+configuration, through `git rev-parse` and `git config`. On Linux and Windows it also walks `~/Documents` like those folders. On macOS
+that folder is protected (the first read prompts), so it is walked only in a
+single scan you ask for with "Also look in Documents", and the choice is not
+kept. It never walks `Desktop`,
+`Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `iCloud Drive`, Google
+Drive, Dropbox or OneDrive folders, hidden folders, dependency or build
+folders, your home directory itself, or the filesystem root. The paths it
+finds are served only by `GET /api/clones/found`, behind the daemon's
+authenticated Host/Origin boundary, and registered only for repositories you
+picked.
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately, not through a public issue or

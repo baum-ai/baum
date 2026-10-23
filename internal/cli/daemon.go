@@ -21,6 +21,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
+	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -430,10 +431,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
 		refreshEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
+		clones := newCloneFinder(registry, events, changed, log)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
+			// A repository may just have been picked.
+			clones.Trigger()
 		}
+		cloneEvents, cloneDropped, unsubscribeClones := events.SubscribeCounted(clonefind.Buffer, clonefind.MatchEvent)
 		live := events.liveSessions(registry, discover, server, log)
 		var liveAPI http.Handler
 		if live != nil {
@@ -456,7 +461,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -473,6 +478,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 						log.Warn("price list not refreshed", "error", err)
 					}
 				})
+				wg.Go(func() { clones.Run(ctx, cloneEvents, cloneDropped) })
 				wg.Go(func() { worker.Run(ctx) })
 				wg.Go(func() { scheduler.Run(ctx) })
 				if live != nil {
@@ -489,6 +495,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Close: func() {
 				api.Close()
 				unsubscribe()
+				unsubscribeClones()
 				events.Close()
 				_ = registry.Close()
 			},
@@ -547,6 +554,30 @@ func (h hookEvents) Subscribe(buffer int, match func(hookevents.Event) bool) (<-
 		return nil, func() {}
 	}
 	return h.service.Store.Subscribe(buffer, match)
+}
+
+// SubscribeCounted is Subscribe that also reports how many events the
+// subscription missed.
+func (h hookEvents) SubscribeCounted(buffer int, match func(hookevents.Event) bool) (<-chan hookevents.Record, func() uint64, func()) {
+	if h.service == nil {
+		return nil, func() uint64 { return 0 }, func() {}
+	}
+	ch, cancel, dropped := h.service.Store.SubscribeCounted(buffer, match)
+	return ch, dropped, cancel
+}
+
+// newCloneFinder builds the service that finds local clones of picked
+// repositories from the folders agents worked in and the usual code folders.
+func newCloneFinder(registry *repos.Registry, events hookEvents, changed func(), log *slog.Logger) *clonefind.Service {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Warn("clones are not searched for: no home directory", "error", err)
+	}
+	options := clonefind.Options{Home: home}
+	if events.service != nil {
+		options.Events = events.service.Store
+	}
+	return &clonefind.Service{Registry: registry, Options: options, Changed: changed, Log: log}
 }
 
 // Close closes the record.
