@@ -804,7 +804,9 @@ A task is a run that is not a review: a prompt over a run directory (a
 checkout and input files the caller put there) whose reply is a JSON document
 of the task's schema. Only the Generator's `Backend`, `Logger` and
 `RetryDelay` take part. `RunTask` writes `schema.json` to the directory and
-sends the prompt as it is, with the same provider retries, stall watchdog and
+sends the prompt as it is, marked as a task (`Request.Task`) so the Claude and
+Anthropic backends frame it with a generic system prompt and nudge instead of
+the review's, with the same provider retries, stall watchdog and
 budgets as `Generate`. Each reply is checked against the schema, then by the
 task's `Check`, which returns findings; a rejected reply is written as
 `rejected-N.json` and sent back with the findings and the backend's
