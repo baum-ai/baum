@@ -20,7 +20,9 @@ A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.
 A repository with no clone is still registered: `RepositorySettings` and
 automatic admission treat it as such, and only `unpick` revokes that. Work
-that needs a clone waits for one (handled in a later step). Clones registered
+that needs a clone waits for one: discovery lists the repository's pull
+requests, but the job API answers `needs_clone` and automatic generation
+submits nothing until a clone is registered. Clones registered
 before the `picked` table existed have no picked row (there is no migration),
 so they must be re-added with `baum internal repos add <path>`, or their
 repository picked, to count as registered.

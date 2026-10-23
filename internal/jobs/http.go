@@ -28,6 +28,13 @@ func (q *Queue) Handler() http.Handler {
 		}
 		return true
 	}
+	// needsClone answers like isolation_required: a coded conflict the app
+	// can act on, here by asking for a local clone first.
+	needsClone := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{ReasonNeedsClone: true})
+	}
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]any{"available": true, "jobs": q.List()})
 	})
@@ -40,6 +47,10 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		v, e := q.Estimate(r.Context(), request.Items, request.Mode)
+		if errors.Is(e, ErrNeedsClone) {
+			needsClone(w)
+			return
+		}
 		if e != nil {
 			http.Error(w, "cannot estimate: select available PRs with an explicit priced model", 400)
 			return
@@ -74,6 +85,10 @@ func (q *Queue) Handler() http.Handler {
 		if errors.Is(e, ErrRestarting) {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if errors.Is(e, ErrNeedsClone) {
+			needsClone(w)
 			return
 		}
 		if e != nil {

@@ -547,3 +547,26 @@ func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *
 		t.Fatalf("replacement account executed old confirmation: %v", err)
 	}
 }
+
+// An unknown or removed clone needs a clone, for preparing and executing.
+func TestLocalWithoutAnAvailableCloneNeedsOne(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	if _, _, e := local.Prepare(ctx, Item{"unknown", 1}); !errors.Is(e, ErrNeedsClone) {
+		t.Fatalf("unknown clone: %v", e)
+	}
+	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = registry.Remove(ctx, clone.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = local.Prepare(ctx, p.Item); !errors.Is(e, ErrNeedsClone) {
+		t.Fatalf("removed clone, prepare: %v", e)
+	}
+	if _, e = local.Execute(ctx, p, func(Progress) {}); !errors.Is(e, ErrNeedsClone) {
+		t.Fatalf("removed clone, execute: %v", e)
+	}
+}

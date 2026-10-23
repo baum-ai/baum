@@ -40,7 +40,7 @@ const (
 const maxAttempts = 5
 
 type Registry interface {
-	List(context.Context) ([]repos.Clone, error)
+	Repositories(context.Context) ([]repos.Repository, error)
 	Preferences(context.Context) (repos.Preferences, error)
 	UpdatePreferences(context.Context, func(repos.Preferences) repos.Preferences) (repos.Preferences, error)
 	RepositorySettings(ctx context.Context, repository string) (repos.Settings, bool, error)
@@ -287,23 +287,29 @@ type view struct {
 }
 
 // current reads the preferences and registered repositories. A repository
-// is listed even when no clone is available, so its state survives.
+// is listed even when no clone is available, or none is registered, so its
+// state survives.
 func (s *Scheduler) current(ctx context.Context) (view, error) {
 	prefs, err := s.Registry.Preferences(ctx)
 	if err != nil {
 		return view{}, err
 	}
-	clones, err := s.Registry.List(ctx)
+	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
 		return view{}, err
 	}
 	v := view{prefs: prefs, repos: map[string]repository{}}
-	for _, c := range clones {
-		name := strings.ToLower(c.Repository)
-		r, seen := v.repos[name]
-		if !seen || (!r.clone.Available && c.Available) {
-			v.repos[name] = repository{clone: c, settings: c.Settings, enabled: c.Settings.AutomaticEnabled(prefs)}
+	for _, p := range picked {
+		name := strings.ToLower(p.Repository)
+		r := repository{settings: p.Settings, enabled: p.Settings.AutomaticEnabled(prefs)}
+		// A repository without a clone keeps the zero clone, which is not
+		// Available: it is observed but nothing is submitted until one appears.
+		for _, c := range p.Clones {
+			if r.clone.ID == "" || (!r.clone.Available && c.Available) {
+				r.clone = c
+			}
 		}
+		v.repos[name] = r
 	}
 	return v, nil
 }
@@ -666,6 +672,10 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		// Its running job's completion wakes the next pass.
 	case errors.Is(err, jobs.ErrRestarting):
 		result = stopAll
+	case errors.Is(err, jobs.ErrNeedsClone):
+		// The clone went away since this pass read it: stay pending without
+		// using up an attempt; passes skip the repository until one is back.
+		result = stopRepository
 	case errors.Is(err, jobs.ErrHeadChanged):
 		// Discovery reports the newer head, which triggers again.
 		pr.Pending, pr.Trigger = "", ""

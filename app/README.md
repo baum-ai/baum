@@ -46,8 +46,10 @@ commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion, approvals and GitHub mutations are absent.
 
-The inbox spans registered clones with Risk, Pull request, Review time,
-Unresolved, Review, Checks and Merge columns. Review time is the latest saved
+The inbox spans picked repositories, with or without a local clone, with Risk, Pull request, Review time,
+Unresolved, Review, Checks and Merge columns. The pull requests of a
+repository without a local clone are listed from discovery (its entries have
+`needs_clone` and no clone); a review needs a local clone. Review time is the latest saved
 review's reading estimate in whole minutes; GitHub state and unresolved thread
 counts also appear for pull requests without saved reviews. A dash means unknown
 or no checks, while a known unresolved count of zero shows 0. Discovery fetches

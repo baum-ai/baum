@@ -1797,7 +1797,10 @@ consumes these snapshots; missing PRs in an open-only snapshot are never treated
 as closed. Each pull keeps its head branch (`head_ref`). Old cache formats drop
 conditional REST responses once so newly retained fields can be populated.
 `Service.PollNow` skips the next deadline for local triggers, while honoring both
-shared rate budgets.
+shared rate budgets. `GET /api/prs` lists every picked repository, and
+`POST /api/prs/refresh` takes exactly one of `{"clone": id}` or
+`{"repository": "owner/name"}` (a picked repository, with or without a clone;
+unknown is `404`).
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
@@ -1805,6 +1808,11 @@ without a saved review or with an unreadable store. Saved review time comes from
 numbers from 1 to 240 are exposed; missing and invalid values remain unknown.
 Newer background observations override checks; a changed head clears discovery
 review, merge and thread states until the next discovery poll.
+
+A picked repository without a clone is listed from its cached discovery
+snapshot: its entries have no `clone_id` and carry `needs_clone: true`, the
+same marker as any entry whose repository has no available clone. There is no
+store to read for it, so its rows are `no_review`.
 
 ### Persistent generation jobs
 
@@ -1826,6 +1834,12 @@ unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
 server, never trusted from the browser.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
+A job names a clone (`Item.Clone`). An item whose clone is unknown or
+unavailable, which includes every repository picked without a clone, is
+`jobs.ErrNeedsClone`: estimate and generate answer `409` with
+`{"needs_clone":true}` (the isolation answer is `{"isolation_required":true}`),
+and a queued job whose clone was removed fails with the reason `needs_clone`
+without running. Pull requests of such a repository are still discovered.
 The runner has no subprocess invocation of baum itself. Only the existing
 read-only agent backends run child processes, cancelled through their context.
 
@@ -1898,7 +1912,10 @@ error; the daemon passes them to the automatic scheduler, which alone decides
 about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
-Per-repository target cursors and repository rotation prevent a small renewed
+Every picked repository is polled, with or without a clone: discovery needs
+only `owner/name`. A repository without an available clone gets no per-PR
+refresh (that reads a store and the clone's saved reviews), and polling it
+still feeds `Service.Discovered`. Per-repository target cursors and repository rotation prevent a small renewed
 GitHub budget from perpetually serving only the first PRs. Linked worktrees are
 deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
@@ -2140,6 +2157,14 @@ it and `Queue.SubmitAutomatic` decides each job.
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new
   baselines.
+- **No clone.** A picked repository without a clone is observed and its
+  state kept, but a pass never submits for it: it needs a clone to generate
+  in. Its pending heads wait, and the first pass after a clone appears
+  submits them as usual. A job whose clone disappeared after it was queued
+  (or after the pass chose it) does not run either: `Queue.SubmitAutomatic`
+  returns `jobs.ErrNeedsClone`, which keeps the head pending without using
+  an attempt, and a queued job fails with the reason `needs_clone` before
+  any model call.
 - **Passes** run at start, every 30 s, when a snapshot leaves pending work,
   when settings change and when a job finishes. A pass submits due pending
   heads in order unless the daemon is stopping or has a restart pending

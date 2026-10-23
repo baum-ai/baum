@@ -21,19 +21,19 @@ type DiscoveryCache interface {
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/prs", func(w http.ResponseWriter, r *http.Request) {
-		clones, err := registry.List(r.Context())
+		list, err := registry.Repositories(r.Context())
 		if err != nil {
 			apiError(w, err)
 			return
 		}
 		seen := map[string]bool{}
 		out := []discovery.Snapshot{}
-		for _, clone := range clones {
-			if seen[clone.Repository] {
+		for _, picked := range list {
+			if seen[picked.Repository] {
 				continue
 			}
-			seen[clone.Repository] = true
-			repo, err := github.ParseRepository(clone.Repository)
+			seen[picked.Repository] = true
+			repo, err := github.ParseRepository(picked.Repository)
 			if err != nil {
 				apiError(w, err)
 				return
@@ -51,15 +51,22 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 	mux.HandleFunc("POST /api/prs/refresh", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1024)
 		var body struct {
-			Clone string `json:"clone"`
+			Clone      string `json:"clone"`
+			Repository string `json:"repository"`
 		}
 		d := json.NewDecoder(r.Body)
 		d.DisallowUnknownFields()
-		if d.Decode(&body) != nil || d.Decode(new(any)) != io.EOF || body.Clone == "" {
-			http.Error(w, "clone is required", http.StatusBadRequest)
+		if d.Decode(&body) != nil || d.Decode(new(any)) != io.EOF || (body.Clone == "") == (body.Repository == "") {
+			http.Error(w, "exactly one of clone or repository is required", http.StatusBadRequest)
 			return
 		}
-		name, err := RegisteredRepository(r.Context(), registry, body.Clone)
+		var name string
+		var err error
+		if body.Clone != "" {
+			name, err = RegisteredRepository(r.Context(), registry, body.Clone)
+		} else {
+			name, err = pickedRepository(r.Context(), registry, body.Repository)
+		}
 		if err != nil {
 			apiError(w, err)
 			return

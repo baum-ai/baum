@@ -56,7 +56,7 @@ func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
 			return c, nil
 		}
 	}
-	return repos.Clone{}, errors.New("registered clone unavailable")
+	return repos.Clone{}, ErrNeedsClone
 }
 func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
 	if item.PR <= 0 {

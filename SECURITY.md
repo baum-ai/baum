@@ -677,7 +677,10 @@ versions retain their captured images atomically alongside the document;
 removing a registry entry does not delete that history.
 
 The authenticated job API derives repository, head, fork and author permissions
-from registered clones and fresh GitHub evidence. A five-minute estimate is
+from registered clones and fresh GitHub evidence. A repository picked without a
+clone is discovered (names and GitHub metadata only) but never generated:
+requests and queued jobs naming no available clone fail with `needs_clone`
+before anything runs. A five-minute estimate is
 bound to the head, selected model/backend, budgets and price list version;
 confirmation cannot authorize changed inputs. Forks, non-writers and unknown
 permissions require a separate single-PR isolation acknowledgement and are

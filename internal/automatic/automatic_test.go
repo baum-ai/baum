@@ -30,12 +30,18 @@ type fakeRegistry struct {
 	others map[string]repos.Settings
 	// unreadable makes RepositorySettings fail, as a transient database error.
 	unreadable bool
+	// noClone leaves the repository picked without a registered clone.
+	noClone bool
 }
 
-func (r *fakeRegistry) List(context.Context) ([]repos.Clone, error) {
+func (r *fakeRegistry) Repositories(context.Context) ([]repos.Repository, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return []repos.Clone{{ID: "clone", Path: "/clone", CommonDir: "/clone/.git", Repository: "org/repo", Settings: r.settings, Available: true}}, nil
+	v := repos.Repository{Repository: "org/repo", Settings: r.settings, Clones: []repos.Clone{}}
+	if !r.noClone {
+		v.Clones = append(v.Clones, repos.Clone{ID: "clone", Path: "/clone", CommonDir: "/clone/.git", Repository: "org/repo", Settings: r.settings, Available: true})
+	}
+	return []repos.Repository{v}, nil
 }
 func (r *fakeRegistry) Preferences(context.Context) (repos.Preferences, error) {
 	r.mu.Lock()
@@ -1047,4 +1053,31 @@ func TestIdentityTransitionFencesQueuedAdmission(t *testing.T) {
 	if admission := h.scheduler.Gate(j); admission.Reason == "" {
 		t.Fatal("previous-account queued job admitted after transition")
 	}
+}
+
+// A picked repository without a clone is listed and observed, but nothing is
+// submitted for it; once a clone appears the next pass submits as usual.
+func TestRepositoryWithoutACloneIsObservedNotSubmitted(t *testing.T) {
+	h := newHarness(t)
+	h.registry.mu.Lock()
+	h.registry.noClone = true
+	h.registry.mu.Unlock()
+	h.observe(pr{number: 1, head: "a1", requested: true})
+	h.pass()
+	h.observe(pr{number: 1, head: "a2", requested: true})
+	h.pass()
+	h.want()
+	o, err := h.scheduler.Overview(context.Background())
+	if err != nil || len(o.Repositories) != 1 || o.Repositories[0].Repository != "org/repo" || !o.Repositories[0].Enabled || o.Repositories[0].Pending != 1 {
+		t.Fatalf("overview %+v %v", o, err)
+	}
+	// Still admitted by the gate: the repository is registered.
+	if a := h.scheduler.Gate(jobs.Job{Prepared: jobs.Prepared{Repository: "org/repo"}, Automatic: true}); a.Reason != "" {
+		t.Fatalf("gate refused a picked repository: %q", a.Reason)
+	}
+	h.registry.mu.Lock()
+	h.registry.noClone = false
+	h.registry.mu.Unlock()
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
 }

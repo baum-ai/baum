@@ -276,6 +276,9 @@ func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := registry.Pick(context.Background(), "acme/bare", nil); err != nil {
+		t.Fatal(err)
+	}
 	_ = registry.Close()
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
@@ -287,7 +290,7 @@ func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {
 
 	reg := find(t, report, "registry")
 	wantStatus(t, reg, StatusInfo)
-	wantContains(t, "registry", reg.Detail, "2 registered clones")
+	wantContains(t, "registry", reg.Detail, "3 repositories (1 without a local clone", "2 registered clones")
 	store := find(t, report, "store-"+a.ID)
 	wantStatus(t, store, StatusInfo)
 	// the store's root is under the clone's common git directory, and not created

@@ -404,6 +404,15 @@ func (q *Queue) Submit(ctx context.Context, estimateID string, confirmed, isolat
 	return q.SubmitConfirmed(ctx, estimateID, Confirmation{Estimate: confirmed, Isolation: isolation})
 }
 
+// ErrNeedsClone: the item names a clone that is not registered or not
+// available. A picked repository without a clone is discovered but never
+// generated; its reviews wait for a clone. Over HTTP it is the code
+// ReasonNeedsClone; a queued job it stops fails with that reason.
+var ErrNeedsClone = errors.New("a local clone of the repository is required")
+
+// ReasonNeedsClone is the machine-readable code of ErrNeedsClone.
+const ReasonNeedsClone = "needs_clone"
+
 // ErrIsolationRequired is a direct generation that includes a fork or an
 // author without known write access, which needs its own confirmation.
 var ErrIsolationRequired = errors.New("isolation confirmation required")
@@ -638,6 +647,10 @@ func (q *Queue) worker() {
 				// turned draft) before any model call.
 				current.State = "cancelled"
 				current.Reason = refused.Reason
+			case err != nil && errors.Is(err, ErrNeedsClone):
+				// The clone was removed while the job waited: nothing ran.
+				current.State = "failed"
+				current.Reason = ReasonNeedsClone
 			case err != nil:
 				current.State = "failed"
 				current.Reason = string(generate.CategoryOf(err))

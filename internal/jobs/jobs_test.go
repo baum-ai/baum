@@ -26,11 +26,16 @@ type fakeExecutor struct {
 	backend, reason string
 	started         chan Prepared
 	release         chan struct{}
+	// prepareErr, when set, fails Prepare.
+	prepareErr error
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.prepareErr != nil {
+		return Prepared{}, "", f.prepareErr
+	}
 	backend := f.backend
 	if backend == "" {
 		backend = "claude"

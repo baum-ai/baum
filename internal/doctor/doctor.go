@@ -108,6 +108,10 @@ type Options struct {
 	// Registry lists the registered clones of the registry file at path,
 	// which exists. The default opens it read-only.
 	Registry func(ctx context.Context, path string) ([]repos.Clone, error)
+	// Repositories lists the picked repositories of the registry file, so the
+	// report can count those without a clone. The default opens it read-only
+	// and only applies with the default Registry; nil omits the count.
+	Repositories func(ctx context.Context, path string) ([]repos.Repository, error)
 	// Daemon describes the per-user baum daemon; nil omits that check. The
 	// caller supplies it because the daemon itself serves this report.
 	Daemon func(ctx context.Context) Daemon
@@ -207,6 +211,9 @@ func (r *runner) defaults() {
 	}
 	if o.Registry == nil {
 		o.Registry = listClones
+		if o.Repositories == nil {
+			o.Repositories = listRepositories
+		}
 	}
 	if o.Executable == nil {
 		o.Executable = os.Executable
@@ -234,6 +241,15 @@ func listClones(ctx context.Context, path string) ([]repos.Clone, error) {
 	}
 	defer func() { _ = registry.Close() }()
 	return registry.List(ctx)
+}
+
+func listRepositories(ctx context.Context, path string) ([]repos.Repository, error) {
+	registry, err := repos.OpenReadOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = registry.Close() }()
+	return registry.Repositories(ctx)
 }
 
 func (r *runner) add(c Check) { r.checks = append(r.checks, c) }
@@ -579,12 +595,29 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 			ctx, cancel := context.WithTimeout(r.ctx, registryTime)
 			var listErr error
 			clones, listErr = r.opts.Registry(ctx, registryPath)
+			var picked []repos.Repository
+			if listErr == nil && r.opts.Repositories != nil {
+				picked, listErr = r.opts.Repositories(ctx, registryPath)
+			}
 			cancel()
 			if listErr != nil {
 				c.Status, c.Detail = StatusWarning, "cannot read the registry: "+listErr.Error()
 				c.Fix = "check that " + registryPath + " is a baum registry that you can read and that no other process holds locked; `baum internal repos list` shows the same error"
 			} else {
 				c.Detail = fmt.Sprintf("%d registered %s", len(clones), plural(len(clones), "clone", "clones"))
+				if len(picked) > 0 {
+					bare := 0
+					for _, p := range picked {
+						if len(p.Clones) == 0 {
+							bare++
+						}
+					}
+					c.Detail = fmt.Sprintf("%d %s", len(picked), plural(len(picked), "repository", "repositories"))
+					if bare > 0 {
+						c.Detail += fmt.Sprintf(" (%d without a local clone, whose pull requests are listed but not reviewed)", bare)
+					}
+					c.Detail += fmt.Sprintf(", %d registered %s", len(clones), plural(len(clones), "clone", "clones"))
+				}
 			}
 		}
 		r.add(c)

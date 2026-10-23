@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -26,6 +27,8 @@ type autoExecutor struct {
 	started    chan Prepared
 	release    chan struct{}
 	fail       error
+	// noClone fails Execute as Local does once the job's clone is gone.
+	noClone bool
 }
 
 func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -43,6 +46,9 @@ func (f *autoExecutor) Execute(ctx context.Context, p Prepared, _ func(Progress)
 	f.mu.Unlock()
 	if p.RefuseDraft && draft {
 		return nil, &NotAutomaticError{ReasonDraft}
+	}
+	if f.noClone {
+		return nil, fmt.Errorf("execute: %w", ErrNeedsClone)
 	}
 	f.started <- p
 	select {
@@ -656,4 +662,24 @@ func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
 	<-f.started
 	f.release <- struct{}{}
 	waitState(t, q, again.ID, "completed")
+}
+
+// An automatic job whose clone was removed while it waited never runs: it
+// fails with the needs_clone reason instead of an opaque internal error.
+func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
+	q, f := newAutoQueue(t)
+	f.noClone = true
+	j, err := q.SubmitAutomatic(context.Background(), auto(1, "a1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitState(t, q, j.ID, "failed")
+	if done.Reason != ReasonNeedsClone {
+		t.Fatalf("job %+v", done)
+	}
+	select {
+	case p := <-f.started:
+		t.Fatalf("job ran: %+v", p)
+	default:
+	}
 }

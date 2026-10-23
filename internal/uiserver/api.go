@@ -279,3 +279,18 @@ func RegisteredRepository(ctx context.Context, registry *repos.Registry, id stri
 	}
 	return "", repos.ErrNotFound
 }
+
+// pickedRepository resolves a picked repository by owner/name, with or without
+// a clone.
+func pickedRepository(ctx context.Context, registry *repos.Registry, name string) (string, error) {
+	list, err := registry.Repositories(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range list {
+		if strings.EqualFold(r.Repository, name) {
+			return strings.ToLower(r.Repository), nil
+		}
+	}
+	return "", repos.ErrNotFound
+}

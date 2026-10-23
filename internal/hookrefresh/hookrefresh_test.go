@@ -49,6 +49,21 @@ func (r *registry) List(context.Context) ([]repos.Clone, error) {
 	return out, nil
 }
 
+// Repositories groups the clones by repository, for the automatic scheduler.
+func (r *registry) Repositories(ctx context.Context) ([]repos.Repository, error) {
+	clones, _ := r.List(ctx)
+	var out []repos.Repository
+	for _, c := range clones {
+		i := slices.IndexFunc(out, func(v repos.Repository) bool { return v.Repository == c.Repository })
+		if i < 0 {
+			out = append(out, repos.Repository{Repository: c.Repository, Settings: c.Settings})
+			i = len(out) - 1
+		}
+		out[i].Clones = append(out[i].Clones, c)
+	}
+	return out, nil
+}
+
 func (r *registry) edit(f func(*registry)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

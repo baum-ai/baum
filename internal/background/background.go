@@ -21,7 +21,7 @@ import (
 )
 
 type Registry interface {
-	List(context.Context) ([]repos.Clone, error)
+	Repositories(context.Context) ([]repos.Repository, error)
 }
 type Discovery interface {
 	Poll(context.Context, github.Repository) (discovery.Snapshot, error)
@@ -151,23 +151,30 @@ func (s *Service) Sync(ctx context.Context) {
 		s.nextRepo = ""
 		s.cursorEpoch = epoch
 	}
-	clones, err := s.Registry.List(ctx)
+	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
 		return
 	}
+	// Every picked repository is polled, with or without a clone. Only
+	// available clones take part in the per-pull-request refresh below.
 	groups := map[string][]repos.Clone{}
 	seen := map[string]bool{}
-	for _, clone := range clones {
-		if !clone.Available {
-			continue
+	for _, repository := range picked {
+		name := strings.ToLower(repository.Repository)
+		if _, ok := groups[name]; !ok {
+			groups[name] = nil
 		}
-		name := strings.ToLower(clone.Repository)
-		key := name + "\x00" + clone.CommonDir
-		if seen[key] {
-			continue
+		for _, clone := range repository.Clones {
+			if !clone.Available {
+				continue
+			}
+			key := name + "\x00" + clone.CommonDir
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			groups[name] = append(groups[name], clone)
 		}
-		seen[key] = true
-		groups[name] = append(groups[name], clone)
 	}
 	names := make([]string, 0, len(groups))
 	for name := range groups {

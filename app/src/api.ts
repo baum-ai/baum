@@ -39,6 +39,8 @@ export type Entry = GitHubState & {
   review_minutes: number | null;
   pull_request: PR;
   clone_id?: string;
+  /** The repository has no available clone: listed from discovery, and a review waits for one. */
+  needs_clone?: boolean;
   status: string;
   version_count: number;
   latest: {

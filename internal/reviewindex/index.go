@@ -18,7 +18,7 @@ import (
 )
 
 type Registry interface {
-	List(context.Context) ([]repos.Clone, error)
+	Repositories(context.Context) ([]repos.Repository, error)
 }
 type Discovery interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
@@ -36,13 +36,16 @@ type Service struct {
 }
 
 type Entry struct {
-	PullRequest   discovery.PullRequest `json:"pull_request"`
-	CloneID       string                `json:"clone_id,omitempty"`
-	Status        string                `json:"status"`
-	FailureReason string                `json:"failure_reason,omitempty"`
-	VersionCount  int                   `json:"version_count"`
-	Latest        *store.Metadata       `json:"latest"`
-	RiskScore     json.RawMessage       `json:"risk_score"`
+	PullRequest discovery.PullRequest `json:"pull_request"`
+	CloneID     string                `json:"clone_id,omitempty"`
+	// NeedsClone marks a repository with no available clone: its pull
+	// requests are listed from discovery, but a review waits for a clone.
+	NeedsClone    bool            `json:"needs_clone,omitempty"`
+	Status        string          `json:"status"`
+	FailureReason string          `json:"failure_reason,omitempty"`
+	VersionCount  int             `json:"version_count"`
+	Latest        *store.Metadata `json:"latest"`
+	RiskScore     json.RawMessage `json:"risk_score"`
 	// Historical includes saved reviews outside the current discovered inbox.
 	// Their state is UNKNOWN unless the saved document already says closed/merged.
 	Historical        bool   `json:"historical"`
@@ -67,17 +70,27 @@ type Snapshot struct {
 
 func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 	out := Snapshot{Entries: []Entry{}, Problems: []Problem{}}
-	clones, err := s.Registry.List(ctx)
+	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
 		return out, err
+	}
+	var clones []repos.Clone
+	hasClone := map[string]bool{}
+	for _, repository := range picked {
+		for _, clone := range repository.Clones {
+			clones = append(clones, clone)
+			if clone.Available {
+				hasClone[strings.ToLower(repository.Repository)] = true
+			}
+		}
 	}
 	discovered := map[store.Key]discovery.PullRequest{}
 	stale := map[string]bool{}
 	seenRepo := map[string]bool{}
 	observations := map[store.Key]discovery.Observation{}
 	discoveryFetched := map[string]time.Time{}
-	for _, clone := range clones {
-		repository := strings.ToLower(clone.Repository)
+	for _, pick := range picked {
+		repository := strings.ToLower(pick.Repository)
 		if seenRepo[repository] {
 			continue
 		}
@@ -180,9 +193,23 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			}
 		}
 	}
+	// A repository without a clone has no store: list its discovered pull
+	// requests so they can be seen, without a clone ID to generate with.
+	for _, pick := range picked {
+		identity := strings.ToLower(pick.Repository)
+		if len(pick.Clones) > 0 {
+			continue
+		}
+		for key, pr := range discovered {
+			if key.Repository == identity {
+				out.Entries = append(out.Entries, Entry{PullRequest: pr, Status: "no_review", Stale: stale[identity]})
+			}
+		}
+	}
 	for i := range out.Entries {
 		entry := &out.Entries[i]
 		key := store.Key{Repository: entry.PullRequest.Repository, Number: entry.PullRequest.Number}
+		entry.NeedsClone = !hasClone[key.Repository]
 		entry.Review, entry.Checks, entry.Merge = entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge
 		entry.Unresolved, entry.UnresolvedCapped = entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped
 		if fetched := discoveryFetched[key.Repository]; !fetched.IsZero() && !entry.Historical {

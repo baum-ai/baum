@@ -18,9 +18,26 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
+// registry lists its clones grouped by repository. A clone with neither ID nor
+// store stands for a picked repository without a clone.
 type registry []repos.Clone
 
-func (r registry) List(context.Context) ([]repos.Clone, error) { return r, nil }
+func (r registry) Repositories(context.Context) ([]repos.Repository, error) {
+	byName := map[string]int{}
+	out := []repos.Repository{}
+	for _, c := range r {
+		i, ok := byName[c.Repository]
+		if !ok {
+			i = len(out)
+			byName[c.Repository] = i
+			out = append(out, repos.Repository{Repository: c.Repository})
+		}
+		if c.ID != "" || c.CommonDir != "" {
+			out[i].Clones = append(out[i].Clones, c)
+		}
+	}
+	return out, nil
+}
 
 type source map[string]discovery.Snapshot
 
@@ -325,5 +342,33 @@ func TestInboxStatesForEveryStoreOutcomeAndObservationPrecedence(t *testing.T) {
 				t.Fatal(got, err)
 			}
 		})
+	}
+}
+
+// A picked repository without a clone lists its discovered pull requests,
+// marked as needing a clone; repositories with an available clone are not.
+func TestRepositoryWithoutACloneListsPullRequestsNeedingOne(t *testing.T) {
+	pr := func(n int) []discovery.PullRequest {
+		return []discovery.PullRequest{{Number: n, HeadSHA: "head", State: "OPEN"}}
+	}
+	service := &Service{
+		Registry:  registry{{Repository: "acme/bare"}, {ID: "clone", Repository: "acme/app", CommonDir: "dir", Available: true}},
+		Discovery: source{"acme/bare": {PullRequests: pr(3)}, "acme/app": {PullRequests: pr(4)}},
+		OpenStore: func(string) (Reader, error) { return fakeReader{}, nil },
+	}
+	snapshot, err := service.Build(context.Background())
+	if err != nil || len(snapshot.Problems) != 0 || len(snapshot.Entries) != 2 {
+		t.Fatalf("%+v %v", snapshot, err)
+	}
+	app, bare := snapshot.Entries[0], snapshot.Entries[1]
+	if app.PullRequest.Repository != "acme/app" || app.CloneID != "clone" || app.NeedsClone || app.Status != "no_review" {
+		t.Fatalf("repository with a clone: %+v", app)
+	}
+	if bare.PullRequest.Repository != "acme/bare" || bare.PullRequest.Number != 3 || bare.CloneID != "" || !bare.NeedsClone || bare.Status != "no_review" {
+		t.Fatalf("repository without a clone: %+v", bare)
+	}
+	raw, _ := json.Marshal(snapshot)
+	if !strings.Contains(string(raw), `"needs_clone":true`) || strings.Count(string(raw), "needs_clone") != 1 {
+		t.Fatalf("%s", raw)
 	}
 }

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,4 +52,24 @@ func TestHTTPGeneratesDirectly(t *testing.T) {
 	}
 	<-f.started
 	close(f.release)
+}
+
+// A request naming a clone that is gone answers with the needs_clone code,
+// apart from the isolation code, for both estimate and generate.
+func TestHTTPNeedsClone(t *testing.T) {
+	q, f := newQueue(t)
+	f.mu.Lock()
+	f.prepareErr = fmt.Errorf("prepare: %w", ErrNeedsClone)
+	f.mu.Unlock()
+	handler := q.Handler()
+	for _, path := range []string{"/api/jobs/estimate", "/api/jobs"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"items":[{"clone":"gone","pr":1}],"mode":"single"}`)))
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"needs_clone":true`) || strings.Contains(w.Body.String(), "isolation") {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
+	}
+	if len(q.List()) != 0 {
+		t.Fatalf("queued %+v", q.List())
+	}
 }

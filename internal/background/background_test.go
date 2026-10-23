@@ -15,9 +15,26 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
+// registry lists its clones grouped by repository, plus bare picked
+// repositories that have no clone.
 type registry []repos.Clone
 
-func (r registry) List(context.Context) ([]repos.Clone, error) { return r, nil }
+func (r registry) Repositories(context.Context) ([]repos.Repository, error) {
+	byName := map[string]int{}
+	out := []repos.Repository{}
+	for _, c := range r {
+		i, ok := byName[c.Repository]
+		if !ok {
+			i = len(out)
+			byName[c.Repository] = i
+			out = append(out, repos.Repository{Repository: c.Repository})
+		}
+		if c.ID != "" || c.CommonDir != "" || c.Available {
+			out[i].Clones = append(out[i].Clones, c)
+		}
+	}
+	return out, nil
+}
 
 type fakeDiscovery struct {
 	polls        int
@@ -246,5 +263,29 @@ func TestIdentityResetRejectsOldBackoffWrites(t *testing.T) {
 	s.setPause("github.com", time.Now().Add(time.Hour), old)
 	if !s.state("acme/app").NextRefresh.IsZero() || !s.pause("github.com").IsZero() {
 		t.Fatal("old account backoff survived reset")
+	}
+}
+
+func TestPickedRepositoryWithoutCloneIsPolledNotRefreshed(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	var discovered []string
+	refreshed := 0
+	s := &Service{Registry: registry{{Repository: "acme/bare"}, {Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now },
+		Discovered: func(_ context.Context, snap discovery.Snapshot) { discovered = append(discovered, snap.Repository) },
+		Saved:      func(context.Context, repos.Clone) ([]int, error) { return nil, nil },
+		Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+			refreshed++
+			return discovery.Observation{}, nil
+		}}
+	s.Sync(context.Background())
+	if d.polls != 2 || len(discovered) != 2 {
+		t.Fatalf("polls=%d discovered=%v, want both repositories polled", d.polls, discovered)
+	}
+	if refreshed != 1 {
+		t.Fatalf("refreshed %d pull requests, want only the repository with a clone", refreshed)
+	}
+	if st := s.state("acme/bare"); st.Error != "" || st.LastSuccess.IsZero() {
+		t.Fatalf("clone-less state = %+v", st)
 	}
 }
