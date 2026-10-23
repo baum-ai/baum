@@ -144,11 +144,10 @@ type Registry struct {
 	db *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
-	// legacy marks a read-only registry not yet migrated to schema version 1,
+	// legacy marks a read-only registry not yet migrated to schemaVersion,
 	// whose stored automatic=false only ever meant the old default.
 	legacy bool
-	// noPicked marks a read-only registry from before version 2: its picked
-	// repositories are the ones with a clone.
+	// noPicked marks a read-only registry without the picked table.
 	noPicked bool
 	// noPreferences marks a read-only registry without saved preferences.
 	noPreferences bool
@@ -156,9 +155,8 @@ type Registry struct {
 
 // schemaVersion is the registry's PRAGMA user_version. Version 1 makes a null
 // automatic setting follow the global preference; before it, registration
-// stored automatic=false for every repository. Version 2 adds the picked
-// table, backfilled with every repository that has a clone.
-const schemaVersion = 2
+// stored automatic=false for every repository.
+const schemaVersion = 1
 
 func Path() (string, error) {
 	p, e := config.Path()
@@ -214,9 +212,7 @@ func Open(path string) (*Registry, error) {
 // transaction, so concurrent processes migrate it exactly once. Before
 // version 1 the app had no automatic control and registration stored
 // automatic=false for every repository, so a stored false becomes "follow the
-// global preference"; a stored true was an explicit choice and stays. Before
-// version 2 a repository was registered only through a clone, so every
-// repository with a clone becomes picked.
+// global preference"; a stored true was an explicit choice and stays.
 func migrate(ctx context.Context, db *sql.DB) (err error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -236,12 +232,7 @@ func migrate(ctx context.Context, db *sql.DB) (err error) {
 		return err
 	}
 	if version < schemaVersion {
-		if version < 1 {
-			if err = migrateAutomatic(ctx, conn); err != nil {
-				return err
-			}
-		}
-		if _, err = conn.ExecContext(ctx, "INSERT OR IGNORE INTO picked SELECT DISTINCT repository FROM clones"); err != nil {
+		if err = migrateAutomatic(ctx, conn); err != nil {
 			return err
 		}
 		if _, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
@@ -339,7 +330,7 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
-	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < 1, noPicked: picked == 0}, nil
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion, noPicked: picked == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -464,28 +455,16 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if resolved, e := filepath.EvalSymlinks(p); e == nil {
 		p = resolved
 	}
-	tx, e := r.db.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer func() { _ = tx.Rollback() }()
-	// The repository stays picked, even when an older baum registered the
-	// clone without a picked row.
-	if _, e = tx.ExecContext(ctx, "INSERT INTO picked SELECT DISTINCT repository FROM clones WHERE id=? OR path=? ON CONFLICT DO NOTHING", idOrPath, p); e != nil {
-		return e
-	}
-	result, e := tx.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
+	// The repository stays picked: its picked row is not touched.
+	result, e := r.db.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
 	if e != nil {
 		return e
 	}
 	n, e := result.RowsAffected()
-	if e != nil {
-		return e
-	}
-	if n == 0 {
+	if e == nil && n == 0 {
 		return ErrNotFound
 	}
-	return tx.Commit()
+	return e
 }
 func (r *Registry) List(ctx context.Context) ([]Clone, error) {
 	if r.noSchema {
@@ -553,8 +532,7 @@ func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
 }
 
 // RepositorySettings reads one repository's shared settings without probing
-// its clones; false means the repository is not picked: it has neither a
-// picked row nor a registered clone.
+// its clones; false means the repository is not picked.
 func (r *Registry) RepositorySettings(ctx context.Context, repository string) (Settings, bool, error) {
 	var s Settings
 	if r.noSchema {
@@ -629,14 +607,12 @@ func mustJSON(v any) string {
 }
 
 // pickedSQL is the condition, over repositories aliased r, for a picked
-// repository: a picked row, or a clone (which an older baum may have added
-// without a picked row).
+// repository: one with a picked row.
 func (r *Registry) pickedSQL() string {
-	const clones = "EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity)"
 	if r.noPicked {
-		return clones
+		return "0"
 	}
-	return "EXISTS (SELECT 1 FROM picked p WHERE p.identity=r.identity) OR " + clones
+	return "EXISTS (SELECT 1 FROM picked p WHERE p.identity=r.identity)"
 }
 
 // Repository is a picked repository with its settings and registered clones,
@@ -699,12 +675,7 @@ func (r *Registry) Unpick(ctx context.Context, repository string) error {
 		return e
 	}
 	defer func() { _ = tx.Rollback() }()
-	deleted, e := tx.ExecContext(ctx, "DELETE FROM clones WHERE repository=?", identity)
-	if e != nil {
-		return e
-	}
-	clones, e := deleted.RowsAffected()
-	if e != nil {
+	if _, e = tx.ExecContext(ctx, "DELETE FROM clones WHERE repository=?", identity); e != nil {
 		return e
 	}
 	unpicked, e := tx.ExecContext(ctx, "DELETE FROM picked WHERE identity=?", identity)
@@ -715,7 +686,7 @@ func (r *Registry) Unpick(ctx context.Context, repository string) error {
 	if e != nil {
 		return e
 	}
-	if clones == 0 && rows == 0 {
+	if rows == 0 {
 		return ErrNotFound
 	}
 	return tx.Commit()

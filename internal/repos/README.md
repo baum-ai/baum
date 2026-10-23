@@ -16,27 +16,16 @@ metadata only and contacts nothing.
 - `picked(identity)`: repositories picked by name, possibly without a clone.
 - `preferences(key, value)`: the global preferences as one JSON row.
 
-A repository is picked when it has a `picked` row or at least one clone. The
-second half of the rule keeps a clone registered by an older baum visible.
-Adding a clone also picks its repository, and removing the clone keeps it
-picked with zero clones. `Unpick` deletes the repository's clones and its
-picked row but keeps the `repositories` row, so its settings survive a re-pick.
-`Pick` accepts only github.com `owner/name`; it reads no local git and checks
-nothing on GitHub.
+A repository is picked exactly when it has a `picked` row. Adding a clone also
+picks its repository, and removing the clone keeps it picked with zero clones.
+`Unpick` deletes the repository's clones and its picked row but keeps the
+`repositories` row, so its settings survive a re-pick. `Pick` accepts only
+github.com `owner/name`; it reads no local git and checks nothing on GitHub.
 
-## Schema versions
-
-`PRAGMA user_version` is 2. `Open` migrates in one `BEGIN IMMEDIATE`
-transaction: below 1, a stored `automatic: false` (what every earlier
-registration stored) becomes `null`, following the global preference; below 2,
-`picked` is backfilled with every repository that has a clone. `OpenReadOnly`
-migrates nothing: it reads a version 0 file's `false` as `null` and, without a
-`picked` table, treats picked as "has a clone".
-
-Version 2 only adds a table. Existing tables keep their columns, so an older
-baum that runs `INSERT INTO repositories VALUES (?,?)` still works against a
-newer database. Its repositories have clones, hence count as picked. Keep it
-that way: do not add columns to `repositories` or `clones`.
+`PRAGMA user_version` is 1: `Open` turns the `automatic: false` that earlier
+registrations stored into `null` (follow the global preference). `OpenReadOnly`
+reads such a file the same way without writing it, and lists no picked
+repositories when the `picked` table is missing.
 
 ## HTTP
 

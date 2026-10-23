@@ -1689,11 +1689,10 @@ reprobes paths and reports changed/missing clones unavailable without rewriting
 them. No clone-on-demand or generation runner is involved.
 
 A GitHub repository can be picked by `owner/name` without any clone (`picked`
-table); clones attach to it later. A repository is picked when it has a
-`picked` row or a clone, so `Add` picks and `Remove` leaves the repository
-picked with zero clones, while `Unpick` deletes its clones too. Settings stay
-on the `repositories` row. The table was added without touching existing
-columns, so an older baum's column-less inserts keep working.
+table); clones attach to it later. A repository is picked exactly when it has
+a `picked` row, so `Add` picks and `Remove` leaves the repository picked with
+zero clones, while `Unpick` deletes its clones too. Settings stay on the
+`repositories` row.
 
 A repository's `automatic` setting is `null` (follow the global preference) or
 an explicit `true`/`false`. The global preference is a master switch
@@ -1704,9 +1703,8 @@ global preferences as one JSON row: `automatic` (true until changed) and
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
 into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
-could set it). Version 2 adds `picked`, backfilled in the same transaction with
-every repository that has a clone. `OpenReadOnly` reads an unmigrated file the
-same way without writing it, treating a missing `picked` table as "has a clone". An older baum that registers a repository after the migration
+could set it). `OpenReadOnly` reads an unmigrated file the same way without
+writing it. An older baum that registers a repository after the migration
 still stores `automatic: false`, which now reads as an explicit off: that
 repository stays off until changed in the app, which fails safe.
 `PUT /api/repos/{id}/settings` replaces the whole object and requires the
