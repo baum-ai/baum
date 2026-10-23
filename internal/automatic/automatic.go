@@ -84,9 +84,12 @@ type Scheduler struct {
 	Interval time.Duration
 	Log      *slog.Logger
 
-	once  sync.Once
-	wake  chan struct{}
-	runMu sync.Mutex
+	once sync.Once
+	wake chan struct{}
+	// run is a one-slot lock held by a pass or by an identity change, which
+	// can hold it for a whole device sign-in. A pass waiting for it gives up
+	// when its context ends, so the daemon can stop meanwhile.
+	run   chan struct{}
 	mu    sync.Mutex
 	state *fileState
 	// observed is when the newest snapshot Observe took for each repository
@@ -108,10 +111,11 @@ func (s *Scheduler) ResetIdentity() {
 // BeginIdentityChange stops submission before credentials change. The returned
 // function must be called once to release the fence, even on failed sign-in.
 func (s *Scheduler) BeginIdentityChange() func(bool) {
-	s.runMu.Lock()
+	s.init()
+	s.run <- struct{}{}
 	s.identityChanging.Store(true)
 	return func(changed bool) {
-		defer s.runMu.Unlock()
+		defer func() { <-s.run }()
 		defer s.identityChanging.Store(false)
 		if !changed {
 			return
@@ -200,7 +204,10 @@ type prState struct {
 }
 
 func (s *Scheduler) init() {
-	s.once.Do(func() { s.wake = make(chan struct{}, 1) })
+	s.once.Do(func() {
+		s.wake = make(chan struct{}, 1)
+		s.run = make(chan struct{}, 1)
+	})
 }
 
 func (s *Scheduler) now() time.Time {
@@ -493,8 +500,13 @@ type work struct {
 
 // Pass submits every pending job that is due. Exposed for tests.
 func (s *Scheduler) Pass(ctx context.Context) {
-	s.runMu.Lock()
-	defer s.runMu.Unlock()
+	s.init()
+	select {
+	case s.run <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-s.run }()
 	v, err := s.current(ctx)
 	if err != nil {
 		s.log().Warn("automatic generation pass skipped", "error", err)

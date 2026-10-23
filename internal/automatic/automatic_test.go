@@ -1017,6 +1017,21 @@ func TestIdentityFencePreservesSettingsAndRequiresNewBaseline(t *testing.T) {
 	}
 }
 
+func TestPassWaitingAtIdentityFenceStopsWithItsContext(t *testing.T) {
+	h := newHarness(t)
+	finish := h.scheduler.BeginIdentityChange()
+	defer finish(false)
+	ctx, cancel := context.WithCancel(context.Background())
+	pass := make(chan struct{})
+	go func() { h.scheduler.Pass(ctx); close(pass) }()
+	cancel()
+	select {
+	case <-pass:
+	case <-time.After(time.Second):
+		t.Fatal("pass kept waiting for a sign-in after its context ended")
+	}
+}
+
 func TestIdentityTransitionFencesQueuedAdmission(t *testing.T) {
 	h := newHarness(t)
 	j := jobs.Job{Prepared: jobs.Prepared{Repository: "org/repo", EstimateUSD: new(1.0)}, CreatedAt: h.now}
