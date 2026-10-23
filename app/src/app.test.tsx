@@ -842,7 +842,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     command: {
       installed: false,
       target: "/app/baum",
-      plan: { link: "/home/me/bin/baum", on_path: true, admin: false },
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
     },
     hooks: {
       agents: [

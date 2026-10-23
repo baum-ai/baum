@@ -410,16 +410,18 @@ title is not interpreted.
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
   `save_review_settings` and `finish_setup`). Every change they make runs in the
-  Rust side and only when the user clicked it on the setup screen;
-  replacing a different baum also needs the screen to name the path the
-  user confirmed. The daemon's pages can call none of them but the picker.
+  Rust side and only when the user requests it in setup or Settings;
+  replacing a different baum also requires the confirmed path. Daemon pages
+  share `setup_state`, the four CLI and hook install/removal commands and
+  `choose_repository`. GitHub connection, repository registration, review
+  settings and finishing setup remain restricted to the bundled setup screen.
 - The opener plugin is used only from Rust, to open links in the browser. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
-directories it writes only what the setup screen installs: the `baum` link
+directories it writes only what the user installs through setup or Settings: the `baum` link
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
