@@ -557,7 +557,7 @@ it("shows no diagnostics notice when nothing is a problem", async () => {
   expect(calls.count).toBe(1);
   expect(node.textContent).not.toContain("diagnostics found");
 });
-it("opens the diagnostics page from its address, as the desktop app's first run does", async () => {
+it("opens the diagnostics page from its address", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   const calls = stubDiagnostics(async () =>
     Response.json({ local: true, report: diagnosticsReport }),
@@ -833,4 +833,47 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(calls.count).toBe(2);
   expect(node.textContent).not.toContain("boom");
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
+});
+
+it("manages CLI and hooks inline in desktop Settings", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  const view = {
+    first_run: false,
+    command: {
+      installed: false,
+      target: "/app/baum",
+      plan: { link: "/home/me/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        {
+          agent: "codex",
+          name: "Codex",
+          detected: true,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+        },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: ["Installed"] },
+  );
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const click = async (label: string) => {
+      const button = [...node.querySelectorAll("button")].find((b) => b.textContent === label);
+      expect(button).toBeTruthy();
+      await act(async () => button!.click());
+    };
+    await click("Install baum CLI");
+    expect(invoke).toHaveBeenCalledWith("install_command", {});
+    await click("Install Codex hooks");
+    expect(invoke).toHaveBeenCalledWith("install_hooks", { agent: "codex" });
+    expect(location.search).toBe("?page=settings");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
 });
