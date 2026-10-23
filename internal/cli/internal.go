@@ -29,6 +29,7 @@ and the agent hooks.`,
 		newReposCommand(),
 		newReviewsCommand(),
 		newDoctorCommand(),
+		newGitHubCredentialCommand(),
 	)
 	return cmd
 }
