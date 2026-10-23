@@ -1838,8 +1838,9 @@ A job names a clone (`Item.Clone`). An item whose clone is unknown or
 unavailable, which includes every repository picked without a clone, is
 `jobs.ErrNeedsClone`: estimate and generate answer `409` with
 `{"needs_clone":true}` (the isolation answer is `{"isolation_required":true}`),
-and a queued job whose clone was removed fails with the reason `needs_clone`
-without running. Pull requests of such a repository are still discovered.
+and a queued job whose clone was removed ends with the reason `needs_clone`
+without running (`cancelled` when automatic, so its head is not used up and
+it counts no spend; `failed` when manual). Pull requests of such a repository are still discovered.
 The runner has no subprocess invocation of baum itself. Only the existing
 read-only agent backends run child processes, cancelled through their context.
 
@@ -2160,11 +2161,13 @@ it and `Queue.SubmitAutomatic` decides each job.
 - **No clone.** A picked repository without a clone is observed and its
   state kept, but a pass never submits for it: it needs a clone to generate
   in. Its pending heads wait, and the first pass after a clone appears
-  submits them as usual. A job whose clone disappeared after it was queued
-  (or after the pass chose it) does not run either: `Queue.SubmitAutomatic`
-  returns `jobs.ErrNeedsClone`, which keeps the head pending without using
-  an attempt, and a queued job fails with the reason `needs_clone` before
-  any model call.
+  submits them as usual. A job whose clone disappeared after the pass chose
+  it is not submitted: `Queue.SubmitAutomatic` returns `jobs.ErrNeedsClone`,
+  which keeps the head pending without using an attempt, a retry time or a
+  new notice. One whose clone disappeared while it was queued is cancelled
+  with the reason `needs_clone` before any model call, like a daily-cap
+  refusal: `Queue.Refused` lists it, no spend is counted, and the head is
+  pending again, so the first pass with an available clone submits it once.
 - **Passes** run at start, every 30 s, when a snapshot leaves pending work,
   when settings change and when a job finishes. A pass submits due pending
   heads in order unless the daemon is stopping or has a restart pending

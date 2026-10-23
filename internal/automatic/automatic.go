@@ -661,6 +661,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	notice := rs.Notice
 	var notAutomatic *jobs.NotAutomaticError
 	var notAllowed *jobs.NotAllowedError
+	quiet := false
 	switch {
 	case err == nil:
 		s.log().Info("queued an automatic review", "repository", w.name, "pr", w.number, "job", job.ID, "trigger", w.trigger)
@@ -675,7 +676,8 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	case errors.Is(err, jobs.ErrNeedsClone):
 		// The clone went away since this pass read it: stay pending without
 		// using up an attempt; passes skip the repository until one is back.
-		result = stopRepository
+		// Nothing changed that anyone needs announcing.
+		result, quiet = stopRepository, true
 	case errors.Is(err, jobs.ErrHeadChanged):
 		// Discovery reports the newer head, which triggers again.
 		pr.Pending, pr.Trigger = "", ""
@@ -704,7 +706,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		}
 		s.log().Warn("automatic review not queued", "repository", w.name, "pr", w.number, "attempt", pr.Attempts, "error", err)
 	}
-	announce := notice != rs.Notice || result == stopRepository
+	announce := notice != rs.Notice || (result == stopRepository && !quiet)
 	rs.Notice = notice
 	s.save()
 	status := s.status(w.name, w.repo, rs, now)

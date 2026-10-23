@@ -41,7 +41,11 @@ func (r *fakeRegistry) Repositories(context.Context) ([]repos.Repository, error)
 	if !r.noClone {
 		v.Clones = append(v.Clones, repos.Clone{ID: "clone", Path: "/clone", CommonDir: "/clone/.git", Repository: "org/repo", Settings: r.settings, Available: true})
 	}
-	return []repos.Repository{v}, nil
+	out := []repos.Repository{v}
+	for name, s := range r.others {
+		out = append(out, repos.Repository{Repository: name, Settings: s, Clones: []repos.Clone{{ID: "clone-" + name, Repository: name, Settings: s, Available: true}}})
+	}
+	return out, nil
 }
 func (r *fakeRegistry) Preferences(context.Context) (repos.Preferences, error) {
 	r.mu.Lock()
@@ -84,6 +88,9 @@ type executor struct {
 	block   chan struct{}
 	started chan struct{}
 	fail    error
+	// needsClone is a clone ID whose items Prepare refuses with ErrNeedsClone,
+	// though the registry reports the clone available.
+	needsClone string
 }
 
 func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
@@ -94,7 +101,14 @@ func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, st
 	if backend == "" {
 		backend = "claude"
 	}
-	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: "org/repo", HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
+	if item.Clone == e.needsClone {
+		return jobs.Prepared{}, "", jobs.ErrNeedsClone
+	}
+	repository := "org/repo"
+	if item.Clone == "clone-org/other" {
+		repository = "org/other"
+	}
+	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repository, HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
 }
 func (e *executor) Execute(ctx context.Context, p jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
 	// Like jobs.Local's recheck: an automatic job of a PR now a draft is
@@ -1080,4 +1094,85 @@ func TestRepositoryWithoutACloneIsObservedNotSubmitted(t *testing.T) {
 	h.registry.mu.Unlock()
 	h.pass()
 	h.want("org/repo#1@a2:new_head")
+}
+
+// A head whose queued job ended because the clone was removed did not use up
+// its head or spend: once a clone is back, the next pass submits it once.
+func TestHeadWaitsForACloneAfterAJobLostIt(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", requested: true})
+	h.pass()
+	h.observe(pr{number: 1, head: "a2", requested: true})
+	h.exec.fail = jobs.ErrNeedsClone
+	h.pass()
+	h.waitIdle()
+	states := func() (cancelled, completed int) {
+		for _, j := range h.queue.List() {
+			switch {
+			case j.State == "cancelled" && j.Reason == jobs.ReasonNeedsClone:
+				cancelled++
+			case j.State == "completed":
+				completed++
+			}
+		}
+		return
+	}
+	if c, _ := states(); c != 1 {
+		t.Fatalf("jobs %+v", h.queue.List())
+	}
+	if spent, known := h.queue.AutomaticSpend("org/repo", startOfDay(h.now)); spent != 0 || !known {
+		t.Fatalf("a job that never ran counted as spend: %v %v", spent, known)
+	}
+	h.registry.mu.Lock()
+	h.registry.noClone = true
+	h.registry.mu.Unlock()
+	h.pass()
+	h.pass()
+	if len(h.queue.List()) != 1 {
+		t.Fatalf("submitted without a clone: %+v", h.queue.List())
+	}
+	h.registry.mu.Lock()
+	h.registry.noClone = false
+	h.registry.mu.Unlock()
+	h.exec.fail = nil
+	h.pass()
+	h.waitIdle()
+	h.pass()
+	if c, d := states(); c != 1 || d != 1 || len(h.queue.List()) != 2 {
+		t.Fatalf("want one cancelled and one completed job: %+v", h.queue.List())
+	}
+}
+
+// ErrNeedsClone from submission (the clone vanished after the pass read it)
+// keeps the head pending without using an attempt or a retry time, stays
+// quiet, and does not hold back other repositories.
+func TestNeedsCloneAtSubmissionKeepsHeadPending(t *testing.T) {
+	h := newHarness(t)
+	h.registry.others = map[string]repos.Settings{"org/other": {}}
+	observeOther := func(head string) {
+		h.exec.setHead(5, head, false)
+		h.scheduler.Observe(context.Background(), discovery.Snapshot{Repository: "org/other", FetchedAt: h.now, PullRequests: []discovery.PullRequest{{Repository: "org/other", Number: 5, HeadSHA: head, State: "OPEN", ReviewRequestedFromMe: true, AuthorHasWrite: new(true), TeamMembershipKnown: true}}})
+	}
+	h.observe(pr{number: 1, head: "a1", requested: true})
+	observeOther("o1")
+	h.pass()
+	h.observe(pr{number: 1, head: "a2", requested: true})
+	observeOther("o2")
+	h.exec.needsClone = "clone"
+	h.notices = nil
+	h.pass()
+	h.pass()
+	h.want("org/other#5@o2:new_head")
+	rs := h.scheduler.load().Repositories["org/repo"]
+	if p := rs.PRs[1]; p.Pending != "a2" || p.Attempts != 0 || !p.RetryAt.IsZero() {
+		t.Fatalf("pr state %+v", p)
+	}
+	for _, n := range h.notices {
+		if n.Repository == "org/repo" {
+			t.Fatalf("announced %+v", n)
+		}
+	}
+	h.exec.needsClone = ""
+	h.pass()
+	h.want("org/other#5@o2:new_head", "org/repo#1@a2:new_head")
 }

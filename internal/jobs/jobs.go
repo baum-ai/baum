@@ -648,8 +648,13 @@ func (q *Queue) worker() {
 				current.State = "cancelled"
 				current.Reason = refused.Reason
 			case err != nil && errors.Is(err, ErrNeedsClone):
-				// The clone was removed while the job waited: nothing ran.
+				// The clone was removed while the job waited: nothing ran. An
+				// automatic job is cancelled like a refused one, so its head is
+				// not used up and runs once a clone is back; a manual one fails.
 				current.State = "failed"
+				if current.Automatic {
+					current.State = "cancelled"
+				}
 				current.Reason = ReasonNeedsClone
 			case err != nil:
 				current.State = "failed"

@@ -673,7 +673,7 @@ func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := waitState(t, q, j.ID, "failed")
+	done := waitState(t, q, j.ID, "cancelled")
 	if done.Reason != ReasonNeedsClone {
 		t.Fatalf("job %+v", done)
 	}
@@ -681,5 +681,16 @@ func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
 	case p := <-f.started:
 		t.Fatalf("job ran: %+v", p)
 	default:
+	}
+	// It spent nothing, and its head is not used up.
+	if spent, known := q.AutomaticSpend("org/repo", time.Now()); spent != 0 || !known {
+		t.Fatalf("spend %v %v", spent, known)
+	}
+	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != j.ID {
+		t.Fatalf("refused %+v", refused)
+	}
+	f.noClone = false
+	if _, err = q.SubmitAutomatic(context.Background(), auto(1, "a1")); err != nil {
+		t.Fatalf("resubmit with a clone: %v", err)
 	}
 }

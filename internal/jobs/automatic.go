@@ -279,10 +279,11 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 }
 
 // unsettled: an automatic job cancelled before any model call for a reason
-// that says nothing about its head (ReasonDailyCap, ReasonDraft). It does not
+// that says nothing about its head (ReasonDailyCap, ReasonDraft,
+// ReasonNeedsClone). It does not
 // count as the head's job.
 func unsettled(j Job) bool {
-	return j.Automatic && j.State == "cancelled" && (j.Reason == ReasonDailyCap || j.Reason == ReasonDraft)
+	return j.Automatic && j.State == "cancelled" && (j.Reason == ReasonDailyCap || j.Reason == ReasonDraft || j.Reason == ReasonNeedsClone)
 }
 
 // headKey identifies a pull request head, case-insensitively by repository.
@@ -291,7 +292,8 @@ func headKey(j Job) string {
 }
 
 // Refused lists automatic jobs cancelled before any model call for a reason
-// that does not use up their head (ReasonDailyCap, ReasonDraft), when that is
+// that does not use up their head (ReasonDailyCap, ReasonDraft,
+// ReasonNeedsClone), when that is
 // the latest job for the head; the scheduler makes such a head pending again
 // while the PR is eligible.
 func (q *Queue) Refused() []Job {
