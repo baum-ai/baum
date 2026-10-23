@@ -19,6 +19,7 @@ import (
 
 	"github.com/baum-ai/baum/hosted/apiclient"
 	"github.com/baum-ai/baum/hosted/traceupload"
+	"github.com/baum-ai/baum/internal/scanskip"
 	"github.com/baum-ai/baum/sessions/collector"
 )
 
@@ -239,10 +240,10 @@ func discoverCheckouts(ctx context.Context, stderr io.Writer) ([]collector.Repos
 		}
 		if rel != "." {
 			depth := strings.Count(rel, string(filepath.Separator)) + 1
-			if depth > setupScanDepth || skipScanDir(entry.Name()) {
+			if depth > setupScanDepth || scanskip.Dir(entry.Name()) {
 				return filepath.SkipDir
 			}
-			if scanHome && depth == 1 && skipUserDataDir(entry.Name()) {
+			if scanHome && depth == 1 && scanskip.UserData(entry.Name()) {
 				return filepath.SkipDir
 			}
 		}
@@ -267,33 +268,6 @@ func canonicalPath(path string) string {
 		return filepath.Clean(resolved)
 	}
 	return filepath.Clean(path)
-}
-
-// skipUserDataDir reports well-known folders of a home directory that hold
-// personal files or cloud mounts, not projects. They are skipped only when the
-// scan starts at the home directory.
-func skipUserDataDir(name string) bool {
-	switch name {
-	case "Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music", "Public", "Library", "Applications", "iCloud Drive":
-		return true
-	}
-	for _, prefix := range []string{"Google Drive", "Dropbox", "OneDrive"} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func skipScanDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	switch name {
-	case "node_modules", "vendor", "target", "dist", "build", "__pycache__", "Library", "Applications":
-		return true
-	}
-	return false
 }
 
 func setupAllRepositories(ctx context.Context, in io.Reader, client *apiclient.Client, opts setupRepositoryOptions, stdout, stderr io.Writer) error {

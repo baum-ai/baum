@@ -33,19 +33,7 @@ func (r *Repo) RemoteURLs(ctx context.Context) ([]Remote, error) {
 		}
 		return nil, err
 	}
-	var remotes []Remote
-	for _, line := range strings.Split(string(out), "\n") {
-		key, value, found := strings.Cut(line, " ")
-		name, ok := strings.CutPrefix(key, "remote.")
-		if !found || !ok {
-			continue
-		}
-		if name, ok = strings.CutSuffix(name, ".url"); !ok || name == "" {
-			continue
-		}
-		remotes = append(remotes, Remote{Name: name, URL: strings.TrimSpace(value)})
-	}
-	return remotes, nil
+	return parseRemotes(out), nil
 }
 
 // RemoteRepository returns the host and the lower-case "owner/name" a git
