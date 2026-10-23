@@ -83,11 +83,12 @@ clones:
   clone; and when asked (`POST /api/clones/found/refresh`) or when the event
   subscription missed events.
 - **What it attaches.** For each picked repository with no available clone it
-  calls `Registry.Add(path, nil)` with the best candidate, trying the next on
-  failure (logged, never fatal). It attaches only a candidate the registry
-  would file under that same repository, which excludes a fork whose origin is
-  the fork: `Add` picks the repository it files a clone under, so attaching
-  the fork would pick the fork too. Unpicked repositories are never attached.
+  calls `Registry.AddFor(path, repository, nil)` with the best candidate,
+  trying the next on failure (logged, never fatal). `AddFor` files the clone
+  under the picked repository when any remote names it, so a fork clone
+  (origin the fork, `upstream` the picked repository) is attached to the
+  upstream without registering or picking the fork. Unpicked repositories are
+  never attached.
 - **Events.** It subscribes to agent hook events. A directory not seen before,
   while some picked repository has no clone, is probed; if its clone is one of
   such a repository it is attached at once.

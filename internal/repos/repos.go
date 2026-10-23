@@ -339,7 +339,13 @@ func (r *Registry) Close() error { return r.db.Close() }
 // registered, without registering it.
 func Inspect(ctx context.Context, path string) (Clone, error) { return inspect(ctx, path) }
 
-func inspect(ctx context.Context, path string) (Clone, error) {
+func inspect(ctx context.Context, path string) (Clone, error) { return inspectFor(ctx, path, "") }
+
+// inspectFor probes a working tree. With repository empty it files the clone
+// under the first GitHub remote, origin first. Otherwise it files it under
+// that repository, which any of its GitHub remotes may name (a fork clone's
+// upstream), and fails when none does.
+func inspectFor(ctx context.Context, path, repository string) (Clone, error) {
 	repo, e := gitlocal.Open(ctx, path, gitlocal.Options{})
 	if e != nil {
 		return Clone{}, errors.New("path is unavailable or is not a git working tree")
@@ -380,8 +386,14 @@ func inspect(ctx context.Context, path string) (Clone, error) {
 		if e != nil {
 			continue
 		}
+		if repository != "" && !strings.EqualFold(gh.String(), repository) {
+			continue
+		}
 		sum := sha256.Sum256([]byte(p))
 		return Clone{ID: hex.EncodeToString(sum[:]), Path: p, CommonDir: common, Repository: strings.ToLower(gh.String()), Available: true}, nil
+	}
+	if repository != "" {
+		return Clone{}, ErrNoMatchingRemote
 	}
 	return Clone{}, errors.New("working tree has no GitHub remote")
 }
@@ -401,7 +413,34 @@ func (r *Registry) Add(ctx context.Context, path string, settings *Settings) (Cl
 // runs under the writer transaction, so omitted fields cannot lose another
 // process's concurrent edits. It must not call back into the registry.
 func (r *Registry) AddPatch(ctx context.Context, path string, edit func(Settings) (Settings, error)) (Clone, error) {
-	c, e := inspect(ctx, path)
+	return r.addPatch(ctx, path, "", edit)
+}
+
+// ErrNoMatchingRemote reports a working tree none of whose GitHub remotes
+// names the requested repository.
+var ErrNoMatchingRemote = errors.New("working tree has no remote for that repository")
+
+// AddFor registers an existing clone for repository (github.com owner/name)
+// when any of its GitHub remotes names it, not only origin: a fork clone whose
+// upstream remote is the repository is filed under the repository, and the
+// fork's own repository is neither registered nor picked. It fails with
+// ErrNoMatchingRemote when no remote names the repository. Settings are as
+// for Add.
+func (r *Registry) AddFor(ctx context.Context, path, repository string, settings *Settings) (Clone, error) {
+	gh, e := github.ParseRepository(repository)
+	if e != nil || gh.Host != config.GitHubHost {
+		return Clone{}, ErrInvalidRepository
+	}
+	return r.addPatch(ctx, path, strings.ToLower(gh.String()), func(previous Settings) (Settings, error) {
+		if settings != nil {
+			return *settings, settings.Validate()
+		}
+		return previous, nil
+	})
+}
+
+func (r *Registry) addPatch(ctx context.Context, path, repository string, edit func(Settings) (Settings, error)) (Clone, error) {
+	c, e := inspectFor(ctx, path, repository)
 	if e != nil {
 		return Clone{}, e
 	}
@@ -509,7 +548,8 @@ func probe(ctx context.Context, clones []Clone) error {
 		if e := ctx.Err(); e != nil {
 			return e
 		}
-		current, err := inspect(ctx, clones[i].Path)
+		// Any remote may name the clone's repository, as AddFor allows.
+		current, err := inspectFor(ctx, clones[i].Path, clones[i].Repository)
 		clones[i].Available = err == nil && current.Path == clones[i].Path && current.CommonDir == clones[i].CommonDir && current.Repository == clones[i].Repository
 	}
 	return nil

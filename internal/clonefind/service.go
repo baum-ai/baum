@@ -34,7 +34,7 @@ func MatchEvent(e hookevents.Event) bool { return e.Kind == hookevents.KindAgent
 // Registry is the part of the repository registry the service uses.
 type Registry interface {
 	Repositories(context.Context) ([]repos.Repository, error)
-	Add(ctx context.Context, path string, settings *repos.Settings) (repos.Clone, error)
+	AddFor(ctx context.Context, path, repository string, settings *repos.Settings) (repos.Clone, error)
 }
 
 // Attached is a clone the service registered by itself.
@@ -260,14 +260,11 @@ func (s *Service) attachAll(ctx context.Context) {
 	}
 }
 
-// attach registers a clone for the picked repository name. A clone the
-// registry would file under another repository (a fork whose origin is the
-// fork) is left alone: registering it would pick that repository too.
+// attach registers a clone for the picked repository name. Any remote may
+// name it: a fork clone whose upstream is the repository is filed under the
+// repository, and the fork's own repository is not picked.
 func (s *Service) attach(ctx context.Context, name string, candidate Candidate) bool {
-	if candidate.primary != name {
-		return false
-	}
-	clone, err := s.Registry.Add(ctx, candidate.Path, nil)
+	clone, err := s.Registry.AddFor(ctx, candidate.Path, name, nil)
 	if err != nil {
 		s.log().Warn("found clone not registered", "repository", name, "error", err)
 		return false

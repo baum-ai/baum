@@ -122,7 +122,7 @@ func TestNothingIsAttachedForUnpickedRepositories(t *testing.T) {
 	}
 }
 
-func TestForkCloneIsNotAttachedToTheUpstreamItNames(t *testing.T) {
+func TestForkCloneIsAttachedToThePickedUpstream(t *testing.T) {
 	h := home(t)
 	repo(t, filepath.Join(h, "code", "fork"), "origin", gh("me/app"), "upstream", gh("acme/app"))
 	f := start(t, h)
@@ -130,12 +130,14 @@ func TestForkCloneIsNotAttachedToTheUpstreamItNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.run(t)
-	eventually(t, "the scan to end", f.scanned)
-	if got := f.clones(t); len(got) != 0 {
-		t.Fatalf("registered %+v, which would pick the fork", got)
+	eventually(t, "the clone to be registered", func() bool { return len(f.clones(t)) == 1 })
+	got := f.clones(t)[0]
+	if got.Repository != "acme/app" || !got.Available {
+		t.Fatalf("clone = %+v", got)
 	}
-	if len(f.service.Snapshot().Repositories["acme/app"]) != 1 {
-		t.Fatal("the fork is not listed for the upstream")
+	picked, err := f.registry.Repositories(context.Background())
+	if err != nil || len(picked) != 1 || picked[0].Repository != "acme/app" {
+		t.Fatalf("picked = %+v, %v (the fork must not be picked)", picked, err)
 	}
 }
 

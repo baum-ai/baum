@@ -56,6 +56,16 @@ Only `POST` validates the name. `DELETE` and `PUT` only lowercase it and look
 it up, so a malformed `owner/name` answers 404, and an Enterprise identity
 added through `add` can be unpicked from the CLI.
 
+`Add` files a clone under its first GitHub remote, `origin` first. `AddFor(path,
+repository, settings)` files it under `repository` when any of its GitHub
+remotes names it (a fork clone whose `upstream` is the picked repository), and
+fails with `ErrNoMatchingRemote` when none does. The fork's own repository is
+neither registered nor picked. A list reprobes a clone by its stored
+repository the same way, so such a clone stays available while some remote
+names that repository. Pull request commits a clone lacks are never fetched
+by generation: assembly reports the missing commit and names the remote whose
+URL matches the registered repository, not `origin`.
+
 Settings PUTs replace the whole object and require `automatic` and
 `daily_cap`, `null` for the default.
 

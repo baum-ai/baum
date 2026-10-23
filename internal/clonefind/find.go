@@ -58,11 +58,6 @@ type Candidate struct {
 	// worktrees); zero for a clone only a scan found.
 	LastActivity time.Time
 	Source       string
-
-	// primary is the repository the registry would file this clone under
-	// (its origin remote first), which can differ from the key it is listed
-	// under when the clone is a fork.
-	primary string
 }
 
 // Result is what one run found.
@@ -542,7 +537,7 @@ func group(result *Result, trees map[string]*workTree) {
 }
 
 func (t *workTree) candidate() Candidate {
-	c := Candidate{Path: t.top, CommonDir: t.common, LastActivity: t.activity, Source: SourceScan, primary: t.names[0]}
+	c := Candidate{Path: t.top, CommonDir: t.common, LastActivity: t.activity, Source: SourceScan}
 	if t.agent {
 		c.Source = SourceAgent
 	}

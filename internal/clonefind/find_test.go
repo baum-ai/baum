@@ -111,9 +111,6 @@ func TestForkCloneMatchesBothNames(t *testing.T) {
 			t.Fatalf("%s = %v", name, got)
 		}
 	}
-	if result.Repositories["acme/app"][0].primary != "me/app" {
-		t.Fatalf("primary = %q", result.Repositories["acme/app"][0].primary)
-	}
 }
 
 func TestOtherHostsAreIgnored(t *testing.T) {
