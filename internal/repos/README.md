@@ -66,6 +66,13 @@ names that repository. Pull request commits a clone lacks are never fetched
 by generation: assembly reports the missing commit and names the remote whose
 URL matches the registered repository, not `origin`.
 
+Cloning a picked repository is served beside these routes by
+[`internal/githubrepos`](../githubrepos/README.md) (the registry package
+contacts nothing): `GET /api/repositories/{owner}/{name}/clone-target` (the
+default folder), `POST /api/repositories/{owner}/{name}/clone` `{"dir"?}` (picks
+the repository if needed, clones in the background and registers the clone with
+`AddFor`; 202, 400, 409) and `GET .../clone` (the current or last state).
+
 Settings PUTs replace the whole object and require `automatic` and
 `daily_cap`, `null` for the default.
 

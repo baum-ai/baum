@@ -85,6 +85,14 @@ the token. Authenticated Git failure messages discard upstream stderr. SSH
 fetches retain the user's working configuration. Native credential-store and
 live GitHub OAuth smoke tests still require each supported OS and a real account.
 
+The same token also lists the account's repositories for picking
+(`github.Client.ViewerRepositories`, GraphQL to the host's API endpoint, needing
+only the `repo read:org` sign-in) and clones a picked repository
+(`gitlocal.Clone`, HTTPS to github.com with the same private-environment header
+as a fetch). A listing failure maps to the connection error codes above plus
+`not_connected` and `rate_limited`, using the runtime health this package keeps.
+See [`internal/githubrepos`](../githubrepos/README.md).
+
 Queued review confirmations include the credential partition inside the existing
 configuration digest. A job admitted just before switching accounts cannot start
 with the replacement account, including after daemon restart. Baum-issued

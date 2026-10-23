@@ -458,6 +458,34 @@ The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, pick repositories, remove records
 and change settings. `baum internal view` exposes none of these routes.
 
+### Listing your GitHub repositories and cloning one
+
+To let you pick repositories by name, the daemon asks GitHub (`api.github.com`
+GraphQL, with the token baum already uses for pull requests) for the
+repositories you own, collaborate on or reach through an organization, newest
+push first, at most 300, and for the open pull requests that involve you. Only
+GitHub receives these requests; the token goes nowhere else. The result is kept
+in the daemon's memory for five minutes and is served only behind its
+authenticated Host/Origin boundary. It needs no scope beyond the `repo
+read:org` sign-in already requests.
+
+When you ask to clone a repository, baum runs `git clone` of
+`https://github.com/<owner>/<name>.git`, a URL built from the validated name, never
+from text you or the app supply. With the GitHub sign-in the token reaches git
+only in its private child environment, as an `Authorization` header scoped to
+that URL (the same way fetches work); it is never in the arguments, a file, a
+log or an error, your global credential helper and header settings are cleared
+for that command, redirects are refused, and git cannot prompt. Without a
+sign-in a public repository clones anonymously. The clone disables hooks (a
+temporary empty hooks directory), repository templates, the file-system
+monitor, submodule recursion and every protocol but HTTPS, and does not keep
+those settings. It writes into the folder you choose (default beside your
+other clones, else `~/code/<owner>/<name>`), which must be inside your home
+directory and absent or empty; missing parent folders are created with normal
+permissions (0755), and a failed or cancelled clone removes what it created.
+Your own Git configuration (proxy, certificates, URL rewrites) still applies.
+The clone is then registered like any other.
+
 ### Finding clones on this computer
 
 The daemon looks for local clones of the repositories you pick, so you are not
