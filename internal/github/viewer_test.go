@@ -120,7 +120,9 @@ func TestViewerRepositoriesPagesUpToTheCap(t *testing.T) {
 
 func TestViewerRepositoriesKeepsListingWhenTheSearchFails(t *testing.T) {
 	fake := newFakeGitHub(t, map[string]route{
-		"ViewerRepositories":     func(gqlRequest, int) fakeResponse { return viewerData(page([]any{viewerNode("a/b", time.Now(), nil)}, "")) },
+		"ViewerRepositories": func(gqlRequest, int) fakeResponse {
+			return viewerData(page([]any{viewerNode("a/b", time.Now(), nil)}, ""))
+		},
 		"ViewerOpenPullRequests": func(gqlRequest, int) fakeResponse { return graphQLError(nil, "FORBIDDEN", "SSO") },
 	})
 	got, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com")

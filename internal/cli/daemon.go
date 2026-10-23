@@ -27,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
@@ -444,6 +445,12 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		if live != nil {
 			liveAPI = live.Handler()
 		}
+		home, _ := os.UserHomeDir()
+		pickList := &githubrepos.Service{
+			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry, Found: clones.Snapshot,
+			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
+			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
+		}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
 				return func(bool) {}
@@ -456,12 +463,13 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					discover.ResetIdentity()
 					worker.ResetIdentity()
 					notify.ResetIdentity()
+					pickList.ResetIdentity()
 				}
 				finish(changedAccount)
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -479,6 +487,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					}
 				})
 				wg.Go(func() { clones.Run(ctx, cloneEvents, cloneDropped) })
+				wg.Go(func() { pickList.Run(ctx) })
 				wg.Go(func() { worker.Run(ctx) })
 				wg.Go(func() { scheduler.Run(ctx) })
 				if live != nil {
