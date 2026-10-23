@@ -18,6 +18,12 @@ metadata only and contacts nothing.
 
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.
+A repository with no clone is still registered: `RepositorySettings` and
+automatic admission treat it as such, and only `unpick` revokes that. Work
+that needs a clone waits for one (handled in a later step). Clones registered
+before the `picked` table existed have no picked row (there is no migration),
+so they must be re-added with `baum internal repos add <path>`, or their
+repository picked, to count as registered.
 `Unpick` deletes the repository's clones and its picked row but keeps the
 `repositories` row, so its settings survive a re-pick. `Pick` accepts only
 github.com `owner/name`; it reads no local git and checks nothing on GitHub.
@@ -43,6 +49,10 @@ authenticated host and origin checks. JSON is decoded strictly.
 | `POST /api/repositories` `{"repository","settings"}` | pick (400 on a bad name or settings) |
 | `DELETE /api/repositories/{owner}/{name}` | unpick (204, 404) |
 | `PUT /api/repositories/{owner}/{name}/settings` | replace settings (404 unless picked) |
+
+Only `POST` validates the name. `DELETE` and `PUT` only lowercase it and look
+it up, so a malformed `owner/name` answers 404, and an Enterprise identity
+added through `add` can be unpicked from the CLI.
 
 Settings PUTs replace the whole object and require `automatic` and
 `daily_cap`, `null` for the default.

@@ -466,11 +466,15 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	}
 	return e
 }
-func (r *Registry) List(ctx context.Context) ([]Clone, error) {
+func (r *Registry) List(ctx context.Context) ([]Clone, error) { return r.clones(ctx, "") }
+
+// clones lists the registered clones of one repository, or of all for an
+// empty identity, probing only those.
+func (r *Registry) clones(ctx context.Context, repository string) ([]Clone, error) {
 	if r.noSchema {
 		return []Clone{}, nil
 	}
-	rows, e := r.db.QueryContext(ctx, `SELECT c.id,c.path,c.common_dir,c.repository,r.settings FROM clones c JOIN repositories r ON c.repository=r.identity ORDER BY c.repository,c.path`)
+	rows, e := r.db.QueryContext(ctx, `SELECT c.id,c.path,c.common_dir,c.repository,r.settings FROM clones c JOIN repositories r ON c.repository=r.identity WHERE ?1='' OR c.repository=?1 ORDER BY c.repository,c.path`, repository)
 	if e != nil {
 		return nil, e
 	}
@@ -736,7 +740,7 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 	if e != nil {
 		return nil, e
 	}
-	clones, e := r.List(ctx)
+	clones, e := r.clones(ctx, only)
 	if e != nil {
 		return nil, e
 	}
