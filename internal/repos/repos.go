@@ -413,7 +413,7 @@ func (r *Registry) Add(ctx context.Context, path string, settings *Settings) (Cl
 // runs under the writer transaction, so omitted fields cannot lose another
 // process's concurrent edits. It must not call back into the registry.
 func (r *Registry) AddPatch(ctx context.Context, path string, edit func(Settings) (Settings, error)) (Clone, error) {
-	return r.addPatch(ctx, path, "", edit)
+	return r.addPatch(ctx, path, "", addGuard{}, edit)
 }
 
 // ErrNoMatchingRemote reports a working tree none of whose GitHub remotes
@@ -431,7 +431,34 @@ func (r *Registry) AddFor(ctx context.Context, path, repository string, settings
 	if e != nil || gh.Host != config.GitHubHost {
 		return Clone{}, ErrInvalidRepository
 	}
-	return r.addPatch(ctx, path, strings.ToLower(gh.String()), func(previous Settings) (Settings, error) {
+	return r.addFor(ctx, path, strings.ToLower(gh.String()), settings, addGuard{})
+}
+
+// Errors of AttachFound.
+var (
+	// ErrNotPicked reports a repository that is not picked.
+	ErrNotPicked = errors.New("repository is not picked")
+	// ErrClonedElsewhere reports a working tree, or a repository directory,
+	// already registered to another repository.
+	ErrClonedElsewhere = errors.New("clone is registered to another repository")
+)
+
+// AttachFound registers a clone the daemon found for a picked repository, as
+// AddFor does, but never changes what is already stored: it fails with
+// ErrNotPicked unless the repository is picked (checked in the same
+// transaction, so an unpick in between is not undone) and with
+// ErrClonedElsewhere when the path or its repository directory is registered
+// to another repository, which AddFor would move.
+func (r *Registry) AttachFound(ctx context.Context, path, repository string) (Clone, error) {
+	gh, e := github.ParseRepository(repository)
+	if e != nil || gh.Host != config.GitHubHost {
+		return Clone{}, ErrInvalidRepository
+	}
+	return r.addFor(ctx, path, strings.ToLower(gh.String()), nil, addGuard{requirePicked: true, keepOthers: true})
+}
+
+func (r *Registry) addFor(ctx context.Context, path, repository string, settings *Settings, guard addGuard) (Clone, error) {
+	return r.addPatch(ctx, path, repository, guard, func(previous Settings) (Settings, error) {
 		if settings != nil {
 			return *settings, settings.Validate()
 		}
@@ -439,7 +466,11 @@ func (r *Registry) AddFor(ctx context.Context, path, repository string, settings
 	})
 }
 
-func (r *Registry) addPatch(ctx context.Context, path, repository string, edit func(Settings) (Settings, error)) (Clone, error) {
+// addGuard makes addPatch fail instead of picking a repository or moving a
+// registered clone.
+type addGuard struct{ requirePicked, keepOthers bool }
+
+func (r *Registry) addPatch(ctx context.Context, path, repository string, guard addGuard, edit func(Settings) (Settings, error)) (Clone, error) {
 	c, e := inspectFor(ctx, path, repository)
 	if e != nil {
 		return Clone{}, e
@@ -453,6 +484,24 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, edit f
 	_, e = tx.ExecContext(ctx, "INSERT INTO repositories VALUES (?,?) ON CONFLICT DO NOTHING", c.Repository, `{"automatic":null}`)
 	if e != nil {
 		return Clone{}, e
+	}
+	if guard.requirePicked {
+		var picked int
+		if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM picked WHERE identity=?", c.Repository).Scan(&picked); e != nil {
+			return Clone{}, e
+		}
+		if picked == 0 {
+			return Clone{}, ErrNotPicked
+		}
+	}
+	if guard.keepOthers {
+		var others int
+		if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM clones WHERE (path=? OR common_dir=?) AND repository<>?", c.Path, c.CommonDir, c.Repository).Scan(&others); e != nil {
+			return Clone{}, e
+		}
+		if others > 0 {
+			return Clone{}, ErrClonedElsewhere
+		}
 	}
 	var raw string
 	if e = tx.QueryRowContext(ctx, "SELECT settings FROM repositories WHERE identity=?", c.Repository).Scan(&raw); e != nil {
@@ -510,6 +559,41 @@ func (r *Registry) List(ctx context.Context) ([]Clone, error) { return r.clones(
 // clones lists the registered clones of one repository, or of all for an
 // empty identity, probing only those.
 func (r *Registry) clones(ctx context.Context, repository string) ([]Clone, error) {
+	result, e := r.cloneRows(ctx, repository)
+	if e != nil {
+		return nil, e
+	}
+	return result, probe(ctx, result)
+}
+
+// CloneRows lists the registered clones exactly as stored, without probing
+// them: Available is false throughout. It runs no git.
+func (r *Registry) CloneRows(ctx context.Context) ([]Clone, error) { return r.cloneRows(ctx, "") }
+
+// PickedWithoutClones lists the picked repositories that have no clone
+// registered. It reads the registry only and runs no git, so it is cheap
+// enough to ask for every hook event.
+func (r *Registry) PickedWithoutClones(ctx context.Context) ([]string, error) {
+	names := []string{}
+	if r.noSchema {
+		return names, nil
+	}
+	rows, e := r.db.QueryContext(ctx, "SELECT r.identity FROM repositories r WHERE ("+r.pickedSQL()+") AND NOT EXISTS (SELECT 1 FROM clones c WHERE c.repository=r.identity) ORDER BY r.identity")
+	if e != nil {
+		return nil, e
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if e = rows.Scan(&name); e != nil {
+			return nil, e
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+func (r *Registry) cloneRows(ctx context.Context, repository string) ([]Clone, error) {
 	if r.noSchema {
 		return []Clone{}, nil
 	}
@@ -539,7 +623,7 @@ func (r *Registry) clones(ctx context.Context, repository string) ([]Clone, erro
 	if e != nil {
 		return nil, e
 	}
-	return result, probe(ctx, result)
+	return result, nil
 }
 
 // probe sets Available on each clone from its current working tree.

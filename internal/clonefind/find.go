@@ -99,8 +99,8 @@ type Options struct {
 	Probe Probe
 	// MaxDepth is how deep a walk goes below its folder (default
 	// DefaultMaxDepth), MaxProbes how many directories are probed with git
-	// (DefaultMaxProbes), MaxWalked how many directories a run walks
-	// (DefaultMaxWalked) and ProbeTimeout the time each git command gets
+	// (DefaultMaxProbes), MaxWalked how many directories a run walks in all
+	// folders together (DefaultMaxWalked) and ProbeTimeout the time each git command gets
 	// (DefaultProbeTimeout).
 	MaxDepth, MaxProbes, MaxWalked int
 	ProbeTimeout                   time.Duration
@@ -157,8 +157,11 @@ type finder struct {
 	o      Options
 	home   string
 	probes int
-	byDir  map[string]*workTree
-	byTop  map[string]*workTree
+	// walked counts the directories walked in this run.
+	walked      int
+	walkedRoots []string
+	byDir       map[string]*workTree
+	byTop       map[string]*workTree
 }
 
 func newFinder(o Options) *finder {
@@ -185,6 +188,8 @@ func Find(ctx context.Context, o Options) (Result, error) {
 			if dir.at.After(tree.activity) {
 				tree.activity = dir.at
 			}
+			// The main clone stands for its linked worktrees.
+			f.mainOf(ctx, tree)
 		}
 	}
 
@@ -203,10 +208,11 @@ func Find(ctx context.Context, o Options) (Result, error) {
 			break
 		}
 		root, ok := f.walkable(root)
-		if !ok || seen[root] {
+		if !ok || seen[root] || f.insideWalked(root) {
 			continue
 		}
 		seen[root] = true
+		f.walkedRoots = append(f.walkedRoots, root)
 		f.walk(ctx, root)
 	}
 
@@ -297,6 +303,16 @@ func AgentDir(e hookevents.Event) (string, bool) {
 	return dir, dir != ""
 }
 
+// insideWalked reports a folder an earlier walk already covered.
+func (f *finder) insideWalked(root string) bool {
+	for _, walked := range f.walkedRoots {
+		if rel, err := filepath.Rel(walked, root); err == nil && !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *finder) agentTrees() []*workTree {
 	var trees []*workTree
 	for _, tree := range f.byTop {
@@ -328,8 +344,12 @@ func (f *finder) inHome(dir string) bool {
 // the directory is gone, is not in a clone of a GitHub repository, or is the
 // root, the home directory or above it.
 func (f *finder) resolve(ctx context.Context, dir string) *workTree {
+	// Protected folders are dropped before anything touches them.
+	if !filepath.IsAbs(dir) || f.protected(filepath.Clean(dir)) {
+		return nil
+	}
 	dir = canonical(dir)
-	if dir == "" {
+	if dir == "" || f.protected(dir) {
 		return nil
 	}
 	if info, err := os.Stat(dir); err != nil {
@@ -373,6 +393,10 @@ func (f *finder) probe(ctx context.Context, dir string) *workTree {
 	}
 	top, common := canonical(light.Top), canonical(light.CommonDir)
 	if top == "" || common == "" || f.unsafe(top) {
+		return nil
+	}
+	// A working tree set elsewhere by core.worktree is not this directory.
+	if rel, err := filepath.Rel(top, canonical(dir)); err != nil || strings.HasPrefix(rel, "..") {
 		return nil
 	}
 	if tree, ok := f.byTop[top]; ok {
@@ -438,6 +462,60 @@ func (f *finder) scanRoots() []string {
 	return roots
 }
 
+// protected reports a folder macOS guards with a privacy prompt: reading it
+// asks the user, so nothing is read in it. ~/Documents is protected too unless
+// this scan was asked to include it.
+func (f *finder) protected(path string) bool {
+	if f.o.GOOS != "darwin" {
+		return false
+	}
+	for _, home := range []string{f.home, filepath.Clean(f.o.Home)} {
+		rel, err := filepath.Rel(home, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		switch {
+		case strings.EqualFold(parts[0], "Documents"):
+			if !f.o.IncludeDocuments {
+				return true
+			}
+		case strings.EqualFold(parts[0], "Desktop"), strings.EqualFold(parts[0], "Downloads"):
+			return true
+		case strings.EqualFold(parts[0], "Library") && len(parts) > 1 &&
+			(strings.EqualFold(parts[1], "Mobile Documents") || strings.EqualFold(parts[1], "CloudStorage")):
+			return true
+		}
+	}
+	return false
+}
+
+// mainOf probes the main clone of a linked worktree, so that it stands for the
+// worktree: agents work in worktrees kept in hidden folders of the clone or of
+// the home directory, which no walk would find. It returns nil unless
+// the repository directory is <clone>/.git of a non-bare working tree at a
+// place a scan may read.
+func (f *finder) mainOf(ctx context.Context, tree *workTree) *workTree {
+	if filepath.Base(tree.common) != ".git" {
+		return nil
+	}
+	main := filepath.Dir(tree.common)
+	if main == tree.top || f.unsafe(main) || f.protected(main) {
+		return nil
+	}
+	if _, ok := f.walkable(main); !ok {
+		return nil
+	}
+	if _, err := os.Lstat(filepath.Join(main, ".git")); err != nil {
+		return nil
+	}
+	found := f.probe(ctx, main)
+	if found == nil || found.top != main || found.common != tree.common {
+		return nil
+	}
+	return found
+}
+
 // documentsAllowed reports whether ~/Documents may be walked.
 func (f *finder) documentsAllowed() bool {
 	return f.o.GOOS != "darwin" || f.o.IncludeDocuments
@@ -459,7 +537,7 @@ func (f *finder) walkable(root string) (string, bool) {
 			if i == 0 && part == "Documents" && f.documentsAllowed() {
 				continue
 			}
-			if scanskip.UserData(part) || scanskip.Dir(part) {
+			if scanskip.UserDataFor(f.o.GOOS, part) || scanskip.DirFor(f.o.GOOS, part) {
 				return "", false
 			}
 		}
@@ -470,7 +548,6 @@ func (f *finder) walkable(root string) (string, bool) {
 // walk finds the working trees below root, to MaxDepth, without following
 // symlinks and without entering what scanskip lists.
 func (f *finder) walk(ctx context.Context, root string) {
-	walked := 0
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if entry != nil && entry.IsDir() {
@@ -484,7 +561,7 @@ func (f *finder) walk(ctx context.Context, root string) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if walked++; walked > f.o.MaxWalked {
+		if f.walked++; f.walked > f.o.MaxWalked {
 			return filepath.SkipAll
 		}
 		if path != root {
@@ -493,7 +570,7 @@ func (f *finder) walk(ctx context.Context, root string) {
 				return filepath.SkipDir
 			}
 			depth := strings.Count(rel, string(filepath.Separator)) + 1
-			if depth > f.o.MaxDepth || scanskip.Dir(entry.Name()) {
+			if depth > f.o.MaxDepth || scanskip.DirFor(f.o.GOOS, entry.Name()) {
 				return filepath.SkipDir
 			}
 		}
@@ -616,9 +693,15 @@ func Locate(ctx context.Context, o Options, dir string, at time.Time) []Match {
 		return nil
 	}
 	tree.agent, tree.activity = true, at
+	main := f.mainOf(ctx, tree)
 	var matches []Match
 	for _, name := range tree.names {
-		matches = append(matches, Match{Repository: name, Candidate: tree.candidate()})
+		merged := map[string][]Candidate{}
+		add(merged, name, tree.candidate())
+		if main != nil {
+			add(merged, name, main.candidate())
+		}
+		matches = append(matches, Match{Repository: name, Candidate: merged[name][0]})
 	}
 	return matches
 }

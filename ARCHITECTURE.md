@@ -1730,10 +1730,15 @@ the folders around the clones agents used, to four levels, with the exclusions
 `baum setup --all` uses (`internal/scanskip`). Candidates are grouped by the
 lowercase `owner/name` of every github.com remote, linked worktrees collapsing
 into their main clone. The daemon's `Service` keeps the result in memory,
-rescans at start, after a registry write and hourly while a picked repository
-has none, attaches the best candidate with `Registry.Add` (a fork the registry
-would file under another name is skipped), and attaches the clone of an agent
-event's directory at once. `GET /api/clones/found` and
+rescans at start, hourly while a picked repository has no available clone, and
+after a registry write (only when a picked repository has no clone row, unless
+the last scan was under a minute ago), attaches the best candidate with
+`Registry.AttachFound` (a fork clone is filed under the picked upstream when
+any remote names it; a path or repository directory registered to another
+repository is never moved, and an unpicked repository is never picked again),
+and attaches the clone of an agent event's directory at once, after a registry
+query that runs no git. On macOS it reads none of the protected folders
+(Documents, Desktop, Downloads, iCloud Drive, CloudStorage). `GET /api/clones/found` and
 `POST /api/clones/found/refresh` serve it. It makes no network request. See
 its [README](internal/clonefind/README.md).
 

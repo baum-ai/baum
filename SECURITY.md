@@ -498,10 +498,16 @@ session stores, without parsing the transcripts; the folders `~/code`, `~/src`,
 `~/go/src/github.com`, to four levels deep, without following symlinks; the
 folders that contain the clones agents worked in, when they are below your home
 directory; and, in each candidate clone, the remote URLs of its git
-configuration, through `git rev-parse` and `git config`. On Linux and Windows it also walks `~/Documents` like those folders. On macOS
-that folder is protected (the first read prompts), so it is walked only in a
-single scan you ask for with "Also look in Documents", and the choice is not
-kept. It never walks `Desktop`,
+configuration, through `git rev-parse` and `git config`. A directory an agent
+worked in is stat'ed, with its parents up to your home directory, and git runs
+in the clone containing it, wherever it is (git may also follow an
+`include.path` in that clone's configuration). To register what it found it
+runs the registry's local checks, which may resolve an SSH alias with
+`ssh -G`; that contacts nothing. On macOS it reads none of `~/Documents`,
+`~/Desktop`, `~/Downloads`, `~/Library/Mobile Documents` or
+`~/Library/CloudStorage`, not even a directory an agent worked in, because
+macOS would ask you for permission; `~/Documents` is read only in the single
+scan you ask for. On Linux and Windows it also walks `~/Documents` like those folders. It never walks `Desktop`,
 `Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `iCloud Drive`, Google
 Drive, Dropbox or OneDrive folders, hidden folders, dependency or build
 folders, your home directory itself, or the filesystem root. The paths it

@@ -73,6 +73,16 @@ default folder), `POST /api/repositories/{owner}/{name}/clone` `{"dir"?}` (picks
 the repository if needed, clones in the background and registers the clone with
 `AddFor`; 202, 400, 409) and `GET .../clone` (the current or last state).
 
+`AddFor` moves a path already registered to another repository to the new
+one. The daemon's clone finder uses `AttachFound` instead, which never changes
+what is stored: it fails with `ErrClonedElsewhere` when the path or its
+repository directory belongs to another repository, and with `ErrNotPicked`
+unless the repository is picked, checked in the same transaction, so an unpick
+in between is not undone. `PickedWithoutClones` (picked repositories with no
+clone row) and `CloneRows` (clones as stored, `available` false) read the
+registry only and run no git, unlike `List` and `Repositories`, which probe
+every clone.
+
 Settings PUTs replace the whole object and require `automatic` and
 `daily_cap`, `null` for the default.
 

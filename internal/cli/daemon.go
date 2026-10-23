@@ -432,7 +432,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
 		refreshEvents, unsubscribe := events.Subscribe(hookrefresh.Buffer, hookrefresh.Match)
-		clones := newCloneFinder(registry, events, changed, log)
+		// A clone found for a picked repository may let the scheduler start work.
+		clones := newCloneFinder(registry, events, func() {
+			changed()
+			scheduler.Wake()
+		}, log)
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()

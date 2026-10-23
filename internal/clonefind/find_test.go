@@ -200,7 +200,7 @@ func TestSiblingsOfAgentClonesAreWalked(t *testing.T) {
 	h := home(t)
 	worked := repo(t, filepath.Join(h, "work", "a"), "origin", gh("acme/a"))
 	sibling := repo(t, filepath.Join(h, "work", "b"), "origin", gh("acme/b"))
-	// An agent worked in Documents: allowed, but its siblings are not read.
+	// An agent worked in Documents: on macOS it is protected, so nothing there is read.
 	repo(t, filepath.Join(h, "Documents", "x"), "origin", gh("acme/x"))
 	repo(t, filepath.Join(h, "Documents", "y"), "origin", gh("acme/y"))
 	// Nor are the siblings of a clone directly in the home directory.
@@ -213,8 +213,8 @@ func TestSiblingsOfAgentClonesAreWalked(t *testing.T) {
 	if got := result.Repositories["acme/b"]; len(got) != 1 || got[0].Path != sibling || got[0].Source != SourceScan {
 		t.Fatalf("sibling = %+v", got)
 	}
-	if got := result.Repositories["acme/x"]; len(got) != 1 {
-		t.Fatalf("documents clone an agent used = %+v", got)
+	if got := result.Repositories["acme/x"]; got != nil {
+		t.Fatalf("documents clone on macOS = %+v", got)
 	}
 	for _, name := range []string{"acme/y", "acme/home-sibling"} {
 		if result.Repositories[name] != nil {

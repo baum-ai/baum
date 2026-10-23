@@ -3,6 +3,7 @@ package clonefind
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,13 @@ func MatchEvent(e hookevents.Event) bool { return e.Kind == hookevents.KindAgent
 // Registry is the part of the repository registry the service uses.
 type Registry interface {
 	Repositories(context.Context) ([]repos.Repository, error)
-	AddFor(ctx context.Context, path, repository string, settings *repos.Settings) (repos.Clone, error)
+	// PickedWithoutClones and CloneRows read the registry only, running no
+	// git; Repositories probes every clone.
+	PickedWithoutClones(context.Context) ([]string, error)
+	CloneRows(context.Context) ([]repos.Clone, error)
+	// AttachFound registers a clone for a repository that is still picked,
+	// without moving a clone registered to another one.
+	AttachFound(ctx context.Context, path, repository string) (repos.Clone, error)
 }
 
 // Attached is a clone the service registered by itself.
@@ -125,6 +132,11 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 // scans again unless it just did.
 func (s *Service) Trigger() {
 	s.spawn(func(ctx context.Context) {
+		// Nothing to do, and no git run, unless a picked repository has no
+		// clone registered.
+		if len(s.withoutClones(ctx)) == 0 {
+			return
+		}
 		s.attachAll(ctx)
 		s.mu.Lock()
 		recent := !s.result.ScannedAt.IsZero() && time.Since(s.result.ScannedAt) < minRescan
@@ -235,13 +247,55 @@ func (s *Service) needy(ctx context.Context) map[string]bool {
 	return needy
 }
 
+// withoutClones lists the picked repositories with no clone registered, from
+// the registry alone.
+func (s *Service) withoutClones(ctx context.Context) map[string]bool {
+	names, err := s.Registry.PickedWithoutClones(ctx)
+	if err != nil {
+		s.log().Warn("picked repositories not read", "error", err)
+		return nil
+	}
+	out := map[string]bool{}
+	for _, name := range names {
+		out[strings.ToLower(name)] = true
+	}
+	return out
+}
+
+// registered holds the working trees and repository directories already
+// registered, to any repository.
+type registered struct{ paths, commons map[string]bool }
+
+func (r registered) has(c Candidate) bool { return r.paths[c.Path] || r.commons[c.CommonDir] }
+
+func (s *Service) registered(ctx context.Context) (registered, bool) {
+	rows, err := s.Registry.CloneRows(ctx)
+	if err != nil {
+		s.log().Warn("registered clones not read", "error", err)
+		return registered{}, false
+	}
+	r := registered{paths: map[string]bool{}, commons: map[string]bool{}}
+	for _, row := range rows {
+		r.paths[row.Path], r.commons[row.CommonDir] = true, true
+	}
+	return r, true
+}
+
 // attachAll registers the best clone found of each picked repository that has
 // none.
 func (s *Service) attachAll(ctx context.Context) {
 	s.attachMu.Lock()
 	defer s.attachMu.Unlock()
+	needy := s.needy(ctx)
+	if len(needy) == 0 {
+		return
+	}
+	known, ok := s.registered(ctx)
+	if !ok {
+		return
+	}
 	attached := false
-	for name := range s.needy(ctx) {
+	for name := range needy {
 		s.mu.Lock()
 		candidates := append([]Candidate(nil), s.result.Repositories[name]...)
 		s.mu.Unlock()
@@ -249,7 +303,7 @@ func (s *Service) attachAll(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if s.attach(ctx, name, candidate) {
+			if s.attach(ctx, name, candidate, known) {
 				attached = true
 				break
 			}
@@ -262,13 +316,21 @@ func (s *Service) attachAll(ctx context.Context) {
 
 // attach registers a clone for the picked repository name. Any remote may
 // name it: a fork clone whose upstream is the repository is filed under the
-// repository, and the fork's own repository is not picked.
-func (s *Service) attach(ctx context.Context, name string, candidate Candidate) bool {
-	clone, err := s.Registry.AddFor(ctx, candidate.Path, name, nil)
-	if err != nil {
-		s.log().Warn("found clone not registered", "repository", name, "error", err)
+// repository, and the fork's own repository is not picked. A working tree or
+// repository directory already registered, to any repository, is never
+// touched, and a repository unpicked meanwhile is not picked again.
+func (s *Service) attach(ctx context.Context, name string, candidate Candidate, known registered) bool {
+	if known.has(candidate) {
 		return false
 	}
+	clone, err := s.Registry.AttachFound(ctx, candidate.Path, name)
+	if err != nil {
+		if !errors.Is(err, repos.ErrNotPicked) && !errors.Is(err, repos.ErrClonedElsewhere) {
+			s.log().Warn("found clone not registered", "repository", name, "error", err)
+		}
+		return false
+	}
+	known.paths[clone.Path], known.commons[clone.CommonDir] = true, true
 	s.log().Info("registered a clone found on this computer", "repository", clone.Repository)
 	s.mu.Lock()
 	s.attached = append(s.attached, Attached{Repository: clone.Repository, Path: clone.Path, At: time.Now().UTC()})
@@ -280,7 +342,9 @@ func (s *Service) attach(ctx context.Context, name string, candidate Candidate) 
 }
 
 // handleEvent attaches the clone an agent worked in when it is one of a picked
-// repository without a clone.
+// repository without a clone. It costs a map lookup for a directory seen
+// before, and one registry query, no git, while every picked repository has a
+// clone.
 func (s *Service) handleEvent(ctx context.Context, record hookevents.Record) {
 	dir, ok := AgentDir(record.Event)
 	if !ok {
@@ -288,27 +352,31 @@ func (s *Service) handleEvent(ctx context.Context, record hookevents.Record) {
 	}
 	s.mu.Lock()
 	known := s.seen[dir]
+	if !known {
+		if s.seen == nil || len(s.seen) >= maxSeen {
+			s.seen = map[string]bool{}
+		}
+		s.seen[dir] = true
+	}
 	s.mu.Unlock()
-	if known {
+	if known || len(s.withoutClones(ctx)) == 0 {
 		return
 	}
-	needy := s.needy(ctx)
-	if len(needy) == 0 {
-		return
-	}
-	s.mu.Lock()
-	if s.seen == nil || len(s.seen) >= maxSeen {
-		s.seen = map[string]bool{}
-	}
-	s.seen[dir] = true
-	s.mu.Unlock()
 	at := record.Event.Time
 	if at.IsZero() {
 		at = record.Received
 	}
+	matches := Locate(ctx, s.Options, dir, at)
+	if len(matches) == 0 {
+		return
+	}
 	attached := false
 	s.attachMu.Lock()
-	for _, match := range Locate(ctx, s.Options, dir, at) {
+	// Asked again under the lock: a clone may have been attached, or a
+	// repository unpicked, while the directory was probed.
+	needy := s.withoutClones(ctx)
+	known2, ok := s.registered(ctx)
+	for _, match := range matches {
 		s.mu.Lock()
 		if s.result.Repositories == nil {
 			s.result.Repositories = map[string][]Candidate{}
@@ -316,7 +384,7 @@ func (s *Service) handleEvent(ctx context.Context, record hookevents.Record) {
 		add(s.result.Repositories, match.Repository, match.Candidate)
 		sortCandidates(s.result.Repositories[match.Repository])
 		s.mu.Unlock()
-		if needy[match.Repository] && s.attach(ctx, match.Repository, match.Candidate) {
+		if ok && needy[match.Repository] && s.attach(ctx, match.Repository, match.Candidate, known2) {
 			attached = true
 		}
 	}
