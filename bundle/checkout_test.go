@@ -164,6 +164,53 @@ func TestWriteArchiveRoundTripsThroughUnpackCheckout(t *testing.T) {
 	}
 }
 
+// TestWriteArchiveWithoutMergeBaseHasHeadOnly covers a default branch
+// checkout: no merge base and no compared paths give one head/ tree under the
+// same budgets and omissions, and it unpacks.
+func TestWriteArchiveWithoutMergeBaseHasHeadOnly(t *testing.T) {
+	export := fakeExport{head: map[string]string{
+		"a.go": "package a\n", "b.go": "package b\n", "logo.png": "\x89PNG\x00",
+		"big.bin": strings.Repeat("0123456789", 10), ".gitmodules": "[submodule \"v\"]\n\tpath = vendor/lib\n",
+	}}
+	var archive bytes.Buffer
+	compressed := gzip.NewWriter(&archive)
+	config := CheckoutConfig{MaxFileBytes: 64, MaxTotalBytes: 1024, MaxTotalFiles: 2}
+	omissions, err := NewCheckoutBuilder(config).WriteArchive(context.Background(), export, "head", "", nil, compressed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := []CheckoutOmission{
+		{Path: "b.go", Reason: OmittedBudgetReason}, {Path: "big.bin", Reason: OmittedSizeReason},
+		{Path: "logo.png", Reason: OmittedBinaryReason}, {Path: "vendor/lib", Reason: OmittedSubmoduleReason},
+	}
+	if !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+	path := filepath.Join(t.TempDir(), "checkout.tar.gz")
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(dir, func(name string, _ os.DirEntry, _ error) error { return os.Chmod(name, 0o700) })
+	})
+	if err := UnpackCheckout(context.Background(), path, dir, config); err != nil {
+		t.Fatalf("UnpackCheckout: %v", err)
+	}
+	var got []string
+	_ = filepath.WalkDir(dir, func(name string, _ os.DirEntry, _ error) error {
+		rel, _ := filepath.Rel(dir, name)
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	})
+	if wantPaths := []string{".", "head", "head/.gitmodules", "head/a.go"}; !slices.Equal(got, wantPaths) {
+		t.Fatalf("unpacked = %v, want %v", got, wantPaths)
+	}
+}
+
 // fakeExport serves two commits' files as git archive would, tar streams of
 // regular files: "head" is the head commit and anything else the merge base.
 // Asking the merge base for a path it does not hold reports ErrNotFound.

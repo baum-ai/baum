@@ -193,7 +193,7 @@ func ApplyCheckoutOmissions(b *Bundle, omissions []CheckoutOmission) {
 const binarySniffBytes = 8000
 
 // WriteArchive streams both trees from one pinned snapshot without checking
-// them out. The compared paths go first, at the head and then at the merge
+// them out; an empty mergeBase writes the head tree alone. The compared paths go first, at the head and then at the merge
 // base, and the rest of the head tree fills what the budget leaves: a file
 // that does not fit is omitted with OmittedBudgetReason instead of failing the
 // export, so the archive always stays within MaxTotalBytes and MaxTotalFiles.
@@ -232,8 +232,14 @@ func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport,
 	defer func() { err = errors.Join(err, writer.Close()) }()
 	var totalBytes int64
 	var totalFiles int
-	// Explicit roots keep the two trees separate even when one is empty.
-	for _, prefix := range []string{"head/", "merge-base/"} {
+	// Explicit roots keep the two trees separate even when one is empty. A
+	// checkout without a merge base, such as a default branch head's, has
+	// only head/.
+	roots := []string{"head/", "merge-base/"}
+	if mergeBase == "" {
+		roots = roots[:1]
+	}
+	for _, prefix := range roots {
 		if err := writer.WriteHeader(&tar.Header{Name: prefix, Typeflag: tar.TypeDir, Mode: 0o500}); err != nil {
 			return nil, err
 		}
@@ -372,7 +378,7 @@ func (c CheckoutConfig) MaxArchiveBytes() int64 {
 }
 
 // UnpackCheckout writes a gzip-compressed checkout archive into dir as the
-// read-only head/ and merge-base/ trees, enforcing caps again so a run never
+// read-only head/ and, when the archive has one, merge-base/ trees, enforcing caps again so a run never
 // reads more than the builder was allowed to write. An archive that does not
 // have the shape WriteArchive produces fails with ErrInvalidArchive; one over
 // a budget fails with BudgetExceededReason naming it, and so does a zero cap.
@@ -463,9 +469,12 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 	if _, err := io.Copy(io.Discard, compressed); err != nil {
 		return ErrInvalidArchive
 	}
-	for _, root := range []string{"head", "merge-base"} {
-		root := filepath.Join(dir, root)
+	for _, name := range []string{"head", "merge-base"} {
+		root := filepath.Join(dir, name)
 		if _, err := os.Stat(root); err != nil {
+			if name == "merge-base" && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return ErrInvalidArchive
 		}
 		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
