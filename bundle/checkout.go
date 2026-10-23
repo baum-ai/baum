@@ -193,9 +193,10 @@ func ApplyCheckoutOmissions(b *Bundle, omissions []CheckoutOmission) {
 const binarySniffBytes = 8000
 
 // WriteArchive streams both trees from one pinned snapshot without checking
-// them out; an empty mergeBase writes the head tree alone. The compared paths
-// go first, at the head and then at the merge base, and the rest of the head tree fills what the budget leaves: a file
-// that does not fit is omitted with OmittedBudgetReason instead of failing the
+// them out; an empty mergeBase, which takes no hunks, writes the head tree
+// alone. The compared paths go first, at the head and then at the merge base,
+// and the rest of the head tree fills what the budget leaves: a file that
+// does not fit is omitted with OmittedBudgetReason instead of failing the
 // export, so the archive always stays within MaxTotalBytes and MaxTotalFiles.
 // Binary files are omitted with OmittedBinaryReason.
 //
@@ -379,9 +380,10 @@ func (c CheckoutConfig) MaxArchiveBytes() int64 {
 
 // UnpackCheckout writes a gzip-compressed checkout archive into dir as the
 // read-only head/ and, when the archive has one, merge-base/ trees, enforcing
-// caps again so a run never reads more than the builder was allowed to write. An archive that does not
-// have the shape WriteArchive produces fails with ErrInvalidArchive; one over
-// a budget fails with BudgetExceededReason naming it, and so does a zero cap.
+// caps again so a run never reads more than the builder was allowed to
+// write. An archive that does not have the shape WriteArchive produces fails
+// with ErrInvalidArchive; one over a budget fails with BudgetExceededReason
+// naming it, and so does a zero cap.
 //
 // The caller must bound the archive's size before calling (see
 // MaxArchiveBytes): the gzip stream is drained after the tar trailer without
