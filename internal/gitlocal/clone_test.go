@@ -211,12 +211,32 @@ func TestCloneForcesCertificateVerificationWithAToken(t *testing.T) {
 	t.Cleanup(func() { cloneRun = original })
 	cloneRun = func(_ context.Context, s runSpec, _ ...string) ([]byte, error) { spec = s; return nil, nil }
 	t.Setenv("GIT_SSL_NO_VERIFY", "1")
+	// URL-scoped Git settings take precedence over a global http.sslVerify.
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	write(t, filepath.Dir(global), filepath.Base(global), "[http \"https://github.com/org/repo.git\"]\n\tsslVerify = false\n", 0o644)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	dir := filepath.Join(t.TempDir(), "repo")
 	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: "tok"}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.ToUpper(strings.Join(spec.env, "\n")), "GIT_SSL_NO_VERIFY") || !contains(spec.config, "http.sslVerify=true") {
 		t.Errorf("env %v config %v", spec.env, spec.config)
+	}
+	spec.limit = 4 << 10
+	withoutScope := spec
+	withoutScope.config = nil
+	for _, setting := range spec.config {
+		if setting != "http.https://github.com/org/repo.git.sslVerify=true" {
+			withoutScope.config = append(withoutScope.config, setting)
+		}
+	}
+	insecure, err := run(context.Background(), withoutScope, "config", "--get-urlmatch", "http.sslVerify", "https://github.com/org/repo.git")
+	if err != nil || strings.TrimSpace(string(insecure)) != "false" {
+		t.Fatalf("hostile URL-scoped config was not loaded: %q, %v", insecure, err)
+	}
+	value, err := run(context.Background(), spec, "config", "--get-urlmatch", "http.sslVerify", "https://github.com/org/repo.git")
+	if err != nil || strings.TrimSpace(string(value)) != "true" {
+		t.Fatalf("effective certificate verification = %q, %v", value, err)
 	}
 }
 

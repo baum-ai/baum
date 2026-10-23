@@ -29,9 +29,11 @@ first), then latest push, then name. `query` keeps repositories whose
 `owner/name` contains every whitespace-separated term, ignoring case; it filters
 the cached list and calls GitHub no further. The GitHub result is cached in
 memory for 5 minutes, dropped when the signed-in account changes, and
-`refresh=1` bypasses it; simultaneous requests share one call. `picked` comes
-from the registry; `clone` is the best path the clone finder's last result has
-for the repository, or `""`.
+`refresh=1` bypasses it; simultaneous requests for the same account share one
+call. A response started before an account change cannot refill the cache
+afterward. `picked` comes
+from the registry; `clone` is an available registered path, otherwise the best
+path the clone finder's last result has for the repository, or `""`.
 
 A failure answers a JSON `{"code","message"}` (never a token or an upstream
 body) with the codes the app already explains for the GitHub connection:
@@ -53,28 +55,39 @@ response.
 | Route | Result |
 | --- | --- |
 | `GET /api/repositories/{owner}/{name}/clone-target` | `{"dir": "<default folder>"}` |
-| `POST /api/repositories/{owner}/{name}/clone` `{"dir"?}` | 202 and a clone state; 400 `invalid_dir`, `invalid_request`, `invalid_repository`; 409 `clone_running` |
+| `POST /api/repositories/{owner}/{name}/clone` `{"dir"?}` | 202 and a clone state; 400 `invalid_dir`, `invalid_request`, `invalid_repository`; 409 `clone_running` or `dir_in_use`; 503 `stopping` |
 | `GET /api/repositories/{owner}/{name}/clone` | the current or last clone state; 404 if none was started |
 
-A clone state is `{"repository","dir","state","error"?}`, `state` being
-`running`, `done` or `failed`; `error` is sanitized text. State is in memory.
+A clone state is `{"repository","dir","state","error"?,"code"?}`, `state` being
+`running`, `done` or `failed`; `error` is sanitized text. `code: "url_rewritten"`
+means the person's Git configuration rewrites GitHub HTTPS URLs to an
+unsupported destination (such as SSH). State is in memory.
 
 **Default folder.** The most common parent directory of the registered clones
-that lie below the home directory (ties: alphabetical), joined with the
-repository name; `~/code/<owner>/<name>` with no such clone. While that path
+that lie below the home directory (ties: flat layout first, then alphabetical),
+joined with the repository name. If clones follow `<root>/<owner>/<name>` (the parent folder
+is named after the registered owner), that layout is kept for the new owner.
+With no such clone, `~/code/<owner>/<name>`. While that path
 exists, `-2`, `-3`, ... is appended to the name.
 
 **Starting.** The body is strict JSON (an empty body means the default folder).
 `dir` must be absolute, inside the home directory but not the home directory
-itself, with no symlink in the path leading out of it, and either missing or an
-empty directory. The repository is picked if it is not (asking for a clone
-chooses it, and it stays picked if the clone fails). The clone runs in the
-background under the daemon's context, at most one per repository, with
+itself, and either missing or an empty directory. A symlink directly under
+home (such as `~/code` on another disk) is supported; deeper symlinks cannot
+lead outside home or that code folder. A symlinked home works by either path.
+The repository is picked if it is not (asking for a clone chooses it, and it stays picked if the clone fails). The clone runs in the
+background under the daemon's context, at most one per repository and with no
+overlapping target folders (including symlink aliases and case variants), with
 `gitlocal.Clone`'s 30 minute timeout. On success the clone is registered with
 `Registry.AddFor(dir, repository, nil)` and the app is told the registry
-changed. A failed or cancelled clone removes what it created.
+changed. New clones are refused during shutdown. A failed or cancelled clone
+removes its own target and any empty parent folders it created; a target that
+already existed is left for git to clean up.
 
 `gitlocal.Clone` builds its URL only from a validated owner/name
 (`gitlocal.GitHubCloneURL`), passes the token in git's private environment only,
 and disables hooks, templates, fsmonitor, submodules and every protocol but
-HTTPS. See `SECURITY.md`.
+HTTPS. Certificate verification is forced on with a token. Git URL rewrites
+to unsupported destinations are refused before creating folders. Configured
+checkout filters such as git-lfs still run and may contact their own storage
+hosts. See `SECURITY.md`.

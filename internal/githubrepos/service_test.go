@@ -331,7 +331,10 @@ func TestCloneRejectsBadRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
-	link := filepath.Join(h.home, "link")
+	if err := os.Mkdir(filepath.Join(h.home, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(h.home, "sub", "link")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +350,7 @@ func TestCloneRejectsBadRequests(t *testing.T) {
 		{"dotdot out of home", `{"dir":` + quote(h.home+"/../escape") + `}`},
 		{"non-empty", `{"dir":` + quote(existing) + `}`},
 		{"a file", `{"dir":` + quote(file) + `}`},
-		{"through a symlink out of home", `{"dir":` + quote(filepath.Join(link, "repo")) + `}`},
+		{"through a nested symlink out of home", `{"dir":` + quote(filepath.Join(link, "repo")) + `}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := h.do("POST", "/api/repositories/acme/widgets/clone", tc.body)
@@ -515,5 +518,209 @@ func TestCloneStopsWithTheDaemon(t *testing.T) {
 	}
 	if _, err := os.Lstat(dir); err == nil {
 		t.Error("the partial directory remains")
+	}
+}
+
+// A response from the previous account must not overwrite a newer cache,
+// and a new request must not share the previous account's in-flight request.
+type changingLister struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (l *changingLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
+	if l.calls.Add(1) == 1 {
+		close(l.started)
+		<-l.release
+		return []github.ViewerRepository{{Repository: "old/private"}}, nil
+	}
+	return []github.ViewerRepository{{Repository: "new/private"}}, nil
+}
+
+func TestAccountChangeDoesNotCacheAnOldInFlightListing(t *testing.T) {
+	h := newHarness(t)
+	lister := &changingLister{started: make(chan struct{}), release: make(chan struct{})}
+	h.service.Lister = lister
+	old := make(chan struct{})
+	go func() {
+		defer close(old)
+		_, _, _ = h.service.viewerRepositories(false)
+	}()
+	<-lister.started
+	h.service.ResetIdentity()
+	newResult := make(chan []github.ViewerRepository, 1)
+	go func() {
+		list, _, _ := h.service.viewerRepositories(false)
+		newResult <- list
+	}()
+	select {
+	case list := <-newResult:
+		if len(list) != 1 || list[0].Repository != "new/private" {
+			t.Errorf("new account got %+v", list)
+		}
+	case <-time.After(5 * time.Second):
+		close(lister.release)
+		<-old
+		t.Fatal("new account joined the old account's request")
+	}
+	close(lister.release)
+	<-old
+	list, _, err := h.service.viewerRepositories(false)
+	if err != nil || len(list) != 1 || list[0].Repository != "new/private" || lister.calls.Load() != 2 {
+		t.Fatalf("cache after old response: %+v, %v, %d calls", list, err, lister.calls.Load())
+	}
+}
+
+func TestListingIncludesAnAlreadyRegisteredClone(t *testing.T) {
+	h := newHarness(t)
+	dir := filepath.Join(h.home, "existing")
+	if err := fakeClone(gitlocal.CloneOptions{URL: "https://github.com/acme/busy.git", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.registry.Add(context.Background(), dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.service.Found = func() clonefind.Found {
+		return clonefind.Found{Repositories: map[string][]clonefind.FoundClone{
+			"acme/busy": {{Path: "/another/clone"}},
+		}}
+	}
+	list := decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
+	if busy := list.Repositories[0]; !busy.Picked || busy.Clone != dir {
+		t.Fatalf("already registered clone = %+v", busy)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	list = decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
+	if busy := list.Repositories[0]; busy.Clone != "/another/clone" {
+		t.Fatalf("unavailable registered clone hid found clone: %+v", busy)
+	}
+}
+
+func TestDefaultDirectoryPreservesOwnerLayout(t *testing.T) {
+	h := newHarness(t)
+	dir := filepath.Join(h.home, "code", "first", "repo")
+	if err := fakeClone(gitlocal.CloneOptions{URL: "https://github.com/first/repo.git", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.registry.Add(context.Background(), dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.service.DefaultDir(context.Background(), "second", "other")
+	if want := filepath.Join(h.home, "code", "second", "other"); err != nil || got != want {
+		t.Fatalf("default = %s, %v; want %s", got, err, want)
+	}
+	if _, err := h.service.validateDir(got); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDefaultAndChosenFoldersAgreeWithSymlinks(t *testing.T) {
+	t.Run("code folder on another disk", func(t *testing.T) {
+		h := newHarness(t)
+		outside := t.TempDir()
+		link := filepath.Join(h.home, "code")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		got, err := h.service.DefaultDir(context.Background(), "acme", "repo")
+		if err != nil || got != filepath.Join(link, "acme", "repo") {
+			t.Fatalf("default = %s, %v", got, err)
+		}
+		if _, err := h.service.validateDir(got); err != nil {
+			t.Fatal(err)
+		}
+		// A deeper symlink cannot escape that code folder.
+		if err := os.Symlink(t.TempDir(), filepath.Join(outside, "escape")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.service.validateDir(filepath.Join(link, "escape", "repo")); err == nil {
+			t.Error("nested symlink escaped the code folder")
+		}
+	})
+	t.Run("symlinked home", func(t *testing.T) {
+		h := newHarness(t)
+		real := h.home
+		alias := filepath.Join(t.TempDir(), "home")
+		if err := os.Symlink(real, alias); err != nil {
+			t.Fatal(err)
+		}
+		h.service.Home = alias
+		for _, home := range []string{alias, real} {
+			if _, err := h.service.validateDir(filepath.Join(home, "code", "acme", "repo")); err != nil {
+				t.Errorf("home %s: %v", home, err)
+			}
+		}
+		got, err := h.service.DefaultDir(context.Background(), "acme", "repo")
+		if err != nil || got != filepath.Join(alias, "code", "acme", "repo") {
+			t.Fatalf("default = %s, %v", got, err)
+		}
+	})
+}
+
+func TestCloneReservesOverlappingFoldersIncludingAliases(t *testing.T) {
+	h := newHarness(t)
+	dir := filepath.Join(h.home, "work", "one")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(h.home, "alias")
+	if err := os.Symlink(filepath.Dir(dir), alias); err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	h.service.Clone = func(context.Context, gitlocal.CloneOptions) error {
+		close(started)
+		<-release
+		return errors.New("deliberate failure")
+	}
+	// Registered after running.Wait so a fatal test still releases the clone.
+	t.Cleanup(func() { close(release) })
+	if rec := h.do("POST", "/api/repositories/acme/one/clone", `{"dir":`+strconvQuote(dir)+`}`); rec.Code != 202 {
+		t.Fatalf("first: %d %s", rec.Code, rec.Body)
+	}
+	<-started
+	for _, target := range []string{dir, filepath.Join(dir, "child"), filepath.Dir(dir), filepath.Join(alias, "one"), strings.ToUpper(dir)} {
+		// Case variants must remain below the real home for validation.
+		if target == strings.ToUpper(dir) {
+			target = filepath.Join(h.home, "WORK", "ONE")
+		}
+		rec := h.do("POST", "/api/repositories/other/two/clone", `{"dir":`+strconvQuote(target)+`}`)
+		if rec.Code != 409 || decode[map[string]string](t, rec)["code"] != "dir_in_use" {
+			t.Errorf("overlap %s: %d %s", target, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestCloneRefusesStartsAfterShutdown(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.service.Context = ctx
+	cancel()
+	h.service.Run(ctx)
+	h.service.Clone = func(context.Context, gitlocal.CloneOptions) error {
+		t.Error("clone started after shutdown")
+		return nil
+	}
+	rec := h.do("POST", "/api/repositories/acme/repo/clone", `{}`)
+	if rec.Code != 503 || decode[map[string]string](t, rec)["code"] != "stopping" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if rows, _ := h.registry.Repositories(context.Background()); len(rows) != 0 {
+		t.Errorf("picked repositories after shutdown: %+v", rows)
+	}
+}
+
+func TestCloneReportsUnsupportedURLRewrite(t *testing.T) {
+	h := newHarness(t)
+	h.service.Clone = func(context.Context, gitlocal.CloneOptions) error { return gitlocal.ErrURLRewritten }
+	if rec := h.do("POST", "/api/repositories/acme/repo/clone", `{}`); rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	state := waitFor(t, h, "acme/repo", "failed")
+	if state.Code != "url_rewritten" || !strings.Contains(state.Error, "Git configuration") {
+		t.Fatalf("state = %+v", state)
 	}
 }

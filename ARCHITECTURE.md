@@ -1746,7 +1746,7 @@ its [README](internal/clonefind/README.md).
 
 `internal/githubrepos` serves `GET /api/github/repositories` (ranked, filtered,
 cached five minutes; each item says whether it is `picked` and the `clone` path
-the finder found) and the clone routes
+from the registry or finder) and the clone routes
 `GET /api/repositories/{owner}/{name}/clone-target` and
 `GET|POST /api/repositories/{owner}/{name}/clone`. `uiserver.LocalAPI` mounts
 them as the `GitHubRepositories` provider next to the registry's
@@ -1755,8 +1755,11 @@ them as the `GitHubRepositories` provider next to the registry's
 search for the ranking). A clone is `gitlocal.Clone`: the HTTPS URL is built
 from a validated owner/name, the token is injected like a fetch's
 (`withCredential`, private environment, scoped header, no helper, no redirects),
-hooks, templates, fsmonitor and submodules are off, and a failed clone removes
-what it created. The daemon runs one clone per repository in the background,
+Git hooks, templates, fsmonitor and submodules are off; configured checkout
+filters such as git-lfs still run. Unsupported URL rewrites are refused and
+certificate verification is forced on with a token. A failed clone removes
+only what it created. The daemon runs one clone per repository in the background,
+reserves non-overlapping resolved target paths and refuses starts during shutdown,
 picks the repository if needed, registers the result with `Registry.AddFor` and
 publishes the registry change. See its [README](internal/githubrepos/README.md).
 

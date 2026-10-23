@@ -476,14 +476,23 @@ only in its private child environment, as an `Authorization` header scoped to
 that URL (the same way fetches work); it is never in the arguments, a file, a
 log or an error, your global credential helper and header settings are cleared
 for that command, redirects are refused, and git cannot prompt. Without a
-sign-in a public repository clones anonymously. The clone disables hooks (a
-temporary empty hooks directory), repository templates, the file-system
-monitor, submodule recursion and every protocol but HTTPS, and does not keep
+sign-in a public repository clones anonymously. With a token, certificate
+verification is forced on, including when `GIT_SSL_NO_VERIFY` is set.
+The clone disables Git hooks (a temporary empty hooks directory), repository
+templates, the file-system monitor, submodule recursion and every protocol but HTTPS, and does not keep
 those settings. It writes into the folder you choose (default beside your
 other clones, else `~/code/<owner>/<name>`), which must be inside your home
-directory and absent or empty; missing parent folders are created with normal
-permissions (0755), and a failed or cancelled clone removes what it created.
-Your own Git configuration (proxy, certificates, URL rewrites) still applies.
+directory and absent or empty; a code-folder symlink directly under home may
+point to another disk. Overlapping running targets, including symlink aliases,
+are refused. Missing parent folders are created with normal permissions (0755).
+A failed or cancelled clone removes only its own target and empty parents it
+created; a pre-existing empty target is left for git to clean up.
+Your own Git configuration (proxy, trusted certificates) still applies. URL
+rewrites to SSH or another unsupported destination are refused with an
+explanation. Global checkout filters such as git-lfs can still run: the
+repository selects them with `.gitattributes`, and they can contact LFS storage
+hosts (including one chosen by `.lfsconfig`). The GitHub header stays scoped to
+the clone URL; it is not sent to those other hosts.
 The clone is then registered like any other.
 
 ### Finding clones on this computer

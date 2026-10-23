@@ -44,7 +44,7 @@ type Lister interface {
 // Registry is the part of the repository registry the service uses.
 type Registry interface {
 	Repositories(context.Context) ([]repos.Repository, error)
-	List(context.Context) ([]repos.Clone, error)
+	CloneRows(context.Context) ([]repos.Clone, error)
 	Pick(ctx context.Context, repository string, settings *repos.Settings) (repos.Repository, error)
 	AddFor(ctx context.Context, path, repository string, settings *repos.Settings) (repos.Clone, error)
 }
@@ -65,7 +65,8 @@ type Service struct {
 	// Health reports the runtime health of the GitHub sign-in after a failed
 	// request (config.GitHubAuth.Health); nil means healthy.
 	Health func() error
-	// Home is the home directory clones must stay inside.
+	// Home is the home directory used for clone targets (including top-level
+	// code-folder symlinks to another disk).
 	Home string
 	// Context ends running clones when the daemon stops; nil means never.
 	Context context.Context
@@ -79,6 +80,11 @@ type Service struct {
 	flight  singleflight.Group
 	clones  map[string]*cloneState
 	running sync.WaitGroup
+	// gen counts account changes; a listing started under an older one is not cached.
+	gen      uint64
+	stopping bool
+	// reserved are the folders of running clones, case-folded.
+	reserved map[string]string
 }
 
 func (s *Service) now() time.Time {
@@ -100,13 +106,16 @@ func (s *Service) ctx() context.Context {
 func (s *Service) ResetIdentity() {
 	s.mu.Lock()
 	s.cache, s.cached = nil, time.Time{}
+	s.gen++
 	s.mu.Unlock()
-	s.flight.Forget("list")
 }
 
 // Run waits for the daemon to stop, then for running clones to clean up.
 func (s *Service) Run(ctx context.Context) {
 	<-ctx.Done()
+	s.mu.Lock()
+	s.stopping = true
+	s.mu.Unlock()
 	s.running.Wait()
 }
 
@@ -119,7 +128,7 @@ type Item struct {
 	Description      string     `json:"description"`
 	OpenPullRequests int        `json:"open_pull_requests"`
 	Picked           bool       `json:"picked"`
-	// Clone is the best local clone the clone finder found, or "".
+	// Clone is an available registered clone, otherwise the best one found, or "".
 	Clone string `json:"clone"`
 }
 
@@ -131,6 +140,7 @@ type Listing struct {
 
 func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, time.Time, error) {
 	s.mu.Lock()
+	gen := s.gen
 	if !refresh && s.cache != nil && s.now().Sub(s.cached) < CacheTTL {
 		list, at := s.cache, s.cached
 		s.mu.Unlock()
@@ -143,7 +153,7 @@ func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, t
 		list []github.ViewerRepository
 		at   time.Time
 	}
-	v, err, _ := s.flight.Do("list", func() (any, error) {
+	v, err, _ := s.flight.Do("list-"+strconv.FormatUint(gen, 10), func() (any, error) {
 		ctx, cancel := context.WithTimeout(s.ctx(), listTimeout)
 		defer cancel()
 		list, err := s.Lister.ViewerRepositories(ctx, config.GitHubHost)
@@ -155,7 +165,9 @@ func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, t
 		}
 		at := s.now()
 		s.mu.Lock()
-		s.cache, s.cached = list, at
+		if s.gen == gen {
+			s.cache, s.cached = list, at
+		}
 		s.mu.Unlock()
 		return result{list, at}, nil
 	})
@@ -203,8 +215,15 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 		return Listing{}, fmt.Errorf("%w: %w", errRegistry, err)
 	}
 	pickedSet := map[string]bool{}
+	registered := map[string]string{}
 	for _, p := range picked {
-		pickedSet[strings.ToLower(p.Repository)] = true
+		name := strings.ToLower(p.Repository)
+		pickedSet[name] = true
+		for _, c := range p.Clones {
+			if c.Available && registered[name] == "" {
+				registered[name] = c.Path
+			}
+		}
 	}
 	var found map[string][]clonefind.FoundClone
 	if s.Found != nil {
@@ -222,7 +241,9 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 			pushed := r.PushedAt
 			item.PushedAt = &pushed
 		}
-		if clones := found[r.Repository]; len(clones) > 0 {
+		if p := registered[r.Repository]; p != "" {
+			item.Clone = p
+		} else if clones := found[r.Repository]; len(clones) > 0 {
 			item.Clone = clones[0].Path
 		}
 		out.Repositories = append(out.Repositories, item)
@@ -328,19 +349,24 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
-// home is the home directory, resolved through symlinks.
-func (s *Service) home() (string, error) {
-	home := s.Home
+// homes returns the home directory and the same directory with symlinks
+// resolved.
+func (s *Service) homes() (home, realHome string, err error) {
+	home = s.Home
 	if home == "" {
-		var err error
 		if home, err = os.UserHomeDir(); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if !filepath.IsAbs(home) {
-		return "", errors.New("home directory is not absolute")
+		return "", "", errors.New("home directory is not absolute")
 	}
-	return filepath.Clean(home), nil
+	home = filepath.Clean(home)
+	realHome, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		realHome = home
+	}
+	return home, realHome, nil
 }
 
 func within(root, p string) bool {
@@ -348,40 +374,130 @@ func within(root, p string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// DefaultDir is where a repository is cloned unless the person chooses: beside
-// the registered clones (their most common parent directory below home), else
-// ~/code/<owner>/<name>, with -2, -3... appended while the path exists.
+// resolve follows symlinks in the deepest existing part of p and appends the
+// rest.
+func resolve(p string) string {
+	existing, rest := p, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = next
+	}
+	real, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return p
+	}
+	return filepath.Join(real, rest)
+}
+
+// checkLocation says whether dir may hold a clone. The rule: dir is below the
+// home directory (as written, or as resolved), not the home directory itself,
+// and its resolved location is inside the resolved home directory, or inside
+// the resolved target of a symlink that is a direct child of the home
+// directory (a ~/code linked to another disk). A symlink deeper in the path
+// may not lead out of the home directory.
+func checkLocation(dir, home, realHome string) error {
+	if dir == home || dir == realHome {
+		return errors.New("dir cannot be the home directory itself")
+	}
+	real := resolve(dir)
+	switch {
+	case within(realHome, real):
+		if within(home, dir) || within(realHome, dir) {
+			return nil
+		}
+	case within(home, dir):
+		rel, _ := filepath.Rel(home, dir)
+		top := filepath.Join(home, strings.Split(rel, string(filepath.Separator))[0])
+		if info, err := os.Lstat(top); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if target, err := filepath.EvalSymlinks(top); err == nil && within(target, real) {
+				return nil
+			}
+		}
+	}
+	return errors.New("dir must be inside the home directory")
+}
+
+// atHome rewrites a path under the resolved home directory to the same place
+// under the home directory as written.
+func atHome(p, home, realHome string) (string, bool) {
+	switch {
+	case p == home || within(home, p):
+		return p, true
+	case p == realHome || within(realHome, p):
+		rel, _ := filepath.Rel(realHome, p)
+		return filepath.Join(home, rel), true
+	}
+	return "", false
+}
+
+// DefaultDir is where a repository is cloned unless the person chooses. Beside
+// the registered clones: the most common parent directory below home, so
+// <parent>/<name>; but if the clones are laid out as <root>/<owner>/<name>
+// (their parent is named after their owner), <root>/<owner>/<name>. With no
+// clone, ~/code/<owner>/<name>. -2, -3... is appended while the path exists.
+// The result always passes the location rule POST applies.
 func (s *Service) DefaultDir(ctx context.Context, owner, name string) (string, error) {
-	home, err := s.home()
+	home, realHome, err := s.homes()
 	if err != nil {
 		return "", err
 	}
-	clones, err := s.Registry.List(ctx)
+	clones, err := s.Registry.CloneRows(ctx)
 	if err != nil {
 		return "", err
 	}
-	parents := map[string]int{}
+	type layout struct {
+		byOwner bool
+		base    string
+	}
+	votes := map[layout]int{}
 	for _, c := range clones {
 		if !filepath.IsAbs(c.Path) {
 			continue
 		}
-		if parent := filepath.Dir(filepath.Clean(c.Path)); parent == home || within(home, parent) {
-			parents[parent]++
+		path, ok := atHome(filepath.Clean(c.Path), home, realHome)
+		if !ok {
+			continue
+		}
+		parent := filepath.Dir(path)
+		if parent != home && !within(home, parent) {
+			continue
+		}
+		ownerOf, _, _ := strings.Cut(c.Repository, "/")
+		if root := filepath.Dir(parent); ownerOf != "" && strings.EqualFold(filepath.Base(parent), ownerOf) && (root == home || within(home, root)) {
+			votes[layout{true, root}]++
+		} else {
+			votes[layout{false, parent}]++
 		}
 	}
-	base := filepath.Join(home, "code", owner, name)
-	best := ""
-	for parent, n := range parents {
-		if best == "" || n > parents[best] || (n == parents[best] && parent < best) {
-			best = parent
+	best, bestVotes := layout{true, filepath.Join(home, "code")}, 0
+	for l, n := range votes {
+		if n > bestVotes || (n == bestVotes && (!l.byOwner && best.byOwner || l.byOwner == best.byOwner && l.base < best.base)) {
+			best, bestVotes = l, n
 		}
 	}
-	if best != "" {
-		base = filepath.Join(best, name)
+	pick := func(l layout) string {
+		if l.byOwner {
+			return filepath.Join(l.base, owner, name)
+		}
+		return filepath.Join(l.base, name)
+	}
+	base := pick(best)
+	if checkLocation(base, home, realHome) != nil {
+		base = pick(layout{true, filepath.Join(home, "code")})
 	}
 	candidate := base
 	for i := 2; i < 1000; i++ {
 		if _, err := os.Lstat(candidate); errors.Is(err, os.ErrNotExist) {
+			if err := checkLocation(candidate, home, realHome); err != nil {
+				return "", err
+			}
 			return candidate, nil
 		}
 		candidate = base + "-" + strconv.Itoa(i)
@@ -419,9 +535,14 @@ type CloneState struct {
 	// State is running, done or failed.
 	State string `json:"state"`
 	Error string `json:"error,omitempty"`
+	// Code names a failure the app explains itself, such as url_rewritten.
+	Code string `json:"code,omitempty"`
 }
 
-type cloneState struct{ CloneState }
+type cloneState struct {
+	CloneState
+	key string
+}
 
 func (s *Service) cloneStatus(w http.ResponseWriter, r *http.Request) {
 	identity, ok := repositoryName(r)
@@ -443,42 +564,19 @@ func (s *Service) cloneStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-// validateDir checks a requested clone folder: absolute, inside home but not
-// home, with no symlink leading out, and either missing or an empty directory.
+// validateDir checks a requested clone folder: absolute, in a permitted
+// location (see checkLocation), and either missing or an empty directory.
 func (s *Service) validateDir(dir string) (string, error) {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return "", errors.New("dir must be an absolute path")
 	}
 	dir = filepath.Clean(dir)
-	home, err := s.home()
+	home, realHome, err := s.homes()
 	if err != nil {
 		return "", errors.New("the home directory is unknown")
 	}
-	if dir == home {
-		return "", errors.New("dir cannot be the home directory itself")
-	}
-	if !within(home, dir) {
-		return "", errors.New("dir must be inside the home directory")
-	}
-	// Resolve the deepest existing ancestor: a symlink in the path must not
-	// lead out of home.
-	realHome, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		realHome = home
-	}
-	existing := dir
-	for {
-		if _, err := os.Lstat(existing); err == nil {
-			break
-		}
-		next := filepath.Dir(existing)
-		if next == existing {
-			break
-		}
-		existing = next
-	}
-	if real, err := filepath.EvalSymlinks(existing); err == nil && real != realHome && !within(realHome, real) {
-		return "", errors.New("dir must be inside the home directory")
+	if err := checkLocation(dir, home, realHome); err != nil {
+		return "", err
 	}
 	if info, err := os.Lstat(dir); err == nil {
 		if !info.IsDir() {
@@ -493,6 +591,15 @@ func (s *Service) validateDir(dir string) (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// reservationKey resolves aliases before comparing running targets. Case folding
+// also prevents overlaps on file systems that treat case variants alike.
+func reservationKey(dir string) string { return strings.ToLower(resolve(filepath.Clean(dir))) }
+
+func overlaps(a, b string) bool {
+	sep := string(filepath.Separator)
+	return a == b || strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
 }
 
 func (s *Service) startClone(w http.ResponseWriter, r *http.Request) {
@@ -531,12 +638,29 @@ func (s *Service) startClone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
+	if s.stopping || s.ctx().Err() != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusServiceUnavailable, "stopping", "baum is stopping; try again after it restarts.")
+		return
+	}
 	if c := s.clones[identity]; c != nil && c.State == "running" {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "clone_running", "A clone of this repository is already running.")
 		return
 	}
-	state := &cloneState{CloneState{Repository: identity, Dir: dir, State: "running"}}
+	key := reservationKey(dir)
+	for other, by := range s.reserved {
+		if overlaps(key, other) {
+			s.mu.Unlock()
+			fail(w, http.StatusConflict, "dir_in_use", "Another clone ("+by+") is using that folder.")
+			return
+		}
+	}
+	if s.reserved == nil {
+		s.reserved = map[string]string{}
+	}
+	s.reserved[key] = identity
+	state := &cloneState{CloneState: CloneState{Repository: identity, Dir: dir, State: "running"}, key: key}
 	if s.clones == nil {
 		s.clones = map[string]*cloneState{}
 	}
@@ -564,8 +688,13 @@ func (s *Service) startClone(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) finish(state *cloneState, err error) {
 	s.mu.Lock()
+	delete(s.reserved, state.key)
 	if err != nil {
 		state.State, state.Error = "failed", err.Error()
+		var coded *codedError
+		if errors.As(err, &coded) {
+			state.Code = coded.code
+		}
 	} else {
 		state.State = "done"
 	}
@@ -574,6 +703,10 @@ func (s *Service) finish(state *cloneState, err error) {
 		s.Changed()
 	}
 }
+
+type codedError struct{ code, message string }
+
+func (e *codedError) Error() string { return e.message }
 
 func (s *Service) runClone(identity, url, dir string) error {
 	ctx := s.ctx()
@@ -597,6 +730,9 @@ func (s *Service) runClone(identity, url, dir string) error {
 	if err := clone(ctx, gitlocal.CloneOptions{URL: url, Dir: dir, Token: token}); err != nil {
 		if ctx.Err() != nil {
 			return errors.New("the clone was cancelled")
+		}
+		if errors.Is(err, gitlocal.ErrURLRewritten) {
+			return &codedError{"url_rewritten", gitlocal.ErrURLRewritten.Error()}
 		}
 		return errors.New(safeMessage(err, token))
 	}

@@ -56,7 +56,6 @@ var (
 	urlRun            = run
 )
 
-
 // ErrURLRewritten reports a Git configuration (url.<base>.insteadOf) that
 // sends GitHub HTTPS URLs somewhere other than HTTPS on github.com, such as
 // SSH. The clone would not use the sign-in.
@@ -134,7 +133,7 @@ func Clone(ctx context.Context, opts CloneOptions) (err error) {
 		"submodule.recurse=false",
 	}
 	if opts.Token != "" {
-		config = append(config, "http.sslVerify=true")
+		config = append(config, "http.sslVerify=true", "http."+opts.URL+".sslVerify=true")
 	}
 	if testFile {
 		config = append(config, "protocol.file.allow=always")
