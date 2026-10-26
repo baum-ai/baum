@@ -329,11 +329,10 @@ export function RepositoryPicker({
       setFound(result && result.repositories ? result : null);
       pickedCallback.current?.(picked.size);
       setError("");
-      // Only initial found clones are preselected; a deliberate unpick stays unpicked.
+      // Found clones are preselected unless the person deliberately unpicked them.
       for (const row of listing.repositories) {
         if (!active.current || seq !== sequence.current || working.current) break;
         if (row.clone && !picked.has(row.repository) && !skipped.current.has(row.repository)) {
-          skipFoundRepository(row.repository);
           working.current = true;
           setBusy(row.repository);
           try {

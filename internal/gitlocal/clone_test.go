@@ -50,6 +50,7 @@ func TestCloneKeepsTheTokenInTheEnvironmentAndHardensGit(t *testing.T) {
 	}
 	t.Setenv("GIT_TRACE", "1")
 	t.Setenv("GIT_CURL_VERBOSE", "1")
+	t.Setenv("BAUM_TEST_NOTE", "an ordinary value mentioning GIT_TRACE=1")
 	dir := filepath.Join(t.TempDir(), "a", "b", "repo")
 	const token = "PRIVATE_CLONE_CREDENTIAL"
 	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: token}); err != nil {
@@ -69,8 +70,10 @@ func TestCloneKeepsTheTokenInTheEnvironmentAndHardensGit(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{"GIT_TRACE=", "GIT_CURL_VERBOSE="} {
-		if strings.Contains(env, unwanted) {
-			t.Errorf("environment keeps %q", unwanted)
+		for _, entry := range spec.env {
+			if strings.HasPrefix(entry, unwanted) {
+				t.Errorf("environment keeps %q", unwanted)
+			}
 		}
 	}
 	for _, want := range []string{"protocol.ext.allow=never", "core.fsmonitor=false", "http.followRedirects=false", "protocol.allow=never"} {
@@ -276,24 +279,28 @@ func TestCloneWithATokenLeavesNoCredentialInTheClone(t *testing.T) {
 	}
 }
 
-func TestCloneRefusesAGitConfigurationThatRewritesToSSH(t *testing.T) {
+func TestCloneRefusesAGitConfigurationThatChangesTheURL(t *testing.T) {
 	requireGit(t)
 	global := filepath.Join(t.TempDir(), "gitconfig")
-	write(t, filepath.Dir(global), filepath.Base(global), "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n", 0o644)
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	original := cloneRun
 	t.Cleanup(func() { cloneRun = original })
 	cloneRun = func(context.Context, runSpec, ...string) ([]byte, error) { t.Error("git clone ran"); return nil, nil }
 	root := t.TempDir()
 	dir := filepath.Join(root, "new", "repo")
-	err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: "t"})
-	if !errors.Is(err, ErrURLRewritten) {
-		t.Fatalf("err = %v, want ErrURLRewritten", err)
+	for _, replacement := range []string{"git@github.com:org/", "https://github.com/evil/", "https://github.com/org/different-"} {
+		t.Run(replacement, func(t *testing.T) {
+			write(t, filepath.Dir(global), filepath.Base(global), "[url \""+replacement+"\"]\n\tinsteadOf = https://github.com/org/\n", 0o644)
+			err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir, Token: "t"})
+			if !errors.Is(err, ErrURLRewritten) {
+				t.Fatalf("err = %v, want ErrURLRewritten", err)
+			}
+			if _, statErr := os.Lstat(filepath.Join(root, "new")); statErr == nil {
+				t.Error("created folders before refusing")
+			}
+		})
 	}
-	if _, statErr := os.Lstat(filepath.Join(root, "new")); statErr == nil {
-		t.Error("created folders before refusing")
-	}
-	// A rewrite to another HTTPS github.com URL is fine.
+	// An unrelated alias leaves the requested URL unchanged.
 	write(t, filepath.Dir(global), filepath.Base(global), "[url \"https://github.com/\"]\n\tinsteadOf = gh:\n", 0o644)
 	cloneRun = func(context.Context, runSpec, ...string) ([]byte, error) { return nil, nil }
 	if err := Clone(context.Background(), CloneOptions{URL: "https://github.com/org/repo.git", Dir: dir}); err != nil {

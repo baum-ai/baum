@@ -1756,9 +1756,9 @@ search for the ranking). A clone is `gitlocal.Clone`: the HTTPS URL is built
 from a validated owner/name, the token is injected like a fetch's
 (`withCredential`, private environment, scoped header, no helper, no redirects),
 Git hooks, templates, fsmonitor and submodules are off; configured checkout
-filters such as git-lfs still run. Unsupported URL rewrites are refused and
-certificate verification is forced on with a token. A failed clone removes
-only what it created. The daemon runs one clone per repository in the background,
+filters such as git-lfs still run. Rewrites that change the clone URL are
+refused and certificate verification is forced on with a token. A failed clone
+removes only what it created. The daemon runs one clone per repository in the background,
 reserves non-overlapping resolved target paths and refuses starts during shutdown,
 picks the repository if needed, registers the result with `Registry.AddFor` and
 publishes the registry change. See its [README](internal/githubrepos/README.md).

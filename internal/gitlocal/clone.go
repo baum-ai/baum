@@ -57,9 +57,8 @@ var (
 )
 
 // ErrURLRewritten reports a Git configuration (url.<base>.insteadOf) that
-// sends GitHub HTTPS URLs somewhere other than HTTPS on github.com, such as
-// SSH. The clone would not use the sign-in.
-var ErrURLRewritten = errors.New("your Git configuration rewrites GitHub URLs to SSH; baum clones over HTTPS with your sign-in: remove the rewrite or choose a folder with an existing clone")
+// changes the requested clone URL, including to another GitHub repository.
+var ErrURLRewritten = errors.New("your Git configuration changes the requested GitHub clone URL; remove the rewrite or choose a folder with an existing clone")
 
 // Clone clones a GitHub repository into opts.Dir. The token travels only in
 // git's private environment, as for a fetch (see withCredential), never in
@@ -153,7 +152,7 @@ func Clone(ctx context.Context, opts CloneOptions) (err error) {
 }
 
 // checkNotRewritten fails with ErrURLRewritten when the user's configuration
-// turns rawURL into anything but an HTTPS github.com URL.
+// changes rawURL, even if the replacement is another HTTPS github.com URL.
 func checkNotRewritten(ctx context.Context, env []string, rawURL string) error {
 	out, err := urlRun(ctx, runSpec{dir: os.TempDir(), env: env, limit: 4 << 10, timeout: 30 * time.Second}, "ls-remote", "--get-url", rawURL)
 	if err != nil {
@@ -162,9 +161,6 @@ func checkNotRewritten(ctx context.Context, env []string, rawURL string) error {
 	}
 	got := strings.TrimSpace(string(out))
 	if got == rawURL {
-		return nil
-	}
-	if u, perr := url.Parse(got); perr == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), "github.com") && u.User == nil && u.Port() == "" {
 		return nil
 	}
 	return ErrURLRewritten

@@ -488,10 +488,11 @@ are refused. Missing parent folders are created with normal permissions (0755).
 A failed or cancelled clone removes only its own target and empty parents it
 created; a pre-existing empty target is left for git to clean up.
 Your own Git configuration (proxy, trusted certificates) still applies. URL
-rewrites to SSH or another unsupported destination are refused with an
-explanation. Global checkout filters such as git-lfs can still run: the
-repository selects them with `.gitattributes`, and they can contact LFS storage
-hosts (including one chosen by `.lfsconfig`). The GitHub header stays scoped to
+rewrites that change the requested clone URL, including to another GitHub
+repository, are refused with an explanation. Global checkout filters such as
+git-lfs can still run: the repository selects them with `.gitattributes`, and
+they can contact LFS storage hosts (including one chosen by `.lfsconfig`).
+The GitHub header stays scoped to
 the clone URL; it is not sent to those other hosts.
 The clone is then registered like any other.
 

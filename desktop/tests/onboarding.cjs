@@ -43,7 +43,7 @@ const assert = require('node:assert/strict');
     }
     if (command === 'review_settings') return reviews;
     if (command === 'save_review_settings') { reviews = args.settings; return { ok: true, lines: [] }; }
-    if (command === 'choose_repository') return '/workspace/sample/project';
+    if (command === 'choose_repository') { await new Promise(resolve => setTimeout(resolve, 50)); return '/workspace/sample/project'; }
     if (command === 'install_command') { await new Promise(resolve => setTimeout(resolve, 300)); state.command.installed = true; return { ok: true, lines: ['Installed CLI'] }; }
     if (command === 'install_hooks') {
       if (fail) return { ok: false, lines: ['Plugin download failed. Retry.'] };
@@ -173,7 +173,7 @@ const assert = require('node:assert/strict');
   const fallback=page.locator('.repository-fallback');
   await expect(fallback.getByRole('button',{name:'Choose folder',exact:true})).toBeVisible();
   await fallback.getByRole('button',{name:'Choose folder',exact:true}).click();
-  assert(calls.some(([c,a])=>c==='repositories'&&a.action==='attach'&&!a.repository&&a.path==='/workspace/sample/project'));
+  await expect.poll(() => calls.some(([c,a])=>c==='repositories'&&a.action==='attach'&&!a.repository&&a.path==='/workspace/sample/project')).toBe(true);
   assert.deepEqual(errors, []);
   await browser.close();
   console.log('Onboarding: GitHub sign-in, separate agent installs, retry, multiple repositories, back/skip, review settings, finish and minimum window width passed.');

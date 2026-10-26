@@ -71,6 +71,38 @@ it("does not pick a result arriving after the picker unmounts", async () => {
   await act(async () => finish({ repositories: [{ repository: "picker/late", clone: "/late" }] }));
   expect(calls).not.toContain("pick");
 });
+it("retries an automatic pick after a transient failure, including after remount", async () => {
+  let attempts = 0;
+  let picked = false;
+  const call: RepositoryCall = async (action) => {
+    if (action === "list")
+      return { repositories: [{ repository: "retry/found", clone: "/code/found" }] } as never;
+    if (action === "picked")
+      return (picked ? [{ repository: "retry/found", clones: [], settings: {} }] : []) as never;
+    if (action === "pick") {
+      attempts++;
+      if (attempts < 3) throw Error("Registry temporarily unavailable");
+      picked = true;
+    }
+    return {} as never;
+  };
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  expect(node.textContent).toContain("Registry temporarily unavailable");
+  await act(async () =>
+    [...node.querySelectorAll("button")]
+      .find((button) => button.textContent === "Try again")!
+      .click(),
+  );
+  expect(attempts).toBe(2);
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  expect(attempts).toBe(3);
+  expect(picked).toBe(true);
+  expect(node.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked).toBe(true);
+  expect(JSON.parse(localStorage.getItem("baum-unpicked-repositories") ?? "[]")).not.toContain(
+    "retry/found",
+  );
+});
 it("shows an editable clone target and registers only after an explicit clone click", async () => {
   const calls: { action: string; args: unknown }[] = [];
   const call: RepositoryCall = async (action, args) => {

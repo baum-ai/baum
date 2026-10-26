@@ -60,8 +60,8 @@ response.
 
 A clone state is `{"repository","dir","state","error"?,"code"?}`, `state` being
 `running`, `done` or `failed`; `error` is sanitized text. `code: "url_rewritten"`
-means the person's Git configuration rewrites GitHub HTTPS URLs to an
-unsupported destination (such as SSH). State is in memory.
+means the person's Git configuration changes the requested clone URL, including
+to another repository on GitHub or to SSH. State is in memory.
 
 **Default folder.** The most common parent directory of the registered clones
 that lie below the home directory (ties: flat layout first, then alphabetical),
@@ -88,6 +88,6 @@ already existed is left for git to clean up.
 (`gitlocal.GitHubCloneURL`), passes the token in git's private environment only,
 and disables hooks, templates, fsmonitor, submodules and every protocol but
 HTTPS. Certificate verification is forced on with a token. Git URL rewrites
-to unsupported destinations are refused before creating folders. Configured
+that change the requested URL are refused before creating folders. Configured
 checkout filters such as git-lfs still run and may contact their own storage
 hosts. See `SECURITY.md`.
