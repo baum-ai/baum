@@ -445,7 +445,8 @@ runs the model's tool calls in-process:
 ## Fixing a pull request
 
 A fix (`internal/fix`, run as a job of the local application) is the one
-time an agent gets **write access**, and the one time baum writes to GitHub.
+time an agent gets **write access**. It is one of baum's few writes to GitHub
+(see "Writes to GitHub" below).
 It runs only after you ask for it on one pull request and confirm a dialog
 naming the harness, the model, the branch it pushes to and the write access;
 it never runs automatically. The daemon checks fresh GitHub evidence when you
@@ -535,6 +536,32 @@ What remains:
 - The commit is yours: your identity, and your signature if you sign commits.
   Clean and smudge filters your git configuration defines (Git LFS, for
   example) run on the checkout as they do in your clone.
+
+## Writes to GitHub
+
+The local application writes to GitHub only when you click and confirm, one
+pull request at a time, with the credential you saved for baum. There are four
+writes and no others:
+
+- **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
+  `expectedHeadOid` set to the head you saw.
+- **Fix push** (`internal/fix`): a plain `git push` of the agent's commit to
+  the pull request's branch, never forced (see "Fixing a pull request").
+- **Update branch** (`internal/prupdate`): `PUT
+  /repos/{owner}/{repo}/pulls/{number}/update-branch` with `expected_head_sha`
+  set to the head you saw. GitHub merges the base branch into the head branch.
+- **Re-run checks** (`internal/prupdate`): `POST
+  /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs` for each failed,
+  cancelled or timed-out workflow run of the head commit. The daemon reads the
+  run list itself; a request names no run.
+
+Each write goes through the daemon's authenticated, CSRF-checked local API,
+only for repositories you picked, and is re-checked against GitHub just before
+it is sent: the pull request is open, the head is still the one you confirmed
+and, for update branch and re-run, your account can push to the repository
+(`permissions.push`). Update branch also refuses a fork's branch and a
+conflicting pull request. None is retried, and none is ever started by an agent
+or automatically.
 
 ## Local repository registry
 

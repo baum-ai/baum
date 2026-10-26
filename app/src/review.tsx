@@ -39,6 +39,7 @@ import { Notice } from "./shell";
 import { LiveSessions } from "./live";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -135,6 +136,8 @@ export function LocalReview({
     previousKeys.current = liveKeys;
   }, [liveKeys]);
   const [merging, setMerging] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const generating = starting || isActiveJob(job) || (!job && entry.status === "generating");
   const generationState = generating
     ? "pending"
@@ -253,13 +256,28 @@ export function LocalReview({
             back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
-            // A fix, when the pull request is broken, comes first.
+            // A fix, when the pull request is broken, comes first; re-running
+            // checks and updating the branch are its smaller remedies.
             beside:
-              doc || (fix && fixLabelText) || canMerge(entry) ? (
+              doc ||
+              (fix && fixLabelText) ||
+              canMerge(entry) ||
+              canRerunChecks(entry) ||
+              canUpdateBranch(entry) ? (
                 <div className="flex flex-wrap items-center gap-2">
                   {fix && fixLabelText ? (
                     <Button size="compact" disabled={fixing} onClick={fix}>
                       {fixing ? "Fixing…" : fixLabelText}
+                    </Button>
+                  ) : null}
+                  {canRerunChecks(entry) ? (
+                    <Button variant="secondary" size="compact" onClick={() => setRerunning(true)}>
+                      Re-run checks
+                    </Button>
+                  ) : null}
+                  {canUpdateBranch(entry) ? (
+                    <Button variant="secondary" size="compact" onClick={() => setUpdating(true)}>
+                      Update branch
                     </Button>
                   ) : null}
                   {doc ? (
@@ -397,6 +415,12 @@ export function LocalReview({
         />
         {merging ? (
           <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
+        ) : null}
+        {rerunning ? (
+          <RerunChecksDialog entry={entry} close={() => setRerunning(false)} rerun={changed} />
+        ) : null}
+        {updating ? (
+          <UpdateBranchDialog entry={entry} close={() => setUpdating(false)} updated={changed} />
         ) : null}
       </AttachmentUrlProvider>
     </ReviewBoundary>

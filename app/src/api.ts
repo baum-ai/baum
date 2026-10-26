@@ -46,6 +46,9 @@ export type PR = GitHubState & {
   /** Whether the signed-in account may push to the repository, which a fix
    *  needs; null or absent when GitHub did not say. */
   viewer_can_push?: boolean | null;
+  /** GitHub says the branch is out of date with its base and not conflicting,
+   *  which Update branch fixes; absent in data from an older daemon. */
+  behind?: boolean;
 };
 export type Entry = GitHubState & {
   review_minutes: number | null;

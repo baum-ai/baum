@@ -33,6 +33,7 @@ import (
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
+	"github.com/baum-ai/baum/internal/prupdate"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -49,7 +50,10 @@ type browserDiscovery struct {
 	// merged reports whether the browser test merged PR 7 through the fake
 	// GitHub, after which discovery no longer lists it as open.
 	merged func() bool
-	head   string
+	// updated and rerun report whether the browser test updated PR 11's
+	// branch or re-ran PR 8's failed checks through the fake GitHub.
+	updated, rerun func() bool
+	head           string
 }
 
 func (d browserDiscovery) Cached(_ context.Context, repository github.Repository) (discovery.Snapshot, error) {
@@ -63,6 +67,15 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 	snapshot.FetchedAt = time.Now()
 	if d.merged != nil && d.merged() {
 		snapshot.PullRequests = slices.DeleteFunc(slices.Clone(snapshot.PullRequests), func(pr discovery.PullRequest) bool { return pr.Number == 7 })
+	}
+	snapshot.PullRequests = slices.Clone(snapshot.PullRequests)
+	for i := range snapshot.PullRequests {
+		switch pr := &snapshot.PullRequests[i]; {
+		case pr.Number == 11 && d.updated != nil && d.updated():
+			pr.Behind, pr.Merge = false, "ready"
+		case pr.Number == 8 && d.rerun != nil && d.rerun():
+			pr.Checks = "running"
+		}
 	}
 	if d.pushed != nil && d.pushed() {
 		snapshot.PullRequests = append([]discovery.PullRequest(nil), snapshot.PullRequests...)
@@ -234,12 +247,13 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		previous = next
 	}
 	write := true
-	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
+	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 11, HeadSHA: repo.Head, Title: "A branch behind its base", State: "OPEN", URL: "https://github.com/acme/demo/pull/11", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
 	prs[0].Review, prs[0].Checks, prs[0].Merge, prs[0].Unresolved = "approved", "passing", "ready", new(0)
 	prs[1].Review, prs[1].Checks, prs[1].Merge, prs[1].Unresolved = "changes_requested", "failing", "conflict", new(3)
 	prs[2].Review, prs[2].Checks, prs[2].Merge, prs[2].Unresolved = "commented", "running", "blocked", new(6)
 	prs[2].UnresolvedCapped = true
 	prs[3].Review, prs[3].Checks, prs[3].Merge = "unreviewed", "none", "draft"
+	prs[4].Review, prs[4].Checks, prs[4].Merge, prs[4].Behind = "approved", "passing", "blocked", true
 	// The viewer may push to acme/demo, so PR 8's conflict and failing checks
 	// offer a fix.
 	for i := range prs {
@@ -258,7 +272,19 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		_, err := os.Stat(mergedMarker)
 		return err == nil
 	}
-	disc := browserDiscovery{merged: merged, snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
+	// Updating PR 11's branch and re-running PR 8's checks write these
+	// markers; their tests remove them again for the specs after them.
+	marker := func(name string) (string, func() bool) {
+		path := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), name)
+		_ = os.Remove(path)
+		return path, func() bool {
+			_, err := os.Stat(path)
+			return err == nil
+		}
+	}
+	updatedMarker, updated := marker("updated-11")
+	rerunMarker, rerun := marker("rerun-8")
+	disc := browserDiscovery{merged: merged, updated: updated, rerun: rerun, snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
 		_, err := os.Stat(pushMarker)
 		return err == nil
 	}}
@@ -277,7 +303,16 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return nil, err
 		}
 		var body any
-		if strings.HasSuffix(r.URL.Path, "/permission") {
+		status := 200
+		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/pulls/11/update-branch") {
+			_ = os.WriteFile(updatedMarker, nil, 0o600)
+			status, body = http.StatusAccepted, map[string]any{"message": "Updating pull request branch."}
+		} else if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/actions/runs/55/rerun-failed-jobs") {
+			_ = os.WriteFile(rerunMarker, nil, 0o600)
+			status, body = http.StatusCreated, map[string]any{}
+		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/actions/runs") {
+			body = map[string]any{"workflow_runs": []any{map[string]any{"id": 55, "name": "CI", "status": "completed", "conclusion": "failure"}}}
+		} else if strings.HasSuffix(r.URL.Path, "/permission") {
 			body = map[string]any{"permission": "write"}
 		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/check-runs") {
 			body = map[string]any{"check_runs": []any{map[string]any{"id": 1, "name": "test", "conclusion": "failure", "output": map[string]any{"title": "1 test failed"}}}}
@@ -291,7 +326,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/9") {
 				headRepo = "other/fork"
 			}
-			body = map[string]any{"state": "open", "title": "Fixture pull request", "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
+			mergeableState := ""
+			if strings.HasSuffix(r.URL.Path, "/11") && !updated() {
+				mergeableState = "behind"
+			}
+			body = map[string]any{"state": "open", "title": "Fixture pull request", "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "mergeable_state": mergeableState, "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
 		} else {
 			var query struct {
 				Query     string
@@ -321,7 +360,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 		}
 		b, _ := json.Marshal(body)
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
 	})})
 	backend := &generatetest.Backend{Version: "fixture", RunFunc: func(ctx context.Context, r agent.Request, _ int) (agent.Result, error) {
 		select {
@@ -388,7 +427,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
 			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
