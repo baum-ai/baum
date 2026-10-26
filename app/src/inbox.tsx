@@ -494,6 +494,9 @@ function mergeStatus(entry: Entry): StateStyle | undefined {
   if (entry.checks === "running")
     return { label: "Checks running", tone: CAUTION, icon: CircleDashedIcon };
   if (entry.merge === "ready") return { label: "Ready", tone: POSITIVE, icon: MergeIcon };
+  // GitHub blocks a branch behind its base when protection requires it up to
+  // date; the PR page offers Update branch for it.
+  if (entry.pull_request.behind) return { label: "Behind base", tone: CAUTION, icon: WarningIcon };
   if (entry.merge === "blocked") return { label: "Blocked", tone: MUTED, icon: CircleCrossIcon };
   if (entry.checks === "passing")
     return { label: "Checks passing", tone: MUTED, iconTone: POSITIVE, icon: CircleCheckIcon };

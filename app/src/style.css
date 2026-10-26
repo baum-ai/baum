@@ -289,6 +289,10 @@ body {
   background: #e8decb;
   color: var(--text-secondary);
 }
+:root[data-theme="dark"] .local-tab[aria-pressed="true"] .local-tab-count {
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  color: var(--text-primary);
+}
 .local-repo-filter select {
   appearance: none;
   padding: 0.3rem 1.6rem 0.3rem 0.6rem;
@@ -1528,6 +1532,11 @@ span.inbox-fix svg {
 }
 .inbox-row[data-focused]:hover {
   background: var(--surface-hover);
+}
+/* The bar already marks the row, so its title link drops the focus ring it
+   would draw on top. */
+.inbox-row[data-focused] a:focus-visible {
+  outline: none;
 }
 .shortcuts-sheet {
   width: 26rem;
