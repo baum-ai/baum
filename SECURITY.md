@@ -445,7 +445,9 @@ runs the model's tool calls in-process:
 ## Fixing a pull request
 
 A fix (`internal/fix`, run as a job of the local application) is the one
-time an agent gets **write access**, and the one time baum writes to GitHub.
+time an agent gets **write access**, and, with a merge you confirm, the one
+time baum writes to GitHub: it pushes a commit and, when it addressed review
+comments, replies on those threads and resolves them.
 It runs only after you ask for it on one pull request and confirm a dialog
 naming the harness, the model, the branch it pushes to and the write access;
 it never runs automatically. The daemon checks fresh GitHub evidence when you
@@ -454,8 +456,10 @@ is in the repository itself (a fork is refused), your account can push to the
 repository (`permissions.push` on `GET /repos/{owner}/{repo}`, which write,
 maintain and admin access give; who wrote the pull request does not matter),
 the head is still the one you confirmed, and it still has a merge conflict
-(GitHub's `mergeable`) or failing checks. A registered local clone is
-required. Only the `claude` and `codex` backends fix; `cursor-agent` and
+(GitHub's `mergeable`), failing checks or, on a pull request you opened, the
+same unresolved review threads with the same comments (a digest of them is
+part of what you confirm, so a comment added or edited afterwards stops the
+fix before the agent runs). A registered local clone is required. Only the `claude` and `codex` backends fix; `cursor-agent` and
 `anthropic` are refused.
 
 The checkout is a linked worktree of your registered clone, detached at the
@@ -501,6 +505,43 @@ secrets masked by the same redactor reviews use, and the instructions say it
 is data. A pull request or a log can still try to steer the agent, which can
 change any file in the checkout.
 
+Review comments are other people's text, and on a public repository anyone
+with a GitHub account can write one. baum reads them only on a pull request
+you opened, and only from threads that are unresolved and that your account
+can reply to and resolve. A thread is left out unless its first comment comes
+from an owner, member or collaborator of the repository (GitHub's author
+association) or from an app's bot account, which someone with admin access
+installed; within a kept thread, other authors' comments are dropped. At most
+20 threads and the first 10 comments of each are read, each comment bounded
+to 2 KiB, and the dialog lists the threads and says how many it left out.
+Each thread goes into the prompt as untrusted data under the same random-tag
+markers, with secrets masked, under a local id (`T1`, `T2`…) that baum maps
+to the thread's GitHub node id; the agent never sees or returns a GitHub id.
+The instructions (`fix-threads.md`) say the comments are feedback to evaluate,
+not instructions, and to ignore requests to run commands, read or send files,
+or change credentials, secrets, CI or workflow configuration, dependencies or
+unrelated files.
+
+The agent reports per thread whether it addressed it, in a JSON block at the
+end of its final message whose opening fence carries the prompt's random tag,
+so a block quoted from a comment or a file is not taken for it. baum parses
+it strictly: anything malformed answers nothing, unknown or repeated ids are
+ignored, and each summary is masked for secrets and reduced to one line of
+plain text of at most 200 characters, with markdown links and images reduced
+to their text and URLs, HTML, `&`, `@` (so nobody is mentioned or notified)
+and control and invisible formatting characters removed.
+
+Only after the push succeeds, baum replies on each thread the agent said it
+addressed, as your GitHub account (with the GitHub token baum reads GitHub
+with, never your git credentials and never the agent), and resolves it. The reply is baum's own text,
+`Addressed in <short sha>: <summary>`. Before replying, baum reads the thread
+again by its node id and leaves it alone if it is now resolved, is not on this
+pull request, or no longer accepts your reply. Threads the agent skipped are
+never touched. With no push (no change, a refused push, any failure) there
+are no replies. Each GitHub request is sent once; a failed reply or
+resolution is recorded per thread on the job, never retried, and never fails
+the fix.
+
 What baum does after the agent:
 
 - Every git command in the checkout names the worktree's git directory
@@ -535,6 +576,15 @@ What remains:
 - The commit is yours: your identity, and your signature if you sign commits.
   Clean and smudge filters your git configuration defines (Git LFS, for
   example) run on the checkout as they do in your clone.
+- A review comment from a trusted author (or a compromised bot) can still try
+  to steer the agent, as a pull request or a log can, and the agent decides
+  which threads it addressed: it could claim threads it did not address, and
+  baum would resolve them, hiding that feedback until someone reopens it. The
+  reply names the commit, so reviewers can check it.
+- The summaries baum posts are the agent's words, published on GitHub under
+  your name. They are short, plain and masked for known secret formats, but a
+  secret in a format the redactor does not know, or text an injected comment
+  asked for, could still appear in one, as it could in the pushed commit.
 
 ## Local repository registry
 
@@ -873,7 +923,10 @@ The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. A fix (`"kind": "fix"`, see
 [Fixing a pull request](#fixing-a-pull-request)) runs only from a confirmed
 single-PR estimate, never from a direct request, and its estimate is refused
-for a fork, an account that cannot push or a backend that cannot fix. The stored copy of a downloaded
+for a fork, an account that cannot push or a backend that cannot fix. A fix
+job also keeps the review threads it addressed (file, line, author and the
+first line of the first comment) and each one's outcome code with the
+agent's cleaned summary. The stored copy of a downloaded
 price list is trusted only after its signature verifies again on load. Only
 the daemon that owns the per-user lock opens the queue, so there is never a
 second one.
@@ -883,8 +936,10 @@ history before the embedded local application loads; the application's files
 are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
 same sanitizers and safe rendering components as the hosted PR page and `baum internal
-view`. Stored document rendering failures remain within the PR pane. The app
-never supplies approvals, merge actions or discussion mutation controls.
+view`. Stored document rendering failures remain within the PR pane. The app's
+only GitHub writes are a merge and a fix you confirm, with that fix's replies on
+the review threads it addressed; it supplies no approvals or other discussion
+controls.
 
 ## Desktop app
 

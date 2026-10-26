@@ -544,7 +544,8 @@ workspace-write` with `sandbox_workspace_write.network_access=false`,
 `exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
 `Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
 `anthropic` have no write mode. The fix instructions are
-`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md` and `fix-checks.md`).
+`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
+`fix-threads.md`).
 
 `agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
 one profile and refuses a request with an `Endpoint`. Before its first run a
@@ -1886,7 +1887,9 @@ an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
 authorization. This service has no generation or GitHub mutation capability;
-the only write to GitHub is a confirmed fix's `git push` (see "Fix jobs").
+the daemon's writes to GitHub are a confirmed merge, a confirmed fix's
+`git push` and that fix's replies on the review threads it addressed (see
+"Fix jobs").
 
 `Service.Cached` resolves the local credential and reads disk without network
 access. Disk data is stale until a successful poll in the running service.
@@ -2062,8 +2065,18 @@ that head's review for the automatic scheduler.
 `/pulls/{n}` for the head, its branch and repository, the base branch and
 `mergeable` (read again once after 1.5 s while GitHub has not computed it),
 `/repos/{o}/{r}` for `permissions.push`, and the head's failing check runs and
-commit statuses. `Prepared.Fix` records what it fixes (`conflicts`, `checks`)
-and the branches; a fork, an account that cannot push, a backend that cannot
+commit statuses. On a pull request the signed-in account opened
+(`viewerDidAuthor`), it also reads the unresolved review threads with one
+GraphQL document (`FixReviewThreads`, up to four pages of 50 threads with the
+first 10 comments of each; `github.Client.UnresolvedThreads`) and keeps,
+through `fix.SelectThreads`, those the account can reply to and resolve whose
+first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
+most 20, dropping other authors' comments and bounding each body to 2 KiB.
+`Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
+digest of the kept threads and their comments) and the branches;
+`fix_threads` previews the threads for the dialog, with
+`fix_threads_capped` and `fix_threads_untrusted`. A fork, an account that
+cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
 `no_push_access`, `unsupported_backend`, `nothing_to_fix`), which the dialog
 explains. The harness, model and budgets resolve as a review's, and the
@@ -2071,7 +2084,8 @@ estimate is the same budget-sized one. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
-without the token).
+without the token), and reads the review threads again, refusing threads whose
+digest changed (`threads_changed`).
 
 `fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
 registered clone under the user cache directory's `baum/fixes/<id>`, detached
@@ -2082,11 +2096,33 @@ merges the base commit itself; a clean merge needs no agent. The agent
 markers, and the run budgets. baum then checks that no conflicted file keeps a
 marker, commits what was left (completing the merge), requires a new commit
 that descends from the head, and pushes it with a plain `git push` to the head
-branch. Phases are `reading checks`, `fetching`, `merging`, `fixing`,
-`committing` and `pushing`. A finished fix records `commit`, `commit_url` and
-the agent's masked `summary`; a failed one a reason (`head_changed`,
-`no_remote`, `git`, `backend`, `budget`, `no_changes`, `conflicts_remain`,
-`history_rewritten`, `push_rejected`, `push_failed`) and a bounded detail.
+branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+`merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
+records `commit`, `commit_url` and the agent's masked `summary`; a failed one
+a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
+`budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
+`push_rejected`, `push_failed`) and a bounded detail.
+
+Review threads reach the prompt as untrusted blocks headed with local ids
+(`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
+contains. The agent ends its final message with a JSON array of
+`{"id","addressed","summary"}` in a code fence whose info string is
+`baum-threads <nonce>`, the nonce of the data markers. `parseAnswer` takes the
+last such fence, which must close the message, decodes it strictly (unknown
+fields, wrong types or trailing data answer nothing), ignores unknown and
+repeated ids, masks secrets in each summary and reduces it to one plain line
+of at most 200 characters without links, URLs, HTML, `@` or control and
+format characters; the job's `summary` is the message without the block.
+After a successful push, and only then, `fix.Run` replies on each addressed
+thread through `github.Client`: it reads the thread again by node id
+(`ReviewThreadState`) and skips one now resolved (`already_resolved`) or not
+on this pull request or not open to the account's reply (`failed`), posts
+`Addressed in <short sha>: <summary>` with `addPullRequestReviewThreadReply`,
+then resolves it with `resolveReviewThread`. Each document is sent once,
+never retried. The job's `thread_outcomes` hold each thread's `resolved`,
+`replied` (the reply posted, the resolution not), `skipped`,
+`already_resolved` or `failed` with the agent's cleaned summary; none of these
+fails the fix.
 The worktree, its registration and the refs are removed whatever happens.
 After a push the daemon polls the repository's discovery at once. Git commands
 in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
