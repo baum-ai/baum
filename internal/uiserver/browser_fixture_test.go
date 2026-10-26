@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -251,8 +250,15 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// an earlier run must not count as already seen.
 	pushMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "push-10")
 	_ = os.Remove(pushMarker)
-	merged := new(atomic.Bool)
-	disc := browserDiscovery{merged: merged.Load, snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
+	// A merge writes this marker, which drops PR 7 from the open list; the
+	// merge test removes it again, so the specs after it still find PR 7.
+	mergedMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "merged-7")
+	_ = os.Remove(mergedMarker)
+	merged := func() bool {
+		_, err := os.Stat(mergedMarker)
+		return err == nil
+	}
+	disc := browserDiscovery{merged: merged, snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
 		_, err := os.Stat(pushMarker)
 		return err == nil
 	}}
@@ -298,7 +304,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			case strings.Contains(query.Query, "query MergeOptions("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false, "viewerDefaultMergeMethod": "SQUASH", "pullRequest": map[string]any{"id": "PR_fixture_7", "state": "OPEN", "isDraft": false, "headRefOid": repo.Head, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}}}}
 			case strings.Contains(query.Query, "mutation MergePullRequest("):
-				merged.Store(true)
+				_ = os.WriteFile(mergedMarker, nil, 0o600)
 				body = map[string]any{"data": map[string]any{"mergePullRequest": map[string]any{"pullRequest": map[string]any{"merged": true, "state": "MERGED"}}}}
 			case strings.Contains(query.Query, "query HeadChecks("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}}

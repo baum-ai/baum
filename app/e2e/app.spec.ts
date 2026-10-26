@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
@@ -501,8 +501,8 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });
 
-// Last in the file: the fake GitHub drops PR 7 from the open list once merged,
-// and earlier tests read it.
+// The fake GitHub drops PR 7 from the open list once merged; removing its
+// marker afterwards gives it back to the specs that run after this one.
 test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
   await page.goto(await launchURL());
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
@@ -523,4 +523,5 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await expect(dialog).toBeHidden();
   // The inbox refreshed: the merged pull request is no longer open or mergeable.
   await expect(inbox.getByRole("button", { name: /^Merge acme\/demo #7/ })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
