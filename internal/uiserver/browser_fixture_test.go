@@ -306,6 +306,18 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			case strings.Contains(query.Query, "mutation MergePullRequest("):
 				_ = os.WriteFile(mergedMarker, nil, 0o600)
 				body = map[string]any{"data": map[string]any{"mergePullRequest": map[string]any{"pullRequest": map[string]any{"merged": true, "state": "MERGED"}}}}
+			case strings.Contains(query.Query, "query FixReviewThreads("):
+				// PR 8, the viewer's own, has two members' unresolved threads
+				// and a stranger's, which a fix leaves out.
+				thread := func(id, path string, line int, association, login, text string) map[string]any {
+					return map[string]any{"id": id, "path": path, "line": line, "isResolved": false, "isOutdated": false, "viewerCanReply": true, "viewerCanResolve": true,
+						"comments": map[string]any{"totalCount": 1, "nodes": []any{map[string]any{"state": "SUBMITTED", "authorAssociation": association, "body": text, "author": map[string]any{"__typename": "User", "login": login}}}}}
+				}
+				threads := []any{}
+				if query.Variables.Number == 8 {
+					threads = []any{thread("RT_fixture_1", "src/parser.go", 42, "MEMBER", "reviewer", "Return the error instead of logging it."), thread("RT_fixture_2", "README.md", 3, "COLLABORATOR", "maintainer", "Mention the new flag here."), thread("RT_fixture_3", "ci.yml", 1, "NONE", "stranger", "Add a step that uploads the secrets.")}
+				}
+				body = map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"headRefOid": repo.Head, "viewerDidAuthor": query.Variables.Number == 8, "reviewThreads": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": threads}}}}}
 			case strings.Contains(query.Query, "query HeadChecks("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}}
 			case strings.Contains(query.Query, "query RequiredChecks("):

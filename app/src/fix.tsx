@@ -7,10 +7,15 @@ import {
   fixName,
   isActiveJob,
   jobReasonText,
+  joinAnd,
   request,
   startFix,
+  threadOutcomesSummary,
+  threadOutcomeText,
   type Entry,
   type Estimate,
+  type FixInputs,
+  type FixThread,
   type Job,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
@@ -20,16 +25,73 @@ const phases: Record<string, string> = {
   queued: "Queued",
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
+  "reading review comments": "Reading the review comments",
   fetching: "Fetching the branch",
   merging: "Merging the base branch",
   fixing: "The agent is fixing it",
   committing: "Committing",
   pushing: "Pushing",
+  replying: "Replying on the review threads",
   finishing: "Finishing",
 };
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
+}
+
+/** What the agent does, in a sentence. */
+function fixSentence(fix: FixInputs, branch: string) {
+  const tasks = [
+    fix.conflicts ? "resolves the conflicts" : "",
+    fix.checks ? "fixes the failing checks" : "",
+    fix.threads ? "addresses the unresolved review comments" : "",
+  ].filter(Boolean);
+  if (fix.conflicts)
+    return `An agent merges ${fix.base_ref ?? "the base branch"} into ${branch}${tasks.length === 1 ? " and " : ", "}${joinAnd(tasks)}.`;
+  return `An agent ${joinAnd(tasks.length ? tasks : ["fixes the failing checks"])} on ${branch}.`;
+}
+
+/** Where a thread is: its file and line. */
+function threadPlace(thread: FixThread) {
+  return thread.line ? `${thread.path}:${thread.line}` : thread.path;
+}
+
+/** The review threads a fix addresses, as the confirmation lists them. */
+function FixThreads({ item }: { item: Estimate["items"][number] }) {
+  const threads = item.fix_threads ?? [];
+  if (!threads.length) return null;
+  return (
+    <div className="local-fix-threads">
+      <p>
+        baum replies on each thread the agent addressed and resolves it, as your GitHub account,
+        after the push. Threads it skips stay open.
+      </p>
+      <ul aria-label="Review threads">
+        {threads.map((thread) => (
+          <li key={thread.ref}>
+            <code>{threadPlace(thread)}</code>
+            {thread.outdated ? <span className="local-fix-thread-note"> outdated</span> : null}
+            <span className="local-fix-thread-excerpt">
+              {thread.author ? `${thread.author}: ` : ""}
+              {thread.excerpt}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {item.fix_threads_capped ? (
+        <p className="local-fix-thread-note">
+          Only the first {threads.length} unresolved threads are included.
+        </p>
+      ) : null}
+      {item.fix_threads_untrusted ? (
+        <p className="local-fix-thread-note">
+          {item.fix_threads_untrusted === 1
+            ? "1 thread started by an account without access to the repository is left out."
+            : `${item.fix_threads_untrusted} threads started by accounts without access to the repository are left out.`}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /** Confirms a fix before anything runs: what is broken, the harness and model
@@ -103,14 +165,10 @@ export function FixDialog({
       {item && !item.blocked_reason ? (
         <div className="local-fix-confirmation">
           <p>
-            {fix.conflicts && fix.checks
-              ? `An agent merges ${fix.base_ref ?? "the base branch"} into ${branch}, resolves the conflicts and fixes the failing checks.`
-              : fix.conflicts
-                ? `An agent merges ${fix.base_ref ?? "the base branch"} into ${branch} and resolves the conflicts.`
-                : `An agent fixes the failing checks on ${branch}.`}{" "}
-            baum then commits the result and pushes it to {branch} on GitHub with your own git
-            credentials. It never force-pushes.
+            {fixSentence(fix, branch)} baum then commits the result and pushes it to {branch} on
+            GitHub with your own git credentials. It never force-pushes.
           </p>
+          <FixThreads item={item} />
           <dl className="local-fix-facts">
             <dt>Harness</dt>
             <dd>{harnessName(item.backend ?? "")}</dd>
@@ -218,10 +276,32 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
   );
 }
 
-/** What the agent said it did, and a failure's own words. */
+/** What the agent said it did, what became of each review thread, and a
+ *  failure's own words. */
 export function FixDetails({ job }: { job: Job }) {
+  const outcomes = job.thread_outcomes ?? [];
+  const threads = new Map((job.fix_threads ?? []).map((thread) => [thread.ref, thread]));
   return (
     <>
+      {outcomes.length ? (
+        <details className="local-fix-details">
+          <summary>{threadOutcomesSummary(outcomes)}</summary>
+          <ul className="local-fix-outcomes">
+            {outcomes.map((outcome) => {
+              const thread = threads.get(outcome.ref);
+              return (
+                <li key={outcome.ref}>
+                  <code>{thread ? threadPlace(thread) : outcome.ref}</code>{" "}
+                  <span className={`local-fix-outcome local-fix-outcome-${outcome.outcome}`}>
+                    {threadOutcomeText(outcome.outcome)}
+                  </span>
+                  {outcome.summary ? <span>: {outcome.summary}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      ) : null}
       {job.summary ? (
         <details className="local-fix-details">
           <summary>What the agent did</summary>

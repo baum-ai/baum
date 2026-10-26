@@ -165,13 +165,37 @@ export type Job = {
   commit_url?: string;
   /** The fix agent's own account of what it changed, secrets masked. */
   summary?: string;
+  /** The review threads a fix addressed, and what became of each once its
+   *  push succeeded. */
+  fix_threads?: FixThread[];
+  thread_outcomes?: ThreadOutcome[];
 };
-/** What a fix was confirmed for. */
+/** What a fix was confirmed for. `threads`, when set, identifies the review
+ *  threads it addresses. */
 export type FixInputs = {
   conflicts?: boolean;
   checks?: boolean;
+  threads?: string;
   head_ref?: string;
   base_ref?: string;
+};
+/** A review thread a fix addresses. Author and excerpt (the first line of its
+ *  first comment) are the reviewer's. */
+export type FixThread = {
+  ref: string;
+  path: string;
+  line?: number;
+  outdated?: boolean;
+  author?: string;
+  excerpt?: string;
+};
+/** What became of a review thread after a fix pushed: baum replied and
+ *  resolved it, replied only, left it (the agent did not address it), found it
+ *  already resolved, or could not reply. `summary` is the agent's, cleaned. */
+export type ThreadOutcome = {
+  ref: string;
+  outcome: "resolved" | "replied" | "skipped" | "already_resolved" | "failed";
+  summary?: string;
 };
 /** One repository's automatic generation, from `api/automatic`. */
 export type AutomaticStatus = {
@@ -203,7 +227,10 @@ const jobReasons: Record<string, string> = {
   draft: "The pull request became a draft.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
   no_push_access: "Your GitHub account can't push to this repository.",
-  nothing_to_fix: "GitHub reports no merge conflict and no failing check on this pull request now.",
+  nothing_to_fix:
+    "GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
+  threads_changed:
+    "The review comments changed after you confirmed the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
     "Fixes run with Claude Code or Codex only. Choose one of them as the review harness to fix pull requests.",
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
@@ -270,6 +297,12 @@ export type Estimate = {
     pr: number;
     kind?: "fix";
     fix?: FixInputs;
+    /** The review threads a fix would address; capped when there were more
+     *  than baum includes, and how many were left out because an account
+     *  without access to the repository started them. */
+    fix_threads?: FixThread[];
+    fix_threads_capped?: boolean;
+    fix_threads_untrusted?: number;
     head_sha: string;
     backend: string;
     model: string;
@@ -534,25 +567,61 @@ export function groupJob(group: Pick<ReviewGroup, "id">, jobs: Job[]): Job | und
   const matches = (job: Job) => job.group === group.id;
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
 }
-/** The name of a fix, by what is broken. */
-export function fixName(fix: { conflicts?: boolean; checks?: boolean }): string {
-  return fix.conflicts && fix.checks
-    ? "Fix conflicts and CI"
-    : fix.conflicts
-      ? "Fix conflicts"
-      : "Fix CI";
+/** "a", "a and b", "a, b and c". */
+export function joinAnd(parts: string[]): string {
+  return parts.length < 2
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+/** The name of a fix, by what it fixes. */
+export function fixName(fix: {
+  conflicts?: boolean;
+  checks?: boolean;
+  threads?: string | boolean;
+}): string {
+  const parts = [
+    fix.conflicts ? "conflicts" : "",
+    fix.checks ? "CI" : "",
+    fix.threads ? "review comments" : "",
+  ].filter(Boolean);
+  return `Fix ${joinAnd(parts.length ? parts : ["CI"])}`;
 }
 /** The fix a pull request offers, or null: only an open pull request whose
  *  branch is in the repository itself (not a fork), in a repository the
- *  signed-in account may push to, with a merge conflict or failing checks.
- *  The daemon checks all of it again against GitHub before anything runs. */
+ *  signed-in account may push to, with a merge conflict, failing checks or,
+ *  on the person's own pull request, unresolved review threads. The daemon
+ *  checks all of it again against GitHub before anything runs. */
 export function fixLabel(entry: Entry): string | null {
   const pr = entry.pull_request;
   if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return null;
   if (pr.state && pr.state.toUpperCase() !== "OPEN") return null;
   const conflicts = entry.merge === "conflict";
   const checks = entry.checks === "failing";
-  return conflicts || checks ? fixName({ conflicts, checks }) : null;
+  const threads = pr.authored_by_me && (entry.unresolved ?? 0) > 0;
+  return conflicts || checks || threads ? fixName({ conflicts, checks, threads }) : null;
+}
+const threadOutcomes: Record<ThreadOutcome["outcome"], string> = {
+  resolved: "Replied and resolved",
+  replied: "Replied, not resolved",
+  skipped: "Left open",
+  already_resolved: "Already resolved",
+  failed: "Reply failed",
+};
+/** What became of one review thread, in a few words. */
+export function threadOutcomeText(outcome: ThreadOutcome["outcome"]): string {
+  return threadOutcomes[outcome] ?? outcome.replaceAll("_", " ");
+}
+/** A fix's replies in one line: "Replied and resolved 3 of 4 threads". */
+export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): string | null {
+  if (!outcomes?.length) return null;
+  const resolved = outcomes.filter((o) => o.outcome === "resolved").length;
+  const replied = outcomes.filter((o) => o.outcome === "replied").length;
+  const failed = outcomes.filter((o) => o.outcome === "failed").length;
+  const total = `${outcomes.length} ${outcomes.length === 1 ? "thread" : "threads"}`;
+  let text = `Replied and resolved ${resolved} of ${total}`;
+  if (replied) text += `; replied on ${replied} more without resolving`;
+  if (failed) text += `; ${failed} ${failed === 1 ? "reply" : "replies"} failed`;
+  return text;
 }
 /** Prepares a fix of the pull request: what it would fix, with which harness
  *  and model, and on which branch, or why it cannot run. */

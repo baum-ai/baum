@@ -501,6 +501,32 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });
 
+// PR 8 is the viewer's own, with a conflict, failing checks and unresolved
+// review threads; the dialog is checked and cancelled, so nothing runs.
+test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
+  await page.goto(await launchURL());
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
+  await row.hover();
+  await row
+    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
+  await expect(dialog).toContainText(
+    "baum replies on each thread the agent addressed and resolves it",
+  );
+  const threads = dialog.getByRole("list", { name: "Review threads" }).getByRole("listitem");
+  await expect(threads).toHaveCount(2);
+  await expect(threads.first()).toContainText("src/parser.go:42");
+  await expect(threads.first()).toContainText("Return the error instead of logging it.");
+  await expect(dialog).toContainText(
+    "1 thread started by an account without access to the repository is left out.",
+  );
+  await expect(dialog).not.toContainText("uploads the secrets");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+});
+
 // The fake GitHub drops PR 7 from the open list once merged; removing its
 // marker afterwards gives it back to the specs that run after this one.
 test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
