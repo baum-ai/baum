@@ -31,9 +31,14 @@ type OutputRedactor struct {
 
 // NewOutputRedactor returns a redactor for output about the bundle, which must
 // be redacted already; with a nil bundle no reference resolves. checkout lists
-// the repository paths of the run's checkout, either tree.
+// the repository paths of the run's checkout, either tree. With a nil
+// validator a document has no contract: every string, keys included, is free
+// text.
 func NewOutputRedactor(v *DocumentValidator, redactor *bundlepkg.Redactor, b *bundlepkg.Bundle, checkout map[string]bool) (*OutputRedactor, error) {
-	o := outputRedaction{redactor: redactor, schema: v.strict, bundle: b, checkout: checkout}
+	o := outputRedaction{redactor: redactor, bundle: b, checkout: checkout}
+	if v != nil {
+		o.schema = v.strict
+	}
 	o.defs, _ = o.schema["$defs"].(map[string]any)
 	var err error
 	if o.inherited, err = inheritedTileSources(b); err != nil {

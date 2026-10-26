@@ -19,7 +19,8 @@ import (
 // document, validates it with the DocumentValidator and, while the validator
 // has findings, sends them back for a repair, up to the run's repair budget.
 // Provider failures are retried within the run's attempt budget; every call
-// and token counts against the run's budgets.
+// and token counts against the run's budgets. RunTask runs a generic task
+// through the same loop.
 //
 // A Generator is safe for concurrent use when its Backend, Prompts and
 // Validator are.

@@ -69,6 +69,9 @@ type Request struct {
 	// Activity receives the backend's progress, tools and turns for the
 	// stall watchdog; nil when the run has none.
 	Activity *Activity
+	// Task marks a generic task (Generator.RunTask) rather than a review, so
+	// the backend frames it without pull request review wording.
+	Task bool
 }
 
 type Result struct {

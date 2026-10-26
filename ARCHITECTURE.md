@@ -791,6 +791,33 @@ exactly as the hosted worker does: `ReasonValidationRejected`, the document
 withheld and only its masked copy kept. They are for hosts to call, including
 the local CLI (not yet wired); today only the hosted worker calls them.
 
+### Tasks
+
+```go
+generator := agent.Generator{Backend: backend, Logger: logger}
+outcome, document, err := generator.RunTask(ctx, agent.Task{
+	Directory: dir, Prompt: prompt, Schema: schema, Check: check,
+	Budgets: budgets, Endpoint: endpoint})
+```
+
+A task is a run that is not a review: a prompt over a run directory (a
+checkout and input files the caller put there) whose reply is a JSON document
+of the task's schema. Only the Generator's `Backend`, `Logger` and
+`RetryDelay` take part. `RunTask` writes `schema.json` to the directory and
+sends the prompt as it is, marked as a task (`Request.Task`) so the Claude and
+Anthropic backends frame it with a generic system prompt and nudge instead of
+the review's, with the same provider retries, stall watchdog and
+budgets as `Generate`. Each reply is checked against the schema, then by the
+task's `Check`, which returns findings; a rejected reply is written as
+`rejected-N.json` and sent back with the findings and the backend's
+`RepairText` ending, up to `MaxRepairAttempts` (at least one). The result is
+as for a review: the document, an `Outcome` (no schema revision or identifier
+pass), `ReasonValidationRejected` with the last rejected document after the
+last repair, or an error. `RunTask` logs sizes and counts only, never what the
+model wrote. A host masks the outcome with `RedactTaskOutput`, which is
+`RedactOutput` without a review contract: every string of the document, keys
+included, is free text, and none is a closed value.
+
 ## `decisions`
 
 A decision is a choice between plausible alternatives that lands in the

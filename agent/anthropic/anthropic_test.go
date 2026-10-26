@@ -391,6 +391,35 @@ func TestEndTurnWithoutDocument(t *testing.T) {
 			t.Fatalf("%v %d", err, result.Calls)
 		}
 	})
+	// A generic task's system prompt and nudge carry no review wording; a
+	// review's keep it.
+	for _, task := range []bool{false, true} {
+		system, nudge := systemPrompt, nudgeText
+		if task {
+			system, nudge = taskSystemPrompt, taskNudgeText
+		}
+		s := newStub(t,
+			then(func(t *testing.T, r sent) {
+				var block struct{ Text string }
+				if err := json.Unmarshal(r.body.System[0], &block); err != nil || block.Text != system {
+					t.Errorf("task %v: system = %s %v", task, r.body.System[0], err)
+				}
+			}, reply("end_turn", smallUsage, text)),
+			then(func(t *testing.T, r sent) {
+				if results := r.results(t); len(results) != 1 || results[0].Text != nudge {
+					t.Errorf("task %v: nudge = %+v", task, results)
+				}
+			}, reply("tool_use", smallUsage, submit("t1", validDocument))),
+		)
+		r := request(runDir(t))
+		r.Task = task
+		if _, err := s.backend().Run(context.Background(), r); err != nil {
+			t.Fatalf("task %v: %v", task, err)
+		}
+		if task && (strings.Contains(system, "review") || strings.Contains(nudge, "review")) {
+			t.Errorf("task framing mentions a review")
+		}
+	}
 	t.Run("fails after the nudges", func(t *testing.T) {
 		s := newStub(t, reply("end_turn", smallUsage, text), reply("end_turn", smallUsage, text), reply("end_turn", smallUsage, text))
 		_, err := s.backend().Run(context.Background(), request(runDir(t)))
