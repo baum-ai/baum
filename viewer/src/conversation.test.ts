@@ -23,6 +23,18 @@ describe("promptSegments", () => {
     ]);
   });
 
+  it("sets a run of quoted lines apart, as a reply quotes its question", () => {
+    expect(
+      promptSegments(
+        "> Where should the token come from?\n>\n>No paste, please.\nThrough the UI.\n> x",
+      ),
+    ).toEqual([
+      { kind: "quote", value: "Where should the token come from?\n\nNo paste, please." },
+      { kind: "text", value: "Through the UI." },
+      { kind: "quote", value: "x" },
+    ]);
+  });
+
   it("reads backticks closed on their own line as inline code, not a fence", () => {
     expect(promptSegments("```npm i``` then fix pkg/__init__.py\n# done")).toEqual([
       { kind: "text", value: "```npm i``` then fix pkg/__init__.py\n# done" },

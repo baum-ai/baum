@@ -1,18 +1,24 @@
 import { formatDate } from "./components/format";
 
-export type PromptSegment = { kind: "text" | "code"; value: string };
+export type PromptSegment = { kind: "text" | "code" | "quote"; value: string };
 
 /** A prompt split into the text a person typed and the code fences they
  *  pasted. Only the fences are worth rendering: the rest is shown as typed,
  *  since a traceback's `__init__`, a glob's `**` or a shell `# comment` would
  *  come out of markdown as bold or a heading. A fence keeps its own markers,
  *  so the code block knows its language; one left open runs to the end, as
- *  markdown would run it. */
+ *  markdown would run it. A run of lines starting `>` is a quote, as a reply
+ *  quotes the question it answers; its markers are dropped. */
 export function promptSegments(text: string): PromptSegment[] {
   const segments: PromptSegment[] = [];
   let prose: string[] = [];
   let code: string[] | null = null;
   let closer: RegExp | null = null;
+  let quote: string[] = [];
+  const flushQuote = () => {
+    if (quote.length > 0) segments.push({ kind: "quote", value: quote.join("\n") });
+    quote = [];
+  };
   const flushProse = () => {
     const value = prose.join("\n").replace(/^\n+|\n+$/g, "");
     if (value.trim()) segments.push({ kind: "text", value });
@@ -28,6 +34,13 @@ export function promptSegments(text: string): PromptSegment[] {
       }
       continue;
     }
+    const quoted = /^ {0,3}> ?(.*)$/.exec(line);
+    if (quoted) {
+      flushProse();
+      quote.push(quoted[1]!);
+      continue;
+    }
+    flushQuote();
     // A backtick fence's info string holds no backtick, so a line such as
     // "```npm i``` then build" is inline code, not an opening fence.
     const open = /^ {0,3}(?:(`{3,})[^`]*$|(~{3,}))/.exec(line);
@@ -41,6 +54,7 @@ export function promptSegments(text: string): PromptSegment[] {
     prose.push(line);
   }
   if (code) segments.push({ kind: "code", value: code.join("\n") });
+  flushQuote();
   flushProse();
   return segments;
 }
