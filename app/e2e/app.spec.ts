@@ -79,30 +79,19 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const row = (title: string) => inbox.getByRole("listitem").filter({ hasText: title });
   const approved = row("Reuse the existing PR page");
   await expect(approved).toContainText("Review time: ~12 min");
-  await expect(approved).toContainText("Unresolved: 0");
   await expect(approved).toContainText("Review: Approved");
-  await expect(approved).toContainText("Checks: Passing");
-  await expect(approved).toContainText("Merge: Ready");
+  await expect(approved).toContainText("Status: Ready");
+  await expect(approved.locator(".inbox-threads")).toHaveCount(0);
   const changes = row("A pull request without a review");
-  await expect(changes).toContainText("Review time: —");
-  await expect(changes).toContainText("Unresolved: 3");
-  await expect(changes).toContainText("Review: Changes requested");
-  await expect(changes).toContainText("Checks: Failing");
-  await expect(changes).toContainText("Merge: Conflict");
-  const fork = row("A fork requiring confirmation");
-  await expect(fork).toContainText("Unresolved: 6+");
-  await expect(fork.locator('[title*="only the first 100"]')).toBeVisible();
-  await expect(fork).toContainText("Review: Commented");
-  await expect(fork).toContainText("Checks: Running");
-  await expect(fork).toContainText("Merge: Blocked");
+  await expect(changes).toContainText("Review time: not estimated");
+  await expect(changes).toContainText("Review: Changes requested3 unresolved");
+  await expect(changes).toContainText("Status: Conflict");
   const unreviewed = row("An automatically reviewed change");
   await expect(unreviewed).toContainText("Review: Unreviewed");
-  await expect(unreviewed).toContainText("Checks: —");
-  await expect(unreviewed).toContainText("Merge: Draft");
-  const unknown = row("Other repository change");
-  await expect(unknown.locator(".inbox-status")).toHaveCount(5);
-  for (const cell of await unknown.locator(".inbox-status").all())
-    await expect(cell).toContainText("—");
+  await expect(unreviewed).toContainText("Status: Draft");
+  // The Inbox holds what is the person's to check; the rest is under Others.
+  await expect(row("A fork requiring confirmation")).toHaveCount(0);
+  await expect(row("Other repository change")).toHaveCount(0);
   await expect(inbox).not.toContainText(/Generated|Cost|Stale discovery/);
   await page.screenshot({
     path: "test-results/inbox-wide.png",
@@ -110,8 +99,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     animations: "disabled",
   });
   await page.setViewportSize({ width: 720, height: 900 });
-  await expect(approved.getByText("Checks:", { exact: true })).toBeVisible();
-  await expect(approved.getByText("Checks: Passing", { exact: true })).toBeVisible();
+  await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
+  await expect(approved.getByText("Status: Ready", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
   await page.screenshot({ path: "test-results/inbox-desktop-minimum.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -132,7 +121,16 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await views.getByRole("button", { name: /^Mine/ }).click();
   await expect(page.getByRole("link", { name: /without a review/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);
-  await views.getByRole("button", { name: /^Open/ }).click();
+  await views.getByRole("button", { name: /^Others/ }).click();
+  const fork = row("A fork requiring confirmation");
+  await expect(fork).toContainText("Review: Commented6+ unresolved");
+  await expect(fork.locator('[title*="only the first 100"]')).toBeVisible();
+  await expect(fork).toContainText("Status: Checks running");
+  const unknown = row("Other repository change");
+  await expect(unknown.locator(".inbox-status")).toHaveCount(3);
+  await expect(unknown.locator(".inbox-status-empty")).toHaveCount(3);
+  await expect(unknown).not.toContainText("—");
+  await page.screenshot({ path: "test-results/inbox-others.png", animations: "disabled" });
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
   await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
   // Only a fork asks before generating, in a batch as on its own page.

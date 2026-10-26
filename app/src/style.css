@@ -246,6 +246,14 @@ body {
   border-bottom-color: var(--text-primary);
   color: var(--text-primary);
 }
+/* A view with nothing in it stays reachable but steps back. */
+.local-tab.empty:not([aria-pressed="true"], :hover) {
+  color: var(--text-disabled);
+}
+.local-tab.empty .local-tab-count {
+  background: none;
+  color: var(--text-disabled);
+}
 .local-tab-count {
   min-width: 1.25rem;
   padding: 0 0.35rem;
@@ -450,7 +458,7 @@ select.local-field {
 }
 .inbox-columns {
   display: grid;
-  grid-template-columns: 1rem 2.5rem minmax(0, 1fr);
+  grid-template-columns: 1rem 3.25rem minmax(0, 1fr);
   column-gap: 0.75rem;
   align-items: center;
   padding-left: 1.5rem;
@@ -468,8 +476,18 @@ select.local-field {
   grid-column: 3;
 }
 .inbox-bucket {
-  padding-left: 1.5rem;
-  padding-right: 1.5rem;
+  padding: 1.1rem 1.5rem 0.55rem;
+}
+.inbox-bucket-count {
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.1rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .inbox-row {
   row-gap: 0.3rem;
@@ -487,6 +505,9 @@ select.local-field {
 .inbox-risk {
   align-self: start;
   margin-top: 0.15rem;
+}
+.inbox-risk {
+  display: flex;
 }
 .inbox-pr-title {
   display: block;
@@ -512,8 +533,31 @@ select.local-field {
 .inbox-status {
   white-space: nowrap;
 }
+.inbox-status-empty {
+  display: none;
+}
+.inbox-threads {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.25rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
+  font-size: 11px;
+  line-height: 1.1rem;
+}
 .inbox-cell-label {
   color: var(--text-tertiary);
+}
+.inbox-activities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+.inbox-activities:not(:empty) {
+  margin-top: 0.3rem;
 }
 .inbox-activity {
   display: inline-flex;
@@ -523,13 +567,16 @@ select.local-field {
 }
 @media (width >= 72rem) {
   .inbox-columns {
-    grid-template-columns: 1rem 2.5rem minmax(0, 1fr) 5rem 5.5rem 9.5rem 5.5rem 5.5rem;
+    grid-template-columns: 1rem 3.25rem minmax(0, 1fr) 5rem 12.5rem 8.5rem;
   }
   .inbox-detail-heading {
     display: inline;
   }
   .inbox-statuses {
     display: contents;
+  }
+  .inbox-status-empty {
+    display: block;
   }
   .inbox-cell-label {
     position: absolute;

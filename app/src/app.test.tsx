@@ -45,7 +45,8 @@ let entries: Entry[] = [];
 let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  history.replaceState(null, "", "/s/test-ns/");
+  // Every open pull request; the default Inbox view has its own test.
+  history.replaceState(null, "", "/s/test-ns/?filter=all");
   fail = false;
   entries = [];
   node = document.createElement("div");
@@ -168,11 +169,10 @@ it("keeps generating and failed indications without old generation columns", asy
   const inbox = node.querySelector(".local-inbox")!;
   expect(inbox.textContent).toContain("Review failed");
   expect(inbox.textContent).toContain("Generating review");
-  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1/);
-  expect(inbox.textContent).toContain("—");
+  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1|—/);
 });
-it("shows all GitHub state labels, quiet normal states, counts and saved review time", async () => {
-  entries = [entry(1), entry(2), entry(3), entry(4), entry(5)];
+it("shows GitHub states that ask for something, one merge status, and nothing for normal states", async () => {
+  entries = [entry(1), entry(2), entry(3), entry(4), entry(5), entry(6)];
   const values = [
     { review: "approved", checks: "passing", merge: "ready", unresolved: 0, review_minutes: 1 },
     {
@@ -190,45 +190,42 @@ it("shows all GitHub state labels, quiet normal states, counts and saved review 
       unresolved_capped: true,
     },
     { review: "unreviewed", checks: "none", merge: "draft" },
+    { review: "unreviewed", checks: "failing", merge: "blocked" },
   ] as const;
   values.forEach((value, index) => Object.assign(entries[index]!, value));
   await act(async () => root.render(<App />));
   const rows = Array.from(node.querySelectorAll<HTMLElement>(".inbox-row"));
   expect(node.querySelector(".inbox-columns-head")!.textContent).toContain(
-    "RiskPull requestReview timeUnresolvedReviewChecksMerge",
+    "RiskPull requestReview timeReviewStatus",
   );
-  expect(rows[0]!.textContent).toContain("~1 min");
-  expect(rows[1]!.textContent).toContain("~240 min");
-  const states = rows.map((row) => Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")));
-  expect(states[0]!.map((cell) => cell.textContent)).toEqual([
-    "Review time: ~1 min",
-    "Unresolved: 0",
-    "Review: Approved",
-    "Checks: Passing",
-    "Merge: Ready",
+  const states = rows.map((row) =>
+    Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
+  );
+  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
+  expect(states[1]).toEqual([
+    "Review time: ~240 min",
+    "Review: Changes requested3 unresolved",
+    "Status: Conflict",
   ]);
-  expect(states[1]!.slice(2).map((cell) => cell.textContent)).toEqual([
-    "Review: Changes requested",
-    "Checks: Failing",
-    "Merge: Conflict",
+  expect(states[2]).toEqual([
+    "Review time: not estimated",
+    "Review: Commented6+ unresolved",
+    "Status: Checks running",
   ]);
-  for (const cell of states[1]!.slice(2)) expect(cell.className).toContain("status-critical");
-  expect(states[2]!.slice(2).map((cell) => cell.textContent)).toEqual([
-    "Review: Commented",
-    "Checks: Running",
-    "Merge: Blocked",
-  ]);
-  expect(states[3]!.slice(2).map((cell) => cell.textContent)).toEqual([
-    "Review: Unreviewed",
-    "Checks: —",
-    "Merge: Draft",
-  ]);
-  expect(states[4]!.every((cell) => cell.textContent!.endsWith("—"))).toBe(true);
-  expect(states[0]![3]!.className).toContain("text-tertiary");
-  expect(states[0]![3]!.querySelector("svg")!.getAttribute("class")).toContain("status-positive");
-  expect(states[2]![4]!.className).not.toContain("status-critical");
-  expect(states[2]![1]!.textContent).toBe("Unresolved: 6+");
-  expect(states[2]![1]!.title).toContain("At least 6 unresolved threads; only the first 100");
+  expect(states[3]).toEqual(["Review time: not estimated", "Review: Unreviewed", "Status: Draft"]);
+  expect(states[4]![2]).toBe("Status: Checks failing");
+  expect(states[5]).toEqual(["Review time: not estimated", "Review: unknown", "Status: unknown"]);
+  const cells = rows.map((row) => Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")));
+  // Normal states draw nothing; their words are for screen readers only.
+  expect(cells[3]![1]!.className).toContain("inbox-status-empty");
+  expect(cells[1]![2]!.className).toContain("status-critical");
+  expect(cells[1]![2]!.title).toBe("Checks failing, merge conflict");
+  expect(cells[2]![2]!.className).toContain("status-caution");
+  expect(cells[0]![2]!.className).toContain("status-positive");
+  expect(rows[0]!.querySelector(".inbox-threads")).toBeNull();
+  expect(rows[2]!.querySelector<HTMLElement>(".inbox-threads")!.title).toContain(
+    "At least 6 unresolved threads; only the first 100",
+  );
 });
 it.each([
   { stale: true, error: undefined, remaining: 5000, note: null },
@@ -365,13 +362,26 @@ it("asks before running an agent on a fork, and generates once confirmed", async
   ]);
   expect(node.querySelector("dialog")).toBeNull();
 });
-it("groups requested PRs before authored PRs once and keeps saved history separate", () => {
+it("groups requested PRs first, splits the person's own by what they need, and keeps saved history separate", () => {
   const requested = entry(1);
   requested.pull_request.authored_by_me = true;
+  requested.merge = "ready";
   const mine = entry(2);
+  mine.merge = "blocked";
   const other = entry(3);
   const history = entry(4, "current", true);
   const older = entry(5, "current", true);
+  const ready = entry(6);
+  ready.merge = "ready";
+  const failing = entry(7);
+  failing.checks = "failing";
+  const conflict = entry(8);
+  conflict.merge = "conflict";
+  const changes = entry(9);
+  changes.review = "changes_requested";
+  changes.merge = "ready";
+  for (const row of [mine, ready, failing, conflict, changes])
+    row.pull_request.authored_by_me = true;
   const at = (time: string) => ({
     version: 1,
     generated_at: time,
@@ -381,16 +391,57 @@ it("groups requested PRs before authored PRs once and keeps saved history separa
   });
   history.latest = at("2026-10-22T10:00:00+01:00");
   older.latest = at("2026-10-22T09:30:00Z");
-  const groups = inboxGroups([older, history, other, mine, requested]);
+  const groups = inboxGroups([
+    older,
+    history,
+    other,
+    mine,
+    requested,
+    ready,
+    failing,
+    conflict,
+    changes,
+  ]);
   expect(
     groups.map((group) => [group.id, group.rows.map((row) => row.pull_request.number)]),
   ).toEqual([
     ["requested", [1]],
+    ["changes", [7, 8, 9]],
+    ["ready", [6]],
     ["mine", [2]],
     ["other", [3]],
     // Most recently reviewed first, whatever the offset.
     ["history", [5, 4]],
   ]);
+});
+it("opens on the Inbox, with only review requests and the person's own, and the rest under Others", async () => {
+  history.replaceState(null, "", "/s/test-ns/");
+  entries = [entry(1), entry(2), entry(3)];
+  await act(async () => root.render(<App />));
+  const titles = () =>
+    Array.from(node.querySelectorAll(".inbox-pr-title")).map((link) => link.textContent);
+  expect(titles()).toEqual(["Change 1", "Change 2"]);
+  const tab = (name: string) =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')).find(
+      (button) => button.textContent?.startsWith(name),
+    )!;
+  expect(tab("Inbox").getAttribute("aria-pressed")).toBe("true");
+  expect(tab("Others").textContent).toBe("Others1");
+  await act(async () => tab("Others").click());
+  expect(titles()).toEqual(["Change 3"]);
+  entries = [entry(3)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/repos"
+      ? Promise.resolve(Response.json([{ id: "clone", repository: "acme/demo", path: "/c" }]))
+      : original(...args),
+  );
+  history.replaceState(null, "", "/s/test-ns/");
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Nothing is waiting on you");
+  expect(tab("Inbox").className).toContain("empty");
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
@@ -426,14 +477,15 @@ it("distinguishes lower-bound risk from exact and unscored reviews", async () =>
   entries = [bound, exact, unknown];
   await act(async () => root.render(<App />));
   const risks = Array.from(node.querySelectorAll<HTMLElement>(".inbox-risk"));
-  expect(risks[0]!.textContent).toContain("1+/5");
+  expect(risks[0]!.textContent).toContain("≥1/5");
   expect(risks[0]!.getAttribute("aria-label")).toContain("at least 1 of 5");
   expect(risks[0]!.title).toContain("incomplete coverage");
-  expect(risks[0]!.className).not.toContain("status-positive");
+  expect(risks[0]!.innerHTML).not.toContain("status-positive");
   expect(risks[1]!.textContent).toContain("1/5");
-  expect(risks[1]!.textContent).not.toContain("+");
+  expect(risks[1]!.textContent).not.toContain("≥");
+  expect(risks[1]!.innerHTML).toContain("status-positive");
   expect(risks[1]!.getAttribute("aria-label")).toBe("Risk 1 of 5");
-  expect(risks[2]!.textContent).toContain("—");
+  expect(risks[2]!.textContent).toBe("");
   expect(risks[2]!.getAttribute("aria-label")).toBe("Risk not scored");
 });
 

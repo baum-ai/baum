@@ -263,7 +263,7 @@ function Workspace({ url }: { url: UrlState }) {
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
     "";
-  const filter = url.search.get("filter") ?? "all";
+  const filter = url.search.get("filter") ?? "inbox";
   const repo = url.search.get("repo") ?? "";
   const indexedEntries = snapshot.entries.map((entry) =>
     isActiveJob(reviewJob(entry, jobs)) ? { ...entry, status: "generating" } : entry,
@@ -469,7 +469,6 @@ function Workspace({ url }: { url: UrlState }) {
             <>
               <PageBar
                 title="Pull requests"
-                detail={loading ? null : `${formatCount(rows.length)} shown`}
                 actions={
                   <>
                     {selection.size > 0 ? (
@@ -510,32 +509,34 @@ function Workspace({ url }: { url: UrlState }) {
                 <div role="group" aria-label="Show" className="local-tabs">
                   {(
                     [
-                      ["all", "Open"],
+                      ["inbox", "Inbox"],
                       ["requested", "Requested"],
                       ["mine", "Mine"],
+                      ["other", "Others"],
                       ["no_review", "Not reviewed"],
                       ["history", "Saved history"],
                     ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={filter === value}
-                      className="local-tab"
-                      onClick={() => {
-                        setSelection(new Set());
-                        url.update((current) => {
-                          current.set("filter", value);
-                          return current;
-                        });
-                      }}
-                    >
-                      {label}
-                      <span className="local-tab-count">
-                        {formatCount(filtered(indexedEntries, value, repo).length)}
-                      </span>
-                    </button>
-                  ))}
+                  ).map(([value, label]) => {
+                    const count = filtered(indexedEntries, value, repo).length;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={filter === value}
+                        className={count === 0 ? "local-tab empty" : "local-tab"}
+                        onClick={() => {
+                          setSelection(new Set());
+                          url.update((current) => {
+                            current.set("filter", value);
+                            return current;
+                          });
+                        }}
+                      >
+                        {label}
+                        <span className="local-tab-count">{formatCount(count)}</span>
+                      </button>
+                    );
+                  })}
                 </div>
                 {repositories.length > 1 ? (
                   <label className="local-repo-filter">
@@ -581,11 +582,17 @@ function Workspace({ url }: { url: UrlState }) {
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
                 ) : rows.length === 0 ? (
                   <div className="local-empty">
-                    <h2>No pull requests here</h2>
+                    <h2>
+                      {filter === "inbox" && clones.length
+                        ? "Nothing is waiting on you"
+                        : "No pull requests here"}
+                    </h2>
                     <p>
-                      {clones.length
-                        ? "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."
-                        : "Pick GitHub repositories in Repositories to get started."}
+                      {!clones.length
+                        ? "Pick GitHub repositories in Repositories to get started."
+                        : filter === "inbox"
+                          ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
+                          : "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."}
                     </p>
                   </div>
                 ) : null}

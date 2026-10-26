@@ -371,18 +371,27 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
 }
+/** The inbox view holds what is the person's to check now: pull requests
+ *  asking for their review and their own. Everyone else's are under "other";
+ *  "all" is every open pull request. */
 export function filtered(entries: Entry[], filter: string, repository: string) {
+  const yours = (e: Entry) =>
+    e.pull_request.review_requested_from_me || e.pull_request.authored_by_me;
   return entries.filter(
     (e) =>
       (!repository || e.pull_request.repository === repository) &&
       (filter === "history" ? e.historical : !e.historical) &&
-      (filter === "requested"
-        ? e.pull_request.review_requested_from_me
-        : filter === "mine"
-          ? e.pull_request.authored_by_me
-          : filter === "outdated" || filter === "no_review"
-            ? e.status === filter
-            : true),
+      (filter === "inbox"
+        ? yours(e)
+        : filter === "other"
+          ? !yours(e)
+          : filter === "requested"
+            ? e.pull_request.review_requested_from_me
+            : filter === "mine"
+              ? e.pull_request.authored_by_me
+              : filter === "outdated" || filter === "no_review"
+                ? e.status === filter
+                : true),
   );
 }
 export function cost(value: number | null | undefined) {

@@ -71,7 +71,8 @@ let liveFails = false;
 const streams: EventTarget[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  history.replaceState(null, "", "/s/test-ns/");
+  // Every open pull request; the default Inbox view has its own test.
+  history.replaceState(null, "", "/s/test-ns/?filter=all");
   liveBody = { sessions: [] };
   liveFails = false;
   streams.length = 0;

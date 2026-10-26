@@ -72,22 +72,37 @@ commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion, approvals and GitHub mutations are absent.
 
-The inbox spans picked repositories, with or without a local clone, with Risk, Pull request, Review time,
-Unresolved, Review, Checks and Merge columns. The pull requests of a
+The inbox spans picked repositories, with or without a local clone, with Risk,
+Pull request, Review time, Review and Status columns. The pull requests of a
 repository without a local clone are listed from discovery (its entries have
-`needs_clone` and no clone); a review needs a local clone. Review time is the latest saved
-review's reading estimate in whole minutes; GitHub state and unresolved thread
-counts also appear for pull requests without saved reviews. A dash means unknown
-or no checks, while a known unresolved count of zero shows 0. Discovery fetches
+`needs_clone` and no clone); a review needs a local clone. Risk is the latest
+saved review's score as a coloured pill (a lower bound reads `≥`). Review time
+is that review's reading estimate in whole minutes. Review is GitHub's review
+decision with a count of unresolved threads beside it. Status combines checks
+and merge state into the one that stands first between the pull request and
+merging: a conflict, failing checks, a draft, running checks, ready, blocked,
+then passing checks; its tooltip names both. GitHub state and unresolved
+thread counts also appear for pull requests without saved reviews. Normal or
+unknown states (no score, no estimate, no GitHub review, no unresolved
+threads, nothing reported) leave the cell empty and are read only by screen
+readers. A review being generated shows the nine-dots loader under the title.
+Discovery fetches
 open pull requests with a paginated GraphQL query per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
 when more threads exist the unresolved count shows a lower bound (`N+`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 1024px. Generating and failed reviews remain visible under the
-title. Incomplete risk assessments show a lower bound (`N+/5`) with an explicit
+title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
-colour. Collapsible groups show Review requested, Your pull requests and Other
-pull requests, with each row in one group; Saved history has its own group.
+colour. Collapsible groups say who acts next, with each row in one group:
+Review requested; the person's own pull requests as Needs changes (changes
+requested, failing checks or a conflict), Ready to merge (GitHub's merge state
+is ready) and Your pull requests (the rest); Other pull requests; and Saved
+history. The inbox opens on the Inbox view, which holds only what is the
+person's to check now: pull requests asking for their review and their own.
+Everyone else's open pull requests are under Others, so Other pull requests
+appears only there; Requested, Mine, Not reviewed and Saved history are the
+other views, and a view with nothing in it is dimmed.
 Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership

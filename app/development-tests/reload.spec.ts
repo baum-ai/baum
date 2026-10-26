@@ -38,7 +38,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
   expect(rejected.status()).toBe(403);
 
   // A page reload would erase this marker. Both edits must update in place.
-  const selection = page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true });
+  const selection = page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true });
   await selection.check();
   await page.evaluate(() => Object.assign(window, { hotReloadMarker: "preserved" }));
   const cssPath = "src/style.css";
