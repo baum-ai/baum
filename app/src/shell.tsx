@@ -4,13 +4,14 @@ import {
   type IconProps,
   PullRequestIcon,
   RepositoryIcon,
+  SessionsIcon,
   SettingsIcon,
   SparkleIcon,
 } from "@baum/viewer/components/icons";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 
-type Page = "inbox" | "jobs" | "repositories" | "settings";
+type Page = "inbox" | "sessions" | "jobs" | "repositories" | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
@@ -18,11 +19,13 @@ type Page = "inbox" | "jobs" | "repositories" | "settings";
 export function Sidebar({
   page,
   activeJobs,
+  runningSessions,
   problems,
   Link,
 }: {
   page: Page;
   activeJobs: number;
+  runningSessions: number;
   problems: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -35,6 +38,13 @@ export function Sidebar({
   };
   const main: Item[] = [
     { page: "inbox", label: "Inbox", href: appURL(), icon: PullRequestIcon },
+    {
+      page: "sessions",
+      label: "Sessions",
+      href: appURL("?page=sessions"),
+      icon: SessionsIcon,
+      badge: runningSessions > 0 ? runningSessions : null,
+    },
     {
       page: "repositories",
       label: "Repositories",

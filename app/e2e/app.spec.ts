@@ -388,6 +388,14 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await expect(live.getByText("Waiting for you")).toBeVisible({ timeout: 10000 });
   await writeFile(marker, "ended");
   await expect(live).toHaveCount(0, { timeout: 10000 });
+  // The Sessions page keeps it under "Ended recently" and has none running.
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const ended = page.getByRole("region", { name: "Ended recently", exact: true });
+  await expect(ended.getByText("Claude Code")).toBeVisible();
+  await expect(ended.getByText("feature")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
+  ).toHaveCount(0);
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await expect(row).toBeVisible();
   await expect(row.getByText("Agent")).toHaveCount(0);

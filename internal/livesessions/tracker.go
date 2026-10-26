@@ -13,9 +13,14 @@
 package livesessions
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -46,13 +51,14 @@ const (
 )
 
 // Timings and bounds. A session is dropped when it has been silent for
-// DropAfter or ended for EndedFor; at most MaxSessions are tracked, the
-// least recently active (an ended one first) making room for a new one.
+// DropAfter or ended for EndedFor, which is long enough for the Sessions page
+// to show what ended recently; at most MaxSessions are tracked, the least
+// recently active (an ended one first) making room for a new one.
 const (
 	IdleAfter   = 10 * time.Minute
 	DropAfter   = 2 * time.Hour
-	EndedFor    = 10 * time.Minute
-	MaxSessions = 32
+	EndedFor    = 24 * time.Hour
+	MaxSessions = 200
 	// SweepEvery is how often Run applies the timings, which events do not
 	// trigger.
 	SweepEvery = 30 * time.Second
@@ -70,6 +76,10 @@ const (
 	// ones is not a session baum's hooks describe.
 	maxID    = 128
 	maxAgent = 32
+	// StateFile is the name of the file in StateDir holding the ended
+	// sessions, since the hook event record rotates by size and may not reach
+	// back EndedFor.
+	StateFile = "live-sessions.json"
 	// rememberedEvents is how many applied event ids are kept, so applying
 	// an event twice (the subscription and a reconcile) changes nothing.
 	rememberedEvents = 4096
@@ -86,9 +96,11 @@ type Session struct {
 	LastActivityAt time.Time `json:"last_activity_at"`
 	// LastEvent is the normalised kind of the latest event (EventStart,
 	// EventPrompt, EventTool, EventStop or EventEnd).
-	LastEvent  string `json:"last_event"`
-	Repository string `json:"repository"`
-	Branch     string `json:"branch,omitempty"`
+	LastEvent string `json:"last_event"`
+	// EndedAt is when an ended session sent its end event, absent otherwise.
+	EndedAt    time.Time `json:"ended_at,omitzero"`
+	Repository string    `json:"repository"`
+	Branch     string    `json:"branch,omitempty"`
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
 	PR int `json:"pr,omitempty"`
@@ -127,6 +139,9 @@ type Tracker struct {
 	Log    *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// StateDir, when set, is a private directory where the ended sessions
+	// are kept across restarts (StateFile): identifiers and times only.
+	StateDir string
 	// Buffer is the subscription's size; zero is 256. A subscriber that falls
 	// behind misses events, which Reconcile applies from the record once the
 	// subscription reports it missed some.
@@ -146,6 +161,8 @@ type Tracker struct {
 	// many of them the last reconcile covered.
 	dropped    func() uint64
 	reconciled uint64
+	// saved is the ended sessions as last written.
+	saved []byte
 }
 
 type key struct{ agent, id string }
@@ -259,6 +276,7 @@ func (t *Tracker) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			t.persist()
 			return
 		case record, ok := <-events:
 			if !ok {
@@ -271,6 +289,7 @@ func (t *Tracker) Run(ctx context.Context) {
 			changed()
 		case <-sweep.C:
 			swept, reconciled := t.Sweep(), t.reconcileIfDropped(ctx)
+			t.persist()
 			if swept || reconciled {
 				changed()
 			}
@@ -301,17 +320,31 @@ func (t *Tracker) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// events are the record's agent events within DropAfter, in the order of
-// their time: a spooled event is recorded after later ones.
+// events are the record's agent events of the sessions that can still be
+// tracked, in the order of their time (a spooled event is recorded after later
+// ones): those within DropAfter, and all of a session that ended within
+// EndedFor.
 func (t *Tracker) events() ([]hookevents.Event, error) {
 	records, err := t.Source.Recent(0)
 	if err != nil {
 		return nil, err
 	}
+	now := t.now()
+	ended := map[key]bool{}
+	for _, record := range records {
+		e := record.Event
+		if kind, _ := normalise(e.Name); matchAgent(e) && kind == EventEnd && e.Session != nil && now.Sub(e.Time) <= EndedFor {
+			ended[key{e.Agent, e.Session.ID}] = true
+		}
+	}
 	events := make([]hookevents.Event, 0, len(records))
 	for _, record := range records {
-		if matchAgent(record.Event) {
-			events = append(events, record.Event)
+		e := record.Event
+		if !matchAgent(e) {
+			continue
+		}
+		if now.Sub(e.Time) <= DropAfter || (e.Session != nil && ended[key{e.Agent, e.Session.ID}] && now.Sub(e.Time) <= EndedFor) {
+			events = append(events, e)
 		}
 	}
 	slices.SortStableFunc(events, func(a, b hookevents.Event) int { return a.Time.Compare(b.Time) })
@@ -333,6 +366,7 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessions, t.pending, t.seen, t.order = map[key]*entry{}, map[key]bool{}, map[string]bool{}, nil
+	t.loadEndedLocked(now)
 	for _, e := range events {
 		t.applyLocked(e, now)
 	}
@@ -521,7 +555,7 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	if at.After(now) {
 		at = now
 	}
-	if now.Sub(at) > DropAfter {
+	if now.Sub(at) > EndedFor {
 		return
 	}
 	k := key{e.Agent, e.Session.ID}
@@ -573,7 +607,7 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	case EventStop:
 		s.waiting = true
 	case EventEnd:
-		s.ended, s.endedAt = true, at
+		s.ended, s.endedAt, s.EndedAt = true, at, at
 	default:
 		s.waiting = false
 	}
@@ -646,4 +680,83 @@ func (t *Tracker) Sessions() []Session {
 		return cmp.Or(cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
 	return out
+}
+
+// persisted is the ended sessions' file: identifiers and times, no paths.
+type persisted struct {
+	Sessions []Session `json:"sessions"`
+}
+
+// persist writes the ended sessions to StateDir when they changed since the
+// last write, so a restart keeps them even once the record has rotated past
+// them. A failure is logged and retried at the next sweep.
+func (t *Tracker) persist() {
+	if t.StateDir == "" {
+		return
+	}
+	t.init()
+	t.mu.Lock()
+	now := t.now()
+	var ended []Session
+	for _, s := range t.sessions {
+		if s.ended && !s.unlinked && !s.expired(now) {
+			ended = append(ended, s.Session)
+		}
+	}
+	t.mu.Unlock()
+	slices.SortFunc(ended, func(a, b Session) int {
+		return cmp.Or(a.EndedAt.Compare(b.EndedAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
+	})
+	data, err := json.Marshal(persisted{ended})
+	if err != nil || bytes.Equal(data, t.saved) {
+		return
+	}
+	if err := writeAtomic(filepath.Join(t.StateDir, StateFile), data); err != nil {
+		t.logger().Warn("ended live sessions not saved", "error", err)
+		return
+	}
+	t.saved = data
+}
+
+// loadEndedLocked adds the ended sessions of the last run that have not
+// expired; the record's events then apply over them.
+func (t *Tracker) loadEndedLocked(now time.Time) {
+	if t.StateDir == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(t.StateDir, StateFile))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			t.logger().Warn("ended live sessions not read", "error", err)
+		}
+		return
+	}
+	var saved persisted
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	for _, s := range saved.Sessions {
+		if s.EndedAt.IsZero() || s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent || now.Sub(s.EndedAt) > EndedFor {
+			continue
+		}
+		s.State = StateEnded
+		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: true, endedAt: s.EndedAt, linkedAt: now}
+	}
+}
+
+// writeAtomic replaces path with data through a private temporary file.
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".live-sessions-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

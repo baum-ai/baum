@@ -189,6 +189,58 @@ it("keeps the sessions shown when rereading them fails", async () => {
   expect(node.textContent).toContain("Agent running");
 });
 
+const sidebarBadge = () =>
+  node.querySelector('a[href$="?page=sessions"] .local-rail-badge')?.textContent ?? null;
+
+it("shows running and recently ended sessions on the Sessions page, updated by the live event", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("No agent sessions are running");
+  expect(node.textContent).toContain("No sessions ended in the last day");
+  expect(sidebarBadge()).toBeNull();
+  liveBody = {
+    sessions: [
+      session(),
+      session({ session_id: "s2", state: "idle", agent: "codex", pr: undefined, branch: "wip" }),
+      session({
+        session_id: "s3",
+        state: "ended",
+        last_event: "end",
+        started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+        last_activity_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+        ended_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+      }),
+    ],
+  };
+  await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+  const running = node.querySelector('[aria-label="Running now"]')!;
+  expect(running.querySelectorAll("li")).toHaveLength(2);
+  expect(running.textContent).toContain("Claude Code");
+  expect(running.textContent).toContain("Working");
+  expect(running.textContent).toContain("acme/demo · feature");
+  expect(running.textContent).toContain("Started 5 minutes ago");
+  expect(running.textContent).toContain("Active 20 seconds ago");
+  expect(running.textContent).toContain("Codex");
+  expect(running.textContent).toContain("Waiting for you");
+  expect(running.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
+  expect(running.querySelector("li:nth-child(2) a")).toBeNull();
+  const ended = node.querySelector('[aria-label="Ended recently"]')!;
+  expect(ended.querySelectorAll("li")).toHaveLength(1);
+  expect(ended.textContent).toContain("Ended 2 hours ago");
+  expect(ended.textContent).toContain("Lasted 1.0h");
+  // Only sessions that are working count on the sidebar.
+  expect(sidebarBadge()).toBe("1");
+  liveBody = { sessions: [session({ state: "ended", ended_at: new Date().toISOString() })] };
+  await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+  expect(sidebarBadge()).toBeNull();
+  expect(node.querySelector('[aria-label="Running now"]')!.textContent).toContain(
+    "No agent sessions are running",
+  );
+  expect(node.querySelector('[aria-label="Ended recently"]')!.querySelectorAll("li")).toHaveLength(
+    1,
+  );
+});
+
 async function renderReview(live: LiveSession[]) {
   await act(async () =>
     root.render(

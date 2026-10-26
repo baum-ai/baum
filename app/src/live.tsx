@@ -5,7 +5,7 @@ import { LiveDot } from "@baum/viewer/components/ui";
 import { agentName, type LiveSession } from "./api";
 
 /** Re-renders now and then so relative times do not freeze. */
-function useNow(interval = 30_000) {
+export function useNow(interval = 30_000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), interval);
