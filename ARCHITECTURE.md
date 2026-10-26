@@ -1904,7 +1904,8 @@ an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
 authorization. This service has no generation or GitHub mutation capability;
-the only write to GitHub is a confirmed fix's `git push` (see "Fix jobs").
+the app's GitHub writes (merge, update branch, re-run checks and a confirmed
+fix's `git push`) live outside it (see "Fix jobs" and below).
 
 `Service.Cached` resolves the local credential and reads disk without network
 access. Disk data is stale until a successful poll in the running service.
@@ -1929,7 +1930,7 @@ shared rate budgets. `GET /api/prs` lists every picked repository, and
 `{"repository": "owner/name"}` (a picked repository, with or without a clone;
 unknown is `404`).
 
-Merging is the one GitHub write the local app makes, and it lives outside
+Merging is a GitHub write the local app makes, and it lives outside
 discovery. `GET /api/prs/merge-options?repository=&pr=` returns the allowed
 merge methods, GitHub's default for the viewer and the pull request's head and
 mergeability (`Client.MergeOptions`, one GraphQL query). `POST /api/prs/merge`
@@ -1942,6 +1943,30 @@ errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
 a merge the daemon runs `Service.PollNow` for the repository and publishes an
 index change so the inbox drops the pull request.
+
+Two more confirmed writes live in `internal/prupdate`, served by
+`uiserver.UpdateHandler` on the same auth, CSRF and picked-repository rules as
+merging. Discovery reports `behind` (GraphQL `mergeStateStatus` `BEHIND`, not a
+draft, not conflicting) on each pull request; a head change in the review index
+clears it with the other merge-state fields. `GET /api/prs/update-branch-options`
+reads the pull request over REST (`fix.ReadPullRequest`: branches, `behind`,
+`conflict`, `fork`) and `POST /api/prs/update-branch` takes `{repository, pr,
+head_sha}`, re-checks that the pull request is open, its head is `head_sha`, it
+is not a fork or conflicting and the account can push (`fix.CanPush`), then
+sends `PUT .../pulls/{n}/update-branch` with `expected_head_sha` through
+`RESTReader.Write`, the one REST method that is not a read. GitHub answers 202
+and merges asynchronously. `GET /api/prs/rerun-checks-options` lists the head's
+workflow runs (`GET .../actions/runs?head_sha=`) whose conclusion is `failure`,
+`cancelled` or `timed_out`, plus the names of failing checks no Actions run is
+behind (`fix.FailingChecks` entries without a job ID: other apps' checks and
+commit statuses), and `POST /api/prs/rerun-checks` takes `{repository, pr,
+head_sha}`, repeats the checks above, re-reads the run list (the request never
+names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
+answers `{rerun, refused}`: an error only when no run started. Errors are
+`{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
+`409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
+anything else `502`. After either write the daemon runs `Service.PollNow` and
+publishes an index change.
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from

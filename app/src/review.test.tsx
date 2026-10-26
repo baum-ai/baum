@@ -305,6 +305,30 @@ it("offers Merge in the PR page header only for an open, ready pull request", as
   });
   expect(node.textContent).not.toContain("Merge…");
 });
+it("offers Re-run checks and Update branch in the PR page header when they apply", async () => {
+  const withPush = { ...entry.pull_request, viewer_can_push: true };
+  await render(job("completed"));
+  expect(node.textContent).not.toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+  await render(job("completed"), 0, { ...entry, checks: "failing", pull_request: withPush });
+  expect(node.textContent).toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+  await render(job("completed"), 0, {
+    ...entry,
+    merge: "blocked",
+    pull_request: { ...withPush, behind: true },
+  });
+  expect(node.textContent).toContain("Update branch");
+  expect(node.textContent).not.toContain("Re-run checks");
+  // Without push access neither is offered.
+  await render(job("completed"), 0, {
+    ...entry,
+    checks: "failing",
+    pull_request: { ...withPush, behind: true, viewer_can_push: false },
+  });
+  expect(node.textContent).not.toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+});
 it("leads with the fix of a broken pull request and follows its job", async () => {
   const fix = vi.fn();
   const broken: Entry = {

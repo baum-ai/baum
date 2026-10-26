@@ -525,3 +525,44 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await expect(inbox.getByRole("button", { name: /^Merge acme\/demo #7/ })).toHaveCount(0);
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
+
+// The fake GitHub marks PR 8's checks as running once its failed run is
+// re-run; removing the marker afterwards gives the specs after this one
+// their failing checks back.
+test("re-runs the failed checks of a pull request from its page", async ({ page }) => {
+  await page.goto(await launchURL());
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  // The row's Status cell keeps its one action (Fix); Re-run is on the page.
+  await expect(inbox.getByRole("button", { name: /Re-run/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  await page.getByRole("button", { name: "Re-run checks", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Re-run failed checks of pull request #8?" });
+  await expect(dialog.getByRole("listitem")).toHaveText(["CI", "test"]);
+  await expect(dialog).toContainText("Not re-runnable from baum");
+  await dialog.screenshot({ path: "test-results/rerun-dialog.png", animations: "disabled" });
+  await dialog.getByRole("button", { name: "Re-run failed checks", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The page refreshed: the checks run again, so there is nothing to re-run.
+  await expect(page.getByRole("button", { name: "Re-run checks", exact: true })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "rerun-8"), { force: true });
+});
+
+test("updates the branch of a pull request that is behind its base from its page", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  await expect(inbox.getByRole("button", { name: /Update/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /A branch behind its base/ }).click();
+  await page.getByRole("button", { name: "Update branch", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Update branch of pull request #11?" });
+  await expect(dialog).toContainText("merge main into feature");
+  await dialog.screenshot({ path: "test-results/update-dialog.png", animations: "disabled" });
+  await dialog.getByRole("button", { name: "Update branch", exact: true }).click();
+  await expect(dialog).toContainText("GitHub accepted the update");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The page refreshed: GitHub no longer reports the branch as behind.
+  await expect(page.getByRole("button", { name: "Update branch", exact: true })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "updated-11"), { force: true });
+});

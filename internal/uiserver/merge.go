@@ -12,8 +12,8 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 )
 
-// PullRequestMerger is the one GitHub write the local app makes: merging a pull
-// request the user confirmed. *github.Client implements it.
+// PullRequestMerger is the GitHub write of merging a pull request the user
+// confirmed. *github.Client implements it.
 type PullRequestMerger interface {
 	MergeOptions(ctx context.Context, repository github.Repository, number int) (github.MergeOptions, error)
 	MergePullRequest(ctx context.Context, repository github.Repository, number int, method, expectedHead string) error

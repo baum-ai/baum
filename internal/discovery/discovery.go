@@ -49,8 +49,12 @@ type PullRequest struct {
 	Review              string `json:"review"`
 	Checks              string `json:"checks"`
 	Merge               string `json:"merge"`
-	Unresolved          *int   `json:"unresolved"`
-	UnresolvedCapped    bool   `json:"unresolved_capped"`
+	// Behind is GitHub's report (mergeStateStatus BEHIND) that the head
+	// branch is out of date with its base and not conflicting, which Update
+	// branch fixes. A draft never reports it.
+	Behind           bool `json:"behind"`
+	Unresolved       *int `json:"unresolved"`
+	UnresolvedCapped bool `json:"unresolved_capped"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -541,6 +545,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.AuthorHasWrite = permission
 		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
+		item.Behind = row.behind()
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil

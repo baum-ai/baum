@@ -254,6 +254,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			if value.HeadSHA != entry.PullRequest.HeadSHA {
 				// Observations carry no review/merge/thread state for a changed revision.
 				entry.Review, entry.Merge, entry.Unresolved, entry.UnresolvedCapped = "", "", nil, false
+				entry.PullRequest.Behind = false
 			}
 			if value.Draft {
 				entry.Merge = "draft"

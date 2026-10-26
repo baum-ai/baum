@@ -102,6 +102,12 @@ func (pr gqlPR) legacy() apiPR {
 	return out
 }
 
+// behind reports a head branch out of date with its base that Update branch
+// can fix: GitHub says BEHIND, and it is neither a draft nor conflicting.
+func (pr gqlPR) behind() bool {
+	return !pr.IsDraft && pr.Mergeable != "CONFLICTING" && pr.MergeStateStatus == "BEHIND"
+}
+
 func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped bool) {
 	if pr.ReviewDecision != nil {
 		switch *pr.ReviewDecision {

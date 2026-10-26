@@ -71,8 +71,9 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging and a fix the person
-confirms are the app's only GitHub writes (see below).
+sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
+re-running checks and a fix the person confirms are the app's only GitHub writes
+(see below).
 
 A pull request with a merge conflict (`merge` is `conflict`) or failing checks
 (`checks` is `failing`) offers a fix, labelled by what is broken: **Fix
@@ -125,6 +126,27 @@ Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text area
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the inbox with the filter kept.
+
+Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
+PR page header beside Fix and Merge…, not in the inbox: the Status cell is
+9.5rem wide and holds one action (Merge on a ready row, else Fix), and a second
+button would crowd "Checks failing" or wrap. `canUpdateBranch` offers the first
+when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
+conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
+`canRerunChecks` offers the second when `checks` is `failing`, the pull request
+is open and `viewer_can_push` is true. Each opens a small confirmation
+(`UpdateBranchDialog`, `RerunChecksDialog`) that reads
+`GET /api/prs/update-branch-options` or `GET /api/prs/rerun-checks-options`:
+the first names the two branches, the second lists the failed GitHub Actions
+workflow runs it will re-run and, under "Not re-runnable from baum", the
+failing checks of other apps; with no failed run it has nothing to confirm.
+Confirming posts `POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
+with the head commit the page showed (labels turn to "Updating…" and
+"Re-running…" in the same frame), so a moved branch is refused in words
+(`{code, message}`, shown inline). A successful update stays open until Closed
+because GitHub merges asynchronously; a re-run where GitHub refused only some
+runs stays open and names them. Either success makes the daemon re-read the
+repository's pull requests.
 
 The inbox spans picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
@@ -336,7 +358,10 @@ through running, idle and ended. The fixture also runs the
 automatic generation scheduler, fed a discovery snapshot every quarter second;
 a second test writes `push-10` in the state directory to give PR 10 a new head
 and follows the automatic review it starts on the PR page and in the jobs list,
-then turns the global switch off and on. Unit tests cover
+then turns the global switch off and on. The fixture's fake GitHub also
+answers the update-branch and re-run calls: tests re-run PR 8's failed checks
+and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
+`updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
 unknown costs, selection and filters, automatic settings and pause notices,
 and the automatic job labels.
