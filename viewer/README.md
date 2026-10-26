@@ -13,6 +13,11 @@ step. It has no dependency on any server: it reads only the document and the
 versions a host hands it. `ReviewViewer` composes the components into a whole
 review page, and a host fills its optional slots with features of its own.
 
+The document contract includes optional `index.validation`, `stats.validation`,
+and per-session gaps, set-aside failures and extraction-unavailable reasons.
+Older documents omit them. Rendering the dedicated Validation part is separate
+work; these additive fields do not change existing review rendering.
+
 ## Using it
 
 React, React DOM and the Markdown, sanitising, syntax highlighting (`shiki`),

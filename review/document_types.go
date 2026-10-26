@@ -89,14 +89,15 @@ type documentReviewGenerator struct {
 }
 
 type documentReviewSources struct {
-	Diff          bool `json:"diff"`
-	Sessions      int  `json:"sessions"`
-	Checks        int  `json:"checks"`
-	TestReports   int  `json:"test_reports"`
-	ReviewThreads bool `json:"review_threads"`
-	AgentReviews  int  `json:"agent_reviews"`
-	SpecLinks     bool `json:"spec_links"`
-	ReviewMD      bool `json:"review_md"`
+	SessionValidation *int `json:"session_validation,omitempty"`
+	Diff              bool `json:"diff"`
+	Sessions          int  `json:"sessions"`
+	Checks            int  `json:"checks"`
+	TestReports       int  `json:"test_reports"`
+	ReviewThreads     bool `json:"review_threads"`
+	AgentReviews      int  `json:"agent_reviews"`
+	SpecLinks         bool `json:"spec_links"`
+	ReviewMD          bool `json:"review_md"`
 }
 
 type documentSummary struct {
@@ -169,6 +170,7 @@ type documentAuthorship struct {
 }
 
 type documentStats struct {
+	Validation    *documentValidationStats   `json:"validation,omitempty"`
 	Sections      int                        `json:"sections"`
 	Files         int                        `json:"files"`
 	Hunks         int                        `json:"hunks"`
@@ -312,6 +314,7 @@ type documentReviewer struct {
 }
 
 type documentIndex struct {
+	Validation      []documentValidation       `json:"validation,omitempty"`
 	FileComparisons []bundlepkg.FileComparison `json:"file_comparisons,omitempty"`
 	Hunks           []documentHunk             `json:"hunks"`
 	Checks          []documentCheck            `json:"checks"`
@@ -418,6 +421,10 @@ type documentComment struct {
 }
 
 type documentSession struct {
+	NotVerified           []bundlepkg.ValidationGap      `json:"not_verified,omitempty"`
+	SetAside              []bundlepkg.ValidationSetAside `json:"set_aside,omitempty"`
+	ValidationUnavailable string                         `json:"validation_unavailable,omitempty"`
+
 	ID              string                `json:"id"`
 	Vendor          string                `json:"vendor"`
 	Models          []string              `json:"models,omitzero"`
@@ -553,4 +560,17 @@ func (v *DocumentValidator) encodeFullDocument(doc *reviewDocument) ([]byte, err
 func jsonString(value string) json.RawMessage {
 	encoded, _ := json.Marshal(value)
 	return encoded
+}
+
+type documentValidation struct {
+	bundlepkg.SessionValidation
+	Session string `json:"session"`
+}
+type documentValidationStats struct {
+	Head        int `json:"head"`
+	Earlier     int `json:"earlier"`
+	Uncommitted int `json:"uncommitted"`
+	Unknown     int `json:"unknown"`
+	SetAside    int `json:"set_aside"`
+	NotVerified int `json:"not_verified"`
 }

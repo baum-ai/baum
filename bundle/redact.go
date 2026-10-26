@@ -97,7 +97,25 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 	total += masked
 	for i := range bundle.Sessions {
 		session := &bundle.Sessions[i]
-		fields = append(fields, &session.Title, &session.Branch, &session.Vendor)
+		if session.Restricted {
+			session.Validations, session.NotVerified, session.SetAside, session.ValidationUnavailable, session.ValidationEvents = nil, nil, nil, "", nil
+		}
+		fields = append(fields, &session.Title, &session.Branch, &session.Vendor, &session.ValidationUnavailable)
+		for i := range session.ValidationEvents {
+			fields = append(fields, &session.ValidationEvents[i].Summary)
+		}
+		if session.Validations != nil {
+			for i := range *session.Validations {
+				item := &(*session.Validations)[i]
+				fields = append(fields, &item.Checked, &item.Caveats, &item.CommitLabel.Reason)
+			}
+		}
+		for i := range session.NotVerified {
+			fields = append(fields, &session.NotVerified[i].What)
+		}
+		for i := range session.SetAside {
+			fields = append(fields, &session.SetAside[i].What, &session.SetAside[i].StatedReason)
+		}
 		for m := range session.Models {
 			fields = append(fields, &session.Models[m])
 		}

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "s",
+    "vendor": "",
+    "restricted": false,
+    "validations": [
+      {
+        "id": "val_head",
+        "method": "browser",
+        "checked": "Mobile layout",
+        "outcome": "passed",
+        "evidence_class": "observed",
+        "commit_label": {
+          "state": "head",
+          "sha": "aaaaaaa",
+          "reason": "No intervening edits"
+        },
+        "event_ids": [
+          "browser"
+        ]
+      }
+    ],
+    "not_verified": [
+      {
+        "what": "Windows"
+      }
+    ],
+    "set_aside": [
+      {
+        "what": "Timeout",
+        "stated_reason": "Unrelated"
+      }
+    ]
+  }
+]

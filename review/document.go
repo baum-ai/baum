@@ -740,6 +740,18 @@ func resolveDocumentAnchor(a documentAnchor, b *bundlepkg.Bundle, directory stri
 					}
 				}
 			} else {
+				for _, event := range s.ValidationEvents {
+					if event.ID == valueOrEmpty(a.Event) {
+						return true
+					}
+				}
+				for _, item := range validationItems(s) {
+					for _, event := range item.EventIDs {
+						if event == valueOrEmpty(a.Event) {
+							return true
+						}
+					}
+				}
 				for _, e := range s.CommandEvents {
 					if e.ID == valueOrEmpty(a.Event) {
 						return true
@@ -1067,6 +1079,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	doc.Stats = documentStats{Sections: len(doc.Sections), Files: len(files), Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
 	summary.RiskScore = riskScore(doc.Sections, b.Diff)
 	doc.Index, doc.AgentReviews, doc.UnassignedHunks = index, agentReviews(b, doc.Sections, doc.Review.Head), unassigned
+	setValidation(&doc.reviewDocument, b)
 	doc.Review.Sources.AgentReviews = len(doc.AgentReviews)
 	countFindings(&doc.reviewDocument)
 	doc.Review.Generator.Truncated = notes
@@ -1199,6 +1212,18 @@ func sessionIndex(b *bundlepkg.Bundle) ([]documentSession, map[string]bool, map[
 				}
 				events = append(events, documentEvent{ID: e.ID, At: e.Time.UTC().Format(time.RFC3339Nano), Verb: "execute", Summary: strings.Join(commands, "; ")})
 			}
+			seenEvents := map[string]bool{}
+			for _, event := range events {
+				seenEvents[event.ID] = true
+			}
+			for _, event := range s.ValidationEvents {
+				if event.Time == nil || seenEvents[event.ID] {
+					continue
+				}
+				events = append(events, documentEvent{ID: event.ID, At: event.Time.UTC().Format(time.RFC3339Nano), Verb: event.Verb, Summary: event.Summary})
+				seenEvents[event.ID] = true
+			}
+			item.NotVerified, item.SetAside, item.ValidationUnavailable = s.NotVerified, s.SetAside, s.ValidationUnavailable
 			item.Outcome = presentJSON(&s.Outcome)
 			item.Models, item.Title, item.GitBranch, item.StartedAt, item.EndedAt = s.Models, presentJSON(&s.Title), presentJSON(&s.Branch), documentTime(s.StartedAt), documentTime(s.EndedAt)
 			if s.Models == nil {
