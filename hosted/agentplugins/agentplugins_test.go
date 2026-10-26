@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,33 @@ import (
 // from available entries. Neither format contains hook trust evidence.
 const claudeInstalled = `[{"id":"baum@baum","version":"1.0.0","scope":"user","enabled":true,"installPath":"/plugins/baum","projectEnabled":false}]`
 const codexInstalled = `{"installed":[{"pluginId":"baum@baum","name":"baum","marketplaceName":"baum","version":"1.0.0","installed":true,"enabled":true,"source":{"source":"local","path":"/plugins/baum"},"installPolicy":"AVAILABLE","authPolicy":"ON_INSTALL"}],"available":[]}`
+
+// Captured from codex-cli 0.164.0 `plugin marketplace list --json`.
+const codexMarketplaces = `{"marketplaces":[{"name":"openai-bundled","root":"/codex/.tmp/bundled-marketplaces/openai-bundled","marketplaceSource":{"sourceType":"local","source":"/codex/.tmp/bundled-marketplaces/openai-bundled"}},{"name":"baum","root":"/codex/.tmp/marketplaces/baum","marketplaceSource":{"sourceType":"git","source":"https://github.com/baum-ai/baum.git"}},{"name":"openai-curated","root":"/codex/.tmp/plugins"}]}`
+
+func TestCodexStatusSkipsListWithoutBaumMarketplace(t *testing.T) {
+	for _, tc := range []struct {
+		name, marketplaces string
+		fails              bool
+	}{
+		{"not configured", `{"marketplaces":[{"name":"openai-curated","root":"/codex/.tmp/plugins"}]}`, false},
+		{"missing registry", `{}`, true},
+		{"invalid JSON", `not JSON`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[1] != "marketplace" {
+					t.Fatalf("listed plugins without baum's marketplace: %v", args)
+				}
+				return []byte(tc.marketplaces), nil
+			}}
+			got, err := client.Status(context.Background(), "codex")
+			if (err != nil) != tc.fails || got != (Status{}) {
+				t.Fatalf("got %+v %v fails=%v", got, err, tc.fails)
+			}
+		})
+	}
+}
 
 func TestNativeStatusShapes(t *testing.T) {
 	for _, tc := range []struct {
@@ -53,12 +81,18 @@ func TestNativePluginLifecycleCommandsAndVerification(t *testing.T) {
 					t.Fatalf("binary=%q", binary)
 				}
 				calls = append(calls, append([]string(nil), args...))
+				if args[1] == "marketplace" && args[2] == "list" {
+					return []byte(codexMarketplaces), nil
+				}
 				switch args[1] {
 				case "install", "add":
 					installed = true
 				case "remove", "uninstall":
 					installed = false
 				case "list":
+					if agent == "codex" && !reflect.DeepEqual(args, []string{"plugin", "list", "--json", "--marketplace", "baum"}) {
+						t.Fatalf("unscoped codex list %v", args)
+					}
 					if installed {
 						if agent == "codex" {
 							return []byte(codexInstalled), nil
@@ -87,18 +121,21 @@ func TestNativePluginLifecycleCommandsAndVerification(t *testing.T) {
 			if !reflect.DeepEqual(calls[0], []string{"plugin", "marketplace", "add", Marketplace}) || !reflect.DeepEqual(calls[1], install) {
 				t.Fatalf("install calls=%v", calls)
 			}
+			uninstallFrom := len(calls)
 			if _, err := client.Uninstall(context.Background(), agent); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(calls[len(calls)-2], remove) {
+			if !slices.ContainsFunc(calls[uninstallFrom:], func(c []string) bool { return reflect.DeepEqual(c, remove) }) {
 				t.Fatalf("remove calls=%v", calls)
 			}
 			before := len(calls)
 			if _, err := client.Uninstall(context.Background(), agent); err != nil {
 				t.Fatal(err)
 			}
-			if len(calls) != before+1 {
-				t.Fatal("absent plugin caused a mutation")
+			for _, call := range calls[before:] {
+				if call[1] == "remove" || call[1] == "uninstall" {
+					t.Fatalf("absent plugin caused a mutation: %v", call)
+				}
 			}
 		})
 	}
@@ -120,6 +157,9 @@ func TestNativeErrorsCancellationAndUnverifiedInstall(t *testing.T) {
 		t.Fatalf("cancellation=%v", err)
 	}
 	client.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[1] == "marketplace" && args[2] == "list" {
+			return []byte(codexMarketplaces), nil
+		}
 		if args[1] == "list" {
 			return []byte(`{"installed":[],"available":[]}`), nil
 		}

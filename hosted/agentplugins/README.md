@@ -7,7 +7,11 @@ enablement and version separately; it cannot establish hook trust.
 
 Claude's user-scope plugin entries and Codex's installed-plugin entries are
 matched by exact plugin ID. Project-scoped Claude installs do not satisfy a
-user install. An unexpected JSON shape, unsupported/missing CLI, failed
+user install. Codex's unscoped plugin list fetches every remote marketplace,
+which can take 30 seconds without a cache, so Codex status first lists the
+configured marketplaces and, when `baum` is among them, lists only that
+marketplace; without it the plugin is reported not installed. Both commands
+stay local. An unexpected JSON shape, unsupported/missing CLI, failed
 command, or an install/remove not reflected in a final list returns an
 error. An installed-but-disabled plugin is reported explicitly.
 

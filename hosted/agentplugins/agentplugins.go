@@ -18,6 +18,8 @@ const (
 	Marketplace   = "baum-ai/baum"
 	StatusTimeout = 10 * time.Second
 	ActionTimeout = 90 * time.Second
+	// marketplaceName is the marketplace part of Plugin, as agents name it.
+	marketplaceName = "baum"
 )
 
 func Agents() []string { return []string{"claude-code", "codex"} }
@@ -76,11 +78,45 @@ func (c *Client) command(ctx context.Context, agent string, args ...string) ([]b
 func (c *Client) Status(ctx context.Context, agent string) (Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, StatusTimeout)
 	defer cancel()
-	output, err := c.command(ctx, agent, "plugin", "list", "--json")
+	args := []string{"plugin", "list", "--json"}
+	if agent == "codex" {
+		// An unscoped Codex list fetches every remote marketplace, which can
+		// take 30 seconds without a cache. Listing only baum's marketplace
+		// stays local, so check that it is configured and scope the list to it.
+		configured, err := c.codexMarketplaceConfigured(ctx)
+		if err != nil || !configured {
+			return Status{}, err
+		}
+		args = append(args, "--marketplace", marketplaceName)
+	}
+	output, err := c.command(ctx, agent, args...)
 	if err != nil {
 		return Status{}, err
 	}
 	return parseStatus(agent, output)
+}
+
+func (c *Client) codexMarketplaceConfigured(ctx context.Context) (bool, error) {
+	output, err := c.command(ctx, "codex", "plugin", "marketplace", "list", "--json")
+	if err != nil {
+		return false, err
+	}
+	return parseCodexMarketplaces(output)
+}
+
+func parseCodexMarketplaces(output []byte) (bool, error) {
+	var list struct {
+		Marketplaces *[]struct{ Name string }
+	}
+	if err := json.Unmarshal(output, &list); err != nil || list.Marketplaces == nil {
+		return false, fmt.Errorf("codex plugin marketplace list returned invalid JSON; update Codex")
+	}
+	for _, m := range *list.Marketplaces {
+		if m.Name == marketplaceName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func parseStatus(agent string, output []byte) (Status, error) {
