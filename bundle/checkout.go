@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -193,9 +194,10 @@ func ApplyCheckoutOmissions(b *Bundle, omissions []CheckoutOmission) {
 const binarySniffBytes = 8000
 
 // WriteArchive streams both trees from one pinned snapshot without checking
-// them out. The compared paths go first, at the head and then at the merge
-// base, and the rest of the head tree fills what the budget leaves: a file
-// that does not fit is omitted with OmittedBudgetReason instead of failing the
+// them out; an empty mergeBase, which takes no hunks, writes the head tree
+// alone. The compared paths go first, at the head and then at the merge base,
+// and the rest of the head tree fills what the budget leaves: a file that
+// does not fit is omitted with OmittedBudgetReason instead of failing the
 // export, so the archive always stays within MaxTotalBytes and MaxTotalFiles.
 // Binary files are omitted with OmittedBinaryReason.
 //
@@ -232,8 +234,14 @@ func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport,
 	defer func() { err = errors.Join(err, writer.Close()) }()
 	var totalBytes int64
 	var totalFiles int
-	// Explicit roots keep the two trees separate even when one is empty.
-	for _, prefix := range []string{"head/", "merge-base/"} {
+	// Explicit roots keep the two trees separate even when one is empty. A
+	// checkout without a merge base, such as a default branch head's, has
+	// only head/.
+	roots := []string{"head/", "merge-base/"}
+	if mergeBase == "" {
+		roots = roots[:1]
+	}
+	for _, prefix := range roots {
 		if err := writer.WriteHeader(&tar.Header{Name: prefix, Typeflag: tar.TypeDir, Mode: 0o500}); err != nil {
 			return nil, err
 		}
@@ -381,6 +389,16 @@ func (c CheckoutConfig) MaxArchiveBytes() int64 {
 // MaxArchiveBytes): the gzip stream is drained after the tar trailer without
 // a limit, and directory entries do not count toward MaxTotalFiles.
 func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig) error {
+	return unpackCheckout(ctx, archive, dir, caps, []string{"head", "merge-base"})
+}
+
+// UnpackHeadCheckout is UnpackCheckout for an archive written without a merge
+// base: it holds head/ alone.
+func UnpackHeadCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig) error {
+	return unpackCheckout(ctx, archive, dir, caps, []string{"head"})
+}
+
+func unpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfig, roots []string) error {
 	file, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -411,7 +429,7 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 			return ErrInvalidArchive
 		}
 		parts := strings.Split(name, "/")
-		if parts[0] != "head" && parts[0] != "merge-base" {
+		if !slices.Contains(roots, parts[0]) {
 			return ErrInvalidArchive
 		}
 		for _, part := range parts {
@@ -463,7 +481,7 @@ func UnpackCheckout(ctx context.Context, archive, dir string, caps CheckoutConfi
 	if _, err := io.Copy(io.Discard, compressed); err != nil {
 		return ErrInvalidArchive
 	}
-	for _, root := range []string{"head", "merge-base"} {
+	for _, root := range roots {
 		root := filepath.Join(dir, root)
 		if _, err := os.Stat(root); err != nil {
 			return ErrInvalidArchive
