@@ -67,7 +67,14 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
-	h := &harness{t: t, home: t.TempDir(), registry: registry, lister: &fakeLister{list: sampleList()}}
+	// The registry stores resolved paths, so the home must already be resolved:
+	// macOS temp folders sit behind /var -> /private/var and Windows ones may
+	// use 8.3 short names.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{t: t, home: home, registry: registry, lister: &fakeLister{list: sampleList()}}
 	h.service = &Service{
 		Lister: h.lister, Registry: registry, Home: h.home, Changed: func() { h.changed.Add(1) },
 		Token: func(context.Context) (string, error) { return "tok", nil },
