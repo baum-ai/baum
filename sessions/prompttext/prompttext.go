@@ -13,6 +13,7 @@
 package prompttext
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 	"unicode"
@@ -34,12 +35,43 @@ var boilerplate = []*regexp.Regexp{
 	regexp.MustCompile(`\[Request interrupted by user[^\]]*\]`),
 }
 
-// Strip removes the wrapper constructs, leaving the prose around them.
+// questionReply is the block Codex writes into the next prompt when someone
+// answers a question the agent asked without waiting (request_user_input):
+// a JSON list of the questions and the answers typed to them.
+var questionReply = regexp.MustCompile(`(?s)<send_user_message_question_reply>(.*?)</send_user_message_question_reply>`)
+
+// Strip removes the wrapper constructs, leaving the prose around them, and
+// writes each answer to an agent's question as the question quoted, then the
+// answer, as a reply reads.
 func Strip(text string) string {
 	for _, pattern := range boilerplate {
 		text = pattern.ReplaceAllString(text, "")
 	}
+	text = questionReply.ReplaceAllStringFunc(text, formatQuestionReply)
 	return strings.TrimSpace(text)
+}
+
+// formatQuestionReply writes one reply block as its questions, quoted, each
+// followed by its answer. A block that does not read as the list Codex
+// writes is left as recorded, since it is the only record of the answer.
+func formatQuestionReply(block string) string {
+	var replies []struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	}
+	body := questionReply.FindStringSubmatch(block)[1]
+	if err := json.Unmarshal([]byte(body), &replies); err != nil || len(replies) == 0 {
+		return block
+	}
+	parts := make([]string, 0, len(replies))
+	for _, reply := range replies {
+		var quoted []string
+		for _, line := range strings.Split(strings.TrimSpace(reply.Question), "\n") {
+			quoted = append(quoted, strings.TrimRight("> "+line, " "))
+		}
+		parts = append(parts, strings.Join(quoted, "\n")+"\n"+strings.TrimSpace(reply.Answer))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // IsBoilerplate reports whether text is only wrapper constructs, and so

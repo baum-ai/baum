@@ -102,3 +102,26 @@ func TestPreviewOfShortTextIsNotTruncated(t *testing.T) {
 		t.Errorf("Preview() = %q, %v; want the text unchanged", preview, truncated)
 	}
 }
+
+func TestStripWritesAnswersToAgentQuestionsAsReplies(t *testing.T) {
+	// The shape Codex writes when someone answers a question asked with
+	// request_user_input, ahead of what they typed next.
+	text := "<send_user_message_question_reply>\n" +
+		`[{"answer":"Through the UI, as usual.","question":"LPL has no Slack app credentials yet.\nWhere should they come from?","questionItemId":"[\"request_user_input_async\",\"call_d376\",0]"},` +
+		`{"answer":"yes","question":"Enable it after?","questionItemId":"x"}]` +
+		"\n</send_user_message_question_reply>\nAlso keep it in install.json"
+	want := "> LPL has no Slack app credentials yet.\n> Where should they come from?\nThrough the UI, as usual.\n\n" +
+		"> Enable it after?\nyes\nAlso keep it in install.json"
+	if got := Strip(text); got != want {
+		t.Errorf("Strip() =\n%s\nwant\n%s", got, want)
+	}
+	if IsBoilerplate(text) {
+		t.Error("an answered question is a prompt somebody typed")
+	}
+
+	// A block that is not the list Codex writes stays as recorded.
+	odd := "<send_user_message_question_reply>not json</send_user_message_question_reply>"
+	if got := Strip(odd); got != odd {
+		t.Errorf("Strip(%q) = %q, want it unchanged", odd, got)
+	}
+}

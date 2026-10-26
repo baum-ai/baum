@@ -216,7 +216,7 @@ export function AgentAvatar({ vendor }: { vendor?: string }) {
 }
 
 /** A prompt as its author typed it, with only pasted code fences rendered as
- *  code: the rest is someone's own words, where markdown would turn a
+ *  code and quoted lines as a quote: the rest is someone's own words, where markdown would turn a
  *  `__init__` bold or a `# comment` into a heading. */
 function PromptText({ text }: { text: string }) {
   return (
@@ -226,6 +226,13 @@ function PromptText({ text }: { text: string }) {
           <Markdown key={index} html={false}>
             {segment.value}
           </Markdown>
+        ) : segment.kind === "quote" ? (
+          <blockquote
+            key={index}
+            className="m-0 border-l-2 border-(--border-default) pl-3 whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]"
+          >
+            {segment.value}
+          </blockquote>
         ) : (
           <p key={index} className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere]">
             {segment.value}
