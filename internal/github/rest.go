@@ -16,7 +16,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/auth"
 )
 
-// RESTReader reads only relative API paths on one validated GitHub host.
+// RESTReader reads, and for the confirmed writes of the app (Write) sends, only relative API paths on one validated GitHub host.
 // Its identity partitions private caches without persisting a credential.
 type RESTReader struct {
 	client          *http.Client
@@ -196,4 +196,44 @@ func (r *RESTReader) GraphQL(ctx context.Context, query string, variables map[st
 		return 0, nil, nil, fmt.Errorf("GitHub discovery response unreadable or too large")
 	}
 	return response.StatusCode, response.Header.Clone(), body, nil
+}
+
+// Write sends one PUT or POST with a JSON body to a relative API path and
+// returns the status and the bounded answer. It is never retried: the callers
+// are the user's confirmed writes (update a branch, re-run workflow runs).
+func (r *RESTReader) Write(ctx context.Context, method, path string, payload any) (int, []byte, error) {
+	relative, err := url.Parse(path)
+	if (method != http.MethodPut && method != http.MethodPost) || err != nil || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || relative.Host != "" || relative.Scheme != "" || relative.Fragment != "" {
+		return 0, nil, fmt.Errorf("invalid GitHub API request")
+	}
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return 0, nil, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	endpoint := *r.endpoint
+	endpoint.Path += relative.Path
+	endpoint.RawQuery = relative.RawQuery
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	if err != nil {
+		return 0, nil, err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := r.client.Do(request)
+	if err != nil {
+		return 0, nil, fmt.Errorf("GitHub request failed")
+	}
+	defer func() { _ = response.Body.Close() }()
+	answer, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("GitHub response unreadable")
+	}
+	return response.StatusCode, answer, nil
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/baum-ai/baum/internal/notices"
 	"github.com/baum-ai/baum/internal/planusage"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/prupdate"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -491,7 +492,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: planusage.NewService().Handler(), Merge: uiserver.MergeHandler(registry, github.NewFromConfig(cfg, github.Options{}), func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }, changed), Changed: settingsChanged,
+		// A write to a pull request re-reads the repository's pull requests so
+		// the inbox shows its new state.
+		githubClient := github.NewFromConfig(cfg, github.Options{})
+		refreshRepository := func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: planusage.NewService().Handler(), Merge: uiserver.MergeHandler(registry, githubClient, refreshRepository, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: githubClient}, refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{

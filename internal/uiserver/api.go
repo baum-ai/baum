@@ -35,8 +35,13 @@ type LocalAPI struct {
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
 	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
-	// request from the app, the only GitHub write the app makes.
+	// request from the app.
 	Merge http.Handler
+	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
+	// their -options reads: updating a pull request's branch and re-running its
+	// failed workflow runs. With merging and a fix's push, they are the
+	// GitHub writes the app makes.
+	Update http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
@@ -100,6 +105,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
+	update := provider(a.Update, "update_unavailable")
+	mux.Handle("GET /api/prs/update-branch-options", update)
+	mux.Handle("POST /api/prs/update-branch", update)
+	mux.Handle("GET /api/prs/rerun-checks-options", update)
+	mux.Handle("POST /api/prs/rerun-checks", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
