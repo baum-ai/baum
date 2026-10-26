@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { useHistoryView } from "@baum/viewer/use-review-version";
@@ -47,7 +55,7 @@ function numberList(numbers: number[]) {
 /** A native dialog that opens modally when it mounts; its parent unmounts it. */
 function useModal() {
   const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   return dialog;
@@ -110,7 +118,7 @@ export function NameDialog({
             Cancel
           </Button>
           <Button type="submit" size="compact" disabled={pending || !name.trim()}>
-            {action}
+            {pending ? "Saving…" : action}
           </Button>
         </div>
       </form>
@@ -138,7 +146,7 @@ function ConfirmDialog({
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="my-3">{children}</p>
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="compact" onClick={close}>
+        <Button variant="ghost" size="compact" disabled={pending} onClick={close}>
           Cancel
         </Button>
         <Button size="compact" disabled={pending} onClick={confirm}>
@@ -345,6 +353,7 @@ export function GroupPage({
   const [deleting, setDeleting] = useState(false);
   const [manageError, setManageError] = useState("");
   const [managing, setManaging] = useState(false);
+  const [removing, setRemoving] = useState<number | null>(null);
   const patch = async (body: { name?: string; members?: number[] }) => {
     await request<ReviewGroup>(`api/groups/${encodeURIComponent(group.id)}`, body, "PATCH");
     await changed();
@@ -395,7 +404,9 @@ export function GroupPage({
         ? job?.state === "queued"
           ? "Review queued"
           : "Generating review…"
-        : "Regenerate"}
+        : busy
+          ? "Starting…"
+          : "Regenerate"}
     </Button>
   );
   const saved = provenance.find((p) => p.version === doc?.review.version);
@@ -453,7 +464,7 @@ export function GroupPage({
             <div className="local-review-empty">
               <GenerationOutcome job={job} />
               <Button size="compact" disabled={busy} onClick={() => void generate()}>
-                {job.state === "failed" ? "Try again" : "Generate review"}
+                {busy ? "Starting…" : job.state === "failed" ? "Try again" : "Generate review"}
               </Button>
             </div>
           ) : (
@@ -464,7 +475,7 @@ export function GroupPage({
                 assumptions and merge order. It builds on each pull request's own review.
               </p>
               <Button size="compact" disabled={busy} onClick={() => void generate()}>
-                Generate review
+                {busy ? "Starting…" : "Generate review"}
               </Button>
             </div>
           )
@@ -490,7 +501,7 @@ export function GroupPage({
                       if (number) void change({ members: [...group.members, number] });
                     }}
                   >
-                    <option value="">Add…</option>
+                    <option value="">{managing && removing === null ? "Adding…" : "Add…"}</option>
                     {addable.map((e) => (
                       <option key={e.pull_request.number} value={e.pull_request.number}>
                         #{e.pull_request.number} {e.pull_request.title}
@@ -523,11 +534,14 @@ export function GroupPage({
                         aria-label={`Remove #${number}`}
                         title="Remove from the group"
                         disabled={managing}
-                        onClick={() =>
-                          void change({ members: group.members.filter((n) => n !== number) })
-                        }
+                        onClick={() => {
+                          setRemoving(number);
+                          void change({
+                            members: group.members.filter((n) => n !== number),
+                          }).finally(() => setRemoving(null));
+                        }}
                       >
-                        Remove
+                        {removing === number ? "Removing…" : "Remove"}
                       </button>
                     ) : null}
                   </li>
@@ -562,7 +576,7 @@ export function GroupPage({
                     disabled={generating || busy || !clone}
                     onClick={() => void generate()}
                   >
-                    Regenerate
+                    {busy ? "Starting…" : "Regenerate"}
                   </Button>
                 }
               >
@@ -584,7 +598,7 @@ export function GroupPage({
                     disabled={busy}
                     onClick={() => void generateMembers()}
                   >
-                    Generate their reviews
+                    {busy ? "Starting…" : "Generate their reviews"}
                   </Button>
                 }
               >
@@ -643,7 +657,7 @@ export function GroupPage({
       {deleting ? (
         <ConfirmDialog
           title="Delete review group?"
-          action="Delete group"
+          action={managing ? "Deleting…" : "Delete group"}
           pending={managing}
           close={() => setDeleting(false)}
           confirm={() => void remove()}

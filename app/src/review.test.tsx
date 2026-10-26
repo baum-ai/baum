@@ -135,6 +135,27 @@ it("shows queued initial generation and progress instead of an empty review", as
   expect(node.querySelector("[data-back]")!.getAttribute("data-back")).toBe("/s/test-ns/");
   expect(node.textContent).not.toContain("Started automatically");
 });
+it("shows a review as starting from the click, before the daemon answers", async () => {
+  await act(async () =>
+    root.render(
+      <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+        <LocalReview
+          entry={entry}
+          clone="selected-clone"
+          revision={0}
+          job={job("failed")}
+          starting
+          changed={changed}
+          generate={generate}
+        />
+      </UrlStateProvider>,
+    ),
+  );
+  expect(node.textContent).toContain("Starting the review");
+  expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
+  // The failed job before it is not the one starting: nothing to cancel.
+  expect(node.textContent).not.toContain("Cancel job");
+});
 it("says when the PR's job was started automatically", async () => {
   await render({ ...job("running"), automatic: true, trigger: "review_requested" });
   expect(node.textContent).toContain("Started automatically because your review was requested");

@@ -579,21 +579,34 @@ select.local-field {
 .inbox-activities:not(:empty) {
   margin-top: 0.3rem;
 }
-/* Merge sits beside the Ready state, out of the way until the row is pointed
-   at or focused; a touch screen has no pointer, so it stays drawn there. */
-.inbox-merge {
-  margin-left: 0.4rem;
-  padding: 0 0.4rem;
+/* Merge and Fix sit beside the state they act on. They are buttons, boxed
+   and raised like the page's secondary buttons, so they never read as one
+   more status pill; Fix's agent mark takes the broken state's colour. Merge stays out
+   of the way until the row is pointed at or focused; a touch screen has no
+   pointer, so it stays drawn there. */
+.inbox-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 1.625rem;
+  margin-left: 0.5rem;
+  padding: 0 0.6rem;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--surface-card);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 6%);
   color: var(--text-primary);
-  font-size: var(--text-xs);
-  line-height: 1.25rem;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
-.inbox-merge:hover {
-  background: var(--surface-hover);
+.inbox-action:hover {
+  background: var(--action-secondary-hover);
+}
+.inbox-action:active {
+  box-shadow: none;
+  transform: translateY(1px);
 }
 @media (hover: hover) {
   .inbox-merge {
@@ -1377,30 +1390,21 @@ dialog form {
   gap: 0.75rem;
 }
 
-/* The fix of a broken pull request: the small action in its inbox status
-   cell and the confirmation that comes before anything runs. */
-/* Fix sits beside a broken state like Merge beside a ready one, but stays
+/* The fix of a broken pull request: the action in its inbox status cell and
+   the confirmation that comes before anything runs. Unlike Merge it stays
    drawn: a broken pull request is the thing to act on. */
-.inbox-fix {
-  margin-left: 0.4rem;
-  padding: 0 0.4rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-primary);
-  font-size: var(--text-xs);
-  line-height: 1.25rem;
+.inbox-fix svg {
+  color: var(--status-critical);
 }
 span.inbox-fix {
   border-color: transparent;
   background: none;
+  box-shadow: none;
   color: var(--text-tertiary);
+  cursor: default;
 }
-button.inbox-fix {
-  cursor: pointer;
-}
-button.inbox-fix:hover {
-  background: var(--surface-hover);
+span.inbox-fix svg {
+  color: inherit;
 }
 .local-fix-confirmation {
   display: grid;

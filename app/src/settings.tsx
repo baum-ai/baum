@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
@@ -120,6 +127,8 @@ export function SettingsPage({
 function DesktopIntegrations() {
   const [view, setView] = useState<SetupView | null>(null);
   const [busy, setBusy] = useState(false);
+  // What the running action is, so only its own button changes its label.
+  const [doing, setDoing] = useState("");
   const [error, setError] = useState("");
   const [output, setOutput] = useState("");
   const working = useRef(false);
@@ -133,6 +142,7 @@ function DesktopIntegrations() {
     if (working.current) return;
     working.current = true;
     setBusy(true);
+    setDoing(command ? `${command}:${args?.agent ?? ""}` : "refresh");
     setError("");
     setOutput("");
     try {
@@ -205,9 +215,13 @@ function DesktopIntegrations() {
                   void run("install_command", command.replace ? { replace: command.replace } : {})
                 }
               >
-                {command.replace
-                  ? `Replace ${display(command.replace)}`
-                  : `${command.action} baum CLI`}
+                {doing === "install_command:"
+                  ? command.replace
+                    ? "Replacing…"
+                    : "Installing…"
+                  : command.replace
+                    ? `Replace ${display(command.replace)}`
+                    : `${command.action} baum CLI`}
               </Button>
             ) : null}
             {view?.command.record ? (
@@ -217,7 +231,7 @@ function DesktopIntegrations() {
                 variant="ghost"
                 onClick={() => void run("uninstall_command")}
               >
-                Remove CLI
+                {doing === "uninstall_command:" ? "Removing…" : "Remove CLI"}
               </Button>
             ) : null}
           </div>
@@ -275,7 +289,11 @@ function DesktopIntegrations() {
                   variant="secondary"
                   onClick={() => void run("install_hooks", { agent: agent.agent })}
                 >
-                  {agent.installed ? "Enable" : "Install"} {agent.name} hooks
+                  {doing === `install_hooks:${agent.agent}`
+                    ? agent.installed
+                      ? "Enabling…"
+                      : "Installing…"
+                    : `${agent.installed ? "Enable" : "Install"} ${agent.name} hooks`}
                 </Button>
               ) : null}
               {agent.installed ? (
@@ -286,7 +304,7 @@ function DesktopIntegrations() {
                   aria-label={`Remove ${agent.name} hooks`}
                   onClick={() => void run("uninstall_hooks", { agent: agent.agent })}
                 >
-                  Remove
+                  {doing === `uninstall_hooks:${agent.agent}` ? "Removing…" : "Remove"}
                 </Button>
               ) : null}
             </div>
@@ -297,7 +315,7 @@ function DesktopIntegrations() {
             Installed something new? Refresh to check its status.
           </p>
           <Button disabled={busy} size="compact" variant="ghost" onClick={() => void run()}>
-            {busy ? "Checking…" : "Check again"}
+            {doing === "refresh" && busy ? "Checking…" : "Check again"}
           </Button>
         </footer>
       </section>
@@ -402,7 +420,7 @@ function DiagnosticsDialog({
   authChanged: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   return (
@@ -516,7 +534,7 @@ function RepositorySettings({
   defaults: ReviewDefaults | null;
   status?: AutomaticStatus;
   save: (settings: Clone["settings"]) => Promise<void>;
-  remove?: () => void;
+  remove?: () => Promise<void>;
   cancel?: () => void;
 }) {
   const [backend, setBackend] = useState<string | null>(clone.settings.backend ?? null);
@@ -529,6 +547,7 @@ function RepositorySettings({
         : "off",
   );
   const [pending, setPending] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const globalBackend = shownBackend(defaults?.backend ?? "auto");
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -541,6 +560,11 @@ function RepositorySettings({
       backend,
       model: model?.trim() ? model.trim() : null,
     }).finally(() => setPending(false));
+  };
+  const unregister = () => {
+    if (!remove) return;
+    setRemoving(true);
+    void remove().finally(() => setRemoving(false));
   };
   const notice = status ? automaticNotice(status) : null;
   return (
@@ -579,7 +603,7 @@ function RepositorySettings({
         <HarnessPicker
           legend="Harness for this repository"
           value={backend}
-          disabled={pending}
+          disabled={pending || removing}
           inherit={{ label: "Global setting", detail: harnessName(globalBackend) }}
           onChange={(next) => {
             setBackend(next);
@@ -592,23 +616,29 @@ function RepositorySettings({
           label="Model for this repository"
           backend={backend ?? globalBackend}
           value={model}
-          disabled={pending}
+          disabled={pending || removing}
           inherit={`Global setting${defaults?.model ? ` (${defaults.model})` : ""}`}
           onChange={setModel}
         />
       </div>
       <div className="local-dialog-actions">
         {remove ? (
-          <Button variant="danger-outline" size="compact" onClick={remove} className="mr-auto">
-            Remove registration
+          <Button
+            variant="danger-outline"
+            size="compact"
+            disabled={pending || removing}
+            onClick={unregister}
+            className="mr-auto"
+          >
+            {removing ? "Removing…" : "Remove registration"}
           </Button>
         ) : null}
         {cancel ? (
-          <Button variant="ghost" size="compact" onClick={cancel}>
+          <Button variant="ghost" size="compact" disabled={pending || removing} onClick={cancel}>
             Cancel
           </Button>
         ) : null}
-        <Button type="submit" size="compact" disabled={pending}>
+        <Button type="submit" size="compact" disabled={pending || removing}>
           {pending ? "Saving…" : "Save repository settings"}
         </Button>
       </div>
@@ -633,6 +663,7 @@ function RepositoryRow({
 }) {
   const [open, setOpen] = useState(false);
   const [cloneError, setCloneError] = useState("");
+  const [removingClone, setRemovingClone] = useState("");
   const clone: Clone = repository.clones.find((c) => c.available) ??
     repository.clones[0] ?? {
       id: repository.repository,
@@ -683,13 +714,17 @@ function RepositoryRow({
               <Button
                 size="compact"
                 variant="ghost"
-                onClick={() =>
+                disabled={removingClone !== ""}
+                onClick={() => {
+                  setRemovingClone(c.id);
+                  setCloneError("");
                   void request(`api/repos/${c.id}`, {}, "DELETE")
                     .then(changed)
                     .catch((e) => setCloneError(errorText(e)))
-                }
+                    .finally(() => setRemovingClone(""));
+                }}
               >
-                Remove this clone registration
+                {removingClone === c.id ? "Removing…" : "Remove this clone registration"}
               </Button>
             </div>
           ))}
@@ -738,7 +773,7 @@ function RepositoryDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   return (
@@ -764,7 +799,7 @@ function RepositoryDialog({
         defaults={defaults}
         status={status}
         cancel={close}
-        remove={() => void remove().then(close)}
+        remove={() => remove().then(close)}
         save={async (settings) => {
           try {
             await request(`api/repositories/${clone.repository}/settings`, settings, "PUT");

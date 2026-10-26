@@ -16,6 +16,7 @@ import {
   CircleDashedIcon,
   CommentsIcon,
   MergeIcon,
+  SparkleIcon,
   WarningIcon,
   type IconProps,
 } from "@baum/viewer/components/icons";
@@ -445,28 +446,35 @@ function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
   return (
     <button
       type="button"
-      className={cn("inbox-merge", FOCUS_RING)}
+      className={cn("inbox-action inbox-merge", FOCUS_RING)}
       aria-label={`Merge ${pr.repository} #${pr.number}`}
       onClick={merge}
     >
-      Merge…
+      Merge
     </button>
   );
 }
 
 /** The small fix action in a broken pull request's status cell. */
 function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fixing: boolean }) {
-  if (fixing) return <span className="inbox-fix">Fixing…</span>;
+  if (fixing)
+    return (
+      <span className="inbox-action inbox-fix">
+        <SparkleIcon size={12} className="flex-none" />
+        Fixing…
+      </span>
+    );
   if (!fix) return null;
   return (
     <button
       type="button"
-      className={cn("inbox-fix", FOCUS_RING)}
+      className={cn("inbox-action inbox-fix", FOCUS_RING)}
       aria-label={label}
       title={label}
       onClick={fix}
     >
-      Fix…
+      <SparkleIcon size={12} className="flex-none" />
+      Fix
     </button>
   );
 }

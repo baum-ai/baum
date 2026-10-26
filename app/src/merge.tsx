@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
 import { LoadingStatus, NineDots } from "./nine-dots";
@@ -47,7 +47,7 @@ export function MergeDialog({
   const [method, setMethod] = useState("");
   const [error, setError] = useState("");
   const [merging, setMerging] = useState(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   useEffect(() => {

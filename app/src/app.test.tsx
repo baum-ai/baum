@@ -202,7 +202,7 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   // A ready pull request also carries its Merge button.
-  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: ReadyMerge…"]);
+  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: ReadyMerge"]);
   expect(states[1]).toEqual([
     "Review time: ~240 min",
     "Review: Changes requested3 unresolved",

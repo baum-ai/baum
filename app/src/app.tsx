@@ -157,6 +157,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [generating, setGenerating] = useState(false);
+  // The pull requests whose review request is on its way to the daemon: they
+  // show as generating from the click, not from the job the answer brings.
+  const [starting, setStarting] = useState(new Set<string>());
   const [generationError, setGenerationError] = useState("");
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
@@ -284,7 +287,9 @@ function Workspace({ url }: { url: UrlState }) {
   const filter = url.search.get("filter") ?? "inbox";
   const repo = url.search.get("repo") ?? "";
   const indexedEntries = snapshot.entries.map((entry) =>
-    isActiveJob(reviewJob(entry, jobs)) ? { ...entry, status: "generating" } : entry,
+    isActiveJob(reviewJob(entry, jobs)) || starting.has(rowKey(entry))
+      ? { ...entry, status: "generating" }
+      : entry,
   );
   const rows = filtered(indexedEntries, filter, repo);
   const repositories = Array.from(
@@ -347,6 +352,8 @@ function Workspace({ url }: { url: UrlState }) {
     }
     setGenerationError("");
     setGenerating(true);
+    const keys = entries.map(rowKey);
+    setStarting((now) => new Set([...now, ...keys]));
     try {
       const answer = await generateReviews(
         entries.map((e) => ({ clone: cloneFor(e), pr: e.pull_request.number })),
@@ -371,6 +378,7 @@ function Workspace({ url }: { url: UrlState }) {
       setGenerationError(errorText(e));
     } finally {
       setGenerating(false);
+      setStarting((now) => new Set([...now].filter((key) => !keys.includes(key))));
     }
   };
   // One notice for every repository GitHub could not refresh, whichever
@@ -550,6 +558,7 @@ function Workspace({ url }: { url: UrlState }) {
                   g.members.includes(selectedEntry.pull_request.number),
               )}
               generate={() => void generate([selectedEntry], "single")}
+              starting={starting.has(rowKey(selectedEntry))}
               fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
               fixJob={fixJob(selectedEntry, jobs)}
             />
@@ -587,7 +596,7 @@ function Workspace({ url }: { url: UrlState }) {
                           )
                         }
                       >
-                        Generate selected ({selection.size})
+                        {generating ? "Starting reviews…" : `Generate selected (${selection.size})`}
                       </Button>
                     ) : null}
                     <button
@@ -823,7 +832,7 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
                 key={job.id}
                 job={job}
                 cancel={() =>
-                  void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+                  request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
                     .then(changed)
                     .catch((e) => setError(errorText(e)))
                 }
@@ -857,7 +866,8 @@ function JobState({ job }: { job: Job }) {
     </span>
   );
 }
-function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
+function JobRow({ job, cancel }: { job: Job; cancel: () => Promise<void> }) {
+  const [cancelling, setCancelling] = useState(false);
   const started = automaticLabel(job);
   const active = job.state === "queued" || job.state === "running";
   const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
@@ -914,8 +924,16 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
       <div className="local-job-actions">
         {active ? (
-          <Button variant="secondary" size="compact" onClick={cancel}>
-            Cancel job
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={cancelling}
+            onClick={() => {
+              setCancelling(true);
+              void cancel().finally(() => setCancelling(false));
+            }}
+          >
+            {cancelling ? "Cancelling…" : "Cancel job"}
           </Button>
         ) : null}
       </div>

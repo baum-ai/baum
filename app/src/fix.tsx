@@ -157,6 +157,7 @@ export function FixDialog({
 /** A fix of the pull request on its page: running, pushed or failed. */
 export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
+  const [cancelling, setCancelling] = useState(false);
   const name = fixName(job.fix ?? {});
   if (isActiveJob(job))
     return (
@@ -172,13 +173,17 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
         <Button
           variant="ghost"
           size="compact"
-          onClick={() =>
+          disabled={cancelling}
+          onClick={() => {
+            setCancelling(true);
+            setError("");
             void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
               .then(changed)
               .catch(() => setError("The fix could not be cancelled. Try again."))
-          }
+              .finally(() => setCancelling(false));
+          }}
         >
-          Cancel fix
+          {cancelling ? "Cancelling…" : "Cancel fix"}
         </Button>
         {error ? <Alert>{error}</Alert> : null}
       </section>

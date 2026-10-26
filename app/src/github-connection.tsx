@@ -20,8 +20,19 @@ import { PanelHeader } from "./shell";
 import { NineDots } from "./nine-dots";
 
 export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void } = {}) {
-  const { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy } =
-    useGitHubConnection(daemonGitHubAuth, onChanged);
+  const {
+    connection,
+    pending,
+    error,
+    busy,
+    working,
+    checking,
+    copied,
+    recheck,
+    action,
+    signIn,
+    copy,
+  } = useGitHubConnection(daemonGitHubAuth, onChanged);
   const status = connection ? describe(connection) : null;
   const idle = connection && !pending;
   const notes =
@@ -56,7 +67,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                 disabled={busy}
                 onClick={() => void action("retry")}
               >
-                Check connection
+                {working === "retry" ? "Checking…" : "Check connection"}
               </Button>
               <Button
                 variant={connection.saved ? "secondary" : "primary"}
@@ -65,7 +76,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                 disabled={busy || connection.state === "loading"}
                 onClick={signIn}
               >
-                {busy ? (
+                {working === "start" ? (
                   "Working…"
                 ) : connection.saved || connection.error === "reconnect_required" ? (
                   "Reconnect"
@@ -162,7 +173,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                   disabled={busy}
                   onClick={() => void action("cancel")}
                 >
-                  Cancel sign-in
+                  {working === "cancel" ? "Cancelling…" : "Cancel sign-in"}
                 </Button>
               </div>
               <p className="text-xs text-(--text-tertiary)">
@@ -198,7 +209,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
               onClick={() => void action("disconnect")}
               className="cursor-pointer text-(--status-critical) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Disconnect
+              {working === "disconnect" ? "Disconnecting…" : "Disconnect"}
             </button>
           ) : null}
         </footer>

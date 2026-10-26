@@ -90,6 +90,7 @@ export function LocalReview({
   clone,
   revision,
   generate,
+  starting = false,
   job,
   changed,
   live = [],
@@ -101,6 +102,8 @@ export function LocalReview({
   clone: string;
   revision: number;
   generate: () => void;
+  /** The review was asked for and the daemon has not answered yet. */
+  starting?: boolean;
   job?: Job;
   changed: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
@@ -132,7 +135,7 @@ export function LocalReview({
     previousKeys.current = liveKeys;
   }, [liveKeys]);
   const [merging, setMerging] = useState(false);
-  const generating = isActiveJob(job) || (!job && entry.status === "generating");
+  const generating = starting || isActiveJob(job) || (!job && entry.status === "generating");
   const generationState = generating
     ? "pending"
     : job?.state === "failed" || job?.state === "interrupted"
@@ -267,9 +270,11 @@ export function LocalReview({
                       onClick={generate}
                     >
                       {generating
-                        ? job?.state === "queued"
-                          ? "Review queued"
-                          : "Generating review…"
+                        ? starting
+                          ? "Starting review…"
+                          : job?.state === "queued"
+                            ? "Review queued"
+                            : "Generating review…"
                         : "Regenerate review"}
                     </Button>
                   ) : null}
@@ -291,13 +296,17 @@ export function LocalReview({
               <section aria-label="Review generation" className="local-review-empty">
                 <LiveDot />
                 <h2 role="status">
-                  {job?.state === "queued" ? "Review queued" : "Generating the review"}
+                  {starting
+                    ? "Starting the review"
+                    : job?.state === "queued"
+                      ? "Review queued"
+                      : "Generating the review"}
                 </h2>
                 <p>
-                  {job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This page updates
-                  when it is ready.
+                  {!starting && job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This
+                  page updates when it is ready.
                 </p>
-                {job ? <CancelJob job={job} changed={changed} /> : null}
+                {!starting && job ? <CancelJob job={job} changed={changed} /> : null}
               </section>
             ) : failed && entry.version_count > 0 ? (
               <div className="local-review-empty">
