@@ -28,8 +28,9 @@ completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
 Setup and Repositories list the signed-in GitHub account's repositories, with
-search and clone status. Found clones are selected automatically the first time;
-unpicking one is respected when the picker reopens. A picked repository can have
+search. Nothing is picked automatically: once the person picks a repository,
+the daemon looks for its local clone and the row says where it was found or
+offers to choose or clone one. A picked repository can have
 no clone: its pull requests remain in the inbox and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
 **Clone it**; generating waits for a clone. Clone it shows an editable default
