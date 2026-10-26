@@ -226,9 +226,8 @@ it("renders a group as one row with its members nested when expanded", async () 
   const bucket = (name: string) =>
     node.querySelector<HTMLElement>(`section[aria-label="${name}"]`)!;
   expect(bucket("Your pull requests").textContent).toContain("Auth rework");
-  expect(bucket("Your pull requests").textContent).toContain(
-    "Review group · 2 pull requests · acme/demo",
-  );
+  expect(bucket("Your pull requests").textContent).toContain("Group of 2");
+  expect(bucket("Your pull requests").textContent).toContain("acme/demo · #2, #3");
   expect(bucket("Your pull requests").textContent).toContain("Group review outdated");
   // One group row, counted as one row; nothing is repeated loose.
   expect(bucket("Your pull requests").textContent).toContain("Your pull requests1");

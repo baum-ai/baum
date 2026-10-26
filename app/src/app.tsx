@@ -707,6 +707,7 @@ function Workspace({ url }: { url: UrlState }) {
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"
+              detail={`${grouping.length} pull requests of ${grouping[0]!.pull_request.repository}. baum writes one review across them: how they fit together, the risks only visible across them, and the order to merge them.`}
               initial={grouping[0]!.pull_request.title.slice(0, 80)}
               action="Create group"
               close={() => setGrouping(null)}

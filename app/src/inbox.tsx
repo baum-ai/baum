@@ -531,14 +531,23 @@ function RiskCell({ risk }: { risk: Entry["risk_score"] }) {
     </span>
   );
 }
-/** The state words of a pull request, as the inbox's status cells say them. */
-export function stateWords(entry: Entry): string[] {
-  const state = entry.pull_request.state.toLowerCase();
-  return [
-    state ? state[0]!.toUpperCase() + state.slice(1) : "",
-    REVIEW[entry.review]?.label ?? "",
-    mergeStatus(entry)?.label ?? "",
-  ].filter(Boolean);
+/** A pull request's GitHub review and merge status on one line, drawn as the
+ *  inbox's cells draw them, for places that list pull requests outside it. */
+export function PullRequestState({ entry }: { entry: Entry }) {
+  const parts = [REVIEW[entry.review], mergeStatus(entry)].filter((style): style is StateStyle =>
+    Boolean(style),
+  );
+  if (parts.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      {parts.map(({ label, tone, icon: Icon, iconTone }) => (
+        <span key={label} className={cn("inline-flex items-center gap-1", tone)}>
+          <Icon size={13} className={cn("flex-none", iconTone)} />
+          {label}
+        </span>
+      ))}
+    </span>
+  );
 }
 /** A review group's one row; its shown members nest under it when expanded. */
 function GroupRow({
@@ -557,9 +566,7 @@ function GroupRow({
   children: ReactNode;
 }) {
   const id = useId();
-  const metadata = ["Review group", `${group.members.length} pull requests`, group.repository].join(
-    " · ",
-  );
+  const metadata = [group.repository, group.members.map((n) => `#${n}`).join(", ")].join(" · ");
   return (
     <li>
       <div className="inbox-columns inbox-row inbox-group-row">
@@ -589,6 +596,7 @@ function GroupRow({
             >
               {group.name}
             </Link>
+            <Badge size="compact">Group of {group.members.length}</Badge>
           </div>
           <p title={metadata} className="inbox-meta text-xs text-(--text-tertiary)">
             {metadata}

@@ -57,24 +57,21 @@ export function SessionsPage({
   const ended = sessions
     .filter((s) => s.state === "ended")
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
+  // Where the session works: the repository, its branch as a chip and the
+  // pull request it is on, linked into the app when the inbox knows it.
   const where = (s: LiveSession) => {
     const href = s.pr ? prHref(s) : null;
     return (
-      <div className="min-w-0 text-xs text-(--text-tertiary)">
-        <span className="font-mono [overflow-wrap:anywhere]">
-          {s.repository}
-          {s.branch ? ` · ${s.branch}` : ""}
-        </span>
+      <div className="local-session-where">
+        <span className="local-session-repo">{s.repository}</span>
+        {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
         {s.pr ? (
           href ? (
-            <>
-              {" · "}
-              <Link href={href} className="text-(--text-secondary) hover:underline">
-                PR #{s.pr}
-              </Link>
-            </>
+            <Link href={href} className="local-session-pr">
+              PR #{s.pr}
+            </Link>
           ) : (
-            ` · PR #${s.pr}`
+            <span className="local-session-pr">PR #{s.pr}</span>
           )
         ) : null}
       </div>
@@ -97,26 +94,30 @@ export function SessionsPage({
                 className="local-session-row"
                 title={s.session_id}
               >
-                <Agent agent={s.agent} />
-                <span className="local-session-state">
-                  {s.state === "running" ? (
-                    <>
-                      <LiveDot className="text-(--status-info)" /> Working
-                    </>
-                  ) : (
-                    <>
-                      <CircleDashedIcon size={12} className="flex-none text-(--text-tertiary)" />{" "}
-                      Waiting for you
-                    </>
-                  )}
-                </span>
+                <div className="local-session-agent">
+                  <Agent agent={s.agent} />
+                  <span className="local-session-state">
+                    {s.state === "running" ? (
+                      <>
+                        <LiveDot className="text-(--status-positive)" /> Working
+                      </>
+                    ) : (
+                      <>
+                        <CircleDashedIcon size={12} className="flex-none text-(--status-caution)" />{" "}
+                        Waiting for you
+                      </>
+                    )}
+                  </span>
+                </div>
                 {where(s)}
-                <span className="local-session-time" title={absolute(s.started_at)}>
-                  Started {formatRelative(s.started_at, now)}
-                </span>
-                <span className="local-session-time" title={absolute(s.last_activity_at)}>
-                  Active {formatRelative(s.last_activity_at, now)}
-                </span>
+                <div className="local-session-times">
+                  <span title={absolute(s.last_activity_at)}>
+                    Active {formatRelative(s.last_activity_at, now)}
+                  </span>
+                  <span title={absolute(s.started_at)}>
+                    Started {formatRelative(s.started_at, now)}
+                  </span>
+                </div>
               </li>
             ))}
           </ul>
@@ -140,13 +141,15 @@ export function SessionsPage({
                   className="local-session-row"
                   title={s.session_id}
                 >
-                  <Agent agent={s.agent} />
-                  <span className="local-session-state">Ended</span>
+                  <div className="local-session-agent">
+                    <Agent agent={s.agent} />
+                    <span className="local-session-state">Ended</span>
+                  </div>
                   {where(s)}
-                  <span className="local-session-time" title={absolute(endedAt)}>
-                    Ended {formatRelative(endedAt, now)}
-                  </span>
-                  <span className="local-session-time">Lasted {lasted(seconds)}</span>
+                  <div className="local-session-times">
+                    <span title={absolute(endedAt)}>Ended {formatRelative(endedAt, now)}</span>
+                    <span>Lasted {lasted(seconds)}</span>
+                  </div>
                 </li>
               );
             })}

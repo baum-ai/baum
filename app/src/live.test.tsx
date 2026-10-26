@@ -218,7 +218,8 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   expect(running.querySelectorAll("li")).toHaveLength(2);
   expect(running.textContent).toContain("Claude Code");
   expect(running.textContent).toContain("Working");
-  expect(running.textContent).toContain("acme/demo · feature");
+  expect(running.querySelector(".local-session-repo")!.textContent).toBe("acme/demo");
+  expect(running.querySelector(".local-session-branch")!.textContent).toBe("feature");
   expect(running.textContent).toContain("Started 5 minutes ago");
   expect(running.textContent).toContain("Active 20 seconds ago");
   expect(running.textContent).toContain("Codex");

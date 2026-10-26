@@ -21,7 +21,7 @@ import {
   type Provenance,
   type ReviewGroup,
 } from "./api";
-import { stateWords } from "./inbox";
+import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { Notice, PageBar } from "./shell";
@@ -55,12 +55,15 @@ function useModal() {
 /** Asks for a group's name: when creating one and when renaming it. */
 export function NameDialog({
   title,
+  detail,
   initial,
   action,
   submit,
   close,
 }: {
   title: string;
+  /** What the group is for, under the title. */
+  detail?: string;
   initial: string;
   action: string;
   submit: (name: string) => Promise<void>;
@@ -84,12 +87,17 @@ export function NameDialog({
   return (
     <dialog ref={dialog} onCancel={close} aria-labelledby="group-name-title">
       <form onSubmit={(event) => void send(event)}>
-        <h2 id="group-name-title" className="text-lg font-semibold">
-          {title}
-        </h2>
-        <label className="grid gap-1 text-xs">
+        <div className="local-dialog-head">
+          <h2 id="group-name-title" className="text-lg font-semibold">
+            {title}
+          </h2>
+          {detail ? <p>{detail}</p> : null}
+        </div>
+        <label className="local-field">
           Group name
           <input
+            type="text"
+            className="local-text-input"
             autoFocus
             value={name}
             maxLength={80}
@@ -335,7 +343,6 @@ export function GroupPage({
   // Managing the group.
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [adding, setAdding] = useState("");
   const [manageError, setManageError] = useState("");
   const [managing, setManaging] = useState(false);
   const patch = async (body: { name?: string; members?: number[] }) => {
@@ -347,7 +354,6 @@ export function GroupPage({
     setManageError("");
     try {
       await patch(body);
-      setAdding("");
     } catch (e) {
       setManageError(errorText(e));
     } finally {
@@ -404,6 +410,12 @@ export function GroupPage({
         versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
         header={{
           heading: group.name,
+          titleAside: <Badge size="compact">Review group</Badge>,
+          statistics: (
+            <p className="text-xs text-(--text-tertiary)">
+              {group.repository} · {group.members.length} pull requests reviewed together
+            </p>
+          ),
           back: { href: appURL(), label: "Inbox" },
           generation: { state: generationState, rewriting: generating && Boolean(doc) },
           beside: doc ? regenerate : null,
@@ -463,84 +475,82 @@ export function GroupPage({
         notices={
           <>
             <section aria-label="Group members" className="local-group-panel">
-              <h2>
-                {group.members.length} pull requests · {group.repository}
-              </h2>
+              <header className="local-group-head">
+                <h2>
+                  Pull requests <span className="local-group-count">{group.members.length}</span>
+                </h2>
+                <div className="local-group-actions">
+                  {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
+                    <select
+                      aria-label="Add pull request"
+                      className="local-group-add"
+                      value=""
+                      disabled={managing}
+                      onChange={(event) => {
+                        const number = Number(event.target.value);
+                        if (number) void change({ members: [...group.members, number] });
+                      }}
+                    >
+                      <option value="">Add…</option>
+                      {addable.map((e) => (
+                        <option key={e.pull_request.number} value={e.pull_request.number}>
+                          #{e.pull_request.number} {e.pull_request.title}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="tiny"
+                    disabled={managing}
+                    onClick={() => setRenaming(true)}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="tiny"
+                    disabled={managing}
+                    onClick={() => setDeleting(true)}
+                  >
+                    Delete group
+                  </Button>
+                </div>
+              </header>
               <ul className="local-group-members">
                 {members.map(({ number, entry }) => (
                   <li key={number} className="local-group-member">
+                    <span className="local-group-number">#{number}</span>
                     <div className="local-group-member-title">
                       {entry ? (
-                        <ViewerLink href={memberHref(entry)}>
-                          #{number} {entry.pull_request.title}
-                        </ViewerLink>
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
                       ) : (
-                        <span>#{number}</span>
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
                       )}
+                      {entry ? (
+                        <span className="local-group-member-state">
+                          <PullRequestState entry={entry} />
+                          <span>{reviewStatus[entry.status] ?? entry.status}</span>
+                        </span>
+                      ) : null}
                     </div>
-                    <span className="local-group-member-state">
-                      {entry
-                        ? [...stateWords(entry), reviewStatus[entry.status] ?? entry.status].join(
-                            " · ",
-                          )
-                        : "Not in the inbox"}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="compact"
-                      aria-label={`Remove #${number}`}
-                      disabled={managing || group.members.length <= 2}
-                      onClick={() =>
-                        void change({ members: group.members.filter((n) => n !== number) })
-                      }
-                    >
-                      Remove
-                    </Button>
+                    {group.members.length > 2 ? (
+                      <button
+                        type="button"
+                        className="local-group-remove"
+                        aria-label={`Remove #${number}`}
+                        title="Remove from the group"
+                        disabled={managing}
+                        onClick={() =>
+                          void change({ members: group.members.filter((n) => n !== number) })
+                        }
+                      >
+                        Remove
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </ul>
-              <div className="local-group-actions">
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  disabled={managing}
-                  onClick={() => setRenaming(true)}
-                >
-                  Rename
-                </Button>
-                <label className="local-group-actions">
-                  <span className="sr-only">Add pull request</span>
-                  <select
-                    aria-label="Add pull request"
-                    value={adding}
-                    disabled={managing || group.members.length >= MAX_GROUP_MEMBERS}
-                    onChange={(event) => setAdding(event.target.value)}
-                  >
-                    <option value="">Add pull request…</option>
-                    {addable.map((e) => (
-                      <option key={e.pull_request.number} value={e.pull_request.number}>
-                        #{e.pull_request.number} {e.pull_request.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  disabled={managing || !adding || group.members.length >= MAX_GROUP_MEMBERS}
-                  onClick={() => void change({ members: [...group.members, Number(adding)] })}
-                >
-                  Add
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="compact"
-                  disabled={managing}
-                  onClick={() => setDeleting(true)}
-                >
-                  Delete group
-                </Button>
-              </div>
               {manageError ? <Alert>{manageError}</Alert> : null}
             </section>
             {group.outdated && group.version_count > 0 ? (
