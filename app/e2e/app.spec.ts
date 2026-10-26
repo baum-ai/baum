@@ -497,3 +497,27 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });
+
+// Last in the file: the fake GitHub drops PR 7 from the open list once merged,
+// and earlier tests read it.
+test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
+  await page.goto(await launchURL());
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  const row = inbox.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
+  await expect(row).toContainText("Merge: Ready");
+  // Only a ready pull request offers Merge.
+  await expect(inbox.getByRole("button", { name: "Merge acme/demo #8", exact: true })).toHaveCount(
+    0,
+  );
+  await row.hover();
+  await row.getByRole("button", { name: "Merge acme/demo #7", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Merge pull request #7?" });
+  // The fixture repository allows merge commits and squashing, not rebasing.
+  await expect(dialog.getByRole("radio")).toHaveCount(2);
+  await expect(dialog.getByRole("radio", { name: /Squash and merge/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Create a merge commit/ }).check();
+  await dialog.getByRole("button", { name: "Merge pull request", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The inbox refreshed: the merged pull request is no longer open or mergeable.
+  await expect(inbox.getByRole("button", { name: /^Merge acme\/demo #7/ })).toHaveCount(0);
+});

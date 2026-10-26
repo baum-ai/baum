@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -44,7 +46,10 @@ import (
 type browserDiscovery struct {
 	snapshot discovery.Snapshot
 	pushed   func() bool
-	head     string
+	// merged reports whether the browser test merged PR 7 through the fake
+	// GitHub, after which discovery no longer lists it as open.
+	merged func() bool
+	head   string
 }
 
 func (d browserDiscovery) Cached(_ context.Context, repository github.Repository) (discovery.Snapshot, error) {
@@ -56,6 +61,9 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 	}
 	snapshot := d.snapshot
 	snapshot.FetchedAt = time.Now()
+	if d.merged != nil && d.merged() {
+		snapshot.PullRequests = slices.DeleteFunc(slices.Clone(snapshot.PullRequests), func(pr discovery.PullRequest) bool { return pr.Number == 7 })
+	}
 	if d.pushed != nil && d.pushed() {
 		snapshot.PullRequests = append([]discovery.PullRequest(nil), snapshot.PullRequests...)
 		for i := range snapshot.PullRequests {
@@ -226,7 +234,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// an earlier run must not count as already seen.
 	pushMarker := filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "push-10")
 	_ = os.Remove(pushMarker)
-	disc := browserDiscovery{snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
+	merged := new(atomic.Bool)
+	disc := browserDiscovery{merged: merged.Load, snapshot: discovery.Snapshot{Repository: "acme/demo", PullRequests: prs, FetchedAt: time.Now(), Rate: discovery.RateLimit{Remaining: new(5000)}}, head: repo.Head, pushed: func() bool {
 		_, err := os.Stat(pushMarker)
 		return err == nil
 	}}
@@ -262,6 +271,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			switch {
 			case strings.Contains(query.Query, "query PullRequest("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"nameWithOwner": "acme/demo", "pullRequest": map[string]any{"number": query.Variables.Number, "state": "OPEN", "isDraft": false, "title": "Generated local review", "body": "A synthetic local change.", "bodyHTML": "<p>A synthetic local change.</p>", "createdAt": "2026-10-01T10:00:00Z", "author": map[string]any{"login": "author", "__typename": "User"}, "authorAssociation": "MEMBER", "baseRefName": "main", "baseRefOid": repo.Base, "headRefName": "feature", "headRefOid": repo.Head, "merged": false}}}}
+			case strings.Contains(query.Query, "query MergeOptions("):
+				body = map[string]any{"data": map[string]any{"repository": map[string]any{"mergeCommitAllowed": true, "squashMergeAllowed": true, "rebaseMergeAllowed": false, "viewerDefaultMergeMethod": "SQUASH", "pullRequest": map[string]any{"id": "PR_fixture_7", "state": "OPEN", "isDraft": false, "headRefOid": repo.Head, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}}}}
+			case strings.Contains(query.Query, "mutation MergePullRequest("):
+				merged.Store(true)
+				body = map[string]any{"data": map[string]any{"mergePullRequest": map[string]any{"pullRequest": map[string]any{"merged": true, "state": "MERGED"}}}}
 			case strings.Contains(query.Query, "query HeadChecks("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}}
 			case strings.Contains(query.Query, "query RequiredChecks("):
@@ -336,7 +350,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.

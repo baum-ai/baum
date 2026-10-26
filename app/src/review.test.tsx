@@ -272,3 +272,15 @@ it("keeps the PR page through queued, running and completed SSE states across cl
     )!.disabled,
   ).toBe(false);
 });
+it("offers Merge in the PR page header only for an open, ready pull request", async () => {
+  await render(job("completed"));
+  expect(node.textContent).not.toContain("Merge…");
+  await render(job("completed"), 0, { ...entry, merge: "ready" });
+  expect(node.textContent).toContain("Merge…");
+  await render(job("completed"), 0, {
+    ...entry,
+    merge: "ready",
+    pull_request: { ...entry.pull_request, draft: true },
+  });
+  expect(node.textContent).not.toContain("Merge…");
+});

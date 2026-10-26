@@ -71,7 +71,21 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as the hosted PR route. Hosted discussion, approvals and GitHub mutations are absent.
+sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging is the one GitHub write
+(see below).
+
+Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
+Merge button in the PR page header and, on hover or keyboard focus, beside Ready
+in its inbox row (always drawn on touch screens). It opens a confirmation dialog
+that reads `GET /api/prs/merge-options` for the repository's allowed methods
+(merge commit, squash, rebase), preselects GitHub's default for the user and
+offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
+with the head commit the page showed, so GitHub refuses the merge if the branch
+has moved. The daemon accepts only picked repositories and never retries. A
+refusal (head moved, conflicts, required checks or branch protection, no
+permission, method not allowed) comes back as `{code, message}` with a 409, 422
+or 403 status and shows inline in the dialog, in words; on success the daemon
+re-reads the repository's pull requests and the inbox drops it.
 
 The inbox spans picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a

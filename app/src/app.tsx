@@ -629,6 +629,7 @@ function Workspace({ url }: { url: UrlState }) {
                   setSelection={setSelection}
                   Link={LocalLink}
                   live={live}
+                  changed={reload}
                 />
               ) : null}
             </>

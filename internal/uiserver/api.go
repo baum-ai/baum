@@ -34,6 +34,9 @@ type LocalAPI struct {
 	Live http.Handler
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
+	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
+	// request from the app, the only GitHub write the app makes.
+	Merge http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -91,6 +94,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			writeJSON(w, map[string]any{"available": false, "code": code})
 		})
 	}
+	merge := provider(a.Merge, "merge_unavailable")
+	mux.Handle("GET /api/prs/merge-options", merge)
+	mux.Handle("POST /api/prs/merge", merge)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
