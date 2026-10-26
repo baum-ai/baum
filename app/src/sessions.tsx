@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { formatDuration, formatRelative } from "@baum/viewer/components/format";
+import { formatRelative } from "@baum/viewer/components/format";
 import { CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -14,6 +14,17 @@ const agentLogos: Record<string, string> = {
   codex: codexLogo,
   cursor: cursorLogo,
 };
+
+/** How long a session ran, in whole units a person reads at a glance:
+ *  "40 s", "25 min", "1 h 5 min". */
+export function lasted(seconds: number): string {
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}
 
 /** The tooltip of a relative time: when it was, in the viewer's locale. */
 const absolute = (iso: string) => new Date(iso).toLocaleString();
@@ -135,7 +146,7 @@ export function SessionsPage({
                   <span className="local-session-time" title={absolute(endedAt)}>
                     Ended {formatRelative(endedAt, now)}
                   </span>
-                  <span className="local-session-time">Lasted {formatDuration(seconds)}</span>
+                  <span className="local-session-time">Lasted {lasted(seconds)}</span>
                 </li>
               );
             })}

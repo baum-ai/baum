@@ -228,7 +228,7 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   const ended = node.querySelector('[aria-label="Ended recently"]')!;
   expect(ended.querySelectorAll("li")).toHaveLength(1);
   expect(ended.textContent).toContain("Ended 2 hours ago");
-  expect(ended.textContent).toContain("Lasted 1.0h");
+  expect(ended.textContent).toContain("Lasted 1 h");
   // Only sessions that are working count on the sidebar.
   expect(sidebarBadge()).toBe("1");
   liveBody = { sessions: [session({ state: "ended", ended_at: new Date().toISOString() })] };
