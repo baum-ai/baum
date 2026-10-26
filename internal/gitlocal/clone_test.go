@@ -135,7 +135,7 @@ func TestCloneFromALocalRepositoryRunsNoHook(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 
 	dir := filepath.Join(t.TempDir(), "code", "owner", "repo")
-	if err := Clone(context.Background(), CloneOptions{URL: "file://" + f.dir, Dir: dir}); err != nil {
+	if err := Clone(context.Background(), CloneOptions{URL: "file://" + filepath.ToSlash(f.dir), Dir: dir}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "keep.txt")); err != nil {
@@ -160,7 +160,7 @@ func TestCloneRefusesANonEmptyTargetAndCleansUpAFailure(t *testing.T) {
 	requireGit(t)
 	allowFileCloneURL = true
 	t.Cleanup(func() { allowFileCloneURL = false })
-	missing := "file://" + filepath.Join(t.TempDir(), "no-such-repository")
+	missing := "file://" + filepath.ToSlash(filepath.Join(t.TempDir(), "no-such-repository"))
 
 	root := t.TempDir()
 	full := filepath.Join(root, "full")
@@ -249,7 +249,7 @@ func TestCloneWithATokenLeavesNoCredentialInTheClone(t *testing.T) {
 	t.Cleanup(func() { allowFileCloneURL = false })
 	const token = "SUPER_SECRET_CLONE_TOKEN"
 	dir := filepath.Join(t.TempDir(), "repo")
-	if err := Clone(context.Background(), CloneOptions{URL: "file://" + f.dir, Dir: dir, Token: token}); err != nil {
+	if err := Clone(context.Background(), CloneOptions{URL: "file://" + filepath.ToSlash(f.dir), Dir: dir, Token: token}); err != nil {
 		t.Fatal(err)
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
