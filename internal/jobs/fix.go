@@ -28,8 +28,9 @@ var mergeableRetry = 1500 * time.Millisecond
 // request's branches and head, whether its branch is in the repository
 // itself (a fork is never pushed to), whether the signed-in account may push
 // to the repository, and what is broken: merge conflicts (GitHub's
-// mergeability) and failing checks of the head. The harness and model are the
-// review's, resolved the same way. What stops a fix is its BlockedReason.
+// mergeability), failing checks of the head and, on the account's own pull
+// request, unresolved review threads (fixThreads). The harness and model are
+// the review's, resolved the same way. What stops a fix is its BlockedReason.
 func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, error) {
 	c, e := l.clone(ctx, item.Clone)
 	if e != nil {
@@ -94,7 +95,20 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			return Prepared{}, "", err
 		}
 		p.Fix.Conflicts, p.Fix.Checks = pr.Conflicts(), len(checks) > 0
-		if !p.Fix.Conflicts && !p.Fix.Checks {
+		threads, err := l.fixThreads(ctx, repository, item.PR)
+		if err != nil {
+			return Prepared{}, "", err
+		}
+		p.Fix.Threads = fix.Digest(threads.Threads)
+		p.FixThreadsCapped, p.FixThreadsUntrusted = threads.Capped, threads.Untrusted
+		for _, t := range threads.Threads {
+			author := ""
+			if len(t.Comments) > 0 {
+				author = t.Comments[0].Author
+			}
+			p.FixThreads = append(p.FixThreads, FixThread{Ref: t.Ref, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: author, Excerpt: fix.Excerpt(t)})
+		}
+		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" {
 			p.BlockedReason = fix.ReasonNothingToFix
 		}
 	}
@@ -111,9 +125,25 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	return p, list.Version(), nil
 }
 
+// fixThreads reads the unresolved review threads a fix of the pull request
+// addresses (fix.SelectThreads), but only on a pull request the signed-in
+// account opened: replying "Addressed in" on reviewers' threads and resolving
+// them is its author's to do. On another pull request there are none.
+func (l *Local) fixThreads(ctx context.Context, repository github.Repository, number int) (fix.Selection, error) {
+	list, err := l.Client.UnresolvedThreads(ctx, repository, number)
+	if err != nil {
+		return fix.Selection{}, err
+	}
+	if !list.ViewerDidAuthor {
+		return fix.Selection{}, nil
+	}
+	return fix.SelectThreads(list), nil
+}
+
 // executeFix rechecks a confirmed fix against GitHub, reads the failing
-// checks' output and logs, and runs the fix (fix.Run). Progress carries the
-// phase, the agent's usage once it has run, and the pushed commit.
+// checks' output and logs and the review threads, and runs the fix
+// (fix.Run). Progress carries the phase, the agent's usage once it has run,
+// the pushed commit and what became of each review thread.
 func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
@@ -166,10 +196,22 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		}
 		evidence = fix.Logs(ctx, reader, repository, checks)
 	}
+	var threads []fix.Thread
+	if p.Fix.Threads != "" {
+		progress(Progress{Phase: "reading review comments"})
+		selection, err := l.fixThreads(ctx, repository, p.PR)
+		if err != nil {
+			return nil, err
+		}
+		// The agent gets exactly the threads that were confirmed.
+		if threads = selection.Threads; fix.Digest(threads) != p.Fix.Threads {
+			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was confirmed; confirm it again")}
+		}
+	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
-		Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		Threads: threads, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
 		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory,
 		Progress: func(phase string) { progress(Progress{Phase: phase}) }})
 	report := Progress{Phase: "finishing"}
@@ -199,6 +241,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	} else {
 		report.Accounting.ClearStrings()
 	}
+	report.Threads = out.Threads
 	if out.Commit != "" {
 		report.Commit = out.Commit
 		report.CommitURL = "https://" + repository.Host + "/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name) + "/commit/" + out.Commit

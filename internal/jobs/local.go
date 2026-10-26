@@ -199,7 +199,11 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	// left to fix does not run.
 	if p.Kind == KindFix && (current.BlockedReason != "" || current.Fix != p.Fix) {
 		reason := current.BlockedReason
-		if reason == "" {
+		switch {
+		case reason != "":
+		case current.Fix.Threads != p.Fix.Threads && p.Fix.Threads != "":
+			reason = fix.ReasonThreadsChanged
+		default:
 			reason = fix.ReasonNothingToFix
 		}
 		return &fix.Error{Reason: reason, Err: errors.New("what the fix was confirmed for changed; confirm it again")}

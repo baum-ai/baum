@@ -1,6 +1,9 @@
 // Package fix runs a fix a person asked for on one of their pull requests: an
-// agent resolves its merge conflicts or failing checks in a temporary
-// checkout of its branch, and baum commits the result and pushes it.
+// agent resolves its merge conflicts, fixes its failing checks or addresses
+// its unresolved review comments in a temporary checkout of its branch, and
+// baum commits the result and pushes it. After the push, baum replies on each
+// review thread the agent addressed, with text it composes itself, and
+// resolves the thread (see threads.go).
 //
 // The agent gets write access to that checkout only, never git credentials
 // or the network (see agent.Fixer). baum itself fetches the branch, starts
@@ -40,6 +43,7 @@ const (
 // Why a fix that ran failed.
 const (
 	ReasonHeadChanged      = "head_changed"
+	ReasonThreadsChanged   = "threads_changed"
 	ReasonNoRemote         = "no_remote"
 	ReasonGit              = "git"
 	ReasonBackend          = "backend"
@@ -86,7 +90,11 @@ type Options struct {
 	// Checks.
 	Conflicts, Checks bool
 	Evidence          []Check
-	Agent             agent.Fixer
+	// Threads are the review threads to address; Replies posts baum's
+	// replies on those the agent addressed, after the push.
+	Threads []Thread
+	Replies ThreadWriter
+	Agent   agent.Fixer
 	// Backend and Model name the agent in the commit message.
 	Backend, Model      string
 	MaxCalls, MaxTokens int
@@ -103,11 +111,15 @@ type Options struct {
 type Outcome struct {
 	// Commit is the commit pushed to the pull request's branch.
 	Commit string
-	// Summary is the agent's final message.
+	// Summary is the agent's final message, without its answer block about
+	// review threads.
 	Summary string
 	// Agent is the agent's run, nil when none was needed (a base branch
 	// that merged cleanly).
 	Agent *agent.Result
+	// Threads is what became of each review thread, in order, once the
+	// push succeeded.
+	Threads []ThreadOutcome
 }
 
 // DefaultDirectory is where fixes check out: fixes under the user's cache
@@ -183,13 +195,14 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			return out, fail(ReasonGit, err)
 		}
 	}
-	if len(conflicts) > 0 || o.Checks {
+	answers := map[string]Answer{}
+	if len(conflicts) > 0 || o.Checks || len(o.Threads) > 0 {
 		progress("fixing")
 		scratch := filepath.Join(dir, "tmp")
 		if err := os.Mkdir(scratch, 0o700); err != nil {
 			return out, fail(ReasonGit, err)
 		}
-		text, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence}, o.Conflicts, o.Checks)
+		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads}, o.Conflicts, o.Checks)
 		if err != nil {
 			return out, fail(ReasonBackend, err)
 		}
@@ -203,6 +216,9 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		cancel()
 		out.Agent = &result
 		out.Summary = string(result.Document)
+		if len(o.Threads) > 0 {
+			out.Summary, answers = parseAnswer(ctx, out.Summary, tag, o.Threads)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return out, ctx.Err()
@@ -249,6 +265,10 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		return out, fail(ReasonPushFailed, err)
 	}
 	out.Commit = head
+	if len(o.Threads) > 0 && o.Replies != nil {
+		progress("replying")
+		out.Threads = reply(ctx, o.Replies, o.Repository, o.Number, o.Threads, answers, head)
+	}
 	return out, nil
 }
 
@@ -300,13 +320,33 @@ func commitMessage(o Options) string {
 	if o.Model != "" {
 		agentName += ", " + o.Model
 	}
-	switch {
-	case o.Conflicts && o.Checks:
-		return fmt.Sprintf("Merge branch '%s' into %s\n\nConflicts resolved and failing checks fixed by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, agentName)
-	case o.Conflicts:
-		return fmt.Sprintf("Merge branch '%s' into %s\n\nConflicts resolved by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, agentName)
+	var done []string
+	if o.Conflicts {
+		done = append(done, "Conflicts resolved")
 	}
-	return fmt.Sprintf("Fix failing checks\n\nChanged by an agent (%s) through baum, on request.", agentName)
+	if o.Checks {
+		done = append(done, "failing checks fixed")
+	}
+	if len(o.Threads) > 0 {
+		done = append(done, "review comments addressed")
+	}
+	if len(done) == 0 {
+		done = append(done, "changed")
+	}
+	what := done[0]
+	if len(done) > 1 {
+		what = strings.Join(done[:len(done)-1], ", ") + " and " + done[len(done)-1]
+	}
+	what = strings.ToUpper(what[:1]) + what[1:]
+	switch {
+	case o.Conflicts:
+		return fmt.Sprintf("Merge branch '%s' into %s\n\n%s by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, what, agentName)
+	case o.Checks && len(o.Threads) > 0:
+		return fmt.Sprintf("Fix failing checks and address review comments\n\n%s by an agent (%s) through baum, on request.", what, agentName)
+	case o.Checks:
+		return fmt.Sprintf("Fix failing checks\n\nChanged by an agent (%s) through baum, on request.", agentName)
+	}
+	return fmt.Sprintf("Address review comments\n\nChanged by an agent (%s) through baum, on request.", agentName)
 }
 
 // markers lists the paths, of those given, whose file in dir still has a
