@@ -110,6 +110,22 @@ permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
 re-reads the repository's pull requests and the inbox drops it.
 
+Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
+the sheet read). On the inbox, `j`/`↓` and `k`/`↑` move a row focus through the
+rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
+are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
+its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
+where both could), `g` generates the pull request's review through the same path
+as the PR page's Generate (so the same confirmations and the instant "Starting"
+state), `r` refreshes from GitHub, `?` (or the `?` button in the page bar) shows
+the sheet of keys and `Esc` closes it or clears the focus. The focused row has an
+accent bar and a faint fill, distinct from hover and selection; focus moves to
+the row's own link, so screen readers follow, and the row scrolls into view.
+Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
+and editable content (checkboxes and radios still pass them) and while any dialog
+is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
+returns to the inbox with the filter kept.
+
 The inbox spans picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
 repository without a local clone are listed from discovery (its entries have

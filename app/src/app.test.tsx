@@ -987,3 +987,43 @@ it("opens clone-less PR deep links by repository and refreshes picked repositori
     false,
   );
 });
+const press = (key: string, init: KeyboardEventInit = {}) =>
+  act(async () => {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
+  });
+it("toggles the shortcuts sheet with ? and from its button, on the inbox only", async () => {
+  entries = [entry(1)];
+  // jsdom has no modal dialogs.
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await press("?");
+  expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
+  await press("?");
+  expect(node.querySelector("dialog")).toBeNull();
+  await act(async () =>
+    node.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]')!.click(),
+  );
+  expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
+});
+it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
+  entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
+  const page = "/s/test-ns/?filter=requested&repository=acme%2Fdemo&pr=42";
+  history.replaceState(null, "", page);
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Needs a local clone");
+  await press("u", { ctrlKey: true });
+  expect(location.search).toContain("pr=42");
+  await press("u");
+  expect(location.search).toBe("?filter=requested");
+  expect(node.textContent).not.toContain("Needs a local clone");
+  history.pushState(null, "", page);
+  await act(async () => dispatchEvent(new PopStateEvent("popstate")));
+  expect(node.textContent).toContain("Needs a local clone");
+  await press("Escape");
+  expect(location.search).toBe("?filter=requested");
+});

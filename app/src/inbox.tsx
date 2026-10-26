@@ -1,5 +1,7 @@
 import {
+  useEffect,
   useId,
+  useRef,
   useState,
   type ComponentType,
   type ReactNode,
@@ -40,7 +42,10 @@ import {
 import { LiveBadge } from "./live";
 import { NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { inboxAction, moveFocus, onBody, useShortcuts } from "./shortcuts";
 
+/** One row the keyboard can reach: a pull request or a review group. */
+type Item = { id: string; entry?: Entry; group?: ReviewGroup };
 /** A review group as one inbox row, with those of its members the inbox shows. */
 export type GroupEntry = { group: ReviewGroup; members: Entry[] };
 type Group = {
@@ -152,6 +157,8 @@ export function Inbox({
   groups: reviewGroups = [],
   fix,
   jobs = [],
+  generate,
+  refresh,
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
@@ -168,7 +175,12 @@ export function Inbox({
   fix?: (entry: Entry) => void;
   /** The queue's jobs, for the fixes running. */
   jobs?: Job[];
+  /** Starts the review of one pull request, as its page's Generate does. */
+  generate?: (entry: Entry) => void;
+  /** Refreshes from GitHub. */
+  refresh?: () => void;
 }) {
+  const section = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [merging, setMerging] = useState<Entry | null>(null);
   // Review groups start collapsed.
@@ -184,6 +196,97 @@ export function Inbox({
           ],
     )
     .filter((row) => !row.needs_clone);
+  // The rows the keyboard moves through, in the order they are drawn.
+  const items: Item[] = groups.flatMap((group) =>
+    collapsed.has(group.id)
+      ? []
+      : [
+          ...group.groups.flatMap(({ group: reviewGroup, members }) => [
+            { id: `group:${reviewGroup.id}`, group: reviewGroup },
+            ...(expanded.has(reviewGroup.id)
+              ? members.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry }))
+              : []),
+          ]),
+          ...group.rows.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry })),
+        ],
+  );
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  // A row that left the list (collapsed, filtered out) is no longer focused.
+  const focused = items.find((item) => item.id === focusedId);
+  const focusedKey = focused?.id ?? null;
+  const rowLink = (id: string) =>
+    Array.from(section.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])
+      .find((element) => element.dataset.rowId === id)
+      ?.querySelector<HTMLElement>(".inbox-pr-title");
+  // Focus goes to the row's own link, so a screen reader reads the row as it
+  // moves, and the row scrolls into view.
+  useEffect(() => {
+    if (!focusedKey) return;
+    const link = rowLink(focusedKey);
+    link?.focus({ preventScroll: true });
+    link?.closest("[data-row-id]")?.scrollIntoView?.({ block: "nearest" });
+  }, [focusedKey]);
+  useShortcuts((event) => {
+    if (event.key === "Escape") {
+      if (!focusedKey) return;
+      event.preventDefault();
+      setFocusedId(null);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      return;
+    }
+    const action = inboxAction(event);
+    if (!action) return;
+    // Enter on a link or button already does what it says.
+    if (event.key === "Enter" && !onBody(event)) {
+      if (event.target instanceof HTMLElement && event.target.closest("a, button")) return;
+    }
+    const entry = focused?.entry;
+    switch (action) {
+      case "next":
+      case "previous":
+        event.preventDefault();
+        setFocusedId(
+          moveFocus(
+            items.map((item) => item.id),
+            focusedKey,
+            action === "next" ? 1 : -1,
+          ),
+        );
+        return;
+      case "refresh":
+        if (!refresh) return;
+        event.preventDefault();
+        refresh();
+        return;
+      case "open":
+        if (!focusedKey) return;
+        event.preventDefault();
+        rowLink(focusedKey)?.click();
+        return;
+      case "select":
+        if (!entry || entry.needs_clone) return;
+        event.preventDefault();
+        toggle(rowKey(entry), !selection.has(rowKey(entry)));
+        return;
+      case "merge":
+        if (!entry || !canMerge(entry)) return;
+        event.preventDefault();
+        setMerging(entry);
+        return;
+      case "fix":
+        // Merge takes the Status cell's action when both could apply.
+        if (!entry || canMerge(entry) || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
+        if (isActiveJob(fixJob(entry, jobs))) return;
+        event.preventDefault();
+        fix(entry);
+        return;
+      case "generate":
+        if (!entry || !generate || entry.status === "generating") return;
+        event.preventDefault();
+        generate(entry);
+        return;
+    }
+  });
   const toggle = (key: string, checked: boolean) =>
     setSelection((previous) => {
       const next = new Set(previous);
@@ -194,6 +297,8 @@ export function Inbox({
   const renderRow = (entry: Entry, nested: boolean) => (
     <InboxRow
       key={rowKey(entry)}
+      rowId={`pr:${rowKey(entry)}`}
+      focused={focusedKey === `pr:${rowKey(entry)}`}
       entry={entry}
       clone={cloneFor(entry)}
       selected={selection.has(rowKey(entry))}
@@ -208,6 +313,7 @@ export function Inbox({
   );
   return (
     <section
+      ref={section}
       aria-label="Pull request inbox"
       className={cn("local-inbox", selection.size > 0 && "selecting")}
     >
@@ -255,6 +361,7 @@ export function Inbox({
             <GroupRow
               key={reviewGroup.id}
               group={reviewGroup}
+              focused={focusedKey === `group:${reviewGroup.id}`}
               job={groupJob(reviewGroup, jobs)}
               expanded={expanded.has(reviewGroup.id)}
               onToggle={() =>
@@ -603,6 +710,7 @@ export function PullRequestState({ entry }: { entry: Entry }) {
 /** A review group's one row; its shown members nest under it when expanded. */
 function GroupRow({
   group,
+  focused,
   job,
   expanded,
   onToggle,
@@ -610,6 +718,8 @@ function GroupRow({
   children,
 }: {
   group: ReviewGroup;
+  /** The row the keyboard is on. */
+  focused: boolean;
   job: Job | undefined;
   expanded: boolean;
   onToggle: () => void;
@@ -620,7 +730,11 @@ function GroupRow({
   const metadata = [group.repository, group.members.map((n) => `#${n}`).join(", ")].join(" · ");
   return (
     <li>
-      <div className="inbox-columns inbox-row inbox-group-row">
+      <div
+        className="inbox-columns inbox-row inbox-group-row"
+        data-row-id={`group:${group.id}`}
+        data-focused={focused || undefined}
+      >
         <button
           type="button"
           aria-expanded={expanded}
@@ -671,6 +785,8 @@ function GroupRow({
   );
 }
 function InboxRow({
+  rowId,
+  focused,
   entry,
   clone,
   selected,
@@ -682,6 +798,9 @@ function InboxRow({
   fix,
   fixing,
 }: {
+  rowId: string;
+  /** The row the keyboard is on. */
+  focused: boolean;
   entry: Entry;
   clone: string;
   selected: boolean;
@@ -698,6 +817,8 @@ function InboxRow({
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
   return (
     <li
+      data-row-id={rowId}
+      data-focused={focused || undefined}
       className={cn(
         "inbox-columns inbox-row",
         nested && "inbox-nested",

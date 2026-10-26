@@ -18,6 +18,7 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
+import { onBody, ShortcutsSheet, useShortcuts } from "./shortcuts";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
@@ -165,6 +166,7 @@ function Workspace({ url }: { url: UrlState }) {
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   // A fix waiting for the user's confirmation.
   const [fixing, setFixing] = useState<Entry | null>(null);
+  const [shortcuts, setShortcuts] = useState(false);
   const [rates, setRates] = useState<
     {
       repository: string;
@@ -402,6 +404,29 @@ function Workspace({ url }: { url: UrlState }) {
       setLoading(false);
     }
   };
+  // The inbox's own keys live in `Inbox`, which knows its rows; these are the
+  // page's: the shortcuts sheet, and the way back from a pull request or group.
+  const onInbox = page === "inbox" && !groupId && !selectedEntry;
+  useShortcuts(
+    (event) => {
+      if (event.key === "?" && onInbox) {
+        event.preventDefault();
+        setShortcuts((open) => !open);
+      } else if (
+        page === "inbox" &&
+        (groupId || requestedNumber) &&
+        (event.key === "u" || (event.key === "Escape" && onBody(event)))
+      ) {
+        // Only the review page's own keys use a focused Escape (its sheets).
+        event.preventDefault();
+        url.update((current) => {
+          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
+          return current;
+        });
+      }
+    },
+    { allowSheet: true },
+  );
   return (
     <div className="local-shell">
       <Sidebar
@@ -601,6 +626,15 @@ function Workspace({ url }: { url: UrlState }) {
                     ) : null}
                     <button
                       type="button"
+                      aria-label="Keyboard shortcuts"
+                      title="Keyboard shortcuts (?)"
+                      onClick={() => setShortcuts(true)}
+                      className="local-icon-button"
+                    >
+                      ?
+                    </button>
+                    <button
+                      type="button"
                       aria-label="Refresh from GitHub"
                       title="Refresh from GitHub"
                       disabled={loading}
@@ -716,11 +750,14 @@ function Workspace({ url }: { url: UrlState }) {
                   groups={groups}
                   fix={setFixing}
                   jobs={jobs}
+                  generate={(entry) => void generate([entry], "single")}
+                  refresh={loading ? undefined : () => void refresh()}
                 />
               ) : null}
             </>
           )}
           {generationError ? <Alert>{generationError}</Alert> : null}
+          {shortcuts && onInbox ? <ShortcutsSheet close={() => setShortcuts(false)} /> : null}
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"

@@ -1460,3 +1460,45 @@ span.inbox-fix svg {
 :root[data-theme="dark"] img[src*="cursor"] {
   filter: invert(1);
 }
+/* The row the keyboard is on: an accent bar and a faint fill, distinct from
+   the sand under the pointer and the stronger fill of a selected row. */
+.inbox-row[data-focused] {
+  background: var(--surface-wash);
+  box-shadow: inset 3px 0 0 var(--action-primary);
+}
+.inbox-row[data-focused]:hover {
+  background: var(--surface-hover);
+}
+.shortcuts-sheet {
+  width: 26rem;
+}
+.shortcuts-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+}
+.shortcuts-list > div {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.shortcuts-list dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.shortcuts-list dd {
+  margin: 0;
+}
+.shortcuts-sheet kbd {
+  min-width: 1.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: center;
+}
