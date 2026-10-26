@@ -1842,18 +1842,36 @@ It does not persist a second review index.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
-"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?}` with `kind` one of
+"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?,"commit"?}` with `kind` one of
 `review_finished`, `review_failed`, `review_automatic` (an automatic review
-finished) and `review_requested`. They are published when a job finishes or
-fails (not when it is cancelled, interrupted or superseded) and when a
-discovery snapshot shows a pull request newly review-requested from the user
-(a repository's first snapshot after the daemon starts is only a baseline).
+finished), `review_requested`, `checks_failed`, `conflict`,
+`changes_requested`, `ready_to_merge`, `fix_pushed` and `fix_failed`. They are
+published when a job finishes or fails (not when it is cancelled, interrupted
+or superseded) and when a discovery snapshot shows a pull request newly
+review-requested from the user (a repository's first snapshot after the
+daemon starts is only a baseline). A fix job gives `fix_pushed` with the
+pushed commit's first seven characters in `commit`, or `fix_failed` with its
+`reason`, instead of a review notice. The four pull request kinds are
+transitions of the user's own pull requests between two successive snapshots
+of one repository: checks became failing, the pull request became conflicting,
+the review decision became changes requested, or the merge state became
+ready (the state the inbox calls Ready). A pull request first seen, or gone
+from the snapshot (closed or merged), gives none; a state GitHub did not
+report keeps the previous one; one that changed several ways gives one notice
+(changes requested, conflict, checks, ready, in that order of precedence).
 The title is GitHub's, trimmed to 200 characters; `risk` (1 to 5) is the
 stored review's score, with `risk_status` `lower_bound` when incomplete
 coverage may hide a higher one; `reason` is the job's failure category and
 nothing free-form. A notice never holds review text, paths or error messages.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
+
+`GET /api/index` also carries `waiting`, the number of open pull requests
+waiting on the user: those review-requested from them plus their own with
+changes requested, failing checks or a conflict, each counted once. It is the
+set the app inbox shows under "Review requested" and "Needs changes".
+`GET /api/index?view=waiting` answers `{"waiting":N}` alone, which is what the
+desktop app polls for its tray text and dock badge.
 
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.

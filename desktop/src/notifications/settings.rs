@@ -31,6 +31,12 @@ pub struct Kinds {
     pub requested: bool,
     pub cap_reached: bool,
     pub automatic: bool,
+    pub checks_failed: bool,
+    pub conflict: bool,
+    pub changes_requested: bool,
+    pub ready_to_merge: bool,
+    pub fix_pushed: bool,
+    pub fix_failed: bool,
 }
 
 impl Default for Kinds {
@@ -41,6 +47,12 @@ impl Default for Kinds {
             requested: true,
             cap_reached: true,
             automatic: true,
+            checks_failed: true,
+            conflict: true,
+            changes_requested: true,
+            ready_to_merge: true,
+            fix_pushed: true,
+            fix_failed: true,
         }
     }
 }
@@ -53,6 +65,12 @@ impl Kinds {
             Kind::Requested => self.requested,
             Kind::CapReached => self.cap_reached,
             Kind::Automatic => self.automatic,
+            Kind::ChecksFailed => self.checks_failed,
+            Kind::Conflict => self.conflict,
+            Kind::ChangesRequested => self.changes_requested,
+            Kind::ReadyToMerge => self.ready_to_merge,
+            Kind::FixPushed => self.fix_pushed,
+            Kind::FixFailed => self.fix_failed,
         }
     }
 
@@ -63,6 +81,12 @@ impl Kinds {
             Kind::Requested => self.requested = on,
             Kind::CapReached => self.cap_reached = on,
             Kind::Automatic => self.automatic = on,
+            Kind::ChecksFailed => self.checks_failed = on,
+            Kind::Conflict => self.conflict = on,
+            Kind::ChangesRequested => self.changes_requested = on,
+            Kind::ReadyToMerge => self.ready_to_merge = on,
+            Kind::FixPushed => self.fix_pushed = on,
+            Kind::FixFailed => self.fix_failed = on,
         }
     }
 }
@@ -162,6 +186,19 @@ mod tests {
         fs::write(dir.join(FILE), r#"{"kinds":{"failed":false}}"#).unwrap();
         let settings = Store::in_dir(dir.clone()).load();
         assert!(!settings.kinds.failed && settings.kinds.finished && settings.kinds.cap_reached);
+        // The kinds added after this file was written are on.
+        assert!(
+            [
+                Kind::ChecksFailed,
+                Kind::Conflict,
+                Kind::ChangesRequested,
+                Kind::ReadyToMerge,
+                Kind::FixPushed,
+                Kind::FixFailed
+            ]
+            .into_iter()
+            .all(|k| settings.kinds.get(k))
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

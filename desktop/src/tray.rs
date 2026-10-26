@@ -77,6 +77,9 @@ pub fn menu_spec(view: &View, login: bool) -> Vec<Entry> {
         Entry::item("open", "Open baum", true),
         Entry::item("summary", view.summary.clone(), false),
     ];
+    if let Some(waiting) = view.waiting_label() {
+        entries.push(Entry::item("waiting", waiting, false));
+    }
     for (i, line) in view.attention.iter().enumerate() {
         entries.push(Entry::item(
             &format!("attention-{i}"),
@@ -392,7 +395,7 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
     let view = View::default();
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon(Icon::Idle)?)
-        .tooltip(format!("baum: {}", view.summary))
+        .tooltip(view.tooltip())
         .menu(&build_menu(app, &menu_spec(&view, login)).map_err(e)?)
         // Windows opens the window on a left click and keeps the menu for the
         // right one; elsewhere a click shows the menu.
@@ -653,11 +656,17 @@ fn apply(
     if let Some(item) = menu_login {
         let _ = item.set_checked(login);
     }
+    // The dock badge (macOS; the taskbar badge where the platform has one) is
+    // the window's, not the tray's. Platforms without one answer with an
+    // error, which is no reason to say anything.
+    if let Some(window) = app.get_webview_window(crate::MAIN) {
+        let _ = window.set_badge_count(view.badge());
+    }
     let Some(tray) = tray else { return };
     if let Ok(image) = icon(view.icon) {
         let _ = tray.set_icon(Some(image));
     }
-    let _ = tray.set_tooltip(Some(format!("baum: {}", view.summary)));
+    let _ = tray.set_tooltip(Some(view.tooltip()));
     if let Ok(menu) = build_menu(app, &menu_spec(view, login)) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -709,10 +718,12 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
     };
     let jobs = client::jobs(&launch).and_then(|b| status::parse_jobs(&b));
     let automatic = client::automatic(&launch).and_then(|b| status::parse_automatic(&b));
+    let waiting = client::waiting(&launch).and_then(|b| status::parse_waiting(&b));
     {
         let mut observed = lock(&shared.0.observed);
         observed.jobs = jobs.ok();
         observed.automatic = automatic.ok().flatten();
+        observed.waiting = waiting.ok();
     }
     render(app, shared, false);
     let busy = lock(&shared.0.observed)
@@ -743,6 +754,7 @@ mod tests {
                 capped: Vec::new(),
             }),
             diagnostics: Some(Vec::new()),
+            waiting: None,
         }
     }
 
@@ -822,6 +834,22 @@ mod tests {
                 "quit-stop"
             ]
         );
+    }
+
+    #[test]
+    fn the_menu_says_how_many_pull_requests_wait_only_when_some_do() {
+        let mut observed = up(0, true);
+        observed.waiting = Some(3);
+        let spec = menu_spec(&view(observed.clone()), false);
+        assert_eq!(spec[1].text, "Idle");
+        assert_eq!(spec[2].id, "waiting");
+        assert_eq!(spec[2].text, "3 pull requests waiting on you");
+        assert!(!spec[2].enabled);
+        for waiting in [Some(0), None] {
+            observed.waiting = waiting;
+            let spec = menu_spec(&view(observed.clone()), false);
+            assert!(spec.iter().all(|e| e.id != "waiting"));
+        }
     }
 
     #[test]
