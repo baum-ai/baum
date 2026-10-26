@@ -120,6 +120,15 @@ while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
+Beside the harness choice, Settings and the desktop setup's review step show a
+"Plan usage" meter per provider and window (for example 5-hour and weekly):
+the share left, when it resets, coloured by what remains. It reads
+`GET api/plan-usage` on mount (asking for a fresh reading) and every five
+minutes while visible. Codex figures come from its last session and say how old
+they are; a provider the daemon cannot read shows "Unavailable: <reason>" and a
+failed request shows nothing. See the daemon's
+[plan usage README](../internal/planusage/README.md).
+
 The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
 In the desktop app, Settings has separate Command line and Agent hooks sections
 with inline CLI install, update and removal controls, plus installation,

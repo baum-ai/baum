@@ -496,6 +496,25 @@ The GitHub header stays scoped to
 the clone URL; it is not sent to those other hosts.
 The clone is then registered like any other.
 
+### Showing what is left of your Claude and Codex plans
+
+To show how much of your plans remains, the daemon reads two things. For Codex
+it reads the rate-limit figures Codex wrote into its own session files
+(`$CODEX_HOME/sessions`, default `~/.codex/sessions`): only the last megabyte of
+the eight newest files, only the usage percentages and reset times, with no
+network request. For Claude it reads the sign-in Claude Code stored (the macOS
+Keychain item "Claude Code-credentials", else `$CLAUDE_CONFIG_DIR/.credentials.json`,
+default `~/.claude/.credentials.json`) and asks `https://api.anthropic.com/api/oauth/usage`,
+the endpoint Claude Code's own `/usage` uses, with that token. This is the one
+outbound host this feature adds (`api.anthropic.com`), and Anthropic is the same
+provider that issued the token. The endpoint is undocumented and may change;
+when it fails baum shows the plan as unavailable. The token is held only for
+the request: it is never refreshed (that would rotate Claude Code's own
+credential), logged, stored, served to the app or put in an error, and redirects
+are refused. Results are kept in the daemon's memory for five minutes, at most
+one request a minute, and are served only by `GET /api/plan-usage` behind the
+daemon's authenticated Host/Origin boundary.
+
 ### Finding clones on this computer
 
 The daemon looks for local clones of the repositories you pick, so you are not

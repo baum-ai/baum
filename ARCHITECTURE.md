@@ -1791,6 +1791,16 @@ reserves non-overlapping resolved target paths and refuses starts during shutdow
 picks the repository if needed, registers the result with `Registry.AddFor` and
 publishes the registry change. See its [README](internal/githubrepos/README.md).
 
+### Plan usage
+
+`internal/planusage` serves `GET /api/plan-usage` (`uiserver.LocalAPI.PlanUsage`):
+what remains of the Claude and Codex plans. Codex comes from the newest
+`token_count` rate-limit snapshot in `$CODEX_HOME/sessions`; Claude from
+Anthropic's undocumented `https://api.anthropic.com/api/oauth/usage`, called with
+Claude Code's stored OAuth token, which is never refreshed, logged or stored.
+That is the one outbound host the feature adds. Results are cached five minutes,
+with at most one read a minute. See its [README](internal/planusage/README.md).
+
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
