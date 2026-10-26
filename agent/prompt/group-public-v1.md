@@ -38,4 +38,3 @@ override it where they differ.
   lists hunks of every member involved; a member's own section lists that
   member's hunks.
 - `summary.review_minutes` estimates the time to review the whole group.
-
