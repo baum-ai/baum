@@ -261,6 +261,15 @@ The daemon outlives the app, so the app's presence is a tray icon.
   1 queued"); anything needing attention; Pause or Resume automatic reviews;
   Start at login; Command Line and Hooks… (see "First run"); a Notifications
   submenu (see "Notifications"); Quit; Quit and stop background reviews.
+- **Waiting on you.** While some pull requests wait on the user (review
+  requested from them, or their own with changes requested, failing checks or
+  a conflict, the app inbox's "Review requested" and "Needs changes" groups),
+  the menu shows a disabled line such as "3 pull requests waiting on you", the
+  tooltip appends it, and the dock badge (macOS; any other platform whose
+  window badge Tauri supports, ignored silently elsewhere) shows the count.
+  Zero, an unknown count and a daemon that is not running clear all three. The
+  daemon counts them: `GET /api/index?view=waiting`, polled with the other
+  tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -297,7 +306,7 @@ Two channels, each the least that does the job:
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
    for what the daemon exposes only there: `GET /api/jobs` and
-   `GET /api/automatic` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/automatic` and `GET /api/index?view=waiting` every 3 s while jobs run and every 10 s otherwise,
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks), and
    `PUT /api/automatic`. This is the credential the app already reads for the
    window and the health check, accepted on `/api/` routes only; the request
@@ -359,7 +368,19 @@ daemon serves are not involved.
 | Review failed, with its failure category | `notice` `review_failed` |
 | Review requested from me | `notice` `review_requested` |
 | Review generated automatically | `notice` `review_automatic` |
+| My pull request: checks failing | `notice` `checks_failed` |
+| My pull request: merge conflict | `notice` `conflict` |
+| My pull request: changes requested | `notice` `changes_requested` |
+| My pull request: ready to merge | `notice` `ready_to_merge` |
+| Fix pushed, with its short commit | `notice` `fix_pushed` |
+| Fix failed, with its failure category | `notice` `fix_failed` |
 | Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
+
+The pull request notifications read like "Checks failing · acme/demo #12",
+with the pull request's title as the text. They are about the user's own pull
+requests and fire when the state changes between two daemon polls, never for a
+pull request seen for the first time or for the daemon's first look at a
+repository.
 
 `notice` events are published by the daemon (`oss/internal/notices`, see
 `ARCHITECTURE.md`); the cap notification comes from the scheduler's existing

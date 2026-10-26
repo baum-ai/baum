@@ -15,15 +15,32 @@ pub enum Kind {
     Requested,
     CapReached,
     Automatic,
+    /// The user's own pull request: its checks began failing.
+    ChecksFailed,
+    /// ... it began conflicting with its base.
+    Conflict,
+    /// ... a review requested changes.
+    ChangesRequested,
+    /// ... GitHub would merge it now.
+    ReadyToMerge,
+    /// A fix pushed a commit to the pull request's branch.
+    FixPushed,
+    FixFailed,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [
+    pub const ALL: [Kind; 11] = [
         Kind::Finished,
         Kind::Failed,
         Kind::Requested,
         Kind::CapReached,
         Kind::Automatic,
+        Kind::ChecksFailed,
+        Kind::Conflict,
+        Kind::ChangesRequested,
+        Kind::ReadyToMerge,
+        Kind::FixPushed,
+        Kind::FixFailed,
     ];
 
     /// The menu entry's label.
@@ -34,6 +51,12 @@ impl Kind {
             Kind::Requested => "Review requested from me",
             Kind::CapReached => "Daily cost cap reached",
             Kind::Automatic => "Review generated automatically",
+            Kind::ChecksFailed => "My pull request: checks failing",
+            Kind::Conflict => "My pull request: merge conflict",
+            Kind::ChangesRequested => "My pull request: changes requested",
+            Kind::ReadyToMerge => "My pull request: ready to merge",
+            Kind::FixPushed => "Fix pushed",
+            Kind::FixFailed => "Fix failed",
         }
     }
 
@@ -45,6 +68,12 @@ impl Kind {
             Kind::Requested => "notifications:requested",
             Kind::CapReached => "notifications:cap_reached",
             Kind::Automatic => "notifications:automatic",
+            Kind::ChecksFailed => "notifications:checks_failed",
+            Kind::Conflict => "notifications:conflict",
+            Kind::ChangesRequested => "notifications:changes_requested",
+            Kind::ReadyToMerge => "notifications:ready_to_merge",
+            Kind::FixPushed => "notifications:fix_pushed",
+            Kind::FixFailed => "notifications:fix_failed",
         }
     }
 
@@ -128,6 +157,8 @@ struct Notice {
     risk_status: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    commit: Option<String>,
 }
 
 /// The daemon's `automatic` event: one repository's automatic generation.
@@ -164,6 +195,12 @@ fn from_notice(n: Notice) -> Option<Toast> {
         "review_failed" => Kind::Failed,
         "review_requested" => Kind::Requested,
         "review_automatic" => Kind::Automatic,
+        "checks_failed" => Kind::ChecksFailed,
+        "conflict" => Kind::Conflict,
+        "changes_requested" => Kind::ChangesRequested,
+        "ready_to_merge" => Kind::ReadyToMerge,
+        "fix_pushed" => Kind::FixPushed,
+        "fix_failed" => Kind::FixFailed,
         _ => return None,
     };
     if n.pr == 0 {
@@ -182,20 +219,48 @@ fn from_notice(n: Notice) -> Option<Toast> {
         Kind::Automatic => "Review generated automatically",
         Kind::Failed => "Review failed",
         Kind::Requested => "Review requested from you",
+        Kind::ChecksFailed => "Checks failing",
+        Kind::Conflict => "Merge conflict",
+        Kind::ChangesRequested => "Changes requested",
+        Kind::ReadyToMerge => "Ready to merge",
+        Kind::FixPushed => "Fix pushed",
+        Kind::FixFailed => "Fix failed",
         Kind::CapReached => unreachable!("a notice never names the cap"),
     };
-    let title = match (kind, &risk, n.reason.as_deref()) {
+    let reason = n
+        .reason
+        .as_deref()
+        .filter(|r| !r.is_empty())
+        .map(|r| clean(&r.replace(['_', '-'], " "), 60));
+    let reference = format!("{repository} #{}", n.pr);
+    // News about the user's own pull request or a fix leads with what
+    // happened and where; its body is the pull request's title. A review's
+    // title keeps the outcome and puts the reference under the pull request's
+    // title.
+    let leads_with_reference = matches!(
+        kind,
+        Kind::ChecksFailed
+            | Kind::Conflict
+            | Kind::ChangesRequested
+            | Kind::ReadyToMerge
+            | Kind::FixPushed
+            | Kind::FixFailed
+    );
+    let title = match (kind, &risk, &reason) {
         (Kind::Finished | Kind::Automatic, Some(risk), _) => format!("{headline}: {risk}"),
-        (Kind::Failed, _, Some(reason)) if !reason.is_empty() => {
-            format!(
-                "{headline}: {}",
-                clean(&reason.replace(['_', '-'], " "), 60)
-            )
-        }
+        (Kind::Failed, _, Some(reason)) => format!("{headline}: {reason}"),
+        (Kind::FixPushed, _, _) => match n.commit.as_deref().map(|c| clean(c, 12)) {
+            Some(commit) if !commit.is_empty() => {
+                format!("{headline} ({commit}) · {reference}")
+            }
+            _ => format!("{headline} · {reference}"),
+        },
+        (Kind::FixFailed, _, Some(reason)) => format!("{headline}: {reason} · {reference}"),
+        _ if leads_with_reference => format!("{headline} · {reference}"),
         _ => headline.to_string(),
     };
-    let reference = format!("{repository} #{}", n.pr);
     let body = match n.title.as_deref().map(|t| clean(t, MAX_TITLE)) {
+        Some(t) if !t.is_empty() && leads_with_reference => t,
         Some(t) if !t.is_empty() => format!("{t}\n{reference}"),
         _ => reference,
     };
@@ -330,6 +395,54 @@ mod tests {
         let t = toast("review_automatic", r#","risk":2,"risk_status":"complete""#);
         assert_eq!(t.kind, Kind::Automatic);
         assert_eq!(t.title, "Review generated automatically: risk 2 of 5");
+    }
+
+    #[test]
+    fn news_about_my_pull_request_leads_with_the_reference() {
+        for (name, kind, title) in [
+            ("checks_failed", Kind::ChecksFailed, "Checks failing"),
+            ("conflict", Kind::Conflict, "Merge conflict"),
+            (
+                "changes_requested",
+                Kind::ChangesRequested,
+                "Changes requested",
+            ),
+            ("ready_to_merge", Kind::ReadyToMerge, "Ready to merge"),
+        ] {
+            let t = toast(name, "");
+            assert_eq!(t.kind, kind);
+            assert_eq!(t.title, format!("{title} · acme/widgets #7"));
+            assert_eq!(t.body, "Fix <b>the</b> thing & more");
+            assert_eq!(
+                t.route,
+                Route::Pr {
+                    clone: "c1".into(),
+                    number: 7
+                }
+            );
+        }
+        // Without a title the body still names the pull request.
+        let data = r#"{"kind":"conflict","repository":"acme/widgets","pr":7}"#;
+        assert_eq!(from_event("notice", data).unwrap().body, "acme/widgets #7");
+    }
+
+    #[test]
+    fn fix_notices_name_the_commit_or_the_reason() {
+        let t = toast("fix_pushed", r#","commit":"0123456""#);
+        assert_eq!(t.kind, Kind::FixPushed);
+        assert_eq!(t.title, "Fix pushed (0123456) · acme/widgets #7");
+        assert_eq!(t.body, "Fix <b>the</b> thing & more");
+        assert_eq!(
+            toast("fix_pushed", "").title,
+            "Fix pushed · acme/widgets #7"
+        );
+        let t = toast("fix_failed", r#","reason":"conflicts_remain""#);
+        assert_eq!(t.kind, Kind::FixFailed);
+        assert_eq!(t.title, "Fix failed: conflicts remain · acme/widgets #7");
+        assert_eq!(
+            toast("fix_failed", "").title,
+            "Fix failed · acme/widgets #7"
+        );
     }
 
     #[test]

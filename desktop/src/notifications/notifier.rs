@@ -246,6 +246,12 @@ mod tests {
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
             ("automatic", CAP.to_string()),
+            ("notice", notice("checks_failed", "")),
+            ("notice", notice("conflict", "")),
+            ("notice", notice("changes_requested", "")),
+            ("notice", notice("ready_to_merge", "")),
+            ("notice", notice("fix_pushed", r#","commit":"0123456""#)),
+            ("notice", notice("fix_failed", r#","reason":"push_failed""#)),
         ];
         for (name, data) in &events {
             assert_eq!(
@@ -263,7 +269,13 @@ mod tests {
                 Kind::Failed,
                 Kind::Requested,
                 Kind::Automatic,
-                Kind::CapReached
+                Kind::CapReached,
+                Kind::ChecksFailed,
+                Kind::Conflict,
+                Kind::ChangesRequested,
+                Kind::ReadyToMerge,
+                Kind::FixPushed,
+                Kind::FixFailed
             ]
         );
         assert_eq!(shown[0].title, "Review finished: risk 4 of 5");
@@ -388,6 +400,12 @@ mod tests {
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
             ("automatic", CAP.to_string()),
+            ("notice", notice("checks_failed", "")),
+            ("notice", notice("conflict", "")),
+            ("notice", notice("changes_requested", "")),
+            ("notice", notice("ready_to_merge", "")),
+            ("notice", notice("fix_pushed", "")),
+            ("notice", notice("fix_failed", "")),
         ] {
             assert_eq!(
                 notifier.handle_event(name, &data),

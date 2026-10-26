@@ -97,6 +97,12 @@ pub fn jobs(launch: &Launch) -> Result<Vec<u8>, String> {
     get(launch, "/api/jobs", POLL_TIMEOUT)
 }
 
+/// How many pull requests wait on the user, which the daemon counts so the
+/// shell need not download the whole index every few seconds.
+pub fn waiting(launch: &Launch) -> Result<Vec<u8>, String> {
+    get(launch, "/api/index?view=waiting", POLL_TIMEOUT)
+}
+
 pub fn automatic(launch: &Launch) -> Result<Vec<u8>, String> {
     get(launch, "/api/automatic", POLL_TIMEOUT)
 }
