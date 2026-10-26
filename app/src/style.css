@@ -1065,3 +1065,45 @@ dialog.local-dialog-wide {
 .settings-card .switch-row input[role="switch"]::after {
   background: var(--surface-card);
 }
+.local-sessions {
+  padding: 0 1.25rem;
+}
+.local-sessions h2 {
+  padding: 1rem 0 0.5rem;
+}
+.local-sessions ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.local-session-row {
+  display: grid;
+  grid-template-columns: 9rem 8.5rem minmax(0, 1fr) 11rem 11rem;
+  align-items: center;
+  column-gap: 1.25rem;
+  row-gap: 0.25rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.local-session-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.local-session-time {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.local-sessions-empty {
+  margin: 0;
+  padding: 0.5rem 0 1.25rem;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+@media (width < 64rem) {
+  .local-session-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

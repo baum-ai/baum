@@ -20,6 +20,7 @@ import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
+import { SessionsPage } from "./sessions";
 import { Notice, PageBar, Sidebar } from "./shell";
 import {
   appBase,
@@ -360,13 +361,14 @@ function Workspace({ url }: { url: UrlState }) {
     <div className="local-shell">
       <Sidebar
         page={
-          page === "jobs" || page === "repositories"
+          page === "jobs" || page === "repositories" || page === "sessions"
             ? page
             : page === "settings" || page === "diagnostics"
               ? "settings"
               : "inbox"
         }
         activeJobs={jobs.filter(isActiveJob).length}
+        runningSessions={live.filter((s) => s.state === "running").length}
         problems={diagnostics.problems}
         Link={LocalLink}
       />
@@ -428,6 +430,28 @@ function Workspace({ url }: { url: UrlState }) {
               }
               onDiagnostics={diagnostics.update}
             />
+          ) : page === "sessions" ? (
+            <>
+              <PageBar title="Sessions" detail="Agent sessions on this computer" />
+              <div className="local-page-body">
+                <SessionsPage
+                  sessions={live}
+                  Link={LocalLink}
+                  prHref={(s) => {
+                    const entry = indexedEntries.find(
+                      (e) =>
+                        e.pull_request.number === s.pr &&
+                        e.pull_request.repository.toLowerCase() === s.repository.toLowerCase(),
+                    );
+                    if (!entry) return null;
+                    const clone = cloneFor(entry);
+                    return appURL(
+                      `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${s.pr}`,
+                    );
+                  }}
+                />
+              </div>
+            </>
           ) : page === "jobs" ? (
             <>
               <PageBar title="Jobs" detail="Reviews generated on this computer" />

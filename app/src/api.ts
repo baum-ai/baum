@@ -237,6 +237,8 @@ export type LiveSession = {
   state: "running" | "idle" | "ended";
   started_at: string;
   last_activity_at: string;
+  /** When an ended session ended; absent otherwise. */
+  ended_at?: string;
   /** The normalised kind of the latest hook event. */
   last_event: "start" | "prompt" | "tool" | "stop" | "end";
   repository: string;

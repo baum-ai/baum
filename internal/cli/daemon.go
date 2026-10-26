@@ -444,7 +444,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			clones.Trigger()
 		}
 		cloneEvents, cloneDropped, unsubscribeClones := events.SubscribeCounted(clonefind.Buffer, clonefind.MatchEvent)
-		live := events.liveSessions(registry, discover, server, log)
+		live := events.liveSessions(paths, registry, discover, server, log)
 		var liveAPI http.Handler
 		if live != nil {
 			liveAPI = live.Handler()
@@ -541,15 +541,17 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 // liveSessions tracks the agent sessions the record's events show, or nothing
 // when the record is not open. It tells the app over the events stream when
 // they change.
-func (h hookEvents) liveSessions(registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
+func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
 	if h.service == nil {
 		return nil
 	}
 	return &livesessions.Tracker{
 		Source: h.service.Store,
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
-		Notify: func() { _ = server.Publish("live", struct{}{}) },
-		Log:    log,
+		// Ended sessions are kept for a day, longer than the record may reach.
+		StateDir: hookevents.RecordDir(paths),
+		Notify:   func() { _ = server.Publish("live", struct{}{}) },
+		Log:      log,
 	}
 }
 

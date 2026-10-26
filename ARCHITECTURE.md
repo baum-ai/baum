@@ -2431,7 +2431,7 @@ replace it.
 
 - **Events.** `Tracker.Run` subscribes to `Store.Subscribe` (agent events whose
   name it knows), rebuilds from `Store.Recent` (every record, filtered to the
-  last two hours and applied in `event.time` order, since a spooled event is
+  last two hours (and all of a recently ended session) and applied in `event.time` order, since a spooled event is
   recorded late), and follows new events. An event counts when it has an
   agent, a session id, a time and a directory (`session.cwd`, else `dir`). The
   agents share baum's event names, which map to a normalised kind:
@@ -2463,11 +2463,17 @@ replace it.
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
-  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (10 minutes) after
-  its end, which leaves the app time to see the end. At most `MaxSessions`
-  (32) are held: a new one evicts an ended session, else the least recently
-  active. The clock is injected (`Tracker.Now`); `Sweep` applies the timeouts
-  every 30 seconds and the tracker keeps nothing on disk.
+  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (24 hours) after
+  its end, so the Sessions page can list what ended recently. At most
+  `MaxSessions` (200) are held: a new one evicts an ended session (the one
+  that ended longest ago), else the least recently active, so a running session
+  goes only when every session held is running. The clock is injected
+  (`Tracker.Now`); `Sweep` applies the timeouts every 30 seconds. The record
+  rotates by size and can hold less than a day, so the tracker also writes its
+  ended sessions (the API's fields, no path) to `live-sessions.json` in the
+  record's directory when they change, and a rebuild loads them first and then
+  applies the record's events over them; a rebuild also takes all events of a
+  session that ended within `EndedFor`, not only those of the last two hours.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -2495,11 +2501,11 @@ replace it.
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers
   `{"sessions":[…]}`, the most recently active first, each
-  `{"agent","session_id","state","started_at","last_activity_at","last_event",
-  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
+  `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
+  "last_event","repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `stop` or `end`, `repository` is
   `owner/name` in lower case, `branch` is absent when detached and `pr` when
-  the branch has no pull request. The working directory and transcript path
+  the branch has no pull request, and `ended_at` unless the state is `ended`. The working directory and transcript path
   stay inside the tracker.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
@@ -2512,8 +2518,11 @@ replace it.
   inbox row shows "Agent running" or "Agent idle" (a count when several) for
   sessions of its pull request, matched by repository and number across
   clones; the PR page lists them in a "Sessions in progress" panel, with their
-  agent, state, branch, start and last activity, above the review. Ended
-  sessions are not shown: when one leaves the list the page reads the session
+  agent, state, branch, start and last activity, above the review. The
+  Sessions page (`?page=sessions`, with a sidebar entry counting the running
+  ones) lists the running and idle sessions, and those that ended within the
+  retention, newest end first. The inbox and the PR page never show an ended
+  session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
 

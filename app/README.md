@@ -136,7 +136,8 @@ while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
-The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
+The app's sidebar leads to the Inbox, Sessions, Repositories, Jobs and Settings; Sessions
+shows the number of agent sessions working now.
 In the desktop app, Settings has separate Command line and Agent hooks sections
 with inline CLI install, update and removal controls, plus installation,
 enablement and removal for each agent. Home paths are displayed with `~`.
@@ -184,6 +185,13 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+
+The Sessions page (`?page=sessions`) lists the same sessions: "Running now" (agent,
+working or waiting for you, repository and branch, a link to the pull request's page
+when the inbox has it, start and last activity) and "Ended recently" (sessions that
+ended in the last 24 hours, newest first, with when they ended and how long they ran).
+Times are relative, with the exact time on hover. The daemon keeps ended sessions for
+24 hours, across restarts, and the `live` event updates the page and the sidebar count.
 
 GitHub connection is available in Settings, the first-run
 diagnostics dialog and the desktop setup's first step, which share

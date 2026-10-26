@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,8 +127,16 @@ func TestSessionLifecycle(t *testing.T) {
 	if !got.StartedAt.Equal(t0) || !got.LastActivityAt.Equal(c.now) || got.Repository != "acme/demo" || got.Branch != "feature" || got.PR != 7 || got.Agent != "claude-code" || got.ID != "s1" {
 		t.Fatalf("session = %+v", got)
 	}
+	if !got.EndedAt.Equal(c.now) {
+		t.Fatalf("ended_at = %v, want %v", got.EndedAt, c.now)
+	}
 	// An ended session is kept for EndedFor, then dropped.
-	c.advance(EndedFor + time.Second)
+	c.advance(EndedFor - time.Second)
+	tr.Sweep()
+	if len(tr.Sessions()) != 1 {
+		t.Fatal("the ended session was dropped before EndedFor")
+	}
+	c.advance(2 * time.Second)
 	if !tr.Sweep() || len(tr.Sessions()) != 0 {
 		t.Fatalf("ended session kept: %+v", tr.Sessions())
 	}
@@ -270,6 +280,117 @@ func TestBound(t *testing.T) {
 	}
 	if len(tr.Sessions()) != MaxSessions {
 		t.Fatalf("tracked %d sessions", len(tr.Sessions()))
+	}
+}
+
+func TestEndedSessionsKeepEndedAtAndOrder(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("a", "session-start", c.now, "/work/demo"))
+	apply(tr, event("b", "session-start", c.now, "/work/demo"))
+	c.advance(time.Hour)
+	apply(tr, event("a", "session-end", c.now, "/work/demo"))
+	c.advance(time.Hour)
+	apply(tr, event("b", "session-end", c.now, "/work/demo"))
+	apply(tr, event("r", "user-prompt-submit", c.now, "/work/demo"))
+	got := tr.Sessions()
+	if len(got) != 3 || got[0].State == StateEnded && got[0].ID != "r" && got[0].ID != "b" {
+		t.Fatalf("sessions = %+v", got)
+	}
+	by := map[string]Session{}
+	for _, s := range got {
+		by[s.ID] = s
+	}
+	if !by["a"].EndedAt.Equal(t0.Add(time.Hour)) || !by["b"].EndedAt.Equal(t0.Add(2*time.Hour)) || !by["r"].EndedAt.IsZero() {
+		t.Fatalf("ended_at: %+v", by)
+	}
+	body, _ := json.Marshal(by["r"])
+	if strings.Contains(string(body), "ended_at") {
+		t.Fatalf("a running session serves ended_at: %s", body)
+	}
+	// Ended sessions stay for a day, then go.
+	c.advance(EndedFor - time.Hour + time.Minute)
+	tr.Sweep()
+	left := map[string]bool{}
+	for _, s := range tr.Sessions() {
+		left[s.ID] = true
+	}
+	if left["a"] || !left["b"] {
+		t.Fatalf("after a day: %v", left)
+	}
+}
+
+func TestBoundEvictsEndedBeforeRunning(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	for i := range MaxSessions {
+		c.advance(time.Second)
+		apply(tr, event(fmt.Sprintf("s%03d", i), "user-prompt-submit", c.now, "/work/demo"))
+	}
+	// The oldest session ends; a newer ended one is still evicted after it,
+	// and never a running one.
+	c.advance(time.Second)
+	apply(tr, event("s000", "session-end", c.now, "/work/demo"))
+	c.advance(time.Second)
+	apply(tr, event("new", "session-start", c.now, "/work/demo"))
+	got := tr.Sessions()
+	if len(got) != MaxSessions {
+		t.Fatalf("tracked %d", len(got))
+	}
+	for _, s := range got {
+		if s.ID == "s000" {
+			t.Fatal("the ended session was kept over a running one")
+		}
+	}
+}
+
+func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t0}
+	tr := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	apply(tr, event("s1", "session-start", c.now, "/work/demo"))
+	c.advance(time.Hour)
+	apply(tr, event("s1", "session-end", c.now, "/work/demo"))
+	apply(tr, event("s2", "user-prompt-submit", c.now, "/work/demo"))
+	tr.persist()
+	data, err := os.ReadFile(filepath.Join(dir, StateFile))
+	if err != nil || strings.Contains(string(data), "/work") || strings.Contains(string(data), "transcripts") || strings.Contains(string(data), `"s2"`) {
+		t.Fatalf("state file = %s, %v", data, err)
+	}
+	// 20 hours later the record holds nothing of it.
+	c.advance(20 * time.Hour)
+	again := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	again.Rebuild(context.Background())
+	got := again.Sessions()
+	if len(got) != 1 || got[0].ID != "s1" || got[0].State != StateEnded || !got[0].EndedAt.Equal(t0.Add(time.Hour)) || got[0].Repository != "acme/demo" {
+		t.Fatalf("restored = %+v", got)
+	}
+	// Past a day after the end it is not restored.
+	c.advance(5 * time.Hour)
+	late := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	late.Rebuild(context.Background())
+	if len(late.Sessions()) != 0 {
+		t.Fatalf("restored an expired session: %+v", late.Sessions())
+	}
+}
+
+func TestRebuildKeepsAnEndedSessionOlderThanDropAfter(t *testing.T) {
+	c := &clock{t0.Add(30 * time.Hour)}
+	at := func(d time.Duration) time.Time { return c.now.Add(-d) }
+	src := &source{records: []hookevents.Record{
+		record(event("ended", "session-start", at(10*time.Hour), "/work/demo")),
+		record(event("ended", "post-task", at(9*time.Hour), "/work/demo")),
+		record(event("ended", "session-end", at(8*time.Hour), "/work/demo")),
+		record(event("silent", "session-start", at(10*time.Hour), "/work/demo")),
+		record(event("gone", "session-start", at(27*time.Hour), "/work/demo")),
+		record(event("gone", "session-end", at(26*time.Hour), "/work/demo")),
+	}}
+	tr := &Tracker{Source: src, Linker: newLinker(), Now: c.Now}
+	tr.Rebuild(context.Background())
+	tr.ResolvePending(context.Background())
+	got := tr.Sessions()
+	if len(got) != 1 || got[0].ID != "ended" || !got[0].StartedAt.Equal(at(10*time.Hour)) || !got[0].EndedAt.Equal(at(8*time.Hour)) {
+		t.Fatalf("sessions = %+v", got)
 	}
 }
 
