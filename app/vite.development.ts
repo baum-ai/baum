@@ -21,7 +21,7 @@ export function desktopDevelopment(directory: string): Plugin {
         base: "/",
         server: {
           host: "127.0.0.1",
-          port: 5173,
+          port: 1420,
           strictPort: true,
           fs: {
             allow: [
@@ -52,7 +52,7 @@ export function desktopDevelopment(directory: string): Plugin {
         }
         try {
           const origin = target();
-          if (request.headers.origin === "http://127.0.0.1:5173") request.headers.origin = origin;
+          if (request.headers.origin === "http://127.0.0.1:1420") request.headers.origin = origin;
           proxy.web(request, response, { target: origin });
         } catch {
           response.writeHead(503);

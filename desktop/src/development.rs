@@ -15,7 +15,7 @@ pub fn frontend(launch: &url::Url) -> Result<url::Url, String> {
         .map_err(|e| format!("Cannot configure the development proxy: {e}"))?;
     let mut frontend = launch.clone();
     frontend
-        .set_port(Some(5173))
+        .set_port(Some(PORT))
         .map_err(|()| "Cannot set the development frontend port".to_string())?;
     Ok(frontend)
 }
@@ -29,9 +29,12 @@ pub fn setup_page() -> Option<url::Url> {
     Some(url::Url::parse(SETUP_PAGE).expect("static URL"))
 }
 
+/// Vite's port, kept off the platform UI's 5173 so both can run at once.
+const PORT: u16 = 1420;
+
 // `localhost`, not `127.0.0.1`: Tauri checks a page's origin, never its
 // path, and the daemon's pages use Vite on `127.0.0.1`.
-const SETUP_PAGE: &str = "http://localhost:5173/setup.html";
+const SETUP_PAGE: &str = "http://localhost:1420/setup.html";
 
 /// Whether `url` is Vite's setup screen, ignoring only the fragment.
 pub fn is_setup_page(url: &url::Url) -> bool {
@@ -48,7 +51,7 @@ pub fn grant_setup(app: &tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
     let mut capability = tauri::ipc::CapabilityBuilder::new("setup-screen-development")
-        .remote("http://localhost:5173/*".to_string())
+        .remote(format!("http://localhost:{PORT}/*"))
         .local(false)
         .window(crate::MAIN);
     for permission in crate::onboarding::SETUP_PERMISSIONS {

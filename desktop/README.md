@@ -517,13 +517,13 @@ restarting the command. Ctrl-C removes the Vite container and its private shared
 the host daemon continues running, just as when the normal desktop app closes.
 
 Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
-on port 5173. The private directory shares only the daemon origin with Vite,
+on port 1420. The private directory shares only the daemon origin with Vite,
 never its launch capability. Vite uses Docker host networking and binds only
 `127.0.0.1`, allowing the host window and the container proxy to reach the host
 daemon without exposing a development port beyond loopback. It proxies the normal
 login exchange and namespaced API, including event streams, rewriting the expected
 development Origin for CSRF validation. The setup screen also loads from Vite,
-at `http://localhost:5173/setup.html`. Tauri grants commands by origin, not
+at `http://localhost:1420/setup.html`. Tauri grants commands by origin, not
 path, so setup uses `localhost` while the daemon's pages use `127.0.0.1`; a
 capability added at runtime grants only the `localhost` origin the setup
 commands, and the window may navigate only to the setup page there. Release builds ignore the override.

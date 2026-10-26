@@ -9,7 +9,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
     await readFile(join(process.env.BAUM_APP_STATE_DIR!, "credential.json"), "utf8"),
   );
   const launch = new URL(credential.url);
-  launch.port = "5173";
+  launch.port = "1420";
   const streaming = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/api/events"),
   );
