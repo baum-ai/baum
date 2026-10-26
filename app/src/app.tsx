@@ -16,6 +16,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
+import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
@@ -34,6 +35,10 @@ import {
   jobReasonText,
   automaticNotice,
   parseLive,
+  parseGroups,
+  sameRepository,
+  MAX_GROUP_MEMBERS,
+  type ReviewGroup,
   type GitHubConnection,
   type Automatic,
   type Clone,
@@ -163,6 +168,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  // The pull requests being grouped, while the group name is asked.
+  const [grouping, setGrouping] = useState<Entry[] | null>(null);
   const lastLive = useRef(0);
   // Sessions in progress change far more often than the rest, so the live
   // event rereads only them. A daemon without them serves none.
@@ -194,6 +202,7 @@ function Workspace({ url }: { url: UrlState }) {
             connection,
             repositories,
             found,
+            groupList,
           ] = await Promise.all([
             request<Clone[]>("api/repos"),
             request<Snapshot>("api/index?history=1"),
@@ -206,6 +215,8 @@ function Workspace({ url }: { url: UrlState }) {
             request<GitHubConnection>("api/github-auth").catch(() => null),
             request<Repository[]>("api/repositories"),
             request<FoundClones>("api/clones/found").catch(() => null),
+            // An older daemon has no groups.
+            request<unknown>("api/groups").catch(() => null),
           ]);
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
@@ -220,6 +231,7 @@ function Workspace({ url }: { url: UrlState }) {
           }
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
+          setGroups(parseGroups(groupList));
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -292,10 +304,30 @@ function Workspace({ url }: { url: UrlState }) {
         entry.pull_request.number === requestedNumber &&
         entry.pull_request.repository.toLowerCase() === requestedRepository.toLowerCase(),
     );
+  const groupId = url.search.get("group");
   const page = url.search.get("page") ?? "inbox";
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
+  const reviewTogether = () => {
+    const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
+    if (
+      chosen.some(
+        (e) => !sameRepository(e.pull_request.repository, chosen[0]!.pull_request.repository),
+      )
+    ) {
+      setGenerationError(
+        "Review together works with pull requests of one repository. Groups across repositories are not supported yet.",
+      );
+      return;
+    }
+    if (chosen.length > MAX_GROUP_MEMBERS) {
+      setGenerationError(`A review group holds at most ${MAX_GROUP_MEMBERS} pull requests.`);
+      return;
+    }
+    setGenerationError("");
+    setGrouping(chosen);
+  };
   const generate = async (entries: Entry[], mode: "single" | "batch", isolation = false) => {
     if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
       setGenerationError("A review of a selected pull request is already queued or running.");
@@ -435,6 +467,26 @@ function Workspace({ url }: { url: UrlState }) {
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
+          ) : groupId ? (
+            (() => {
+              const group = groups.find((g) => g.id === groupId);
+              return group ? (
+                <GroupPage
+                  key={group.id}
+                  group={group}
+                  entries={indexedEntries}
+                  jobs={jobs}
+                  clones={clones}
+                  cloneFor={cloneFor}
+                  revision={revision}
+                  changed={reload}
+                />
+              ) : loading ? (
+                <LoadingStatus block>Loading review group…</LoadingStatus>
+              ) : (
+                <GroupMissing />
+              );
+            })()
           ) : selectedEntry?.needs_clone && !cloneFor(selectedEntry) ? (
             <section>
               <PageBar
@@ -463,6 +515,11 @@ function Workspace({ url }: { url: UrlState }) {
               job={reviewJob(selectedEntry, jobs)}
               changed={reload}
               live={live}
+              groups={groups.filter(
+                (g) =>
+                  sameRepository(g.repository, selectedEntry.pull_request.repository) &&
+                  g.members.includes(selectedEntry.pull_request.number),
+              )}
               generate={() => void generate([selectedEntry], "single")}
             />
           ) : (
@@ -472,6 +529,16 @@ function Workspace({ url }: { url: UrlState }) {
                 detail={loading ? null : `${formatCount(rows.length)} shown`}
                 actions={
                   <>
+                    {selection.size > 1 ? (
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={generating}
+                        onClick={reviewTogether}
+                      >
+                        Review together ({selection.size})
+                      </Button>
+                    ) : null}
                     {selection.size > 0 ? (
                       <Button
                         size="compact"
@@ -598,11 +665,34 @@ function Workspace({ url }: { url: UrlState }) {
                   setSelection={setSelection}
                   Link={LocalLink}
                   live={live}
+                  groups={groups}
+                  jobs={jobs}
                 />
               ) : null}
             </>
           )}
           {generationError ? <Alert>{generationError}</Alert> : null}
+          {grouping ? (
+            <NameDialog
+              title="Review these pull requests together"
+              initial={grouping[0]!.pull_request.title.slice(0, 80)}
+              action="Create group"
+              close={() => setGrouping(null)}
+              submit={async (name) => {
+                const created = await request<ReviewGroup>("api/groups", {
+                  name,
+                  members: grouping.map((e) => ({
+                    repository: e.pull_request.repository,
+                    number: e.pull_request.number,
+                  })),
+                });
+                setGrouping(null);
+                setSelection(new Set());
+                url.update(() => new URLSearchParams({ group: created.id }));
+                await reload();
+              }}
+            />
+          ) : null}
           {fork ? (
             <ForkConfirmation
               entries={fork.entries}
@@ -729,11 +819,21 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
       <div className="min-w-0">
         <LocalLink
           href={appURL(
-            `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+            job.group
+              ? `?group=${encodeURIComponent(job.group)}`
+              : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
           )}
           className="local-job-title"
         >
-          {job.repository} <span>#{job.pr}</span>
+          {job.group ? (
+            <>
+              Review group: {job.group_name || job.group} <span>{job.repository}</span>
+            </>
+          ) : (
+            <>
+              {job.repository} <span>#{job.pr}</span>
+            </>
+          )}
         </LocalLink>
         <p className="local-job-meta">{started ?? "Started by you"}</p>
         {job.reason ? (

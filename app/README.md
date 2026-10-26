@@ -120,6 +120,32 @@ while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
+Review groups (`internal/reviewgroups` owns the daemon side). Selecting two or
+more rows shows "Review together (N)": it asks for a name (prefilled with the
+first pull request's title) and creates a group of 2 to 8 pull requests of one
+repository, then opens `?group=<id>`; a selection across repositories or of
+more than eight is refused in the app without a request. In the inbox a group
+with at least one shown member is one row, placed in the bucket of its
+highest-priority shown member (Review requested, then Your pull requests, then
+Other pull requests; Saved history only when every shown member is
+historical). Its shown members leave the loose rows and nest under the group
+row, which is collapsed by default; members the current filter hides are not
+shown, bucket counts count the group once, and Select all covers loose rows and
+the members of expanded groups. The group row shows the group's risk, its name,
+"Review group · N pull requests · repository" and, when it applies,
+"Generating group review", "Group review outdated" or "No group review yet".
+The group page (`?group=<id>`) is the shared viewer with the group's name as
+heading, member labels on sections, and above the review the members (state and
+their own review status, each linking to its page) with Rename, Add pull
+request, Remove (never below two members, nor above eight) and Delete group.
+Deleting never deletes saved reviews. Generating needs an available clone of
+the repository and a saved review of every member: members without one are
+named, and "Generate their reviews" queues them. A fork or an author without
+write access asks for the same confirmation as a pull request. An outdated
+group offers Regenerate. A pull request's page links the groups it belongs to,
+and the Jobs page labels a group job "Review group: <name>". Groups across
+repositories are not supported yet.
+
 The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
 In the desktop app, Settings has separate Command line and Agent hooks sections
 with inline CLI install, update and removal controls, plus installation,
