@@ -43,32 +43,40 @@ A second launch focuses the existing window instead of opening another one.
 
 ## First run: the baum command and the hooks
 
-First run uses a four-step setup in the landing page's sand, espresso and green
+First run uses a five-step setup in the landing page's sand, espresso and green
 palette, with bundled Studio Feixen fonts. The screen is a typed React entry in
 `../app/src/desktop/`, built alongside the local application by its Vite build.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, keeping the connecting page from `ui/`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
-daemon-served pages may only open the native folder picker (below). Each step is optional and has Back
+daemon-served pages may open the native folder picker (below) or manage
+the bundled CLI and agent hooks directly in Settings. Each step is optional and has Back
 and Continue controls; changes happen only when the user selects an install
 or add action. Displayed paths abbreviate the current home directory as
-`$HOME`; actions still use the full path:
+`~`; actions still use the full path:
 
-1. Install the bundled `baum` command onto the login shell's `PATH` (below).
+1. Connect GitHub with device sign-in. The app attaches to the daemon while
+   setup shows, and the step reaches the daemon's GitHub sign-in through the
+   setup screen's `github_connection` command, which relays status, start,
+   cancel and retry over the tray's loopback client; disconnecting stays in
+   Settings. Signing in opens GitHub's device page in the default browser and
+   copies the code in the same click. The daemon runs the device flow and keeps
+   the credential, so the screen never holds a token.
+2. Install the bundled `baum` command onto the login shell's `PATH` (below).
    The step states in one line where baum will be installed, or which other
    baum it replaces; PATH and administrator warnings show beneath it.
-2. Connect the agents you use, with separate install or enable buttons. The
+3. Connect the agents you use, with separate install or enable buttons. The
    Codex marketplace plugin is installed with `baum hooks install
    --user --agent codex`. The screen explains reviewing trust with `/hooks`.
    The Claude Code plugin is installed separately with `--agent claude-code`.
    Both use the native agent CLI to fetch the public marketplace. Installation
    and enablement do not mean the user has trusted the hooks.
-3. Add one or more existing local GitHub clones. Choosing a folder in the
+4. Add one or more existing local GitHub clones. Choosing a folder in the
    native picker adds it straight away; an absolute path can be pasted instead.
    Each is registered with `baum internal repos add`;
    this does not change repository hooks. Repositories follow the review
    settings of the next step.
-4. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
+5. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
    the Anthropic API), its model (the harness default, a listed model or a
    custom one), whether reviews run automatically and, if so, for which pull
    requests (authored, requested, or both). The screen reads them with
@@ -78,9 +86,16 @@ or add action. Displayed paths abbreviate the current home directory as
 
 Failed actions leave the user on the step with their output and a retry action.
 "Check again" rereads the installed state. Finishing records `setup.json`,
-attaches to the daemon and opens diagnostics. Later, "Command Line and Hooks…"
+attaches to the daemon and opens the inbox. If diagnostics find a problem,
+the inbox shows a notice linking to the fixes. Later, "Command Line and Hooks…"
 in the tray, or the menu bar on macOS, reopens the same steps, with removal controls for
-the command and each agent plugin.
+the command and each agent plugin. Settings also provides these controls inline, without reopening setup.
+
+Setup, Diagnostics and Settings offer GitHub device sign-in: copy the code and open
+GitHub in the default browser. The daemon completes sign-in independently of
+the window and saves credentials in the operating system credential store.
+Disconnect removes the saved credential; explicit environment/config overrides
+remain effective, and saved reviews stay readable.
 
 The screen gets the facts from the bundled baum: `baum daemon login-path
 --json` resolves the login shell's `PATH` as the daemon does and names the
@@ -384,7 +399,7 @@ title is not interpreted.
   `http` and `https` links to other hosts open in the default browser. Other
   loopback servers, other schemes and new-window requests are refused.
 - Tauri treats the daemon's pages as remote. One capability names them,
-  `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows only
+  `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. They can call no other Tauri
@@ -395,16 +410,18 @@ title is not interpreted.
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
   `save_review_settings` and `finish_setup`). Every change they make runs in the
-  Rust side and only when the user clicked it on the setup screen;
-  replacing a different baum also needs the screen to name the path the
-  user confirmed. The daemon's pages can call none of them but the picker.
+  Rust side and only when the user requests it in setup or Settings;
+  replacing a different baum also requires the confirmed path. Daemon pages
+  share `setup_state`, the four CLI and hook install/removal commands and
+  `choose_repository`. GitHub connection, repository registration, review
+  settings and finishing setup remain restricted to the bundled setup screen.
 - The opener plugin is used only from Rust, to open links in the browser. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
-directories it writes only what the setup screen installs: the `baum` link
+directories it writes only what the user installs through setup or Settings: the `baum` link
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.

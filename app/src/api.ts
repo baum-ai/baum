@@ -379,4 +379,21 @@ export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
 }
 
-// estimateReasons explains, in words, why an item has no estimate on purpose.
+/** Safe daemon-owned GitHub connection state; credentials never reach the app. */
+export type GitHubConnection = {
+  state: string;
+  host: string;
+  login?: string;
+  source?: string;
+  override: boolean;
+  saved: boolean;
+  pending?: {
+    id: string;
+    user_code: string;
+    verification_uri: string;
+    expires_at: string;
+    interval: number;
+  };
+  error?: string;
+  message?: string;
+};

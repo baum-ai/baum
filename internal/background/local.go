@@ -22,10 +22,26 @@ type Local struct {
 	Config config.Config
 }
 
-func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (discovery.Observation, error) {
+func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (result discovery.Observation, returnedErr error) {
+	ctx, cancel := config.GitHubAuth.IdentityContext(ctx)
+	defer cancel()
 	repo, err := github.ParseRepository(clone.Repository)
 	if err != nil {
 		return discovery.Observation{}, err
+	}
+	// Carry the originating partition even when a later refresh step fails.
+	// Background callers retain useful partial observations on ordinary errors.
+	if client, ok := l.Client.(*github.Client); ok {
+		reader, err := client.REST(ctx, repo)
+		if err != nil {
+			return discovery.Observation{}, err
+		}
+		defer func() {
+			result.Identity = reader.CacheIdentity()
+			if ctx.Err() != nil {
+				result = discovery.Observation{}
+			}
+		}()
 	}
 	versions, err := store.Open(clone.CommonDir, "", false)
 	if err != nil {
@@ -75,7 +91,7 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (disc
 		}
 		observation = observe(current)
 	}
-	if err := versions.RefreshCurrent(ctx, key, saved, document); err != nil {
+	if err := config.GitHubAuth.WithIdentity(ctx, func() error { return versions.RefreshCurrent(ctx, key, saved, document) }); err != nil {
 		return observation, err
 	}
 	return observation, nil

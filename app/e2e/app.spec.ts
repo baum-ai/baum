@@ -296,9 +296,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(diagnostics.getByText(/Overall: Problem/)).toBeVisible();
   const problem = diagnostics.getByRole("listitem").filter({ hasText: "GitHub token" });
   await expect(problem.getByText("Problem", { exact: true })).toBeVisible();
-  await expect(problem.getByText(/Run gh auth login, or set github_token/)).toBeVisible();
   await expect(
-    diagnostics.getByRole("listitem").filter({ hasText: "GitHub CLI" }).getByText("Warning"),
+    problem.getByText(/Connect GitHub in baum Settings, or set github_token/),
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByRole("listitem").filter({ hasText: "Model backend" }).getByText("Warning"),
   ).toBeVisible();
   await expect(
     diagnostics.getByRole("listitem").filter({ hasText: "git is available" }).getByText("OK"),
@@ -403,4 +405,46 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
   await expect(row).toBeVisible();
   await expect(row.getByText("Agent")).toHaveCount(0);
+});
+
+test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        invoke: async () => ({
+          first_run: false,
+          home: "/home/user",
+          command: {
+            installed: true,
+            record: {},
+            found: { path: "/home/user/.local/bin/baum", version: "1.0" },
+          },
+          hooks: {
+            agents: ["claude-code", "codex"].map((agent) => ({
+              agent,
+              name: agent === "codex" ? "Codex" : "Claude Code",
+              detected: true,
+              installed: true,
+              enabled: true,
+            })),
+          },
+        }),
+      },
+    });
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  const cli = page.getByRole("region", { name: "Command line", exact: true });
+  const hooks = page.getByRole("region", { name: "Agent hooks", exact: true });
+  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
+  await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
+  await cli.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("settings-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 600, height: 900 });
+  await expect(cli).toBeVisible();
+  await expect(hooks).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("settings-narrow.png"), fullPage: true });
 });

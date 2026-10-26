@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,8 @@ type RESTReader struct {
 	graphqlEndpoint *url.URL
 }
 
+var ErrIdentityChanged = errors.New("GitHub identity changed; retry the operation")
+
 func (c *Client) REST(ctx context.Context, repository Repository) (*RESTReader, error) {
 	host := auth.NormalizeHostname(repository.Host)
 	if _, ok := checkedRepository(host, repository.Owner, repository.Name); !ok {
@@ -41,8 +44,26 @@ func (c *Client) REST(ctx context.Context, repository Repository) (*RESTReader, 
 	if endpoint.Host == host {
 		endpoint.Path = "/api/v3"
 	}
-	digest := sha256.Sum256([]byte(host + "\x00" + token))
-	return &RESTReader{client: &http.Client{Transport: authTransport{host: endpoint.Host, token: token, base: c.restTransport}, CheckRedirect: refuseRedirect, Timeout: requestTimeout}, endpoint: endpoint, identity: hex.EncodeToString(digest[:]), graphqlEndpoint: graphQLEndpoint(host)}, nil
+	identity := "token:" + token
+	if c.accountIdentity != nil {
+		if account := c.accountIdentity(host, token); account != "" {
+			identity = account
+		}
+	}
+	digest := sha256.Sum256([]byte(host + "\x00" + identity))
+	// A discovery transaction must never combine accounts in one cache. Resolve
+	// credentials on every request, but abort if this reader's partition changed.
+	tokens := func(ctx context.Context, host string) (string, error) {
+		current, err := c.tokens(ctx, host)
+		if err != nil {
+			return "", err
+		}
+		if current != token {
+			return "", ErrIdentityChanged
+		}
+		return current, nil
+	}
+	return &RESTReader{client: &http.Client{Transport: authTransport{host: endpoint.Host, tokens: tokens, tokenHost: host, base: c.restTransport, result: c.authResult}, CheckRedirect: refuseRedirect, Timeout: requestTimeout}, endpoint: endpoint, identity: hex.EncodeToString(digest[:]), graphqlEndpoint: graphQLEndpoint(host)}, nil
 }
 
 func (r *RESTReader) CacheIdentity() string { return r.identity }

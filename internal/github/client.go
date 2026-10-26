@@ -1,9 +1,8 @@
 // Package github reads one pull request's metadata, commits, checks and
 // conversation from GitHub's GraphQL API with the user's own token, and maps
 // them onto the generation bundle the way every baum host does. It is the
-// only part of baum that calls GitHub's API. Hosts, repositories, SSH
-// aliases and tokens are read as the GitHub CLI reads them, through its
-// library go-gh; the GraphQL requests are baum's own, over shurcooL-graphql.
+// only part of baum that calls GitHub's API. Repositories and SSH
+// aliases are parsed with go-gh; baum owns host recognition and credentials; the GraphQL requests are baum's own, over shurcooL-graphql.
 package github
 
 import (
@@ -13,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,15 +32,19 @@ type TokenSource func(ctx context.Context, host string) (string, error)
 // Options configure a Client. The zero value talks to GitHub.
 type Options struct {
 	// Transport carries the requests; nil uses http.DefaultTransport.
-	Transport http.RoundTripper
+	Transport       http.RoundTripper
+	AuthResult      func(host, token string, status int, headers http.Header)
+	AccountIdentity func(host, token string) string
 }
 
 // Client reads GitHub GraphQL evidence and read-only REST discovery metadata
 // from any recognized GitHub host with that host's token.
 type Client struct {
-	tokens        TokenSource
-	transport     http.RoundTripper
-	restTransport http.RoundTripper
+	tokens          TokenSource
+	transport       http.RoundTripper
+	restTransport   http.RoundTripper
+	authResult      func(string, string, int, http.Header)
+	accountIdentity func(string, string) string
 
 	mu    sync.Mutex
 	hosts map[string]*graphql.Client
@@ -67,6 +71,8 @@ func New(tokens TokenSource, opts Options) *Client {
 	}
 	return &Client{
 		tokens:           tokens,
+		authResult:       opts.AuthResult,
+		accountIdentity:  opts.AccountIdentity,
 		restTransport:    base,
 		transport:        githubapi.RateLimitTransport(unavailableTransport{base: base}),
 		hosts:            map[string]*graphql.Client{},
@@ -82,18 +88,36 @@ func New(tokens TokenSource, opts Options) *Client {
 // NewFromConfig returns a client whose tokens cfg resolves per host (see
 // config.Config.ResolveGitHubToken).
 func NewFromConfig(cfg config.Config, opts Options) *Client {
+	if opts.AuthResult == nil {
+		opts.AuthResult = func(host, token string, status int, headers http.Header) {
+			if host == "github.com" {
+				config.GitHubAuth.ObserveResponse(token, status, headers)
+			}
+		}
+	}
+	if opts.AccountIdentity == nil {
+		opts.AccountIdentity = func(host, token string) string {
+			if _, source := cfg.ExplicitGitHubTokenSource(host); source != "" || host != "github.com" {
+				return ""
+			}
+			if id := config.GitHubAuth.AccountForToken(token); id > 0 {
+				return "baum-account:" + strconv.FormatInt(id, 10)
+			}
+			return ""
+		}
+	}
 	return New(cfg.ResolveGitHubToken, opts)
 }
 
 // requestTimeout bounds one GraphQL request, however slowly GitHub answers.
 const requestTimeout = 2 * time.Minute
 
-// ErrUnknownHost reports a host gh does not treat as GitHub. No token is
+// ErrUnknownHost reports a host baum does not recognize as GitHub. No token is
 // looked up for it and no request is sent to it.
-var ErrUnknownHost = errors.New("not a GitHub host gh knows: use github.com, a *.ghe.com tenant, a host you ran `gh auth login` for, or GH_HOST")
+var ErrUnknownHost = errors.New("unrecognized GitHub host: use github.com, a *.ghe.com tenant, or explicitly set GH_HOST")
 
 // graphQL returns the GraphQL client for host, created on first use with the
-// host's token. The token is added only to requests for the host's GraphQL
+// endpoint. The token is resolved for every request to the host's GraphQL
 // endpoint, the client follows no redirect, and responses reach the mapping
 // byte for byte. The token lookup, which may wait on a keyring, runs without
 // the client's lock held.
@@ -108,13 +132,9 @@ func (c *Client) graphQL(ctx context.Context, host string) (*graphql.Client, err
 	if ok {
 		return client, nil
 	}
-	token, err := c.tokens(ctx, host)
-	if err != nil {
-		return nil, err
-	}
 	endpoint := graphQLEndpoint(host)
 	httpClient := &http.Client{
-		Transport:     authTransport{host: endpoint.Host, token: token, base: c.transport},
+		Transport:     authTransport{host: endpoint.Host, tokens: c.tokens, tokenHost: host, base: c.transport, result: c.authResult},
 		CheckRedirect: refuseRedirect,
 		Timeout:       requestTimeout,
 	}
@@ -142,18 +162,35 @@ func graphQLEndpoint(host string) *url.URL {
 // authTransport adds the host's token, and identifies baum, on requests for
 // the host's GraphQL endpoint only.
 type authTransport struct {
-	host  string
-	token string
-	base  http.RoundTripper
+	result    func(string, string, int, http.Header)
+	tokens    TokenSource
+	tokenHost string
+	host      string
+	token     string
+	base      http.RoundTripper
 }
 
 func (t authTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = request.Clone(request.Context())
 	request.Header.Set("User-Agent", "baum")
+	usedToken := ""
 	if request.URL.Scheme == "https" && strings.EqualFold(request.URL.Host, t.host) {
-		request.Header.Set("Authorization", "token "+t.token)
+		token := t.token
+		if t.tokens != nil {
+			var err error
+			token, err = t.tokens(request.Context(), t.tokenHost)
+			if err != nil {
+				return nil, err
+			}
+		}
+		request.Header.Set("Authorization", "token "+token)
+		usedToken = token
 	}
-	return t.base.RoundTrip(request)
+	response, err := t.base.RoundTrip(request)
+	if err == nil && response != nil && usedToken != "" && t.result != nil {
+		t.result(t.tokenHost, usedToken, response.StatusCode, response.Header)
+	}
+	return response, err
 }
 
 // errRedirect reports a redirect the client refused to follow.

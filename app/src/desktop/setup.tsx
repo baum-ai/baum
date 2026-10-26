@@ -11,11 +11,18 @@ import {
   type SetupView,
 } from "./setup-model";
 import { ReviewSettingsForm } from "./reviews";
+import { GitHubStep } from "./github-step";
 import logo from "./logo.svg";
 import codexLogo from "./codex.svg";
 import claudeLogo from "./claude-code.svg";
 
 const steps = [
+  [
+    "Connect GitHub",
+    "baum finds your pull requests and keeps their reviews current with your GitHub account.",
+    "Connect GitHub",
+    "Pull requests and reviews",
+  ],
   [
     "Install the baum CLI",
     "Agent hooks report to baum through this command. The app ships its own copy and keeps it updated.",
@@ -85,6 +92,7 @@ export function Setup() {
   const [repositories, setRepositories] = useState<string[]>([]);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
+  const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
   const busy = pending !== null;
@@ -191,6 +199,7 @@ export function Setup() {
   const command = view ? describeCommand(view.command) : null;
   const done = view
     ? [
+        github,
         Boolean(command?.ok),
         view.hooks.agents.length > 0 &&
           view.hooks.agents.every((a) => a.installed && a.enabled && !a.error),
@@ -202,6 +211,7 @@ export function Setup() {
   const modelMissing = step === last && reviews !== null && !reviews.model.trim();
   const started = view
     ? [
+        github,
         Boolean(command?.ok),
         view.hooks.agents.some((a) => a.installed),
         repositories.length > 0,
@@ -272,7 +282,8 @@ export function Setup() {
         )}
         {view && command && (
           <div id="panels">
-            {step === 0 && (
+            {step === 0 && <GitHubStep onConnected={setGitHub} />}
+            {step === 1 && (
               <div id="command-panel">
                 <p id="command-state" className={command.ok ? "ok" : undefined}>
                   {display(command.state)}
@@ -306,7 +317,7 @@ export function Setup() {
                 </div>
               </div>
             )}
-            {step === 1 && (
+            {step === 2 && (
               <div id="agent-panel">
                 <ul className="setup-card agent-list">
                   {agents.map((definition) => {
@@ -379,7 +390,7 @@ export function Setup() {
                 )}
               </div>
             )}
-            {step === 2 && (
+            {step === 3 && (
               <div id="repo-panel">
                 <div className="setup-card repo-card">
                   <button
@@ -492,9 +503,11 @@ export function Setup() {
           </div>
           {!done && (
             <p id="skip-note">
-              {step === 2
-                ? "You can add repositories later in Settings."
-                : "You can finish setup later from the app menu."}
+              {step === 0
+                ? "You can connect GitHub later in Settings."
+                : step === 3
+                  ? "You can add repositories later in Settings."
+                  : "You can finish setup later from the app menu."}
             </p>
           )}
         </footer>

@@ -4,7 +4,7 @@
 //! baum's marketplace plugins through the Claude Code and Codex CLIs (the bundled
 //! `baum hooks install --user`). The user starts each change on that screen;
 //! the Rust side makes it. When the user continues, the window attaches to
-//! the daemon and, the first time, opens its diagnostics page. The menu item
+//! the daemon and opens its inbox. The menu item
 //! reopens the screen to see what is installed, update it or remove it.
 //!
 //! Whether setup ran and what the app installed live in `setup.json` in the
@@ -40,6 +40,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-add-repository",
     "allow-review-settings",
     "allow-save-review-settings",
+    "allow-github-connection",
     "allow-finish-setup",
 ];
 /// The bundled connecting screen.
@@ -55,6 +56,8 @@ pub const MENU_LABEL: &str = "Command Line and Hooks…";
 const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
 // Login PATH resolution (30 s), two native actions (90 s each), and overhead.
 const HOOKS_TIMEOUT: Duration = Duration::from_secs(240);
+/// Starting a GitHub sign-in asks GitHub for a device code.
+const GITHUB_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -62,8 +65,6 @@ pub struct Setup {
     /// The setup screen shows, so attaching to the daemon must not navigate
     /// away from it.
     open: AtomicBool,
-    /// The next attach opens the daemon's diagnostics page (first run).
-    diagnostics_next: AtomicBool,
     /// One change at a time.
     busy: Mutex<()>,
 }
@@ -239,7 +240,7 @@ pub fn attach(
     let (handle, window, launch) = (app.clone(), window.clone(), launch.clone());
     let queued = app.run_on_main_thread(move || {
         let open = handle.state::<Setup>().open.load(Ordering::SeqCst);
-        let result = (!open).then(|| window.navigate(landing(&handle, &launch)));
+        let result = (!open).then(|| window.navigate(launch));
         let _ = send.send(result);
     });
     if let Err(e) = queued {
@@ -256,27 +257,6 @@ pub fn setup_url() -> url::Url {
 fn bundled(page: &str) -> url::Url {
     let mut url = crate::navigation::bundled_screen();
     url.set_path(&format!("/{page}"));
-    url
-}
-
-/// The URL to load for a launch URL: once after first-run setup, the
-/// daemon's diagnostics page, which the bootstrap page opens for a `page` of
-/// "diagnostics" beside the token.
-fn landing(app: &AppHandle, launch: &url::Url) -> url::Url {
-    if app
-        .state::<Setup>()
-        .diagnostics_next
-        .swap(false, Ordering::SeqCst)
-    {
-        return with_diagnostics(launch);
-    }
-    launch.clone()
-}
-
-fn with_diagnostics(launch: &url::Url) -> url::Url {
-    let mut url = launch.clone();
-    let fragment = format!("{}&page=diagnostics", launch.fragment().unwrap_or_default());
-    url.set_fragment(Some(&fragment));
     url
 }
 
@@ -659,10 +639,51 @@ pub async fn save_review_settings(
     .await
 }
 
+/// The GitHub step signs in through the attached daemon's own API, which runs
+/// the device flow and keeps the credential, so the screen never holds a
+/// token. It reads the connection, or starts, cancels or rechecks a sign-in;
+/// disconnecting stays in the app's settings.
+#[tauri::command]
+pub async fn github_connection(
+    app: AppHandle,
+    action: Option<String>,
+) -> Result<serde_json::Value, String> {
+    blocking(move || {
+        let launch =
+            crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;
+        let response = match action.as_deref() {
+            None => crate::client::request(
+                &launch,
+                "GET",
+                "/api/github-auth",
+                None,
+                crate::client::POLL_TIMEOUT,
+            )?,
+            Some(name @ ("start" | "cancel" | "retry")) => crate::client::request(
+                &launch,
+                "POST",
+                &format!("/api/github-auth/{name}"),
+                Some("{}"),
+                GITHUB_TIMEOUT,
+            )?,
+            Some(other) => return Err(format!("Unknown GitHub action: {other}")),
+        };
+        if response.status != 200 {
+            return Err(format!(
+                "The baum daemon answered {}: {}",
+                response.status,
+                String::from_utf8_lossy(&response.body).trim()
+            ));
+        }
+        serde_json::from_slice(&response.body)
+            .map_err(|e| format!("Cannot read the GitHub connection: {e}"))
+    })
+    .await
+}
+
 /// Leaves the setup screen (a synchronous command, so on the main thread):
 /// records that first-run setup is done, returns
-/// to the connecting screen and attaches to the daemon, opening its
-/// diagnostics page after a first run.
+/// to the connecting screen and attaches to the daemon, opening its inbox.
 #[tauri::command]
 pub fn finish_setup(app: AppHandle) -> Result<(), String> {
     let mut saved = load(&app);
@@ -672,9 +693,6 @@ pub fn finish_setup(app: AppHandle) -> Result<(), String> {
         save(&app, &saved)?;
     }
     let setup = app.state::<Setup>();
-    if first {
-        setup.diagnostics_next.store(true, Ordering::SeqCst);
-    }
     setup.open.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(crate::MAIN) {
         let _ = window.navigate(bundled(CONNECTING_PAGE));
@@ -878,21 +896,6 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let (left, _) = remove_all(left, |_| Ok(String::new()));
         assert!(left.is_empty());
-    }
-
-    #[test]
-    fn the_first_attach_opens_the_diagnostics_page() {
-        let launch = url::Url::parse(
-            "http://127.0.0.1:4100/#token=abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE",
-        )
-        .unwrap();
-        let url = with_diagnostics(&launch);
-        assert_eq!(
-            url.fragment(),
-            Some("token=abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE&page=diagnostics")
-        );
-        assert_eq!(url.origin(), launch.origin());
-        assert_eq!(url.path(), "/");
     }
 
     #[test]

@@ -555,3 +555,61 @@ func TestPollNowSkipsTheDeadlineButNotTheBudget(t *testing.T) {
 		t.Fatalf("exhausted budget polled again: %v requests=%d", err, len(f.requests)-before)
 	}
 }
+
+func TestIdentityResetCancelsAndFencesInFlightPoll(t *testing.T) {
+	entered := make(chan struct{})
+	var once sync.Once
+	c := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		once.Do(func() { close(entered) })
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})})
+	s := New(c, t.TempDir())
+	done := make(chan error, 1)
+	go func() { _, err := s.Poll(context.Background(), testRepo); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("poll never started")
+	}
+	old := s.Epoch()
+	s.ResetIdentity()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("old poll succeeded after reset")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reset did not cancel poll")
+	}
+	if s.Epoch() == old {
+		t.Fatal("epoch unchanged")
+	}
+	files, err := os.ReadDir(s.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatal("old poll wrote cache after reset")
+	}
+}
+
+func TestObservationCannotMoveToAnotherAccountPartition(t *testing.T) {
+	s, _ := service(t, recordedFixture())
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Observe(context.Background(), testRepo, Observation{Identity: "previous-account", Number: 1, HeadSHA: "old-private"})
+	if !errors.Is(err, github.ErrIdentityChanged) {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Cached(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, observation := range snapshot.Observations {
+		if observation.HeadSHA == "old-private" {
+			t.Fatal("old account observation entered current cache")
+		}
+	}
+}

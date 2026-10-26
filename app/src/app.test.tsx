@@ -69,15 +69,17 @@ beforeEach(() => {
       if (fail || !path.startsWith("/s/test-ns/"))
         return new Response("unauthorized", { status: 401 });
       return Response.json(
-        path.includes("/s/test-ns/api/index")
-          ? { entries, problems: [] }
-          : path === "/s/test-ns/api/repos"
-            ? []
-            : path === "/s/test-ns/api/prs"
+        path === "/s/test-ns/api/github-auth"
+          ? { state: "disconnected", host: "github.com", saved: false, override: false }
+          : path.includes("/s/test-ns/api/index")
+            ? { entries, problems: [] }
+            : path === "/s/test-ns/api/repos"
               ? []
-              : path === "/s/test-ns/api/jobs"
-                ? { jobs: [] }
-                : {},
+              : path === "/s/test-ns/api/prs"
+                ? []
+                : path === "/s/test-ns/api/jobs"
+                  ? { jobs: [] }
+                  : {},
       );
     }),
   );
@@ -199,7 +201,7 @@ it.each([
     stale: true,
     error: "offline",
     remaining: 4999,
-    note: "Couldn't refresh acme/demo from GitHub (offline). Showing what was saved.",
+    note: "GitHub is not connected, so baum cannot refresh pull requests.",
   },
   {
     stale: false,
@@ -417,11 +419,40 @@ it("shows failed background refresh without hiding cached reviews", async () => 
       : original(...args),
   );
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain(
-    "background metadata refresh is unavailable (metadata_unavailable)",
-  );
-  expect(node.textContent).toContain("Cached reviews remain readable");
+  expect(node.textContent).toContain("GitHub is not connected");
+  expect(node.textContent).toContain("Saved reviews are still available");
   expect(node.querySelector('[aria-label="Select acme/demo #1"]')).not.toBeNull();
+});
+
+it("folds every repository GitHub could not refresh into one notice with one action", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const failed = (repository: string) => ({
+    repository,
+    error: "discovery_unavailable",
+    next_refresh: "2026-10-15T12:01:00Z",
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/background"
+      ? Promise.resolve(Response.json([failed("acme/demo"), failed("acme/other")]))
+      : String(args[0]) === "/s/test-ns/api/github-auth"
+        ? Promise.resolve(
+            Response.json({
+              state: "connected",
+              host: "github.com",
+              saved: true,
+              login: "octocat",
+              override: false,
+            }),
+          )
+        : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const notices = [...node.querySelectorAll(".local-notice")];
+  expect(notices).toHaveLength(1);
+  expect(notices[0]!.textContent).toContain("could not refresh 2 repositories from GitHub");
+  expect(notices[0]!.querySelector("a")!.textContent).toBe("Open settings");
+  expect(notices[0]!.querySelector("a")!.getAttribute("href")).toContain("page=settings");
 });
 
 const diagnosticsReport = {
@@ -442,7 +473,7 @@ const diagnosticsReport = {
       status: "problem",
       detail: "No token found.",
       source: "none",
-      fix: "Run gh auth login.",
+      fix: "Connect GitHub in baum Settings.",
     },
   ],
 };
@@ -464,7 +495,7 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   expect(text).toContain("Diagnostics");
   expect(text).toContain("Overall: Problem. 1 problem found.");
   for (const word of ["OK", "Warning", "Problem"]) expect(text).toContain(word);
-  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).toContain("Fix: Upgrade gh.");
   expect(text).toContain("/usr/bin/git");
   expect(text).toContain("2.40.0");
@@ -478,9 +509,9 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Checking this machine…");
   const button = () =>
-    [...node.querySelectorAll("dialog button")].find((b) =>
-      (b.textContent ?? "").startsWith("Check"),
-    )! as HTMLButtonElement;
+    [
+      ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
+    ].find((b) => /Check/.test(b.textContent ?? ""))!;
   expect(button().disabled).toBe(true);
   await act(async () => resolve(Response.json({ local: true, report: diagnosticsReport })));
   expect(button().textContent).toBe("Check again");
@@ -507,7 +538,7 @@ it("points every page at the diagnostics when they find a problem", async () => 
   expect(location.search).toBe("?page=diagnostics");
   const text = node.textContent ?? "";
   expect(text).toContain("Check this computer");
-  expect(text).toContain("Fix: Run gh auth login.");
+  expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).not.toContain("Show the fixes");
   // The page ran the checks again; the inbox does not rerun them.
   expect(calls.count).toBe(2);
@@ -526,7 +557,7 @@ it("shows no diagnostics notice when nothing is a problem", async () => {
   expect(calls.count).toBe(1);
   expect(node.textContent).not.toContain("diagnostics found");
 });
-it("opens the diagnostics page from its address, as the desktop app's first run does", async () => {
+it("opens the diagnostics page from its address", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   const calls = stubDiagnostics(async () =>
     Response.json({ local: true, report: diagnosticsReport }),
@@ -801,5 +832,48 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   await act(async () => retry.click());
   expect(calls.count).toBe(2);
   expect(node.textContent).not.toContain("boom");
-  expect(node.textContent).toContain("Fix: Run gh auth login.");
+  expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
+});
+
+it("manages CLI and hooks inline in desktop Settings", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  const view = {
+    first_run: false,
+    command: {
+      installed: false,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        {
+          agent: "codex",
+          name: "Codex",
+          detected: true,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+        },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: ["Installed"] },
+  );
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const click = async (label: string) => {
+      const button = [...node.querySelectorAll("button")].find((b) => b.textContent === label);
+      expect(button).toBeTruthy();
+      await act(async () => button!.click());
+    };
+    await click("Install baum CLI");
+    expect(invoke).toHaveBeenCalledWith("install_command", {});
+    await click("Install Codex hooks");
+    expect(invoke).toHaveBeenCalledWith("install_hooks", { agent: "codex" });
+    expect(location.search).toBe("?page=settings");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
 });

@@ -44,12 +44,12 @@ export function displayPath(value: string, homeDirectory?: string | null) {
   if (!home) return value;
   const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp("(^|[\\s(\"'=:`])" + escaped + "(?=$|[\\\\/\\s)\"'`,;:])", "g");
-  return value.replace(pattern, (_, prefix) => `${prefix}$HOME`);
+  return value.replace(pattern, (_, prefix) => `${prefix}~`);
 }
 
 export function repositoryPath(value: string, home?: string | null) {
-  if (home && (value === "$HOME" || /^\$HOME[\\/]/.test(value))) {
-    return home + value.slice(5);
+  if (home && (value === "~" || /^~[\\/]/.test(value))) {
+    return home + value.slice(1);
   }
   return value;
 }

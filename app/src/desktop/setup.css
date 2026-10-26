@@ -431,3 +431,60 @@ button.loading::before {
     animation-duration: 2.4s;
   }
 }
+.github-code-step {
+  border-top: 1px solid #ead3a8;
+  padding: 20px 0;
+}
+.github-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #ddbf8e;
+  border-radius: 10px;
+  background: #fff;
+}
+.github-code span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  user-select: all;
+}
+.github-code-step .actions {
+  margin-top: 14px;
+}
+.github-code-step a.button {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+  padding: 11px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--bg);
+  background: var(--accent);
+  text-decoration: none;
+}
+.github-code-step a.button:hover {
+  background: #256632;
+}
+.setup-card .github-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.github-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8e3dc;
+  color: #8a2c1a;
+  font-size: 14px;
+}

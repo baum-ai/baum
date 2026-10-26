@@ -1,11 +1,11 @@
 // Package doctor reports why baum can or cannot find its tools, backend and
 // GitHub token, with a fix for each problem.
 //
-// It runs "<tool> --version" for git and gh, the same checks "baum internal generate"
+// It runs "<tool> --version" for git, the same checks "baum internal generate"
 // runs for claude, codex (including codex's read-only sandbox preflight) and
 // cursor-agent (its --help and --version), and for anthropic (that
-// ANTHROPIC_API_KEY is set; the key is not tried against the API), "gh auth
-// token" when no token is configured,
+// ANTHROPIC_API_KEY is set; the key is not tried against the API), and reads
+// baum's credential store when no explicit GitHub token is configured,
 // and at most one network request, for the signed price list. The tools run with the
 // environment their backends give them, never the whole of ours. It never
 // prints a token or an API key, only where one was found.
@@ -277,7 +277,6 @@ func (r *runner) run() {
 	r.cfg, r.cfgErr = cfg, cfgErr
 
 	r.git()
-	r.gh()
 	checked := r.backends()
 	r.selection(checked)
 	clones := r.locations(cfgErr)
@@ -342,38 +341,6 @@ func (r *runner) git() {
 		} else {
 			c.Status, c.Detail = StatusOK, "git "+orUnknown(version)+" is recent enough (needs "+gitlocal.MinGitVersion+" or newer)"
 		}
-	}
-	r.add(c)
-}
-
-func (r *runner) gh() {
-	c := Check{ID: "gh", Label: "gh (GitHub CLI)"}
-	var path string
-	var err error
-	if explicit := r.opts.Getenv("GH_PATH"); explicit != "" {
-		c.Source = "GH_PATH"
-		if path, err = r.opts.LookPath(explicit); err != nil {
-			c.Status, c.Detail = StatusWarning, fmt.Sprintf("GH_PATH is %q, which cannot be run: %v", explicit, unwrapExec(err))
-			c.Fix = "point GH_PATH at the gh executable, or unset it to search PATH; gh is only needed to read a token from `gh auth login`"
-			r.add(c)
-			return
-		}
-	} else {
-		c.Source = "PATH"
-		if path, err = r.opts.LookPath("gh"); err != nil {
-			c.Status, c.Detail = StatusWarning, "gh was not found on PATH; it is only needed when the GitHub token comes from `gh auth login`"
-			c.Fix = "install the GitHub CLI and run `gh auth login`, or set GITHUB_TOKEN, or set GH_PATH to the gh executable"
-			r.add(c)
-			return
-		}
-	}
-	c.Path = path
-	version, _, err := r.version(agent.LocalEnvironment(os.Environ()), path)
-	if err != nil {
-		c.Status, c.Detail = StatusWarning, fmt.Sprintf("running %s --version failed: %v", path, err)
-		c.Fix = fmt.Sprintf("run `%s --version` yourself to see why it fails, or reinstall gh", path)
-	} else {
-		c.Status, c.Detail, c.Version = StatusOK, "gh found; used only to read a token from `gh auth login`", version
 	}
 	r.add(c)
 }
@@ -710,8 +677,8 @@ func (r *runner) tokens(clones []repos.Clone) {
 		c := Check{ID: "github-token-" + host, Label: "GitHub token: " + host}
 		if !github.IsGitHubHost(host) {
 			c.Status = StatusProblem
-			c.Detail = fmt.Sprintf("baum will not read %s: it is not github.com, a *.ghe.com tenant, a host in gh's hosts.yml or the host GH_HOST names, so a token is never looked up or sent for it", host)
-			c.Fix = fmt.Sprintf("set GH_HOST=%s or run `gh auth login --hostname %s`", host, host)
+			c.Detail = fmt.Sprintf("baum will not read %s: it is not github.com, a *.ghe.com tenant, the host GH_HOST names, so a token is never looked up or sent for it", host)
+			c.Fix = fmt.Sprintf("set GH_HOST=%s and GH_ENTERPRISE_TOKEN", host)
 			r.add(c)
 			continue
 		}
@@ -731,7 +698,7 @@ func (r *runner) tokens(clones []repos.Clone) {
 			c.Status, c.Fix = StatusWarning, fix
 			c.Detail = "no token was found for " + host + unread
 			if unread != "" {
-				c.Fix = "fix the config file as the config check says (its github_token is read once it loads), or set GITHUB_TOKEN, or run `gh auth login`"
+				c.Fix = "fix the config file as the config check says (its github_token is read once it loads), or set GITHUB_TOKEN, or connect GitHub in baum Settings"
 			}
 			if host == config.GitHubHost {
 				c.Detail += "; public repositories work without one, within GitHub's low unauthenticated rate limit"
@@ -740,11 +707,11 @@ func (r *runner) tokens(clones []repos.Clone) {
 				c.Detail += ", and a registered clone belongs to it"
 			}
 		case errors.Is(err, context.DeadlineExceeded):
-			c.Status, c.Detail = StatusProblem, fmt.Sprintf("asking gh for the token of %s timed out after %s", host, tokenTimeout)
-			c.Fix = "the keyring may be waiting for an unlock or \"allow\" prompt: run `gh auth token` once to answer it, or set GITHUB_TOKEN"
+			c.Status, c.Detail = StatusProblem, fmt.Sprintf("reading the GitHub credential for %s timed out after %s", host, tokenTimeout)
+			c.Fix = "the keyring may be waiting for an unlock or \"allow\" prompt: unlock the operating system credential store and retry, or set GITHUB_TOKEN"
 		default:
 			c.Status, c.Detail = StatusProblem, "looking up the token failed: "+err.Error()
-			c.Fix = "run `gh auth status` to see why gh cannot read its token, or set GITHUB_TOKEN"
+			c.Fix = "reconnect GitHub in baum Settings; check repository permissions and organization SSO authorization, or set GITHUB_TOKEN"
 		}
 		r.add(c)
 	}
@@ -860,7 +827,7 @@ func (r *runner) environment() {
 	value := r.opts.Getenv("PATH")
 	c := Check{ID: "path", Label: "PATH", Status: StatusInfo}
 	if value == "" {
-		c.Status, c.Detail = StatusWarning, "PATH is empty, so git, gh, claude and codex cannot be found by name"
+		c.Status, c.Detail = StatusWarning, "PATH is empty, so git, claude and codex cannot be found by name"
 		c.Fix = "start baum from a shell, or set backend_paths.claude and backend_paths.codex in " + r.cfgPath + " (git must still be on PATH)"
 		r.add(c)
 		return
@@ -891,14 +858,6 @@ func orUnknown(version string) string {
 		return "(version not recognised)"
 	}
 	return version
-}
-
-func unwrapExec(err error) error {
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
-		return execErr.Err
-	}
-	return err
 }
 
 // WriteText renders r for a terminal: one line per check with a status marker,

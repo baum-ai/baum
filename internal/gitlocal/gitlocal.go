@@ -474,15 +474,25 @@ func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 // remote-tracking branches, commit-graph or auto-maintenance. In a partial
 // clone the fetch keeps the clone's filter.
 func (r *Repo) fetch(ctx context.Context, refspecs []string) error {
+	env, authenticated, err := r.fetchCredentials(ctx, r.fetchEnv(ctx))
+	if err != nil {
+		return err
+	}
 	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-prune", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", r.opts.Remote}
-	_, err := run(ctx, runSpec{
-		dir: r.dir, env: r.fetchEnv(ctx), timeout: r.opts.FetchTimeout,
+	_, err = run(ctx, runSpec{
+		dir: r.dir, env: env, timeout: r.opts.FetchTimeout,
 		config: []string{
 			"core.hooksPath=" + filepath.Join(r.mirror, "hooks"), "protocol.ext.allow=never", "gc.auto=0",
 			"maintenance.auto=false", "fetch.recurseSubmodules=false", "fetch.writeCommitGraph=false",
 		},
 	}, append(args, refspecs...)...)
 	if err != nil {
+		if authenticated {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return errors.New("GitHub HTTPS fetch failed; check repository access, organization SSO authorization and GitHub connection")
+		}
 		return err
 	}
 	// A fetch into a shallow clone can add shallow commits.

@@ -985,3 +985,66 @@ func TestPRTurnedDraftWhileQueuedRunsWhenReadyAgain(t *testing.T) {
 	h.pass()
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:ready_for_review")
 }
+
+func TestIdentityFencePreservesSettingsAndRequiresNewBaseline(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "old", requested: true})
+	h.now = h.now.Add(time.Minute)
+	finish := h.scheduler.BeginIdentityChange()
+	pass := make(chan struct{})
+	go func() { h.scheduler.Pass(context.Background()); close(pass) }()
+	select {
+	case <-pass:
+		t.Fatal("pass crossed identity fence")
+	case <-time.After(20 * time.Millisecond):
+	}
+	finish(true)
+	select {
+	case <-pass:
+	case <-time.After(time.Second):
+		t.Fatal("fence not released")
+	}
+	h.observe(pr{number: 1, head: "new-account-existing", requested: true})
+	h.scheduler.Pass(context.Background())
+	if jobs := h.queued(); len(jobs) != 0 {
+		t.Fatal("historical PR automatically queued", jobs)
+	}
+	h.now = h.now.Add(time.Minute)
+	h.observe(pr{number: 1, head: "subsequent-change", requested: true})
+	h.scheduler.Pass(context.Background())
+	if jobs := h.queued(); len(jobs) != 1 {
+		t.Fatal("future changes did not resume", jobs)
+	}
+}
+
+func TestPassWaitingAtIdentityFenceStopsWithItsContext(t *testing.T) {
+	h := newHarness(t)
+	finish := h.scheduler.BeginIdentityChange()
+	defer finish(false)
+	ctx, cancel := context.WithCancel(context.Background())
+	pass := make(chan struct{})
+	go func() { h.scheduler.Pass(ctx); close(pass) }()
+	cancel()
+	select {
+	case <-pass:
+	case <-time.After(time.Second):
+		t.Fatal("pass kept waiting for a sign-in after its context ended")
+	}
+}
+
+func TestIdentityTransitionFencesQueuedAdmission(t *testing.T) {
+	h := newHarness(t)
+	j := jobs.Job{Prepared: jobs.Prepared{Repository: "org/repo", EstimateUSD: new(1.0)}, CreatedAt: h.now}
+	if admission := h.scheduler.Gate(j); admission.Reason != "" {
+		t.Fatal(admission)
+	}
+	finish := h.scheduler.BeginIdentityChange()
+	if admission := h.scheduler.Gate(j); admission.Reason == "" {
+		t.Fatal("queued job admitted during transition")
+	}
+	h.now = h.now.Add(time.Minute)
+	finish(true)
+	if admission := h.scheduler.Gate(j); admission.Reason == "" {
+		t.Fatal("previous-account queued job admitted after transition")
+	}
+}

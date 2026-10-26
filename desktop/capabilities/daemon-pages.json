@@ -1,9 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "daemon-pages",
-  "description": "The daemon's pages on loopback may open the native folder picker, which only returns the folder the user chose. Nothing else: registering it is the daemon's own API, and every install, removal and setup command stays with the bundled setup screen.",
+  "description": "The attached daemon pages may open the folder picker and manage the bundled CLI and agent plugins from Settings. Other setup commands remain restricted to the bundled screen.",
   "windows": ["main"],
   "remote": { "urls": ["http://127.0.0.1:*/*"] },
   "local": false,
-  "permissions": ["allow-choose-repository"]
+  "permissions": [
+    "allow-choose-repository",
+    "allow-setup-state",
+    "allow-install-command",
+    "allow-uninstall-command",
+    "allow-install-hooks",
+    "allow-uninstall-hooks"
+  ]
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -133,19 +134,14 @@ func remoteURL(remote string) (*url.URL, bool) {
 // IsGitHubHost reports whether baum will talk to host: see gitHubHost.
 func IsGitHubHost(host string) bool { return gitHubHost(auth.NormalizeHostname(host)) }
 
-// gitHubHost reports a host gh treats as GitHub: github.com, a *.ghe.com
-// tenant, a host in gh's hosts.yml, or the one GH_HOST names. Only these are
+// gitHubHost recognizes github.com, a *.ghe.com tenant and the host GH_HOST
+// explicitly names. Only these are
 // ever sent a token.
 func gitHubHost(host string) bool {
 	if host == config.GitHubHost || auth.IsTenancy(host) {
 		return true
 	}
-	for _, known := range auth.KnownHosts() {
-		if auth.NormalizeHostname(known) == host {
-			return true
-		}
-	}
-	return false
+	return host != "" && host == auth.NormalizeHostname(strings.TrimSpace(os.Getenv("GH_HOST")))
 }
 
 // Clone is the local clone a pull request is resolved from; *gitlocal.Repo

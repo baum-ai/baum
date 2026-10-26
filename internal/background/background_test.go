@@ -235,3 +235,16 @@ func TestRefreshNowSharesTheRatePause(t *testing.T) {
 		t.Fatalf("sync ignored the pause: %+v calls=%v", state, calls)
 	}
 }
+
+func TestIdentityResetRejectsOldBackoffWrites(t *testing.T) {
+	s := &Service{}
+	old := s.identityEpoch()
+	s.put(State{Repository: "acme/app", NextRefresh: time.Now().Add(time.Hour)}, old)
+	s.setPause("github.com", time.Now().Add(time.Hour), old)
+	s.ResetIdentity()
+	s.put(State{Repository: "acme/app", NextRefresh: time.Now().Add(time.Hour)}, old)
+	s.setPause("github.com", time.Now().Add(time.Hour), old)
+	if !s.state("acme/app").NextRefresh.IsZero() || !s.pause("github.com").IsZero() {
+		t.Fatal("old account backoff survived reset")
+	}
+}

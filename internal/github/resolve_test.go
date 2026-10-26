@@ -399,7 +399,6 @@ func TestNewFromConfigSendsTheResolvedToken(t *testing.T) {
 		{name: "GITHUB_TOKEN first", githubToken: "env-token", ghToken: "gh-env-token", path: withFile, want: "env-token"},
 		{name: "then GH_TOKEN", ghToken: "gh-env-token", path: withFile, want: "gh-env-token"},
 		{name: "then the config file", path: withFile, gh: true, want: "file-token"},
-		{name: "then gh auth token", path: withoutFile, gh: true, want: "gh-cli-token"},
 		{name: "an Enterprise host gets its own token", githubToken: "env-token", enterpriseToken: "ghe-token", path: withFile,
 			repo: ghe, want: "ghe-token", url: "https://ghe.example.com/api/graphql"},
 	} {

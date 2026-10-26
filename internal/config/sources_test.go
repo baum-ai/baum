@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/githubauth"
 )
 
 func TestBackendPathsRoundTrip(t *testing.T) {
@@ -100,62 +100,32 @@ func TestGitHubTokenSourceIsTracked(t *testing.T) {
 	}
 }
 
-func TestResolveGitHubTokenSourceFromGH(t *testing.T) {
-	ctx := context.Background()
-	t.Run("gh environment variable", func(t *testing.T) {
-		standInGH(t, "unused", "unused")
-		t.Setenv("GH_ENTERPRISE_TOKEN", "ghe_env")
-		_, source, err := (Config{}).ResolveGitHubTokenSource(ctx, "ghe.example.com")
-		if err != nil || source != "environment variable GH_ENTERPRISE_TOKEN" {
-			t.Errorf("source = %q, err = %v", source, err)
-		}
-	})
-	t.Run("gh hosts.yml", func(t *testing.T) {
-		// go-gh reads its configuration once per process, so a fresh process
-		// reads this directory.
-		if runtime.GOOS == "windows" {
-			t.Skip("re-executing the test binary")
-		}
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte("github.com:\n  oauth_token: gho_from_hosts\n  user: someone\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command(os.Args[0], "-test.run=^TestHostsFileHelper$")
-		cmd.Env = append(os.Environ(), "BAUM_HOSTS_HELPER=1", "GH_CONFIG_DIR="+dir, "GH_TOKEN=", "GITHUB_TOKEN=", "GH_PATH=", "PATH="+t.TempDir())
-		out, err := cmd.CombinedOutput()
-		if err != nil || !strings.Contains(string(out), "source="+SourceGHHostsFile+" token=gho_from_hosts") {
-			t.Errorf("helper: %v\n%s", err, out)
-		}
-	})
-	t.Run("gh keyring", func(t *testing.T) {
-		standInGH(t, "auth token --secure-storage --hostname github.com", "gho_keyring")
-		_, source, err := (Config{}).ResolveGitHubTokenSource(ctx, "github.com")
-		if err != nil || source != SourceGHKeyring {
-			t.Errorf("source = %q, err = %v", source, err)
-		}
-	})
-	t.Run("none", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		t.Setenv("GH_PATH", "")
-		t.Setenv("GH_CONFIG_DIR", t.TempDir())
-		for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
-			t.Setenv(name, "")
-		}
-		if _, _, err := (Config{}).ResolveGitHubTokenSource(ctx, "github.com"); !errors.Is(err, ErrNoGitHubToken) {
-			t.Errorf("err = %v, want ErrNoGitHubToken", err)
-		}
-	})
-}
-
-func TestHostsFileHelper(t *testing.T) {
-	if os.Getenv("BAUM_HOSTS_HELPER") == "" {
-		t.Skip("run by TestResolveGitHubTokenSourceFromGH")
+func TestResolveGitHubTokenSourceIgnoresGHStorage(t *testing.T) {
+	standInGH(t, "unused", "unused")
+	t.Setenv("GH_HOST", "ghe.example.com")
+	t.Setenv("GH_ENTERPRISE_TOKEN", "enterprise")
+	_, source, err := (Config{}).ResolveGitHubTokenSource(context.Background(), "ghe.example.com")
+	if err != nil || source != "environment variable GH_ENTERPRISE_TOKEN" {
+		t.Fatalf("%q %v", source, err)
 	}
-	token, source, err := (Config{}).ResolveGitHubTokenSource(context.Background(), "github.com")
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(os.Getenv("GH_CONFIG_DIR"), "hosts.yml"), []byte("github.com:\n  oauth_token: secret\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("source=%s token=%s\n", source, token)
+	if _, _, err := (Config{}).ResolveGitHubTokenSource(context.Background(), "github.com"); !errors.Is(err, ErrNoGitHubToken) {
+		t.Fatal(err)
+	}
+}
+
+func TestBaumCredentialSource(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	original := GitHubAuth
+	t.Cleanup(func() { GitHubAuth = original })
+	GitHubAuth = githubauth.New(&memoryCredentialStore{credential: githubauth.Credential{AccessToken: "baum-secret", Login: "alice", ID: 1}})
+	token, source, err := (Config{}).ResolveGitHubTokenSource(context.Background(), "github.com")
+	if err != nil || token != "baum-secret" || source != SourceBaum {
+		t.Fatalf("source %q error %v", source, err)
+	}
 }
 
 // TestParseErrorsNamePositionAndKeyNotValues: go-toml's own message quotes
@@ -216,4 +186,18 @@ func TestParseErrorsNamePositionAndKeyNotValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+type memoryCredentialStore struct{ credential githubauth.Credential }
+
+func (s *memoryCredentialStore) Load(context.Context) (githubauth.Credential, error) {
+	return s.credential, nil
+}
+func (s *memoryCredentialStore) Save(_ context.Context, c githubauth.Credential) error {
+	s.credential = c
+	return nil
+}
+func (s *memoryCredentialStore) Delete(context.Context) error {
+	s.credential = githubauth.Credential{}
+	return nil
 }

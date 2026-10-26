@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
@@ -83,15 +84,55 @@ type Scheduler struct {
 	Interval time.Duration
 	Log      *slog.Logger
 
-	once  sync.Once
-	wake  chan struct{}
-	runMu sync.Mutex
+	once sync.Once
+	wake chan struct{}
+	// run is a one-slot lock held by a pass or by an identity change, which
+	// can hold it for a whole device sign-in. A pass waiting for it gives up
+	// when its context ends, so the daemon can stop meanwhile.
+	run   chan struct{}
 	mu    sync.Mutex
 	state *fileState
 	// observed is when the newest snapshot Observe took for each repository
 	// was fetched. Background refresh and Trigger observe from different
 	// goroutines, so an older snapshot can arrive after a newer one.
-	observed map[string]time.Time
+	observed         map[string]time.Time
+	resetAt          time.Time
+	identitySince    atomic.Int64
+	identityChanging atomic.Bool
+}
+
+// ResetIdentity forgets account-dependent PR baselines while preserving daily
+// spending limits, pauses, repository preferences and saved reviews.
+func (s *Scheduler) ResetIdentity() {
+	finish := s.BeginIdentityChange()
+	finish(true)
+}
+
+// BeginIdentityChange stops submission before credentials change. The returned
+// function must be called once to release the fence, even on failed sign-in.
+func (s *Scheduler) BeginIdentityChange() func(bool) {
+	s.init()
+	s.run <- struct{}{}
+	s.identityChanging.Store(true)
+	return func(changed bool) {
+		defer func() { <-s.run }()
+		defer s.identityChanging.Store(false)
+		if !changed {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.resetAt = s.now().UTC()
+		s.identitySince.Store(s.resetAt.UnixNano())
+		for _, repository := range s.load().Repositories {
+			repository.Since = s.resetAt
+			repository.PRs = map[int]*prState{}
+			repository.AwaitingBaseline = true
+		}
+		s.observed = map[string]time.Time{}
+		s.save()
+		s.Wake()
+	}
 }
 
 // Status is one repository's automatic generation as the app shows it.
@@ -163,7 +204,10 @@ type prState struct {
 }
 
 func (s *Scheduler) init() {
-	s.once.Do(func() { s.wake = make(chan struct{}, 1) })
+	s.once.Do(func() {
+		s.wake = make(chan struct{}, 1)
+		s.run = make(chan struct{}, 1)
+	})
 }
 
 func (s *Scheduler) now() time.Time {
@@ -354,6 +398,9 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	name := strings.ToLower(snapshot.Repository)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if snapshot.FetchedAt.Before(s.resetAt) {
+		return
+	}
 	if snapshot.FetchedAt.Before(s.observed[name]) {
 		return
 	}
@@ -453,8 +500,13 @@ type work struct {
 
 // Pass submits every pending job that is due. Exposed for tests.
 func (s *Scheduler) Pass(ctx context.Context) {
-	s.runMu.Lock()
-	defer s.runMu.Unlock()
+	s.init()
+	select {
+	case s.run <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-s.run }()
 	v, err := s.current(ctx)
 	if err != nil {
 		s.log().Warn("automatic generation pass skipped", "error", err)
@@ -727,6 +779,14 @@ const (
 // reads only the registry database and the clock, never the scheduler's state
 // or the queue: the queue's mutex is held.
 func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
+	if s.identityChanging.Load() {
+		return jobs.Admission{Reason: GateOff}
+	}
+	since := s.identitySince.Load()
+	obsolete := since != 0 && j.CreatedAt.UnixNano() < since
+	if obsolete {
+		return jobs.Admission{Reason: GateOff}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	prefs, err := s.Registry.Preferences(ctx)

@@ -26,6 +26,7 @@ type LocalAPI struct {
 	Config           config.Config
 	PRs, Index, Jobs http.Handler
 	Background       http.Handler
+	GitHubAuth       http.Handler
 	// Automatic serves /api/automatic: the automatic generation preferences
 	// and per-repository status.
 	Automatic http.Handler
@@ -84,6 +85,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
+	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
 	mux.Handle("/api/jobs", provider(a.Jobs, "runner_unavailable"))
 	mux.Handle("/api/jobs/", provider(a.Jobs, "runner_unavailable"))

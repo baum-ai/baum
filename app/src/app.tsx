@@ -33,6 +33,7 @@ import {
   jobReasonText,
   automaticNotice,
   parseLive,
+  type GitHubConnection,
   type Automatic,
   type Clone,
   type Entry,
@@ -138,6 +139,7 @@ function Workspace({ url }: { url: UrlState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
@@ -152,6 +154,7 @@ function Workspace({ url }: { url: UrlState }) {
     }[]
   >([]);
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
+  const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
   const lastLive = useRef(0);
@@ -167,16 +170,18 @@ function Workspace({ url }: { url: UrlState }) {
   const reload = useCallback(async () => {
     const sequence = ++lastReload.current;
     try {
-      const [repos, index, jobList, discovery, sync, auto, settings] = await Promise.all([
-        request<Clone[]>("api/repos"),
-        request<Snapshot>("api/index?history=1"),
-        request<{ jobs?: Job[] }>("api/jobs"),
-        request<typeof rates>("api/prs"),
-        request<typeof background>("api/background"),
-        // A daemon without automatic generation answers without repositories.
-        request<Partial<Automatic>>("api/automatic").catch(() => null),
-        request<ReviewDefaults>("api/settings").catch(() => null),
-      ]);
+      const [repos, index, jobList, discovery, sync, auto, settings, connection] =
+        await Promise.all([
+          request<Clone[]>("api/repos"),
+          request<Snapshot>("api/index?history=1"),
+          request<{ jobs?: Job[] }>("api/jobs"),
+          request<typeof rates>("api/prs"),
+          request<typeof background>("api/background"),
+          // A daemon without automatic generation answers without repositories.
+          request<Partial<Automatic>>("api/automatic").catch(() => null),
+          request<ReviewDefaults>("api/settings").catch(() => null),
+          request<GitHubConnection>("api/github-auth").catch(() => null),
+        ]);
       if (sequence !== lastReload.current) return;
       setClones(repos);
       setSnapshot(index);
@@ -185,6 +190,7 @@ function Workspace({ url }: { url: UrlState }) {
       setBackground(Array.isArray(sync) ? sync : []);
       setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
       setDefaults(settings);
+      setGitHub(connection);
       setError("");
       setRevision((n) => n + 1);
     } catch (e) {
@@ -209,6 +215,10 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("reset", refresh);
     return () => source.close();
   }, [reload, reloadLive]);
+  const authChanged = () => {
+    setAuthRevision((n) => n + 1);
+    void reload();
+  };
   const cloneFor = (e: Entry) =>
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
@@ -264,6 +274,16 @@ function Workspace({ url }: { url: UrlState }) {
       setGenerating(false);
     }
   };
+  // One notice for every repository GitHub could not refresh, whichever
+  // refresh failed: the cause and the fix are usually the same connection.
+  const unsynced = [
+    ...new Set([
+      ...background.filter((s) => s.error).map((s) => s.repository),
+      ...rates.filter((r) => r.error).map((r) => r.repository),
+    ]),
+  ];
+  // A failed refresh is already in the notice above.
+  const limited = rates.filter((r) => !r.error && r.rate.remaining === 0);
   const refresh = async () => {
     setLoading(true);
     try {
@@ -293,15 +313,11 @@ function Workspace({ url }: { url: UrlState }) {
       />
       <div className="local-frame">
         <div className="local-notices">
-          {background
-            .filter((state) => state.error)
-            .map((state) => (
-              <Notice key={state.repository}>
-                {state.repository}: background metadata refresh is unavailable ({state.error}).
-                Cached reviews remain readable. Next retry:{" "}
-                {new Date(state.next_refresh).toLocaleTimeString()}.
-              </Notice>
-            ))}
+          {unsynced.length > 0 && page !== "settings" ? (
+            <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
+              {syncNotice(github, unsynced)}
+            </Notice>
+          ) : null}
           {(automatic?.repositories ?? [])
             .filter((status) => status.enabled && status.paused_until)
             .map((status) => (
@@ -332,6 +348,8 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
+              authRevision={authRevision}
+              authChanged={authChanged}
               automatic={automatic}
               defaults={defaults}
               changed={reload}
@@ -459,16 +477,16 @@ function Workspace({ url }: { url: UrlState }) {
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh
                     or a spent GitHub allowance is worth a word. */}
-                {rates
-                  .filter((r) => r.error || r.rate.remaining === 0)
-                  .map((r) => (
-                    <Notice key={r.repository}>
-                      {r.error
-                        ? `Couldn't refresh ${r.repository} from GitHub (${r.error}).`
-                        : `GitHub's request limit for ${r.repository} is used up until ${new Date(r.rate.reset).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`}{" "}
-                      Showing what was saved.
-                    </Notice>
-                  ))}
+                {limited.length > 0 ? (
+                  <Notice>
+                    GitHub's request limit for {repositoryList(limited.map((r) => r.repository))} is
+                    used up until{" "}
+                    {new Date(
+                      Math.max(...limited.map((r) => Date.parse(r.rate.reset))),
+                    ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    . Showing what was saved.
+                  </Notice>
+                ) : null}
                 {snapshot.problems.map((p) => (
                   <Notice key={p.clone_id + p.reason}>
                     {clones.find((c) => c.id === p.clone_id)?.repository ?? "Clone"}: {p.reason}
@@ -657,4 +675,17 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
       </details>
     </li>
   );
+}
+
+function repositoryList(names: string[]) {
+  return names.length === 1 ? names[0] : `${names.length} repositories`;
+}
+
+function syncNotice(github: GitHubConnection | null, repositories: string[]) {
+  const saved = "Saved reviews are still available.";
+  if (github && !github.saved && !github.override && !github.pending)
+    return `GitHub is not connected, so baum cannot refresh pull requests. ${saved}`;
+  if (github?.error)
+    return `The GitHub connection needs attention, so baum cannot refresh pull requests. ${saved}`;
+  return `baum could not refresh ${repositoryList(repositories)} from GitHub and will keep retrying. ${saved}`;
 }

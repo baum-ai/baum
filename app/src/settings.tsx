@@ -8,11 +8,20 @@ import {
   type Clone,
   type DiagnosticReport,
 } from "./api";
+import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, PanelHeader } from "./shell";
+import codexLogo from "./desktop/codex.svg";
+import claudeLogo from "./desktop/claude-code.svg";
+import { SlidersIcon, TerminalIcon, SessionsIcon, CheckIcon } from "@baum/viewer/components/icons";
 import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
 import {
+  describeCommand,
+  describeAgent,
+  displayPath,
+  type SetupView,
+  type Outcome,
   modelPresets,
   withModel,
   type PullRequests,
@@ -39,6 +48,8 @@ export function SettingsPage({
   diagnosticsOpen,
   setDiagnosticsOpen,
   onDiagnostics,
+  authRevision,
+  authChanged,
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -47,6 +58,8 @@ export function SettingsPage({
   diagnosticsOpen: boolean;
   setDiagnosticsOpen: (open: boolean) => void;
   onDiagnostics: (report: DiagnosticReport | null) => void;
+  authRevision: number;
+  authChanged: () => void;
 }) {
   return (
     <section>
@@ -71,9 +84,16 @@ export function SettingsPage({
         }
       />
       {diagnosticsOpen ? (
-        <DiagnosticsDialog close={() => setDiagnosticsOpen(false)} onReport={onDiagnostics} />
+        <DiagnosticsDialog
+          close={() => setDiagnosticsOpen(false)}
+          onReport={onDiagnostics}
+          authRevision={authRevision}
+          authChanged={authChanged}
+        />
       ) : null}
-      <div className="local-page-body">
+      <div className="local-page-body local-settings">
+        {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
+        {hasFolderPicker() ? <DesktopIntegrations /> : null}
         {automatic && defaults ? (
           <ReviewSettingsSection
             key={JSON.stringify([automatic.enabled, automatic.pull_requests, defaults])}
@@ -84,12 +104,202 @@ export function SettingsPage({
         ) : (
           <p role="status">Reading your review settings…</p>
         )}
-        <p className="text-xs text-(--text-tertiary)">
+        <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
           and stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
         </p>
       </div>
     </section>
+  );
+}
+
+function DesktopIntegrations() {
+  const [view, setView] = useState<SetupView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [output, setOutput] = useState("");
+  const working = useRef(false);
+  async function refresh() {
+    setView(await invoke<SetupView>("setup_state"));
+  }
+  useEffect(() => {
+    void refresh().catch((cause) => setError(String(cause)));
+  }, []);
+  async function run(command?: string, args?: Record<string, unknown>) {
+    if (working.current) return;
+    working.current = true;
+    setBusy(true);
+    setError("");
+    setOutput("");
+    try {
+      if (command) {
+        const outcome = await invoke<Outcome>(command, args);
+        if (outcome.ok) setOutput(outcome.lines.join("\n"));
+        else setError(outcome.lines.join("\n"));
+      }
+      await refresh();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      working.current = false;
+      setBusy(false);
+    }
+  }
+  const command = view ? describeCommand(view.command) : null;
+  const display = (text: string) => displayPath(text, view?.home);
+  const status = (label: string, connected: boolean) => (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs ${connected ? "text-(--status-positive)" : "text-(--text-tertiary)"}`}
+    >
+      {connected ? <CheckIcon size={14} /> : null}
+      {label}
+    </span>
+  );
+  const feedback = (
+    <>
+      {error ? <Alert>{display(error)}</Alert> : null}
+      {output ? (
+        <p role="status" className="whitespace-pre-wrap text-xs text-(--text-secondary)">
+          {display(output)}
+        </p>
+      ) : null}
+    </>
+  );
+  return (
+    <>
+      <section className="local-panel settings-card p-0!" aria-labelledby="cli-heading">
+        <PanelHeader
+          id="cli-heading"
+          icon={<TerminalIcon size={20} />}
+          title="Command line"
+          detail="Use baum from your terminal. Updates come with the desktop app."
+        />
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <h3 className="text-base font-medium">baum CLI</h3>
+              {command ? status(command.ok ? "Installed" : "Not installed", !!command.ok) : null}
+            </div>
+            {command ? (
+              <p className="break-all text-xs text-(--text-secondary)">{display(command.state)}</p>
+            ) : (
+              <p role="status" className="text-xs text-(--text-secondary)">
+                Checking installation…
+              </p>
+            )}
+            {command?.note ? (
+              <p className="text-xs text-(--text-secondary)">{display(command.note)}</p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {command?.action ? (
+              <Button
+                disabled={busy}
+                size="compact"
+                variant="secondary"
+                onClick={() =>
+                  void run("install_command", command.replace ? { replace: command.replace } : {})
+                }
+              >
+                {command.replace
+                  ? `Replace ${display(command.replace)}`
+                  : `${command.action} baum CLI`}
+              </Button>
+            ) : null}
+            {view?.command.record ? (
+              <Button
+                disabled={busy}
+                size="compact"
+                variant="ghost"
+                onClick={() => void run("uninstall_command")}
+              >
+                Remove CLI
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </section>
+      <section className="local-panel settings-card p-0!" aria-labelledby="hooks-heading">
+        <PanelHeader
+          id="hooks-heading"
+          icon={<SessionsIcon size={20} />}
+          title="Agent hooks"
+          detail="Connect your coding agents so baum can follow their work."
+        />
+        {view?.hooks.agents.map((agent) => (
+          <div
+            key={agent.agent}
+            className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+          >
+            <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
+              <img
+                src={agent.agent === "codex" ? codexLogo : claudeLogo}
+                alt=""
+                width="24"
+                height="24"
+                className="mt-0.5 shrink-0"
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h3 className="text-base font-medium">{agent.name}</h3>
+                  {status(
+                    agent.installed && agent.enabled
+                      ? "Connected"
+                      : agent.installed
+                        ? "Disabled"
+                        : "Not connected",
+                    agent.installed && agent.enabled && !agent.error,
+                  )}
+                </div>
+                {agent.error || !agent.installed ? (
+                  <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
+                ) : null}
+                {agent.installed ? (
+                  <p className="text-xs text-(--text-tertiary)">
+                    {agent.agent === "codex"
+                      ? "Review hook trust with /hooks in Codex."
+                      : "Review plugin trust in Claude Code."}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {agent.detected && !agent.error && (!agent.installed || !agent.enabled) ? (
+                <Button
+                  disabled={busy}
+                  size="compact"
+                  variant="secondary"
+                  onClick={() => void run("install_hooks", { agent: agent.agent })}
+                >
+                  {agent.installed ? "Enable" : "Install"} {agent.name} hooks
+                </Button>
+              ) : null}
+              {agent.installed ? (
+                <Button
+                  disabled={busy}
+                  size="compact"
+                  variant="ghost"
+                  aria-label={`Remove ${agent.name} hooks`}
+                  onClick={() => void run("uninstall_hooks", { agent: agent.agent })}
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+          <p className="text-xs text-(--text-tertiary)">
+            Installed something new? Refresh to check its status.
+          </p>
+          <Button disabled={busy} size="compact" variant="ghost" onClick={() => void run()}>
+            {busy ? "Checking…" : "Check again"}
+          </Button>
+        </footer>
+      </section>
+      {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
+      {feedback}
+    </>
   );
 }
 
@@ -135,28 +345,39 @@ function ReviewSettingsSection({
     }
   };
   return (
-    <section aria-label="Reviews" className="local-stack">
-      {error ? <Alert>{error}</Alert> : null}
+    <section aria-labelledby="review-settings-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="review-settings-heading"
+        icon={<SlidersIcon size={20} />}
+        title="Reviews"
+        detail="The agent that writes reviews, and which pull requests baum reviews on its own."
+      />
+      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
       <ReviewSettingsForm
         settings={draft}
         disabled={pending}
         onChange={setDraft}
-        className="local-panel"
+        className="settings-form"
       />
-      <div className="local-inline-form">
-        <Button
-          size="compact"
-          disabled={!dirty || pending || !draft.model.trim()}
-          onClick={() => void save()}
-        >
-          {pending ? "Saving…" : "Save review settings"}
-        </Button>
-        {dirty ? (
-          <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
-            Discard changes
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <p className="text-xs text-(--text-tertiary)">
+          {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty ? (
+            <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
+              Discard changes
+            </Button>
+          ) : null}
+          <Button
+            size="compact"
+            disabled={!dirty || pending || !draft.model.trim()}
+            onClick={() => void save()}
+          >
+            {pending ? "Saving…" : "Save review settings"}
           </Button>
-        ) : null}
-      </div>
+        </div>
+      </footer>
     </section>
   );
 }
@@ -165,9 +386,13 @@ function ReviewSettingsSection({
 function DiagnosticsDialog({
   close,
   onReport,
+  authRevision,
+  authChanged,
 }: {
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
+  authRevision: number;
+  authChanged: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -189,7 +414,8 @@ function DiagnosticsDialog({
           Close
         </Button>
       </div>
-      <DiagnosticsSection onReport={onReport} />
+      <GitHubConnectionSection onChanged={authChanged} />
+      <DiagnosticsSection key={authRevision} onReport={onReport} />
     </dialog>
   );
 }

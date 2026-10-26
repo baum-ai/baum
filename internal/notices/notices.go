@@ -76,6 +76,12 @@ type Service struct {
 	requested map[string]map[int]bool
 }
 
+func (s *Service) ResetIdentity() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requested = nil
+}
+
 // JobDone publishes the notice for a job that just finished: completed
 // reviews and failures. Cancelled, interrupted and superseded jobs are not
 // the user's news.

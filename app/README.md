@@ -64,8 +64,10 @@ Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership
 remains explicit. Cached discovery keeps the inbox readable when refresh fails;
-a calm notice appears for a failed refresh or exhausted GitHub allowance,
-never merely because the cache is old. Refresh asks
+one notice covers every repository GitHub could not refresh, says whether
+GitHub is disconnected or needs attention, and links to Settings; another
+covers an exhausted GitHub allowance. Neither appears merely because the cache
+is old. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
 restricted fork/author entries are excluded from batches and require explicit
 isolation confirmation when generated individually. Generation confirms an
@@ -89,6 +91,10 @@ bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
 The app's sidebar leads to the Inbox, Jobs, Repositories and Settings.
+In the desktop app, Settings has separate Command line and Agent hooks sections
+with inline CLI install, update and removal controls, plus installation,
+enablement and removal for each agent. Home paths are displayed with `~`.
+It shows the installed state, paths, trust guidance and action results.
 Settings holds the global review settings in the same form as the desktop
 setup's last step: the harness, its model (a listed model or a custom name),
 whether reviews run automatically and for which pull requests (authored,
@@ -136,11 +142,27 @@ event kind, repository, branch and PR number reach the app, never a path or
 transcript. When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+
+GitHub connection is available in Settings, the first-run
+diagnostics dialog and the desktop setup's first step, which share
+`src/github-auth.ts`. Sign in with GitHub starts device authorization through
+the daemon and, in the same click, opens the fixed
+`https://github.com/login/device` page in the browser and copies the code once
+the daemon returns it (a clipboard write given a promise, since by then the
+click no longer counts and the window has lost focus). The panel observes only safe local connection status;
+Go polls GitHub even after the window closes. Denial, expiry, network failures,
+missing scopes, revoked authorization and locked credential stores have retry
+or reconnect controls. An explicit environment/config credential is shown
+separately from the saved desktop account and continues to take precedence.
+Disconnect removes only baum's saved credential, not the explicit override or
+GitHub's authorization. Cached inbox entries and saved reviews remain readable
+without signing in. Credentials never reach the UI.
+
 Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) open
 in a dialog from Settings' "Check this computer" button, which shows how many
 problems they found. `?page=diagnostics` opens Settings with the dialog open;
-the desktop app opens it after its first-run setup (the bootstrap page carries
-`page=diagnostics` from the launch URL's fragment). Each warning and problem
+the bootstrap page can carry `page=diagnostics` from the launch URL's
+fragment. Desktop setup opens the inbox instead. Each warning and problem
 shows its fix. The app runs the diagnostics once when it opens and, while they
 find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only
@@ -198,3 +220,11 @@ The confirmation amount is budget planning, not a PR-sized prediction. It shows
 the configured charged-token and backend-call limits and assumes one
 budget-sized cache read per call at the highest listed rates. Cached reads and
 provider overshoot can exceed those assumptions, so this is not a dollar cap.
+
+GitHub browser scenarios use the real auth manager/controller and mocked GitHub
+HTTP and credential-store boundaries. The `github-auth-mode` marker selects
+pending, alice/bob approval, denial, expiry, network failure, insufficient scopes
+or locked persistence. Tests cover copy/open, background completion, reload,
+account replacement, disconnect with saved-review access, recovery and the local
+session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
+`test-results/` for PR attachments.
