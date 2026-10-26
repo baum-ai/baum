@@ -23,6 +23,10 @@ import (
 type Item struct {
 	Clone string `json:"clone"`
 	PR    int    `json:"pr"`
+	// Group names a review group instead of a pull request (PR is then 0):
+	// the job generates the group's combined review. See
+	// internal/reviewgroups.
+	Group string `json:"group,omitempty"`
 }
 type Prepared struct {
 	ConfigDigest string `json:"config_digest"`
@@ -44,6 +48,11 @@ type Prepared struct {
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
 	// a confirmed run does not.
 	Draft bool `json:"draft,omitempty"`
+	// GroupName is a group job's group name when it was prepared, and
+	// Members its members' numbers and heads ("7@<sha>,9@<sha>"), which a
+	// confirmation covers like a pull request's head.
+	GroupName string `json:"group_name,omitempty"`
+	Members   string `json:"members,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
@@ -349,6 +358,9 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 			return Estimate{}, e
 		}
 		key := fmt.Sprintf("%s#%d", p.Repository, p.PR)
+		if p.Group != "" {
+			key = "group:" + p.Group
+		}
 		if seen[key] {
 			continue
 		}
@@ -456,7 +468,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) {
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) {
 			return nil, errors.New("generation inputs changed; estimate again")
 		}
 		prepared = append(prepared, current)
@@ -484,7 +496,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 	for _, p := range prepared {
 		existing := -1
 		for i, j := range q.jobs {
-			if j.Repository == p.Repository && j.PR == p.PR && (j.State == "queued" || j.State == "running") {
+			if j.Repository == p.Repository && j.PR == p.PR && j.Group == p.Group && (j.State == "queued" || j.State == "running") {
 				existing = i
 				break
 			}

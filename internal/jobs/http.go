@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
 func (q *Queue) Handler() http.Handler {
@@ -35,6 +37,23 @@ func (q *Queue) Handler() http.Handler {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{ReasonNeedsClone: true})
 	}
+	// groupRefusal answers a group job refused before it was queued: members
+	// without a saved review (409, naming them) or a group that does not
+	// exist (404). It reports whether it answered.
+	groupRefusal := func(w http.ResponseWriter, e error) bool {
+		var missing *MembersNeedReviewsError
+		switch {
+		case errors.As(e, &missing):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"members_need_reviews": missing.Numbers})
+		case errors.Is(e, reviewgroups.ErrNotFound):
+			http.Error(w, "review group not found", http.StatusNotFound)
+		default:
+			return false
+		}
+		return true
+	}
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]any{"available": true, "jobs": q.List()})
 	})
@@ -49,6 +68,9 @@ func (q *Queue) Handler() http.Handler {
 		v, e := q.Estimate(r.Context(), request.Items, request.Mode)
 		if errors.Is(e, ErrNeedsClone) {
 			needsClone(w)
+			return
+		}
+		if groupRefusal(w, e) {
 			return
 		}
 		if e != nil {
@@ -89,6 +111,9 @@ func (q *Queue) Handler() http.Handler {
 		}
 		if errors.Is(e, ErrNeedsClone) {
 			needsClone(w)
+			return
+		}
+		if groupRefusal(w, e) {
 			return
 		}
 		if e != nil {

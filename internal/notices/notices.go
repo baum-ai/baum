@@ -86,7 +86,8 @@ func (s *Service) ResetIdentity() {
 // reviews and failures. Cancelled, interrupted and superseded jobs are not
 // the user's news.
 func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
-	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") {
+	// A review group's job names no pull request; its page shows the outcome.
+	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") || job.Group != "" {
 		return
 	}
 	n := Notice{Kind: KindFinished, Repository: job.Repository, PR: job.PR, Clone: job.Clone}

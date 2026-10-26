@@ -173,7 +173,7 @@ func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
 	}{{"writer", "owner/repo", "write", 200, false}, {"fork writer", "other/repo", "write", 200, true}, {"reader", "owner/repo", "read", 200, true}, {"unknown permission", "owner/repo", "", 403, true}} {
 		t.Run(test.name, func(t *testing.T) {
 			local := localRunner(registry, test.headRepository, test.permission, test.status)
-			p, version, e := local.Prepare(ctx, Item{clone.ID, 1})
+			p, version, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -247,11 +247,11 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
 	local := &Local{Registry: registry, Config: cfg, Client: client}
-	if _, _, e := local.Prepare(ctx, Item{clone.ID, 1}); e != nil {
+	if _, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil {
 		t.Fatalf("claude on PATH: %v", e)
 	}
 	local.Config.BackendPaths = map[config.Backend]string{config.BackendClaude: filepath.Join(t.TempDir(), "missing-claude")}
-	_, _, e = local.Prepare(ctx, Item{clone.ID, 1})
+	_, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e == nil || !strings.Contains(e.Error(), "backend_paths.claude") {
 		t.Fatalf("err = %v, want one naming backend_paths.claude", e)
 	}
@@ -273,7 +273,7 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	}); e != nil {
 		t.Fatal(e)
 	}
-	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
 	}
@@ -284,7 +284,7 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	}); e != nil {
 		t.Fatal(e)
 	}
-	if p, _, e = local.Prepare(ctx, Item{clone.ID, 1}); e != nil || p.Model != "repository-model" {
+	if p, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil || p.Model != "repository-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
 	}
 }
@@ -301,7 +301,7 @@ func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
 	local.Backends.CursorAgent = func(string) generate.CheckedBackend {
 		return &generatetest.Backend{BackendName: agent.BackendCursorAgent, Version: "2026.10.16"}
 	}
-	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -334,7 +334,7 @@ func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
 	document.Version = "2999-01-01"
 	newer := pricing.NewList(document)
 	pricing.Install(newer)
-	confirmed, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	confirmed, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil || confirmed.PriceVersion != "2999-01-01" {
 		t.Fatal(confirmed, e)
 	}
@@ -387,7 +387,7 @@ func TestLocalRecheckRefusesAnAutomaticJobOfADraft(t *testing.T) {
 			return agent.Result{}, errors.New("no model calls in this test")
 		}}
 	}}}
-	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil || p.Draft {
 		t.Fatal(p, e)
 	}
@@ -553,10 +553,10 @@ func TestLocalWithoutAnAvailableCloneNeedsOne(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
 	local := localRunner(registry, "owner/repo", "write", 200)
-	if _, _, e := local.Prepare(ctx, Item{"unknown", 1}); !errors.Is(e, ErrNeedsClone) {
+	if _, _, e := local.Prepare(ctx, Item{Clone: "unknown", PR: 1}); !errors.Is(e, ErrNeedsClone) {
 		t.Fatalf("unknown clone: %v", e)
 	}
-	p, _, e := local.Prepare(ctx, Item{clone.ID, 1})
+	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil {
 		t.Fatal(e)
 	}

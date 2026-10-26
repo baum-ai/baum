@@ -37,6 +37,7 @@ import (
 	"github.com/baum-ai/baum/internal/notices"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -411,7 +412,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
+		// Review groups live in the daemon's state, not in a clone.
+		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
+		if err != nil {
+			_ = registry.Close()
+			events.Close()
+			return daemon.App{}, err
+		}
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
@@ -422,6 +430,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		})
 		if err != nil {
+			_ = groups.Close()
 			_ = registry.Close()
 			events.Close()
 			return daemon.App{}, err
@@ -474,6 +483,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), Changed: settingsChanged,
+			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -510,6 +520,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				unsubscribe()
 				unsubscribeClones()
 				events.Close()
+				_ = groups.Close()
 				_ = registry.Close()
 			},
 		}, nil
