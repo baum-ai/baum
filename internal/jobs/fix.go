@@ -101,12 +101,24 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 		}
 		p.Fix.Threads = fix.Digest(threads.Threads)
 		p.FixThreadsCapped, p.FixThreadsUntrusted = threads.Capped, threads.Untrusted
-		for _, t := range threads.Threads {
-			author := ""
-			if len(t.Comments) > 0 {
-				author = t.Comments[0].Author
+		if len(threads.Threads) > 0 {
+			// The excerpts are stored with the job: secrets in them are
+			// masked as in the agent's summary.
+			redactor, err := bundle.NewRedactor()
+			if err != nil {
+				return Prepared{}, "", err
 			}
-			p.FixThreads = append(p.FixThreads, FixThread{Ref: t.Ref, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: author, Excerpt: fix.Excerpt(t)})
+			for _, t := range threads.Threads {
+				author := ""
+				if len(t.Comments) > 0 {
+					author = t.Comments[0].Author
+				}
+				excerpt, _, err := redactor.RedactString(ctx, fix.Excerpt(t))
+				if err != nil {
+					return Prepared{}, "", err
+				}
+				p.FixThreads = append(p.FixThreads, FixThread{Ref: t.Ref, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: author, Excerpt: excerpt})
+			}
 		}
 		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" {
 			p.BlockedReason = fix.ReasonNothingToFix

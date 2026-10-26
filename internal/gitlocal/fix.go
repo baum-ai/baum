@@ -194,6 +194,25 @@ func (f *Fix) Merge(ctx context.Context, message string) ([]string, error) {
 	return conflicts, nil
 }
 
+// Changed lists the paths commit changes against the fix's starting head,
+// a rename as its old and new paths.
+func (f *Fix) Changed(ctx context.Context, commit string) ([]string, error) {
+	if !validOID(commit) {
+		return nil, ErrInvalidInput
+	}
+	out, err := f.git(ctx, 4<<20, "diff", "--name-only", "--no-renames", "-z", f.Head, commit, "--")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for path := range strings.SplitSeq(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
+}
+
 // HEAD is the commit the checkout is at.
 func (f *Fix) HEAD(ctx context.Context) (string, error) {
 	out, err := f.git(ctx, maxOIDOutputBytes, "rev-parse", "--verify", "HEAD")

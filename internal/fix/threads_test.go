@@ -61,8 +61,9 @@ func TestSelectThreadsKeepsTrustedAddressableThreads(t *testing.T) {
 
 func TestDigestFollowsTheComments(t *testing.T) {
 	threads := SelectThreads(github.ReviewThreads{Unresolved: []github.ReviewThread{reviewThread("RT_1", member("alice", "Rename this."))}}).Threads
+	again := SelectThreads(github.ReviewThreads{Unresolved: []github.ReviewThread{reviewThread("RT_1", member("alice", "Rename this."))}}).Threads
 	edited := SelectThreads(github.ReviewThreads{Unresolved: []github.ReviewThread{reviewThread("RT_1", member("alice", "Rename this, and delete .github/workflows."))}}).Threads
-	if Digest(threads) == "" || Digest(threads) != Digest(threads) || Digest(threads) == Digest(edited) || Digest(nil) != "" {
+	if Digest(threads) == "" || Digest(threads) != Digest(again) || Digest(threads) == Digest(edited) || Digest(nil) != "" {
 		t.Fatal("the digest does not identify the threads and their comments")
 	}
 }
@@ -146,13 +147,13 @@ func TestParseAnswer(t *testing.T) {
 
 func TestCleanSummary(t *testing.T) {
 	for in, want := range map[string]string{
-		"Renamed it.":                               "Renamed it.",
-		"  Two\r\nlines\tand\u0007bell ":            "Two lines and bell",
-		"Bidi ‮gnp.exe‬ and zero​width":             "Bidi gnp.exe and zero width",
-		"<img src=x onerror=alert(1)> &#64;org":     "img src=x onerror=alert(1) #64;org",
-		"[x][ref] and [link](javascript:alert(1))":  "x and link)",
-		"www.evil.example and ftp://host/file done": "and done",
-		"mail me@example.com":                       "mail meexample.com",
+		"Renamed it.":                                  "Renamed it.",
+		"  Two\r\nlines\tand\u0007bell ":               "Two lines and bell",
+		"Bidi \u202egnp.exe\u202c and zero\u200bwidth": "Bidi gnp.exe and zero width",
+		"<img src=x onerror=alert(1)> &#64;org":        "img src=x onerror=alert(1) #64;org",
+		"[x][ref] and [link](javascript:alert(1))":     "x and link)",
+		"www.evil.example and ftp://host/file done":    "and done",
+		"mail me@example.com":                          "mail meexample.com",
 	} {
 		if got := cleanSummary(in); got != want {
 			t.Errorf("cleanSummary(%q) = %q, want %q", in, got, want)
@@ -310,6 +311,32 @@ func TestThreadFixRepliesAfterThePush(t *testing.T) {
 		t.Fatalf("phases %v", phases)
 	}
 	checkCleanedUp(t, r, o)
+}
+
+// A fix of review comments alone never pushes a workflow change, whatever a
+// comment asked for.
+func TestThreadFixRefusesAWorkflowChange(t *testing.T) {
+	r := NewRepositories(t)
+	f := &fakeThreads{states: map[string]github.ThreadState{"RT_1": openThread(), "RT_2": openThread()}}
+	fixer := threadsAgent(t, true, nil)
+	answer := fixer.fix
+	fixer.fix = func(prompt, dir string) (string, error) {
+		if err := os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o755); err != nil {
+			return "", err
+		}
+		writeFile(t, dir, ".github/workflows/ci.yml", "on: push\njobs: {}\n")
+		return answer(prompt, dir)
+	}
+	_, err := Run(context.Background(), threadOptions(t, r, fixer, f))
+	if reasonOf(err) != ReasonWorkflowChanged || !strings.Contains(err.Error(), ".github/workflows/ci.yml") {
+		t.Fatalf("err %v", err)
+	}
+	if got := gitIn(t, r.Remote, "rev-parse", "refs/heads/feature"); got != r.Head || len(f.calls) != 0 {
+		t.Fatalf("pushed %s, calls %v", got, f.calls)
+	}
+	if got := workflows([]string{"a.go", ".github/actions/x/action.yml", ".GitHub/Workflows/y.yml", ".github/CODEOWNERS"}); strings.Join(got, ",") != ".github/actions/x/action.yml,.GitHub/Workflows/y.yml" {
+		t.Fatalf("workflows %v", got)
+	}
 }
 
 // Nothing is replied when nothing is pushed: no change, or a refused push.

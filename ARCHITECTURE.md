@@ -2101,7 +2101,9 @@ branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 records `commit`, `commit_url` and the agent's masked `summary`; a failed one
 a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 `budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
-`push_rejected`, `push_failed`) and a bounded detail.
+`workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+fix of review comments alone fails with `workflow_changed` when its commit
+changes a path under `.github/workflows/` or `.github/actions/`.
 
 Review threads reach the prompt as untrusted blocks headed with local ids
 (`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never

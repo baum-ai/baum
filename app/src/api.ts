@@ -240,6 +240,8 @@ const jobReasons: Record<string, string> = {
   conflicts_remain: "The agent left conflict markers in a file, so nothing was pushed.",
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
+  workflow_changed:
+    "The agent changed a GitHub workflow or action, which a fix of review comments never pushes. Nothing was pushed.",
   push_rejected:
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",

@@ -51,6 +51,7 @@ const (
 	ReasonNoChanges        = "no_changes"
 	ReasonConflictsRemain  = "conflicts_remain"
 	ReasonHistoryRewritten = "history_rewritten"
+	ReasonWorkflowChanged  = "workflow_changed"
 	ReasonPushRejected     = "push_rejected"
 	ReasonPushFailed       = "push_failed"
 )
@@ -254,6 +255,18 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if !descends {
 		return out, fail(ReasonHistoryRewritten, errors.New("the result does not build on the pull request's head; baum never rewrites a branch's history"))
 	}
+	if len(o.Threads) > 0 && !o.Conflicts && !o.Checks {
+		// A fix of review comments alone never pushes a workflow change:
+		// the comments are other people's words, and a workflow runs with
+		// the repository's secrets as soon as it is pushed.
+		changed, err := checkout.Changed(ctx, head)
+		if err != nil {
+			return out, fail(ReasonGit, err)
+		}
+		if paths := workflows(changed); len(paths) > 0 {
+			return out, fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which a fix of review comments never pushes", strings.Join(paths, ", ")))
+		}
+	}
 	progress("pushing")
 	if err := checkout.Push(ctx, head); err != nil {
 		if ctx.Err() != nil {
@@ -347,6 +360,19 @@ func commitMessage(o Options) string {
 		return fmt.Sprintf("Fix failing checks\n\nChanged by an agent (%s) through baum, on request.", agentName)
 	}
 	return fmt.Sprintf("Address review comments\n\nChanged by an agent (%s) through baum, on request.", agentName)
+}
+
+// workflows lists the paths, of those given, that are GitHub Actions
+// workflows or repository actions, at most five.
+func workflows(paths []string) []string {
+	var found []string
+	for _, path := range paths {
+		lower := strings.ToLower(path)
+		if strings.HasPrefix(lower, ".github/workflows/") || strings.HasPrefix(lower, ".github/actions/") {
+			found = append(found, path)
+		}
+	}
+	return found[:min(len(found), 5)]
 }
 
 // markers lists the paths, of those given, whose file in dir still has a

@@ -556,6 +556,11 @@ What baum does after the agent:
   conflict marker, and fails when nothing changed.
 - It refuses a result that does not descend from the confirmed head: a fix
   only adds commits, it never rewrites the branch.
+- A fix of review comments alone (no conflict, no failing check) refuses a
+  result that changes anything under `.github/workflows/` or
+  `.github/actions/`: a workflow runs with the repository's secrets as soon
+  as it is pushed, and no review comment, being other people's words, may
+  bring one about.
 - It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
   from your clone to the remote whose URL names the repository: never forced,
   so GitHub refuses it if the branch moved on, and nothing else (no tags, no
