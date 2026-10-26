@@ -399,7 +399,17 @@ export function RepositoryPicker({
     }
   };
   const needle = query.trim().toLowerCase();
-  const matches = list.filter((r) => r.repository.toLowerCase().includes(needle));
+  // Exact names come first, then names that start with the search, so typing a
+  // repository's name always reaches it however many others contain it.
+  const rank = (repository: string) => {
+    const full = repository.toLowerCase();
+    const name = full.slice(full.indexOf("/") + 1);
+    if (full === needle || name === needle) return 0;
+    return full.startsWith(needle) || name.startsWith(needle) ? 1 : 2;
+  };
+  const matches = list
+    .filter((r) => r.repository.toLowerCase().includes(needle))
+    .sort((a, b) => (needle ? rank(a.repository) - rank(b.repository) : 0));
   // A short list keeps the step readable; search reaches the rest, and picked
   // repositories always stay visible.
   const rows = matches.filter((r, i) => i < shownRepositories || r.picked);

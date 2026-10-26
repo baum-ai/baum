@@ -79,6 +79,33 @@ it("shows the first repositories and picked ones, and searches the rest", async 
   expect(shown()).toEqual(["many/repo-10"]);
   expect(node.querySelector(".repository-more")).toBeNull();
 });
+it("puts exact and leading matches first, so a name buried in longer ones stays reachable", async () => {
+  const names = [
+    ...Array.from({ length: 8 }, (_, i) => `acme/api-client-${i}`),
+    "acme/web-api",
+    "acme/api",
+  ];
+  const call: RepositoryCall = async (action) =>
+    (action === "list"
+      ? { repositories: names.map((repository) => ({ repository, clone: "", description: "" })) }
+      : action === "picked"
+        ? []
+        : {}) as never;
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  const search = node.querySelector<HTMLInputElement>("input[type=search]")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      search,
+      "acme/api",
+    );
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const shown = [...node.querySelectorAll(".repository-name strong")].map((n) => n.textContent);
+  expect(shown).toEqual(["acme/api", ...names.slice(0, 7)]);
+  expect(node.querySelector(".repository-more")!.textContent).toBe(
+    "1 more match. Keep typing to narrow the list.",
+  );
+});
 it("keeps loading, not empty, while the GitHub listing for a new connection is pending", async () => {
   let finish!: () => void;
   const call: RepositoryCall = async (action) => {
