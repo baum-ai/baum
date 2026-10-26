@@ -84,7 +84,9 @@ pull requests, with each row in one group; Saved history has its own group.
 Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership
-remains explicit. Cached discovery keeps the inbox readable when refresh fails;
+remains explicit. Refresh events share the active read and queue one follow-up,
+so a completed inbox snapshot is shown even while more updates arrive.
+Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache

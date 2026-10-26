@@ -171,60 +171,72 @@ function Workspace({ url }: { url: UrlState }) {
     const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => null);
     if (sessions && sequence === lastLive.current) setLive(sessions);
   }, []);
-  const lastReload = useRef(0);
-  const reload = useCallback(async () => {
-    const sequence = ++lastReload.current;
-    try {
-      const [
-        repos,
-        index,
-        jobList,
-        discovery,
-        sync,
-        auto,
-        settings,
-        connection,
-        repositories,
-        found,
-      ] = await Promise.all([
-        request<Clone[]>("api/repos"),
-        request<Snapshot>("api/index?history=1"),
-        request<{ jobs?: Job[] }>("api/jobs"),
-        request<typeof rates>("api/prs"),
-        request<typeof background>("api/background"),
-        // A daemon without automatic generation answers without repositories.
-        request<Partial<Automatic>>("api/automatic").catch(() => null),
-        request<ReviewDefaults>("api/settings").catch(() => null),
-        request<GitHubConnection>("api/github-auth").catch(() => null),
-        request<Repository[]>("api/repositories"),
-        request<FoundClones>("api/clones/found").catch(() => null),
-      ]);
-      if (sequence !== lastReload.current) return;
-      setClones(repos);
-      setPicked(Array.isArray(repositories) ? repositories : []);
-      if (Array.isArray(found?.attached)) {
-        const keys = found.attached.map((a) => `${a.repository}:${a.at}`);
-        if (seenAttachments.current)
-          setAttached((previous) => [
-            ...previous,
-            ...found.attached.filter((_, i) => !seenAttachments.current!.has(keys[i]!)),
+  const reloadPending = useRef(false);
+  const reloadInFlight = useRef<Promise<void> | null>(null);
+  const reload = useCallback(() => {
+    reloadPending.current = true;
+    if (reloadInFlight.current) return reloadInFlight.current;
+    // Publish each completed snapshot; events during a read queue one more
+    // instead of starting competing reads that discard each other's results.
+    const drain = async () => {
+      while (reloadPending.current) {
+        reloadPending.current = false;
+        try {
+          const [
+            repos,
+            index,
+            jobList,
+            discovery,
+            sync,
+            auto,
+            settings,
+            connection,
+            repositories,
+            found,
+          ] = await Promise.all([
+            request<Clone[]>("api/repos"),
+            request<Snapshot>("api/index?history=1"),
+            request<{ jobs?: Job[] }>("api/jobs"),
+            request<typeof rates>("api/prs"),
+            request<typeof background>("api/background"),
+            // A daemon without automatic generation answers without repositories.
+            request<Partial<Automatic>>("api/automatic").catch(() => null),
+            request<ReviewDefaults>("api/settings").catch(() => null),
+            request<GitHubConnection>("api/github-auth").catch(() => null),
+            request<Repository[]>("api/repositories"),
+            request<FoundClones>("api/clones/found").catch(() => null),
           ]);
-        seenAttachments.current = new Set(keys);
+          setClones(repos);
+          setPicked(Array.isArray(repositories) ? repositories : []);
+          if (Array.isArray(found?.attached)) {
+            const keys = found.attached.map((a) => `${a.repository}:${a.at}`);
+            if (seenAttachments.current)
+              setAttached((previous) => [
+                ...previous,
+                ...found.attached.filter((_, i) => !seenAttachments.current!.has(keys[i]!)),
+              ]);
+            seenAttachments.current = new Set(keys);
+          }
+          setSnapshot(index);
+          setJobs(jobList.jobs ?? []);
+          setRates(discovery);
+          setBackground(Array.isArray(sync) ? sync : []);
+          setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
+          setDefaults(settings);
+          setGitHub(connection);
+          setError("");
+          setRevision((n) => n + 1);
+        } catch (e) {
+          setError(errorText(e));
+        } finally {
+          setLoading(false);
+        }
       }
-      setSnapshot(index);
-      setJobs(jobList.jobs ?? []);
-      setRates(discovery);
-      setBackground(Array.isArray(sync) ? sync : []);
-      setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
-      setDefaults(settings);
-      setGitHub(connection);
-      setError("");
-      setRevision((n) => n + 1);
-    } catch (e) {
-      if (sequence === lastReload.current) setError(errorText(e));
-    } finally {
-      if (sequence === lastReload.current) setLoading(false);
-    }
+    };
+    reloadInFlight.current = drain().finally(() => {
+      reloadInFlight.current = null;
+    });
+    return reloadInFlight.current;
   }, []);
   useEffect(() => {
     void reload();

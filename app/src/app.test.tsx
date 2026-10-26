@@ -89,6 +89,41 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
 });
+it("shows a slow inbox response while coalescing refresh events into a follow-up read", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  const responses: ((value: Response) => void)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string) =>
+      path.includes("api/index")
+        ? new Promise<Response>((resolve) => responses.push(resolve))
+        : original(path),
+    ),
+  );
+  const missing = { ...entry(42), clone_id: undefined, needs_clone: true };
+  await act(async () => root.render(<App />));
+  expect(responses).toHaveLength(1);
+  await act(async () => {
+    for (let i = 0; i < 5; i++) listeners.get("index")!();
+  });
+  expect(responses).toHaveLength(1);
+  await act(async () => responses[0]!(Response.json({ entries: [missing], problems: [] })));
+  expect(node.textContent).toContain("Change 42");
+  expect(node.textContent).toContain("Needs a local clone");
+  expect(responses).toHaveLength(2);
+  await act(async () => responses[1]!(Response.json({ entries: [], problems: [] })));
+  expect(node.textContent).not.toContain("Change 42");
+});
 it("keeps API, event and navigation URLs under the session namespace", async () => {
   entries = [entry(1)];
   await act(async () => root.render(<App />));
