@@ -100,7 +100,10 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   });
   await page.setViewportSize({ width: 720, height: 900 });
   await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
-  await expect(approved.getByText("Status: Ready", { exact: true })).toBeVisible();
+  // The cell also holds the Merge button of a ready pull request.
+  await expect(
+    approved.locator(".inbox-status").filter({ hasText: "Status: Ready" }),
+  ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
   await page.screenshot({ path: "test-results/inbox-desktop-minimum.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -504,7 +507,7 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await page.goto(await launchURL());
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
-  await expect(row).toContainText("Merge: Ready");
+  await expect(row).toContainText("Status: Ready");
   // Only a ready pull request offers Merge.
   await expect(inbox.getByRole("button", { name: "Merge acme/demo #8", exact: true })).toHaveCount(
     0,
