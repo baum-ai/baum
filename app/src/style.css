@@ -683,30 +683,6 @@ dialog {
   max-width: calc(100vw - 2rem);
   width: 36rem;
 }
-/* A labelled text field in a form or dialog. */
-.local-field {
-  display: grid;
-  gap: 0.35rem;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-.local-text-input {
-  height: 2.25rem;
-  padding: 0 0.75rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 400;
-}
-.local-text-input:focus {
-  outline: none;
-  border-color: var(--action-accent, #2e6b40);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-accent, #2e6b40) 18%, transparent);
-}
 dialog::backdrop {
   background: rgba(42, 29, 21, 0.35);
 }
@@ -1315,27 +1291,18 @@ a.local-session-pr:hover {
   line-height: 1.1rem;
   text-align: center;
 }
-.local-group-actions {
+.local-group-foot {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  justify-content: flex-end;
   gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid var(--border-subtle);
 }
 .local-group-add {
-  height: 1.75rem;
-  max-width: 14rem;
-  padding: 0 1.75rem 0 0.6rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background:
-    var(--surface-card)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23857a6c' stroke-width='1.4'/%3E%3C/svg%3E")
-    no-repeat right 0.6rem center / 0.6rem;
-  color: var(--text-primary);
-  font: inherit;
+  max-width: 11rem;
+  padding-top: 0.2rem;
+  padding-bottom: 0.2rem;
   font-size: var(--text-xs);
-  appearance: none;
-  cursor: pointer;
 }
 .local-group-members {
   margin: 0;
@@ -1412,21 +1379,28 @@ dialog form {
 
 /* The fix of a broken pull request: the small action in its inbox status
    cell and the confirmation that comes before anything runs. */
+/* Fix sits beside a broken state like Merge beside a ready one, but stays
+   drawn: a broken pull request is the thing to act on. */
 .inbox-fix {
+  margin-left: 0.4rem;
   padding: 0 0.4rem;
   border: 1px solid var(--border-default);
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: var(--surface-card);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   line-height: 1.25rem;
+}
+span.inbox-fix {
+  border-color: transparent;
+  background: none;
+  color: var(--text-tertiary);
 }
 button.inbox-fix {
   cursor: pointer;
 }
 button.inbox-fix:hover {
   background: var(--surface-hover);
-  color: var(--text-primary);
 }
 .local-fix-confirmation {
   display: grid;
@@ -1475,4 +1449,10 @@ button.inbox-fix:hover {
 :root[data-theme="dark"] .local-fix-warning {
   background: #2a2214;
   color: #e9cf9a;
+}
+/* The Codex and Cursor marks are drawn in black; on a dark page they turn
+   light, as their makers draw them there. */
+:root[data-theme="dark"] img[src*="codex"],
+:root[data-theme="dark"] img[src*="cursor"] {
+  filter: invert(1);
 }

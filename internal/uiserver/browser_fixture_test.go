@@ -382,7 +382,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics,
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
 			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
@@ -412,3 +412,16 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// browserPlanUsage answers api/plan-usage with fixed readings: Claude's two
+// windows and a Codex plan whose weekly window is nearly spent, so the meters
+// show every colour without reading any real credential.
+var browserPlanUsage = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	now := time.Now().UTC()
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{"plans":[
+{"provider":"claude","available":true,"windows":[{"name":"5-hour","used_percent":38,"resets_at":%q},{"name":"weekly","used_percent":74,"resets_at":%q}],"fetched_at":%q},
+{"provider":"codex","available":true,"plan":"pro","windows":[{"name":"weekly","used_percent":93,"resets_at":%q}],"fetched_at":%q}]}`,
+		at(3*time.Hour), at(52*time.Hour), at(0), at(30*time.Hour), at(-20*time.Minute))
+})

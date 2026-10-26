@@ -14,6 +14,7 @@ import {
   type Job,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
+import { harnessName } from "./desktop/reviews";
 
 const phases: Record<string, string> = {
   queued: "Queued",
@@ -112,7 +113,7 @@ export function FixDialog({
           </p>
           <dl className="local-fix-facts">
             <dt>Harness</dt>
-            <dd>{item.backend}</dd>
+            <dd>{harnessName(item.backend ?? "")}</dd>
             <dt>Model</dt>
             <dd>{item.model || "Harness default"}</dd>
             <dt>Pushes to</dt>

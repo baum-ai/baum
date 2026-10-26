@@ -459,8 +459,14 @@ function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fi
   if (fixing) return <span className="inbox-fix">Fixing…</span>;
   if (!fix) return null;
   return (
-    <button type="button" className="inbox-fix" aria-label={label} title={label} onClick={fix}>
-      Fix
+    <button
+      type="button"
+      className={cn("inbox-fix", FOCUS_RING)}
+      aria-label={label}
+      title={label}
+      onClick={fix}
+    >
+      Fix…
     </button>
   );
 }

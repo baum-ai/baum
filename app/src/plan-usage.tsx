@@ -16,6 +16,8 @@ export type PlanUsageEntry = {
   fetched_at: string;
 };
 
+/** "weekly" reads "Weekly", "pro" reads "Pro". */
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const providerName = { claude: "Claude Code", codex: "Codex" } as const;
 /** The daemon caches for five minutes, so asking more often only repeats its answer. */
 export const PLAN_USAGE_REFRESH_MS = 5 * 60 * 1000;
@@ -39,7 +41,7 @@ function Meter({ win, now }: { win: PlanWindow; now: number }) {
   if (win.used_percent === null) {
     return (
       <li className="grid gap-1" data-window={win.name}>
-        <span className="text-xs text-(--text-secondary)">{win.name}</span>
+        <span className="text-xs text-(--text-secondary)">{capital(win.name)}</span>
         <span className="text-xs text-(--text-tertiary)">
           Reset since baum last saw it. Use it once to see the new figure.
         </span>
@@ -50,7 +52,7 @@ function Meter({ win, now }: { win: PlanWindow; now: number }) {
   return (
     <li className="grid gap-1" data-window={win.name}>
       <div className="flex items-baseline justify-between gap-3 text-xs">
-        <span className="text-(--text-secondary)">{win.name}</span>
+        <span className="text-(--text-secondary)">{capital(win.name)}</span>
         <span className="text-(--text-tertiary)">
           {`${left}% left`}
           {resets && win.resets_at ? ` · resets in ${span(Date.parse(win.resets_at) - now)}` : ""}
@@ -58,7 +60,7 @@ function Meter({ win, now }: { win: PlanWindow; now: number }) {
       </div>
       <div
         role="meter"
-        aria-label={`${win.name} usage left`}
+        aria-label={`${capital(win.name)} usage left`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={left}
@@ -93,7 +95,7 @@ export function PlanUsageView({
           <h3 className="text-xs font-semibold text-(--text-primary)">
             {providerName[plan.provider] ?? plan.provider}
             {plan.plan ? (
-              <span className="font-normal text-(--text-tertiary)"> · {plan.plan}</span>
+              <span className="font-normal text-(--text-tertiary)"> · {capital(plan.plan)}</span>
             ) : null}
           </h3>
           {plan.available ? (

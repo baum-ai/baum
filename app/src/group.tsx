@@ -87,17 +87,17 @@ export function NameDialog({
   return (
     <dialog ref={dialog} onCancel={close} aria-labelledby="group-name-title">
       <form onSubmit={(event) => void send(event)}>
-        <div className="local-dialog-head">
+        <div className="grid gap-1">
           <h2 id="group-name-title" className="text-lg font-semibold">
             {title}
           </h2>
-          {detail ? <p>{detail}</p> : null}
+          {detail ? <p className="text-xs text-(--text-secondary)">{detail}</p> : null}
         </div>
-        <label className="local-field">
+        <label className="local-field-label">
           Group name
           <input
             type="text"
-            className="local-text-input"
+            className="local-field"
             autoFocus
             value={name}
             maxLength={80}
@@ -479,43 +479,25 @@ export function GroupPage({
                 <h2>
                   Pull requests <span className="local-group-count">{group.members.length}</span>
                 </h2>
-                <div className="local-group-actions">
-                  {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
-                    <select
-                      aria-label="Add pull request"
-                      className="local-group-add"
-                      value=""
-                      disabled={managing}
-                      onChange={(event) => {
-                        const number = Number(event.target.value);
-                        if (number) void change({ members: [...group.members, number] });
-                      }}
-                    >
-                      <option value="">Add…</option>
-                      {addable.map((e) => (
-                        <option key={e.pull_request.number} value={e.pull_request.number}>
-                          #{e.pull_request.number} {e.pull_request.title}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  <Button
-                    variant="ghost"
-                    size="tiny"
+                {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
+                  <select
+                    aria-label="Add pull request"
+                    className="local-field local-group-add"
+                    value=""
                     disabled={managing}
-                    onClick={() => setRenaming(true)}
+                    onChange={(event) => {
+                      const number = Number(event.target.value);
+                      if (number) void change({ members: [...group.members, number] });
+                    }}
                   >
-                    Rename
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="tiny"
-                    disabled={managing}
-                    onClick={() => setDeleting(true)}
-                  >
-                    Delete group
-                  </Button>
-                </div>
+                    <option value="">Add…</option>
+                    {addable.map((e) => (
+                      <option key={e.pull_request.number} value={e.pull_request.number}>
+                        #{e.pull_request.number} {e.pull_request.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
               </header>
               <ul className="local-group-members">
                 {members.map(({ number, entry }) => (
@@ -551,6 +533,24 @@ export function GroupPage({
                   </li>
                 ))}
               </ul>
+              <footer className="local-group-foot">
+                <Button
+                  variant="ghost"
+                  size="tiny"
+                  disabled={managing}
+                  onClick={() => setRenaming(true)}
+                >
+                  Rename
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="tiny"
+                  disabled={managing}
+                  onClick={() => setDeleting(true)}
+                >
+                  Delete group
+                </Button>
+              </footer>
               {manageError ? <Alert>{manageError}</Alert> : null}
             </section>
             {group.outdated && group.version_count > 0 ? (
