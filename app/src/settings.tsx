@@ -12,6 +12,7 @@ import {
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
+import { PlanUsage } from "./plan-usage";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
 import codexLogo from "./desktop/codex.svg";
@@ -362,6 +363,9 @@ function ReviewSettingsSection({
         onChange={setDraft}
         className="settings-form"
       />
+      <div className="px-5 pb-4">
+        <PlanUsage />
+      </div>
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
         <p className="text-xs text-(--text-tertiary)">
           {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
