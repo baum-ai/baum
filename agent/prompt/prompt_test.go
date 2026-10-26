@@ -80,3 +80,33 @@ func TestUnknownBackendIsAnError(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupInstructionsInsertGroupTextBeforeSubmitting(t *testing.T) {
+	shared := readFile(t, "review-public-v3.md")
+	group := readFile(t, "group-public-v1.md")
+	for _, phrase := range []string{"members/<number>/head/", "members.json", "Do not write `stack`"} {
+		if !strings.Contains(group, phrase) {
+			t.Errorf("the group text does not say %q", phrase)
+		}
+	}
+	for backend, file := range map[string]string{agent.BackendClaude: "submit-claude.md", agent.BackendCodex: "submit-codex.md", agent.BackendCursorAgent: "submit-cursor.md"} {
+		got, err := (prompt.GroupPrompts{}).Instructions(context.Background(), backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Version != prompt.GroupVersion {
+			t.Fatalf("%s: version %q", backend, got.Version)
+		}
+		want := strings.TrimSuffix(shared, "## 10. Submitting\n") + group + "## 10. Submitting\n\n" + readFile(t, file)
+		if got.Body != want {
+			t.Fatalf("%s: the group text must sit before the Submitting heading and its submit block", backend)
+		}
+		sum := sha256.Sum256([]byte(got.Body))
+		if got.Digest != hex.EncodeToString(sum[:]) {
+			t.Fatalf("%s: digest is not the sha256 of the body", backend)
+		}
+	}
+	if _, err := (prompt.GroupPrompts{}).Instructions(context.Background(), "nope"); err == nil {
+		t.Fatal("an unknown backend must be an error")
+	}
+}

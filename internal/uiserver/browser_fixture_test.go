@@ -35,6 +35,7 @@ import (
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -320,7 +321,15 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		live := &livesessions.Tracker{Source: events, Linker: browserLiveLinker{}, Notify: func() { _ = server.Publish("live", struct{}{}) }}
 		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
+		// Review groups generate through the same fake backend: a group of
+		// pull requests with saved reviews (PR 7, and any the browser
+		// generates first) gets a combined review.
+		groups, err := reviewgroups.Open(filepath.Join(home, "groups.sqlite"))
+		if err != nil {
+			_ = events.Close()
+			return daemon.App{}, err
+		}
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if job.Phase == "finished" {
@@ -350,8 +359,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close() }, Drain: runner.Drain, Resume: runner.Resume,
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics,
+			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.
 			Run: func(ctx context.Context) {

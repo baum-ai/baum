@@ -690,7 +690,16 @@ embedded with `go:embed`.
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
-each backend submits its result differently.
+each backend submits its result differently. `GroupPrompts` is the local
+review group's prompt (`group-review-public-v1`): the same text with
+`group-public-v1.md` inserted before the Submitting heading, which says how a
+group's bundle, per-member checkout and `members.json` differ and what a
+combined review covers (see "Review groups").
+
+A host can also pass `Run.Decorate`, which the loop applies to every document
+the model returns before masking and validation, to fill what the host
+decides and the model never writes: a review group's `stack` and each
+section's `pull_requests`.
 
 The loop owns the rest of what a run sends:
 
@@ -1984,6 +1993,41 @@ one exception is a backend billed outside the list (cursor-agent): its item has
 a nil estimate with an `estimate_reason`, the total is unknown, and
 `Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
 acknowledgement. Unknown actual usage remains null.
+
+### Review groups
+
+`internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
+requests of one repository reviewed together, in `groups.sqlite` in the
+daemon's state directory (beside `jobs.json`), not in a clone. Their combined
+reviews are versions keyed by group ID in the same file, so they never collide
+with a member's own versions in its clone's `versions.sqlite`; deleting a
+group hides it and keeps every version. `/api/groups` serves the definitions
+(create, rename, set members, delete), each with its latest version's
+metadata, risk, the members that version covered and whether it is outdated
+(other members, or a member head in the review index that differs from the one
+reviewed), and a group's versions, documents and patches.
+
+A job item names `{clone, group}` with `pr` 0, so automatic scheduling,
+duplicate-head checks and notices, all keyed by pull request, never match a
+group job. Preparation reads every member from GitHub like a pull request
+job (`Prepared.Members` holds each member's head, which the confirmation
+covers) and needs a saved review of each member in the clone's store, or
+answers `409 {"members_need_reviews": [...]}`. Execution passes
+`generate.Options.Group` and publishes through `reviewgroups.Publisher`.
+`generate.Run` then assembles each member with the ordinary assembler (no
+description images, an equal share of the checkout budget), merges the
+bundles with `assemble.MergeGroup` (the first member's header titled with the
+group's name and a body listing the members, every hunk once in member order,
+the union of the other evidence, one `FileComparison` per member, refitted to
+the caps), unpacks each checkout at `members/<number>/` with no top-level
+`head/`, writes `members.json` (each member's saved review in brief) and runs
+the group prompt. Its decorator sets `stack` (the group's name and each
+member's number, head and saved review version) and each section's
+`pull_requests` from the members whose hunks it lists, so the stored document
+is stack-shaped like a hosted stack review, with `review.pull_request` the
+lowest member. The group page reads patches from the member whose comparison
+changes the file and whose patch holds the cited hunk's range; it lists no
+linked sessions or commits.
 
 ### Local application presentation
 

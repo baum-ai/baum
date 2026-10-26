@@ -123,6 +123,10 @@ type Options struct {
 	DiagnosticsOut string
 	// Now defaults to time.Now.
 	Now func() time.Time
+	// Group, when set, generates a review group's combined review of the
+	// pull requests it names instead of the one Request names; Prompts then
+	// defaults to the public group prompt.
+	Group *Group
 }
 
 // Result is a finished run.
@@ -168,9 +172,13 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			return result, err
 		}
 	}
+	o.Redactor = redactor
 	prompts := o.Prompts
 	if prompts == nil {
 		prompts = prompt.Prompts{}
+		if o.Group != nil {
+			prompts = prompt.GroupPrompts{}
+		}
 	}
 	prompts = markedPrompts{prompts}
 	now := o.Now
@@ -214,31 +222,15 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 
 	request := o.Request
-	progress("assembling the bundle for %s#%d", request.Repository, request.Number)
-	checkoutPath, attachmentsPath := filepath.Join(archives, "checkout.tar.gz"), filepath.Join(archives, "attachments.tar")
-	checkoutFile, err := os.OpenFile(checkoutPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return result, err
-	}
-	defer func() { _ = checkoutFile.Close() }()
-	attachmentsFile, err := os.OpenFile(attachmentsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return result, err
-	}
-	defer func() { _ = attachmentsFile.Close() }()
-	request.Checkout, request.Attachments = checkoutFile, attachmentsFile
-	assembled, err := o.Assembler.Assemble(ctx, request)
-	if err != nil {
-		err = interrupted(err)
-		if CategoryOf(err) != "" {
+	var assembled assemble.Result
+	var captured []store.Attachment
+	var decorate func([]byte) []byte
+	if o.Group != nil {
+		progress("assembling the bundle for a group of %d pull request(s) of %s", len(o.Group.Members), request.Repository)
+		if assembled, decorate, err = assembleGroup(ctx, o, archives, runDir, fail, interrupted); err != nil {
 			return result, err
 		}
-		if errors.Is(err, github.ErrNotFound) {
-			err = fmt.Errorf("pull request %s#%d was not found: it does not exist, or your token cannot see it: %w", request.Repository, request.Number, err)
-		}
-		return result, fail(CategoryInput, err)
-	}
-	if err := errors.Join(checkoutFile.Close(), attachmentsFile.Close()); err != nil {
+	} else if assembled, captured, err = assembleOne(ctx, o, archives, runDir, fail, interrupted); err != nil {
 		return result, err
 	}
 	b := assembled.Bundle
@@ -249,24 +241,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 	}
 	limits := request.Limits
-	if err := bundle.UnpackCheckout(ctx, checkoutPath, runDir, limits.Checkout); err != nil {
-		if err = interrupted(err); CategoryOf(err) != "" {
-			return result, err
-		}
-		return result, fail(CategoryInput, fmt.Errorf("unpacking the checkout: %w", err))
-	}
-	if len(b.Attachments) > 0 {
-		if err := bundle.UnpackAttachments(ctx, attachmentsPath, runDir, b.Attachments, limits.MaxImageBytes); err != nil {
-			if err = interrupted(err); CategoryOf(err) != "" {
-				return result, err
-			}
-			return result, fail(CategoryInput, fmt.Errorf("unpacking the description images: %w", err))
-		}
-	}
-	captured, err := capturedAttachments(attachmentsPath, b.Attachments)
-	if err != nil {
-		return result, fail(CategoryInput, err)
-	}
 	// A path the checkout holds may stay in the returned document as it is.
 	checkout := checkoutPaths(runDir, limits.Checkout.MaxTotalFiles)
 
@@ -292,7 +266,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
 	}
 	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
-		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets,
+		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate,
 	})
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.
@@ -361,6 +335,62 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	result.Attachments = captured
 	result.Document = completed
 	return result, nil
+}
+
+// assembleOne assembles the pull request o.Request names into archives and
+// unpacks its checkout and description images into the run directory.
+func assembleOne(ctx context.Context, o Options, archives, runDir string, fail func(Category, error) error, interrupted func(error) error) (assemble.Result, []store.Attachment, error) {
+	request := o.Request
+	if o.Progress != nil {
+		_, _ = fmt.Fprintf(o.Progress, "assembling the bundle for %s#%d\n", request.Repository, request.Number)
+	}
+	checkoutPath, attachmentsPath := filepath.Join(archives, "checkout.tar.gz"), filepath.Join(archives, "attachments.tar")
+	checkoutFile, err := os.OpenFile(checkoutPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return assemble.Result{}, nil, err
+	}
+	defer func() { _ = checkoutFile.Close() }()
+	attachmentsFile, err := os.OpenFile(attachmentsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return assemble.Result{}, nil, err
+	}
+	defer func() { _ = attachmentsFile.Close() }()
+	request.Checkout, request.Attachments = checkoutFile, attachmentsFile
+	assembled, err := o.Assembler.Assemble(ctx, request)
+	if err != nil {
+		err = interrupted(err)
+		if CategoryOf(err) != "" {
+			return assemble.Result{}, nil, err
+		}
+		if errors.Is(err, github.ErrNotFound) {
+			err = fmt.Errorf("pull request %s#%d was not found: it does not exist, or your token cannot see it: %w", request.Repository, request.Number, err)
+		}
+		return assemble.Result{}, nil, fail(CategoryInput, err)
+	}
+	if err := errors.Join(checkoutFile.Close(), attachmentsFile.Close()); err != nil {
+		return assemble.Result{}, nil, err
+	}
+	b := assembled.Bundle
+	limits := request.Limits
+	if err := bundle.UnpackCheckout(ctx, checkoutPath, runDir, limits.Checkout); err != nil {
+		if err = interrupted(err); CategoryOf(err) != "" {
+			return assemble.Result{}, nil, err
+		}
+		return assemble.Result{}, nil, fail(CategoryInput, fmt.Errorf("unpacking the checkout: %w", err))
+	}
+	if len(b.Attachments) > 0 {
+		if err := bundle.UnpackAttachments(ctx, attachmentsPath, runDir, b.Attachments, limits.MaxImageBytes); err != nil {
+			if err = interrupted(err); CategoryOf(err) != "" {
+				return assemble.Result{}, nil, err
+			}
+			return assemble.Result{}, nil, fail(CategoryInput, fmt.Errorf("unpacking the description images: %w", err))
+		}
+	}
+	captured, err := capturedAttachments(attachmentsPath, b.Attachments)
+	if err != nil {
+		return assemble.Result{}, nil, fail(CategoryInput, err)
+	}
+	return assembled, captured, nil
 }
 
 // rejection is the error of a rejected document: the reason and the first of

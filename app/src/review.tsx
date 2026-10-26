@@ -14,6 +14,7 @@ import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import { WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
+import { ViewerLink } from "@baum/viewer/navigation";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
@@ -90,6 +91,7 @@ export function LocalReview({
   job,
   changed,
   live = [],
+  groups = [],
 }: {
   entry: Entry;
   clone: string;
@@ -99,6 +101,8 @@ export function LocalReview({
   changed: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
+  /** The review groups this pull request belongs to. */
+  groups?: { id: string; name: string }[];
 }) {
   const pr = entry.pull_request;
   const running = liveFor(live, pr);
@@ -313,6 +317,14 @@ export function LocalReview({
           )}
           notices={
             <>
+              {groups.map((group) => (
+                <Notice key={group.id}>
+                  In review group{" "}
+                  <ViewerLink href={appURL(`?group=${encodeURIComponent(group.id)}`)}>
+                    {group.name}
+                  </ViewerLink>
+                </Notice>
+              ))}
               <LiveSessions sessions={running} />
               {entry.needs_clone && doc ? (
                 <Notice>
@@ -417,7 +429,7 @@ function GeneratedBy({
 }
 /** What became of the PR's last generation that did not complete: what
  *  happened in a sentence, and the generator's own words behind a toggle. */
-function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
+export function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
   const failed = job.state === "failed";
   const title = failed
     ? compact
@@ -447,7 +459,7 @@ function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boole
   );
 }
 /** Stops the PR's queued or running job. */
-function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   return (
@@ -472,7 +484,7 @@ function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> })
   );
 }
 /** A new version being generated above the review the reader is on. */
-function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const started = automaticLabel(job);
   return (
     <section aria-label="Review generation" className="local-job-outcome">

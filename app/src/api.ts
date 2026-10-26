@@ -87,6 +87,38 @@ export type Accounting = {
     failed: boolean;
   }[];
 };
+/** A named set of 2 to 8 open pull requests of one repository, reviewed as one. */
+export type ReviewGroup = {
+  id: string;
+  repository: string;
+  name: string;
+  members: number[];
+  created_at: string;
+  updated_at: string;
+  version_count: number;
+  latest: {
+    version: number;
+    generated_at: string;
+    backend: string;
+    model: string;
+    recorded_cost_usd: number | null;
+  } | null;
+  risk_score: { score: number | null; status: string } | null;
+  /** The members the latest version covered, with the heads it read. */
+  reviewed: { number: number; head_sha: string; review_version: number }[];
+  outdated: boolean;
+};
+export const MAX_GROUP_MEMBERS = 8;
+/** An older daemon answers 404 or `available: false`: no groups. */
+export function parseGroups(body: unknown): ReviewGroup[] {
+  const list = (body as { available?: unknown; groups?: unknown } | null)?.groups;
+  return (body as { available?: unknown } | null)?.available !== false && Array.isArray(list)
+    ? (list as ReviewGroup[])
+    : [];
+}
+export function sameRepository(a: string, b: string) {
+  return a.toLowerCase() === b.toLowerCase();
+}
 export type Provenance = {
   tokens?: number;
   version: number;
@@ -114,6 +146,10 @@ export type Job = {
   /** Queued by the daemon's scheduler, not confirmed by a person. */
   automatic?: boolean;
   trigger?: string;
+  /** A review group job names its group; its `pr` is 0. */
+  group?: string;
+  group_name?: string;
+  members?: string;
 };
 /** One repository's automatic generation, from `api/automatic`. */
 export type AutomaticStatus = {
@@ -346,6 +382,35 @@ export async function generateReviews(
     );
   return "queued";
 }
+/** Queues the review of a group. Besides the answers of `generateReviews`,
+ *  a group whose members lack a saved review answers with the numbers. */
+export async function generateGroup(
+  clone: string,
+  group: string,
+  confirmIsolation = false,
+): Promise<"queued" | "isolation" | "needs_clone" | { missing: number[] }> {
+  const response = await fetch(appURL("api/jobs"), {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      items: [{ clone, group }],
+      mode: "single",
+      confirm_isolation: confirmIsolation,
+    }),
+  });
+  if (response.status === 409) {
+    const body = await response.json().catch(() => null);
+    if (body?.isolation_required) return "isolation";
+    if (body?.needs_clone) return "needs_clone";
+    if (Array.isArray(body?.members_need_reviews)) return { missing: body.members_need_reviews };
+  }
+  if (!response.ok)
+    throw Error(
+      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
+    );
+  return "queued";
+}
 export function selector(clone: string, pr: number, version?: number) {
   return new URLSearchParams({
     clone,
@@ -353,22 +418,26 @@ export function selector(clone: string, pr: number, version?: number) {
     ...(version ? { version: String(version) } : {}),
   }).toString();
 }
+function validDocument(doc: ReviewDocument) {
+  if (doc.schema !== "baum.review/1" || !doc.review || !Array.isArray(doc.sections) || !doc.summary)
+    throw Error("Invalid review document.");
+  return doc;
+}
 export function documentRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(
     `api/document?${selector(clone, pr, version)}`,
     undefined,
     "GET",
     signal,
-  ).then((doc) => {
-    if (
-      doc.schema !== "baum.review/1" ||
-      !doc.review ||
-      !Array.isArray(doc.sections) ||
-      !doc.summary
-    )
-      throw Error("Invalid review document.");
-    return doc;
-  });
+  ).then(validDocument);
+}
+export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
+  return request<ReviewDocument>(
+    `api/groups/${encodeURIComponent(id)}/document${version ? `?version=${version}` : ""}`,
+    undefined,
+    "GET",
+    signal,
+  ).then(validDocument);
 }
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
@@ -407,8 +476,14 @@ export function isActiveJob(job: Job | undefined): boolean {
  * Active work takes precedence over earlier terminal attempts. */
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   const matches = (job: Job) =>
+    !job.group &&
     job.pr === entry.pull_request.number &&
     job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase();
+  return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
+}
+/** The group's latest active job, else its latest job. */
+export function groupJob(group: Pick<ReviewGroup, "id">, jobs: Job[]): Job | undefined {
+  const matches = (job: Job) => job.group === group.id;
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
 }
 

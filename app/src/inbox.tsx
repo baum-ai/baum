@@ -22,16 +22,38 @@ import {
 import { Badge } from "@baum/viewer/components/ui";
 import { riskScoreTone, type RiskScoreLevel } from "@baum/viewer/review-document";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
+import {
+  appURL,
+  groupJob,
+  isActiveJob,
+  liveFor,
+  rowKey,
+  sameRepository,
+  type Entry,
+  type Job,
+  type LiveSession,
+  type ReviewGroup,
+} from "./api";
 import { LiveBadge } from "./live";
 import { NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 
-type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
+/** A review group as one inbox row, with those of its members the inbox shows. */
+export type GroupEntry = { group: ReviewGroup; members: Entry[] };
+type Group = {
+  id: string;
+  heading: string;
+  hint: string;
+  tone: string;
+  /** The loose rows: pull requests not shown under a review group. */
+  rows: Entry[];
+  groups: GroupEntry[];
+};
 /** Groups by who acts next. Discovery flags place requested, authored and
  *  other pull requests; the person's own split by GitHub's state into what
- *  needs their changes, what GitHub would merge now and the rest. */
-export function inboxGroups(rows: Entry[]): Group[] {
+ *  needs their changes, what GitHub would merge now and the rest. A review group with a shown member is one row in the bucket of its
+ *  highest-priority shown member, and its shown members leave the loose rows. */
+export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Group[] {
   const groups: Group[] = [
     {
       id: "requested",
@@ -39,6 +61,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "asking for your review",
       tone: "text-(--status-caution)",
       rows: [],
+      groups: [],
     },
     {
       id: "changes",
@@ -46,6 +69,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "yours, with changes requested, failing checks or a conflict",
       tone: "text-(--status-critical)",
       rows: [],
+      groups: [],
     },
     {
       id: "ready",
@@ -53,6 +77,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "yours, and GitHub would merge it now",
       tone: "text-(--status-positive)",
       rows: [],
+      groups: [],
     },
     {
       id: "mine",
@@ -60,6 +85,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "drafts and those waiting on reviews or checks",
       tone: "text-(--status-info)",
       rows: [],
+      groups: [],
     },
     {
       id: "other",
@@ -67,6 +93,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "across your registered repositories",
       tone: "text-(--text-tertiary)",
       rows: [],
+      groups: [],
     },
     {
       id: "history",
@@ -74,6 +101,7 @@ export function inboxGroups(rows: Entry[]): Group[] {
       hint: "reviews retained outside the open inbox",
       tone: "text-(--text-tertiary)",
       rows: [],
+      groups: [],
     },
   ];
   const own = (row: Entry) =>
@@ -82,21 +110,33 @@ export function inboxGroups(rows: Entry[]): Group[] {
       : row.merge === "ready"
         ? 2
         : 3;
-  for (const row of rows) {
-    const index = row.historical
+  const bucket = (row: Entry) =>
+    row.historical
       ? 5
       : row.pull_request.review_requested_from_me
         ? 0
         : row.pull_request.authored_by_me
           ? own(row)
           : 4;
-    groups[index]!.rows.push(row);
+  const grouped = new Set<Entry>();
+  for (const group of reviewGroups) {
+    const members = rows.filter(
+      (row) =>
+        sameRepository(row.pull_request.repository, group.repository) &&
+        group.members.includes(row.pull_request.number),
+    );
+    if (members.length === 0) continue;
+    for (const member of members) grouped.add(member);
+    // Saved history is the lowest bucket, so the highest-priority member
+    // puts the group there only when every shown member is historical.
+    groups[Math.min(...members.map(bucket))]!.groups.push({ group, members });
   }
+  for (const row of rows) if (!grouped.has(row)) groups[bucket(row)]!.rows.push(row);
   // Saved history reads most recently reviewed first; a review without a
   // generation time goes last.
   const reviewed = (row: Entry) => Date.parse(row.latest?.generated_at ?? "") || 0;
   groups[5]!.rows.sort((a, b) => reviewed(b) - reviewed(a));
-  return groups.filter((group) => group.rows.length > 0);
+  return groups.filter((group) => group.rows.length + group.groups.length > 0);
 }
 export function Inbox({
   rows,
@@ -106,6 +146,8 @@ export function Inbox({
   Link,
   live = [],
   changed,
+  groups: reviewGroups = [],
+  jobs = [],
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
@@ -116,12 +158,24 @@ export function Inbox({
   live?: LiveSession[];
   /** Reloads the inbox after a merge. */
   changed?: () => Promise<void>;
+  /** Review groups; each with a shown member is one row. */
+  groups?: ReviewGroup[];
+  jobs?: Job[];
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [merging, setMerging] = useState<Entry | null>(null);
-  const groups = inboxGroups(rows);
+  // Review groups start collapsed.
+  const [expanded, setExpanded] = useState(new Set<string>());
+  const groups = inboxGroups(rows, reviewGroups);
   const visible = groups
-    .flatMap((group) => (collapsed.has(group.id) ? [] : group.rows))
+    .flatMap((group) =>
+      collapsed.has(group.id)
+        ? []
+        : [
+            ...group.rows,
+            ...group.groups.flatMap((entry) => (expanded.has(entry.group.id) ? entry.members : [])),
+          ],
+    )
     .filter((row) => !row.needs_clone);
   const toggle = (key: string, checked: boolean) =>
     setSelection((previous) => {
@@ -130,6 +184,19 @@ export function Inbox({
       else next.delete(key);
       return next;
     });
+  const renderRow = (entry: Entry, nested: boolean) => (
+    <InboxRow
+      key={rowKey(entry)}
+      entry={entry}
+      clone={cloneFor(entry)}
+      selected={selection.has(rowKey(entry))}
+      toggle={(checked) => toggle(rowKey(entry), checked)}
+      Link={Link}
+      live={liveFor(live, entry.pull_request)}
+      nested={nested}
+      merge={canMerge(entry) ? () => setMerging(entry) : undefined}
+    />
+  );
   return (
     <section
       aria-label="Pull request inbox"
@@ -164,6 +231,7 @@ export function Inbox({
         <Bucket
           key={group.id}
           group={group}
+          count={group.rows.length + group.groups.length}
           collapsed={collapsed.has(group.id)}
           onToggle={() =>
             setCollapsed((previous) => {
@@ -174,18 +242,26 @@ export function Inbox({
             })
           }
         >
-          {group.rows.map((entry) => (
-            <InboxRow
-              key={rowKey(entry)}
-              entry={entry}
-              clone={cloneFor(entry)}
-              selected={selection.has(rowKey(entry))}
-              toggle={(checked) => toggle(rowKey(entry), checked)}
+          {group.groups.map(({ group: reviewGroup, members }) => (
+            <GroupRow
+              key={reviewGroup.id}
+              group={reviewGroup}
+              job={groupJob(reviewGroup, jobs)}
+              expanded={expanded.has(reviewGroup.id)}
+              onToggle={() =>
+                setExpanded((previous) => {
+                  const next = new Set(previous);
+                  if (next.has(reviewGroup.id)) next.delete(reviewGroup.id);
+                  else next.add(reviewGroup.id);
+                  return next;
+                })
+              }
               Link={Link}
-              live={liveFor(live, entry.pull_request)}
-              merge={canMerge(entry) ? () => setMerging(entry) : undefined}
-            />
+            >
+              {members.map((entry) => renderRow(entry, true))}
+            </GroupRow>
           ))}
+          {group.rows.map((entry) => renderRow(entry, false))}
         </Bucket>
       ))}
       {merging ? (
@@ -201,11 +277,13 @@ export function Inbox({
 }
 function Bucket({
   group,
+  count,
   collapsed,
   onToggle,
   children,
 }: {
   group: Group;
+  count: number;
   collapsed: boolean;
   onToggle: () => void;
   children: ReactNode;
@@ -236,7 +314,7 @@ function Bucket({
             className={cn("size-1.5 flex-none rounded-full bg-current", group.tone)}
           />
           <span>{group.heading}</span>
-          <span className="inbox-bucket-count">{formatCount(group.rows.length)}</span>
+          <span className="inbox-bucket-count">{formatCount(count)}</span>
           <span className="hidden min-w-0 truncate font-normal text-(--text-tertiary) sm:inline">
             · {group.hint}
           </span>
@@ -423,26 +501,10 @@ function StatusColumns({ entry, merge }: { entry: Entry; merge?: () => void }) {
     </div>
   );
 }
-function InboxRow({
-  entry,
-  clone,
-  selected,
-  toggle,
-  Link,
-  live,
-  merge,
-}: {
-  entry: Entry;
-  clone: string;
-  selected: boolean;
-  toggle: (checked: boolean) => void;
-  Link: ComponentType<ViewerLinkProps>;
-  live: LiveSession[];
-  merge?: () => void;
-}) {
-  const pr = entry.pull_request;
-  const score = entry.risk_score?.score;
-  const lowerBound = entry.risk_score?.status === "lower_bound";
+/** The risk column: the score out of 5, or a dash. */
+function RiskCell({ risk }: { risk: Entry["risk_score"] }) {
+  const score = risk?.score;
+  const lowerBound = risk?.status === "lower_bound";
   const riskLabel =
     score == null
       ? "Risk not scored"
@@ -457,9 +519,128 @@ function InboxRow({
       : lowerBound && score < 4
         ? "caution"
         : riskScoreTone(score as RiskScoreLevel);
+  return (
+    <span role="img" aria-label={riskLabel} title={riskLabel} className="inbox-risk">
+      {tone ? (
+        <Badge tone={tone} className="font-medium tabular-nums">
+          {lowerBound ? "≥" : ""}
+          {score}
+          <span className="opacity-60">/5</span>
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+/** The state words of a pull request, as the inbox's status cells say them. */
+export function stateWords(entry: Entry): string[] {
+  const state = entry.pull_request.state.toLowerCase();
+  return [
+    state ? state[0]!.toUpperCase() + state.slice(1) : "",
+    REVIEW[entry.review]?.label ?? "",
+    mergeStatus(entry)?.label ?? "",
+  ].filter(Boolean);
+}
+/** A review group's one row; its shown members nest under it when expanded. */
+function GroupRow({
+  group,
+  job,
+  expanded,
+  onToggle,
+  Link,
+  children,
+}: {
+  group: ReviewGroup;
+  job: Job | undefined;
+  expanded: boolean;
+  onToggle: () => void;
+  Link: ComponentType<ViewerLinkProps>;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const metadata = ["Review group", `${group.members.length} pull requests`, group.repository].join(
+    " · ",
+  );
+  return (
+    <li>
+      <div className="inbox-columns inbox-row inbox-group-row">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={id}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name}`}
+          onClick={onToggle}
+          className={cn("inbox-group-toggle", FOCUS_RING)}
+        >
+          <ChevronRightIcon
+            size={12}
+            className={cn(
+              "text-(--text-tertiary) transition-transform motion-reduce:transition-none",
+              expanded && "rotate-90",
+            )}
+          />
+        </button>
+        <RiskCell risk={group.risk_score} />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <Link
+              href={appURL(`?group=${encodeURIComponent(group.id)}`)}
+              title={group.name}
+              className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
+            >
+              {group.name}
+            </Link>
+          </div>
+          <p title={metadata} className="inbox-meta text-xs text-(--text-tertiary)">
+            {metadata}
+          </p>
+          {isActiveJob(job) ? (
+            <span className="inbox-activity text-(--text-secondary)">
+              <NineDots size={14} />
+              Generating group review
+            </span>
+          ) : group.outdated ? (
+            <span className="inbox-activity">Group review outdated</span>
+          ) : group.version_count === 0 ? (
+            <span className="inbox-activity">No group review yet</span>
+          ) : null}
+        </div>
+      </div>
+      <ul id={id} hidden={!expanded}>
+        {children}
+      </ul>
+    </li>
+  );
+}
+function InboxRow({
+  entry,
+  clone,
+  selected,
+  toggle,
+  Link,
+  live,
+  nested = false,
+  merge,
+}: {
+  entry: Entry;
+  clone: string;
+  selected: boolean;
+  toggle: (checked: boolean) => void;
+  Link: ComponentType<ViewerLinkProps>;
+  live: LiveSession[];
+  /** Shown under its review group's row. */
+  nested?: boolean;
+  merge?: () => void;
+}) {
+  const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
   return (
-    <li className={cn("inbox-columns inbox-row", selected && "bg-(--surface-selected)")}>
+    <li
+      className={cn(
+        "inbox-columns inbox-row",
+        nested && "inbox-nested",
+        selected && "bg-(--surface-selected)",
+      )}
+    >
       <input
         type="checkbox"
         aria-label={`Select ${pr.repository} #${pr.number}`}
@@ -467,15 +648,7 @@ function InboxRow({
         disabled={entry.needs_clone}
         onChange={(e) => toggle(e.target.checked)}
       />
-      <span role="img" aria-label={riskLabel} title={riskLabel} className="inbox-risk">
-        {tone ? (
-          <Badge tone={tone} className="font-medium tabular-nums">
-            {lowerBound ? "≥" : ""}
-            {score}
-            <span className="opacity-60">/5</span>
-          </Badge>
-        ) : null}
-      </span>
+      <RiskCell risk={entry.risk_score} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
           <Link

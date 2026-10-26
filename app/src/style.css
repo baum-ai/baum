@@ -1156,3 +1156,85 @@ dialog.local-dialog-wide {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 }
+
+/* A review group's row: its toggle takes the checkbox column, and its shown
+   members nest under it, indented past the toggle. */
+.inbox-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: start;
+  margin-top: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+@media (width >= 72rem) {
+  .inbox-group-toggle {
+    align-self: center;
+    margin-top: 0;
+  }
+}
+.inbox-nested {
+  padding-left: 2.5rem;
+  background: var(--surface-wash);
+}
+.inbox-nested:hover {
+  background: var(--surface-hover);
+}
+
+/* The review group page: its members and the controls that change them. */
+.local-group-panel {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.875rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+.local-group-panel h2 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.local-group-members {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.local-group-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0;
+}
+.local-group-member + .local-group-member {
+  border-top: 1px solid var(--border-subtle);
+}
+.local-group-member-title {
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+.local-group-member-title a {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.local-group-member-title a:hover {
+  text-decoration: underline;
+}
+.local-group-member-state {
+  color: var(--text-tertiary);
+}
+.local-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+dialog form {
+  display: grid;
+  gap: 0.75rem;
+}

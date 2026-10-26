@@ -37,6 +37,9 @@ type LocalAPI struct {
 	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
 	// request from the app, the only GitHub write the app makes.
 	Merge http.Handler
+	// Groups serves /api/groups: review groups and their combined reviews
+	// (internal/reviewgroups).
+	Groups http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -102,6 +105,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
+	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
