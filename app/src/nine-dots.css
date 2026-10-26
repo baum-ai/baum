@@ -1,0 +1,99 @@
+/* The nine-dots loader (nine-dots.tsx). Every rule for it is here: pages
+   use NineDots or LoadingStatus and never restyle them. */
+.nine-dots {
+  --nine-dots-rest: #7a4a26;
+  --nine-dots-active: #3e9b4f;
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+:root[data-theme="dark"] .nine-dots {
+  --nine-dots-rest: #c98b4e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .nine-dots {
+    --nine-dots-rest: #c98b4e;
+  }
+}
+.nine-dots.nine-dots-text {
+  --nine-dots-rest: color-mix(in srgb, currentColor 35%, transparent);
+  --nine-dots-active: currentColor;
+  margin-inline-end: 0.5em;
+  vertical-align: -0.15em;
+}
+.nine-dots circle {
+  fill: var(--nine-dots-rest);
+}
+/* Delays are negative so every dot is mid-loop from the first frame. */
+.nine-dots [class^="nine-dots-step-"] {
+  animation: nine-dots 1.2s linear infinite;
+}
+.nine-dots .nine-dots-step-0 {
+  animation-delay: -1.2s;
+}
+.nine-dots .nine-dots-step-1 {
+  animation-delay: -1.05s;
+}
+.nine-dots .nine-dots-step-2 {
+  animation-delay: -0.9s;
+}
+.nine-dots .nine-dots-step-3 {
+  animation-delay: -0.75s;
+}
+.nine-dots .nine-dots-step-4 {
+  animation-delay: -0.6s;
+}
+.nine-dots .nine-dots-step-5 {
+  animation-delay: -0.45s;
+}
+.nine-dots .nine-dots-step-6 {
+  animation-delay: -0.3s;
+}
+.nine-dots .nine-dots-step-7 {
+  animation-delay: -0.15s;
+}
+@keyframes nine-dots {
+  0%,
+  14% {
+    fill: var(--nine-dots-active);
+  }
+  30%,
+  100% {
+    fill: var(--nine-dots-rest);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nine-dots [class^="nine-dots-step-"] {
+    animation: none;
+  }
+  .nine-dots .nine-dots-step-0 {
+    fill: var(--nine-dots-active);
+  }
+}
+
+.loading-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+.loading-message {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.loading-status.loading-block {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.875rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+}
+.loading-block .loading-title {
+  font-size: 1rem;
+  font-weight: 500;
+}
+.loading-detail {
+  font-size: 0.875rem;
+  opacity: 0.8;
+}

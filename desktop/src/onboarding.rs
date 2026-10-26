@@ -545,14 +545,23 @@ async fn change_hooks(
 
 /// The native folder picker. The setup screen and the daemon's pages (the
 /// `daemon-pages` capability) may call it: it changes nothing and returns only
-/// the folder the user chose.
+/// the folder the user chose. With `clone_target` it asks where a new clone
+/// should go rather than for an existing clone.
 #[tauri::command]
-pub async fn choose_repository(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn choose_repository(
+    app: AppHandle,
+    clone_target: Option<bool>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let title = if clone_target.unwrap_or(false) {
+        "Choose where to clone the repository"
+    } else {
+        "Choose a local GitHub repository"
+    };
     blocking(move || {
         app.dialog()
             .file()
-            .set_title("Choose a local GitHub repository")
+            .set_title(title)
             .blocking_pick_folder()
             .map(|path| {
                 path.into_path()

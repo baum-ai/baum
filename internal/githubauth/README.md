@@ -14,8 +14,13 @@ performs one exchange, enforces the server interval, and adds five seconds on
 `slow_down`. Callers should poll with a request context and stop at terminal
 states. Starting again replaces the previous pending authorization.
 
-Refresh is serialized with account changes. Expiring tokens are refreshed with
-the public client ID and refresh token, without a client secret. `/user` checks
+The OAuth App has token expiration turned off, so a grant has no expiry and no
+refresh token, and the credential lasts until the user revokes it. GitHub
+refreshes an OAuth App's expiring tokens only with the client secret, which a
+desktop binary cannot keep, so expiring grants from before that change are
+refreshed with the public client ID and refresh token, without a client
+secret, and any refusal asks the user to reconnect. Refresh is serialized with
+account changes. `/user` checks
 account identity and OAuth scopes before persistence. Rotated credentials must
 be saved before the new access token is returned. An unavailable store fails
 closed, with no plaintext fallback. Disconnect deletes the local credential;

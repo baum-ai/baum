@@ -24,7 +24,7 @@ func TestForkCloneRegisteredToTheForkIsNeverMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.run(t)
-	eventually(t, "the scan to end", f.scanned)
+	f.scan(t)
 	f.events <- agentEvent(fork, time.Now())
 	f.service.Trigger()
 	time.Sleep(400 * time.Millisecond) // several ticks and events

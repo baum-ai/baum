@@ -888,7 +888,8 @@ away or removed link into the member tree that contains them; paths still
 present link at the stack head. Older stacks retain their fallback.
 
 The sans-serif font comes from the `--viewer-font-sans` CSS variable, which
-defaults to Inter, bundled with the package under the SIL Open Font License.
+defaults to baum's bundled type, Instrument Sans for text and Manrope for
+headings, both bundled with the package under the SIL Open Font License.
 A host overrides the variable to restyle the viewer without forking it; the
 hosted service sets its own licensed face this way.
 
@@ -2053,6 +2054,14 @@ writers can become root, but never the staff group, gid 20, or a file). On
 Windows only the allowlist
 applies. A refusal is logged; the daemon keeps running without
 `restart_pending`, and is replaced when a newer client next finds it idle.
+A daemon also restarts when its own executable is replaced on disk, by an
+update or a development rebuild, even at the same version: every 5 seconds it
+compares the file at its `os.Executable()` path with the one it started from,
+and once a different file there has stayed unchanged for one check and passes
+the same policy, it schedules `restart_pending` into that path as if a newer
+client had asked. Until then, helpers it starts from its own path (the GitHub
+credential helper) run the new file and refuse the old parent. A failed
+restart is not retried until the file changes again.
 A daemon speaking a newer protocol is an
 `IncompatibleError` naming both versions.
 When nothing answers, a second lock (`start.lock.sqlite`) serializes starts:

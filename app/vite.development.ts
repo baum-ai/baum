@@ -24,11 +24,7 @@ export function desktopDevelopment(directory: string): Plugin {
           port: 1420,
           strictPort: true,
           fs: {
-            allow: [
-              resolve(import.meta.dirname),
-              resolve(import.meta.dirname, "../viewer"),
-              resolve(import.meta.dirname, "../desktop/ui"),
-            ],
+            allow: [resolve(import.meta.dirname), resolve(import.meta.dirname, "../viewer")],
           },
         },
       };

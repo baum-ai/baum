@@ -15,7 +15,7 @@ itself is unchanged and stays `CGO_ENABLED=0`.
 There is one daemon per user, shared by the app and coding-agent hooks. Either
 may start it, and it outlives the app: quitting the app leaves it running.
 
-1. The window opens on a bundled connecting screen (`ui/`).
+1. The window opens on a bundled connecting screen (`../app/src/desktop/connecting.tsx`).
 2. The app runs the bundled `baum daemon ensure --json`, which starts the daemon
    if none is running and prints its status as one JSON line. A daemon that
    hooks already started is the normal case. The command has 45 seconds.
@@ -43,11 +43,14 @@ A second launch focuses the existing window instead of opening another one.
 
 ## First run: the baum command and the hooks
 
-First run uses a five-step setup in the landing page's sand, espresso and green
-palette, with bundled Studio Feixen fonts. The screen is a typed React entry in
+First run uses a three-step setup in the landing page's sand, espresso and green
+palette, set like every screen of the app in its bundled type: Instrument
+Sans for text and Manrope for headings, both under the SIL Open Font License
+(`../viewer/src/fonts/`). Studio Feixen, the website's font, is licensed for the
+web only and is never bundled in the app. The screen is a typed React entry in
 `../app/src/desktop/`, built alongside the local application by its Vite build.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
-native assets in `dist/`, keeping the connecting page from `ui/`. Tauri embeds
+native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
 daemon-served pages may open the native folder picker (below) or manage
 the bundled CLI and agent hooks directly in Settings. Each step is optional and has Back
@@ -55,40 +58,48 @@ and Continue controls; changes happen only when the user selects an install
 or add action. Displayed paths abbreviate the current home directory as
 `~`; actions still use the full path:
 
-1. Connect GitHub with device sign-in. The app attaches to the daemon while
-   setup shows, and the step reaches the daemon's GitHub sign-in through the
-   setup screen's `github_connection` command, which relays status, start,
-   cancel and retry over the tray's loopback client; disconnecting stays in
-   Settings. Signing in opens GitHub's device page in the default browser and
-   copies the code in the same click. The daemon runs the device flow and keeps
-   the credential, so the screen never holds a token.
-2. Install the bundled `baum` command onto the login shell's `PATH` (below).
-   The step states in one line where baum will be installed, or which other
-   baum it replaces; PATH and administrator warnings show beneath it.
-3. Connect the agents you use, with separate install or enable buttons. The
-   Codex marketplace plugin is installed with `baum hooks install
-   --user --agent codex`. The screen explains reviewing trust with `/hooks`.
-   The Claude Code plugin is installed separately with `--agent claude-code`.
-   Both use the native agent CLI to fetch the public marketplace. Installation
-   and enablement do not mean the user has trusted the hooks.
-4. Pick GitHub repositories from the signed-in account, with search. baum
-   finds local clones from agent activity and common code folders and preselects
-   found repositories. Missing clones offer Choose folder, Clone it (with an
-   editable default folder) and Skip. A picked repository without a clone still
-   lists its pull requests; generating waits for a clone. Without sign-in the
-   step offers Choose folder or an absolute path instead. On macOS, Also look
-   in Documents starts a single opt-in scan. The setup `repositories` command
-   relays only allowlisted list, pick/unpick, discovery, folder registration and
-   clone actions to the daemon. It cannot provide arbitrary HTTP routes or see
-   a GitHub token. Explicit folder attachment may file a fork under its upstream
-   repository when a remote matches it.
-5. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
+1. Connect GitHub and pick repositories.
+   - Device sign-in: the app attaches to the daemon while setup shows, and the
+     step reaches the daemon's GitHub sign-in through the setup screen's
+     `github_connection` command, which relays status, start, cancel and retry
+     over the tray's loopback client; disconnecting stays in Settings. Signing
+     in opens GitHub's device page in the default browser and copies the code
+     in the same click. The daemon runs the device flow and keeps the
+     credential, so the screen never holds a token.
+   - Below it, pick GitHub repositories from the signed-in account. The list
+     shows the first eight and any picked ones; search finds the rest. Rows show
+     GitHub details only and nothing is picked on its own. Once a repository
+     is picked, baum looks for its clone in folders agents worked in and common
+     code folders, with the nine-dots loader while it looks, then shows the
+     clone it found or says none was found. A picked repository without a
+     clone offers Choose folder and Clone it (with an editable default folder);
+     unticking it unpicks it. A picked repository without a clone still lists its pull requests;
+     generating waits for a clone. Repositories show only once GitHub is
+     connected: baum works with GitHub repositories only, with no local-folder
+     fallback. On macOS, Also look in Documents
+     starts a single opt-in scan. The setup `repositories` command relays only
+     allowlisted list, pick/unpick, discovery, folder registration and clone
+     actions to the daemon. It cannot provide arbitrary HTTP routes or see a
+     GitHub token. Explicit folder attachment may file a fork under its
+     upstream repository when a remote matches it.
+2. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
    the Anthropic API), its model (the harness default, a listed model or a
    custom one), whether reviews run automatically and, if so, for which pull
    requests (authored, requested, or both). The screen reads them with
    `baum internal reviews show` and saves changes with `baum internal reviews
-   set` when the user opens baum. They are stored as app preferences in the
-   repository registry, which the daemon rereads for every job.
+   set` when the user opens baum at the end of setup. They are stored as app
+   preferences in the repository registry, which the daemon rereads for every
+   job.
+3. Install the CLI and connect agents.
+   - Install the bundled `baum` command onto the login shell's `PATH` (below).
+     The step states in one line where baum will be installed, or which other
+     baum it replaces; PATH and administrator warnings show beneath it.
+   - Connect the agents you use, with separate install or enable buttons. The
+     Codex marketplace plugin is installed with `baum hooks install --user
+     --agent codex`. The screen explains reviewing trust with `/hooks`. The
+     Claude Code plugin is installed separately with `--agent claude-code`.
+     Both use the native agent CLI to fetch the public marketplace.
+     Installation and enablement do not mean the user has trusted the hooks.
 
 Failed actions leave the user on the step with their output and a retry action.
 "Check again" rereads the installed state. Finishing records `setup.json`,

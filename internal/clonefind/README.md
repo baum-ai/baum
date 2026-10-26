@@ -1,9 +1,12 @@
 # Finding local clones
 
-`internal/clonefind` finds the local git clones of GitHub repositories without
-asking. Picked repositories without a clone get one attached automatically, and
-the setup and Repositories screens can pre-select repositories whose clone was
-found. It reads local files and runs read-only git commands. It makes no
+`internal/clonefind` finds the local git clones of the GitHub repositories a
+person picks. It searches only while a picked repository has no clone, and
+attaches the clone it finds; repositories that are not picked are never looked
+for. The setup and Repositories screens list GitHub repositories without local
+paths, and show a picked repository's search (`running` in the snapshot) and
+then its clone, or that none was found. It reads local files and runs
+read-only git commands. It makes no
 network request, and nothing about local folders leaves the computer.
 
 ## Sources
@@ -102,13 +105,16 @@ context. A run that hits a limit reports what it found.
 `Service` (run by the daemon) keeps the last result in memory and attaches
 clones:
 
-- **When it scans.** At daemon start in the background (readiness does not wait
-  for it); after any registry write through the API, `Trigger`: it does
-  nothing unless a picked repository has no clone registered (one registry
-  query, no git), else attaches from the last result, and scans again unless
-  the last scan was under a minute ago; every hour while a picked repository
-  has no available clone; and when asked (`POST /api/clones/found/refresh`) or
-  when the event subscription missed events.
+- **When it scans.** Only while a picked repository has no available clone:
+  at daemon start in the background (readiness does not wait for it), every
+  hour, and when the event subscription missed events; after any registry
+  write through the API, `Trigger`: it does nothing unless a picked repository
+  has no clone registered (one registry query, no git), else attaches from the
+  last result, and scans again unless the last scan was under a minute ago.
+  From `Trigger` until that check ends or its scan does, the snapshot reports
+  `running`, so a repository just picked reads as being looked for. A scan
+  also runs when asked (`POST /api/clones/found/refresh`). With nothing picked
+  the daemon reads no folder.
 - **What it attaches.** For each picked repository with no available clone it
   calls `Registry.AttachFound(path, repository)` with the best candidate,
   trying the next on failure (logged, never fatal). `AttachFound` files the

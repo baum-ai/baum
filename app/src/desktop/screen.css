@@ -1,3 +1,7 @@
+/* Base styles of the desktop app's own screens: connecting (connecting.html)
+   and setup (setup.html), in baum's bundled type, as every other screen. */
+@import "../../../viewer/src/fonts/fonts.css";
+
 :root {
   color-scheme: light dark;
   --bg: #fbf8f2;
@@ -5,7 +9,7 @@
   --muted: #6f6257;
   --accent: #7a4a26;
   --panel: #f1ebe0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-text);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,8 +47,10 @@ section {
 }
 
 h1 {
+  font-family: var(--font-heading);
   font-size: 1.4rem;
-  font-weight: 600;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   margin: 16px 0 8px;
 }
 
@@ -88,28 +94,6 @@ pre {
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.spinner {
-  width: 28px;
-  height: 28px;
-  margin: 0 auto;
-  border: 3px solid var(--panel);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
 }
 
 /* The setup screen (setup.html). */

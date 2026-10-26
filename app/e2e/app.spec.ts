@@ -487,7 +487,7 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
     /code\/acme\/clone-me/,
   );
   await row.getByRole("button", { name: "Clone repository", exact: true }).click();
-  await expect(row).toContainText("✓", { timeout: 15000 });
+  await expect(row).toContainText("Found at", { timeout: 15000 });
   await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });

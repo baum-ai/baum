@@ -9,7 +9,7 @@ import {
   type Repository,
   type DiagnosticReport,
 } from "./api";
-import { RepositoryPicker, CloneActions, skipFoundRepository } from "./repositories";
+import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
@@ -29,6 +29,7 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
+import { LoadingStatus } from "./nine-dots";
 
 /** The harness and model reviews use when a repository does not choose its own. */
 export type ReviewDefaults = { backend: string; model: string };
@@ -104,7 +105,7 @@ export function SettingsPage({
             changed={changed}
           />
         ) : (
-          <p role="status">Reading your review settings…</p>
+          <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
         <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
@@ -476,12 +477,9 @@ export function RepositoriesPage({
                 automatic={automatic}
                 defaults={defaults}
                 changed={changed}
-                remove={() => {
-                  skipFoundRepository(repository.repository);
-                  return action(() =>
-                    request(`api/repositories/${repository.repository}`, {}, "DELETE"),
-                  );
-                }}
+                remove={() =>
+                  action(() => request(`api/repositories/${repository.repository}`, {}, "DELETE"))
+                }
               />
             ))}
           </ul>

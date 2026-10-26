@@ -19,7 +19,6 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
@@ -55,8 +54,6 @@ type Registry interface {
 type Service struct {
 	Lister   Lister
 	Registry Registry
-	// Found returns the clone finder's last result; nil means none found.
-	Found func() clonefind.Found
 	// Token returns the GitHub token for github.com; an error wrapping
 	// config.ErrNoGitHubToken means signed out, and clones are anonymous.
 	Token func(ctx context.Context) (string, error)
@@ -128,7 +125,8 @@ type Item struct {
 	Description      string     `json:"description"`
 	OpenPullRequests int        `json:"open_pull_requests"`
 	Picked           bool       `json:"picked"`
-	// Clone is an available registered clone, otherwise the best one found, or "".
+	// Clone is an available registered clone of a picked repository, or "".
+	// Clones are looked for only once a repository is picked.
 	Clone string `json:"clone"`
 }
 
@@ -225,10 +223,6 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 			}
 		}
 	}
-	var found map[string][]clonefind.FoundClone
-	if s.Found != nil {
-		found = s.Found().Repositories
-	}
 	terms := strings.Fields(strings.ToLower(query))
 	out := Listing{FetchedAt: at, Repositories: []Item{}}
 	for _, r := range ranked(list) {
@@ -241,11 +235,7 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 			pushed := r.PushedAt
 			item.PushedAt = &pushed
 		}
-		if p := registered[r.Repository]; p != "" {
-			item.Clone = p
-		} else if clones := found[r.Repository]; len(clones) > 0 {
-			item.Clone = clones[0].Path
-		}
+		item.Clone = registered[r.Repository]
 		out.Repositories = append(out.Repositories, item)
 	}
 	return out, nil

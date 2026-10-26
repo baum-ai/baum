@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   LiveDot,
-  Spinner,
   type BadgeTone,
 } from "@baum/viewer/components/ui";
 import { ExternalLinkIcon, GitHubIcon } from "@baum/viewer/components/icons";
@@ -18,6 +17,7 @@ import {
   useGitHubConnection,
 } from "./github-auth";
 import { PanelHeader } from "./shell";
+import { NineDots } from "./nine-dots";
 
 export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void } = {}) {
   const { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy } =
@@ -84,7 +84,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         <div className="space-y-4 border-t border-(--border-subtle) p-5">
           {!connection && !error ? (
             <p role="status" className="flex items-center gap-2 text-(--text-secondary)">
-              <Spinner /> Checking GitHub connection…
+              <NineDots /> Checking GitHub connection…
             </p>
           ) : null}
           {error ? (
@@ -98,7 +98,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
               >
                 {checking ? (
                   <span className="inline-flex items-center gap-2">
-                    <Spinner /> Checking…
+                    <NineDots /> Checking…
                   </span>
                 ) : (
                   "Check again"
@@ -180,10 +180,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
       {connection ? (
         <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-(--border-subtle) px-5 py-3 text-xs text-(--text-tertiary)">
           <div className="space-y-1">
-            <p>
-              Pull requests are downloaded to this computer and shared only with your model
-              provider, never with baum.
-            </p>
+            <p>Data is downloaded to this computer and never shared with baum.</p>
             {connection.saved ? (
               <p>
                 Credential: {connection.source || "none"}.{" "}

@@ -326,7 +326,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		})
 		changed := func() { scheduler.Wake(); _ = server.Publish("index", struct{}{}) }
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
-		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Found: finder.Snapshot, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
+		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
 			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
 				return err
 			}

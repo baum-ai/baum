@@ -42,11 +42,14 @@ add its sources so the utilities its components use are generated:
 with their dark variants (applied under `:root[data-theme="dark"]`), the
 categorical series, and the pane and skeleton animations. The sans-serif
 family comes from `--viewer-font-sans`; set it on `:root` to restyle the
-viewer. Without it the viewer uses Inter
-(variable weight, Latin and Latin Extended), bundled as woff2 in `src/fonts/`
-with its SIL Open Font License (`src/fonts/OFL.txt`). The host's bundler
-resolves the files from `viewer.css`, and a browser downloads them only when
-a page renders in Inter, so a host that sets the variable never fetches them.
+viewer. Without it the viewer uses baum's bundled type, declared once in
+`src/fonts/fonts.css`: Instrument Sans for text (`--font-text`, with a real
+italic) and Manrope for headings (`--font-heading`, at weight 800), variable
+weight, Latin and Latin Extended, as woff2 with their SIL Open Font Licenses
+(`src/fonts/*-OFL.txt`). The local application, `baum internal view` and the desktop's
+own screens all use it. The host's bundler resolves the files from
+`viewer.css`, and a browser downloads them only when a page renders in them,
+so a host that sets the variable never fetches them.
 
 ## Host seams
 
