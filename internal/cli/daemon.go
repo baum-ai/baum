@@ -473,7 +473,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Merge: uiserver.MergeHandler(registry, github.NewFromConfig(cfg, github.Options{}), func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), Changed: settingsChanged,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,

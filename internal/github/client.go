@@ -38,7 +38,8 @@ type Options struct {
 }
 
 // Client reads GitHub GraphQL evidence and read-only REST discovery metadata
-// from any recognized GitHub host with that host's token.
+// from any recognized GitHub host with that host's token. Its one write is
+// merging a pull request the user confirmed (merge.go).
 type Client struct {
 	tokens          TokenSource
 	transport       http.RoundTripper

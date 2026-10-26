@@ -1876,6 +1876,20 @@ shared rate budgets. `GET /api/prs` lists every picked repository, and
 `{"repository": "owner/name"}` (a picked repository, with or without a clone;
 unknown is `404`).
 
+Merging is the one GitHub write the local app makes, and it lives outside
+discovery. `GET /api/prs/merge-options?repository=&pr=` returns the allowed
+merge methods, GitHub's default for the viewer and the pull request's head and
+mergeability (`Client.MergeOptions`, one GraphQL query). `POST /api/prs/merge`
+takes `{repository, pr, method, head_sha}` and runs GraphQL `mergePullRequest`
+with `expectedHeadOid` set to `head_sha` (`Client.MergePullRequest`), so GitHub
+refuses a pull request whose head moved. Both accept only picked repositories
+(unpicked is `404`), send each document once with no retry, and map GitHub's
+errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
+`409`, `blocked` (required checks, reviews, branch protection) and
+`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
+a merge the daemon runs `Service.PollNow` for the repository and publishes an
+index change so the inbox drops the pull request.
+
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
 `summary.review_minutes` in the existing SQLite summary projection: only whole

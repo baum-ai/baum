@@ -35,6 +35,7 @@ import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./live";
 import { LoadingStatus } from "./nine-dots";
+import { canMerge, MergeDialog } from "./merge";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -112,6 +113,7 @@ export function LocalReview({
       setEnded((n) => n + 1);
     previousKeys.current = liveKeys;
   }, [liveKeys]);
+  const [merging, setMerging] = useState(false);
   const generating = isActiveJob(job) || (!job && entry.status === "generating");
   const generationState = generating
     ? "pending"
@@ -230,20 +232,30 @@ export function LocalReview({
             back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
-            beside: doc ? (
-              <Button
-                variant="secondary"
-                size="compact"
-                disabled={generating || entry.needs_clone}
-                onClick={generate}
-              >
-                {generating
-                  ? job?.state === "queued"
-                    ? "Review queued"
-                    : "Generating review…"
-                  : "Regenerate review"}
-              </Button>
-            ) : null,
+            beside:
+              doc || canMerge(entry) ? (
+                <div className="flex flex-wrap gap-2">
+                  {doc ? (
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={generating || entry.needs_clone}
+                      onClick={generate}
+                    >
+                      {generating
+                        ? job?.state === "queued"
+                          ? "Review queued"
+                          : "Generating review…"
+                        : "Regenerate review"}
+                    </Button>
+                  ) : null}
+                  {canMerge(entry) ? (
+                    <Button size="compact" onClick={() => setMerging(true)}>
+                      Merge…
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null,
           }}
           placeholder={
             entry.needs_clone ? (
@@ -339,6 +351,9 @@ export function LocalReview({
           commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
           hunkPatches={patches}
         />
+        {merging ? (
+          <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
+        ) : null}
       </AttachmentUrlProvider>
     </ReviewBoundary>
   );

@@ -205,7 +205,8 @@ it("shows all GitHub state labels, quiet normal states, counts and saved review 
     "Unresolved: 0",
     "Review: Approved",
     "Checks: Passing",
-    "Merge: Ready",
+    // A ready pull request also carries its Merge button.
+    "Merge: ReadyMerge…",
   ]);
   expect(states[1]!.slice(2).map((cell) => cell.textContent)).toEqual([
     "Review: Changes requested",

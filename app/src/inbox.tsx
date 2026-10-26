@@ -23,6 +23,7 @@ import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
 import { LiveBadge } from "./live";
+import { canMerge, MergeDialog } from "./merge";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
 /** Discovery flags describe these groups; none infer approval or merge readiness. */
@@ -80,6 +81,7 @@ export function Inbox({
   setSelection,
   Link,
   live = [],
+  changed,
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
@@ -88,8 +90,11 @@ export function Inbox({
   Link: ComponentType<ViewerLinkProps>;
   /** Agent sessions in progress; a row shows those of its pull request. */
   live?: LiveSession[];
+  /** Reloads the inbox after a merge. */
+  changed?: () => Promise<void>;
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [merging, setMerging] = useState<Entry | null>(null);
   const groups = inboxGroups(rows);
   const visible = groups
     .flatMap((group) => (collapsed.has(group.id) ? [] : group.rows))
@@ -154,10 +159,19 @@ export function Inbox({
               toggle={(checked) => toggle(rowKey(entry), checked)}
               Link={Link}
               live={liveFor(live, entry.pull_request)}
+              merge={canMerge(entry) ? () => setMerging(entry) : undefined}
             />
           ))}
         </Bucket>
       ))}
+      {merging ? (
+        <MergeDialog
+          key={rowKey(merging)}
+          entry={merging}
+          close={() => setMerging(null)}
+          merged={changed ?? (async () => {})}
+        />
+      ) : null}
     </section>
   );
 }
@@ -269,11 +283,14 @@ function StatusCell({
   label,
   style,
   title,
+  action,
 }: {
   column: string;
   label?: string;
   style?: StateStyle;
   title?: string;
+  /** A control for this state, drawn after it. */
+  action?: ReactNode;
 }) {
   const Icon = style?.icon;
   const text = label ?? style?.label;
@@ -288,10 +305,26 @@ function StatusCell({
       <span className="inbox-cell-label">{column}: </span>
       {Icon && text ? <Icon size={14} className={cn("flex-none", style?.iconTone)} /> : null}
       {text ?? "—"}
+      {action}
     </span>
   );
 }
-function StatusColumns({ entry }: { entry: Entry }) {
+/** Opens the merge confirmation; shown on the row being pointed at or
+ *  focused, and always on a touch screen. */
+function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
+  const pr = entry.pull_request;
+  return (
+    <button
+      type="button"
+      className={cn("inbox-merge", FOCUS_RING)}
+      aria-label={`Merge ${pr.repository} #${pr.number}`}
+      onClick={merge}
+    >
+      Merge…
+    </button>
+  );
+}
+function StatusColumns({ entry, merge }: { entry: Entry; merge?: () => void }) {
   const unresolved = entry.unresolved;
   return (
     <div className="inbox-statuses">
@@ -319,7 +352,11 @@ function StatusColumns({ entry }: { entry: Entry }) {
       />
       <StatusCell column="Review" style={REVIEW[entry.review]} />
       <StatusCell column="Checks" style={CHECKS[entry.checks]} />
-      <StatusCell column="Merge" style={MERGE[entry.merge]} />
+      <StatusCell
+        column="Merge"
+        style={MERGE[entry.merge]}
+        action={merge ? <MergeAction entry={entry} merge={merge} /> : undefined}
+      />
     </div>
   );
 }
@@ -330,6 +367,7 @@ function InboxRow({
   toggle,
   Link,
   live,
+  merge,
 }: {
   entry: Entry;
   clone: string;
@@ -337,6 +375,7 @@ function InboxRow({
   toggle: (checked: boolean) => void;
   Link: ComponentType<ViewerLinkProps>;
   live: LiveSession[];
+  merge?: () => void;
 }) {
   const pr = entry.pull_request;
   const score = entry.risk_score?.score;
@@ -398,7 +437,7 @@ function InboxRow({
         </p>
         <ReviewActivity entry={entry} />
       </div>
-      <StatusColumns entry={entry} />
+      <StatusColumns entry={entry} merge={merge} />
     </li>
   );
 }
