@@ -171,11 +171,12 @@ func TestApplyLoginEnvironment(t *testing.T) {
 	old := resolveShell
 	t.Cleanup(func() { resolveShell = old })
 	for _, tc := range []struct {
-		name    string
-		resolve func(context.Context, shellenv.Options) (shellenv.Result, error)
-		inherit []string
-		want    map[string]string
-		dropped []string
+		name         string
+		resolve      func(context.Context, shellenv.Options) (shellenv.Result, error)
+		inherit      []string
+		want         map[string]string
+		wantUnixPath string
+		dropped      []string
 	}{
 		{
 			name: "login shell wins",
@@ -194,9 +195,10 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			resolve: func(context.Context, shellenv.Options) (shellenv.Result, error) {
 				return shellenv.Result{Shell: "/bin/zsh", Env: map[string]string{"PATH": "/opt/bin", "XDG_STATE_HOME": "/elsewhere/state", "XDG_RUNTIME_DIR": "/run/elsewhere"}}, nil
 			},
-			inherit: []string{"PATH=/usr/bin", "HOME=/home/user"},
-			want:    map[string]string{"PATH": "/opt/bin:/usr/bin", "HOME": "/home/user"},
-			dropped: []string{"XDG_STATE_HOME", "XDG_RUNTIME_DIR"},
+			inherit:      []string{"PATH=/usr/bin", "HOME=/home/user"},
+			want:         map[string]string{"PATH": "/opt/bin", "HOME": "/home/user"},
+			wantUnixPath: "/opt/bin:/usr/bin",
+			dropped:      []string{"XDG_STATE_HOME", "XDG_RUNTIME_DIR"},
 		},
 		{
 			// Windows: shellenv.Resolve returns the inherited environment
@@ -211,8 +213,9 @@ func TestApplyLoginEnvironment(t *testing.T) {
 				env["PATH"] = `/registry/bin`
 				return shellenv.Result{Env: env}, nil
 			},
-			inherit: []string{"PATH=/usr/bin", "GITHUB_TOKEN=tok-from-agent", "HOME=/home/user"},
-			want:    map[string]string{"PATH": "/registry/bin", "GITHUB_TOKEN": "tok-from-agent", "HOME": "/home/user"},
+			inherit:      []string{"PATH=/usr/bin", "GITHUB_TOKEN=tok-from-agent", "HOME=/home/user"},
+			want:         map[string]string{"PATH": "/registry/bin", "GITHUB_TOKEN": "tok-from-agent", "HOME": "/home/user"},
+			wantUnixPath: "/registry/bin:/usr/bin",
 		},
 		{
 			name: "failing shell falls back",
@@ -234,8 +237,8 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			var logged strings.Builder
 			applyLoginEnvironment(context.Background(), slog.New(slog.NewTextHandler(&logged, nil)))
 			for name, value := range tc.want {
-				if name == "PATH" && tc.name == "registry PATH" && runtime.GOOS != "windows" {
-					value += ":/usr/bin"
+				if name == "PATH" && tc.wantUnixPath != "" && runtime.GOOS != "windows" {
+					value = tc.wantUnixPath
 				}
 				if got := os.Getenv(name); got != value {
 					t.Errorf("%s = %q, want %q", name, got, value)
