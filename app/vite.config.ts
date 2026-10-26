@@ -1,11 +1,13 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { desktopDevelopment } from "./vite.development.ts";
 
-// The same build supplies the daemon app and Tauri's local setup assets.
+// The same build supplies the daemon app and Tauri's own screens: setup, and
+// the connecting screen the window opens on, which becomes Tauri's index.html
+// and is taken out of the daemon's copy.
 function desktopBundle(): Plugin {
   let output = "";
   return {
@@ -19,7 +21,8 @@ function desktopBundle(): Plugin {
       rmSync(destination, { recursive: true, force: true });
       mkdirSync(destination, { recursive: true });
       cpSync(output, destination, { recursive: true });
-      cpSync(resolve(import.meta.dirname, "../desktop/ui"), destination, { recursive: true });
+      renameSync(join(destination, "connecting.html"), join(destination, "index.html"));
+      rmSync(join(output, "connecting.html"));
     },
   };
 }
@@ -63,6 +66,7 @@ export default defineConfig({
       input: {
         app: resolve(import.meta.dirname, "index.html"),
         setup: resolve(import.meta.dirname, "setup.html"),
+        connecting: resolve(import.meta.dirname, "connecting.html"),
       },
     },
   },

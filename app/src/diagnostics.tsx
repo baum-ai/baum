@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Alert } from "@baum/viewer/components/ui";
 import { request, type DiagnosticCheck, type DiagnosticReport, type Diagnostics } from "./api";
+import { LoadingStatus } from "./nine-dots";
 
 const statusText: Record<DiagnosticCheck["status"], string> = {
   ok: "OK",
@@ -125,7 +126,7 @@ export function DiagnosticsSection({
         </Alert>
       ) : null}
       {running && report === undefined && !error ? (
-        <p role="status">Checking this machine…</p>
+        <LoadingStatus block>Checking this machine…</LoadingStatus>
       ) : null}
       {report === null ? <p>Diagnostics are not available in this build.</p> : null}
       {report ? (

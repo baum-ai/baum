@@ -24,7 +24,9 @@ func (nativeStore) Load(context.Context) (Credential, error) {
 		return Credential{}, ErrStore
 	}
 	var c Credential
-	if json.Unmarshal([]byte(s), &c) != nil || c.AccessToken == "" || c.Login == "" || c.ID <= 0 || c.ExpiresAt <= 0 || c.RefreshToken == "" || c.RefreshExpiresAt <= 0 {
+	// A token without expiry has no refresh token; an expiring one needs it.
+	if json.Unmarshal([]byte(s), &c) != nil || c.AccessToken == "" || c.Login == "" || c.ID <= 0 || c.ExpiresAt < 0 ||
+		(c.ExpiresAt > 0 && (c.RefreshToken == "" || c.RefreshExpiresAt <= 0)) {
 		return Credential{}, ErrStore
 	}
 	return c, nil

@@ -183,9 +183,15 @@
   color: #6b4a33;
   cursor: pointer;
 }
+.segmented label:hover input:not(:checked) + span {
+  color: #2a1d15;
+}
+/* The chosen option reads like a chosen harness tile: light green, green ring. */
 .segmented input:checked + span {
-  background: #2a1d15;
-  color: #fff8ea;
+  background: #eef4e8;
+  box-shadow: inset 0 0 0 1px #2e7d3e;
+  color: #2a1d15;
+  font-weight: 500;
 }
 .review-card .review-note {
   margin: 10px 0 0;

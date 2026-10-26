@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { request, type Repository } from "./api";
 import { invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
+import { LoadingStatus } from "./nine-dots";
 import "./repositories.css";
 
 export type RepositoryItem = {
@@ -78,53 +87,42 @@ export const repositoryCall: RepositoryCall = (action, args = {}) => {
 };
 export const setupRepositoryCall: RepositoryCall = (action, args = {}) =>
   invoke("repositories", { action, ...args });
-const skippedFound = new Set<string>();
-const skippedKey = "baum-unpicked-repositories";
-export function skipFoundRepository(repository: string) {
-  skippedFound.add(repository);
-  try {
-    localStorage.setItem(skippedKey, JSON.stringify([...skippedFound]));
-  } catch {
-    /* Private storage can be unavailable. */
-  }
-}
-export function allowFoundRepository(repository: string) {
-  skippedFound.delete(repository);
-  try {
-    localStorage.setItem(skippedKey, JSON.stringify([...skippedFound]));
-  } catch {
-    /* Private storage can be unavailable. */
-  }
-}
-function restoreSkipped() {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(skippedKey) ?? "[]");
-    if (Array.isArray(saved))
-      for (const name of saved) if (typeof name === "string") skippedFound.add(name);
-  } catch {
-    /* Ignore an unreadable local preference. */
-  }
+const shownRepositories = 8;
+/** The clone's own folder inside the folder the person picked, unless they
+ *  picked a folder already named after the repository. */
+export function cloneDirectory(parent: string, repository: string) {
+  const name = repository.split("/").pop() ?? repository;
+  const trimmed = parent.replace(/[\\/]+$/, "");
+  if (trimmed.split(/[\\/]/).pop() === name) return trimmed;
+  const separator = trimmed.includes("\\") && !trimmed.includes("/") ? "\\" : "/";
+  return `${trimmed}${separator}${name}`;
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
 
-/** One set of local actions, shared by setup, the repository picker and a PR. */
+/** One set of local actions, shared by setup, the repository picker and a PR.
+ *  With a status they shrink to one line of text actions after it. While
+ *  `looking` (baum is searching for a clone) they wait, unless a clone this
+ *  set started is running: that one is reported instead. */
 export function CloneActions({
   repository,
   call = repositoryCall,
   home,
   changed,
-  skip,
+  status,
+  looking = false,
 }: {
   repository: string;
   call?: RepositoryCall;
   home?: string;
   changed: () => Promise<void>;
-  skip?: () => void;
+  status?: ReactNode;
+  looking?: boolean;
 }) {
   const [mode, setMode] = useState<"" | "folder" | "clone">("");
+  const fieldId = useId();
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -194,9 +192,13 @@ export function CloneActions({
   return (
     <div className="repository-actions">
       {state?.state === "running" ? (
-        <p role="status">Cloning to {displayPath(state.dir, home)}…</p>
-      ) : (
-        <div className="repository-buttons">
+        <LoadingStatus>Cloning to {displayPath(state.dir, home)}…</LoadingStatus>
+      ) : looking ? (
+        <LoadingStatus>Looking for a local clone…</LoadingStatus>
+      ) : status && mode ? null : (
+        // The one-line form gives way to an open path form, which has Cancel.
+        <div className={status ? "repository-buttons repository-inline" : "repository-buttons"}>
+          {status ? <span className="repository-inline-status">{status}</span> : null}
           <button
             type="button"
             disabled={busy}
@@ -218,7 +220,8 @@ export function CloneActions({
               void run(async () => {
                 const target = await call<{ dir: string }>("target", { repository });
                 if (active.current) {
-                  setPath(target.dir);
+                  // Shown with ~ for the home directory; submitting expands it.
+                  setPath(displayPath(target.dir, home));
                   setMode("clone");
                 }
               })
@@ -226,11 +229,6 @@ export function CloneActions({
           >
             Clone it
           </button>
-          {skip ? (
-            <button type="button" disabled={busy} onClick={skip}>
-              Skip
-            </button>
-          ) : null}
         </div>
       )}
       {mode ? (
@@ -255,15 +253,39 @@ export function CloneActions({
             });
           }}
         >
-          <label>
-            {mode === "clone" ? "Clone into" : "Local clone path"}
-            <input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              disabled={busy}
-              required
-            />
-          </label>
+          <div className="repository-path">
+            <label htmlFor={fieldId}>{mode === "clone" ? "Clone into" : "Local clone path"}</label>
+            <span className="repository-path-field">
+              <input
+                id={fieldId}
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                disabled={busy}
+                required
+              />
+              {mode === "clone" && hasFolderPicker() ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label="Choose a folder to clone into"
+                  title="Choose a folder"
+                  onClick={() =>
+                    void run(async () => {
+                      const parent = await invoke<string | null>("choose_repository", {
+                        cloneTarget: true,
+                      });
+                      if (parent && active.current)
+                        setPath(displayPath(cloneDirectory(parent, repository), home));
+                    })
+                  }
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+                  </svg>
+                </button>
+              ) : null}
+            </span>
+          </div>
           <div className="repository-buttons">
             <button type="submit" disabled={busy}>
               {busy ? "Working…" : mode === "clone" ? "Clone repository" : "Use folder"}
@@ -299,11 +321,11 @@ export function RepositoryPicker({
   const [found, setFound] = useState<FoundClones | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  // The connection the shown list was loaded for: until a load for the
+  // current one finishes, the list is still loading, not empty.
+  const [listed, setListed] = useState<boolean | null>(null);
+  const loading = listed !== connected;
   const [busy, setBusy] = useState<string | null>(null);
-  const [fallback, setFallback] = useState("");
-  const skipped = useRef(skippedFound);
-  restoreSkipped();
   const active = useRef(true);
   const sequence = useRef(0);
   const working = useRef(false);
@@ -329,29 +351,10 @@ export function RepositoryPicker({
       setFound(result && result.repositories ? result : null);
       pickedCallback.current?.(picked.size);
       setError("");
-      // Found clones are preselected unless the person deliberately unpicked them.
-      for (const row of listing.repositories) {
-        if (!active.current || seq !== sequence.current || working.current) break;
-        if (row.clone && !picked.has(row.repository) && !skipped.current.has(row.repository)) {
-          working.current = true;
-          setBusy(row.repository);
-          try {
-            await call("pick", { repository: row.repository });
-            picked.add(row.repository);
-          } finally {
-            working.current = false;
-            if (active.current) setBusy(null);
-          }
-        }
-      }
-      if (active.current && seq === sequence.current) {
-        setList(listing.repositories.map((r) => ({ ...r, picked: picked.has(r.repository) })));
-        pickedCallback.current?.(picked.size);
-      }
     } catch (e) {
       if (active.current && seq === sequence.current) setError(message(e));
     } finally {
-      if (active.current && seq === sequence.current) setLoading(false);
+      if (active.current && seq === sequence.current) setListed(connected);
     }
   }, [call, connected]);
   useEffect(() => {
@@ -366,6 +369,15 @@ export function RepositoryPicker({
       clearInterval(timer);
     };
   }, [reload]);
+  // While the daemon looks for a picked repository's clone, check back sooner.
+  const looking = Boolean(found?.running);
+  useEffect(() => {
+    if (!looking) return;
+    const timer = setInterval(() => {
+      if (!working.current) void reload();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [looking, reload]);
   const update = useCallback(async () => {
     await reload();
     await changedCallback.current?.();
@@ -386,28 +398,52 @@ export function RepositoryPicker({
       if (active.current) setBusy(null);
     }
   };
-  const rows = list.filter((r) => r.repository.toLowerCase().includes(query.trim().toLowerCase()));
+  const needle = query.trim().toLowerCase();
+  // Exact names come first, then names that start with the search, so typing a
+  // repository's name always reaches it however many others contain it.
+  const rank = (repository: string) => {
+    const full = repository.toLowerCase();
+    const name = full.slice(full.indexOf("/") + 1);
+    if (full === needle || name === needle) return 0;
+    return full.startsWith(needle) || name.startsWith(needle) ? 1 : 2;
+  };
+  const matches = list
+    .filter((r) => r.repository.toLowerCase().includes(needle))
+    .sort((a, b) => (needle ? rank(a.repository) - rank(b.repository) : 0));
+  // A short list keeps the step readable; search reaches the rest, and picked
+  // repositories always stay visible.
+  const rows = matches.filter((r, i) => i < shownRepositories || r.picked);
+  const hidden = matches.length - rows.length;
+  // Results take their own height without a search, and keep it while one
+  // runs, so typing never moves the page.
+  const results = useRef<HTMLDivElement>(null);
+  const [restHeight, setRestHeight] = useState<number>();
+  useLayoutEffect(() => {
+    const height = results.current?.offsetHeight;
+    if (!needle && !loading && height && height !== restHeight) setRestHeight(height);
+  });
   const mac = /Mac/i.test(navigator.platform);
   return (
     <section className="repository-picker" aria-label="Choose GitHub repositories">
-      <p className="repository-help">
-        baum looks for clones in folders your agents have worked in and in common code folders.
-        Nothing leaves this computer.
-      </p>
       {connected ? (
         <label className="repository-search">
           Search repositories
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a GitHub repository"
-          />
+          <span className="repository-search-field">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="M16 16l4.5 4.5" />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find a GitHub repository"
+            />
+          </span>
         </label>
       ) : (
-        <p>Connect GitHub to list your repositories, or choose a local folder below.</p>
+        <p>Connect GitHub to list your repositories.</p>
       )}
-      {loading ? <p role="status">Finding your repositories…</p> : null}
       {error ? (
         <div role="alert">
           <p>{error}</p>
@@ -416,60 +452,87 @@ export function RepositoryPicker({
           </button>
         </div>
       ) : null}
-      {!loading && connected && !error && rows.length === 0 ? <p>No repositories match.</p> : null}
-      <ul className="repository-choices">
-        {rows.map((row) => (
-          <li key={row.repository}>
-            <label className="repository-choice">
-              <input
-                type="checkbox"
-                checked={row.picked}
-                disabled={busy !== null}
-                aria-label={`Pick ${row.repository}`}
-                onChange={(e) => {
-                  const pick = e.target.checked;
-                  if (pick) allowFoundRepository(row.repository);
-                  else skipFoundRepository(row.repository);
-                  setList((previous) =>
-                    previous.map((r) =>
-                      r.repository === row.repository ? { ...r, picked: pick } : r,
-                    ),
-                  );
-                  void action(row.repository, () =>
-                    call(pick ? "pick" : "unpick", { repository: row.repository }),
-                  );
-                }}
-              />
-              <span>
-                <strong>{row.repository}</strong>
-                {row.private ? <small>Private</small> : null}
-                {row.description ? (
-                  <span className="repository-description">{row.description}</span>
+      {connected || rows.length > 0 ? (
+        // Searching keeps the box's height, so the page never moves; it
+        // scrolls only when picked repositories run past the rows it shows.
+        <div
+          ref={results}
+          className="repository-results"
+          style={needle && restHeight ? { height: restHeight } : undefined}
+        >
+          {loading ? (
+            <LoadingStatus
+              block
+              detail="baum is listing the repositories your GitHub account can access."
+            >
+              Loading your GitHub repositories…
+            </LoadingStatus>
+          ) : null}
+          {!loading && connected && !error && rows.length === 0 ? (
+            <p className="repository-empty">No repositories match.</p>
+          ) : null}
+          <ul className="repository-choices">
+            {rows.map((row) => (
+              <li key={row.repository} className={row.picked ? "picked" : undefined}>
+                <label className="repository-choice">
+                  <input
+                    type="checkbox"
+                    checked={row.picked}
+                    disabled={busy !== null}
+                    aria-label={`Pick ${row.repository}`}
+                    onChange={(e) => {
+                      const pick = e.target.checked;
+                      setList((previous) =>
+                        previous.map((r) =>
+                          r.repository === row.repository ? { ...r, picked: pick } : r,
+                        ),
+                      );
+                      void action(row.repository, () =>
+                        call(pick ? "pick" : "unpick", { repository: row.repository }),
+                      );
+                    }}
+                  />
+                  <span className="repository-text">
+                    <span className="repository-name">
+                      <strong>{row.repository}</strong>
+                      {row.private ? <small>Private</small> : null}
+                    </span>
+                    {row.description ? (
+                      <span className="repository-description" title={row.description}>
+                        {row.description}
+                      </span>
+                    ) : null}
+                    {row.picked && row.clone ? (
+                      <span className="repository-clone found" title={row.clone}>
+                        Found at {displayPath(row.clone, home)}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+                {row.picked && !row.clone ? (
+                  <div className="repository-missing">
+                    <CloneActions
+                      repository={row.repository}
+                      call={call}
+                      home={home}
+                      changed={update}
+                      status="No local clone found"
+                      looking={Boolean(found?.running)}
+                    />
+                  </div>
                 ) : null}
-              </span>
-            </label>
-            <p className="repository-clone">
-              {row.clone
-                ? `✓ ${displayPath(row.clone, home)}`
-                : found?.running
-                  ? "Finding a clone…"
-                  : "No clone found"}
+              </li>
+            ))}
+          </ul>
+          {hidden > 0 ? (
+            <p className="repository-more">
+              {needle
+                ? `${hidden} more ${hidden === 1 ? "match" : "matches"}. Keep typing to narrow the list.`
+                : `${hidden} more ${hidden === 1 ? "repository" : "repositories"}. Search to find one.`}
             </p>
-            {row.picked && !row.clone ? (
-              <CloneActions
-                repository={row.repository}
-                call={call}
-                home={home}
-                changed={update}
-                skip={() => {
-                  skipFoundRepository(row.repository);
-                  void action(row.repository, () => call("unpick", { repository: row.repository }));
-                }}
-              />
-            ) : null}
-          </li>
-        ))}
-      </ul>
+          ) : null}
+        </div>
+      ) : null}
       {mac && list.some((r) => r.picked && !r.clone) ? (
         <button
           type="button"
@@ -481,48 +544,6 @@ export function RepositoryPicker({
           Also look in Documents
         </button>
       ) : null}
-      <details className="repository-fallback" open={!connected}>
-        <summary>Choose a local folder instead</summary>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const path = repositoryPath(fallback.trim(), home ?? "");
-            if (path)
-              void action("folder", async () => {
-                await call("attach", { path });
-                setFallback("");
-              });
-          }}
-        >
-          <label>
-            Repository folder
-            <input
-              placeholder="/path/to/a/local/clone"
-              value={fallback}
-              onChange={(e) => setFallback(e.target.value)}
-            />
-          </label>
-          <div className="repository-buttons">
-            {hasFolderPicker() ? (
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() =>
-                  void action("folder", async () => {
-                    const path = await invoke<string | null>("choose_repository");
-                    if (path) await call("attach", { path });
-                  })
-                }
-              >
-                Choose folder
-              </button>
-            ) : null}
-            <button type="submit" disabled={busy !== null || !fallback.trim()}>
-              Add folder
-            </button>
-          </div>
-        </form>
-      </details>
     </section>
   );
 }

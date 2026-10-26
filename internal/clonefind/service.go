@@ -68,6 +68,10 @@ type Service struct {
 	running   bool
 	again     bool
 	documents bool
+	// triggered counts Trigger calls still checking, so a repository just
+	// picked reads as being looked for until its clone is attached or a scan
+	// runs.
+	triggered int
 	result    Result
 	attached  []Attached
 	seen      map[string]bool
@@ -82,9 +86,10 @@ func (s *Service) log() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// Run scans once at start, then again when asked, when events were missed,
-// and every Interval while a picked repository has no clone. It attaches the
-// clone of a picked repository an agent event shows. It returns when ctx ends.
+// Run scans while a picked repository has no clone: at start, when events
+// were missed, and every Interval. Nothing is searched for repositories that
+// are not picked; Trigger scans when one is. It attaches the clone of a picked
+// repository an agent event shows. It returns when ctx ends.
 func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, dropped func() uint64) {
 	s.mu.Lock()
 	s.ctx = ctx
@@ -95,7 +100,9 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 		s.mu.Unlock()
 		s.wg.Wait()
 	}()
-	s.start(true, false)
+	if len(s.needy(ctx)) > 0 {
+		s.start(true, false)
+	}
 	interval := s.Interval
 	if interval <= 0 {
 		interval = DefaultInterval
@@ -119,7 +126,9 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 			if dropped != nil {
 				if n := dropped(); n != missed {
 					missed = n
-					s.start(true, false)
+					if len(s.needy(ctx)) > 0 {
+						s.start(true, false)
+					}
 				}
 			}
 			s.handleEvent(ctx, record)
@@ -131,7 +140,18 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 // what the last scan found and, if a picked repository still has no clone,
 // scans again unless it just did.
 func (s *Service) Trigger() {
-	s.spawn(func(ctx context.Context) {
+	s.mu.Lock()
+	s.triggered++
+	s.mu.Unlock()
+	done := func() {
+		s.mu.Lock()
+		s.triggered--
+		s.mu.Unlock()
+	}
+	if !s.spawn(func(ctx context.Context) {
+		// A scan this starts is running before done, so Snapshot never reports
+		// the check finished in between.
+		defer done()
 		// Nothing to do, and no git run, unless a picked repository has no
 		// clone registered.
 		if len(s.withoutClones(ctx)) == 0 {
@@ -144,7 +164,9 @@ func (s *Service) Trigger() {
 		if !recent && len(s.needy(ctx)) > 0 {
 			s.start(true, false)
 		}
-	})
+	}) {
+		done()
+	}
 }
 
 // Refresh starts a scan unless one is running, and reports whether it did.
@@ -414,7 +436,7 @@ type FoundClone struct {
 func (s *Service) Snapshot() Found {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	found := Found{Running: s.running, Repositories: map[string][]FoundClone{}, Attached: append([]Attached{}, s.attached...)}
+	found := Found{Running: s.running || s.triggered > 0, Repositories: map[string][]FoundClone{}, Attached: append([]Attached{}, s.attached...)}
 	if !s.result.ScannedAt.IsZero() {
 		at := s.result.ScannedAt
 		found.ScannedAt = &at

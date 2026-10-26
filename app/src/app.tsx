@@ -43,6 +43,7 @@ import {
   type Job,
   type LiveSession,
 } from "./api";
+import { LoadingStatus } from "./nine-dots";
 
 function useLocation() {
   const [search, setSearch] = useState(() => new URLSearchParams(location.search));
@@ -121,7 +122,7 @@ export function App() {
           <main className="local-connecting">
             <LogoMark size={40} />
             {auth === "loading" ? (
-              <p role="status">Connecting to the local application…</p>
+              <LoadingStatus block>Connecting to the local application…</LoadingStatus>
             ) : (
               <Alert>{authError} Open this page from the baum desktop app.</Alert>
             )}
@@ -577,7 +578,7 @@ function Workspace({ url }: { url: UrlState }) {
                   </Notice>
                 ))}
                 {loading ? (
-                  <p role="status">Loading local inbox…</p>
+                  <LoadingStatus block>Loading local inbox…</LoadingStatus>
                 ) : rows.length === 0 ? (
                   <div className="local-empty">
                     <h2>No pull requests here</h2>

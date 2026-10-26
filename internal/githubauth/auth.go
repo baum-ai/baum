@@ -255,7 +255,11 @@ type tokenResponse struct {
 }
 
 func (m *Manager) validate(ctx context.Context, r tokenResponse) (Credential, error) {
-	if r.Access == "" || !strings.EqualFold(r.TokenType, "bearer") || r.Expires <= 60 || r.RefreshExpires <= 0 || r.Refresh == "" || r.Expires > 366*24*3600 || r.RefreshExpires > 10*366*24*3600 {
+	// An OAuth App without token expiration grants a token with no expiry
+	// and no refresh token; an expiring one must come with both.
+	expiring := r.Expires != 0
+	if r.Access == "" || !strings.EqualFold(r.TokenType, "bearer") || r.Expires > 366*24*3600 || r.RefreshExpires > 10*366*24*3600 ||
+		(expiring && (r.Expires <= 60 || r.RefreshExpires <= 0 || r.Refresh == "")) {
 		return Credential{}, ErrRequest
 	}
 	var user struct {
@@ -280,14 +284,11 @@ func (m *Manager) validate(ctx context.Context, r tokenResponse) (Credential, er
 	if received.IsZero() {
 		received = m.now()
 	}
-	if m.now().Unix()+60 >= received.Unix()+r.Expires {
+	if expiring && m.now().Unix()+60 >= received.Unix()+r.Expires {
 		return Credential{}, ErrReconnect
 	}
 	c := Credential{AccessToken: r.Access, RefreshToken: r.Refresh, Login: user.Login, ID: user.ID}
-	if r.Expires > 0 {
-		if r.Refresh == "" {
-			return Credential{}, ErrRequest
-		}
+	if expiring {
 		c.ExpiresAt = received.Unix() + r.Expires
 	}
 	if r.RefreshExpires > 0 {
@@ -478,12 +479,9 @@ func (m *Manager) Token(ctx context.Context) (token string, returnedErr error) {
 		return "", err
 	}
 	if r.Error != "" {
-		switch r.Error {
-		case "bad_refresh_token", "invalid_grant", "expired_token", "token_expired":
-			return "", ErrReconnect
-		default:
-			return "", ErrRequest
-		}
+		// GitHub answered and refused the refresh (a spent token, or a client
+		// it will not refresh for); only a new sign-in recovers.
+		return "", ErrReconnect
 	}
 	r.received = m.now()
 	m.rotated = &r
@@ -518,12 +516,7 @@ func (m *Manager) validateGrant(ctx context.Context, r *tokenResponse) (Credenti
 			return Credential{}, err
 		}
 		if next.Error != "" {
-			switch next.Error {
-			case "bad_refresh_token", "invalid_grant", "expired_token", "token_expired":
-				return Credential{}, ErrReconnect
-			default:
-				return Credential{}, ErrRequest
-			}
+			return Credential{}, ErrReconnect
 		}
 		next.received = m.now()
 		*r = next

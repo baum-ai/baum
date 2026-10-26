@@ -13,9 +13,10 @@
 #
 # The notices cover the Go modules linked into the baum binary for every
 # release target (linux, darwin and windows; the module set does not depend on
-# the architecture), the Go standard library, the npm packages and the Inter
-# font compiled into the embedded bundles (third_party/js.txt, written by
-# viewer/scripts/third-party-notices.mjs) and, for the desktop app, the Rust
+# the architecture), the Go standard library, the npm packages compiled into
+# the embedded bundles (third_party/js.txt, written by
+# viewer/scripts/third-party-notices.mjs), the fonts embedded with them
+# (Instrument Sans and Manrope) and, for the desktop app, the Rust
 # crates (third_party/rust.txt, written by desktop/scripts/third-party-notices.sh).
 # THIRD_PARTY_NOTICES.txt is for the command-line archives; the desktop app
 # ships desktop/THIRD_PARTY_NOTICES.txt, which adds the Rust crates.
@@ -26,7 +27,8 @@ cd "$(dirname "$0")/.."
 # The tool is pinned: a different version can classify files differently and
 # change the output.
 go_licenses=github.com/google/go-licenses/v2@v2.0.1
-inter_licence=viewer/src/fonts/OFL.txt
+instrument_sans_licence=viewer/src/fonts/instrument-sans-OFL.txt
+manrope_licence=viewer/src/fonts/manrope-OFL.txt
 rule='------------------------------------------------------------------------------'
 
 generate_go() {
@@ -95,7 +97,7 @@ reproduces those licences and their copyright notices.
 Contents
   1. Go modules and the Go standard library (compiled into baum)
   2. npm packages (compiled into the embedded viewer and local application)
-  3. Inter font (embedded in the viewer and local application)
+  3. Instrument Sans and Manrope fonts (embedded in the viewer and local application)
 HEADER
     if [ "${2:-}" = desktop ]; then
       echo "  4. Rust crates (compiled into the desktop app)"
@@ -114,13 +116,18 @@ HEADER
     cat third_party/js.txt
     echo
     echo "$rule"
-    echo "3. Inter font"
+    echo "3. Instrument Sans and Manrope fonts"
     echo "$rule"
     echo
-    echo "The inter-latin-wght-normal and inter-latin-ext-wght-normal woff2 files in the"
-    echo "embedded assets are the Inter variable font, under the SIL Open Font License 1.1:"
+    echo "The instrument-sans-* woff2 files in the embedded assets are the Instrument Sans"
+    echo "variable font, under the SIL Open Font License 1.1:"
     echo
-    sed 's/\r$//' "$inter_licence"
+    sed 's/\r$//' "$instrument_sans_licence"
+    echo
+    echo "The manrope-* woff2 files in the embedded assets are the Manrope variable font,"
+    echo "under the SIL Open Font License 1.1:"
+    echo
+    sed 's/\r$//' "$manrope_licence"
     if [ "${2:-}" = desktop ]; then
       echo
       echo "$rule"

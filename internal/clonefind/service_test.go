@@ -64,6 +64,14 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// scan runs one scan and waits for it: the service scans on its own only
+// while a picked repository has no clone.
+func (f *fixture) scan(t *testing.T) {
+	t.Helper()
+	eventually(t, "a scan to start", f.service.Refresh)
+	eventually(t, "the scan to end", f.scanned)
+}
+
 func (f *fixture) scanned() bool {
 	s := f.service.Snapshot()
 	return s.ScannedAt != nil && !s.Running
@@ -110,15 +118,44 @@ func TestPickedRepositoryGetsTheCloneFoundInACodeFolder(t *testing.T) {
 	}
 }
 
-func TestNothingIsAttachedForUnpickedRepositories(t *testing.T) {
+func TestNothingIsSearchedOrAttachedForUnpickedRepositories(t *testing.T) {
 	h := home(t)
 	repo(t, filepath.Join(h, "code", "app"), "origin", gh("acme/app"))
 	f := start(t, h)
 	f.run(t)
-	eventually(t, "the scan to end", f.scanned)
+	f.service.Trigger()
+	time.Sleep(200 * time.Millisecond)
+	if s := f.service.Snapshot(); s.ScannedAt != nil || s.Running || len(s.Repositories) != 0 {
+		t.Fatalf("searched with nothing picked: %+v", s)
+	}
+	f.scan(t)
 	f.service.Trigger()
 	if n := len(f.clones(t)); n != 0 || f.changes.Load() != 0 {
 		t.Fatalf("clones = %d, changes = %d", n, f.changes.Load())
+	}
+}
+
+func TestPickingARepositoryStartsTheSearch(t *testing.T) {
+	h := home(t)
+	clone := repo(t, filepath.Join(h, "code", "app"), "origin", gh("acme/app"))
+	f := start(t, h)
+	f.run(t)
+	eventually(t, "the service to start", func() bool { return f.service.spawn(func(context.Context) {}) })
+	if f.service.Snapshot().ScannedAt != nil {
+		t.Fatal("searched before anything was picked")
+	}
+	if _, err := f.registry.Pick(context.Background(), "acme/app", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.service.Trigger()
+	// The pick reads as being looked for from the moment it is made.
+	if !f.service.Snapshot().Running {
+		t.Fatal("a just-picked repository was not reported as being looked for")
+	}
+	eventually(t, "the clone to be registered", func() bool { return len(f.clones(t)) == 1 })
+	eventually(t, "the search to end", f.scanned)
+	if got := f.clones(t)[0]; got.Path != clone {
+		t.Fatalf("clone = %+v", got)
 	}
 }
 
@@ -148,7 +185,7 @@ func TestAgentEventAttachesANewClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.run(t)
-	eventually(t, "the first scan to end", f.scanned)
+	f.scan(t)
 	if len(f.clones(t)) != 0 {
 		t.Fatal("a clone appeared from nowhere")
 	}
@@ -172,7 +209,7 @@ func TestAPIServesAndRefreshes(t *testing.T) {
 	clone := repo(t, filepath.Join(h, "code", "app"), "origin", gh("acme/app"))
 	f := start(t, h)
 	f.run(t)
-	eventually(t, "the scan to end", f.scanned)
+	f.scan(t)
 	handler := f.service.Handler()
 
 	get := httptest.NewRecorder()
@@ -251,7 +288,7 @@ func TestRefreshCanIncludeDocumentsOnce(t *testing.T) {
 	f := start(t, h)
 	f.service.Options.GOOS = "darwin"
 	f.run(t)
-	eventually(t, "the scan to end", f.scanned)
+	f.scan(t)
 	if len(f.service.Snapshot().Repositories) != 0 {
 		t.Fatal("Documents walked without opt-in")
 	}

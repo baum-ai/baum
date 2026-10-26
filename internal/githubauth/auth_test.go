@@ -183,10 +183,35 @@ func TestRefreshRejectsFailure(t *testing.T) {
 	if token != "" || !errors.Is(err, ErrReconnect) || s.saves != 0 {
 		t.Fatal(token, err)
 	}
-	*reply = `{"error":"bad_refresh_token","error_description":"secret"}`
-	token, err = m.Token(context.Background())
-	if token != "" || !errors.Is(err, ErrReconnect) {
-		t.Fatal(token, err)
+	for _, refused := range []string{"bad_refresh_token", "incorrect_client_credentials"} {
+		*reply = `{"error":"` + refused + `","error_description":"secret"}`
+		token, err = m.Token(context.Background())
+		if token != "" || !errors.Is(err, ErrReconnect) {
+			t.Fatal(refused, token, err)
+		}
+	}
+}
+func TestNonExpiringTokenNeedsNoRefresh(t *testing.T) {
+	m, s, now, reply, calls := fixture(t)
+	r := tokenResponse{Access: "forever", TokenType: "bearer", received: *now}
+	c, err := m.validate(context.Background(), r)
+	if err != nil || c.ExpiresAt != 0 || c.RefreshToken != "" {
+		t.Fatal(c, err)
+	}
+	s.c = c
+	*reply = `{"error":"unexpected refresh"}`
+	*now = now.Add(365 * 24 * time.Hour)
+	token, err := m.Token(context.Background())
+	if err != nil || token != "forever" || *calls != 0 {
+		t.Fatal(token, err, *calls)
+	}
+	for _, half := range []tokenResponse{
+		{Access: "a", TokenType: "bearer", Expires: 3600},
+		{Access: "a", TokenType: "bearer", Expires: -1, Refresh: "r", RefreshExpires: 7200},
+	} {
+		if _, err := m.validate(context.Background(), half); !errors.Is(err, ErrRequest) {
+			t.Fatal(half, err)
+		}
 	}
 }
 func TestRequestDoesNotFollowRedirect(t *testing.T) {

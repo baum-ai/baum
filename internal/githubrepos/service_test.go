@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
@@ -135,11 +134,6 @@ func TestListingRanksFiltersAndAnnotates(t *testing.T) {
 	if _, err := h.registry.Pick(context.Background(), "acme/quiet", nil); err != nil {
 		t.Fatal(err)
 	}
-	h.service.Found = func() clonefind.Found {
-		return clonefind.Found{Repositories: map[string][]clonefind.FoundClone{
-			"acme/busy": {{Path: "/work/code/busy"}, {Path: "/work/old/busy"}},
-		}}
-	}
 	rec := h.do("GET", "/api/github/repositories", "")
 	if rec.Code != 200 {
 		t.Fatalf("status %d %s", rec.Code, rec.Body)
@@ -150,7 +144,7 @@ func TestListingRanksFiltersAndAnnotates(t *testing.T) {
 		t.Fatalf("order = %s, want %s", got, want)
 	}
 	busy := l.Repositories[0]
-	if !busy.Private || busy.OpenPullRequests != 3 || busy.Description != "busy repo" || busy.Clone != "/work/code/busy" || busy.Picked || busy.PushedAt == nil {
+	if !busy.Private || busy.OpenPullRequests != 3 || busy.Description != "busy repo" || busy.Clone != "" || busy.Picked || busy.PushedAt == nil {
 		t.Errorf("busy = %+v", busy)
 	}
 	if quiet := l.Repositories[4]; !quiet.Picked || quiet.Clone != "" {
@@ -588,11 +582,6 @@ func TestListingIncludesAnAlreadyRegisteredClone(t *testing.T) {
 	if _, err := h.registry.Add(context.Background(), dir, nil); err != nil {
 		t.Fatal(err)
 	}
-	h.service.Found = func() clonefind.Found {
-		return clonefind.Found{Repositories: map[string][]clonefind.FoundClone{
-			"acme/busy": {{Path: "/another/clone"}},
-		}}
-	}
 	list := decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
 	if busy := list.Repositories[0]; !busy.Picked || busy.Clone != dir {
 		t.Fatalf("already registered clone = %+v", busy)
@@ -601,8 +590,8 @@ func TestListingIncludesAnAlreadyRegisteredClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	list = decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
-	if busy := list.Repositories[0]; busy.Clone != "/another/clone" {
-		t.Fatalf("unavailable registered clone hid found clone: %+v", busy)
+	if busy := list.Repositories[0]; busy.Clone != "" {
+		t.Fatalf("unavailable registered clone listed: %+v", busy)
 	}
 }
 

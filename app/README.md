@@ -6,10 +6,17 @@ host; Vite and frontend dependencies stay in Docker. Changes to the daemon-serve
 app and `../viewer` hot reload without rebuilding Go or Rust. See
 [desktop development](../desktop/README.md#development).
 
-The native onboarding screen is React too: `setup.html` mounts `src/desktop/setup.tsx`,
+The desktop app's own screens are React too: `setup.html` mounts
+`src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. The
-multi-page production build emits both entries and assembles `../desktop/dist`
-for Tauri, including the small connecting screen from `../desktop/ui`. Fonts and
+multi-page production build emits every entry and assembles `../desktop/dist`
+for Tauri, where the connecting screen becomes `index.html`, the page the
+window opens on; it is taken out of the daemon's copy. Every loading state uses
+one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
+lives only in `src/nine-dots.css`. Every screen uses baum's bundled type from the
+viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
+headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
+under the SIL Open Font License, listed in the third-party notices. Fonts and
 icons are bundled as local assets rather than requiring a network. The setup
 screen keeps its Tauri-local origin and permissions; serving it from the daemon
 or Vite does not grant native access. Setup changes currently require restarting
@@ -27,7 +34,7 @@ no clone: its pull requests remain in the inbox and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
 **Clone it**; generating waits for a clone. Clone it shows an editable default
 folder and polls the daemon's background clone, including after reopening.
-Without GitHub sign-in, setup offers the local folder fallback instead.
+Repositories come from GitHub only: without sign-in there is nothing to pick.
 
 Repository settings apply once per repository, including one with no clone.
 **Change local clone** lists registrations and lets the person remove one or
@@ -119,7 +126,7 @@ with inline CLI install, update and removal controls, plus installation,
 enablement and removal for each agent. Home paths are displayed with `~`.
 It shows the installed state, paths, trust guidance and action results.
 Settings holds the global review settings in the same form as the desktop
-setup's last step: the harness, its model (a listed model or a custom name),
+setup's review step: the harness, its model (a listed model or a custom name),
 whether reviews run automatically and for which pull requests (authored,
 requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
 `backend`, `model`, `pull_requests`), which the daemon keeps as app
@@ -132,8 +139,8 @@ repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
 `true`, `false`); only "Off" differs while the global switch is on, and while
 it is off a repository set to "On" is shown as paused by the global switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
-opens the searchable account picker; its local folder fallback can register a
-path without GitHub sign-in. Explicit per-repository folder attachment uses any
+opens the searchable account picker, the only way to add one: baum works with
+GitHub repositories only. Explicit per-repository folder attachment uses any
 matching remote, including an upstream remote in a fork clone. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
 automatic generation and harness/model overrides. Saving clears an old daily

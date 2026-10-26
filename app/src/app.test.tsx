@@ -704,48 +704,23 @@ async function openRepository(name = "acme/demo") {
   );
   return node.querySelector(`[aria-label="Repository ${name}"]`)!;
 }
-function typeInto(input: HTMLInputElement, value: string) {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
-it("keeps an explicit local folder fallback and shows daemon validation failures", async () => {
+it("offers GitHub repositories only, with no local folder fallback", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic();
   const original = vi.mocked(fetch).getMockImplementation()!;
-  const posts: unknown[] = [];
-  vi.mocked(fetch).mockImplementation((...args) => {
-    const path = String(args[0]);
-    const init = args[1] as RequestInit | undefined;
-    if (path.startsWith("/s/test-ns/api/github/repositories"))
-      return Promise.resolve(Response.json({ repositories: [] }));
-    if (path === "/s/test-ns/api/repos" && init?.method === "POST") {
-      const body = JSON.parse(String(init.body));
-      posts.push(body);
-      return Promise.resolve(
-        body.path.endsWith("bad")
-          ? new Response("cannot register path", { status: 400 })
-          : Response.json({}),
-      );
-    }
-    return original(...args);
-  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).startsWith("/s/test-ns/api/github/repositories")
+      ? Promise.resolve(Response.json({ repositories: [] }))
+      : original(...args),
+  );
   await act(async () => root.render(<App />));
   await act(async () =>
     [...node.querySelectorAll("button")].find((b) => b.textContent === "Add repositories")!.click(),
   );
-  const input = node.querySelector<HTMLInputElement>(
-    'input[placeholder="/path/to/a/local/clone"]',
-  )!;
-  const submit = () =>
-    node.querySelector<HTMLButtonElement>(".repository-fallback button[type=submit]")!;
-  expect(submit().disabled).toBe(true);
-  await act(async () => typeInto(input, "/work/bad"));
-  await act(async () => submit().click());
-  expect(node.textContent).toContain("cannot register path");
-  await act(async () => typeInto(input, "/work/good"));
-  await act(async () => submit().click());
-  expect(posts).toEqual([{ path: "/work/bad" }, { path: "/work/good" }]);
+  expect(node.querySelector(".repository-picker")).not.toBeNull();
+  expect(node.textContent).not.toContain("local folder");
+  expect(node.querySelector('input[placeholder="/path/to/a/local/clone"]')).toBeNull();
 });
 it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");

@@ -107,6 +107,10 @@ type Options struct {
 	trust func(path string) (string, error)
 	// socketCheck replaces socketCheckInterval in tests.
 	socketCheck time.Duration
+	// executable replaces os.Executable, and replacedCheck
+	// replacedCheckInterval, in tests.
+	executable    string
+	replacedCheck time.Duration
 }
 
 // Run is the daemon. It returns ErrRunning when another daemon holds the
@@ -213,6 +217,17 @@ func Run(ctx context.Context, opts Options) error {
 		trust = trustedExecutable
 	}
 	control := &controller{status: status, stop: stop, methods: methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
+	if opts.Respawn != nil {
+		executable := opts.executable
+		if executable == "" {
+			executable, _ = os.Executable()
+		}
+		interval := opts.replacedCheck
+		if interval <= 0 {
+			interval = replacedCheckInterval
+		}
+		control.executable = newExecutableWatch(executable, interval)
+	}
 	self.Store(control)
 	defer self.Store(nil)
 	runCtx, cancelRun := context.WithCancel(context.Background())
@@ -334,7 +349,10 @@ type controller struct {
 	// restartInto is the trusted executable of the newest client that asked
 	// the daemon to restart as its version, and restartVersion that version.
 	restartInto, restartVersion string
-	wg                          sync.WaitGroup
+	// executable, when set, restarts the daemon from its own path once that
+	// file is replaced.
+	executable *executableWatch
+	wg         sync.WaitGroup
 }
 
 // setStopping marks the daemon stopping when it stops for another reason
@@ -375,6 +393,7 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+		c.restartIfReplaced()
 		// Drain refuses new jobs in the same step that finds none pending,
 		// so a job confirmed now gets a "restarting, retry" answer instead of
 		// being interrupted. The daemon is marked stopping under the same
@@ -407,6 +426,27 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 		}
 		c.stop()
 		return
+	}
+}
+
+// restartIfReplaced asks for a restart from the daemon's own path once its
+// executable was replaced there, unless a newer client already asked for one.
+// The replacement must pass the same trust check as a client's executable.
+func (c *controller) restartIfReplaced() {
+	if !c.executable.replaced(time.Now()) {
+		return
+	}
+	executable, err := c.trust(c.executable.path)
+	if err != nil {
+		c.log.Warn("executable replaced, but the replacement is refused; keeping this version", "reason", err.Error())
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.restartInto == "" {
+		c.restartInto, c.restartVersion = executable, c.status.Version
+		c.status.RestartPending = true
+		c.log.Info("executable replaced; restart requested once idle")
 	}
 }
 

@@ -1,7 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { RepositoryPicker, CloneActions, type RepositoryCall } from "./repositories";
+import {
+  RepositoryPicker,
+  CloneActions,
+  cloneDirectory,
+  type RepositoryCall,
+} from "./repositories";
 import { generateReviews, request, LocalRequestError } from "./api";
 let root: Root;
 let node: HTMLDivElement;
@@ -16,7 +21,7 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
 });
-it("preselects a found clone once and keeps a deliberate unpick across remounts", async () => {
+it("leaves found clones unpicked until the person picks them", async () => {
   const picked = new Set<string>();
   const calls: string[] = [];
   const call: RepositoryCall = async (action, args) => {
@@ -43,13 +48,82 @@ it("preselects a found clone once and keeps a deliberate unpick across remounts"
     return value as never;
   };
   await act(async () => root.render(<RepositoryPicker call={call} />));
-  expect(picked.has("picker/found")).toBe(true);
-  await act(async () => node.querySelector<HTMLInputElement>("input[type=checkbox]")!.click());
-  expect(picked.size).toBe(0);
-  await act(async () => root.render(<div />));
-  await act(async () => root.render(<RepositoryPicker call={call} />));
+  expect(calls).not.toContain("pick");
   expect(node.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked).toBe(false);
-  expect(calls.filter((a) => a === "pick")).toHaveLength(1);
+  await act(async () => node.querySelector<HTMLInputElement>("input[type=checkbox]")!.click());
+  expect(picked.has("picker/found")).toBe(true);
+});
+it("shows the first repositories and picked ones, and searches the rest", async () => {
+  const names = Array.from({ length: 12 }, (_, i) => `many/repo-${i}`);
+  const call: RepositoryCall = async (action) =>
+    (action === "list"
+      ? { repositories: names.map((repository) => ({ repository, clone: "", description: "" })) }
+      : action === "picked"
+        ? [{ repository: "many/repo-11" }]
+        : {}) as never;
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  const shown = () =>
+    [...node.querySelectorAll(".repository-name strong")].map((n) => n.textContent);
+  expect(shown()).toEqual([...names.slice(0, 8), "many/repo-11"]);
+  expect(node.querySelector(".repository-more")!.textContent).toBe(
+    "3 more repositories. Search to find one.",
+  );
+  const search = node.querySelector<HTMLInputElement>("input[type=search]")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      search,
+      "repo-10",
+    );
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(shown()).toEqual(["many/repo-10"]);
+  expect(node.querySelector(".repository-more")).toBeNull();
+});
+it("puts exact and leading matches first, so a name buried in longer ones stays reachable", async () => {
+  const names = [
+    ...Array.from({ length: 8 }, (_, i) => `acme/api-client-${i}`),
+    "acme/web-api",
+    "acme/api",
+  ];
+  const call: RepositoryCall = async (action) =>
+    (action === "list"
+      ? { repositories: names.map((repository) => ({ repository, clone: "", description: "" })) }
+      : action === "picked"
+        ? []
+        : {}) as never;
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  const search = node.querySelector<HTMLInputElement>("input[type=search]")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      search,
+      "acme/api",
+    );
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const shown = [...node.querySelectorAll(".repository-name strong")].map((n) => n.textContent);
+  expect(shown).toEqual(["acme/api", ...names.slice(0, 7)]);
+  expect(node.querySelector(".repository-more")!.textContent).toBe(
+    "1 more match. Keep typing to narrow the list.",
+  );
+});
+it("keeps loading, not empty, while the GitHub listing for a new connection is pending", async () => {
+  let finish!: () => void;
+  const call: RepositoryCall = async (action) => {
+    if (action === "list") {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { repositories: [{ repository: "late/one", clone: "", description: "" }] } as never;
+    }
+    return (action === "picked" ? [] : {}) as never;
+  };
+  await act(async () => root.render(<RepositoryPicker call={call} connected={false} />));
+  await act(async () => root.render(<RepositoryPicker call={call} connected />));
+  expect(node.textContent).toContain("Loading your GitHub repositories…");
+  expect(node.textContent).not.toContain("No repositories match.");
+  await act(async () => finish());
+  expect(node.textContent).not.toContain("Loading your GitHub repositories…");
+  expect(node.querySelector(".repository-name strong")!.textContent).toBe("late/one");
 });
 it("does not pick a result arriving after the picker unmounts", async () => {
   let finish!: (value: unknown) => void;
@@ -70,38 +144,6 @@ it("does not pick a result arriving after the picker unmounts", async () => {
   await act(async () => root.render(<div />));
   await act(async () => finish({ repositories: [{ repository: "picker/late", clone: "/late" }] }));
   expect(calls).not.toContain("pick");
-});
-it("retries an automatic pick after a transient failure, including after remount", async () => {
-  let attempts = 0;
-  let picked = false;
-  const call: RepositoryCall = async (action) => {
-    if (action === "list")
-      return { repositories: [{ repository: "retry/found", clone: "/code/found" }] } as never;
-    if (action === "picked")
-      return (picked ? [{ repository: "retry/found", clones: [], settings: {} }] : []) as never;
-    if (action === "pick") {
-      attempts++;
-      if (attempts < 3) throw Error("Registry temporarily unavailable");
-      picked = true;
-    }
-    return {} as never;
-  };
-  await act(async () => root.render(<RepositoryPicker call={call} />));
-  expect(node.textContent).toContain("Registry temporarily unavailable");
-  await act(async () =>
-    [...node.querySelectorAll("button")]
-      .find((button) => button.textContent === "Try again")!
-      .click(),
-  );
-  expect(attempts).toBe(2);
-  await act(async () => root.render(<div />));
-  await act(async () => root.render(<RepositoryPicker call={call} />));
-  expect(attempts).toBe(3);
-  expect(picked).toBe(true);
-  expect(node.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked).toBe(true);
-  expect(JSON.parse(localStorage.getItem("baum-unpicked-repositories") ?? "[]")).not.toContain(
-    "retry/found",
-  );
 });
 it("shows an editable clone target and registers only after an explicit clone click", async () => {
   const calls: { action: string; args: unknown }[] = [];
@@ -148,33 +190,6 @@ it("maps needs_clone conflicts from generation and estimation", async () => {
   expect(LocalRequestError).toBeDefined();
 });
 
-it("stops preselecting further clones after unmounting during a pick", async () => {
-  let finish!: () => void;
-  const picked: string[] = [];
-  const call: RepositoryCall = async (action) => {
-    if (action === "list")
-      return {
-        repositories: [
-          { repository: "during/one", clone: "/one" },
-          { repository: "during/two", clone: "/two" },
-        ],
-      } as never;
-    if (action === "picked") return [] as never;
-    if (action === "pick") {
-      picked.push("pick");
-      await new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-      return {} as never;
-    }
-    return {} as never;
-  };
-  await act(async () => root.render(<RepositoryPicker call={call} />));
-  await act(async () => root.render(<div />));
-  await act(async () => finish());
-  expect(picked).toHaveLength(1);
-});
-
 it("offers the macOS Documents scan only through its explicit action", async () => {
   const original = Object.getOwnPropertyDescriptor(navigator, "platform");
   Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
@@ -208,4 +223,14 @@ it("offers the macOS Documents scan only through its explicit action", async () 
     if (original) Object.defineProperty(navigator, "platform", original);
     else Reflect.deleteProperty(navigator, "platform");
   }
+});
+
+it("clones into the repository's own folder inside the folder picked", () => {
+  expect(cloneDirectory("/home/user/code", "acme/widgets")).toBe("/home/user/code/widgets");
+  expect(cloneDirectory("/home/user/code/", "acme/widgets")).toBe("/home/user/code/widgets");
+  // A folder already named after the repository is the clone's folder.
+  expect(cloneDirectory("/home/user/code/widgets", "acme/widgets")).toBe("/home/user/code/widgets");
+  expect(cloneDirectory("C:\\Users\\me\\code", "acme/widgets")).toBe(
+    "C:\\Users\\me\\code\\widgets",
+  );
 });

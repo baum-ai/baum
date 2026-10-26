@@ -34,6 +34,7 @@ import {
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./live";
+import { LoadingStatus } from "./nine-dots";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -64,7 +65,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
         Transcript could not be read. <Button onClick={() => setRetry((n) => n + 1)}>Retry</Button>
       </Alert>
     );
-  if (!load) return <p role="status">Reading redacted local transcript…</p>;
+  if (!load) return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
   return (
     <>
       <p>
@@ -271,7 +272,7 @@ export function LocalReview({
               </div>
             ) : entry.version_count > 0 ? (
               <div className="local-review-empty">
-                <p role="status">Loading review…</p>
+                <LoadingStatus block>Loading review…</LoadingStatus>
               </div>
             ) : job && job.state !== "completed" && !isActiveJob(job) ? (
               <div className="local-review-empty">

@@ -15,31 +15,14 @@ import { RepositoryPicker, setupRepositoryCall } from "../repositories";
 import logo from "./logo.svg";
 import codexLogo from "./codex.svg";
 import claudeLogo from "./claude-code.svg";
+import { LoadingStatus, NineDots } from "../nine-dots";
 
 const steps = [
   [
     "Connect GitHub",
-    "baum finds your pull requests and keeps their reviews current with your GitHub account.",
+    "baum finds your repositories with your GitHub account.",
     "Connect GitHub",
-    "Pull requests and reviews",
-  ],
-  [
-    "Install the baum CLI",
-    "Agent hooks report to baum through this command. The app ships its own copy and keeps it updated.",
-    "Install the CLI",
-    "The baum command",
-  ],
-  [
-    "Connect your agents",
-    "Install the baum plugin in each agent you use. You can skip one and add it later.",
-    "Connect agents",
-    "Codex and Claude Code",
-  ],
-  [
-    "Add repositories",
-    "Pick your GitHub repositories. baum finds their local clones for you.",
-    "Add repositories",
-    "Your GitHub repositories",
+    "Account and repositories",
   ],
   [
     "Set up reviews",
@@ -47,13 +30,21 @@ const steps = [
     "Set up reviews",
     "Harness, model and automation",
   ],
+  [
+    "Connect your agents",
+    "Install the baum CLI, then add the baum plugin to each coding agent you use.",
+    "Connect agents",
+    "The baum CLI, Codex and Claude Code",
+  ],
 ] as const;
 const last = steps.length - 1;
+const reviewStep = 1;
 const agents = [
   {
     id: "codex",
     name: "Codex",
     logo: codexLogo,
+    about: "Reports Codex sessions to baum.",
     hint: (
       <>
         Open <code>/hooks</code> in Codex to trust the hooks.
@@ -64,6 +55,7 @@ const agents = [
     id: "claude-code",
     name: "Claude Code",
     logo: claudeLogo,
+    about: "Reports Claude Code sessions to baum.",
     hint: <>Approve the hooks in Claude Code.</>,
   },
 ];
@@ -112,7 +104,7 @@ export function Setup() {
     };
   }, []);
   useEffect(() => {
-    if (step !== last || reviews) return;
+    if (!view || reviews) return;
     let active = true;
     invoke<ReviewSettings>("review_settings")
       .then((settings) => {
@@ -172,30 +164,28 @@ export function Setup() {
         aria-label={label}
         onClick={onClick}
       >
+        {pending === id && <NineDots size={14} tone="text" />}
         {children}
       </button>
     );
   }
   const command = view ? describeCommand(view.command) : null;
+  const agentsDone =
+    view !== null &&
+    view.hooks.agents.length > 0 &&
+    view.hooks.agents.every((a) => a.installed && a.enabled && !a.error);
   const done = view
-    ? [
-        github,
-        Boolean(command?.ok),
-        view.hooks.agents.length > 0 &&
-          view.hooks.agents.every((a) => a.installed && a.enabled && !a.error),
-        pickedCount > 0,
-        true,
-      ][step]
+    ? [github && pickedCount > 0, true, Boolean(command?.ok) && agentsDone][step]
     : false;
   const reviewsChanged = reviews !== null && JSON.stringify(reviews) !== savedReviews;
-  const modelMissing = step === last && reviews !== null && !reviews.model.trim();
+  // A custom model needs a name, both to leave the review step and to finish.
+  const modelMissing =
+    (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
   const started = view
     ? [
-        github,
-        Boolean(command?.ok),
-        view.hooks.agents.some((a) => a.installed),
-        pickedCount > 0,
+        github || pickedCount > 0,
         true,
+        Boolean(command?.ok) || view.hooks.agents.some((a) => a.installed),
       ][step]
     : false;
   async function finish() {
@@ -256,136 +246,152 @@ export function Setup() {
           <p id="intro">{steps[step]![1]}</p>
         </header>
         {!view && !error && (
-          <p id="checking" role="status">
+          <LoadingStatus id="checking" block>
             Checking this computer…
-          </p>
+          </LoadingStatus>
         )}
         {view && command && (
           <div id="panels">
-            {step === 0 && <GitHubStep onConnected={setGitHub} />}
-            {step === 1 && (
-              <div id="command-panel">
-                <p id="command-state" className={command.ok ? "ok" : undefined}>
-                  {display(command.state)}
-                </p>
-                {command.note && (
-                  <p id="command-note" className="callout">
-                    {display(command.note)}
-                  </p>
+            {step === 0 && (
+              <>
+                <GitHubStep onConnected={setGitHub} />
+                {/* Repositories come from the GitHub account, so they wait for it. */}
+                {github && (
+                  <>
+                    <h2 className="setup-section">Repositories</h2>
+                    <p className="setup-section-note">
+                      Pick the repositories that baum should monitor.
+                    </p>
+                    <div id="repo-panel" className="setup-card">
+                      <RepositoryPicker
+                        call={setupRepositoryCall}
+                        home={view.home ?? undefined}
+                        onPicked={setPickedCount}
+                      />
+                    </div>
+                  </>
                 )}
-                <div className="actions">
-                  {command.action &&
-                    button(
-                      "command-install",
-                      command.replace ? command.action : `${command.action} baum CLI`,
-                      () =>
-                        void run("command-install", () =>
-                          change(
-                            "install_command",
-                            command.replace ? { replace: command.replace } : {},
-                          ),
-                        ),
-                    )}
-                  {view.command.record &&
-                    !view.first_run &&
-                    button(
-                      "command-remove",
-                      "Remove CLI",
-                      () => void run("command-remove", () => change("uninstall_command")),
-                      "secondary",
-                    )}
-                </div>
-              </div>
+              </>
             )}
-            {step === 2 && (
-              <div id="agent-panel">
-                <ul className="setup-card agent-list">
-                  {agents.map((definition) => {
-                    const agent = view.hooks.agents.find((a) => a.agent === definition.id);
-                    const connected = agent?.installed && agent.enabled && !agent.error;
-                    const state = agent
-                      ? describeAgent(agent)
-                      : `${definition.name} status unavailable. Check again to retry.`;
-                    const verb = agent?.installed ? "Enable" : "Install";
-                    return (
-                      <li className="agent-row" key={definition.id}>
-                        <img
-                          className="agent-logo"
-                          src={definition.logo}
-                          alt=""
-                          width="24"
-                          height="24"
-                        />
-                        <div className="agent-info">
-                          <h2>{definition.name}</h2>
-                          {state && (
-                            <p
-                              id={`${definition.id}-state`}
-                              className={connected ? "ok" : undefined}
-                            >
-                              {display(state)}
-                            </p>
-                          )}
-                          {agent?.installed && !agent.error && (
-                            <p id={`${definition.id}-hint`} className="agent-hint">
-                              {definition.hint}
-                            </p>
-                          )}
-                        </div>
-                        <div className="actions">
-                          {agent?.installed &&
-                            !view.first_run &&
-                            button(
-                              `${definition.id}-remove`,
-                              "Remove",
-                              () =>
-                                void run(`${definition.id}-remove`, () =>
-                                  change("uninstall_hooks", { agent: definition.id }),
-                                ),
-                              "quiet",
-                              `Remove ${definition.name} hooks`,
-                            )}
-                          {agent?.detected &&
-                            !agent.error &&
-                            !connected &&
-                            button(
-                              `${definition.id}-install`,
-                              verb,
-                              () =>
-                                void run(`${definition.id}-install`, () =>
-                                  change("install_hooks", { agent: definition.id }),
-                                ),
-                              undefined,
-                              `${verb} ${definition.name} hooks`,
-                            )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {view.hooks.error && (
-                  <p id="hooks-error" role="status">
-                    {display(view.hooks.error)}
-                  </p>
-                )}
-              </div>
-            )}
-            {step === 3 && (
-              <div id="repo-panel" className="setup-card">
-                <RepositoryPicker
-                  call={setupRepositoryCall}
-                  home={view.home ?? undefined}
-                  connected={github}
-                  onPicked={setPickedCount}
-                />
-              </div>
-            )}
-            {step === last && reviews && (
+            {step === reviewStep && reviews && (
               <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
             )}
-            {step === last && !reviews && !error && (
-              <p id="checking" role="status">
+            {step === reviewStep && !reviews && !error && (
+              <LoadingStatus id="checking" block>
                 Reading your review settings…
+              </LoadingStatus>
+            )}
+            {step === 2 && (
+              <ul className="setup-card agent-list">
+                <li className="agent-row">
+                  <span className="row-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+                      <path d="M7 10l3 2.5L7 15M12.5 15H17" />
+                    </svg>
+                  </span>
+                  <div className="agent-info">
+                    <h2>baum CLI</h2>
+                    <p id="command-state" className={command.ok ? "ok" : undefined}>
+                      {display(command.state)}
+                    </p>
+                    {!command.ok && (
+                      <p className="agent-hint">Agent hooks report to baum through this command.</p>
+                    )}
+                    {command.note && (
+                      <p id="command-note" className="callout">
+                        {display(command.note)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="actions">
+                    {view.command.record &&
+                      !view.first_run &&
+                      button(
+                        "command-remove",
+                        "Remove",
+                        () => void run("command-remove", () => change("uninstall_command")),
+                        "quiet compact",
+                        "Remove the baum CLI",
+                      )}
+                    {command.action &&
+                      button(
+                        "command-install",
+                        command.action,
+                        () =>
+                          void run("command-install", () =>
+                            change(
+                              "install_command",
+                              command.replace ? { replace: command.replace } : {},
+                            ),
+                          ),
+                        "secondary compact",
+                        command.replace ? undefined : `${command.action} the baum CLI`,
+                      )}
+                  </div>
+                </li>
+                {agents.map((definition) => {
+                  const agent = view.hooks.agents.find((a) => a.agent === definition.id);
+                  const connected = agent?.installed && agent.enabled && !agent.error;
+                  const state = agent
+                    ? describeAgent(agent)
+                    : `${definition.name} status unavailable. Check again to retry.`;
+                  const verb = agent?.installed ? "Enable" : "Install";
+                  return (
+                    <li className="agent-row" key={definition.id}>
+                      <img
+                        className="agent-logo"
+                        src={definition.logo}
+                        alt=""
+                        width="24"
+                        height="24"
+                      />
+                      <div className="agent-info">
+                        <h2>{definition.name}</h2>
+                        <p id={`${definition.id}-state`} className={connected ? "ok" : undefined}>
+                          {display(state || definition.about)}
+                        </p>
+                        {agent?.installed && !agent.error && (
+                          <p id={`${definition.id}-hint`} className="agent-hint">
+                            {definition.hint}
+                          </p>
+                        )}
+                      </div>
+                      <div className="actions">
+                        {agent?.installed &&
+                          !view.first_run &&
+                          button(
+                            `${definition.id}-remove`,
+                            "Remove",
+                            () =>
+                              void run(`${definition.id}-remove`, () =>
+                                change("uninstall_hooks", { agent: definition.id }),
+                              ),
+                            "quiet compact",
+                            `Remove ${definition.name} hooks`,
+                          )}
+                        {agent?.detected &&
+                          !agent.error &&
+                          !connected &&
+                          button(
+                            `${definition.id}-install`,
+                            verb,
+                            () =>
+                              void run(`${definition.id}-install`, () =>
+                                change("install_hooks", { agent: definition.id }),
+                              ),
+                            "secondary compact",
+                            `${verb} ${definition.name} hooks`,
+                          )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {step === 2 && view.hooks.error && (
+              <p id="hooks-error" role="status">
+                {display(view.hooks.error)}
               </p>
             )}
           </div>
@@ -401,13 +407,7 @@ export function Setup() {
             {step > 0 && button("back", "← Back", () => navigate(step - 1), "quiet")}
             {button(
               "continue",
-              step === last
-                ? reviewsChanged
-                  ? "Save and open baum →"
-                  : "Open baum →"
-                : started
-                  ? "Continue →"
-                  : "Skip →",
+              step === last ? "Open baum →" : started ? "Continue →" : "Skip →",
               () => {
                 if (!view) return;
                 if (step < last) navigate(step + 1);
@@ -421,10 +421,8 @@ export function Setup() {
           {!done && (
             <p id="skip-note">
               {step === 0
-                ? "You can connect GitHub later in Settings."
-                : step === 3
-                  ? "You can add repositories later in Settings."
-                  : "You can finish setup later from the app menu."}
+                ? "You can connect GitHub and add repositories later in Settings."
+                : "You can finish setup later from the app menu."}
             </p>
           )}
         </footer>

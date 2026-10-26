@@ -451,7 +451,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{
-			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry, Found: clones.Snapshot,
+			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry,
 			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
 		}

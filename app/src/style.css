@@ -193,9 +193,10 @@ body {
 }
 .local-page-title h1 {
   margin: 0;
+  font-family: var(--font-heading);
   font-size: var(--text-lg);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 .local-page-title p {
   margin: 0;

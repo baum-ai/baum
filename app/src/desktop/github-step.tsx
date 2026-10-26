@@ -8,6 +8,7 @@ import {
   type GitHubAuthCall,
 } from "../github-auth";
 import { invoke } from "./native";
+import { NineDots } from "../nine-dots";
 
 /** The setup screen reaches the daemon's GitHub sign-in through the app. */
 const viaApp: GitHubAuthCall = (action) =>
@@ -61,6 +62,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 className={`${connected ? "secondary" : ""}${busy ? " loading" : ""}`}
                 onClick={signIn}
               >
+                {busy && <NineDots size={14} tone="text" />}
                 {connection.saved ? "Reconnect" : "Sign in with GitHub"}
               </button>
             </div>
@@ -122,10 +124,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
           </div>
         )}
       </div>
-      <p className="repo-note">
-        Pull requests are downloaded to this computer and shared only with your model provider,
-        never with baum.
-      </p>
+      <p className="repo-note">Data is downloaded to this computer and never shared with baum.</p>
     </div>
   );
 }
