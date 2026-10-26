@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/filelock"
+	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/privatefs"
 )
@@ -27,7 +29,29 @@ type Item struct {
 	// the job generates the group's combined review. See
 	// internal/reviewgroups.
 	Group string `json:"group,omitempty"`
+	// Kind is KindFix for a fix, empty for a review.
+	Kind string `json:"kind,omitempty"`
 }
+
+// KindFix is the Item.Kind of a fix: an agent with write access to a
+// temporary checkout of the pull request's branch resolves its merge
+// conflicts or failing checks, and baum pushes the result (internal/fix). A
+// fix is never automatic and runs only from a confirmed estimate.
+const KindFix = "fix"
+
+// FixInputs are what a fix job was confirmed for: what it fixes, the branch
+// it pushes to and the base branch it merges.
+type FixInputs struct {
+	Conflicts bool   `json:"conflicts,omitempty"`
+	Checks    bool   `json:"checks,omitempty"`
+	HeadRef   string `json:"head_ref,omitempty"`
+	BaseRef   string `json:"base_ref,omitempty"`
+}
+
+// ErrFixNeedsConfirmation refuses a fix asked for without a confirmed
+// estimate.
+var ErrFixNeedsConfirmation = errors.New("a fix runs only from a confirmed estimate")
+
 type Prepared struct {
 	ConfigDigest string `json:"config_digest"`
 	PriceVersion string `json:"price_version"`
@@ -57,6 +81,8 @@ type Prepared struct {
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
 	RefuseDraft bool `json:"-"`
+	// Fix is what a fix job (KindFix) does.
+	Fix FixInputs `json:"fix,omitzero"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -104,8 +130,14 @@ type Job struct {
 	ActualCostUSD *float64 `json:"actual_cost_usd"`
 	Reason        string   `json:"reason,omitempty"`
 	// Detail is the failure in words, from a generation error, whose text is
-	// redacted before it is built; other errors leave it empty.
-	Detail    string    `json:"detail,omitempty"`
+	// redacted before it is built, or from a fix; other errors leave it
+	// empty.
+	Detail string `json:"detail,omitempty"`
+	// Commit is the commit a fix pushed, CommitURL where GitHub shows it, and
+	// Summary the agent's account of the fix, with secrets masked.
+	Commit    string    `json:"commit,omitempty"`
+	CommitURL string    `json:"commit_url,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -114,6 +146,8 @@ type Progress struct {
 	CostReason             string
 	Phase                  string
 	Calls, Tokens, Repairs int
+	// Commit, CommitURL and Summary, when set, are a fix's (see Job).
+	Commit, CommitURL, Summary string
 }
 type Executor interface {
 	Prepare(context.Context, Item) (Prepared, string, error)
@@ -348,6 +382,15 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
+	// A fix is confirmed on its own.
+	if items[0].Kind != "" && (mode != "single" || items[0].Kind != KindFix) {
+		return Estimate{}, errors.New("invalid generation selection")
+	}
+	for _, item := range items[1:] {
+		if item.Kind != "" {
+			return Estimate{}, errors.New("invalid generation selection")
+		}
+	}
 	estimate := Estimate{ID: id(), Items: []Prepared{}, ExpiresAt: time.Now().Add(5 * time.Minute).UTC()}
 	total := 0.0
 	known := true
@@ -433,6 +476,11 @@ var ErrIsolationRequired = errors.New("isolation confirmation required")
 // reviews, and only a fork or an author without known write access needs
 // their confirmation (isolation) first.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
+	for _, item := range items {
+		if item.Kind != "" {
+			return nil, ErrFixNeedsConfirmation
+		}
+	}
 	e, err := q.estimate(ctx, items, mode, isolation)
 	if err != nil {
 		return nil, err
@@ -468,7 +516,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) {
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix {
 			return nil, errors.New("generation inputs changed; estimate again")
 		}
 		prepared = append(prepared, current)
@@ -496,7 +544,8 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 	for _, p := range prepared {
 		existing := -1
 		for i, j := range q.jobs {
-			if j.Repository == p.Repository && j.PR == p.PR && j.Group == p.Group && (j.State == "queued" || j.State == "running") {
+			// A review and a fix of one pull request are separate jobs.
+			if j.Repository == p.Repository && j.PR == p.PR && j.Group == p.Group && j.Kind == p.Kind && (j.State == "queued" || j.State == "running") {
 				existing = i
 				break
 			}
@@ -630,6 +679,12 @@ func (q *Queue) worker() {
 				q.jobs[i].Repairs = p.Repairs
 				q.jobs[i].Accounting = p.Accounting.Clone()
 				q.jobs[i].CostReason = p.CostReason
+				if p.Commit != "" {
+					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
+				}
+				if p.Summary != "" {
+					q.jobs[i].Summary = p.Summary
+				}
 				q.jobs[i].UpdatedAt = time.Now().UTC()
 				// Save every reported usage update before publishing it. A crash
 				// may lose in-flight provider usage, never the reports we received.
@@ -653,7 +708,15 @@ func (q *Queue) worker() {
 			current.UpdatedAt = time.Now().UTC()
 			current.State = "completed"
 			var refused *NotAutomaticError
+			var fixErr *fix.Error
 			switch {
+			case err != nil && errors.As(err, &fixErr):
+				current.State = "failed"
+				current.Reason = fixErr.Reason
+				current.Detail = fixErr.Error()
+				if len(current.Detail) > 500 {
+					current.Detail = strings.ToValidUTF8(current.Detail[:500], "") + "…"
+				}
 			case err != nil && current.Automatic && errors.As(err, &refused):
 				// The recheck found what automatic generation skips (a PR
 				// turned draft) before any model call.

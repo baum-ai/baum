@@ -71,8 +71,31 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging is the one GitHub write
-(see below).
+sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging and a fix the person
+confirms are the app's only GitHub writes (see below).
+
+A pull request with a merge conflict (`merge` is `conflict`) or failing checks
+(`checks` is `failing`) offers a fix, labelled by what is broken: **Fix
+conflicts**, **Fix CI** or **Fix conflicts and CI** (`fixLabel` in
+`src/api.ts`). It is offered only when the pull request is open, is not a fork,
+discovery says the signed-in account can push to the repository
+(`viewer_can_push`) and the repository has a local clone. The PR page puts the
+button first beside the version menu, and the inbox puts a small **Fix** in
+the row's Status cell. Either opens
+`FixDialog` (`src/fix.tsx`), which estimates the fix
+(`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
+(the review's), the branch the result is pushed to, the estimate, and that the
+agent runs with write access to a temporary checkout (Claude Code cannot run
+commands, so it cannot run the tests; Codex runs them without network). A fix
+the daemon refuses shows its reason instead of a confirmation. Confirming
+queues it (`POST api/jobs` with the estimate id); nothing runs without that.
+The fix is a job like a review: the Jobs list labels it with the fix's name
+and, once done, links the pushed commit and keeps the agent's summary behind
+**What the agent did**; the PR page shows its phase with **Cancel fix**, then
+the pushed commit or the failure in words, and the button reads **Fixing…**
+meanwhile. `reviewJob` ignores fix jobs and `fixJob` finds them, so a fix
+never shows as a review being generated. The daemon polls discovery after a
+push, so the new head appears without a manual refresh.
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, beside Ready

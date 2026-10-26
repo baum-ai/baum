@@ -87,7 +87,7 @@ func (c *Claude) Read(ctx context.Context) Plan {
 		// The error is dropped: nothing in it is safe or useful to show.
 		return c.unavailable("Claude's usage could not be reached.")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return c.unavailable("Open Claude Code to refresh its sign-in.")

@@ -29,9 +29,11 @@ import {
   automaticLabel,
   jobReasonText,
   liveFor,
+  fixLabel,
   type LiveSession,
   type Provenance,
 } from "./api";
+import { FixNotice } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./live";
@@ -92,6 +94,8 @@ export function LocalReview({
   changed,
   live = [],
   groups = [],
+  fix,
+  fixJob,
 }: {
   entry: Entry;
   clone: string;
@@ -103,8 +107,18 @@ export function LocalReview({
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string }[];
+  /** Opens the fix confirmation; absent when the pull request offers no fix. */
+  fix?: () => void;
+  /** The pull request's latest fix job. */
+  fixJob?: Job;
 }) {
   const pr = entry.pull_request;
+  const fixLabelText = fixLabel(entry);
+  const fixing = isActiveJob(fixJob);
+  // A finished fix stays on the page while it concerns the head shown: the
+  // one it started from, or the commit it pushed.
+  const showFix =
+    !!fixJob && (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha);
   const running = liveFor(live, pr);
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
@@ -236,9 +250,15 @@ export function LocalReview({
             back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
+            // A fix, when the pull request is broken, comes first.
             beside:
-              doc || canMerge(entry) ? (
-                <div className="flex flex-wrap gap-2">
+              doc || (fix && fixLabelText) || canMerge(entry) ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {fix && fixLabelText ? (
+                    <Button size="compact" disabled={fixing} onClick={fix}>
+                      {fixing ? "Fixing…" : fixLabelText}
+                    </Button>
+                  ) : null}
                   {doc ? (
                     <Button
                       variant="secondary"
@@ -325,6 +345,9 @@ export function LocalReview({
                   </ViewerLink>
                 </Notice>
               ))}
+              {showFix && fixJob ? (
+                <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+              ) : null}
               <LiveSessions sessions={running} />
               {entry.needs_clone && doc ? (
                 <Notice>

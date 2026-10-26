@@ -99,6 +99,17 @@ func browserDiagnostics(context.Context) doctor.Report {
 
 // browserLiveLinker links the one directory the browser test's agent session
 // works in to PR 7's branch; the real linkage is tested in livesessions.
+// fixtureFixer is the fixture's model backend, which can also fix: it leaves
+// a note in the checkout. Its push fails, since the fixture's clone has no
+// reachable remote; the app's fix button and confirmation are what the
+// fixture is for.
+type fixtureFixer struct{ *generatetest.Backend }
+
+func (fixtureFixer) Fix(_ context.Context, r agent.Request) (agent.Result, error) {
+	err := os.WriteFile(filepath.Join(r.Directory, "FIXED.md"), []byte("fixed by the fixture\n"), 0o644)
+	return agent.Result{Document: []byte("Left a note."), Calls: 1, Tokens: 10}, err
+}
+
 type browserLiveLinker struct{}
 
 func (browserLiveLinker) Link(_ context.Context, cwd string) (livesessions.Link, bool) {
@@ -230,6 +241,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	prs[2].Review, prs[2].Checks, prs[2].Merge, prs[2].Unresolved = "commented", "running", "blocked", new(6)
 	prs[2].UnresolvedCapped = true
 	prs[3].Review, prs[3].Checks, prs[3].Merge = "unreviewed", "none", "draft"
+	// The viewer may push to acme/demo, so PR 8's conflict and failing checks
+	// offer a fix.
+	for i := range prs {
+		prs[i].ViewerCanPush = &write
+	}
 
 	// The browser test pushes PR 10 by writing this marker; a marker left by
 	// an earlier run must not count as already seen.
@@ -257,12 +273,19 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		var body any
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			body = map[string]any{"permission": "write"}
+		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/check-runs") {
+			body = map[string]any{"check_runs": []any{map[string]any{"id": 1, "name": "test", "conclusion": "failure", "output": map[string]any{"title": "1 test failed"}}}}
+		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/status") {
+			body = map[string]any{"statuses": []any{}}
+		} else if r.Method == "GET" && strings.Count(strings.Trim(r.URL.Path, "/"), "/") == 2 {
+			// The repository itself: the viewer may push to it.
+			body = map[string]any{"full_name": "acme/demo", "permissions": map[string]any{"push": true}}
 		} else if r.Method == "GET" {
 			headRepo := "acme/demo"
 			if strings.HasSuffix(r.URL.Path, "/9") {
 				headRepo = "other/fork"
 			}
-			body = map[string]any{"state": "open", "head": map[string]any{"sha": repo.Head, "repo": map[string]any{"full_name": headRepo}}, "user": map[string]any{"login": "author"}}
+			body = map[string]any{"state": "open", "title": "Fixture pull request", "mergeable": !strings.HasSuffix(r.URL.Path, "/8"), "head": map[string]any{"sha": repo.Head, "ref": "feature", "repo": map[string]any{"full_name": headRepo}}, "base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "acme/demo"}}, "user": map[string]any{"login": "author"}}
 		} else {
 			var query struct {
 				Query     string
@@ -329,7 +352,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if job.Phase == "finished" {

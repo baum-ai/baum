@@ -24,6 +24,8 @@ import { riskScoreTone, type RiskScoreLevel } from "@baum/viewer/review-document
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
+  fixJob,
+  fixLabel,
   groupJob,
   isActiveJob,
   liveFor,
@@ -147,6 +149,7 @@ export function Inbox({
   live = [],
   changed,
   groups: reviewGroups = [],
+  fix,
   jobs = [],
 }: {
   rows: Entry[];
@@ -160,6 +163,9 @@ export function Inbox({
   changed?: () => Promise<void>;
   /** Review groups; each with a shown member is one row. */
   groups?: ReviewGroup[];
+  /** Opens the fix confirmation for a broken pull request. */
+  fix?: (entry: Entry) => void;
+  /** The queue's jobs, for the fixes running. */
   jobs?: Job[];
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
@@ -195,6 +201,8 @@ export function Inbox({
       live={liveFor(live, entry.pull_request)}
       nested={nested}
       merge={canMerge(entry) ? () => setMerging(entry) : undefined}
+      fix={fix && cloneFor(entry) ? () => fix(entry) : undefined}
+      fixing={isActiveJob(fixJob(entry, jobs))}
     />
   );
   return (
@@ -418,7 +426,7 @@ function StatusCell({
     <span
       title={title}
       className={cn(
-        "inbox-status inline-flex items-center gap-1.5 text-xs tabular-nums",
+        "inbox-status inline-flex flex-wrap items-center gap-x-1.5 text-xs tabular-nums",
         style?.tone ?? MUTED,
       )}
     >
@@ -445,7 +453,36 @@ function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
     </button>
   );
 }
-function StatusColumns({ entry, merge }: { entry: Entry; merge?: () => void }) {
+
+/** The small fix action in a broken pull request's status cell. */
+function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fixing: boolean }) {
+  if (fixing) return <span className="inbox-fix">Fixing…</span>;
+  if (!fix) return null;
+  return (
+    <button type="button" className="inbox-fix" aria-label={label} title={label} onClick={fix}>
+      Fix
+    </button>
+  );
+}
+function StatusColumns({
+  entry,
+  merge,
+  fix,
+  fixing = false,
+}: {
+  entry: Entry;
+  merge?: () => void;
+  fix?: () => void;
+  fixing?: boolean;
+}) {
+  // The Status cell carries the one thing to do about the state it shows:
+  // merge a ready pull request, or fix a broken one.
+  const label = fixLabel(entry);
+  const action = merge ? (
+    <MergeAction entry={entry} merge={merge} />
+  ) : label ? (
+    <FixAction label={label} fix={fix} fixing={fixing} />
+  ) : null;
   const unresolved = entry.unresolved;
   const status = mergeStatus(entry);
   // Unresolved threads belong to the GitHub review, beside its decision; none
@@ -496,7 +533,7 @@ function StatusColumns({ entry, merge }: { entry: Entry; merge?: () => void }) {
                 .join(", ")
             : undefined
         }
-        action={merge ? <MergeAction entry={entry} merge={merge} /> : undefined}
+        action={action ?? undefined}
       />
     </div>
   );
@@ -628,6 +665,8 @@ function InboxRow({
   live,
   nested = false,
   merge,
+  fix,
+  fixing,
 }: {
   entry: Entry;
   clone: string;
@@ -638,6 +677,8 @@ function InboxRow({
   /** Shown under its review group's row. */
   nested?: boolean;
   merge?: () => void;
+  fix?: () => void;
+  fixing: boolean;
 }) {
   const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
@@ -681,7 +722,7 @@ function InboxRow({
           <LiveBadge sessions={live} />
         </div>
       </div>
-      <StatusColumns entry={entry} merge={merge} />
+      <StatusColumns entry={entry} merge={merge} fix={fix} fixing={fixing} />
     </li>
   );
 }

@@ -72,6 +72,10 @@ type Request struct {
 	// Task marks a generic task (Generator.RunTask) rather than a review, so
 	// the backend frames it without pull request review wording.
 	Task bool
+	// Scratch, for a Fixer, is a private directory the agent's commands may
+	// write to besides Directory: their TMPDIR. Empty leaves the backend's
+	// own temporary directory.
+	Scratch string
 }
 
 type Result struct {

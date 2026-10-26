@@ -74,7 +74,11 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		if e != nil {
-			http.Error(w, "cannot estimate: select available PRs with an explicit priced model", 400)
+			message := "cannot estimate: select available PRs with an explicit priced model"
+			if len(request.Items) == 1 && request.Items[0].Kind == KindFix {
+				message = "cannot prepare the fix: GitHub, the local clone or the agent is unavailable"
+			}
+			http.Error(w, message, 400)
 			return
 		}
 		respond(w, v)
@@ -103,6 +107,10 @@ func (q *Queue) Handler() http.Handler {
 			}
 		} else {
 			v, e = q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation})
+		}
+		if errors.Is(e, ErrFixNeedsConfirmation) {
+			http.Error(w, e.Error(), http.StatusBadRequest)
+			return
 		}
 		if errors.Is(e, ErrRestarting) {
 			w.Header().Set("Retry-After", "5")
