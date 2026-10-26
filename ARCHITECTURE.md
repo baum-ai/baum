@@ -534,6 +534,18 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
 
+`agent.Fixer` is the one write mode, for a fix a person confirmed
+(`internal/fix`, see "Fix jobs" below): `Fix` runs the agent over a checkout
+it may edit, with no schema, and returns its final message as the summary.
+Only the local profiles implement it. `claude` keeps restricted mode and the
+other review flags but has `Read,Glob,Grep,Edit,Write` and `--permission-mode
+acceptEdits`: it edits files and runs nothing. `codex` runs `--sandbox
+workspace-write` with `sandbox_workspace_write.network_access=false`,
+`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
+`Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
+`anthropic` have no write mode. The fix instructions are
+`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md` and `fix-checks.md`).
+
 `agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
 one profile and refuses a request with an `Endpoint`. Before its first run a
 `Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
@@ -1843,6 +1855,9 @@ run's outcome afterwards is only a warning, and the lease later expires.
 `internal/discovery` reads the viewer and open pull requests through one GraphQL
 query per repository per poll, plus cursor pagination with 50 pulls per page.
 Each pull includes review, checks and merge states, and up to 100 review threads.
+The repository's `viewerPermission` becomes each pull's `viewer_can_push`
+(write, maintain or admin; null when GitHub does not say), which decides
+whether the app offers a fix.
 Missing state is unknown; unresolved counts are nullable and marked as lower
 bounds when threads exceed the cap. Comment-only reviews use the latest 100
 reviews as a fallback to GitHub's review decision and opinionated reviews.
@@ -1851,7 +1866,8 @@ REST requests. Truncated review requests fail the refresh rather than concealing
 an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
-authorization. This service has no generation or GitHub mutation capability.
+authorization. This service has no generation or GitHub mutation capability;
+the only write to GitHub is a confirmed fix's `git push` (see "Fix jobs").
 
 `Service.Cached` resolves the local credential and reads disk without network
 access. Disk data is stale until a successful poll in the running service.
@@ -1915,8 +1931,9 @@ unavailable, which includes every repository picked without a clone, is
 and a queued job whose clone was removed ends with the reason `needs_clone`
 without running (`cancelled` when automatic, so its head is not used up and
 it counts no spend; `failed` when manual). Pull requests of such a repository are still discovered.
-The runner has no subprocess invocation of baum itself. Only the existing
-read-only agent backends run child processes, cancelled through their context.
+The runner has no subprocess invocation of baum itself. Only the agent
+backends and a fix's git commands run child processes, cancelled through their
+context.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
 generation") queues a job nobody confirmed. It prepares the item like an
@@ -1960,6 +1977,52 @@ one exception is a backend billed outside the list (cursor-agent): its item has
 a nil estimate with an `estimate_reason`, the total is unknown, and
 `Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
 acknowledgement. Unknown actual usage remains null.
+
+### Fix jobs
+
+A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
+shares the queue, journal, concurrency, progress events and cancellation with
+reviews and shows in the same Jobs list. A fix is estimated alone
+(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`)
+and queued only from that confirmed estimate (`POST /api/jobs` with
+`estimate_id`); a direct request is `400` (`ErrFixNeedsConfirmation`), and
+automatic generation never queues one. A review and a fix of one pull request
+neither supersede nor block each other, and a fix of a head does not count as
+that head's review for the automatic scheduler.
+
+`jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
+`/pulls/{n}` for the head, its branch and repository, the base branch and
+`mergeable` (read again once after 1.5 s while GitHub has not computed it),
+`/repos/{o}/{r}` for `permissions.push`, and the head's failing check runs and
+commit statuses. `Prepared.Fix` records what it fixes (`conflicts`, `checks`)
+and the branches; a fork, an account that cannot push, a backend that cannot
+fix, or nothing broken is the item's `blocked_reason` (`fork`,
+`no_push_access`, `unsupported_backend`, `nothing_to_fix`), which the dialog
+explains. The harness, model and budgets resolve as a review's, and the
+estimate is the same budget-sized one. Before running, the executor prepares
+again and refuses a changed head (`head_changed`) or changed fix inputs, then
+reads the failing checks' output and the last 200 lines of up to four GitHub
+Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
+without the token).
+
+`fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
+registered clone under the user cache directory's `baum/fixes/<id>`, detached
+at the head fetched into `refs/baum/fix/<id>/` from the remote whose URL names
+the repository (`ErrHeadMoved` when the branch moved on). For a conflict it
+merges the base commit itself; a clean merge needs no agent. The agent
+(`agent.Fixer`) runs with the prompt, the untrusted data between nonce-tagged
+markers, and the run budgets. baum then checks that no conflicted file keeps a
+marker, commits what was left (completing the merge), requires a new commit
+that descends from the head, and pushes it with a plain `git push` to the head
+branch. Phases are `reading checks`, `fetching`, `merging`, `fixing`,
+`committing` and `pushing`. A finished fix records `commit`, `commit_url` and
+the agent's masked `summary`; a failed one a reason (`head_changed`,
+`no_remote`, `git`, `backend`, `budget`, `no_changes`, `conflicts_remain`,
+`history_rewritten`, `push_rejected`, `push_failed`) and a bounded detail.
+The worktree, its registration and the refs are removed whatever happens.
+After a push the daemon polls the repository's discovery at once. Git commands
+in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
+`core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
 
 ### Local application presentation
 

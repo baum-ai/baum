@@ -27,6 +27,8 @@ import {
   appURL,
   request,
   reviewJob,
+  fixJob,
+  fixName,
   isActiveJob,
   filtered,
   rowKey,
@@ -44,6 +46,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
+import { FixDetails, FixDialog } from "./fix";
 
 function useLocation() {
   const [search, setSearch] = useState(() => new URLSearchParams(location.search));
@@ -151,6 +154,8 @@ function Workspace({ url }: { url: UrlState }) {
   const [generationError, setGenerationError] = useState("");
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
+  // A fix waiting for the user's confirmation.
+  const [fixing, setFixing] = useState<Entry | null>(null);
   const [rates, setRates] = useState<
     {
       repository: string;
@@ -430,7 +435,7 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "jobs" ? (
             <>
-              <PageBar title="Jobs" detail="Reviews generated on this computer" />
+              <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
               <div className="local-page-body">
                 <Jobs jobs={jobs} changed={reload} />
               </div>
@@ -464,6 +469,8 @@ function Workspace({ url }: { url: UrlState }) {
               changed={reload}
               live={live}
               generate={() => void generate([selectedEntry], "single")}
+              fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
+              fixJob={fixJob(selectedEntry, jobs)}
             />
           ) : (
             <>
@@ -598,6 +605,8 @@ function Workspace({ url }: { url: UrlState }) {
                   setSelection={setSelection}
                   Link={LocalLink}
                   live={live}
+                  fix={setFixing}
+                  jobs={jobs}
                 />
               ) : null}
             </>
@@ -609,6 +618,15 @@ function Workspace({ url }: { url: UrlState }) {
               close={() => setFork(null)}
               confirm={() => void generate(fork.entries, fork.mode, true)}
               pending={generating}
+            />
+          ) : null}
+          {fixing && cloneFor(fixing) ? (
+            <FixDialog
+              key={rowKey(fixing)}
+              entry={fixing}
+              clone={cloneFor(fixing)}
+              close={() => setFixing(null)}
+              started={reload}
             />
           ) : null}
         </main>
@@ -735,12 +753,30 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => void }) {
         >
           {job.repository} <span>#{job.pr}</span>
         </LocalLink>
-        <p className="local-job-meta">{started ?? "Started by you"}</p>
+        <p className="local-job-meta">
+          {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
+          {started ?? "Started by you"}
+        </p>
+        {job.kind === "fix" && job.commit ? (
+          <p className="local-job-meta">
+            Pushed{" "}
+            <a href={job.commit_url} target="_blank" rel="noreferrer">
+              <code>{job.commit.slice(0, 7)}</code>
+            </a>
+            {job.fix?.head_ref ? (
+              <>
+                {" "}
+                to <code>{job.fix.head_ref}</code>
+              </>
+            ) : null}
+          </p>
+        ) : null}
         {job.reason ? (
           <p role="status" className="local-job-meta">
             {jobReasonText(job.reason)}
           </p>
         ) : null}
+        {job.kind === "fix" ? <FixDetails job={job} /> : null}
       </div>
       <span className="local-job-figure">{calls}</span>
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>

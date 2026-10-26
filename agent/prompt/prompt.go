@@ -1,7 +1,9 @@
 // Package prompt is the review prompt this module ships: the instructions the
-// generate-and-repair loop (agent.Generator) gives a model backend.
+// generate-and-repair loop (agent.Generator) gives a model backend. It also
+// holds the fix instructions (Fix): fix-public-v1.md, with fix-conflicts.md
+// and fix-checks.md for what a fix is for.
 //
-// Four files are embedded:
+// Four review files are embedded:
 //
 //	review-public-v3.md   the review instructions shared by every backend,
 //	                      ending with the "## 10. Submitting" heading

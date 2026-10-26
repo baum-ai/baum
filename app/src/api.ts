@@ -42,6 +42,10 @@ export type PR = GitHubState & {
   review_requested_from_me: boolean;
   author_has_write: boolean | null;
   team_membership_known: boolean;
+  head_ref?: string;
+  /** Whether the signed-in account may push to the repository, which a fix
+   *  needs; null or absent when GitHub did not say. */
+  viewer_can_push?: boolean | null;
 };
 export type Entry = GitHubState & {
   review_minutes: number | null;
@@ -114,6 +118,24 @@ export type Job = {
   /** Queued by the daemon's scheduler, not confirmed by a person. */
   automatic?: boolean;
   trigger?: string;
+  /** "fix" for a fix of the pull request; absent for a review. */
+  kind?: "fix";
+  fix?: FixInputs;
+  head_sha?: string;
+  backend?: string;
+  model?: string;
+  /** The commit a fix pushed, and where GitHub shows it. */
+  commit?: string;
+  commit_url?: string;
+  /** The fix agent's own account of what it changed, secrets masked. */
+  summary?: string;
+};
+/** What a fix was confirmed for. */
+export type FixInputs = {
+  conflicts?: boolean;
+  checks?: boolean;
+  head_ref?: string;
+  base_ref?: string;
 };
 /** One repository's automatic generation, from `api/automatic`. */
 export type AutomaticStatus = {
@@ -143,6 +165,21 @@ const jobReasons: Record<string, string> = {
   internal: "Something went wrong inside baum.",
   superseded: "A newer commit replaced it.",
   draft: "The pull request became a draft.",
+  fork: "The pull request's branch is in a fork, which baum never pushes to.",
+  no_push_access: "Your GitHub account can't push to this repository.",
+  nothing_to_fix: "GitHub reports no merge conflict and no failing check on this pull request now.",
+  unsupported_backend:
+    "Fixes run with Claude Code or Codex only. Choose one of them as the review harness to fix pull requests.",
+  head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
+  no_remote: "The local clone has no remote for this repository to push to.",
+  git: "A git command in the temporary checkout failed.",
+  no_changes: "The agent changed nothing, so there was nothing to push.",
+  conflicts_remain: "The agent left conflict markers in a file, so nothing was pushed.",
+  history_rewritten:
+    "The result didn't build on the pull request's commits, so baum refused to push it.",
+  push_rejected:
+    "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
+  push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
 /** What a finished job's reason means, in a sentence. */
 export function jobReasonText(reason: string): string {
@@ -195,6 +232,8 @@ export type Estimate = {
   items: {
     clone: string;
     pr: number;
+    kind?: "fix";
+    fix?: FixInputs;
     head_sha: string;
     backend: string;
     model: string;
@@ -393,12 +432,57 @@ export function isActiveJob(job: Job | undefined): boolean {
   return job?.state === "queued" || job?.state === "running";
 }
 /** A queue entry belongs to the PR, including its GitHub host, across clones.
- * Active work takes precedence over earlier terminal attempts. */
+ * Active work takes precedence over earlier terminal attempts. A fix is not
+ * a review: see fixJob. */
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
+  return prJob(entry, jobs, (job) => job.kind !== "fix");
+}
+/** The PR's latest fix job, an active one first. */
+export function fixJob(entry: Entry, jobs: Job[]): Job | undefined {
+  return prJob(entry, jobs, (job) => job.kind === "fix");
+}
+function prJob(entry: Entry, jobs: Job[], kind: (job: Job) => boolean): Job | undefined {
   const matches = (job: Job) =>
+    kind(job) &&
     job.pr === entry.pull_request.number &&
     job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase();
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
+}
+/** The name of a fix, by what is broken. */
+export function fixName(fix: { conflicts?: boolean; checks?: boolean }): string {
+  return fix.conflicts && fix.checks
+    ? "Fix conflicts and CI"
+    : fix.conflicts
+      ? "Fix conflicts"
+      : "Fix CI";
+}
+/** The fix a pull request offers, or null: only an open pull request whose
+ *  branch is in the repository itself (not a fork), in a repository the
+ *  signed-in account may push to, with a merge conflict or failing checks.
+ *  The daemon checks all of it again against GitHub before anything runs. */
+export function fixLabel(entry: Entry): string | null {
+  const pr = entry.pull_request;
+  if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return null;
+  if (pr.state && pr.state.toUpperCase() !== "OPEN") return null;
+  const conflicts = entry.merge === "conflict";
+  const checks = entry.checks === "failing";
+  return conflicts || checks ? fixName({ conflicts, checks }) : null;
+}
+/** Prepares a fix of the pull request: what it would fix, with which harness
+ *  and model, and on which branch, or why it cannot run. */
+export async function estimateFix(clone: string, pr: number): Promise<Estimate> {
+  return request<Estimate>("api/jobs/estimate", {
+    items: [{ clone, pr, kind: "fix" }],
+    mode: "single",
+  });
+}
+/** Starts a fix the person confirmed. */
+export async function startFix(estimate: Estimate): Promise<Job[]> {
+  const answer = await request<{ jobs: Job[] }>("api/jobs", {
+    estimate_id: estimate.id,
+    confirm_estimate: true,
+  });
+  return answer.jobs;
 }
 
 /** Safe daemon-owned GitHub connection state; credentials never reach the app. */

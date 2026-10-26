@@ -80,7 +80,7 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 			}
 			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
 		}
-		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
+		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"viewerPermission": "WRITE", "pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
 		body = string(encoded)
 	}
 	if body == "" {
@@ -154,6 +154,12 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	}
 	if prs[3].AuthorHasWrite != nil {
 		t.Fatal("unreadable permission treated as known")
+	}
+	// The viewer's own permission is the repository's, whoever wrote the PR.
+	for _, pr := range prs {
+		if pr.ViewerCanPush == nil || !*pr.ViewerCanPush {
+			t.Fatalf("viewer push permission %#v", pr)
+		}
 	}
 	entries, err := os.ReadDir(s.directory)
 	if err != nil || len(entries) != 2 {

@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
@@ -32,6 +33,9 @@ type Local struct {
 	// RefreshPrices downloads and installs the signed price list; nil disables
 	// the refresh for jobs confirmed against a newer list than the active one.
 	RefreshPrices func(context.Context) error
+	// FixDirectory holds fixes' temporary checkouts; empty is
+	// fix.DefaultDirectory.
+	FixDirectory string
 }
 
 type identityVersions struct {
@@ -61,6 +65,13 @@ func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
 func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
 	if item.PR <= 0 {
 		return Prepared{}, "", errors.New("invalid pull request")
+	}
+	switch item.Kind {
+	case "":
+	case KindFix:
+		return l.prepareFix(ctx, item)
+	default:
+		return Prepared{}, "", errors.New("unknown job kind")
 	}
 	c, e := l.clone(ctx, item.Clone)
 	if e != nil {
@@ -150,7 +161,19 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 		return e
 	}
 	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Backend != p.Backend || current.Model != p.Model || current.EstimateReason != p.EstimateReason || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
+			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was confirmed")}
+		}
 		return errors.New("generation inputs changed")
+	}
+	// A fix GitHub now refuses (a lost push permission) or that has nothing
+	// left to fix does not run.
+	if p.Kind == KindFix && (current.BlockedReason != "" || current.Fix != p.Fix) {
+		reason := current.BlockedReason
+		if reason == "" {
+			reason = fix.ReasonNothingToFix
+		}
+		return &fix.Error{Reason: reason, Err: errors.New("what the fix was confirmed for changed; confirm it again")}
 	}
 	if p.RefuseDraft && current.Draft {
 		return &NotAutomaticError{ReasonDraft}
@@ -170,6 +193,9 @@ func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, erro
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+	if p.Kind == KindFix {
+		return l.executeFix(ctx, p, progress)
+	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
 		return nil, e

@@ -21,7 +21,17 @@ import {
 } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL, liveFor, rowKey, type Entry, type LiveSession } from "./api";
+import {
+  appURL,
+  fixJob,
+  fixLabel,
+  isActiveJob,
+  liveFor,
+  rowKey,
+  type Entry,
+  type Job,
+  type LiveSession,
+} from "./api";
 import { LiveBadge } from "./live";
 
 type Group = { id: string; heading: string; hint: string; tone: string; rows: Entry[] };
@@ -80,6 +90,8 @@ export function Inbox({
   setSelection,
   Link,
   live = [],
+  fix,
+  jobs = [],
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
@@ -88,6 +100,10 @@ export function Inbox({
   Link: ComponentType<ViewerLinkProps>;
   /** Agent sessions in progress; a row shows those of its pull request. */
   live?: LiveSession[];
+  /** Opens the fix confirmation for a broken pull request. */
+  fix?: (entry: Entry) => void;
+  /** The queue's jobs, for the fixes running. */
+  jobs?: Job[];
 }) {
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const groups = inboxGroups(rows);
@@ -154,6 +170,8 @@ export function Inbox({
               toggle={(checked) => toggle(rowKey(entry), checked)}
               Link={Link}
               live={liveFor(live, entry.pull_request)}
+              fix={fix && cloneFor(entry) ? () => fix(entry) : undefined}
+              fixing={isActiveJob(fixJob(entry, jobs))}
             />
           ))}
         </Bucket>
@@ -269,11 +287,14 @@ function StatusCell({
   label,
   style,
   title,
+  action,
 }: {
   column: string;
   label?: string;
   style?: StateStyle;
   title?: string;
+  /** Drawn after the state, such as the fix of a broken pull request. */
+  action?: ReactNode;
 }) {
   const Icon = style?.icon;
   const text = label ?? style?.label;
@@ -281,17 +302,40 @@ function StatusCell({
     <span
       title={title}
       className={cn(
-        "inbox-status inline-flex items-center gap-1.5 text-xs tabular-nums",
+        "inbox-status inline-flex flex-wrap items-center gap-x-1.5 text-xs tabular-nums",
         style?.tone ?? MUTED,
       )}
     >
       <span className="inbox-cell-label">{column}: </span>
       {Icon && text ? <Icon size={14} className={cn("flex-none", style?.iconTone)} /> : null}
       {text ?? "—"}
+      {action}
     </span>
   );
 }
-function StatusColumns({ entry }: { entry: Entry }) {
+/** The small fix action in a broken pull request's status cell. */
+function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fixing: boolean }) {
+  if (fixing) return <span className="inbox-fix">Fixing…</span>;
+  if (!fix) return null;
+  return (
+    <button type="button" className="inbox-fix" aria-label={label} title={label} onClick={fix}>
+      Fix
+    </button>
+  );
+}
+function StatusColumns({
+  entry,
+  fix,
+  fixing = false,
+}: {
+  entry: Entry;
+  fix?: () => void;
+  fixing?: boolean;
+}) {
+  const label = fixLabel(entry);
+  const action = label ? <FixAction label={label} fix={fix} fixing={fixing} /> : null;
+  // One action per row: in the merge cell for a conflict, else in checks.
+  const inMerge = entry.merge === "conflict";
   const unresolved = entry.unresolved;
   return (
     <div className="inbox-statuses">
@@ -318,8 +362,8 @@ function StatusColumns({ entry }: { entry: Entry }) {
         }
       />
       <StatusCell column="Review" style={REVIEW[entry.review]} />
-      <StatusCell column="Checks" style={CHECKS[entry.checks]} />
-      <StatusCell column="Merge" style={MERGE[entry.merge]} />
+      <StatusCell column="Checks" style={CHECKS[entry.checks]} action={inMerge ? null : action} />
+      <StatusCell column="Merge" style={MERGE[entry.merge]} action={inMerge ? action : null} />
     </div>
   );
 }
@@ -330,6 +374,8 @@ function InboxRow({
   toggle,
   Link,
   live,
+  fix,
+  fixing,
 }: {
   entry: Entry;
   clone: string;
@@ -337,6 +383,8 @@ function InboxRow({
   toggle: (checked: boolean) => void;
   Link: ComponentType<ViewerLinkProps>;
   live: LiveSession[];
+  fix?: () => void;
+  fixing: boolean;
 }) {
   const pr = entry.pull_request;
   const score = entry.risk_score?.score;
@@ -398,7 +446,7 @@ function InboxRow({
         </p>
         <ReviewActivity entry={entry} />
       </div>
-      <StatusColumns entry={entry} />
+      <StatusColumns entry={entry} fix={fix} fixing={fixing} />
     </li>
   );
 }

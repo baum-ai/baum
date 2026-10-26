@@ -16,6 +16,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
  viewer { login }
  rateLimit { cost remaining resetAt }
  repository(owner: $owner, name: $name) {
+  viewerPermission
   pullRequests(states: OPEN, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
@@ -180,17 +181,35 @@ func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped 
 	return
 }
 
-func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]gqlPR, actor, error) {
+// openPulls reads the open pull requests, the viewer and whether the viewer
+// may push to the repository (nil when GitHub did not say).
+func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]gqlPR, actor, *bool, error) {
+	result, viewer, permission, err := p.openPullPages(ctx, repository)
+	if err != nil {
+		return nil, viewer, nil, err
+	}
+	var push *bool
+	switch permission {
+	case "ADMIN", "MAINTAIN", "WRITE":
+		push = new(true)
+	case "READ", "TRIAGE":
+		push = new(false)
+	}
+	return result, viewer, push, nil
+}
+
+func (p *poll) openPullPages(ctx context.Context, repository github.Repository) ([]gqlPR, actor, string, error) {
 	var result []gqlPR
 	var viewer actor
+	var permission string
 	var cursor any
 	for page := 0; page < 1000; page++ {
 		if rateDeadline(p.graphRate).After(p.now) {
-			return nil, viewer, errRateLimit
+			return nil, viewer, "", errRateLimit
 		}
 		status, headers, body, err := p.reader.GraphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
 		if err != nil {
-			return nil, viewer, err
+			return nil, viewer, "", err
 		}
 		// GraphQL response headers describe its point budget, never the REST budget.
 		if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
@@ -207,7 +226,8 @@ func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]g
 					ResetAt         time.Time
 				}
 				Repository *struct {
-					PullRequests struct {
+					ViewerPermission string
+					PullRequests     struct {
 						Nodes    []gqlPR
 						PageInfo pageInfo
 					}
@@ -232,21 +252,22 @@ func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]g
 				resume = at
 			}
 			p.graphRate.RetryAt = resume
-			return nil, viewer, errRateLimit
+			return nil, viewer, "", errRateLimit
 		}
 		if status != 200 {
-			return nil, viewer, fmt.Errorf("GitHub discovery HTTP %d", status)
+			return nil, viewer, "", fmt.Errorf("GitHub discovery HTTP %d", status)
 		}
 		if parseErr != nil || len(response.Errors) > 0 || response.Data.Repository == nil {
-			return nil, viewer, errors.New("invalid GitHub discovery response")
+			return nil, viewer, "", errors.New("invalid GitHub discovery response")
 		}
 		viewer = response.Data.Viewer
+		permission = response.Data.Repository.ViewerPermission
 		pulls := response.Data.Repository.PullRequests
 		for _, pr := range pulls.Nodes {
 			// Missing request pages could conceal automatic eligibility; do not publish
 			// a partial inbox as if it represented all requests.
 			if pr.ReviewRequests.PageInfo.HasNextPage {
-				return nil, viewer, errors.New("GitHub review requests exceeded limit")
+				return nil, viewer, "", errors.New("GitHub review requests exceeded limit")
 			}
 		}
 		result = append(result, pulls.Nodes...)
@@ -258,12 +279,12 @@ func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]g
 				p.unchanged = false
 			}
 			p.cache.Responses[cacheKey] = cachedResponse{Body: minimal}
-			return result, viewer, nil
+			return result, viewer, permission, nil
 		}
 		if pulls.PageInfo.EndCursor == "" || pulls.PageInfo.EndCursor == cursor {
-			return nil, viewer, errors.New("invalid GitHub pagination cursor")
+			return nil, viewer, "", errors.New("invalid GitHub pagination cursor")
 		}
 		cursor = pulls.PageInfo.EndCursor
 	}
-	return nil, viewer, errors.New("GitHub discovery pagination exceeded limit")
+	return nil, viewer, "", errors.New("GitHub discovery pagination exceeded limit")
 }

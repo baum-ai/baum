@@ -76,7 +76,7 @@ func newAutoQueue(t *testing.T) (*Queue, *autoExecutor) {
 }
 
 func auto(pr int, head string) AutomaticRequest {
-	return AutomaticRequest{Item: Item{"clone", pr}, Repository: "org/repo", Head: head, Trigger: TriggerNewHead}
+	return AutomaticRequest{Item: Item{Clone: "clone", PR: pr}, Repository: "org/repo", Head: head, Trigger: TriggerNewHead}
 }
 
 func reason(err error) string {
@@ -165,14 +165,14 @@ func TestAutomaticOneJobPerPRAndDedupedByHead(t *testing.T) {
 	<-f.started
 	// A confirmed job is refused while the automatic one runs, and an
 	// automatic one never joins or supersedes a confirmed one.
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, err = q.Submit(ctx, e.ID, true, false); err == nil {
 		t.Fatal("confirmed job accepted beside a running automatic one")
 	}
 	f.release <- struct{}{}
 	waitState(t, q, second.ID, "completed")
 	f.heads[2] = "b1"
-	e = estimate(t, q, "single", Item{"clone", 2})
+	e = estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	manual, err := q.Submit(ctx, e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestAutomaticDailyCapCountsTodaysAutomaticJobs(t *testing.T) {
 		t.Fatalf("over the cap after completion: %v", err)
 	}
 	// A confirmed job does not count against the automatic cap.
-	e := estimate(t, q, "single", Item{"clone", 3})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 3})
 	manual, err := q.Submit(ctx, e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 		t.Fatalf("second retry: %v", err)
 	}
 	// A confirmed run interrupted is not retried automatically.
-	e := estimate(t, q, "single", Item{"clone", 2})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	if _, err = q.Submit(ctx, e.ID, true, false); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestAutomaticRefusesDrafts(t *testing.T) {
 		t.Fatalf("draft: %v", err)
 	}
 	// A confirmed run of a draft still works.
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestAutomaticGateStopsQueuedJobs(t *testing.T) {
 		queued = append(queued, j)
 	}
 	f.heads[4] = "d1"
-	e := estimate(t, q, "single", Item{"clone", 4})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 4})
 	confirmed, err := q.Submit(ctx, e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -428,7 +428,7 @@ func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
 	dir := privateDir(t)
 	path := filepath.Join(dir, "jobs.json")
 	now := time.Now().UTC()
-	raw, err := json.Marshal([]Job{{ID: "a", Prepared: Prepared{Item: Item{"clone", 1}, Repository: "org/repo", HeadSHA: "a1"}, Automatic: true, Trigger: TriggerNewHead, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}})
+	raw, err := json.Marshal([]Job{{ID: "a", Prepared: Prepared{Item: Item{Clone: "clone", PR: 1}, Repository: "org/repo", HeadSHA: "a1"}, Automatic: true, Trigger: TriggerNewHead, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestAutomaticDailyCapRecheckedBeforeStart(t *testing.T) {
 	}
 	// A confirmed job is not held by the automatic cap.
 	f.heads[4] = "d1"
-	e := estimate(t, q, "single", Item{"clone", 4})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 4})
 	manual, err := q.Submit(ctx, e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -643,7 +643,7 @@ func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
 		t.Fatalf("refused %+v", refused)
 	}
 	// A confirmed run of the draft is not rechecked for it.
-	e := estimate(t, q, "single", Item{"clone", 3})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 3})
 	manual, err := q.Submit(ctx, e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -655,7 +655,7 @@ func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
 	waitState(t, q, manual[0].ID, "completed")
 	// Ready again at the same head: not a duplicate.
 	setDraft(false)
-	again, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{"clone", 2}, Repository: "org/repo", Head: "b1", Trigger: TriggerReadyForReview})
+	again, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{Clone: "clone", PR: 2}, Repository: "org/repo", Head: "b1", Trigger: TriggerReadyForReview})
 	if err != nil {
 		t.Fatalf("head stopped as a draft: %v", err)
 	}

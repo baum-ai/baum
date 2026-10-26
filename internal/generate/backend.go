@@ -116,6 +116,15 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 	return e.CheckedBackend.Check(ctx)
 }
 
+// Fix forwards a fix (agent.Fixer) to a backend that can make one.
+func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
+	fixer, ok := e.CheckedBackend.(agent.Fixer)
+	if !ok {
+		return agent.Result{}, fmt.Errorf("%s cannot fix pull requests", e.name)
+	}
+	return fixer.Fix(ctx, request)
+}
+
 // Selected is the backend a run uses.
 type Selected struct {
 	Backend CheckedBackend

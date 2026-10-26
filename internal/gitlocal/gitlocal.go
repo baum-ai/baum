@@ -22,7 +22,8 @@
 // finding the repository, and fetching a missing pull request commit, which
 // lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
-// changed. An export is the hosted mirror's own git archive command run in
+// changed, except by a Fix: the temporary worktree, refs and push of a fix a
+// person confirmed (see Fix). An export is the hosted mirror's own git archive command run in
 // the private repository, so it is byte for byte the archive the hosted
 // service produces, including whatever attributes that archive applies: it
 // still applies working-tree-encoding from the tree.

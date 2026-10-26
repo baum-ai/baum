@@ -39,6 +39,10 @@ type PullRequest struct {
 	ReviewRequestedFromMe bool   `json:"review_requested_from_me"`
 	// Nil means the token could not establish repository write permission.
 	AuthorHasWrite *bool `json:"author_has_write"`
+	// ViewerCanPush is whether the signed-in account may push to the
+	// repository (GitHub's viewerPermission is write, maintain or admin),
+	// which a fix needs; nil when GitHub did not say.
+	ViewerCanPush *bool `json:"viewer_can_push"`
 	// False means team membership was unavailable; false review-request flags
 	// must not be interpreted as proof that no team requested this viewer.
 	TeamMembershipKnown bool   `json:"team_membership_known"`
@@ -472,7 +476,7 @@ func (p *poll) ResetIfExhausted() time.Time {
 
 func (p *poll) discover(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	snapshot := Snapshot{Repository: repository.String(), PullRequests: []PullRequest{}}
-	prs, viewer, err := p.openPulls(ctx, repository)
+	prs, viewer, canPush, err := p.openPulls(ctx, repository)
 	if err != nil {
 		return snapshot, err
 	}
@@ -535,6 +539,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 			permissions[key] = permission
 		}
 		item.AuthorHasWrite = permission
+		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}

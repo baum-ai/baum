@@ -70,7 +70,24 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendClaude }
 
-func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
+	return c.run(ctx, request, false)
+}
+
+// Fix runs Claude Code with write access to the request's directory, for a
+// fix a person asked for (agent.Fixer). It runs in restricted mode with the
+// file tools only (Read, Glob, Grep, Edit and Write), confined to the
+// directory: it cannot run a command, so it cannot run tests, git or anything
+// else, and the caller commits what it changed. Its final message is the
+// result's Document. Only the User profile fixes.
+func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
+	if c.Profile != User {
+		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
+	}
+	return c.run(ctx, request, true)
+}
+
+func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (result agent.Result, err error) {
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
@@ -119,7 +136,11 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	// --json-schema registers. Text output cannot be validated, so the
 	// instructions never ask for JSON as text: a text answer only costs a
 	// truncated response and a second call.
-	cmd := exec.CommandContext(ctx, binary, c.args(request)...)
+	args := c.args(request)
+	if fix {
+		args = c.fixArgs(request)
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = request.Directory
 	cmd.Env = c.environment(request.Directory, endpoint)
 	cmd.Stdin = strings.NewReader(request.Prompt)
@@ -318,6 +339,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			} `json:"event"`
 			Usage    usage           `json:"usage"`
 			Document json.RawMessage `json:"structured_output"`
+			// Result is the final message's text, which a fix keeps.
+			Result string `json:"result"`
 		}
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			break
@@ -423,6 +446,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				break
 			}
 			result.Document = bytes.TrimSpace(event.Document)
+			if fix {
+				result.Document = []byte(boundedSummary(event.Result))
+			}
 			if len(result.Document) > 8<<20 {
 				err = errors.New("agent document exceeds output size limit")
 				break
@@ -496,10 +522,22 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		}
 		return result, fmt.Errorf("claude code failed: %w (%s)", waitErr, stderr.String())
 	}
-	if !completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null")) {
+	if fix && !completed {
+		return result, errors.New("claude code did not finish the fix")
+	}
+	if !fix && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
 		return result, errors.New("claude code returned no structured document")
 	}
 	return result, nil
+}
+
+// boundedSummary trims a fix's final message to agent.MaxFixSummaryBytes.
+func boundedSummary(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > agent.MaxFixSummaryBytes {
+		text = strings.ToValidUTF8(text[:agent.MaxFixSummaryBytes], "") + "…"
+	}
+	return text
 }
 
 const structuredOutputTool = "StructuredOutput"

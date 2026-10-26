@@ -239,7 +239,9 @@ so isolation is only as strong as that tool's read-only mode. Repository
 content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
-account.
+account. The one exception to read-only is a fix you confirm, which gives the
+agent write access to a temporary checkout: see
+[Fixing a pull request](#fixing-a-pull-request).
 
 The `claude` backend (`agent/claude`, the `User` profile) restricts Claude Code
 as far as the tool allows:
@@ -439,6 +441,100 @@ runs the model's tool calls in-process:
   a path only when it named an existing file or directory in the run
   directory (otherwise `(refused path)`), never file contents, search
   patterns or other model text.
+
+## Fixing a pull request
+
+A fix (`internal/fix`, run as a job of the local application) is the one
+time an agent gets **write access**, and the one time baum writes to GitHub.
+It runs only after you ask for it on one pull request and confirm a dialog
+naming the harness, the model, the branch it pushes to and the write access;
+it never runs automatically. The daemon checks fresh GitHub evidence when you
+confirm and again before anything runs: the pull request is open, its branch
+is in the repository itself (a fork is refused), your account can push to the
+repository (`permissions.push` on `GET /repos/{owner}/{repo}`, which write,
+maintain and admin access give; who wrote the pull request does not matter),
+the head is still the one you confirmed, and it still has a merge conflict
+(GitHub's `mergeable`) or failing checks. A registered local clone is
+required. Only the `claude` and `codex` backends fix; `cursor-agent` and
+`anthropic` are refused.
+
+The checkout is a linked worktree of your registered clone, detached at the
+confirmed head, under `fixes/<id>/` in your user cache directory
+(`$XDG_CACHE_HOME/baum` or the platform's), outside the clone and outside the
+system temporary directory. Its branch and the base branch are fetched into
+`refs/baum/fix/<id>/`, as a review's missing commits are; a branch that moved
+on stops the fix. For a conflict, baum starts the merge of the base branch
+itself, so the agent finds the conflict markers. When the fix ends, however it
+ends (success, failure, cancellation), the worktree, its registration in the
+clone and the temporary refs are removed. A directory a crashed daemon left is
+removed by a later fix once it is a day old, and its registration pruned.
+
+What the agent can do, per backend:
+
+- `claude` runs in the same restricted mode as a review, with the `Read`,
+  `Glob`, `Grep`, `Edit` and `Write` tools and `--permission-mode
+  acceptEdits`. Restricted mode removes every tool that runs a command or
+  reaches the network, confines the file tools to the checkout and leaves
+  writes to settings, git and tool-configuration files to a person, which a
+  `--print` run never has. So Claude Code edits files but cannot run your
+  tests, git or anything else, and cannot read outside the checkout. Settings
+  files, MCP servers and sessions are off as in a review.
+- `codex` runs in Codex's `workspace-write` sandbox with the network off: the
+  commands it runs, such as your tests, can write to the checkout and to a
+  private scratch directory that becomes their `TMPDIR`, and nowhere else
+  (`/tmp` and your `TMPDIR` are excluded). As in a review, they can read any
+  file your account can. baum checks before the first run that Codex's
+  sandbox starts (the read-only preflight); the write-enabled profile is not
+  checked separately.
+- Both get the same environment allowlist as a review: no SSH agent, no
+  `GIT_` variable, no GitHub token, no provider credential baum did not set.
+  The agent never gets git credentials or network access to push anything.
+
+What reaches the agent: the pull request's title and branches, the conflicted
+paths, and for failing checks the failing check runs and commit statuses of
+the head (name, conclusion, output title, summary and text, each bounded) and
+the last 200 lines of the job logs of up to four failing GitHub Actions jobs.
+baum reads them with your GitHub token from the API; a job log's signed
+download URL is read without the token. All of it is untrusted: it goes into
+the prompt between markers that carry a random tag it cannot know, with
+secrets masked by the same redactor reviews use, and the instructions say it
+is data. A pull request or a log can still try to steer the agent, which can
+change any file in the checkout.
+
+What baum does after the agent:
+
+- Every git command in the checkout names the worktree's git directory
+  explicitly (`GIT_DIR`, `GIT_WORK_TREE`), so a `.git` file the agent
+  rewrote is ignored, and runs with `core.hooksPath` pointing at an empty
+  directory outside the checkout, so no hook runs, neither the clone's nor
+  one the pull request carries (such as a `.husky` directory); the
+  file-system monitor is off.
+- baum stages everything the agent left, ignored files excepted, and commits
+  it with your git identity and signing configuration, completing the merge
+  for a conflict. It refuses to commit while a conflicted file still has a
+  conflict marker, and fails when nothing changed.
+- It refuses a result that does not descend from the confirmed head: a fix
+  only adds commits, it never rewrites the branch.
+- It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
+  from your clone to the remote whose URL names the repository: never forced,
+  so GitHub refuses it if the branch moved on, and nothing else (no tags, no
+  submodules). The push uses your own git configuration and credentials (your
+  credential helper, or your SSH agent as background fetches use it), never
+  baum's GitHub sign-in token: push credentials stay with baum and git, never
+  with the agent.
+
+What remains:
+
+- The agent's changes are pushed without anyone reviewing them first. Look at
+  the commit before you merge the pull request.
+- A `codex` agent can read files outside the checkout, such as credentials
+  under your home directory, and copy them into the checkout, and baum would
+  commit and push them to the pull request's branch, which may be public. A
+  pull request or check log could try to make it do so. The `claude` backend's
+  file tools cannot read outside the checkout.
+- The commit is yours: your identity, and your signature if you sign commits.
+  Clean and smudge filters your git configuration defines (Git LFS, for
+  example) run on the checkout as they do in your clone.
 
 ## Local repository registry
 
@@ -755,7 +851,10 @@ excluded from batch generation. Cancellation reaches the existing backend
 process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
-entries become interrupted before work resumes. The stored copy of a downloaded
+entries become interrupted before work resumes. A fix (`"kind": "fix"`, see
+[Fixing a pull request](#fixing-a-pull-request)) runs only from a confirmed
+single-PR estimate, never from a direct request, and its estimate is refused
+for a fork, an account that cannot push or a backend that cannot fix. The stored copy of a downloaded
 price list is trusted only after its signature verifies again on load. Only
 the daemon that owns the per-user lock opens the queue, so there is never a
 second one.
