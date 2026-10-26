@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -35,17 +36,34 @@ type Item struct {
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
 // temporary checkout of the pull request's branch resolves its merge
-// conflicts or failing checks, and baum pushes the result (internal/fix). A
+// conflicts, failing checks or unresolved review comments, and baum pushes
+// the result and replies on the review threads it addressed (internal/fix). A
 // fix is never automatic and runs only from a confirmed estimate.
 const KindFix = "fix"
 
 // FixInputs are what a fix job was confirmed for: what it fixes, the branch
 // it pushes to and the base branch it merges.
 type FixInputs struct {
-	Conflicts bool   `json:"conflicts,omitempty"`
-	Checks    bool   `json:"checks,omitempty"`
-	HeadRef   string `json:"head_ref,omitempty"`
-	BaseRef   string `json:"base_ref,omitempty"`
+	Conflicts bool `json:"conflicts,omitempty"`
+	Checks    bool `json:"checks,omitempty"`
+	// Threads, when the fix addresses review comments, identifies the
+	// threads and their comments (fix.Digest): a reply or an edit on GitHub
+	// after the confirmation stops the fix.
+	Threads string `json:"threads,omitempty"`
+	HeadRef string `json:"head_ref,omitempty"`
+	BaseRef string `json:"base_ref,omitempty"`
+}
+
+// FixThread is a review thread a fix addresses, as the confirmation and the
+// job show it. Author and Excerpt, the first line of the first comment, are
+// the reviewer's.
+type FixThread struct {
+	Ref      string `json:"ref"`
+	Path     string `json:"path"`
+	Line     int    `json:"line,omitempty"`
+	Outdated bool   `json:"outdated,omitempty"`
+	Author   string `json:"author,omitempty"`
+	Excerpt  string `json:"excerpt,omitempty"`
 }
 
 // ErrFixNeedsConfirmation refuses a fix asked for without a confirmed
@@ -83,6 +101,13 @@ type Prepared struct {
 	RefuseDraft bool `json:"-"`
 	// Fix is what a fix job (KindFix) does.
 	Fix FixInputs `json:"fix,omitzero"`
+	// FixThreads are the review threads a fix addresses (Fix.Threads).
+	// FixThreadsCapped says there were more than fix.MaxThreads, and
+	// FixThreadsUntrusted counts the threads left out because an account
+	// without access to the repository started them.
+	FixThreads          []FixThread `json:"fix_threads,omitempty"`
+	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
+	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -93,7 +118,7 @@ func (p Prepared) sameConfirmedInputs(o Prepared) bool {
 		return false
 	}
 	p.EstimateUSD, o.EstimateUSD = nil, nil
-	return p == o
+	return reflect.DeepEqual(p, o)
 }
 
 // sameEstimate reports whether a fresh preparation carries the confirmed
@@ -135,19 +160,24 @@ type Job struct {
 	Detail string `json:"detail,omitempty"`
 	// Commit is the commit a fix pushed, CommitURL where GitHub shows it, and
 	// Summary the agent's account of the fix, with secrets masked.
-	Commit    string    `json:"commit,omitempty"`
-	CommitURL string    `json:"commit_url,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Commit    string `json:"commit,omitempty"`
+	CommitURL string `json:"commit_url,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	// ThreadOutcomes is what became of each review thread a fix addressed
+	// (FixThreads), once its push succeeded.
+	ThreadOutcomes []fix.ThreadOutcome `json:"thread_outcomes,omitempty"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
 	CostReason             string
 	Phase                  string
 	Calls, Tokens, Repairs int
-	// Commit, CommitURL and Summary, when set, are a fix's (see Job).
+	// Commit, CommitURL, Summary and Threads, when set, are a fix's (see
+	// Job).
 	Commit, CommitURL, Summary string
+	Threads                    []fix.ThreadOutcome
 }
 type Executor interface {
 	Prepare(context.Context, Item) (Prepared, string, error)
@@ -684,6 +714,9 @@ func (q *Queue) worker() {
 				}
 				if p.Summary != "" {
 					q.jobs[i].Summary = p.Summary
+				}
+				if p.Threads != nil {
+					q.jobs[i].ThreadOutcomes = p.Threads
 				}
 				q.jobs[i].UpdatedAt = time.Now().UTC()
 				// Save every reported usage update before publishing it. A crash

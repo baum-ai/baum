@@ -2,8 +2,17 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { fixJob, fixLabel, reviewJob, type Entry, type Estimate, type Job } from "./api";
-import { FixDialog } from "./fix";
+import {
+  fixJob,
+  fixLabel,
+  fixName,
+  reviewJob,
+  threadOutcomesSummary,
+  type Entry,
+  type Estimate,
+  type Job,
+} from "./api";
+import { FixDialog, FixNotice } from "./fix";
 import { Inbox } from "./inbox";
 
 const broken: Entry = {
@@ -199,4 +208,88 @@ it("explains a fix that cannot run and offers no confirmation", async () => {
   );
   expect(node.textContent).toContain("can't push to this repository");
   expect(Array.from(node.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Close"]);
+});
+
+it("offers review comments only on the person's own pull request with unresolved threads", () => {
+  const clean = { merge: "ready" as const, checks: "passing" as const };
+  expect(fixLabel(variant({ ...clean, unresolved: 2 }))).toBe("Fix review comments");
+  expect(fixLabel(variant({ ...clean, unresolved: 2 }, { authored_by_me: false }))).toBeNull();
+  expect(fixLabel(variant({ ...clean, unresolved: 0 }))).toBeNull();
+  expect(fixLabel(variant({ unresolved: 3 }))).toBe("Fix conflicts, CI and review comments");
+  expect(fixLabel(variant({ merge: "ready", unresolved: 3 }))).toBe("Fix CI and review comments");
+  expect(fixName({ conflicts: true, threads: "digest" })).toBe("Fix conflicts and review comments");
+  expect(fixName({ checks: true })).toBe("Fix CI");
+});
+
+it("lists the review threads and says baum replies and resolves", async () => {
+  answer = estimate({
+    fix: { threads: "digest", head_ref: "feature", base_ref: "main" },
+    fix_threads: [
+      { ref: "T1", path: "src/a.go", line: 12, author: "alice", excerpt: "Rename this." },
+      { ref: "T2", path: "src/b.go", outdated: true, author: "bob", excerpt: "Why a map?" },
+    ],
+    fix_threads_capped: true,
+    fix_threads_untrusted: 2,
+  });
+  await act(async () =>
+    root.render(
+      <FixDialog entry={broken} clone="clone" close={() => {}} started={async () => {}} />,
+    ),
+  );
+  const text = node.textContent ?? "";
+  expect(node.querySelector("h2")?.textContent).toBe("Fix review comments");
+  expect(text).toContain("An agent addresses the unresolved review comments on feature.");
+  expect(text).toContain("baum replies on each thread the agent addressed and resolves it");
+  const threads = node.querySelectorAll('[aria-label="Review threads"] li');
+  expect(Array.from(threads).map((li) => li.textContent)).toEqual([
+    "src/a.go:12alice: Rename this.",
+    "src/b.go outdatedbob: Why a map?",
+  ]);
+  expect(text).toContain("Only the first 2 unresolved threads are included.");
+  expect(text).toContain(
+    "2 threads started by accounts without access to the repository are left out.",
+  );
+  expect(
+    Array.from(node.querySelectorAll("button")).some(
+      (button) => button.textContent === "Fix review comments",
+    ),
+  ).toBe(true);
+});
+
+it("shows what became of each review thread after the push", async () => {
+  expect(threadOutcomesSummary([])).toBeNull();
+  expect(
+    threadOutcomesSummary([
+      { ref: "T1", outcome: "resolved" },
+      { ref: "T2", outcome: "replied" },
+      { ref: "T3", outcome: "failed" },
+      { ref: "T4", outcome: "skipped" },
+    ]),
+  ).toBe(
+    "Replied and resolved 1 of 4 threads; replied on 1 more without resolving; 1 reply failed",
+  );
+  const job = {
+    id: "f",
+    kind: "fix",
+    repository: "acme/demo",
+    pr: 8,
+    state: "completed",
+    phase: "finished",
+    commit: "0123456789",
+    fix: { threads: "digest", head_ref: "feature" },
+    fix_threads: [
+      { ref: "T1", path: "src/a.go", line: 12 },
+      { ref: "T2", path: "src/b.go" },
+    ],
+    thread_outcomes: [
+      { ref: "T1", outcome: "resolved", summary: "Renamed it." },
+      { ref: "T2", outcome: "skipped", summary: "A question for the author." },
+    ],
+  } as Job;
+  await act(async () => root.render(<FixNotice job={job} changed={async () => {}} />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Fix review comments: pushed 0123456 to feature");
+  expect(text).toContain("Replied and resolved 1 of 2 threads");
+  expect(text).toContain("src/a.go:12 Replied and resolved: Renamed it.");
+  expect(text).toContain("src/b.go Left open: A question for the author.");
 });

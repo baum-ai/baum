@@ -1439,6 +1439,66 @@ span.inbox-fix svg {
   color: #6b4a1f;
   font-size: var(--text-xs);
 }
+/* The review threads a fix addresses: where each is, and its first line. */
+.local-fix-threads {
+  display: grid;
+  gap: 0.5rem;
+}
+.local-fix-threads ul {
+  display: grid;
+  gap: 0.25rem;
+  max-height: 12rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  font-size: var(--text-xs);
+}
+.local-fix-threads li {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.local-fix-threads code {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-fix-thread-excerpt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.local-fix-thread-note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.local-fix-outcomes {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.local-fix-outcome {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.local-fix-outcome-resolved {
+  color: var(--status-positive);
+}
+.local-fix-outcome-failed {
+  color: var(--status-critical);
+}
 .local-fix-details {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
