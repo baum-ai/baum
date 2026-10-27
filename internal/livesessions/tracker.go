@@ -12,7 +12,9 @@
 // working directory itself and the transcript path stay inside the tracker
 // and are never served. Reading session files from disk is unchanged and
 // remains the full history; Transcripts serves a tracked session's
-// transcript, redacted, while it runs.
+// transcript, redacted, while it runs, and its list adds each session's title,
+// compaction summary and activity (latest tool calls, files written, latest
+// assistant message), read from the transcript and masked.
 package livesessions
 
 import (
@@ -902,6 +904,18 @@ func (t *Tracker) Lookup(agent, id string) (Session, string, bool) {
 		return Session{}, "", false
 	}
 	return session, s.transcript, true
+}
+
+// workdir is the session's working directory, for reading paths the session
+// wrote relative to it; it is never served.
+func (t *Tracker) workdir(agent, id string) string {
+	t.init()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[key{agent, id}]; s != nil {
+		return s.cwd
+	}
+	return ""
 }
 
 // persisted is the ended sessions' file: identifiers and times, no paths.

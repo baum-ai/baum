@@ -2828,7 +2828,7 @@ replace it.
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
   "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
-  "repository","branch"?,"pr"?,"title"?,"summary"?}`: `state` is `running`, `idle` or `ended`,
+  "repository","branch"?,"pr"?,"title"?,"summary"?,"activity"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
   waiting fields are present while the session waits (see "Waiting"; the
   message only when the agent sent one), `repository` is
@@ -2857,6 +2857,18 @@ replace it.
   again only when the files' sizes or times changed, and right away after a
   failed read. Everything is one line or a block, masked and cut, and
   dropped with the session.
+- **Activity.** The same pass reads what the agent is doing into `activity`
+  (`activity.go`): `steps`, its last 12 tool calls oldest first (`tool`, a
+  one-line masked `target` of at most 160 characters, `at`), `files_touched`
+  (distinct files written by Edit, Write, MultiEdit, NotebookEdit or a Codex
+  `apply_patch`, over the whole transcript read, at most 10 000 remembered)
+  and `last_message` (the latest assistant text, at most 400 characters).
+  Targets are paths relative to the session's working directory when inside
+  it. Claude Code's `assistant` lines and Codex's `response_item` payloads
+  (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
+  `message`) are read; Codex `shell`, `exec_command` and `local_shell` show
+  as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`. Cursor
+  sessions have none; it is absent until something is found.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only

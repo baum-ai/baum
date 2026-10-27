@@ -433,8 +433,9 @@ a "Sessions in progress" panel (agent, working or waiting, title, branch, last
 activity and Open transcript) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
 event kind, why and since when it waits on the person with the one masked line
-its agent showed, repository, branch, PR number and the session's title (see
-"Live sessions" in ARCHITECTURE.md) reach the app in the list,
+its agent showed, repository, branch, PR number, the session's title and its
+activity (latest tool calls with masked targets, files written, latest assistant
+message; see "Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
