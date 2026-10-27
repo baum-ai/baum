@@ -3,14 +3,16 @@
 // local application so a pull request page and the inbox can show work in
 // progress before any session file is complete.
 //
-// It reads identifiers only. A hook event never carries prompts or tool
-// input, and the tracker keeps from it the agent, the session id, when the
-// session started and was last active, a normalised event kind, and the
-// repository, branch and pull request the session's working directory links
-// to. The working directory itself and the transcript path stay inside the
-// tracker and are never served. Reading session files from disk is
-// unchanged and remains the full history; Transcripts serves a tracked
-// session's transcript, redacted, while it runs.
+// It reads identifiers only, and one line of text. A hook event never carries
+// prompts or tool input, and the tracker keeps from it the agent, the session
+// id, when the session started and was last active, a normalised event kind,
+// why and since when it waits on its user, with the short message a Claude
+// Code notification showed (masked like a transcript), and the repository,
+// branch and pull request the session's working directory links to. The
+// working directory itself and the transcript path stay inside the tracker
+// and are never served. Reading session files from disk is unchanged and
+// remains the full history; Transcripts serves a tracked session's
+// transcript, redacted, while it runs.
 package livesessions
 
 import (
@@ -23,8 +25,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/hookevents"
 )
@@ -34,9 +39,9 @@ const (
 	// StateRunning is a session whose agent is working: its last event was
 	// a start, a prompt or tool activity, and not longer ago than IdleAfter.
 	StateRunning = "running"
-	// StateIdle is a session waiting for its user (its last event was a
-	// stop, which agents send at the end of every turn) or silent for
-	// IdleAfter: an agent that crashed sends nothing.
+	// StateIdle is a session waiting for its user (it has a WaitingReason:
+	// its turn ended, or it asked for a permission or an answer) or silent
+	// for IdleAfter: an agent that crashed sends nothing.
 	StateIdle = "idle"
 	// StateEnded is a session that sent its end event.
 	StateEnded = "ended"
@@ -47,8 +52,26 @@ const (
 	EventStart  = "start"
 	EventPrompt = "prompt"
 	EventTool   = "tool"
-	EventStop   = "stop"
-	EventEnd    = "end"
+	// EventWait is the agent asking its user for something: a Claude Code
+	// notification or a Codex permission request.
+	EventWait = "wait"
+	EventStop = "stop"
+	EventEnd  = "end"
+)
+
+// Why a session waits on its user.
+const (
+	// WaitPermission is a session asking to be allowed to run a tool: a
+	// Claude Code permission_prompt notification or a Codex permission
+	// request.
+	WaitPermission = "permission"
+	// WaitInput is a session asking a question (an elicitation dialog, a
+	// background agent waiting on input) or any notification of a type baum
+	// does not know, which is taken to want the user.
+	WaitInput = "input"
+	// WaitTurnFinished is a session whose turn ended (a stop, or Claude
+	// Code's idle_prompt, which follows one a minute later).
+	WaitTurnFinished = "turn_finished"
 )
 
 // Timings and bounds. A session is dropped when it has been silent for
@@ -73,6 +96,12 @@ const (
 	// else changed, for the app to be told: a busy agent's tool events would
 	// otherwise make every open window read the list once a second.
 	ActivityNotifyEvery = 30 * time.Second
+	// AnnounceWithin is how recent a wait must be for Waiting to be told of
+	// it: an event the spool delivers late is old news.
+	AnnounceWithin = 5 * time.Minute
+	// maxWaitingMessage bounds the message served, in characters: the app
+	// shows one line of it.
+	maxWaitingMessage = 160
 	// Bounds on the identifiers a session is keyed by; an event with longer
 	// ones is not a session baum's hooks describe.
 	maxID    = 128
@@ -96,8 +125,19 @@ type Session struct {
 	StartedAt      time.Time `json:"started_at"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 	// LastEvent is the normalised kind of the latest event (EventStart,
-	// EventPrompt, EventTool, EventStop or EventEnd).
+	// EventPrompt, EventTool, EventWait, EventStop or EventEnd).
 	LastEvent string `json:"last_event"`
+	// WaitingReason is why the session waits on its user (WaitPermission,
+	// WaitInput or WaitTurnFinished), absent while it works, once it ended,
+	// and for a session that is only silent.
+	WaitingReason string `json:"waiting_reason,omitempty"`
+	// WaitingSince is when that wait began.
+	WaitingSince time.Time `json:"waiting_since,omitzero"`
+	// WaitingMessage is the line a Claude Code notification showed for the
+	// wait, such as "Claude needs your permission to use Bash": format and
+	// control characters dropped, masked as transcripts are and at most
+	// maxWaitingMessage characters. Absent when the agent sent none.
+	WaitingMessage string `json:"waiting_message,omitempty"`
 	// EndedAt is when an ended session sent its end event, absent otherwise.
 	EndedAt    time.Time `json:"ended_at,omitzero"`
 	Repository string    `json:"repository"`
@@ -147,6 +187,16 @@ type Tracker struct {
 	// behind misses events, which Reconcile applies from the record once the
 	// subscription reports it missed some.
 	Buffer int
+	// Mask, when set, masks the secrets and e-mail addresses in a waiting
+	// message, as transcripts are masked; nil keeps the text.
+	Mask func(string) string
+	// Waiting, when set, is called once for each wait for a permission or an
+	// answer (WaitPermission, WaitInput) of a session the application is
+	// shown, as it begins: not for a finished turn, not for the waits a
+	// rebuild replays when the daemon starts, and not for one that began more
+	// than AnnounceWithin ago. It is called without the tracker's lock and
+	// must not block.
+	Waiting func(Session)
 
 	ready    sync.Once
 	mu       sync.Mutex
@@ -164,6 +214,14 @@ type Tracker struct {
 	reconciled uint64
 	// saved is the ended sessions as last written.
 	saved []byte
+	// announcements are the waits to hand Waiting once the lock is released.
+	announcements []Session
+}
+
+// waitKey names one wait of a session.
+type waitKey struct {
+	reason string
+	since  time.Time
 }
 
 type key struct{ agent, id string }
@@ -177,11 +235,11 @@ type entry struct {
 	// when none did. Transcripts reads it only after checking it is inside the
 	// agent's own session store.
 	transcript string
-	// waiting is set by a stop, until the next event of work.
-	waiting  bool
-	ended    bool
-	endedAt  time.Time
-	linkedAt time.Time
+	// announced is the last wait handed to Waiting, or skipped.
+	announced waitKey
+	ended     bool
+	endedAt   time.Time
+	linkedAt  time.Time
 	// stale is set when an event arrived within RelinkEvery of the last lookup
 	// and so skipped one: the link may be out of date until Sweep looks again.
 	stale bool
@@ -215,6 +273,8 @@ func normalise(name string) (string, bool) {
 		return EventPrompt, true
 	case "pre-task", "post-task", "post-todo", "post-tool-use", "pre-compact", "subagent-start", "subagent-stop":
 		return EventTool, true
+	case "notification", "permission-request":
+		return EventWait, true
 	case "stop":
 		return EventStop, true
 	case "session-end":
@@ -223,15 +283,75 @@ func normalise(name string) (string, bool) {
 	return "", false
 }
 
+// waitReason is why a wait event (EventWait) says its session waits, or false
+// for a Claude Code notification that asks nothing of the user: a sign-in
+// that succeeded, an answer already given, a background agent that finished,
+// a usage limit that resumed on its own, a mod's notice. A notification of a
+// type not listed, or with none, is taken to want an answer, so a type Claude
+// Code adds later still shows.
+func waitReason(e hookevents.Event) (string, bool) {
+	if e.Name == "permission-request" {
+		return WaitPermission, true
+	}
+	switch e.Session.NotificationType {
+	case "permission_prompt":
+		return WaitPermission, true
+	case "idle_prompt":
+		return WaitTurnFinished, true
+	case "auth_success", "elicitation_complete", "elicitation_response", "agent_completed",
+		"quota_auto_resume_fired", "quota_auto_resume_disabled", "plugin_notification":
+		return "", false
+	}
+	return WaitInput, true
+}
+
 // state is the session's state at now.
 func (e *entry) state(now time.Time) string {
 	switch {
 	case e.ended:
 		return StateEnded
-	case e.waiting || now.Sub(e.LastActivityAt) > IdleAfter:
+	case e.WaitingReason != "" || now.Sub(e.LastActivityAt) > IdleAfter:
 		return StateIdle
 	}
 	return StateRunning
+}
+
+// wait records that the session waits on its user for reason from at, or,
+// with no reason, that it does not. A wait for the reason it already waits
+// for goes on: its start is kept, and its message unless a new one came.
+func (e *entry) wait(reason string, at time.Time, message string) {
+	switch {
+	case reason == "":
+		e.WaitingReason, e.WaitingSince, e.WaitingMessage = "", time.Time{}, ""
+	case reason != e.WaitingReason:
+		e.WaitingReason, e.WaitingSince, e.WaitingMessage = reason, at, message
+	case message != "":
+		e.WaitingMessage = message
+	}
+}
+
+// message is a notification's text as the application is shown it: format
+// characters dropped, control characters and runs of spaces made one space,
+// masked (before it is cut, so a secret is never cut where the mask cannot
+// see it), then cut to maxWaitingMessage characters.
+func (t *Tracker) message(e hookevents.Event) string {
+	text := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(e.Session.Message, "�"))
+	text = strings.Join(strings.Fields(text), " ")
+	if text != "" && t.Mask != nil {
+		text = t.Mask(text)
+	}
+	if utf8.RuneCountInString(text) <= maxWaitingMessage {
+		return text
+	}
+	return string([]rune(text)[:maxWaitingMessage-1]) + "…"
 }
 
 // expired reports whether the session is dropped at now.
@@ -376,6 +496,12 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 	for _, e := range events {
 		t.applyLocked(e, now)
 	}
+	// The waits the record replays were told of, if at all, by the daemon
+	// that saw them begin.
+	for _, s := range t.sessions {
+		s.announced = waitKey{s.WaitingReason, s.WaitingSince}
+	}
+	t.announcements = nil
 }
 
 // reconcileIfDropped reconciles when the subscription missed events since
@@ -406,13 +532,15 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 	}
 	now := t.now()
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	changed := false
 	for _, e := range events {
 		if t.applyLocked(e, now) {
 			changed = true
 		}
 	}
+	announcements := t.takeAnnouncementsLocked()
+	t.mu.Unlock()
+	t.announce(announcements)
 	return changed
 }
 
@@ -436,8 +564,46 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 	t.init()
 	now := t.now()
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.applyLocked(e, now)
+	changed := t.applyLocked(e, now)
+	announcements := t.takeAnnouncementsLocked()
+	t.mu.Unlock()
+	t.announce(announcements)
+	return changed
+}
+
+// announceLocked queues the session's wait for Waiting when it is one to
+// announce and was not announced yet.
+func (t *Tracker) announceLocked(k key, now time.Time) {
+	s := t.sessions[k]
+	if s == nil || s.unlinked || s.ended || (s.WaitingReason != WaitPermission && s.WaitingReason != WaitInput) {
+		return
+	}
+	wait := waitKey{s.WaitingReason, s.WaitingSince}
+	if s.announced == wait {
+		return
+	}
+	s.announced = wait
+	if now.Sub(s.WaitingSince) > AnnounceWithin {
+		return
+	}
+	if view, ok := t.view(k, now); ok {
+		t.announcements = append(t.announcements, view)
+	}
+}
+
+func (t *Tracker) takeAnnouncementsLocked() []Session {
+	out := t.announcements
+	t.announcements = nil
+	return out
+}
+
+func (t *Tracker) announce(waits []Session) {
+	if t.Waiting == nil {
+		return
+	}
+	for _, s := range waits {
+		t.Waiting(s)
+	}
 }
 
 // ResolvePending looks up the link of each session waiting for one and
@@ -461,6 +627,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	}
 	t.mu.Unlock()
 	changed := false
+	var announcements []Session
 	for _, r := range todo {
 		link, ok := t.Linker.Link(ctx, r.cwd)
 		now := t.now()
@@ -472,6 +639,8 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			case ok:
 				r.s.setLink(link, now)
 				r.s.unlinked = false
+				// A new session's wait is announced once it is shown.
+				t.announceLocked(r.k, now)
 			case r.s.unlinked:
 				delete(t.sessions, r.k)
 			default:
@@ -484,8 +653,10 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				changed = true
 			}
 		}
+		announcements = append(announcements, t.takeAnnouncementsLocked()...)
 		t.mu.Unlock()
 	}
+	t.announce(announcements)
 	return changed
 }
 
@@ -547,6 +718,7 @@ func (t *Tracker) applyLocked(e hookevents.Event, now time.Time) bool {
 	k := key{e.Agent, e.Session.ID}
 	before, existed := t.view(k, now)
 	t.applyEvent(e, now)
+	t.announceLocked(k, now)
 	after, exists := t.view(k, now)
 	return significant(before, after, existed, exists)
 }
@@ -557,6 +729,13 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 		return
 	}
 	kind, _ := normalise(e.Name)
+	reason := ""
+	if kind == EventWait {
+		var ok bool
+		if reason, ok = waitReason(e); !ok {
+			return
+		}
+	}
 	at := e.Time.UTC()
 	if at.After(now) {
 		at = now
@@ -614,11 +793,18 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	s.LastActivityAt, s.LastEvent = at, kind
 	switch kind {
 	case EventStop:
-		s.waiting = true
+		s.wait(WaitTurnFinished, at, "")
+	case EventWait:
+		// Claude Code's idle_prompt follows a stop: the turn is the same
+		// one, and it never replaces a question asked since.
+		if reason != WaitTurnFinished || s.WaitingReason == "" {
+			s.wait(reason, at, t.message(e))
+		}
 	case EventEnd:
 		s.ended, s.endedAt, s.EndedAt = true, at, at
+		s.wait("", at, "")
 	default:
-		s.waiting = false
+		s.wait("", at, "")
 	}
 }
 

@@ -131,12 +131,13 @@ func (browserLiveLinker) Link(_ context.Context, cwd string) (livesessions.Link,
 
 // feedLiveSession records a hook event for the Claude Code session id
 // whenever the first line of the browser test's marker file changes:
-// "running", "idle" or "ended". With a transcript path, the hooks name it and
-// the marker's other lines are the session's prompts: each change of them
-// rewrites the transcript there, each prompt with a reply, without a hook
-// event, as an agent writes its transcript between hooks.
+// "running", "idle", "permission" (a permission prompt notification) or
+// "ended". With a transcript path, the hooks name it and the marker's other
+// lines are the session's prompts: each change of them rewrites the
+// transcript there, each prompt with a reply, without a hook event, as an
+// agent writes its transcript between hooks.
 func feedLiveSession(ctx context.Context, events *hookevents.Store, marker, id, transcript string) {
-	names := map[string]string{"running": "user-prompt-submit", "idle": "stop", "ended": "session-end"}
+	names := map[string]string{"running": "user-prompt-submit", "idle": "stop", "permission": "notification", "ended": "session-end"}
 	var last, lastPrompts string
 	// The turns started a few minutes ago, a minute apart.
 	start := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
@@ -152,6 +153,9 @@ func feedLiveSession(ctx context.Context, events *hookevents.Store, marker, id, 
 				if name, ok := names[state]; ok {
 					e := hookevents.New(hookevents.KindAgent, "claude-code", name, "/fixture/live", "fixture")
 					e.Session = &hookevents.Session{ID: id, Cwd: "/fixture/live", TranscriptPath: transcript}
+					if name == "notification" {
+						e.Session.NotificationType, e.Session.Message = "permission_prompt", "Claude needs your permission to use Bash"
+					}
 					_, _ = events.Add(e, hookevents.ViaSocket)
 				}
 			}
@@ -439,6 +443,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	transcriptMarker := filepath.Join(state, "live-transcript")
 	_ = os.Remove(transcriptMarker)
 	transcriptPath := filepath.Join(home, ".claude", "projects", "-fixture-live", "transcript-e2e.jsonl")
+	// A third, which the browser test sends to Needs you and back.
+	needsMarker := filepath.Join(state, "live-needs")
+	_ = os.Remove(needsMarker)
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
@@ -497,6 +504,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				go live.Run(ctx)
 				go feedLiveSession(ctx, events, liveMarker, "live-e2e", "")
 				go feedLiveSession(ctx, events, transcriptMarker, "transcript-e2e", transcriptPath)
+				go feedLiveSession(ctx, events, needsMarker, "needs-e2e", "")
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {

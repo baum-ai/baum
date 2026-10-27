@@ -189,7 +189,7 @@ func TestUnregisteredDirectoryAndIncompleteEventsAreIgnored(t *testing.T) {
 	noID := event("", "session-start", c.now, "/work/demo")
 	noCwd := event("s2", "session-start", c.now, "")
 	git := hookevents.New(hookevents.KindGit, "", "post-commit", "/work/demo", "test")
-	unknown := event("s3", "notification", c.now, "/work/demo")
+	unknown := event("s3", "something-new", c.now, "/work/demo")
 	endOnly := event("s4", "session-end", c.now, "/work/demo")
 	for name, e := range map[string]hookevents.Event{"unregistered": other, "no id": noID, "no cwd": noCwd, "git": git, "unknown name": unknown, "end of unseen": endOnly} {
 		if apply(tr, e) {

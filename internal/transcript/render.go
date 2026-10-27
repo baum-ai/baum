@@ -65,6 +65,21 @@ func (r *Renderer) Render(ctx context.Context, graph *session.Graph, meta Meta) 
 	return replaceHome(body, r.homes), nil
 }
 
+// Mask masks one line of text as Render masks a transcript's: secrets and
+// e-mail addresses, with the same engine, and the home directory as ~. A line
+// the engine cannot read is none.
+func (r *Renderer) Mask(ctx context.Context, text string) string {
+	r.once.Do(func() { r.engine, r.engineErr = redact.New() })
+	if r.engineErr != nil {
+		return ""
+	}
+	masked, _, err := r.engine.RedactContext(ctx, text)
+	if err != nil {
+		return ""
+	}
+	return string(replaceHome([]byte(masked), r.homes))
+}
+
 // UserHome is the home directory: $HOME (or its platform's equivalent), else
 // the account's, else none.
 func UserHome() string {
