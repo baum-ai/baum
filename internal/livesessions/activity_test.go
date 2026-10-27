@@ -48,7 +48,7 @@ func TestActivityStepsNameTheirTargetsMaskedAndRelativeToTheWorkingDirectory(t *
 		toolUse("2026-10-27T18:01:02.000Z", "Bash", `{"command":"psql `+plantedDSN+`\nselect 1"}`),
 		toolUse("2026-10-27T18:01:03.000Z", "Grep", `{"pattern":"func main","path":"oss"}`),
 		toolUse("2026-10-27T18:01:04.000Z", "Grep", `{"pattern":"TODO"}`),
-		toolUse("2026-10-27T18:01:05.000Z", "mcp__linear__get_issue", `{"id":"ENG-1"}`),
+		toolUse("2026-10-27T18:01:05.000Z", "mcp__tracker__get_item", `{"id":"item-1"}`),
 		toolUse("2026-10-27T18:01:06.000Z", "Glob", `{"pattern":"**/*.go"}`),
 	)
 	a := activities(t, f)["claude-code/s1"]
@@ -61,7 +61,7 @@ func TestActivityStepsNameTheirTargetsMaskedAndRelativeToTheWorkingDirectory(t *
 		{"Bash", "psql [masked]", "2026-10-27T18:01:02Z"},
 		{"Grep", `"func main" in oss`, "2026-10-27T18:01:03Z"},
 		{"Grep", `"TODO"`, "2026-10-27T18:01:04Z"},
-		{"linear: get_issue", "", "2026-10-27T18:01:05Z"},
+		{"tracker: get_item", "", "2026-10-27T18:01:05Z"},
 		{"Glob", "**/*.go", "2026-10-27T18:01:06Z"},
 	}
 	if len(a.Steps) != len(want) {

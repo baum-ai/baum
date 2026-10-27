@@ -55,7 +55,7 @@ const (
 	EventPrompt = "prompt"
 	EventTool   = "tool"
 	// EventWait is the agent asking its user for something: a Claude Code
-	// notification or a Codex permission request.
+	// notification or a permission request of either agent.
 	EventWait = "wait"
 	EventStop = "stop"
 	EventEnd  = "end"
@@ -64,8 +64,8 @@ const (
 // Why a session waits on its user.
 const (
 	// WaitPermission is a session asking to be allowed to run a tool: a
-	// Claude Code permission_prompt notification or a Codex permission
-	// request.
+	// Claude Code permission_prompt notification or a permission request of
+	// either agent.
 	WaitPermission = "permission"
 	// WaitInput is a session asking a question (an elicitation dialog, a
 	// background agent waiting on input) or any notification of a type baum
