@@ -884,14 +884,18 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   // Sessions: j focuses the row, Enter opens its transcript, u comes back.
   await page.keyboard.press("Control+3");
   await expect(heading("Sessions")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Running now", exact: true })).toContainText(
-    "Walk the app by keyboard",
-    { timeout: 10000 },
-  );
+  // The fixture's one session keeps the title an earlier story gave it, so
+  // the row is found by its link, not its words.
+  await expect(
+    page
+      .getByRole("region", { name: "Running now", exact: true })
+      .getByRole("link", { name: /^Open transcript/ }),
+  ).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("j");
   await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
   await page.keyboard.press("Enter");
-  await expect(heading("Walk the app by keyboard")).toBeVisible();
+  await expect.poll(() => search().get("session")).not.toBeNull();
+  await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();
   await page.keyboard.press("u");
   await expect(heading("Sessions")).toBeVisible();
 

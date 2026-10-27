@@ -281,7 +281,13 @@ mod tests {
 
     #[test]
     fn the_page_reaches_only_the_panels_actions() {
-        for id in ["open", "pause", "quit-stop", "close", "session:claude-code:a"] {
+        for id in [
+            "open",
+            "pause",
+            "quit-stop",
+            "close",
+            "session:claude-code:a",
+        ] {
             assert!(allowed(id), "{id}");
         }
         for id in [
