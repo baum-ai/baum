@@ -619,7 +619,7 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await page.getByRole("button", { name: "Choose folder", exact: true }).click();
   await page.getByRole("textbox", { name: "Local clone path", exact: true }).fill("/not/a/clone");
   await page.getByRole("button", { name: "Use folder", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("cannot register path");
+  await expect(page.getByRole("alert")).toContainText("is not a git working tree");
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("button", { name: "Add repositories", exact: true }).click();
   const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
@@ -650,6 +650,23 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await row.getByRole("button", { name: "Clone repository", exact: true }).click();
   await expect(row).toContainText("Found at", { timeout: 15000 });
   await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
+  // A folder whose remote uses the repository's earlier name is accepted,
+  // with a warning.
+  await picker.getByRole("searchbox", { name: "Search repositories" }).fill("renamed");
+  await picker.getByRole("checkbox", { name: "Pick acme/renamed", exact: true }).click();
+  const renamed = picker.getByRole("listitem").filter({ hasText: "acme/renamed" });
+  await renamed.getByRole("button", { name: "Choose folder", exact: true }).click();
+  const folder = await readFile(
+    join(process.env.BAUM_APP_STATE_DIR ?? "", "renamed-folder"),
+    "utf8",
+  );
+  await renamed.getByRole("textbox", { name: "Local clone path" }).fill(folder);
+  await renamed.getByRole("button", { name: "Use folder", exact: true }).click();
+  await expect(renamed).toContainText("Found at");
+  await expect(renamed).toContainText(
+    "Its local clone's remote uses acme/old-renamed, an earlier name that GitHub forwards to acme/renamed.",
+  );
+  await page.screenshot({ path: "test-results/forwarded-remote.png", animations: "disabled" });
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });
 

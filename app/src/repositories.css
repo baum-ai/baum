@@ -337,3 +337,8 @@
   stroke-width: 1.8;
   stroke-linejoin: round;
 }
+.repository-warning {
+  color: var(--status-caution, #9a5b00);
+  font-size: var(--text-xs, 0.875rem);
+  overflow-wrap: anywhere;
+}

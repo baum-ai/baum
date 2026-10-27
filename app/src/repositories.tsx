@@ -18,6 +18,7 @@ export type RepositoryItem = {
   description: string;
   picked: boolean;
   clone: string;
+  earlier_names?: string[];
   private?: boolean;
   open_pull_requests?: number;
 };
@@ -97,6 +98,10 @@ export function cloneDirectory(parent: string, repository: string) {
   const separator = trimmed.includes("\\") && !trimmed.includes("/") ? "\\" : "/";
   return `${trimmed}${separator}${name}`;
 }
+/** Said for a repository whose clone was registered with a remote using an
+ *  earlier name. */
+export const earlierNamesWarning = (names: string[], repository: string) =>
+  `Its local clone's remote uses ${names.join(" or ")}, an earlier name that GitHub forwards to ${repository}.`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -518,6 +523,11 @@ export function RepositoryPicker({
                     {row.picked && row.clone ? (
                       <span className="repository-clone found" title={row.clone}>
                         Found at {displayPath(row.clone, home)}
+                      </span>
+                    ) : null}
+                    {row.picked && row.clone && row.earlier_names?.length ? (
+                      <span className="repository-warning">
+                        {earlierNamesWarning(row.earlier_names, row.repository)}
                       </span>
                     ) : null}
                   </span>

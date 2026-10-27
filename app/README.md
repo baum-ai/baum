@@ -376,7 +376,10 @@ it is off a repository set to "On" is shown as paused by the global switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
 opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
-matching remote, including an upstream remote in a fork clone. Settings apply
+matching remote, including an upstream remote in a fork clone, or one using
+an earlier name GitHub forwards to the repository, which the picker and
+Repositories rows then show (`earlier_names`); a folder of another repository
+shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
 automatic generation and harness/model overrides. Saving clears an old daily
 spending cap. Removing a repository unpicks it but leaves its files and saved

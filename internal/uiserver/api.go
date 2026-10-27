@@ -58,7 +58,10 @@ type LocalAPI struct {
 	// Analytics serves /api/analytics: what the agents did, cost and
 	// delivered (internal/analytics).
 	Analytics http.Handler
-	Changed   func()
+	// CurrentName lets POST /api/repos register a folder whose remote uses
+	// an earlier name of the repository (repos.Registry.HandlerWith).
+	CurrentName repos.CurrentName
+	Changed     func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -85,7 +88,7 @@ func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()
 	mux := http.NewServeMux()
-	registry := a.Registry.Handler()
+	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registry.ServeHTTP(w, r)
 		if r.Method != "GET" && r.Method != "HEAD" && a.Changed != nil {

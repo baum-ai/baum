@@ -13,7 +13,14 @@ export type Clone = {
     model: string | null;
   };
 };
-export type Repository = { repository: string; settings: Clone["settings"]; clones: Clone[] };
+export type Repository = {
+  repository: string;
+  settings: Clone["settings"];
+  clones: Clone[];
+  /** Names GitHub forwards to the repository that its clones' remotes were
+   *  registered with. */
+  earlier_names?: string[];
+};
 export class LocalRequestError extends Error {
   code?: string;
   status?: number;
@@ -456,7 +463,7 @@ export async function request<T>(
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
   if (!response.ok) {
-    const text = (await response.text()).slice(0, 240);
+    const text = await response.text();
     let body: { code?: string; message?: string; needs_clone?: boolean } = {};
     try {
       body = JSON.parse(text);
@@ -466,7 +473,7 @@ export async function request<T>(
     throw new LocalRequestError(
       body.needs_clone
         ? "Needs a local clone"
-        : (body.message ?? `Local request failed (${response.status}): ${text}`),
+        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
       body.needs_clone ? "needs_clone" : body.code,
       response.status,
     );

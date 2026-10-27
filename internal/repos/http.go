@@ -2,16 +2,32 @@ package repos
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
+
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/github"
 )
+
+// CurrentName is the lower-case owner/name a github.com repository has now;
+// the daemon asks GitHub, which answers an earlier name it forwards with the
+// current one. The registry itself contacts nothing.
+type CurrentName func(ctx context.Context, repository string) (string, error)
 
 // Handler exposes the registry API for the future local UI host. It does not
 // listen or authenticate: the host MUST mount it behind its authenticated,
 // host/origin-checked middleware. Never mount this on the public view server.
-func (r *Registry) Handler() http.Handler {
+func (r *Registry) Handler() http.Handler { return r.HandlerWith(nil) }
+
+// HandlerWith is Handler, also registering a folder for a repository when its
+// remote uses an earlier name that current reports GitHub forwards to it.
+func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 	mux := http.NewServeMux()
 	fail := func(w http.ResponseWriter, err error) {
 		status := http.StatusInternalServerError
@@ -23,11 +39,13 @@ func (r *Registry) Handler() http.Handler {
 		}
 		http.Error(w, http.StatusText(status), status)
 	}
-	write := func(w http.ResponseWriter, v any) {
+	writeStatus := func(w http.ResponseWriter, status int, v any) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(v)
 	}
+	write := func(w http.ResponseWriter, v any) { writeStatus(w, http.StatusOK, v) }
 	decode := func(w http.ResponseWriter, req *http.Request, v any) bool {
 		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
 		d := json.NewDecoder(req.Body)
@@ -129,11 +147,20 @@ func (r *Registry) Handler() http.Handler {
 		var e error
 		if input.Repository != "" {
 			c, e = r.AddFor(req.Context(), input.Path, input.Repository, input.Settings)
+			var mismatch *RemoteMismatchError
+			if errors.As(e, &mismatch) && current != nil {
+				switch alias, unchecked := forwarded(req.Context(), mismatch, current); {
+				case alias != "":
+					c, e = r.AddForwarded(req.Context(), input.Path, mismatch.Repository, alias, input.Settings)
+				case unchecked:
+					mismatch.Unchecked = true
+				}
+			}
 		} else {
 			c, e = r.Add(req.Context(), input.Path, input.Settings)
 		}
 		if e != nil {
-			http.Error(w, "cannot register path: check that it is an existing git working tree with a GitHub remote", 400)
+			writeStatus(w, http.StatusBadRequest, map[string]string{"message": registerError(e)})
 			return
 		}
 		write(w, c)
@@ -205,4 +232,41 @@ func (r *Registry) Handler() http.Handler {
 		write(w, s)
 	})
 	return mux
+}
+
+// forwarded is the first of a mismatch's remotes, origin's first, that GitHub
+// forwards to the requested repository, "" when none does; unchecked when
+// GitHub could not be asked about one.
+func forwarded(ctx context.Context, mismatch *RemoteMismatchError, current CurrentName) (alias string, unchecked bool) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, remote := range mismatch.Remotes {
+		if gh, e := github.ParseRepository(remote); e != nil || gh.Host != config.GitHubHost {
+			continue
+		}
+		switch name, e := current(ctx, remote); {
+		case e == nil && name == mismatch.Repository:
+			return remote, false
+		case e != nil && !errors.Is(e, github.ErrNotFound):
+			unchecked = true
+		}
+	}
+	return "", unchecked
+}
+
+// registerError is what the person is told when a folder cannot be
+// registered.
+func registerError(e error) string {
+	var mismatch *RemoteMismatchError
+	switch {
+	case errors.Is(e, ErrNotWorkingTree):
+		return "This folder does not exist or is not a git working tree."
+	case errors.As(e, &mismatch) && mismatch.Unchecked:
+		return fmt.Sprintf("This folder is a clone of %s, not %s. baum could not check with GitHub whether that is an earlier name of %s; check the GitHub connection and try again.", strings.Join(mismatch.Remotes, ", "), mismatch.Repository, mismatch.Repository)
+	case errors.As(e, &mismatch) && len(mismatch.Remotes) > 0:
+		return fmt.Sprintf("This folder is a clone of %s, not %s. Choose a clone of %s.", strings.Join(mismatch.Remotes, ", "), mismatch.Repository, mismatch.Repository)
+	case errors.As(e, &mismatch):
+		return fmt.Sprintf("This folder has no GitHub remote. Choose a clone of %s.", mismatch.Repository)
+	}
+	return "cannot register path: check that it is an existing git working tree with a GitHub remote"
 }

@@ -102,7 +102,7 @@ func (d browserDiscovery) PollNow(ctx context.Context, repository github.Reposit
 type browserRepositoryLister struct{}
 
 func (browserRepositoryLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
-	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}}, nil
+	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, nil
 }
 
 // browserDiagnostics is a fixed report: no machine is inspected.
@@ -268,6 +268,16 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	commitRecently(t, other.Dir)
 	writePlanHistory(t, filepath.Join(home, "plan-usage-history.json"))
 	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
+		t.Fatal(err)
+	}
+	// A clone whose remote still uses the name acme/renamed had before
+	// GitHub renamed it; the browser test chooses it as a folder.
+	renamed := assembletest.NewRepo(t, assembletest.Options{})
+	assembletest.Git(t, renamed.Dir, "remote", "add", "origin", "https://github.com/acme/old-renamed")
+	if err := os.MkdirAll(os.Getenv("BAUM_APP_STATE_DIR"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "renamed-folder"), []byte(renamed.Dir), 0600); err != nil {
 		t.Fatal(err)
 	}
 	versions, err := store.Open(clone.CommonDir, "", true)
@@ -536,7 +546,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}).Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage, Analytics: insights.Handler(),
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}).Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+			if repository == "acme/old-renamed" {
+				return "acme/renamed", nil
+			}
+			return "", github.ErrNotFound
+		}, PlanUsage: browserPlanUsage, Analytics: insights.Handler(),
 			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot

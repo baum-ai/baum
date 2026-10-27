@@ -128,6 +128,9 @@ type Item struct {
 	// Clone is an available registered clone of a picked repository, or "".
 	// Clones are looked for only once a repository is picked.
 	Clone string `json:"clone"`
+	// EarlierNames are names GitHub forwards to a picked repository that its
+	// clones' remotes were registered with.
+	EarlierNames []string `json:"earlier_names,omitempty"`
 }
 
 // Listing is the JSON of GET /api/github/repositories.
@@ -214,9 +217,11 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 	}
 	pickedSet := map[string]bool{}
 	registered := map[string]string{}
+	earlier := map[string][]string{}
 	for _, p := range picked {
 		name := strings.ToLower(p.Repository)
 		pickedSet[name] = true
+		earlier[name] = p.EarlierNames
 		for _, c := range p.Clones {
 			if c.Available && registered[name] == "" {
 				registered[name] = c.Path
@@ -235,7 +240,7 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 			pushed := r.PushedAt
 			item.PushedAt = &pushed
 		}
-		item.Clone = registered[r.Repository]
+		item.Clone, item.EarlierNames = registered[r.Repository], earlier[r.Repository]
 		out.Repositories = append(out.Repositories, item)
 	}
 	return out, nil

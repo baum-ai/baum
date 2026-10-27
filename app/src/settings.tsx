@@ -16,7 +16,7 @@ import {
   type Repository,
   type DiagnosticReport,
 } from "./api";
-import { RepositoryPicker, CloneActions } from "./repositories";
+import { RepositoryPicker, CloneActions, earlierNamesWarning } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { PlanUsage } from "./plan-usage";
@@ -957,6 +957,11 @@ function RepositoryRow({
         ) : (
           <p className="local-repo-missing">Needs a local clone</p>
         )}
+        {clone.available && repository.earlier_names?.length ? (
+          <p className="repository-warning">
+            {earlierNamesWarning(repository.earlier_names, repository.repository)}
+          </p>
+        ) : null}
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
       <div className="local-repo-actions">
