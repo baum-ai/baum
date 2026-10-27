@@ -440,6 +440,28 @@ never a path; a session's transcript comes only when the Sessions page opens it
 from disk again, where the full session is. A daemon without the record serves
 none.
 
+Decision capture (`GET api/decisions`, see the daemon's
+[decision capture README](../internal/decisionlog/README.md)) adds
+"Decisions (n)" to each row of that panel: the session's decision titles
+behind a disclosure, and "Updated N minutes ago", "Capturing…" or why it was
+not captured, in words (Cursor Agent as the review harness cannot capture).
+Below it, "Decisions from sessions" lists the decisions of every session of
+the pull request, in progress or linked by the saved review, marking those
+made after that review was generated "Provisional"; it is not drawn while no
+session has decisions or a capture state. Both read again on the `decisions`
+event, which carries no data. Settings' **Decision capture** section holds
+the switch, the decision log model (the harness's cheap default, or another
+of its models) and an optional daily cap, saved with `PUT
+api/settings/decisions` (`enabled`, `model`, `daily_cap`; the whole object);
+`GET api/settings` returns them as `decisions`. A repository's dialog turns
+capture off for it (`decisions: false`; on sends `null`). The desktop setup's
+review step offers the decision log model beside the harness, reset to that
+harness's cheap model when the harness changes, and says what capture sends.
+Analytics shows decision capture's calls, failures by reason and spend under
+baum's work; an unknown cost stays unknown. The browser fixture seeds a
+decision store for the two live sessions of PR 7, and a test checks the
+panel, the list, Settings, the repository dialog and Analytics.
+
 The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
 now" (agent, working or waiting for you, the session's title and, once the agent
 compacted it, the request its compaction summary records, repository and branch,

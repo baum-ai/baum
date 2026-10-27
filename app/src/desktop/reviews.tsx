@@ -1,5 +1,10 @@
 import { useId, useState } from "react";
-import { modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
+import {
+  decisionModelDefaults,
+  modelPresets,
+  type PullRequests,
+  type ReviewSettings,
+} from "./setup-model";
 import codexLogo from "./codex.svg";
 import claudeLogo from "./claude-code.svg";
 import cursorLogo from "./cursor.svg";
@@ -139,16 +144,72 @@ export function ModelPicker({
   );
 }
 
+/** What decision capture sends, said once wherever it is set up. */
+export function DecisionsDisclosure() {
+  return (
+    <p className="review-note">
+      baum captures the decisions of your agent sessions in the repositories you pick. It sends each
+      session's prompts, the agent's visible text, its plans, question-and-answer dialogue and the
+      names of the files it edited, with secrets masked, to the harness's provider; never tool
+      output or file contents. Capture follows the sessions the agent hooks report, so it needs the
+      hooks installed. Turn it off in Settings or per repository.
+    </p>
+  );
+}
+
+/** The decision capture model, among the harness's models; Cursor Agent
+ *  cannot capture decisions. */
+export function DecisionModelPicker({
+  backend,
+  value,
+  onChange,
+  disabled,
+  inherit,
+  id,
+}: {
+  backend: string;
+  value: string | null;
+  onChange: (next: string | null) => void;
+  disabled: boolean;
+  inherit?: string;
+  id: string;
+}) {
+  if (!decisionModelDefaults[backend])
+    return (
+      <div className="review-section">
+        <span className="review-label">Decision log model</span>
+        <p className="review-note">
+          {harnessName(backend)} can't capture decisions. Choose another harness to capture them.
+        </p>
+      </div>
+    );
+  return (
+    <ModelPicker
+      key={backend}
+      id={id}
+      label="Decision log model"
+      backend={backend}
+      value={value}
+      disabled={disabled}
+      inherit={inherit}
+      onChange={onChange}
+    />
+  );
+}
+
 export function ReviewSettingsForm({
   settings,
   disabled,
   onChange,
   className = "setup-card",
+  decisions = false,
 }: {
   settings: ReviewSettings;
   disabled: boolean;
   onChange: (next: ReviewSettings) => void;
   className?: string;
+  /** Also offer the decision capture model, which follows the harness. */
+  decisions?: boolean;
 }) {
   const update = (patch: Partial<ReviewSettings>) => onChange({ ...settings, ...patch });
   return (
@@ -157,7 +218,12 @@ export function ReviewSettingsForm({
         value={settings.backend}
         disabled={disabled}
         onChange={(backend) =>
-          update({ backend: backend ?? "", model: modelPresets[backend ?? ""]?.[0] ?? "" })
+          update({
+            backend: backend ?? "",
+            model: modelPresets[backend ?? ""]?.[0] ?? "",
+            // A new harness has other models: start from its cheap default.
+            ...(decisions ? { decisions_model: decisionModelDefaults[backend ?? ""] ?? "" } : {}),
+          })
         }
       />
       <ModelPicker
@@ -217,6 +283,20 @@ export function ReviewSettingsForm({
           </fieldset>
         )}
       </div>
+      {decisions ? (
+        <>
+          <DecisionModelPicker
+            id="decisions-model"
+            backend={settings.backend}
+            value={settings.decisions_model ?? ""}
+            disabled={disabled}
+            onChange={(model) => update({ decisions_model: model ?? "" })}
+          />
+          <div className="review-section">
+            <DecisionsDisclosure />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

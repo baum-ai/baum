@@ -38,6 +38,7 @@ import { FixNotice } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
+import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { PullRequestState, pullRequestStates } from "./inbox";
@@ -391,6 +392,12 @@ export function LocalReview({
                 <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
               ) : null}
               <LiveSessions sessions={running} Link={ViewerLink} />
+              <PullRequestDecisionsList
+                repository={pr.repository}
+                number={pr.number}
+                live={running}
+                revision={revision + ended}
+              />
               {entry.needs_clone && doc ? (
                 <Notice>
                   Needs a local clone. This saved review remains available.

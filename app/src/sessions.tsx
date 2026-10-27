@@ -14,6 +14,7 @@ import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { useNow } from "./live";
+import { LiveSessionDecisions } from "./decisions";
 
 const agentLogos: Record<string, string> = {
   "claude-code": claudeLogo,
@@ -190,6 +191,7 @@ export function LiveSessions({
                 Open transcript
               </Link>
             </span>
+            <LiveSessionDecisions session={s} />
           </li>
         ))}
       </ul>

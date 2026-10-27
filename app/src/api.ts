@@ -11,6 +11,9 @@ export type Clone = {
     daily_cap: number | null;
     backend: string | null;
     model: string | null;
+    /** Decision capture for this repository: false turns it off, null and
+     *  true follow the global switches. Absent from an older daemon. */
+    decisions?: boolean | null;
   };
 };
 export type Repository = { repository: string; settings: Clone["settings"]; clones: Clone[] };
@@ -414,6 +417,58 @@ export function liveFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "nu
       s.pr === pr.number &&
       s.repository.toLowerCase() === pr.repository.toLowerCase(),
   );
+}
+/** A decision captured from an agent session, from `api/decisions`. */
+export type CapturedDecision = {
+  decision_id: string;
+  title?: string;
+  summary: string;
+  category: string;
+  who: string;
+  rationale?: string;
+  rejected_alternative?: string;
+  superseded: boolean;
+  files: string[];
+  decided_at: string;
+  /** On a pull request: dated after its saved review was generated. */
+  provisional?: boolean;
+};
+/** What decision capture holds of one session. */
+export type SessionDecisions = {
+  agent: string;
+  session_id: string;
+  /** Empty for a session never captured. */
+  coverage: "extracted" | "skipped" | "";
+  skip_reason?: string;
+  updated_at: string | null;
+  /** A model call for the session is in flight. */
+  capturing: boolean;
+  decisions: CapturedDecision[];
+};
+/** The sessions of a pull request with their decisions. */
+export type PullRequestDecisions = {
+  sessions: (SessionDecisions & { title?: string; live: boolean })[];
+  review_generated_at: string | null;
+};
+/** The global decision capture settings, from `api/settings`. */
+export type DecisionSettings = { enabled: boolean; model: string; daily_cap: number | null };
+const skipReasons: Record<string, string> = {
+  too_large: "The session is too large to capture.",
+  unreadable: "The session's transcript could not be read.",
+  session_mismatch: "The transcript belongs to another session.",
+  generation_run: "baum's own runs are not captured.",
+  over_token_cap: "The session is too long for one capture.",
+  extraction_failed: "Capture failed three times; it tries again when the session changes.",
+  backend_unsupported:
+    "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
+  backend_unavailable: "No harness that can capture decisions is available on this computer.",
+  unpriced_model: "The decision model has no known price, so it is not called.",
+  over_cost_cap: "This session reached its daily capture spend of $0.25.",
+  daily_cap: "Decision capture reached its daily spending cap.",
+};
+/** Why a session's decisions were not captured, in words. */
+export function skipReasonText(reason: string | undefined): string {
+  return (reason && skipReasons[reason]) ?? "Not captured.";
 }
 export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason: string }[] };
 /** The server serves the app only under its session namespace,

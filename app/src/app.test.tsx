@@ -696,6 +696,8 @@ function stubAutomatic(
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (path.endsWith("api/settings/agent-env"))
         return Promise.resolve(Response.json(puts.at(-1)!.body));
+      if (path.endsWith("api/settings/decisions"))
+        return Promise.resolve(Response.json({ decisions: puts.at(-1)!.body }));
       return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
@@ -815,7 +817,78 @@ it("sets automatic reviews per repository and clears an old daily cap", async ()
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: false, daily_cap: null, backend: null, model: null },
+    body: { automatic: false, daily_cap: null, backend: null, model: null, decisions: null },
+  });
+});
+it("turns decision capture off for one repository", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  const toggle = region.querySelector<HTMLInputElement>('input[role="switch"]')!;
+  // On by default.
+  expect(toggle.checked).toBe(true);
+  await act(async () => toggle.click());
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts.at(-1)!.body).toMatchObject({ decisions: false });
+});
+it("shows a repository's decision capture turned off", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic({ ...demoClone, settings: { ...demoClone.settings, decisions: false } });
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
+});
+it("saves the decision capture switch, model and daily cap", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+    decisions: { enabled: true, model: "", daily_cap: null },
+  });
+  await act(async () => root.render(<App />));
+  const section = () => node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const save = () =>
+    [...section().querySelectorAll("button")].find(
+      (b) => b.textContent === "Save decision capture",
+    )!;
+  const model = section().querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
+  expect(section().textContent).toContain("never tool output or file contents");
+  expect(save().disabled).toBe(true);
+  const cap = section().querySelector<HTMLInputElement>("#decisions-cap")!;
+  const type = async (value: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(cap, value);
+      cap.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  await type("-1");
+  expect(section().textContent).toContain("Enter an amount of zero or more");
+  expect(save().disabled).toBe(true);
+  await type("2.5");
+  await act(async () => {
+    model.value = "gpt-6-sol";
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => save().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "gpt-6-sol", daily_cap: 2.5 },
+  });
+  expect(section().textContent).toContain("Saved.");
+  await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
+  expect(model.disabled).toBe(true);
+  await act(async () => save().click());
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: false, model: "gpt-6-sol", daily_cap: 2.5 },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
@@ -866,7 +939,7 @@ it("saves a repository without a cap as explicit null when automatic settings ar
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, daily_cap: null, backend: null, model: null },
+    body: { automatic: null, daily_cap: null, backend: null, model: null, decisions: null },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {

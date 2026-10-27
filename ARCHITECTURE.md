@@ -2967,7 +2967,11 @@ another reply) and recorded in a ledger that throttles a session (5 minutes apar
 day unless it ended) and caps its spend at $0.25 a day, with an optional
 global daily cap. The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
-newer one drops them. See [its README](internal/decisionlog/README.md).
+newer one drops them. The app reads it through `GET /api/decisions` (a
+session, or the sessions of a pull request: those the tracker links to it and
+those its saved review links, with decisions newer than that review marked
+provisional) and rereads on the `decisions` event the store's writes publish.
+See [its README](internal/decisionlog/README.md).
 
 ### Transports and control protocol
 

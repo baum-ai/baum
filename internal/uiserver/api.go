@@ -58,6 +58,10 @@ type LocalAPI struct {
 	// Analytics serves /api/analytics: what the agents did, cost and
 	// delivered (internal/analytics).
 	Analytics http.Handler
+	// Decisions builds the handler of /api/decisions, the decisions captured
+	// from agent sessions (internal/decisionlog), given the sessions a pull
+	// request's saved review links, as its PR page lists them.
+	Decisions func(LinkedSessions) http.Handler
 	Changed   func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
@@ -133,6 +137,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
+	var decisions http.Handler
+	if a.Decisions != nil {
+		decisions = a.Decisions(a.linkedSessions(cache))
+	}
+	mux.Handle("/api/decisions", provider(decisions, "decisions_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
@@ -145,11 +154,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
+		decisions := decisionSettingsOf(repos.Preferences{})
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
 			}
+			decisions = decisionSettingsOf(prefs)
 		}
 		writeJSON(w, struct {
 			Backend        config.Backend    `json:"backend"`
@@ -158,8 +169,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps           map[string]int    `json:"caps"`
 			AgentEnv       map[string]string `json:"agent_env"`
 			AgentEnvSource string            `json:"agent_env_source"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+			Decisions      decisionSettings  `json:"decisions"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, decisions})
 	})
+	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.
 	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {

@@ -486,6 +486,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
+				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
 			}
@@ -530,12 +531,20 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
 		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
+		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
+		if decisionStore != nil {
+			insights.Captures = decisionCaptures(decisionStore)
+			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
+				return (&decisionlog.API{Store: decisionStore, Live: live.Sessions, Linked: decisionLinks(linked)}).Handler()
+			}
+		}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Decisions:   decisionsAPI,
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -601,6 +610,34 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				_ = registry.Close()
 			},
 		}, nil
+	}
+}
+
+// decisionCaptures reads decision capture's ledger for analytics.
+func decisionCaptures(store *decisionlog.Store) func(context.Context, time.Time) ([]analytics.Capture, error) {
+	return func(ctx context.Context, since time.Time) ([]analytics.Capture, error) {
+		ledger, err := store.Ledger(ctx, since)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]analytics.Capture, len(ledger))
+		for i, e := range ledger {
+			out[i] = analytics.Capture{Repository: e.Repository, Backend: e.Backend, State: e.State, Reason: e.Reason, StartedAt: e.StartedAt, Cost: e.Cost}
+		}
+		return out, nil
+	}
+}
+
+// decisionLinks lists the sessions a pull request's saved review links for
+// the decisions API.
+func decisionLinks(linked uiserver.LinkedSessions) func(context.Context, string, int) ([]decisionlog.Linked, time.Time, error) {
+	return func(ctx context.Context, repository string, number int) ([]decisionlog.Linked, time.Time, error) {
+		sessions, generated, err := linked(ctx, repository, number)
+		out := make([]decisionlog.Linked, len(sessions))
+		for i, s := range sessions {
+			out[i] = decisionlog.Linked{SessionKey: decisionlog.SessionKey{Agent: s.Agent, ID: s.ID}, Title: s.Title}
+		}
+		return out, generated, err
 	}
 }
 

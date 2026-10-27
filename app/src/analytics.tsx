@@ -118,6 +118,15 @@ export type Analytics = {
     merges: number | null;
     branch_updates: number | null;
     check_reruns: number | null;
+    /** Decision capture's model calls; null without its ledger, absent from
+     *  an older daemon. */
+    decisions?: {
+      attempts: number;
+      succeeded: number;
+      failed: number;
+      cost: Cost;
+      failures: { reason: string; count: number }[];
+    } | null;
   };
   delivery: {
     status: "loading" | "ready" | "unavailable";
@@ -776,6 +785,7 @@ function BaumWork({ data }: { data: Analytics }) {
           ))}
         </ul>
       ) : null}
+      {b.decisions ? <DecisionCapture decisions={b.decisions} /> : null}
       <Stats
         items={[
           {
@@ -796,6 +806,47 @@ function BaumWork({ data }: { data: Analytics }) {
         ]}
       />
     </Card>
+  );
+}
+
+const captureFailures: Record<string, string> = {
+  timeout: "Timed out",
+  unusable_reply: "Reply could not be used",
+  call_failed: "Model call failed",
+};
+
+/** Decision capture's calls in the window, within baum's work. */
+function DecisionCapture({
+  decisions: d,
+}: {
+  decisions: NonNullable<Analytics["baum"]["decisions"]>;
+}) {
+  const cost = costText(d.cost);
+  return (
+    <div className="analytics-decisions">
+      <h3>Decision capture</h3>
+      <Stats
+        items={[
+          { label: "Capture calls", value: formatCount(d.attempts) },
+          { label: "Failed calls", value: formatCount(d.failed) },
+          {
+            label: "Capture spend",
+            value: d.cost.usd === null ? null : cost.text,
+            reason: d.attempts ? cost.title : "No capture calls in this window.",
+          },
+        ]}
+      />
+      {d.failures.length ? (
+        <ul className="analytics-reasons" aria-label="Failed decision captures by reason">
+          {d.failures.map((f) => (
+            <li key={f.reason}>
+              <span>{captureFailures[f.reason] ?? f.reason}</span>
+              <strong>{formatCount(f.count)}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

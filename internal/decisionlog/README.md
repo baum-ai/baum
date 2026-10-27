@@ -117,6 +117,29 @@ Settled attempts and obsolete decisions older than 90 days are pruned daily.
 The store holds decisions, rationale and evidence quotes derived from redacted
 transcripts, never the transcripts themselves.
 
+## In the app
+
+`API` serves `GET /api/decisions`, mounted by `internal/uiserver`:
+
+- `?agent=&session=`: one session's current decisions, its coverage and skip
+  reason, when its row last changed (`updated_at`, null when never captured)
+  and `capturing`, true while one of its calls is pending.
+- `?repository=&pr=`: the same for each session of the pull request, resolved
+  when read: the tracked sessions not over whose pull request it is (the live
+  tracker's `prlink` link), then the sessions its latest saved review links on
+  this machine (`locallink`, the computation its PR page's sessions list
+  shares). A session in both appears once, `live`. Decisions dated after the
+  review's `generated_at` are `provisional`; without a saved review none are,
+  and only the tracked sessions are listed.
+
+`Store.Changed` is called after every write the app shows (a skip, a cover,
+a save, an attempt beginning or settling); the daemon publishes the app's
+`decisions` event, which carries no data, with it. The settings are
+`preferences.decisions` (`GET /api/settings` and `PUT /api/settings/decisions`
+in `internal/uiserver`), and a repository's `settings.decisions` through the
+repository settings API. Analytics counts the ledger (`Store.Ledger`) under
+baum's work.
+
 ## Testing by hand
 
 `baum internal decisions capture --agent <agent> --session <id> [--path

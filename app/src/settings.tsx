@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, Toggle } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
   request,
@@ -15,6 +15,7 @@ import {
   type Clone,
   type Repository,
   type DiagnosticReport,
+  type DecisionSettings,
 } from "./api";
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
@@ -27,18 +28,27 @@ import {
   SlidersIcon,
   TerminalIcon,
   SessionsIcon,
+  LightbulbIcon,
   CheckIcon,
   SearchIcon,
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
+import {
+  DecisionModelPicker,
+  DecisionsDisclosure,
+  HarnessPicker,
+  ModelPicker,
+  ReviewSettingsForm,
+  harnessName,
+} from "./desktop/reviews";
 import {
   describeCommand,
   describeAgent,
   displayPath,
   type SetupView,
   type Outcome,
+  decisionModelDefaults,
   modelPresets,
   withModel,
   type PullRequests,
@@ -127,6 +137,7 @@ export function SettingsPage({
         ) : (
           <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
+        {defaults ? <DecisionSettingsSection defaults={defaults} /> : null}
         <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
@@ -482,6 +493,128 @@ function ReviewSettingsSection({
   );
 }
 
+/** Decision capture: the switch, the model and an optional daily cap. */
+function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
+  const [saved, setSaved] = useState<DecisionSettings | null>(null);
+  const [draft, setDraft] = useState<DecisionSettings | null>(null);
+  const [cap, setCap] = useState("");
+  const [pending, setPending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const load = (settings: DecisionSettings) => {
+    setSaved(settings);
+    setDraft(settings);
+    setCap(settings.daily_cap === null ? "" : String(settings.daily_cap));
+  };
+  useEffect(() => {
+    request<{ decisions?: DecisionSettings }>("api/settings").then(
+      (settings) => {
+        if (settings.decisions) load(settings.decisions);
+      },
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
+  const backend = shownBackend(defaults.backend);
+  const capValue = cap.trim() === "" ? null : Number(cap);
+  const capInvalid = capValue !== null && (!Number.isFinite(capValue) || capValue < 0);
+  const next = { ...draft, daily_cap: capInvalid ? draft.daily_cap : capValue };
+  const dirty = JSON.stringify(next) !== JSON.stringify(saved);
+  const save = async () => {
+    setPending(true);
+    setError("");
+    setDone(false);
+    try {
+      const answer = await request<{ decisions: DecisionSettings }>(
+        "api/settings/decisions",
+        next,
+        "PUT",
+      );
+      load(answer.decisions);
+      setDone(true);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  const fallback = decisionModelDefaults[backend];
+  return (
+    <section aria-labelledby="decisions-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="decisions-heading"
+        icon={<LightbulbIcon size={20} />}
+        title="Decision capture"
+        detail="baum records the decisions made in your agent sessions, with a small model through the review harness, and shows them beside each pull request."
+        actions={
+          <Toggle
+            checked={draft.enabled}
+            disabled={pending}
+            onChange={(enabled) => {
+              setDone(false);
+              setDraft({ ...draft, enabled });
+            }}
+          >
+            Capture decisions
+          </Toggle>
+        }
+      />
+      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
+      <div className="review-card settings-form">
+        <DecisionModelPicker
+          id="settings-decisions-model"
+          backend={backend}
+          value={draft.model || null}
+          inherit={`Default${fallback ? ` (${fallback})` : ""}`}
+          disabled={pending || !draft.enabled}
+          onChange={(model) => {
+            setDone(false);
+            setDraft({ ...draft, model: model ?? "" });
+          }}
+        />
+        <div className="review-section">
+          <label htmlFor="decisions-cap" className="review-label">
+            Daily spending cap (US$)
+          </label>
+          <input
+            id="decisions-cap"
+            className="local-field"
+            inputMode="decimal"
+            placeholder="No cap"
+            value={cap}
+            disabled={pending || !draft.enabled}
+            aria-invalid={capInvalid || undefined}
+            onChange={(event) => {
+              setDone(false);
+              setCap(event.target.value);
+            }}
+          />
+          <p className="review-note">
+            {capInvalid
+              ? "Enter an amount of zero or more, or leave it empty for no cap."
+              : "Across all sessions. Each session is also held to $0.25 a day."}
+          </p>
+        </div>
+        <div className="review-section">
+          <DecisionsDisclosure />
+        </div>
+      </div>
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <p role="status" className="text-xs text-(--text-tertiary)">
+          {done ? "Saved." : dirty ? "You have unsaved changes." : ""}
+        </p>
+        <Button
+          size="compact"
+          disabled={!dirty || pending || capInvalid}
+          onClick={() => void save()}
+        >
+          {pending ? "Saving…" : "Save decision capture"}
+        </Button>
+      </footer>
+    </section>
+  );
+}
+
 type EnvRow = { id: number; name: string; value: string };
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_MAX = 32;
@@ -801,6 +934,7 @@ function RepositorySettings({
         ? "on"
         : "off",
   );
+  const [decisions, setDecisions] = useState(clone.settings.decisions !== false);
   const [pending, setPending] = useState(false);
   const [removing, setRemoving] = useState(false);
   const globalBackend = shownBackend(defaults?.backend ?? "auto");
@@ -814,6 +948,7 @@ function RepositorySettings({
       daily_cap: null,
       backend,
       model: model?.trim() ? model.trim() : null,
+      decisions: decisions ? null : false,
     }).finally(() => setPending(false));
   };
   const unregister = () => {
@@ -876,6 +1011,9 @@ function RepositorySettings({
           onChange={setModel}
         />
       </div>
+      <Toggle checked={decisions} disabled={pending || removing} onChange={setDecisions}>
+        Capture the decisions of agent sessions in this repository
+      </Toggle>
       <div className="local-dialog-actions">
         {remove ? (
           <Button

@@ -27,9 +27,9 @@ const steps = [
   ],
   [
     "Set up reviews",
-    "Choose what writes your reviews and which pull requests baum reviews on its own.",
+    "Choose what writes your reviews, which pull requests baum reviews on its own and the model that captures your sessions' decisions.",
     "Set up reviews",
-    "Harness, model and automation",
+    "Harness, models and automation",
   ],
   [
     "Connect your agents",
@@ -276,7 +276,12 @@ export function Setup() {
             )}
             {step === reviewStep && reviews && (
               <>
-                <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
+                <ReviewSettingsForm
+                  settings={reviews}
+                  disabled={busy}
+                  onChange={setReviews}
+                  decisions
+                />
                 <PlanUsage className="setup-card" />
               </>
             )}

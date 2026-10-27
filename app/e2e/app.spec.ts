@@ -833,3 +833,78 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   );
   expect(errors).toEqual([]);
 });
+
+test("captured decisions show on the PR page, in Settings and in Analytics", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const state = process.env.BAUM_APP_STATE_DIR ?? "";
+  // The fixture's decision store holds decisions of both sessions on PR 7;
+  // the second has a capture call in flight.
+  const running = join(state, "live-session");
+  const waiting = join(state, "live-needs");
+  await writeFile(running, "running");
+  await writeFile(waiting, "idle");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  const live = page.getByRole("region", { name: "Sessions in progress", exact: true });
+  const summary = live.getByText(/^Decisions \(3\)/);
+  await expect(summary).toBeVisible({ timeout: 10000 });
+  await expect(live.getByText(/^Decisions \(1\) · Capturing…/)).toBeVisible();
+  await summary.click();
+  await expect(live.getByText("Retry a failed sessions read once")).toBeVisible();
+  const list = page.getByRole("region", { name: "Decisions from sessions (4)", exact: true });
+  await expect(list).toBeVisible();
+  // Two decisions came after the saved review was generated.
+  await expect(list.getByText("Provisional", { exact: true })).toHaveCount(2);
+  await expect(list.getByText(/2 decisions were made after the saved review/)).toBeVisible();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await live.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `test-results/decisions-pr-${scheme}.png`,
+      animations: "disabled",
+      fullPage: true,
+    });
+  }
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.screenshot({
+    path: "test-results/decisions-pr-narrow.png",
+    animations: "disabled",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
+
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  const capture = page.getByRole("region", { name: "Decision capture", exact: true });
+  await expect(capture.getByRole("switch", { name: "Capture decisions" })).toBeChecked();
+  await expect(capture.getByRole("combobox", { name: "Decision log model" })).toBeVisible();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await capture.screenshot({ path: `test-results/decisions-settings-${scheme}.png` });
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Settings for acme/demo" }).click();
+  const repository = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
+  await expect(
+    repository.getByRole("switch", { name: /Capture the decisions of agent sessions/ }),
+  ).toBeChecked();
+  await repository.screenshot({ path: "test-results/decisions-repository.png" });
+  await repository.getByRole("button", { name: "Cancel", exact: true }).click();
+
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+  const work = page.getByRole("region", { name: "baum's work" });
+  await expect(work.getByText("Decision capture", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(work.getByText("Timed out")).toBeVisible();
+  await work.scrollIntoViewIfNeeded();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await work.screenshot({ path: `test-results/decisions-analytics-${scheme}.png` });
+  }
+  await writeFile(running, "ended");
+  await writeFile(waiting, "ended");
+  expect(errors).toEqual([]);
+});

@@ -123,6 +123,9 @@ export type ReviewSettings = {
   model: string;
   automatic: boolean;
   pull_requests: PullRequests;
+  /** The decision capture model; empty is the harness's default. Only the
+   *  desktop setup edits it here. */
+  decisions_model?: string;
 };
 
 const claudeModels = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
@@ -136,9 +139,21 @@ export const modelPresets: Record<string, string[]> = {
   "cursor-agent": ["composer-2.5", "composer-2.5-fast", "grok-4.7-medium", "grok-4.7-high"],
 };
 
+/** The cheap model decision capture uses per harness when none is chosen;
+ *  Cursor Agent cannot capture decisions. */
+export const decisionModelDefaults: Record<string, string> = {
+  claude: "claude-haiku-5-5",
+  anthropic: "claude-haiku-5-5",
+  codex: "gpt-6-luna",
+};
+
 /** Settings with an explicit model: an unset one becomes the harness's
- *  default, so the user always sees and saves a real choice. */
+ *  default, so the user always sees and saves a real choice. The decision
+ *  capture model, when the settings carry one, is filled the same way. */
 export function withModel(settings: ReviewSettings): ReviewSettings {
-  if (settings.model.trim()) return settings;
-  return { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
+  const next = settings.model.trim()
+    ? settings
+    : { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
+  if (next.decisions_model === undefined || next.decisions_model.trim()) return next;
+  return { ...next, decisions_model: decisionModelDefaults[next.backend] ?? "" };
 }
