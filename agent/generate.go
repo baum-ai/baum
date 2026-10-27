@@ -75,38 +75,56 @@ type Run struct {
 // error alongside the Outcome of what was spent. The Outcome's text is not
 // redacted: the host applies RedactOutput before it stores or shows it.
 func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, document []byte, err error) {
-	outcome.SchemaRevision = g.Validator.Revision
-	// Reported on every outcome, so a host can tell a loop that ran the
-	// identifier pass from one that predates it.
-	outcome.IdentifierRedaction = &IdentifierRedaction{}
-	prompt, err := g.Prompts.Instructions(ctx, g.Backend.Name())
+	defer func() {
+		outcome.SchemaRevision = g.Validator.Revision
+		// Reported on every outcome, so a host can tell a loop that ran the
+		// identifier pass from one that predates it.
+		if outcome.IdentifierRedaction == nil {
+			outcome.IdentifierRedaction = &IdentifierRedaction{}
+		}
+	}()
+	task, err := g.ReviewTask(ctx, run)
 	if err != nil {
 		return outcome, nil, err
+	}
+	return g.RunTask(ctx, task)
+}
+
+// ReviewTask is the review of run as a task RunTask runs: it writes
+// bundle.json into the run directory and returns the review's model schema,
+// its prompts (the instructions, the bundle and the source excerpts, and the
+// repair text) and its Accept, which keeps the offered tile kinds, preserves
+// the first pass's risk omissions in a repair, masks the secrets written
+// into identifiers and prepares the document with the validator. A secret
+// masked in a closed value stops the repairs: the host rejects the run
+// whatever a later pass returns.
+func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
+	prompt, err := g.Prompts.Instructions(ctx, g.Backend.Name())
+	if err != nil {
+		return Task{}, err
 	}
 	logger := g.Logger
 	redactor := g.Redactor
 	if redactor == nil {
 		if redactor, err = bundle.NewRedactor(); err != nil {
-			return outcome, nil, err
+			return Task{}, err
 		}
 	}
 	// One redactor for every pass, so its counts cover them all: a secret
 	// written in any pass fails the run.
 	identifiers, err := review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil)
 	if err != nil {
-		return outcome, nil, err
+		return Task{}, err
 	}
 	if err := tilecatalogue.Validate(run.TileKinds); err != nil {
-		return outcome, nil, fmt.Errorf("tile kinds: %w", err)
+		return Task{}, fmt.Errorf("tile kinds: %w", err)
 	}
 	schema, err := g.Validator.ModelSchema(run.TileKinds)
 	if err != nil {
-		return outcome, nil, err
+		return Task{}, err
 	}
-	for name, body := range map[string][]byte{"bundle.json": run.EncodedBundle, "schema.json": schema} {
-		if err := os.WriteFile(filepath.Join(run.Directory, name), body, 0400); err != nil {
-			return outcome, nil, err
-		}
+	if err := os.WriteFile(filepath.Join(run.Directory, "bundle.json"), run.EncodedBundle, 0400); err != nil {
+		return Task{}, err
 	}
 	if logger != nil {
 		patches := 0
@@ -134,70 +152,46 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 	if logger != nil {
 		logger.InfoContext(ctx, "review context prepared", "prompt_bytes", len(contextPack), "source_bytes", len(source))
 	}
-	text := contextPack
 	var assessed []byte
-	// Stalls are counted over the run, repairs included.
-	stalls := 0
-	budgets := run.Budgets
-	repairs := max(budgets.MaxRepairAttempts, 1)
-	for attempt := 0; ; attempt++ {
-		result, callErr := g.call(ctx, budgets, Request{Directory: run.Directory, Prompt: text, Schema: schema, Logger: logger, Endpoint: run.Endpoint}, &outcome, &stalls)
-		if callErr != nil {
-			if attempt > 0 {
-				// A repair that could not finish still fails with the call's
-				// own reason; the document it was repairing and the findings
-				// stay on the outcome for a maintainer to read.
-				outcome.RejectedDocument = RetainedDocument(document)
+	return Task{
+		Directory: run.Directory, Schema: schema, Budgets: run.Budgets, Endpoint: run.Endpoint, Review: true,
+		PassPrompt: func(pass TaskPass) (string, error) {
+			if pass.Number == 1 {
+				return contextPack, nil
 			}
-			return outcome, nil, callErr
-		}
-		document = review.DocumentWithTileKinds(result.Document, run.TileKinds)
-		if run.Decorate != nil {
-			document = run.Decorate(document)
-		}
-		if attempt == 0 {
-			assessed = document
-		} else {
-			document = review.PreserveRiskOmissionsForRepair(run.Bundle.Previous, assessed, document)
-		}
-		outcome.Model = result.Model
-		// Prepare respells identifiers into a form no rule detects, so their
-		// secrets are masked first, as the model wrote them. Everything built
-		// from the document below (the findings, the logs, the repair prompt,
-		// a kept rejected document) comes after.
-		masked, identifiersErr := identifiers.Identifiers(ctx, document)
-		outcome.IdentifierRedaction = &IdentifierRedaction{Masked: identifiers.Masked(), MaskedClosed: identifiers.MaskedClosed()}
-		if identifiersErr != nil {
-			// The document returned with the error is unmasked.
-			if err := ctx.Err(); err != nil {
-				return outcome, nil, err
+			return instructions + repairInstruction + string(run.EncodedBundle) + "\nRejected document:\n" + string(pass.Rejected) + "\nThe validator found:\n" + pass.Findings + fmt.Sprintf(repairEnding, pass.Number-1, pass.Repairs), nil
+		},
+		Accept: func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
+			document := review.DocumentWithTileKinds(reply, run.TileKinds)
+			if run.Decorate != nil {
+				document = run.Decorate(document)
 			}
-			return outcome, nil, fmt.Errorf("masking identifiers: %w", identifiersErr)
-		}
-		document, outcome.Findings = g.Validator.Prepare(masked, run.Bundle, run.Directory)
-		if logger != nil {
-			logger.InfoContext(ctx, "review document validated", "pass", attempt+1, "valid", outcome.Findings == "", "findings_bytes", len(outcome.Findings), "document_bytes", len(document), "findings", boundedText(outcome.Findings, 2048))
-		}
-		if outcome.Findings == "" {
-			break
-		}
-		// A repair cannot undo a secret written in an identifier: the host
-		// rejects the run whatever the later passes return.
-		if attempt == repairs || outcome.IdentifierRedaction.MaskedClosed > 0 {
-			outcome.Reason = ReasonValidationRejected
-			outcome.RejectedDocument = RetainedDocument(document)
-			break
-		}
-		outcome.ValidationRepairs++
-		if err := os.WriteFile(filepath.Join(run.Directory, fmt.Sprintf("rejected-%d.json", attempt+1)), document, 0400); err != nil {
-			return outcome, nil, err
-		}
-		text = instructions + repairInstruction + string(run.EncodedBundle) + "\nRejected document:\n" + string(document) + "\nThe validator found:\n" + outcome.Findings + fmt.Sprintf(repairEnding, attempt+1, repairs)
-	}
-	if err := ctx.Err(); err != nil {
-		return outcome, nil, err
-	}
-	return outcome, document, nil
+			if pass.Number == 1 {
+				assessed = document
+			} else {
+				document = review.PreserveRiskOmissionsForRepair(run.Bundle.Previous, assessed, document)
+			}
+			// Prepare respells identifiers into a form no rule detects, so their
+			// secrets are masked first, as the model wrote them. Everything built
+			// from the document below (the findings, the logs, the repair prompt,
+			// a kept rejected document) comes after.
+			masked, identifiersErr := identifiers.Identifiers(ctx, document)
+			outcome.IdentifierRedaction = &IdentifierRedaction{Masked: identifiers.Masked(), MaskedClosed: identifiers.MaskedClosed()}
+			if identifiersErr != nil {
+				// The document returned with the error is unmasked.
+				if err := ctx.Err(); err != nil {
+					return Verdict{}, err
+				}
+				return Verdict{}, fmt.Errorf("masking identifiers: %w", identifiersErr)
+			}
+			prepared, findings := g.Validator.Prepare(masked, run.Bundle, run.Directory)
+			if logger != nil {
+				logger.InfoContext(ctx, "review document validated", "pass", pass.Number, "valid", findings == "", "findings_bytes", len(findings), "document_bytes", len(prepared), "findings", boundedText(findings, 2048))
+			}
+			// A repair cannot undo a secret written in an identifier.
+			return Verdict{Document: prepared, Findings: findings, Stop: outcome.IdentifierRedaction.MaskedClosed > 0}, nil
+		},
+	}, nil
 }
 
 // call runs the backend, retrying a provider failure within the attempt budget

@@ -34,6 +34,9 @@ type Task struct {
 	// it returns the document the reply stands for, the findings that send it
 	// back for a repair, or Stop to reject it without another repair.
 	Accept func(ctx context.Context, pass TaskPass, document []byte, outcome *Outcome) (Verdict, error)
+	// Review frames the task as a review (Generator.ReviewTask): the backend
+	// runs it with its review framing rather than a generic task's.
+	Review bool
 }
 
 // TaskPass is one pass of a task: Number 1 is the first, each later one a
@@ -67,13 +70,19 @@ const taskRepairInstruction = "\n\nThis is validation repair, not a new task. Pr
 // applies RedactTaskOutput before it stores or shows it. Nothing the model
 // wrote is logged.
 func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, document []byte, err error) {
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(task.Schema, &schema); err != nil {
-		return outcome, nil, fmt.Errorf("task schema: %w", err)
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		return outcome, nil, fmt.Errorf("task schema: %w", err)
+	accept := task.Accept
+	if accept == nil {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(task.Schema, &schema); err != nil {
+			return outcome, nil, fmt.Errorf("task schema: %w", err)
+		}
+		resolved, err := schema.Resolve(nil)
+		if err != nil {
+			return outcome, nil, fmt.Errorf("task schema: %w", err)
+		}
+		accept = func(_ context.Context, _ TaskPass, document []byte, _ *Outcome) (Verdict, error) {
+			return Verdict{Document: document, Findings: taskFindings(resolved, task.Check, document)}, nil
+		}
 	}
 	if err := os.WriteFile(filepath.Join(task.Directory, "schema.json"), task.Schema, 0400); err != nil {
 		return outcome, nil, err
@@ -89,12 +98,6 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 			return task.Prompt + taskRepairInstruction + string(pass.Rejected) + "\nThe validator found:\n" + pass.Findings + fmt.Sprintf(repairEnding, pass.Number-1, pass.Repairs), nil
 		}
 	}
-	accept := task.Accept
-	if accept == nil {
-		accept = func(_ context.Context, _ TaskPass, document []byte, _ *Outcome) (Verdict, error) {
-			return Verdict{Document: document, Findings: taskFindings(resolved, task.Check, document)}, nil
-		}
-	}
 	stalls := 0
 	budgets := task.Budgets
 	pass := TaskPass{Number: 1, Repairs: max(budgets.MaxRepairAttempts, 1)}
@@ -103,7 +106,7 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 		if err != nil {
 			return outcome, nil, err
 		}
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: true}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: !task.Review}, &outcome, &stalls)
 		if callErr != nil {
 			if pass.Number > 1 {
 				outcome.RejectedDocument = RetainedDocument(document)
@@ -115,7 +118,7 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 			return outcome, nil, err
 		}
 		document, outcome.Findings = verdict.Document, verdict.Findings
-		if logger != nil {
+		if logger != nil && !task.Review {
 			logger.InfoContext(ctx, "task document validated", "pass", pass.Number, "valid", outcome.Findings == "", "findings_bytes", len(outcome.Findings), "document_bytes", len(document))
 		}
 		if outcome.Findings == "" {
