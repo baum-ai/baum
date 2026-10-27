@@ -9,7 +9,8 @@
 // repository, branch and pull request the session's working directory links
 // to. The working directory itself and the transcript path stay inside the
 // tracker and are never served. Reading session files from disk is
-// unchanged and remains the full history.
+// unchanged and remains the full history; Transcripts serves a tracked
+// session's transcript, redacted, while it runs.
 package livesessions
 
 import (
@@ -167,10 +168,15 @@ type Tracker struct {
 
 type key struct{ agent, id string }
 
-// entry is a tracked session. cwd stays here: it is never served.
+// entry is a tracked session. cwd and transcript stay here: they are never
+// served.
 type entry struct {
 	Session
 	cwd string
+	// transcript is the transcript file the session's hooks last named, empty
+	// when none did. Transcripts reads it only after checking it is inside the
+	// agent's own session store.
+	transcript string
 	// waiting is set by a stop, until the next event of work.
 	waiting  bool
 	ended    bool
@@ -595,6 +601,9 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	if cwd != "" {
 		s.cwd = cwd
 	}
+	if e.Session.TranscriptPath != "" {
+		s.transcript = e.Session.TranscriptPath
+	}
 	if kind == EventStart && at.Before(s.StartedAt) {
 		s.StartedAt = at
 	}
@@ -680,6 +689,27 @@ func (t *Tracker) Sessions() []Session {
 		return cmp.Or(cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
 	return out
+}
+
+// Lookup is a session the application is shown, with the transcript path its
+// hooks last reported (empty when none did, or for an ended session read back
+// from StateFile, which keeps no paths); false when the tracker does not list
+// it.
+func (t *Tracker) Lookup(agent, id string) (Session, string, bool) {
+	t.init()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	k := key{agent, id}
+	s := t.sessions[k]
+	if s == nil || s.expired(now) {
+		return Session{}, "", false
+	}
+	session, ok := t.view(k, now)
+	if !ok {
+		return Session{}, "", false
+	}
+	return session, s.transcript, true
 }
 
 // persisted is the ended sessions' file: identifiers and times, no paths.

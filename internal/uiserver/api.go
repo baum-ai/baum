@@ -30,7 +30,8 @@ type LocalAPI struct {
 	// Automatic serves /api/automatic: the automatic generation preferences
 	// and per-repository status.
 	Automatic http.Handler
-	// Live serves /api/live-sessions: the agent sessions in progress.
+	// Live serves /api/live-sessions: the agent sessions in progress, and
+	// /api/live-sessions/{agent}/{id}/transcript: one of their transcripts.
 	Live http.Handler
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
@@ -115,6 +116,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/live-sessions/", provider(a.Live, "live_sessions_unavailable"))
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))

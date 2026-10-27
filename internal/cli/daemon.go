@@ -42,6 +42,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
 
@@ -466,7 +467,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		live := events.liveSessions(paths, registry, discover, server, log)
 		var liveAPI http.Handler
 		if live != nil {
-			liveAPI = live.Handler()
+			// The live transcripts are written as the review page's are.
+			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render, Log: log}).Handler()
 		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{

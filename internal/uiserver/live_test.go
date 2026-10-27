@@ -16,18 +16,23 @@ func TestLiveSessionsRouteIsAuthenticatedAndOptional(t *testing.T) {
 	}
 	defer func() { _ = registry.Close() }()
 	live := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/live-sessions" || r.Method != "GET" {
+		switch {
+		case r.Method != "GET":
 			http.NotFound(w, r)
-			return
+		case r.URL.Path == "/api/live-sessions":
+			writeJSON(w, map[string]any{"sessions": []any{}})
+		case r.URL.Path == "/api/live-sessions/claude-code/s1/transcript":
+			writeJSON(w, map[string]any{"available": true, "version": "v1"})
+		default:
+			http.NotFound(w, r)
 		}
-		writeJSON(w, map[string]any{"sessions": []any{}})
 	})
 	for name, tt := range map[string]struct {
-		live http.Handler
-		want string
+		live                 http.Handler
+		want, wantTranscript string
 	}{
-		"served":      {live, `{"sessions":[]}`},
-		"unavailable": {nil, `"live_sessions_unavailable"`},
+		"served":      {live, `{"sessions":[]}`, `"version":"v1"`},
+		"unavailable": {nil, `"live_sessions_unavailable"`, `"live_sessions_unavailable"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			handler := LocalAPI{Registry: registry, Live: tt.live}.Handler()
@@ -49,6 +54,15 @@ func TestLiveSessionsRouteIsAuthenticatedAndOptional(t *testing.T) {
 			w := request(t, s, "GET", "/api/live-sessions", "", "", "", "Bearer "+s.launch, "")
 			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tt.want) {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
+			}
+			// A session's transcript is behind the same boundary.
+			const transcript = "/api/live-sessions/claude-code/s1/transcript"
+			if w := request(t, s, "GET", transcript, "", "", "", "", ""); w.Code != http.StatusUnauthorized {
+				t.Fatalf("transcript without credentials: %d", w.Code)
+			}
+			w = request(t, s, "GET", transcript, "", "", "", "Bearer "+s.launch, "")
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tt.wantTranscript) {
+				t.Fatalf("transcript: %d %s", w.Code, w.Body.String())
 			}
 		})
 	}
