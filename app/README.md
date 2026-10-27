@@ -368,14 +368,21 @@ group offers Regenerate. A pull request's page links the groups it belongs to,
 and the Jobs page labels a group job "Review group: <name>". Groups across
 repositories are not supported yet.
 
-Beside the harness choice, Settings and the desktop setup's review step show a
-"Plan usage" meter per provider and window (for example 5-hour and weekly):
-the share left, when it resets, coloured by what remains. It reads
-`GET api/plan-usage` on mount (asking for a fresh reading) and every five
-minutes while visible. Codex figures come from its last session and say how old
-they are; a provider the daemon cannot read shows "Unavailable: <reason>" and a
-failed request shows nothing. See the daemon's
-[plan usage README](../internal/planusage/README.md).
+The sidebar keeps plan usage in view above Jobs and Settings: per provider,
+each window (for example 5-hour and weekly) with the share left, when it
+resets and a thin bar coloured by what remains, and how old the oldest figure
+is; hovering "resets in" shows the exact date and time. A narrow window folds
+it to the lowest share left. Only
+plans the daemon could read show: a provider that is not installed, signed
+out or has not run yet is left out, and with neither readable (or a failed
+request) the box is not drawn. The desktop setup's review step shows the same
+meters, with "Unavailable: <reason>" for a provider it cannot read. Both ask
+`GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
+reads again at most once a minute), and work out "resets in" again every 30
+seconds between readings. Codex figures are live when Codex is signed in with
+ChatGPT; otherwise they come from its last session and, once older than 15
+minutes, say how old they are.
+See the daemon's [plan usage README](../internal/planusage/README.md).
 
 The app's sidebar leads to the Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs
 and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
@@ -409,7 +416,7 @@ It shows the installed state, paths, trust guidance and action results.
 Settings holds the global review settings in the same form as the desktop
 setup's review step: the harness, its model (a listed model or a custom name),
 whether reviews run automatically and for which pull requests (authored,
-requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
+requested, both, or all open pull requests in the repository). Saving sends them to `PUT api/automatic` (`enabled`,
 `backend`, `model`, `pull_requests`), which the daemon keeps as app
 preferences over the config file; `GET api/settings` reports the effective
 harness and model. **Environment for agents** (`AgentEnvSection`) edits

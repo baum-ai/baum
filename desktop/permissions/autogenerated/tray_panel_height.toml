@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-panel-height"
+description = "Enables the tray_panel_height command without any pre-configured scope."
+commands.allow = ["tray_panel_height"]
+
+[[permission]]
+identifier = "deny-tray-panel-height"
+description = "Denies the tray_panel_height command without any pre-configured scope."
+commands.deny = ["tray_panel_height"]

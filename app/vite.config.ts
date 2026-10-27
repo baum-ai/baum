@@ -5,9 +5,10 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { desktopDevelopment } from "./vite.development.ts";
 
-// The same build supplies the daemon app and Tauri's own screens: setup, and
-// the connecting screen the window opens on, which becomes Tauri's index.html
-// and is taken out of the daemon's copy.
+// The same build supplies the daemon app and Tauri's own screens: setup, the
+// tray panel, and the connecting screen the window opens on, which becomes
+// Tauri's index.html. The connecting screen and the tray panel are taken out
+// of the daemon's copy.
 function desktopBundle(): Plugin {
   let output = "";
   return {
@@ -23,6 +24,7 @@ function desktopBundle(): Plugin {
       cpSync(output, destination, { recursive: true });
       renameSync(join(destination, "connecting.html"), join(destination, "index.html"));
       rmSync(join(output, "connecting.html"));
+      rmSync(join(output, "tray.html"));
     },
   };
 }
@@ -67,6 +69,7 @@ export default defineConfig({
         app: resolve(import.meta.dirname, "index.html"),
         setup: resolve(import.meta.dirname, "setup.html"),
         connecting: resolve(import.meta.dirname, "connecting.html"),
+        tray: resolve(import.meta.dirname, "tray.html"),
       },
     },
   },

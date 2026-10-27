@@ -117,7 +117,7 @@ export function describeAgent(agent: Agent) {
   return "";
 }
 
-export type PullRequests = "both" | "authored" | "requested";
+export type PullRequests = "all" | "both" | "authored" | "requested";
 export type ReviewSettings = {
   backend: string;
   model: string;

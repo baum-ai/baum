@@ -49,6 +49,12 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got != (reviewSettings{Backend: "codex", Model: "gpt-5.5", Automatic: false, PullRequests: "requested"}) {
 		t.Fatalf("after set %+v", got)
 	}
+	if _, e := run("set", "--pull-requests=all"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.PullRequests != "all" {
+		t.Fatalf("after choosing all %+v", got)
+	}
 	// An empty model is the backend's default, not the file's model.
 	if _, e := run("set", "--model=", "--pull-requests=both"); e != nil {
 		t.Fatal(e)

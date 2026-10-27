@@ -156,7 +156,7 @@ type Overview struct {
 	Enabled                 bool `json:"enabled"`
 	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
 	// PullRequests is which pull requests get automatic reviews: both,
-	// authored or requested.
+	// authored, requested or all.
 	PullRequests string   `json:"pull_requests"`
 	Repositories []Status `json:"repositories"`
 }
@@ -374,19 +374,10 @@ func (s *Scheduler) enable(name string) *repoState {
 }
 
 // eligible: the viewer's review is requested or the viewer wrote it, as
-// the preferences narrow that, and it is not a draft, not from a fork and not
-// by an author without known write access.
+// the preferences narrow or widen that to every pull request, and it is not a
+// draft, not from a fork and not by an author without known write access.
 func eligible(pr discovery.PullRequest, prefs repos.Preferences) bool {
-	var wanted bool
-	switch prefs.PullRequests {
-	case repos.PullRequestsAuthored:
-		wanted = pr.AuthoredByMe
-	case repos.PullRequestsRequested:
-		wanted = pr.ReviewRequestedFromMe
-	default:
-		wanted = pr.ReviewRequestedFromMe || pr.AuthoredByMe
-	}
-	return wanted && !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite
+	return prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe) && !pr.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite
 }
 
 // Observe records a complete discovery snapshot. The first one after a

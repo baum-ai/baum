@@ -18,9 +18,11 @@ mod lifecycle;
 mod navigation;
 mod notifications;
 mod onboarding;
+mod panel;
 mod status;
 mod tray;
 mod updater;
+mod zoom;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -312,6 +314,12 @@ fn main() {
             onboarding::github_connection,
             onboarding::repositories,
             onboarding::finish_setup,
+            panel::tray_panel,
+            panel::tray_panel_height,
+            panel::tray_action,
+            zoom::zoom_state,
+            zoom::set_zoom,
+            zoom::step_zoom,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
@@ -319,6 +327,7 @@ fn main() {
             let opener = app.handle().clone();
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
+            zoom::install(app.handle())?;
             tray::setup(app.handle());
             let page = onboarding::start(app.handle());
             development::grant_setup(app.handle())?;
@@ -330,11 +339,17 @@ fn main() {
             } else {
                 WebviewUrl::App(page.into())
             };
-            WebviewWindowBuilder::new(app, MAIN, page)
+            let window = WebviewWindowBuilder::new(app, MAIN, page)
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .visible(!hidden)
+                .initialization_script(zoom::SCRIPT)
+                .on_page_load(|webview, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        zoom::apply(webview.as_ref());
+                    }
+                })
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
                     let setup = onboarding::is_open(&handle);
@@ -357,6 +372,11 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // The panel is a convenience: the menu still works without it.
+            if let Err(e) = panel::create(app.handle()) {
+                eprintln!("baum desktop: no tray panel: {e}");
+            }
+            zoom::apply(window.as_ref());
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
@@ -380,12 +400,13 @@ fn main() {
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
     /// picker and CLI/hook management, on loopback; the bundled screens get
-    /// exactly their commands and no remote URL.
+    /// exactly their commands and no remote URL, and the tray panel's page
+    /// only its own, in its own window. Every page gets the zoom shortcuts.
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
-            "connecting-screen": ["allow-connection", "allow-reconnect"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks"],
+            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",
@@ -398,8 +419,10 @@ mod tests {
                 "allow-save-review-settings",
                 "allow-github-connection",
                 "allow-repositories",
-                "allow-finish-setup"
+                "allow-finish-setup",
+                "allow-step-zoom"
             ],
+            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action"],
         });
         let mut found = serde_json::Map::new();
         for entry in
@@ -416,7 +439,12 @@ mod tests {
             } else {
                 assert!(capability.get("remote").is_none(), "{capability}");
             }
-            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            let window = if capability["identifier"] == "tray-panel" {
+                crate::panel::LABEL
+            } else {
+                crate::MAIN
+            };
+            assert_eq!(capability["windows"], serde_json::json!([window]));
             found.insert(
                 capability["identifier"].as_str().unwrap().to_string(),
                 capability["permissions"].clone(),
@@ -433,7 +461,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen", "setup-screen", "daemon-pages"])
+            serde_json::json!([
+                "connecting-screen",
+                "setup-screen",
+                "daemon-pages",
+                "tray-panel"
+            ])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

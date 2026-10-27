@@ -151,7 +151,90 @@ body {
   color: #1f1a15;
 }
 .local-rail-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   margin-top: auto;
+}
+/* Plan usage, always in view above the foot: what is left of each plan
+   window, with thin bars. */
+.plan-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem 0.65rem 0.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-card) 45%, transparent);
+  color: var(--text-primary);
+}
+.plan-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.plan-rail-age {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.plan-rail-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.plan-rail-name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.plan-rail-tier {
+  margin-left: 0.4rem;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+.plan-rail-window {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.plan-rail-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  column-gap: 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+}
+.plan-rail-left {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.plan-rail-reset {
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+.plan-rail-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--status-neutral-bg);
+}
+.plan-rail-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s;
+}
+.plan-rail-compact {
+  display: none;
 }
 /* A narrow window keeps the glyphs only; the links keep their names. */
 @media (width < 64rem) {
@@ -170,6 +253,21 @@ body {
     position: relative;
     justify-content: center;
     padding: 0;
+  }
+  /* Folded, the box keeps only the lowest share left. */
+  .plan-rail {
+    align-items: center;
+    padding: 0.45rem 0;
+  }
+  .plan-rail-head,
+  .plan-rail-plan {
+    display: none;
+  }
+  .plan-rail-compact {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
   .local-rail-badge {
     position: absolute;
@@ -1185,19 +1283,6 @@ dialog.local-dialog-wide {
 }
 .settings-card .review-section + .review-section {
   border-top-color: var(--border-subtle);
-}
-/* The plan meters close the Reviews card as a section of their own. */
-.settings-plan-usage {
-  display: grid;
-  gap: 0.75rem;
-  padding: 1.25rem;
-  border-top: 1px solid var(--border-subtle);
-}
-.settings-plan-usage-title {
-  margin: 0;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-secondary);
 }
 .settings-card .review-label,
 .settings-card .review-section legend {

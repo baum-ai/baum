@@ -85,16 +85,16 @@ or add action. Displayed paths abbreviate the current home directory as
 2. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
    the Anthropic API), its model (the harness default, a listed model or a
    custom one), whether reviews run automatically and, if so, for which pull
-   requests (authored, requested, or both). The screen reads them with
-   `baum internal reviews show` and saves changes with `baum internal reviews
-   set` when the user opens baum at the end of setup. They are stored as app
-   preferences in the repository registry, which the daemon rereads for every
-   job.
+   requests (authored, requested, both, or all open pull requests). The
+   screen reads them with `baum internal reviews show` and saves changes with
+   `baum internal reviews set` when the user opens baum at the end of setup.
+   They are stored as app preferences in the repository registry, which the
+   daemon rereads for every job.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
      baum it replaces; PATH and administrator warnings show beneath it.
-   - Connect the agents you use, with separate install or enable buttons. The
+   - Connect the agents you use, with separate Connect or Enable buttons. The
      Codex marketplace plugin is installed with `baum hooks install --user
      --agent codex`. The screen explains reviewing trust with `/hooks`. The
      Claude Code plugin is installed separately with `--agent claude-code`.
@@ -257,10 +257,24 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
-  1 queued"); anything needing attention; Pause or Resume automatic reviews;
-  Start at login; Command Line and Hooks… (see "First run"); a Notifications
-  submenu (see "Notifications"); Quit; Quit and stop background reviews.
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
+  anything needing attention; each agent session asking for a permission or
+  an answer (clicking one opens its transcript); "Plan usage left" with a
+  line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
+  3 h"); Open baum; Pause or Resume automatic reviews; Start at login; Command
+  Line and Hooks… (see "First run"); a Notifications submenu (see
+  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  only the plans the daemon could read, and nothing when it can read neither
+  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  read differently, which the 3–10 s polls check.
+- **Tray panel (macOS and Windows):** a left click on the icon opens a small
+  borderless window under the icon (above it, on a bottom taskbar), drawn
+  like a menu: the status line, waiting sessions as highlighted rows that
+  open them, the plan usage left as coloured meters, Open baum, Pause or
+  Resume automatic reviews and Quit and stop background reviews. It hides
+  when it loses focus; the right click keeps the full menu. Linux tray hosts
+  report no clicks, so Linux has the menu only. The panel is the bundled
+  `tray.html`, created hidden at startup.
 - **Waiting on you.** While some pull requests wait on the user (review
   requested from them, or their own with changes requested, failing checks or
   a conflict, the "Review requested" and "Needs changes" groups of the app's
@@ -306,9 +320,12 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs` and
-   `GET /api/automatic` and `GET /api/index?view=waiting` every 3 s while jobs run and every 10 s otherwise,
-   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks), and
+   for what the daemon exposes only there: `GET /api/jobs`,
+   `GET /api/automatic`, `GET /api/index?view=waiting` and
+   `GET /api/live-sessions` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
+   `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
+   daemon reads again at most once a minute), and
    `PUT /api/automatic`. This is the credential the app already reads for the
    window and the health check, accepted on `/api/` routes only; the request
    that changes state sends the daemon's own origin and JSON, as the daemon
@@ -317,9 +334,13 @@ Two channels, each the least that does the job:
 
 Notifications read the events stream separately (see "Notifications").
 
-The tray adds no Tauri capability, and none names a remote URL: the tray, the
-dialogs and the autostart entry are used from Rust only, so pages the daemon
-serves still reach no command or plugin.
+The tray menu adds no Tauri capability, and none names a remote URL: the
+tray, the dialogs and the autostart entry are used from Rust only, so pages
+the daemon serves still reach no command or plugin. The tray panel's
+capability (`tray-panel`) lets only its bundled page, in its own window, read
+the tray's last view (`tray_panel`), fit the window to its height
+(`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
+waiting session (`tray_action`, which refuses any other menu id).
 
 ## Start at login
 
@@ -440,6 +461,30 @@ title is not interpreted.
   resumes after the last event it saw. A review requested or finished while the
   daemon was down is not announced.
 
+## Zoom
+
+The window zooms with the webview's own page zoom (WebKitGTK, WebView2 or
+WKWebView), not CSS or the desktop's scale factor. It therefore works the same on X11,
+Wayland, macOS and Windows, and it scales every page the window shows: the
+bundled screens, the daemon's pages and any page added later, without that page
+doing anything (`src/zoom.rs`).
+
+- **Shortcuts.** Ctrl (Cmd on macOS) with `+` or `=` zooms in, `-` zooms out
+  and `0` returns to 100%, from 67% to 200% in browser-like steps. Linux and
+  Windows windows have no menu bar to hold accelerators, so the window injects
+  a small script (`src/zoom.js`) into every page it loads. The script calls
+  `step_zoom` and announces the new level to the page as a `baum:zoom` event.
+  It matches the typed character and, for layouts where it differs (AZERTY's
+  0 key types `à`), the physical key.
+  The webview's built-in zoom keys, mouse-wheel and pinch zoom are not used.
+- **Settings.** The desktop Settings page has a Zoom card with the same levels,
+  through `zoom_state` and `set_zoom`. It follows changes made by the shortcuts.
+  It stays hidden when the app does not offer these commands, as when a
+  different daemon's pages show in an older app.
+- **Saved.** The level is saved in `window.json` in the app's config
+  directory and applied when the window opens and whenever a page starts
+  loading. A missing, damaged or unknown level is 100%.
+
 ## What pages may do
 
 - The window loads only the bundled screens and the attached daemon's origin.
@@ -454,14 +499,17 @@ title is not interpreted.
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
   button opens, which changes nothing and returns only the chosen folder. The
-  page registers it through the daemon's own API. They can call no other Tauri
-  command or plugin. `withGlobalTauri` is off.
+  page registers it through the daemon's own API. It also allows the zoom
+  commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
+  offered levels. They can call no other Tauri command or plugin.
+  `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
   origin only: `connecting-screen` allows the app's `connection` and
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Every change they make runs in the
+  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
   share `setup_state`, the four CLI and hook install/removal commands and

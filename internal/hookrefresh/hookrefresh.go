@@ -528,6 +528,9 @@ func (s *Service) refreshDue(ctx context.Context) {
 		}
 		clone := tasks[numbers[0]].clone
 		observations, err := s.Refresh(ctx, clone, numbers)
+		// Unreadable preferences leave the default choice: a candidate only
+		// spares a poll.
+		prefs, _ := s.Registry.Preferences(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -552,7 +555,7 @@ func (s *Service) refreshDue(ctx context.Context) {
 				t.limit = t.due
 				s.tasks[key{g, o.Number}] = t
 			}
-			if o.HeadSHA != t.known && candidate(t.pr, o) {
+			if o.HeadSHA != t.known && candidate(t.pr, o, prefs) {
 				moved = true
 				t.known = o.HeadSHA
 			}
@@ -567,9 +570,9 @@ func (s *Service) refreshDue(ctx context.Context) {
 // review: what the scheduler requires (eligible), as far as the cached
 // snapshot and the refresh show. The scheduler decides again from a fresh
 // poll; this only spares a poll that could queue nothing.
-func candidate(pr discovery.PullRequest, o discovery.Observation) bool {
+func candidate(pr discovery.PullRequest, o discovery.Observation, prefs repos.Preferences) bool {
 	open := o.State == "" || o.State == "OPEN"
-	return open && !o.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && (pr.AuthoredByMe || pr.ReviewRequestedFromMe)
+	return open && !o.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe)
 }
 
 // queueTrigger has the scheduler poll the repository now, or Window after
