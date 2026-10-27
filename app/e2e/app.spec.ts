@@ -872,7 +872,11 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await expect(goTo).toHaveCount(0);
   await expect(page.locator("[data-review-page]")).toBeVisible();
   await expect.poll(() => search().get("pr")).toBe("7");
-  // j and k step through the review in reading order, from the Summary.
+  // j and k step through the review in reading order, from the Summary, once
+  // the review has loaded its sections.
+  const rail = page.getByRole("navigation", { name: "Review sections" });
+  await expect(rail.getByRole("button", { name: "Summary", pressed: true })).toBeVisible();
+  await expect(rail.getByRole("button", { name: "Retry policy and backoff" })).toBeVisible();
   await expect.poll(() => search().get("pane")).toBeNull();
   await page.keyboard.press("j");
   await expect.poll(() => search().get("pane")).not.toBeNull();
