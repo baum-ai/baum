@@ -251,7 +251,9 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
   const lowest = figures.length ? Math.min(...figures) : null;
   const name = (plan: PlanUsageEntry) => providerName[plan.provider] ?? plan.provider;
   return (
-    <section className="plan-rail" aria-label="Plan usage">
+    // Not a named region: its own heading says what it is, and the Analytics
+    // page's "Plan usage" card is the region of that name.
+    <div className="plan-rail">
       <div className="plan-rail-head">
         <span>Plan usage</span>
         {age ? <span className="plan-rail-age">{age}</span> : null}
@@ -305,7 +307,7 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
       >
         {lowest === null ? "–" : `${lowest}%`}
       </span>
-    </section>
+    </div>
   );
 }
 

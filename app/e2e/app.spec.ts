@@ -315,39 +315,42 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toEqual([]);
 });
 
-// The root is the Inbox: one pull request to do next, a queue behind it and
-// what was cleared today. Skipping moves on to the next card.
-test("the Inbox shows one card to do next, the queue and what was cleared", async ({ page }) => {
+// The root is the Inbox: what waits on the person, grouped beside the
+// selected pull request's panel, with today's progress. j and a click move
+// the selection, and the panel follows it.
+test("the Inbox lists what is next beside the selected pull request", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(await launchURL());
   await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
-  const card = page.locator("article.upnext-card");
-  await expect(card).toBeVisible({ timeout: 15000 });
-  const title = card.locator("h2");
+  const panel = page.locator("article.upnext-panel");
+  await expect(panel).toBeVisible({ timeout: 15000 });
+  const title = panel.locator("h2.upnext-title");
   await expect(title).not.toHaveText("");
-  await expect(card).toContainText("Why now:");
-  const queue = page.getByRole("region", { name: "Then", exact: true });
-  await expect(queue.locator("button.upnext-row").first()).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Cleared today" })).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "Cleared today" })).toBeVisible();
+  const rows = page.locator("button.upnext-row");
+  expect(await rows.count()).toBeGreaterThan(1);
+  await expect(rows.first()).toHaveAttribute("aria-current", "true");
   await page.screenshot({
     path: "test-results/up-next-wide.png",
     fullPage: false,
     animations: "disabled",
   });
   const first = (await title.textContent()) ?? "";
-  await card.getByRole("button", { name: "Skip", exact: true }).click();
+  await page.keyboard.press("j");
+  await expect(rows.nth(1)).toHaveAttribute("aria-current", "true");
   await expect(title).not.toHaveText(first);
-  await expect(card).toContainText("Why now:");
+  await rows.first().click();
+  await expect(title).toHaveText(first);
   await page.setViewportSize({ width: 720, height: 900 });
-  await expect(card).toBeVisible();
+  await expect(panel).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
   await page.screenshot({
     path: "test-results/up-next-desktop-minimum.png",
     animations: "disabled",
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(card).toBeVisible();
+  await expect(rows.first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({
     path: "test-results/up-next-narrow.png",
