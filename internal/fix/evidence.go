@@ -137,29 +137,37 @@ var failing = map[string]bool{"failure": true, "timed_out": true, "startup_failu
 // FailingChecks lists the head commit's failing check runs (their latest
 // attempt) and commit statuses, at most 20, with their output bounded.
 func FailingChecks(ctx context.Context, r Reader, repository github.Repository, sha string) ([]Check, error) {
-	var runs struct {
-		CheckRuns []struct {
-			ID         int64
-			Name       string
-			Conclusion string
-			App        *struct{ Slug string }
-			Output     struct{ Title, Summary, Text string }
-		} `json:"check_runs"`
-	}
-	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
-	if err := readJSON(ctx, r, path+"/check-runs?per_page=100&filter=latest", &runs); err != nil {
-		return nil, fmt.Errorf("reading the checks: %w", err)
-	}
 	var checks []Check
-	for _, run := range runs.CheckRuns {
-		if !failing[run.Conclusion] {
-			continue
+	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
+	for page := 1; len(checks) < maxChecks; page++ {
+		var runs struct {
+			CheckRuns []struct {
+				ID         int64
+				Name       string
+				Conclusion string
+				App        *struct{ Slug string }
+				Output     struct{ Title, Summary, Text string }
+			} `json:"check_runs"`
 		}
-		check := Check{Name: bounded(run.Name, 256), Conclusion: run.Conclusion, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, maxCheckField), Text: bounded(run.Output.Text, maxCheckField)}
-		if run.App != nil && run.App.Slug == "github-actions" {
-			check.JobID = run.ID
+		if err := readJSON(ctx, r, fmt.Sprintf("%s/check-runs?per_page=100&filter=latest&page=%d", path, page), &runs); err != nil {
+			return nil, fmt.Errorf("reading the checks: %w", err)
 		}
-		checks = append(checks, check)
+		for _, run := range runs.CheckRuns {
+			if !failing[run.Conclusion] {
+				continue
+			}
+			check := Check{Name: bounded(run.Name, 256), Conclusion: run.Conclusion, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, maxCheckField), Text: bounded(run.Output.Text, maxCheckField)}
+			if run.App != nil && run.App.Slug == "github-actions" {
+				check.JobID = run.ID
+			}
+			checks = append(checks, check)
+			if len(checks) == maxChecks {
+				break
+			}
+		}
+		if len(runs.CheckRuns) < 100 {
+			break
+		}
 	}
 	var combined struct {
 		Statuses []struct {

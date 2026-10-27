@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -311,7 +312,9 @@ func (p *poll) openPullPages(ctx context.Context, repository github.Repository) 
 				result[i].UpdatedAt = time.Time{}
 			}
 			// Compare only the typed, minimal result: no raw GraphQL payload is cached.
-			minimal, _ := json.Marshal(result)
+			stable := append([]gqlPR(nil), result...)
+			sort.Slice(stable, func(i, j int) bool { return stable[i].Number < stable[j].Number })
+			minimal, _ := json.Marshal(stable)
 			const cacheKey = "graphql:open-pulls"
 			if string(minimal) != string(p.cache.Responses[cacheKey].Body) {
 				p.unchanged = false

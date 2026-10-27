@@ -317,6 +317,20 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 	}
 	name := ""
 	for _, remote := range remotes {
+		pushURL, err := repo.RemotePushURL(ctx, remote.Name)
+		if err != nil || pushURL == "" {
+			continue
+		}
+		validPushURLs := true
+		for _, destination := range strings.Split(pushURL, "\n") {
+			if !names(destination) {
+				validPushURLs = false
+				break
+			}
+		}
+		if !validPushURLs {
+			continue
+		}
 		if !names(remote.URL) {
 			rewritten, err := repo.RemoteFetchURL(ctx, remote.Name)
 			if err != nil || !names(rewritten) {

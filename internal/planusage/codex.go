@@ -85,13 +85,17 @@ func (c *Codex) Read(ctx context.Context) Plan {
 		out.Reason = "No Codex sessions found yet. Run Codex once to see its usage."
 		return out
 	}
+	var latest Plan
 	for _, name := range files {
 		if ctx.Err() != nil {
 			break
 		}
-		if plan, ok := codexSnapshot(name, now); ok {
-			return plan
+		if plan, ok := codexSnapshot(name, now); ok && (!latest.Available || plan.FetchedAt.After(latest.FetchedAt)) {
+			latest = plan
 		}
+	}
+	if latest.Available {
+		return latest
 	}
 	out.Reason = "Codex has not reported its usage limits yet."
 	return out
