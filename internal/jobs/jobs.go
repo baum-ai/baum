@@ -166,8 +166,11 @@ type Job struct {
 	// ThreadOutcomes is what became of each review thread a fix addressed
 	// (FixThreads), once its push succeeded.
 	ThreadOutcomes []fix.ThreadOutcome `json:"thread_outcomes,omitempty"`
-	CreatedAt      time.Time           `json:"created_at"`
-	UpdatedAt      time.Time           `json:"updated_at"`
+	// HasTranscript says a fix kept a transcript of its agent's run, which
+	// GET /api/jobs/{id}/transcript serves.
+	HasTranscript bool      `json:"has_transcript,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
@@ -178,23 +181,27 @@ type Progress struct {
 	// Job).
 	Commit, CommitURL, Summary string
 	Threads                    []fix.ThreadOutcome
+	// HasTranscript is set once a fix's transcript file exists.
+	HasTranscript bool
 }
 type Executor interface {
 	Prepare(context.Context, Item) (Prepared, string, error)
 	Execute(context.Context, Prepared, func(Progress)) (*float64, error)
 }
 type Queue struct {
-	mu        sync.Mutex
-	path      string
-	executor  Executor
-	jobs      []Job
-	estimates map[string]Estimate
-	cancels   map[string]context.CancelFunc
-	wake      chan struct{}
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	changed   func(Job)
+	mu   sync.Mutex
+	path string
+	// transcripts is where fix jobs keep their transcripts, beside path.
+	transcripts string
+	executor    Executor
+	jobs        []Job
+	estimates   map[string]Estimate
+	cancels     map[string]context.CancelFunc
+	wake        chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	changed     func(Job)
 	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
 	clock func() time.Time
 	// lock keeps every other process from opening this journal.
@@ -272,7 +279,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
 	opened := false
 	defer func() {
 		if !opened {
@@ -694,7 +701,7 @@ func (q *Queue) worker() {
 				break
 			}
 			j := q.jobs[i]
-			ctx, cancel := context.WithCancel(q.ctx)
+			ctx, cancel := context.WithCancel(context.WithValue(q.ctx, transcriptTargetKey{}, transcriptTarget{q.transcripts, j.ID}))
 			q.cancels[j.ID] = cancel
 			q.mu.Unlock()
 			q.signal()
@@ -717,6 +724,9 @@ func (q *Queue) worker() {
 				}
 				if p.Threads != nil {
 					q.jobs[i].ThreadOutcomes = p.Threads
+				}
+				if p.HasTranscript {
+					q.jobs[i].HasTranscript = true
 				}
 				q.jobs[i].UpdatedAt = time.Now().UTC()
 				// Save every reported usage update before publishing it. A crash

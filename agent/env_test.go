@@ -87,13 +87,13 @@ func TestLocalEnvironmentWindows(t *testing.T) {
 }
 
 func TestWithUserEnvSetsTheUsersVariablesOverTheInherited(t *testing.T) {
-	inherited := []string{"PATH=/bin", "HOME=/home/ada", "LANG=C"}
-	got := WithUserEnv(inherited, []string{"GIT_CONFIG_GLOBAL=/home/ada/agent.gitconfig", "LANG=en_GB.UTF-8"})
-	want := []string{"PATH=/bin", "HOME=/home/ada", "GIT_CONFIG_GLOBAL=/home/ada/agent.gitconfig", "LANG=en_GB.UTF-8"}
+	inherited := []string{"PATH=/bin", "HOME=/u/ada", "LANG=C"}
+	got := WithUserEnv(inherited, []string{"GIT_CONFIG_GLOBAL=/u/ada/agent.gitconfig", "LANG=en_GB.UTF-8"})
+	want := []string{"PATH=/bin", "HOME=/u/ada", "GIT_CONFIG_GLOBAL=/u/ada/agent.gitconfig", "LANG=en_GB.UTF-8"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("WithUserEnv = %q, want %q", got, want)
 	}
-	if !slices.Equal(inherited, []string{"PATH=/bin", "HOME=/home/ada", "LANG=C"}) {
+	if !slices.Equal(inherited, []string{"PATH=/bin", "HOME=/u/ada", "LANG=C"}) {
 		t.Fatal("WithUserEnv changed its input")
 	}
 	if got := WithUserEnv(inherited, nil); !slices.Equal(got, inherited) {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/baum-ai/baum/internal/reviewgroups"
 )
@@ -145,6 +146,47 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		respond(w, v)
+	})
+	// transcript serves a fix job's transcript from entry after on, read
+	// fresh from its file.
+	mux.HandleFunc("GET /api/jobs/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
+		after := 0
+		if v := r.URL.Query().Get("after"); v != "" {
+			n, e := strconv.Atoi(v)
+			if e != nil || n < 0 {
+				http.Error(w, "invalid after", 400)
+				return
+			}
+			after = n
+		}
+		var job Job
+		found := false
+		for _, j := range q.List() {
+			if j.ID == r.PathValue("id") {
+				job, found = j, true
+			}
+		}
+		if !found || !job.HasTranscript {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		lines, more, e := readTranscript(transcriptPath(q.transcripts, job.ID), after)
+		if errors.Is(e, os.ErrNotExist) {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		if e != nil {
+			http.Error(w, http.StatusText(500), 500)
+			return
+		}
+		next := after
+		if len(lines) > 0 {
+			next = lines[len(lines)-1].Seq
+		}
+		if lines == nil {
+			lines = []transcriptLine{}
+		}
+		respond(w, map[string]any{"entries": lines, "next": next, "more": more, "done": job.State != "queued" && job.State != "running"})
 	})
 	return mux
 }

@@ -288,6 +288,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	}
 	completed := false
 	toolsSeen := map[string]string{}
+	titles := map[string]string{}
 	done := make(chan struct{})
 	defer close(done)
 	if request.Logger != nil {
@@ -317,12 +318,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 				ID, Model string
 				Content   []struct {
 					Type, ID, Name string
+					Text, Thinking string
 					ToolUseID      string `json:"tool_use_id"`
 					IsError        bool   `json:"is_error"`
 					Content        json.RawMessage
 					Input          struct {
 						FilePath      string `json:"file_path"`
 						Path          string
+						Pattern       string
+						Command       string
 						Offset, Limit int
 					}
 				}
@@ -387,12 +391,25 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		for _, content := range event.Message.Content {
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
+				titles[content.ID] = toolTitle(content.Name, content.Input.FilePath, content.Input.Path, content.Input.Pattern, content.Input.Command)
+				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ID, Tool: content.Name, Title: titles[content.ID], Status: "running"})
 				request.Activity.ToolStarted(content.ID, content.Name)
 				path := agent.EventPath(request.Directory, cmp.Or(content.Input.FilePath, content.Input.Path))
 				record(agent.Event{Kind: "tool_call", ID: content.ID, Tool: content.Name, Path: path, Offset: content.Input.Offset, Limit: content.Input.Limit})
 			}
+			if event.Type == "assistant" && content.Type == "text" && strings.TrimSpace(content.Text) != "" {
+				request.Emit(agent.TranscriptEntry{Kind: "message", Text: content.Text})
+			}
+			if event.Type == "assistant" && content.Type == "thinking" && strings.TrimSpace(content.Thinking) != "" {
+				request.Emit(agent.TranscriptEntry{Kind: "reasoning", Text: content.Thinking})
+			}
 			if content.Type == "tool_result" {
 				request.Activity.ToolFinished(content.ToolUseID)
+				finished := "completed"
+				if content.IsError {
+					finished = "failed"
+				}
+				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ToolUseID, Tool: toolsSeen[content.ToolUseID], Title: titles[content.ToolUseID], Text: toolResultText(content.Content), Status: finished})
 				status := "success"
 				tool := toolsSeen[content.ToolUseID]
 				if content.IsError && tool == structuredOutputTool {
@@ -541,6 +558,15 @@ func boundedSummary(text string) string {
 		text = strings.ToValidUTF8(text[:agent.MaxFixSummaryBytes], "") + "…"
 	}
 	return text
+}
+
+// toolTitle names a tool call for the transcript: the tool and its main
+// argument, the first of path, pattern and command that it has.
+func toolTitle(name string, arguments ...string) string {
+	if argument := cmp.Or(arguments...); argument != "" {
+		return name + " " + argument
+	}
+	return name
 }
 
 const structuredOutputTool = "StructuredOutput"

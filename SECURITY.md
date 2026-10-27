@@ -738,6 +738,9 @@ computer, plus one GitHub search per picked repository:
   90 days (ids, dates and trailers), through the same private read-only
   repository the PR page uses; nothing is fetched. They are held in memory for
   five minutes and not stored.
+- **Fix transcripts.** What a fix's agent said and ran, with its tool output,
+  in `transcripts/` beside `jobs.json` (private files, secrets masked, bounded,
+  the 50 latest fixes). It stays on your machine.
 - **baum's own work.** The jobs list (`jobs.json`) and a small ledger,
   `analytics-actions.json`, of the merges, branch updates and check re-runs you
   made from the app (time, kind, repository and pull request number), kept 90

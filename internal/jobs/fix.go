@@ -220,13 +220,21 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was confirmed; confirm it again")}
 		}
 	}
+	var transcript func(agent.TranscriptEntry)
+	hasTranscript := false
+	if target, ok := transcriptTargetOf(ctx); ok {
+		if writer, err := openTranscript(target.Dir, target.JobID); err == nil {
+			defer writer.Close()
+			transcript, hasTranscript = func(entry agent.TranscriptEntry) { writer.Add(ctx, entry) }, true
+		}
+	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(),
-		Progress: func(phase string) { progress(Progress{Phase: phase}) }})
-	report := Progress{Phase: "finishing"}
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript,
+		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
+	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64
 	if out.Agent != nil {
 		accounting := &agent.Accounting{}

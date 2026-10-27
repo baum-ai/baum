@@ -110,6 +110,8 @@ type Options struct {
 	// Env are the user's agent variables for the git commands of the fix
 	// (gitlocal.FixOptions.Env).
 	Env []string
+	// Transcript, when set, receives the agent's steps (agent.Request.Transcript).
+	Transcript func(agent.TranscriptEntry)
 }
 
 // Outcome is what a fix did.
@@ -223,7 +225,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			wall = defaultWallClock
 		}
 		runCtx, cancel := context.WithTimeout(ctx, wall)
-		result, err := o.Agent.Fix(runCtx, agent.Request{Logger: o.Logger, Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens})
+		result, err := o.Agent.Fix(runCtx, agent.Request{Logger: o.Logger, Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
 		timedOut := runCtx.Err() != nil
 		cancel()
 		out.Agent = &result
