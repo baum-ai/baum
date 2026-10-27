@@ -410,7 +410,12 @@ func (r *Registry) AddForwarded(ctx context.Context, path, repository, alias str
 	}
 	// The earlier name is the same repository: its clones move to the
 	// current one, and it is not picked twice.
-	if e = r.exec(ctx, []string{"UPDATE clones SET repository=?2 WHERE repository=?1", "DELETE FROM picked WHERE identity=?1"}, earlier, current); e != nil {
+	// Settings chosen under a still-picked earlier name replace the current
+	// name's default.
+	if e = r.exec(ctx, []string{
+		`UPDATE repositories SET settings=(SELECT settings FROM repositories WHERE identity=?1) WHERE identity=?2 AND settings='{"automatic":null}' AND EXISTS (SELECT 1 FROM picked WHERE identity=?1)`,
+		"UPDATE clones SET repository=?2 WHERE repository=?1", "DELETE FROM picked WHERE identity=?1",
+	}, earlier, current); e != nil {
 		return Clone{}, e
 	}
 	return c, nil

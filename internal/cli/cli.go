@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 // buildVersion is injected by the release build through -ldflags -X; local
@@ -64,6 +65,11 @@ func ExitCode(err error) int {
 
 // Run dispatches args to the matching subcommand.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	// Remotes using an earlier name the registry recorded read as the
+	// repository's current one here too, as in the daemon.
+	if r, err := repos.OpenReadOnly(""); err == nil {
+		_ = r.Close()
+	}
 	cmd := newRootCommand(stdin, stdout, stderr)
 	cmd.SetArgs(args)
 	err := cmd.Execute()

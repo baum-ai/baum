@@ -664,7 +664,7 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await renamed.getByRole("button", { name: "Use folder", exact: true }).click();
   await expect(renamed).toContainText("Found at");
   await expect(renamed).toContainText(
-    "Its local clone's remote uses acme/old-renamed, an earlier name that GitHub forwards to acme/renamed.",
+    "GitHub forwards acme/old-renamed to acme/renamed; clones whose remote still uses that earlier name count as its clones.",
   );
   await page.screenshot({ path: "test-results/forwarded-remote.png", animations: "disabled" });
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");

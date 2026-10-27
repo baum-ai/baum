@@ -76,8 +76,9 @@ func RemoteRepository(remote string) (host, repository string, ok bool) {
 		return "", "", false
 	}
 	host, repository = strings.ToLower(host), strings.ToLower(parts[0]+"/"+parts[1])
-	// Earlier names are github.com's; an SSH alias has no dot.
-	if host == "github.com" || host == "ssh.github.com" || !strings.Contains(host, ".") {
+	// Earlier names are github.com's; an SSH alias has no dot or extends
+	// github.com (github.com-work).
+	if strings.HasPrefix(host, "github.com") || host == "ssh.github.com" || !strings.Contains(host, ".") {
 		repository = RenamedTo(repository)
 	}
 	return host, repository, true

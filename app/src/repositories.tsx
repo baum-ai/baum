@@ -98,10 +98,10 @@ export function cloneDirectory(parent: string, repository: string) {
   const separator = trimmed.includes("\\") && !trimmed.includes("/") ? "\\" : "/";
   return `${trimmed}${separator}${name}`;
 }
-/** Said for a repository whose clone was registered with a remote using an
+/** Said for a repository a clone was registered for with a remote using an
  *  earlier name. */
 export const earlierNamesWarning = (names: string[], repository: string) =>
-  `Its local clone's remote uses ${names.join(" or ")}, an earlier name that GitHub forwards to ${repository}.`;
+  `GitHub forwards ${names.join(" and ")} to ${repository}; clones whose remote still uses that earlier name count as its clones.`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);

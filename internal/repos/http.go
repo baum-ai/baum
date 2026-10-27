@@ -238,13 +238,14 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 // forwards to the requested repository, "" when none does; unchecked when
 // GitHub could not be asked about one.
 func forwarded(ctx context.Context, mismatch *RemoteMismatchError, current CurrentName) (alias string, unchecked bool) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	for _, remote := range mismatch.Remotes {
 		if gh, e := github.ParseRepository(remote); e != nil || gh.Host != config.GitHubHost {
 			continue
 		}
-		switch name, e := current(ctx, remote); {
+		lookup, cancel := context.WithTimeout(ctx, 10*time.Second)
+		name, e := current(lookup, remote)
+		cancel()
+		switch {
 		case e == nil && name == mismatch.Repository:
 			return remote, false
 		case e != nil && !errors.Is(e, github.ErrNotFound):

@@ -253,6 +253,6 @@ it("warns about a picked repository whose clone uses an earlier name", async () 
         : { running: false, repositories: {}, attached: [] }) as never;
   await act(async () => root.render(<RepositoryPicker call={call} />));
   expect(node.querySelector(".repository-warning")!.textContent).toBe(
-    "Its local clone's remote uses old/repo, an earlier name that GitHub forwards to new/repo.",
+    "GitHub forwards old/repo to new/repo; clones whose remote still uses that earlier name count as its clones.",
   );
 });

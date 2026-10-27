@@ -67,6 +67,10 @@ func TestFolderHTTPRegistersARemoteUsingAnEarlierName(t *testing.T) {
 	if c, err := r.Add(ctx, before, nil); err != nil || c.Repository != old {
 		t.Fatalf("Add = %+v, %v", c, err)
 	}
+	automatic := true
+	if err := r.UpdateRepository(ctx, old, Settings{Automatic: &automatic}); err != nil {
+		t.Fatal(err)
+	}
 	var asked []string
 	lookup := func(_ context.Context, repository string) (string, error) {
 		asked = append(asked, repository)
@@ -79,7 +83,7 @@ func TestFolderHTTPRegistersARemoteUsingAnEarlierName(t *testing.T) {
 	// Both clones are available clones of the repository, which is picked
 	// once, and their remotes name it for every caller matching remotes.
 	list, err := r.Repositories(ctx)
-	if err != nil || len(list) != 1 || list[0].Repository != current || len(list[0].Clones) != 2 || !list[0].Clones[0].Available || !list[0].Clones[1].Available || strings.Join(list[0].EarlierNames, ",") != old {
+	if err != nil || len(list) != 1 || list[0].Repository != current || len(list[0].Clones) != 2 || !list[0].Clones[0].Available || !list[0].Clones[1].Available || list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic || strings.Join(list[0].EarlierNames, ",") != old {
 		t.Fatalf("%+v %v", list, err)
 	}
 	if !gitlocal.SameRepository("https://github.com/"+old, current) || gitlocal.SameRepository("https://gitlab.com/"+old, current) {

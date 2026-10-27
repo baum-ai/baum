@@ -18,11 +18,13 @@ its HTTP handler uses.
 - `aliases(alias, repository)`: earlier github.com names GitHub forwards to a
   repository after a rename or transfer, recorded when a folder whose remote
   uses one is registered (`AddForwarded`). `Open` and `OpenReadOnly` load them
-  into `gitlocal`, so in that process every remote URL using an earlier name
+  into `gitlocal` (every `baum` command opens the registry read-only first), so
+  in that process every remote URL using an earlier name
   reads as the current one (`gitlocal.RemoteRepository`,
   `github.RepositoryFromRemote`) and the clone is a clone of the repository
   everywhere. Clones registered under the earlier name move to the current
-  one, which is picked once. Renames chain, and renaming back undoes them.
+  one, which is picked once and takes the earlier name's settings while its
+  own are still the default. Renames chain, and renaming back undoes them.
   Aliases are never checked again; the remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
 - `preferences(key, value)`: the global preferences as one JSON row.
