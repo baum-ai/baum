@@ -173,9 +173,19 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 	var st PullSync
 	var cursor, relinked sql.NullInt64
 	var activated int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO pull_sync(repository, activated_at) VALUES (?,?)
-ON CONFLICT(repository) DO UPDATE SET repository=excluded.repository RETURNING etag, cursor_updated_at, activated_at, relinked_at`,
-		repository, s.now().UnixMilli()).Scan(&st.ETag, &cursor, &activated, &relinked)
+	read := func() error {
+		return s.db.QueryRowContext(ctx, `SELECT etag, cursor_updated_at, activated_at, relinked_at FROM pull_sync WHERE repository=?`, repository).
+			Scan(&st.ETag, &cursor, &activated, &relinked)
+	}
+	err := read()
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO pull_sync(repository, activated_at) VALUES (?,?)`, repository, s.now().UnixMilli()); err == nil {
+			err = read()
+		}
+	}
+	if err != nil {
+		return st, err
+	}
 	st.ActivatedAt = time.UnixMilli(activated)
 	if cursor.Valid {
 		st.Cursor = time.UnixMilli(cursor.Int64)
@@ -183,12 +193,11 @@ ON CONFLICT(repository) DO UPDATE SET repository=excluded.repository RETURNING e
 	if relinked.Valid {
 		st.RelinkedAt = time.UnixMilli(relinked.Int64)
 	}
-	return st, err
+	return st, nil
 }
 
-// SavePulls upserts the listed pull requests. A non-zero cursor records a
-// complete listing: the sync state moves to etag and the cursor, which never
-// goes back.
+// SavePulls upserts the listed pull requests and, for a non-zero cursor,
+// moves the sync state to etag and the cursor; the cursor never goes back.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, p := range pulls {
@@ -272,6 +281,8 @@ WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
 // PullsWithCommitsSince lists the pull requests holding a recorded commit
 // made at or after since, at the head their commits were recorded at, so
 // they are linked again while a newer head cannot be read.
+// The base is the current one: with a new base too, the range is read from
+// it (rare, and the next read of the new head records it right).
 func (s *Store) PullsWithCommitsSince(ctx context.Context, repository string, since time.Time) ([]StoredPull, error) {
 	return s.pulls(ctx, `SELECT number, CASE WHEN paths_head_sha != '' THEN paths_head_sha ELSE head_sha END, base_sha, base_ref
 FROM pull_request p WHERE repository=?1 AND EXISTS

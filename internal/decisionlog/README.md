@@ -120,20 +120,24 @@ transcripts, never the transcripts themselves.
 
 ## Feature log
 
-The feature log groups a repository's pull requests and sessions into
+The feature log will group a repository's pull requests and sessions into
 features as the hosted feature log does, with the `features` package's rules
-and published prompts. Its choices are in `featureconfig.go`. It shares the
-store with capture. `FeatureWorker` runs in the daemon beside the capture
-scheduler, every minute and when settings change, for each picked repository
-with an available clone whose decisions are captured (the gate above); a
-repository turned off is not read and makes no GitHub call. A repository whose
-listing fails, whose clone cannot be read or whose heads cannot be fetched is
-tried again after 15 minutes.
+and published prompts. Its choices are in `featureconfig.go`, and it shares
+the store with capture. `FeatureWorker` now syncs a repository's pull
+requests, reads their paths and commits from the clone, and links the
+commits to this machine's sessions; placing them in features builds on that.
+It runs in the daemon beside the capture scheduler, every minute and when
+settings change, for each picked repository with an available clone whose
+decisions are captured (the gate above); a repository turned off is not read
+and makes no GitHub call. A repository whose listing fails, whose clone
+cannot be read or whose remote is out of reach is tried again after 15
+minutes.
 
 ### Pull requests
 
 - The first run for a repository records when the feature log was activated
-  for it (`pull_sync.activated_at`); work from before is not assigned.
+  for it (`pull_sync.activated_at`), for placement to leave earlier work
+  out.
 - The repository's pull requests of every state are listed through the
   GitHub REST API, most recently updated first, 64 a page (a page too large
   to read is read again at half the size, down to 8), until one updated
@@ -146,26 +150,27 @@ tried again after 15 minutes.
 - Only pull requests that can be placed in a feature are read from the
   clone: open or merged ones not opened by a bot. Each pass fetches what
   its due pull requests lack, as a review fetches a missing pull request
-  commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`,
-  a base by its id into `refs/baum/pull/<N>/base`, 100 refspecs to a
-  `git fetch`, and one at a time when such a fetch fails, so a ref the
-  remote lacks keeps out no other. The refs stay, as they may back saved
-  reviews. Each pull request's commits, from its base to its head, are then
-  read from the clone's own objects, never fetched. Its paths are the files
-  its commits change; its commits replace those recorded. GitHub's file
-  list is never read.
-- When every fetch fails and the remote does not answer `git ls-remote`
-  either, nothing is counted against any pull request and the repository
-  waits; when it answers, the refs are missing and the pull requests fail
-  as below. A pull request whose commits then cannot be read
-  (its head or base is missing, or it has too many) is read again after 15
-  minutes; after 3 failures at its head its paths are unknown at that head.
-  A new head starts the count again, and the daily re-link has every
-  failed pull request read again at once, an unknown one 3 more times. A
-  pull request that fails never stops the others or the linking.
+  commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
+  and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
+  100 refspecs to a `git fetch`. So each such pull request of the last 180
+  days gets refs in the clone; they are kept, not pruned, as they may back
+  saved reviews. Each pull request's commits, from its base to its head,
+  are then read from the clone's own objects, never fetched. Its paths are
+  the files its commits change; its commits replace those recorded.
+  GitHub's file list is never read.
+- When a fetch fails, the remote is asked for its HEAD (`git ls-remote`).
+  When it does not answer, the pass stops, nothing is counted against any
+  pull request and the repository waits; when it answers, the refs of the
+  failed fetch are fetched one at a time, so one the remote lacks keeps out
+  no other. A pull request whose commits then cannot be read (its head or
+  base is missing, or it has too many) is read again after 15 minutes;
+  after 3 failures at its head its paths are unknown at that head. A new
+  head starts the count again, and the daily re-link has every failed pull
+  request read again at once, an unknown one 3 more times. A pull request
+  that fails never stops the others or the linking.
 - The gate is read again before the fetch and before each pull request; a
   repository turned off during a sync stops there, and its commits are not
-  linked now.
+  linked in that pass.
 
 ### Sessions linked to pull requests
 
@@ -183,25 +188,25 @@ they had:
 
 A commit linked to a session more than one way keeps its strongest link.
 
-A captured session's decisions are attributed (`features.SessionLinks`)
-from the feature pull requests its linked commits are in, each with the
-paths it touches and those it was assigned with; a session with no capture
-row has none.
+`Store.SessionLinks` reads what attributes a captured session's decisions
+(`features.SessionLinks`): the feature pull requests its linked commits are
+in, each with the paths it touches and those it was assigned with; a
+session with no capture row has none.
 
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
-  their paths at a head, their commits, and the listing's ETag, cursor,
-  activation and last full re-link.
+  their paths at a head and failed reads, their commits, and the listing's
+  ETag, cursor, activation and last full re-link.
 - `session_commit`: each session linked to a commit, with the method and
   confidence.
-- `feature_version`: a repository's groupings, at most one `current` and one
-  `building`; the feature log reads and writes the current one, made when
-  first needed.
-- `feature`, `feature_pull`, `feature_session`, `feature_settle`,
-  `pr_summary`, `feature_consolidation`: the features of a version, their
-  members, the items settled for a trigger, generated pull request summaries
-  and the consolidation passes.
+- `feature_version`, `feature`, `feature_pull`, `feature_session`,
+  `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
+  placement writes. A repository has at most one `current` and one
+  `building` version; `liveVersion` is the one place that chooses the
+  version in use (the current one, made when first needed).
+
+These rows are not pruned.
 
 ## Testing by hand
 

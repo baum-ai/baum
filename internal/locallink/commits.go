@@ -40,10 +40,11 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 	if len(commits) == 0 {
 		return nil, nil
 	}
-	// The remote is only a missing checkpoint's fetch hint: the clone is
-	// opened for it only when a commit names a checkpoint.
+	// The remote is only a missing checkpoint's fetch hint in a warning: the
+	// clone is opened for it only when warnings are read and a commit names
+	// a checkpoint.
 	remote := ""
-	if opts.Repository != "" && slices.ContainsFunc(commits, func(c gitlocal.Commit) bool {
+	if opts.Repository != "" && opts.Warn != nil && slices.ContainsFunc(commits, func(c gitlocal.Commit) bool {
 		valid, _ := entirecheckpoint.ParseMessage(c.Message)
 		return len(valid) > 0
 	}) {

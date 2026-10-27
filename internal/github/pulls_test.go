@@ -17,10 +17,11 @@ import (
 type listReader struct {
 	count int
 	etag  string
-	// tooLarge refuses pages of more than this many as too large; 0 never.
-	tooLarge int
-	paths    []string
-	etags    []string
+	// tooLarge refuses pages of more than this many as too large, from the
+	// pull request at offset tooLargeFrom on; 0 never.
+	tooLarge, tooLargeFrom int
+	paths                  []string
+	etags                  []string
 }
 
 func (r *listReader) Read(_ context.Context, path, etag string) (int, http.Header, []byte, error) {
@@ -37,7 +38,7 @@ func (r *listReader) Read(_ context.Context, path, etag string) (int, http.Heade
 	if perPage < 1 || page < 1 {
 		return 0, nil, nil, fmt.Errorf("bad path %s", path)
 	}
-	if r.tooLarge > 0 && perPage > r.tooLarge {
+	if r.tooLarge > 0 && perPage > r.tooLarge && page*perPage > r.tooLargeFrom {
 		return 0, nil, nil, ErrResponseTooLarge
 	}
 	rows := []map[string]any{}
@@ -131,5 +132,23 @@ func TestListPullRequestsShrinksOversizedPages(t *testing.T) {
 	}
 	if _, err := ListPullRequests(context.Background(), &listReader{count: 40, tooLarge: 4}, widgets, "", time.Time{}); err != ErrResponseTooLarge {
 		t.Fatalf("err = %v, want too large below the floor", err)
+	}
+}
+
+// A page refused partway through a listing shrinks it from there on, with no
+// pull request listed twice or left out.
+func TestListPullRequestsShrinksPartway(t *testing.T) {
+	reader := &listReader{count: 3 * pullsPerPage, tooLarge: 16, tooLargeFrom: pullsPerPage}
+	list, err := ListPullRequests(context.Background(), reader, widgets, "", time.Time{})
+	if err != nil || len(list.Pulls) != reader.count {
+		t.Fatalf("list = %d pulls, %v", len(list.Pulls), err)
+	}
+	for i, pull := range list.Pulls {
+		if pull.Number != i+1 {
+			t.Fatalf("pull %d is number %d", i, pull.Number)
+		}
+	}
+	if !strings.Contains(reader.paths[0], fmt.Sprintf("per_page=%d&page=1", pullsPerPage)) || !strings.Contains(reader.paths[3], "per_page=16&page=5") {
+		t.Fatalf("paths = %v", reader.paths[:4])
 	}
 }

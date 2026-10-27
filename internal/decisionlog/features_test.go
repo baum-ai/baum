@@ -372,23 +372,29 @@ func TestFeatureWorkerGateAndShutdown(t *testing.T) {
 			registry.repositories[0].Clones = []repos.Clone{{Path: t.TempDir(), Available: true}}
 			registry.listed = make(chan struct{}, 16)
 			calls := 0
-			w := &FeatureWorker{Store: openStore(t, &clock{t0}), Registry: registry, Tick: time.Hour,
-				GitHub: func(context.Context, github.Repository) (github.Reader, error) {
-					calls++
-					return nil, fmt.Errorf("unexpected")
-				}}
 			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// A repository turned on is reached, and the daemon stops in the
+			// middle of its pass.
+			w := &FeatureWorker{Store: openStore(t, &clock{t0}), Registry: registry, Tick: time.Hour,
+				GitHub: func(ctx context.Context, _ github.Repository) (github.Reader, error) {
+					calls++
+					cancel()
+					return nil, ctx.Err()
+				}}
 			done := make(chan struct{})
 			go func() {
 				w.Run(ctx)
 				close(done)
 			}()
-			// The first pass reads the repositories; a wake starts a second,
-			// so the first has finished when it reads them again.
-			<-registry.listed
-			w.Wake()
-			<-registry.listed
-			cancel()
+			if name != "on" {
+				// The first pass reads the repositories; a wake starts a
+				// second, so the first has finished when it reads them again.
+				<-registry.listed
+				w.Wake()
+				<-registry.listed
+				cancel()
+			}
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
@@ -534,48 +540,64 @@ func TestFeatureSyncTruncatedListing(t *testing.T) {
 	}
 }
 
-// A new head starts a pull request's failure count again; the daily re-link
-// has every failed one read again at once.
+// A new head starts a pull request's failure count again; the third failure
+// at a head leaves its paths unknown, and the daily re-link has it, and every
+// other failed one, read again at once.
 func TestPathFailuresFollowTheHead(t *testing.T) {
 	ctx := context.Background()
 	c := &clock{t0}
 	s := openStore(t, c)
-	list := func(head string) {
+	list := func(number int, head string) {
 		t.Helper()
-		pull := github.ListedPull{Number: 1, State: "open", HeadSHA: head, BaseSHA: "b", UpdatedAt: t0}
+		pull := github.ListedPull{Number: number, State: "open", HeadSHA: head, BaseSHA: "b", UpdatedAt: t0}
 		if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", t0); err != nil {
 			t.Fatal(err)
 		}
 	}
-	state := func() (failures int, retry sql.NullInt64) {
+	state := func(number int) (head string, failures int, retry sql.NullInt64) {
 		t.Helper()
-		if err := s.db.QueryRow(`SELECT paths_failures, paths_retry_at FROM pull_request WHERE number=1`).Scan(&failures, &retry); err != nil {
+		if err := s.db.QueryRow(`SELECT paths_head_sha, paths_failures, paths_retry_at FROM pull_request WHERE number=?`, number).
+			Scan(&head, &failures, &retry); err != nil {
 			t.Fatal(err)
 		}
-		return failures, retry
+		return head, failures, retry
+	}
+	fail := func(number int, head string, wantUnknown bool) {
+		t.Helper()
+		if unknown, err := s.PathsFailed(ctx, "o/r", number, head); err != nil || unknown != wantUnknown {
+			t.Fatalf("unknown %t, %v", unknown, err)
+		}
 	}
 	if _, err := s.Activate(ctx, "o/r"); err != nil {
 		t.Fatal(err)
 	}
-	list("h1")
-	for range 2 {
-		if unknown, err := s.PathsFailed(ctx, "o/r", 1, "h1"); err != nil || unknown {
-			t.Fatalf("unknown %t, %v", unknown, err)
-		}
-	}
-	list("h1")
-	if failures, retry := state(); failures != 2 || !retry.Valid {
+	list(1, "h1")
+	list(2, "x1")
+	fail(1, "h1", false)
+	fail(1, "h1", false)
+	list(1, "h1")
+	if _, failures, retry := state(1); failures != 2 || !retry.Valid {
 		t.Fatalf("the same head kept %d failures, retry %v", failures, retry)
 	}
+	list(1, "h2")
+	if _, failures, retry := state(1); failures != 0 || retry.Valid {
+		t.Fatalf("a new head kept %d failures, retry %v", failures, retry)
+	}
+	for try := 1; try <= FeaturePathTries; try++ {
+		fail(1, "h2", try == FeaturePathTries)
+	}
+	if head, _, _ := state(1); head != "h2" {
+		t.Fatalf("unknown at head %q", head)
+	}
+	fail(2, "x1", false)
 	if err := s.RetryUnknownPaths(ctx, "o/r"); err != nil {
 		t.Fatal(err)
 	}
-	if _, retry := state(); retry.Valid {
-		t.Fatal("the re-link must clear the retry time")
+	if head, failures, retry := state(1); head != "" || failures != 0 || retry.Valid {
+		t.Fatalf("unknown pull request after the re-link: %q %d %v", head, failures, retry)
 	}
-	list("h2")
-	if failures, retry := state(); failures != 0 || retry.Valid {
-		t.Fatalf("a new head kept %d failures, retry %v", failures, retry)
+	if _, failures, retry := state(2); failures != 1 || retry.Valid {
+		t.Fatalf("failed pull request after the re-link: %d %v", failures, retry)
 	}
 }
 

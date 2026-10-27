@@ -2973,20 +2973,21 @@ newer one drops them. See [its README](internal/decisionlog/README.md).
 
 `decisionlog.FeatureWorker` runs in the daemon beside the capture scheduler,
 on the same store, every minute and on a settings change, for each picked
-repository with a clone that passes the capture gate. It lists the
-repository's pull requests through the REST API (`github.ListPullRequests`,
-`state=all`, sorted by update, to the stored cursor, the first page
-conditional on its ETag, a page too large read again at half the size),
-fetches the missing heads (from `refs/pull/<N>/head`) and bases (by id) of
-open and merged non-bot pull requests (`gitlocal.FetchPulls`, 100 refspecs
-a `git fetch`, one at a time after a failed one), records each changed one's commits and paths from
-the clone's own objects (a failed read is retried after 15 minutes, and
-after 3 failures at one head its paths are unknown until the daily
-re-link), and links commits to this
-machine's sessions with `locallink.LinkCommits`, the per-commit matching
-`Resolve` uses. The constants are in `featureconfig.go` and the live feature
-version of a repository is chosen in one place (`liveVersion`). See
-[its README](internal/decisionlog/README.md#feature-log).
+repository with a clone that passes the capture gate. In this step it syncs
+and indexes; the feature tables are there for placement to build on. It
+lists the repository's pull requests through the REST API
+(`github.ListPullRequests`, `state=all`, sorted by update, to the stored
+cursor, the first page conditional on its ETag, a page too large read again
+at half the size), fetches the missing heads (from `refs/pull/<N>/head`) and
+bases (by id) of open and merged non-bot pull requests (`gitlocal.FetchPulls`,
+100 refspecs a `git fetch`; after a failed one, an `ls-remote` probe, then
+one at a time), records each changed one's commits and paths from the
+clone's own objects (a failed read is retried after 15 minutes, and after 3
+failures at one head its paths are unknown until the daily re-link), and
+links commits to this machine's sessions with `locallink.LinkCommits`, the
+per-commit matching `Resolve` uses. The constants are in `featureconfig.go`
+and the live feature version of a repository is chosen in one place
+(`liveVersion`). See [its README](internal/decisionlog/README.md#feature-log).
 
 ### Transports and control protocol
 

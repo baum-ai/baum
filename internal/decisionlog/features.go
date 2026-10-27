@@ -175,7 +175,7 @@ type SyncReport struct {
 	// Stopped is set when the repository was turned off during the sync.
 	Stopped bool `json:"stopped,omitempty"`
 	Commits int  `json:"commits_recorded"`
-	// commits are those recorded, for Index.
+	// commits are those recorded within FeatureLookback, for Index.
 	commits []gitlocal.Commit
 }
 
@@ -230,6 +230,7 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 	if err != nil || len(pulls) == 0 {
 		return report, err
 	}
+	lookback := w.now().Add(-FeatureLookback)
 	if !w.enabled(ctx, repository) {
 		report.Stopped = true
 		return report, nil
@@ -282,7 +283,11 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 			paths = slices.Compact(paths)
 			report.PathsRead++
 			report.Commits += len(recorded)
-			report.commits = append(report.commits, commits...)
+			for _, c := range commits {
+				if at, err := time.Parse(time.RFC3339, c.CommittedAt); err == nil && !at.Before(lookback) {
+					report.commits = append(report.commits, c)
+				}
+			}
 		}
 		if err := w.Store.SetPullPaths(ctx, repository, p.Number, p.HeadSHA, paths, recorded); err != nil {
 			return report, err
