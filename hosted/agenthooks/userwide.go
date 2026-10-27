@@ -54,6 +54,11 @@ var userWide = map[string]UserWide{
 			// seen working again once it was given: the hooks above report
 			// only subagent and todo tools.
 			{Event: "post-tool-use", HookEvent: "PostToolUse", Matcher: matcher(""), Async: true, RecordOnly: true},
+			// Claude Code asks for a permission or an answer: the hook holds
+			// until the app answers, the request is withdrawn (the terminal,
+			// which asks alongside, answered first) or the timeout kills it,
+			// which leaves the terminal's dialog as it was.
+			{Event: "permission-request", HookEvent: "PermissionRequest", Matcher: matcher(""), Timeout: 3600, RecordOnly: true},
 		},
 		ProjectFiles: []string{".claude/settings.json", ".claude/settings.local.json"},
 	},
@@ -66,8 +71,10 @@ var userWide = map[string]UserWide{
 			{Event: "session-end", HookEvent: "SessionEnd", Timeout: 3},
 			{Event: "subagent-start", HookEvent: "SubagentStart", Timeout: 30},
 			{Event: "subagent-stop", HookEvent: "SubagentStop", Timeout: 30},
-			// Codex is about to ask its user to approve a command. The hook
-			// prints nothing, so it decides nothing and Codex asks as usual.
+			// Codex is about to ask its user to approve a command. Unless the
+			// user lets the app answer Codex (agentrequests.Settings), the hook
+			// prints nothing, so it decides nothing and Codex asks as usual;
+			// this definition stays as it is, so the user's trust in it stands.
 			{Event: "permission-request", HookEvent: "PermissionRequest", Timeout: 30, RecordOnly: true},
 		},
 		ProjectFiles: []string{".codex/hooks.json", ".codex/config.toml"},
