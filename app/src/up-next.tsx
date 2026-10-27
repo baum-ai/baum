@@ -465,7 +465,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     waiting,
     fixing,
     cleared,
-    snoozedUntil: (key: string): SnoozeEnd => (key in state.held ? "change" : (state.snoozed[key] ?? 0)),
+    snoozedUntil: (key: string): SnoozeEnd =>
+      key in state.held ? "change" : (state.snoozed[key] ?? 0),
     snooze: (item: UpNextItem, until: SnoozeEnd) =>
       update((s) =>
         until === "change"
@@ -552,9 +553,7 @@ export function UpNextPage({
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
-  const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(
-    null,
-  );
+  const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
   const { queue, cleared, snoozed, fixing, waiting, now } = inbox;
@@ -565,9 +564,7 @@ export function UpNextPage({
         .filter((item) => group.kinds.includes(item.kind))
         .map((item): Row => ({ key: item.key, entry: item.entry, item })),
       ...(group.id === "agent"
-        ? fixing.map(
-            ({ entry, job }): Row => ({ key: upNextKey(entry.pull_request), entry, job }),
-          )
+        ? fixing.map(({ entry, job }): Row => ({ key: upNextKey(entry.pull_request), entry, job }))
         : []),
     ],
   })).filter((group) => group.rows.length > 0);
@@ -637,7 +634,11 @@ export function UpNextPage({
       select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
     } else if (key === "Enter") {
       // Enter on a link or button already does what it says.
-      if (!onBody(event) && event.target instanceof HTMLElement && event.target.closest("a, button"))
+      if (
+        !onBody(event) &&
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button")
+      )
         return;
       const primary = detail.current?.querySelector<HTMLElement>(".upnext-primary");
       if (!primary) return;
@@ -977,7 +978,12 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
           title: "What needs fixing",
           rows: [
             ...(entry.review === "changes_requested"
-              ? [{ main: "Changes requested", sub: "A reviewer asked for changes before it merges." }]
+              ? [
+                  {
+                    main: "Changes requested",
+                    sub: "A reviewer asked for changes before it merges.",
+                  },
+                ]
               : []),
             ...(unresolved > 0
               ? [
@@ -988,7 +994,12 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
                 ]
               : []),
             ...(entry.merge === "conflict"
-              ? [{ main: "Conflicts with its base", sub: "The branch and its base changed the same lines." }]
+              ? [
+                  {
+                    main: "Conflicts with its base",
+                    sub: "The branch and its base changed the same lines.",
+                  },
+                ]
               : []),
             ...(entry.checks === "failing" ? [{ main: "Checks failing" }] : []),
           ],

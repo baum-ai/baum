@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry, Job, LiveSession } from "./api";
-import { snoozeUntil, upNext } from "./up-next";
+import { snoozeOptions, snoozeText, upNext } from "./up-next";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -113,40 +113,42 @@ it("orders what waits on the person and leaves out what waits on others", () => 
   );
   expect(items.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
     ["review", 1],
-    ["fix", 2],
+    ["clone", 9],
     ["merge", 3],
     ["merge", 4],
+    ["fix", 2],
     ["update", 10],
-    ["clone", 9],
   ]);
   // A draft waits on its author's work, and a fix already running on its agent.
   expect(waiting.map((e) => e.pull_request.number)).toEqual([5, 7]);
-  const [review, fix] = items;
+  const [review, clone, merge, , fix] = items;
   expect(review!.why).toBe(
-    "sam asked for your review. baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
+    "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
   );
-  expect(review!.facts).toEqual([
-    { label: "Risk", value: "4 of 5" },
-    { label: "baum review", value: "Ready" },
-    { label: "Agents", value: "1 working" },
-  ]);
+  expect(review!.working).toBe(1);
   expect(review!.minutes).toBe(12);
-  expect(fix!.why).toBe(
-    "Yours. Checks are failing. An agent can fix it while you do something else.",
-  );
-  expect(items[5]!.why).toContain("no local clone of acme/demo");
+  // Its group already says a merge is ready.
+  expect(merge!.why).toBe("");
+  expect(fix!.why).toBe("Checks are failing. An agent can fix it while you do something else.");
+  expect(clone!.why).toContain("no local clone of acme/demo");
 });
 
-it("snoozes to a whole hour three hours on, or to tomorrow morning in the evening", () => {
-  expect(new Date(snoozeUntil(new Date(2026, 9, 27, 10, 20).getTime()))).toEqual(
-    new Date(2026, 9, 27, 14, 0),
-  );
-  expect(new Date(snoozeUntil(new Date(2026, 9, 27, 12, 0).getTime()))).toEqual(
-    new Date(2026, 9, 27, 15, 0),
-  );
-  expect(new Date(snoozeUntil(new Date(2026, 9, 27, 17, 0).getTime()))).toEqual(
-    new Date(2026, 9, 28, 9, 0),
-  );
+it("offers an hour, this afternoon while it is over an hour off, tomorrow morning and the next push", () => {
+  const morning = new Date(2026, 9, 27, 10, 20).getTime();
+  expect(snoozeOptions(morning).map((o) => [o.label, o.until])).toEqual([
+    ["1 hour", new Date(2026, 9, 27, 11, 20).getTime()],
+    ["This afternoon", new Date(2026, 9, 27, 15, 0).getTime()],
+    ["Tomorrow morning", new Date(2026, 9, 28, 9, 0).getTime()],
+    ["Until it changes", "change"],
+  ]);
+  const later = new Date(2026, 9, 27, 14, 30).getTime();
+  expect(snoozeOptions(later).map((o) => o.label)).toEqual([
+    "1 hour",
+    "Tomorrow morning",
+    "Until it changes",
+  ]);
+  expect(snoozeText("change", later)).toBe("the next push");
+  expect(snoozeText(new Date(2026, 9, 28, 9, 0).getTime(), later)).toMatch(/^tomorrow 9/);
 });
 
 let root: Root;
@@ -231,27 +233,50 @@ const render = async () => {
   root = createRoot(node);
   await act(async () => root.render(<App />));
 };
-const card = () => node.querySelector("article.upnext-card");
-const queue = () =>
+const panel = () => node.querySelector("article.upnext-panel")!;
+const shown = () => panel().querySelector("h2")!.textContent;
+const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
+const groups = () =>
+  Array.from(node.querySelectorAll(".upnext-group-head h2")).map((h) => h.textContent);
 const button = (name: string) =>
   Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.startsWith(name))!;
-// The card slides away before a skip or snooze lands.
-const leave = async (name: string) => {
-  await act(async () => button(name).click());
-  expect(card()!.classList).toContain("upnext-card-leaving");
-  await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+const row = (title: string) =>
+  Array.from(node.querySelectorAll<HTMLButtonElement>(".upnext-row")).find((r) =>
+    r.textContent?.includes(title),
+  )!;
+const snoozeFor = (label: string) =>
+  Array.from(node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((item) =>
+    item.textContent?.includes(label),
+  )!;
+const press = (key: string) =>
+  act(async () => {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+const progress = () => {
+  const bar = node.querySelector('[role="progressbar"]')!;
+  return `${bar.getAttribute("aria-valuenow")} of ${bar.getAttribute("aria-valuemax")}`;
+};
+/** What the list says was done today; it starts folded. */
+const cleared = async () => {
+  const toggle = node.querySelector<HTMLButtonElement>('[aria-label="Done today"] button');
+  if (!toggle) return null;
+  if (toggle.getAttribute("aria-expanded") === "false") await act(async () => toggle.click());
+  return Array.from(node.querySelectorAll(".upnext-done-text"))
+    .map((text) => text.textContent)
+    .join("\n");
 };
 
-it("opens on the one thing to do next, with the rest after it", async () => {
+it("groups what waits on the person and opens on the first", async () => {
   await render();
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 1");
-  expect(card()!.textContent).toContain("Why now:");
-  const start = Array.from(card()!.querySelectorAll("a")).find(
-    (a) => a.textContent === "Start reviewing",
-  )!;
-  expect(start.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1");
-  expect(queue()).toEqual(["Change 2", "Change 3", "Change 4"]);
+  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 2", "Hand to an agent · 1"]);
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(shown()).toBe("Change 1");
+  expect(panel().textContent).toContain("sam asked for your review");
+  // Open is always the default action.
+  const open = panel().querySelector<HTMLAnchorElement>("a.upnext-primary")!;
+  expect(open.textContent).toBe("Open↵");
+  expect(open.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1");
   expect(node.textContent).toContain("1 pull request of yours waits on reviewers");
   const inbox = Array.from(node.querySelectorAll(".local-rail a")).find((a) =>
     a.textContent?.startsWith("Inbox"),
@@ -260,42 +285,83 @@ it("opens on the one thing to do next, with the rest after it", async () => {
   expect(inbox.textContent).toBe("Inbox4");
 });
 
-it("skips, promotes and snoozes, and remembers it", async () => {
+it("moves with j and k, opens with Enter and merges with m", async () => {
   await render();
-  await leave("Skip");
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
-  expect(queue()).toEqual(["Change 3", "Change 4", "Change 1"]);
-  await act(async () =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>(".upnext-row"))
-      .find((row) => row.textContent?.includes("Change 4"))!
-      .click(),
+  await press("m");
+  // Only a pull request ready to merge merges.
+  expect(node.querySelector("dialog")).toBeNull();
+  await press("j");
+  await press("j");
+  await press("k");
+  expect(shown()).toBe("Change 3");
+  expect(row("Change 3").getAttribute("aria-current")).toBe("true");
+  await press("m");
+  expect(node.querySelector("dialog")).not.toBeNull();
+  // Afresh, with no dialog open.
+  await render();
+  await press("Enter");
+  expect(location.search).toBe("?clone=clone&pr=1");
+});
+
+it("snoozes, undoes and brings back, and remembers it", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("s");
+  await press("1");
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Snoozed #3 until /);
+  // The pull request that takes its place is selected.
+  expect(shown()).toBe("Change 4");
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2"]);
+  await press("u");
+  expect(shown()).toBe("Change 3");
+  expect(list()).toContain("Change 3");
+  await act(async () => button("Snooze").click());
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(shown()).toBe("Change 4");
+  // Snoozed pull requests start folded away.
+  expect(groups()).toContain("▸ Snoozed · 1");
+  expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.hidden).toBe(true);
+  // A reload keeps the snooze.
+  await render();
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2"]);
+  await act(async () => button("▸ Snoozed").click());
+  await act(async () => button("Bring back").click());
+  expect(list()).toContain("Change 3");
+  expect(shown()).toBe("Change 3");
+});
+
+it("brings back a pull request snoozed until it changes once it is pushed to", async () => {
+  await render();
+  await act(async () => row("Change 4").click());
+  await act(async () => button("Snooze").click());
+  await act(async () => snoozeFor("Until it changes").click());
+  expect(list()).not.toContain("Change 4");
+  await render();
+  expect(list()).not.toContain("Change 4");
+  entries = entries.map((e) =>
+    e.pull_request.number === 4
+      ? mine(4, { merge: "ready", checks: "passing", pull_request: { head_sha: "new" } })
+      : e,
   );
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 4");
-  await leave("Snooze until");
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
-  expect(node.textContent).toContain("1 snoozed until");
-  // A reload keeps the order and the snooze.
   await render();
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
-  expect(queue()).toEqual(["Change 3", "Change 1"]);
-  await act(async () => button("Bring them back").click());
-  expect(queue()).toContain("Change 4");
+  expect(list()).toContain("Change 4");
 });
 
 it("counts what left the queue as cleared today", async () => {
   await render();
-  expect(node.querySelector('[aria-label="0 of 4 cleared today"]')).not.toBeNull();
+  expect(progress()).toBe("0 of 4");
+  expect(await cleared()).toBeNull();
   // Merged elsewhere: it is gone from the next read.
   entries = entries.filter((e) => e.pull_request.number !== 3);
   await render();
-  expect(node.querySelector('[aria-label="1 of 4 cleared today"]')).not.toBeNull();
-  expect(node.querySelector(".upnext-cleared")!.textContent).toBe("Merged #3 Change 3");
+  expect(progress()).toBe("1 of 4");
+  expect(await cleared()).toBe("Merged #3 Change 3");
   // Reviewed, fixed and merged; someone else's pull request keeps the
   // repository in the read.
   entries = [entry(6)];
   await render();
   expect(node.textContent).toContain("Inbox zero.");
-  expect(node.textContent).toContain("All 4 handled. Go get a coffee.");
+  expect(node.textContent).toContain("All 4 handled. Nothing needs you right now.");
 });
 
 it("clears only what the person finished, and nothing of a repository missing from the read", async () => {
@@ -310,12 +376,12 @@ it("clears only what the person finished, and nothing of a repository missing fr
         : e,
   );
   await render();
-  expect(node.querySelector(".upnext-cleared")!.textContent).toBe("Fixed #2 Change 2");
-  expect(queue()).toEqual(["Change 4"]);
+  expect(await cleared()).toBe("Fixed #2 Change 2");
+  expect(list()).toEqual(["Change 1", "Change 4"]);
   // GitHub could not be read: nothing of acme/demo is listed.
   entries = [];
   await render();
-  expect(node.querySelector(".upnext-cleared")!.textContent).toBe("Fixed #2 Change 2");
+  expect(await cleared()).toBe("Fixed #2 Change 2");
 });
 
 it("starts afresh from storage it cannot read", async () => {
@@ -325,19 +391,18 @@ it("starts afresh from storage it cannot read", async () => {
     JSON.stringify({
       day: `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`,
       seen: [],
-      skipped: "Change 1",
-      promoted: 4,
       snoozed: null,
+      held: { "acme/demo#3": 5 },
     }),
   );
   await render();
-  expect(card()!.querySelector("h2")!.textContent).toBe("Change 1");
-  expect(queue()).toEqual(["Change 2", "Change 3", "Change 4"]);
+  expect(shown()).toBe("Change 1");
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
 });
 
 it("merges every ready pull request after one confirmation", async () => {
   await render();
-  await act(async () => button("Quick wins: merge 2 ready").click());
+  await act(async () => button("Merge all 2").click());
   const dialog = node.querySelector("dialog")!;
   expect(dialog.textContent).toContain("Squash and merge");
   await act(async () => button("Merge 2 pull requests").click());
@@ -363,19 +428,19 @@ it("says how to start when no repository is picked", async () => {
   expect(node.textContent).toContain("Nothing to do yet");
 });
 
-const cleared = () => node.querySelector(".upnext-cleared")?.textContent ?? null;
-
 it("does not clear a pull request whose fix is running, and offers to watch it", async () => {
   await render();
-  // Pressing Fix and confirming starts a job and the pull request leaves the queue.
+  // Pressing Fix and confirming starts a job; the agent's row stays in its group.
   jobsList = [fixJobOf()];
   await render();
-  expect(queue()).toEqual(["Change 3", "Change 4"]);
-  expect(cleared()).toBeNull();
-  expect(node.textContent).toContain(
-    "An agent is fixing #2 Change 2 · The agent is fixing it. Watch",
-  );
-  const watch = Array.from(node.querySelectorAll("a")).find((a) => a.textContent === "Watch")!;
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
+  expect(await cleared()).toBeNull();
+  await act(async () => row("Change 2").click());
+  expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
+  const watch = Array.from(panel().querySelectorAll("a")).find(
+    (a) => a.textContent === "Watch the agent",
+  )!;
   expect(watch.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   // The one other waiting pull request keeps the generic sentence.
   expect(node.textContent).toContain("1 pull request of yours waits on reviewers");
@@ -386,29 +451,25 @@ it("clears a fixed pull request once its fix pushed", async () => {
   jobsList = [fixJobOf({ state: "completed", commit: "abc1234" })];
   entries = entries.map((e) => (e.pull_request.number === 2 ? mine(2, { checks: "running" }) : e));
   await render();
-  expect(cleared()).toBe("Fixed #2 Change 2");
+  expect(await cleared()).toBe("Fixed #2 Change 2");
 });
 
 it("brings back a pull request whose fix failed, with what happened", async () => {
   await render();
   jobsList = [fixJobOf({ state: "failed", reason: "signing" })];
   await render();
-  expect(cleared()).toBeNull();
-  expect(queue()).toContain("Change 2");
-  await act(async () =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>(".upnext-row"))
-      .find((row) => row.textContent?.includes("Change 2"))!
-      .click(),
-  );
-  expect(card()!.textContent).toContain("The last fix failed: Git couldn't sign a commit");
-  const see = Array.from(card()!.querySelectorAll("a")).find(
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Fix · last fix failed");
+  await act(async () => row("Change 2").click());
+  expect(panel().textContent).toContain("The last fix failed: Git couldn't sign a commit");
+  const see = Array.from(panel().querySelectorAll("a")).find(
     (a) => a.textContent === "See what the agent did",
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
-  expect(button("Fix").textContent).toContain("Fix");
+  expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
 });
 
-it("keeps a failed fix of a pull request in the queue for the card", () => {
+it("keeps a failed fix of a pull request in the queue for its panel", () => {
   const { items } = upNext(
     [mine(2, { checks: "failing" })],
     [],
@@ -421,7 +482,7 @@ it("shows nothing as cleared on starting a fix", async () => {
   await render();
   jobsList = [fixJobOf({ state: "queued", phase: "" })];
   await render();
-  expect(cleared()).toBeNull();
-  expect(node.textContent).toContain("An agent is fixing #2 Change 2 · Queued");
-  expect(node.querySelector('[aria-label="0 of 3 cleared today"]')).not.toBeNull();
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Agent fixing · Queued");
+  expect(progress()).toBe("0 of 3");
 });

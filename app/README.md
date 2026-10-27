@@ -143,8 +143,13 @@ its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
-`?` (or the `?` button in the page bar) shows
-the sheet of keys and `Esc` closes it or clears the focus. The focused row has an
+and `Esc` clears the focus. On any page, `?` (or the `?` button in Pull
+requests' page bar) shows the sheet of every key, grouped by where it works
+(anywhere, the Inbox, Pull requests, a pull request, group or session page),
+with the current page's group first; `?` or `Esc` closes it. Key hints drawn
+on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
+`useKeyHints` marks the document root then and clears it on release or when
+the window loses focus. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
@@ -174,56 +179,77 @@ because GitHub merges asynchronously; a re-run where GitHub refused only some
 runs stays open and names them. Either success makes the daemon re-read the
 repository's pull requests.
 
-The Inbox (the app's root, `src/up-next.tsx`) holds one thing at a time: the
-next pull request that waits on the person, as a card, with the rest under
-"Then" and what they cleared today beside it. Its "Up next" header counts the
-queue and sums baum's reading estimates into the minutes of work; only reviews
-have one. The page follows the Up next design's own colours and sizes rather
-than the app's tokens and type scale (`--un-*` in `src/style.css`, mapped onto
-the app's dark tokens in dark mode). `upNext` places each open pull
-request in at most one kind, from discovery's flags only: **Review** (their
-review is requested), **Fix** (theirs, with changes requested, unresolved
-threads, a conflict or failing checks), **Merge** (theirs, and `canMerge`),
-**Update** (theirs, and `canUpdateBranch`) and **Clone** (a requested review
-whose repository has no local clone). Their own pull requests with nothing to
-do (drafts, and those waiting on reviewers or checks) are counted under the
-queue and linked to Pull requests; one a fix agent is working on has its own
-line there ("An agent is fixing #N … · <phase>") with a **Watch** link to the
-job's transcript. Everyone else's are only there. The queue runs in that order of kinds, so a review
-someone waits on comes first; within Review a saved review ready to read comes
-before one being written, then the riskier first; otherwise the lower number
-first. Each pull request appears once, whatever clones hold it.
-The card names the kind, the repository and number, baum's reading estimate,
-the title (linking to the PR page), a "Why now" sentence built from the same
-state, and up to four facts (risk, baum's review, GitHub's review, unresolved
-threads, merge state, checks, agents working). Its action is Start reviewing or
-Choose a local clone (both open the PR page), the fix's own label (opening
-`FixDialog`), Merge (`MergeDialog`) or Update branch (`UpdateBranchDialog`),
-with Open pull request beside a write. **Snooze until …** hides the pull
-request until the next whole hour three hours on, or 9 AM the next day once
-that is past 6 PM; **Skip** moves it to the end (both slide the card away first); a row under
-"Then" moves it up next. With two or more Merge items, the header offers
-**Quick wins: merge N ready**: one
-confirmation that reads each pull request's merge options, merges each with
-GitHub's default method for the person at the head commit shown, one after
-another, and names any GitHub refused with the reason; leaving the page stops
-the merges not yet sent. "Cleared today" lists the pull requests that left the
-queue since first seen today because the person's part is done: it merged or
-closed, the review request went ("Reviewed", or "Handled" for one that needed a
-clone), their fix pushed (a fix counts only once its job completed with a
-commit: never while it runs, nor after it failed or was cancelled) and left it
-waiting on checks or reviewers, or their branch update did. A pull request
-back in the queue as a Fix whose latest fix job failed says "The last fix
-failed: <reason>" on its card, with **See what the agent did** (the
-transcript, else the job in the list); its button starts a new fix. Their own pull request that only stopped being mergeable (a push, checks
-running) waits uncleared, and nothing is cleared for a repository the latest
-read lists no open pull request of, since GitHub may only be unreachable. A
-ring shows cleared against cleared plus remaining, with the reading minutes of
-what was cleared; one that comes back is no longer cleared. Skips, the promoted card, snoozes and today's record are kept in this
-browser's `localStorage` (`baum.inbox.v1`) and start again each day, snoozes
-excepted; nothing reaches the daemon. The sidebar's Inbox badge counts the
-queue without snoozed pull requests. It is not the desktop tray's waiting count,
-which counts only review requests and the person's blocked pull requests.
+The Inbox (the app's root, `src/up-next.tsx`) is a split view: a list of
+what waits on the person, grouped by what they do about it, beside the panel
+of the selected pull request. The page follows the Up next design's own
+colours and sizes rather than the app's tokens and type scale (`--un-*` in
+`src/style.css`, mapped onto the app's dark tokens in dark mode); its list and
+panel scroll on their own, and below 760px the list stacks above the panel.
+`upNext` places each open pull request in at most one kind, from discovery's
+flags only: **Review** (their review is requested), **Clone** (a requested
+review whose repository has no local clone), **Merge** (theirs, and
+`canMerge`), **Fix** (theirs, with changes requested, unresolved threads, a
+conflict or failing checks) and **Update** (theirs, and `canUpdateBranch`).
+The queue runs in that order, which is the order of the list's groups:
+**Needs your eyes** (Review, Clone), **Ready to merge** (Merge) and **Hand to
+an agent** (Fix, Update, then the person's pull requests a fix agent is working
+on, each with the loader and the fix's phase). Within Review a saved review
+ready to read comes before one being written, then the riskier first;
+otherwise the lower number first. Each pull request appears once, whatever
+clones hold it. Their own pull requests with nothing to do (drafts, and those
+waiting on reviewers or checks) are counted at the foot of the list and linked
+to Pull requests; everyone else's are only there.
+
+The list's header counts what is the person's, sums baum's reading estimates
+into minutes (only reviews have one), counts the fixes with agents and what was
+done today, and draws a bar of cleared against cleared plus remaining. A row
+shows the title, then the kind, repository and reading estimate (or the
+agent's phase, or "last fix failed"), and a red dot at risk 5. With two or more
+Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
+each pull request's merge options, merges each with GitHub's default method for
+the person at the head commit shown, one after another, and names any GitHub
+refused with the reason; leaving the page stops the merges not yet sent. Below
+the groups, **Snoozed** and **Done today** start folded.
+
+The panel names the kind, the repository and number, who asked (or "Yours"),
+baum's reading estimate and the title (linking to the PR page), then why it
+waits on the person in a sentence built from its state (none for a Merge, whose
+group says it). Its default action is always **Open** (the PR page); beside it
+is what the kind asks for: Merge (`MergeDialog`), Update the branch
+(`UpdateBranchDialog`), the fix's own label (`FixDialog`), Watch the agent for
+a running fix, else Open on GitHub; then **Snooze**. A scored pull request has
+a risk card: the score as five blocks, its meaning and, from the saved review,
+its first reason. Below it the panel lists, by kind: for a Review or Merge,
+"What changed" (the review's summary and its first six sections in review
+order, with their scores and lines added and removed); for a Fix, what needs
+fixing; for an Update, where it stands; for a Clone, what baum will do. The
+saved review is read when its pull request is selected, and again only for a
+new version. A pull request back in the queue as a Fix whose latest fix job
+failed says "The last fix failed: <reason>", with **See what the agent did**
+(the transcript, else the job in the list). Agent sessions working on its
+branch are counted at the foot of the panel.
+
+Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
+away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
+request until its head moves. A snooze selects the next pull request and shows
+a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
+`j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `s`
+opens Snooze and `1`–`4` choose from it, `u` undoes a snooze.
+
+"Done today" lists the pull requests that left the queue since first seen
+today because the person's part is done: it merged or closed, the review
+request went ("Reviewed", or "Handled" for one that needed a clone), their fix
+pushed (a fix counts only once its job completed with a commit: never while it
+runs, nor after it failed or was cancelled) and left it waiting on checks or
+reviewers, or their branch update did. Their own pull request that only stopped
+being mergeable (a push, checks running) waits uncleared, and nothing is
+cleared for a repository the latest read lists no open pull request of, since
+GitHub may only be unreachable; one that comes back is no longer cleared.
+Snoozes and today's record are kept in this browser's `localStorage`
+(`baum.inbox.v1`) and start again each day, snoozes excepted; nothing reaches
+the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
+requests. It is not the desktop tray's waiting count, which counts only review
+requests and the person's blocked pull requests.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,

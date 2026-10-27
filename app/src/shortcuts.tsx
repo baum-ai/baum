@@ -131,29 +131,32 @@ export function ShortcutsSheet({
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const groups: { place: ShortcutsPlace; title: string; rows: { keys: string[]; label: string }[] }[] =
-    [
-      {
-        place: "anywhere",
-        title: "Anywhere",
-        rows: [
-          { keys: ["?"], label: "Show or hide this list" },
-          { keys: [MAC ? "⌥ Option" : "Alt"], label: "Hold to show the keys on buttons" },
-          { keys: ["Escape"], label: "Close this list" },
-        ],
-      },
-      { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
-      {
-        place: "pulls",
-        title: "Pull requests",
-        rows: [...INBOX_SHORTCUTS, { keys: ["Escape"], label: "Clear the row focus" }],
-      },
-      {
-        place: "page",
-        title: "A pull request, group or session",
-        rows: [{ keys: ["u", "Escape"], label: "Back to the list" }],
-      },
-    ];
+  const groups: {
+    place: ShortcutsPlace;
+    title: string;
+    rows: { keys: string[]; label: string }[];
+  }[] = [
+    {
+      place: "anywhere",
+      title: "Anywhere",
+      rows: [
+        { keys: ["?"], label: "Show or hide this list" },
+        { keys: [MAC ? "⌥ Option" : "Alt"], label: "Hold to show the keys on buttons" },
+        { keys: ["Escape"], label: "Close this list" },
+      ],
+    },
+    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+    {
+      place: "pulls",
+      title: "Pull requests",
+      rows: [...INBOX_SHORTCUTS, { keys: ["Escape"], label: "Clear the row focus" }],
+    },
+    {
+      place: "page",
+      title: "A pull request, group or session",
+      rows: [{ keys: ["u", "Escape"], label: "Back to the list" }],
+    },
+  ];
   const ordered = [
     ...groups.filter((group) => group.place === current),
     ...groups.filter((group) => group.place !== current),

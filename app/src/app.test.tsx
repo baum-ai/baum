@@ -203,7 +203,8 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   // A ready pull request also carries its Merge button.
-  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: ReadyMerge"]);
+  // Its key hint is drawn inside it, shown only while Alt is held.
+  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: ReadyMergem"]);
   expect(states[1]).toEqual([
     "Review time: ~240 min",
     "Review: Changes requested3 unresolved",
@@ -1048,7 +1049,7 @@ const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
   });
-it("toggles the shortcuts sheet with ? and from its button, on the inbox only", async () => {
+it("toggles the shortcuts sheet with ? and from its button", async () => {
   entries = [entry(1)];
   // jsdom has no modal dialogs.
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {

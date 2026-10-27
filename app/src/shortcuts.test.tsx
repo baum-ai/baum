@@ -291,8 +291,34 @@ it("lists exactly the keys that work in the sheet", async () => {
   await act(async () => root.render(<ShortcutsSheet close={() => {}} />));
   const sheet = node.querySelector("dialog")!;
   expect(sheet.open).toBe(true);
-  const listed = Array.from(sheet.querySelectorAll("dt kbd")).map((kbd) => kbd.textContent);
-  expect(listed).toEqual(["j", "↓", "k", "↑", "Enter", "o", "x", "m", "f", "g", "r", "?", "Esc"]);
+  const listed = (group: string) =>
+    Array.from(sheet.querySelectorAll(`[aria-label="${group}"] dt kbd`)).map(
+      (kbd) => kbd.textContent,
+    );
+  const headings = () => Array.from(sheet.querySelectorAll("h3")).map((h) => h.textContent);
+  expect(headings()).toEqual([
+    "Anywhere",
+    "Inbox",
+    "Pull requests",
+    "A pull request, group or session",
+  ]);
+  expect(listed("Anywhere")).toEqual(["?", "Alt", "Esc"]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "s", "u"]);
+  expect(listed("Pull requests")).toEqual([
+    "j",
+    "↓",
+    "k",
+    "↑",
+    "Enter",
+    "o",
+    "x",
+    "m",
+    "f",
+    "g",
+    "r",
+    "Esc",
+  ]);
+  expect(listed("A pull request, group or session")).toEqual(["u", "Esc"]);
   expect(INBOX_SHORTCUTS.flatMap((s) => s.keys)).toEqual([
     "j",
     "ArrowDown",
@@ -305,6 +331,16 @@ it("lists exactly the keys that work in the sheet", async () => {
     "f",
     "g",
     "r",
+  ]);
+});
+
+it("lists the keys of where the sheet was opened first", async () => {
+  await act(async () => root.render(<ShortcutsSheet current="pulls" close={() => {}} />));
+  expect(Array.from(node.querySelectorAll("dialog h3")).map((h) => h.textContent)).toEqual([
+    "Pull requests",
+    "Anywhere",
+    "Inbox",
+    "A pull request, group or session",
   ]);
 });
 
