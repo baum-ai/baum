@@ -165,7 +165,7 @@ func TestWaitingMessageIsCleanedMaskedAndBounded(t *testing.T) {
 		masked = append(masked, text)
 		return strings.ReplaceAll(text, "hunter2", "*******")
 	}
-	long := "Claude needs\x1b[31m your\r\npermission‮ to use​ Bash  " + strings.Repeat("é", 200) + " hunter2"
+	long := "Claude needs\x1b[31m your\r\npermission\u202e to use\u200b Bash  " + strings.Repeat("é", 200) + " hunter2"
 	apply(tr, notification("s1", "permission_prompt", long, c.now))
 	s := only(t, tr)
 	if !strings.HasPrefix(s.WaitingMessage, "Claude needs [31m your permission to use Bash éé") {
@@ -175,7 +175,7 @@ func TestWaitingMessageIsCleanedMaskedAndBounded(t *testing.T) {
 		t.Errorf("message has %d characters: %q", n, s.WaitingMessage)
 	}
 	for _, r := range s.WaitingMessage {
-		if r < ' ' || r == '‮' || r == '​' {
+		if r < ' ' || r == '\u202e' || r == '\u200b' {
 			t.Errorf("message keeps %U", r)
 		}
 	}
