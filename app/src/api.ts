@@ -361,6 +361,8 @@ export type LiveSession = {
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
+  // Analytics names agents by their session store's vendor slug.
+  claude_code: "Claude Code",
   codex: "Codex",
   cursor: "Cursor",
 };
