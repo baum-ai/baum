@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-step-zoom"
+description = "Enables the step_zoom command without any pre-configured scope."
+commands.allow = ["step_zoom"]
+
+[[permission]]
+identifier = "deny-step-zoom"
+description = "Denies the step_zoom command without any pre-configured scope."
+commands.deny = ["step_zoom"]

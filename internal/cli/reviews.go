@@ -112,7 +112,7 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("backend", "", "backend for reviews the app generates: "+strings.Join(backendNames(), ", "))
 	set.Flags().String("model", "", "model for reviews the app generates (empty uses the backend's default)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
-	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested or both")
+	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
 	root.AddCommand(show, set)
 	return root
 }
