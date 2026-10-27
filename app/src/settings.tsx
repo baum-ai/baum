@@ -137,7 +137,10 @@ export function SettingsPage({
         ) : (
           <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
-        {defaults ? <DecisionSettingsSection defaults={defaults} /> : null}
+        {defaults ? (
+          // A new review harness or model changes what capture resolves to.
+          <DecisionSettingsSection key={JSON.stringify(defaults)} defaults={defaults} />
+        ) : null}
         <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
@@ -582,6 +585,14 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
             setDraft({ ...draft, model: model ?? "" });
           }}
         />
+        {saved.backend === "" ? (
+          <div className="review-section">
+            <p className="review-note">
+              No harness that can capture decisions is available on this computer, so capture does
+              not run.
+            </p>
+          </div>
+        ) : null}
         <div className="review-section">
           <label htmlFor="decisions-cap" className="review-label">
             Daily spending cap (US$)

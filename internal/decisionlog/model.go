@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
@@ -200,11 +201,16 @@ type Effective struct {
 	Ignored bool `json:"model_ignored"`
 }
 
+// effectiveTimeout bounds the backend checks EffectiveModel runs for auto, so
+// a slow CLI never holds Settings or the setup.
+var effectiveTimeout = 5 * time.Second
+
 // EffectiveModel resolves the backend and decision model as a capture does
-// (resolveBackend, decisionModel), from the config file with the app's
-// preferences over it; a repository's own backend can still differ. Backends
-// zero builds them from the configuration and list nil is pricing.Active.
-// With auto it runs the backends' checks.
+// (resolveModel), from the config file with the app's preferences over it; a
+// repository's own backend can still differ. Backends zero builds them from
+// the configuration and list nil is pricing.Active. With auto it runs the
+// backends' checks, for at most effectiveTimeout; no backend, or none in
+// time, is the zero Effective: unknown, and nothing is ignored.
 func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Preferences, backends generate.Backends, list *pricing.List) Effective {
 	cfg := prefs.Resolve(file)
 	if backends.Claude == nil {
@@ -213,15 +219,26 @@ func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Prefere
 	if list == nil {
 		list = pricing.Active()
 	}
-	var out Effective
-	backend, err := resolveBackend(ctx, cfg.Backend, backends)
+	ctx, cancel := context.WithTimeout(ctx, effectiveTimeout)
+	defer cancel()
+	backend, model, err := resolveModel(ctx, cfg.Backend, backends, list, prefs.Decisions.Model)
 	if err != nil {
-		return out
+		return Effective{}
 	}
-	out.Backend = backend
-	if backend != agent.BackendCursorAgent {
-		out.Model = decisionModel(list, backend, prefs.Decisions.Model)
+	chosen := prefs.Decisions.Model
+	return Effective{Backend: backend, Model: model, Ignored: chosen != nil && *chosen != "" && *chosen != model}
+}
+
+// resolveModel names the backend capture uses (resolveBackend) and its
+// decision model (decisionModel); cursor-agent, which cannot capture, has
+// none.
+func resolveModel(ctx context.Context, requested config.Backend, backends generate.Backends, list *pricing.List, chosen *string) (string, string, error) {
+	backend, err := resolveBackend(ctx, requested, backends)
+	if err != nil {
+		return "", "", err
 	}
-	out.Ignored = prefs.Decisions.Model != nil && *prefs.Decisions.Model != "" && *prefs.Decisions.Model != out.Model
-	return out
+	if backend == agent.BackendCursorAgent {
+		return backend, "", nil
+	}
+	return backend, decisionModel(list, backend, chosen), nil
 }

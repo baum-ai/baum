@@ -342,11 +342,10 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	if report.Backend, err = resolveBackend(ctx, requested, backends); err != nil {
+	if report.Backend, report.Model, err = resolveModel(ctx, requested, backends, c.prices(), prefs.Decisions.Model); err != nil {
 		c.logger().Info("decision capture backend unavailable", "backend", requested, "error", err)
 		return skip(ReasonUnavailable)
 	}
-	report.Model = decisionModel(c.prices(), report.Backend, prefs.Decisions.Model)
 	if o.Model != "" {
 		report.Model = o.Model
 	}

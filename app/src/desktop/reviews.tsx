@@ -124,7 +124,7 @@ export function ModelPicker({
             {inherit ? <option value={INHERIT}>{inherit}</option> : null}
             {presets.map((model) => (
               <option key={model} value={model}>
-                {model === unused ? `${model} (not used with ${harnessName(backend)})` : model}
+                {model === unused ? `${model} (not used)` : model}
               </option>
             ))}
             <option value={CUSTOM}>Custom…</option>

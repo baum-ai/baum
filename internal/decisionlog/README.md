@@ -144,13 +144,15 @@ transcripts, never the transcripts themselves.
 a save, an attempt beginning or settling; the beginning is what shows
 "Capturing…", and the settling ends it when no save or skip follows); the daemon publishes the app's
 `decisions` event, which carries no data, with it. The settings are
-`preferences.decisions` (`GET /api/settings`, and `GET` and `PUT
-/api/settings/decisions` in `internal/uiserver`, which also report
-`EffectiveModel`: the backend and model a capture would use, resolved as it
-does, `auto` included, and whether the chosen model is ignored; `baum internal
-reviews show` reports the same as `decisions_effective_model` and
-`decisions_model_ignored`), and a repository's `settings.decisions` through the
-repository settings API. Analytics counts the ledger (`Store.Ledger`) under
+`preferences.decisions`, which `GET /api/settings` returns as they are.
+Only `GET` and `PUT /api/settings/decisions` (in `internal/uiserver`) add
+`EffectiveModel`: the backend and model a capture would use, resolved by the
+same helper a capture uses, `auto` included, and whether the chosen model is
+ignored. Its backend checks get 5 seconds; no backend, or none in time, is
+unknown (empty) and ignores nothing. `baum internal reviews show` reports the
+same as `decisions_backend`, `decisions_effective_model` and
+`decisions_model_ignored`. A repository's own setting is `settings.decisions`,
+through the repository settings API. Analytics counts the ledger (`Store.Ledger`) under
 baum's work.
 
 ## Testing by hand

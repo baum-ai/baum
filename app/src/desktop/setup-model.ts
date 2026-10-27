@@ -126,8 +126,9 @@ export type ReviewSettings = {
   /** The decision capture model; empty is the harness's default. Only the
    *  desktop setup edits it here. */
   decisions_model?: string;
-  /** What the daemon reports, never saved: the model capture uses with the
-   *  saved harness, and whether it ignores `decisions_model`. */
+  /** What the daemon reports, never saved: the harness and model capture
+   *  uses (empty when unknown), and whether it ignores `decisions_model`. */
+  decisions_backend?: string;
   decisions_effective_model?: string;
   decisions_model_ignored?: boolean;
 };
@@ -167,7 +168,12 @@ export function withModel(settings: ReviewSettings): ReviewSettings {
  *  decision capture model that is the harness's default is stored as none,
  *  so it follows the harness. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
-  const { decisions_effective_model: _, decisions_model_ignored: __, ...saved } = settings;
+  const {
+    decisions_backend: _,
+    decisions_effective_model: __,
+    decisions_model_ignored: ___,
+    ...saved
+  } = settings;
   if (saved.decisions_model === undefined) return saved;
   return saved.decisions_model === decisionModelDefaults[saved.backend]
     ? { ...saved, decisions_model: "" }

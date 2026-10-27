@@ -877,7 +877,7 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
   const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
-  expect(model.selectedOptions[0]!.textContent).toBe("claude-sonnet-5-5 (not used with Codex)");
+  expect(model.selectedOptions[0]!.textContent).toBe("claude-sonnet-5-5 (not used)");
   expect(section.textContent).toContain("Codex doesn't use claude-sonnet-5-5");
   await act(async () => {
     model.value = model.options[0]!.value;

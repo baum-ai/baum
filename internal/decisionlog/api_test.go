@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -168,5 +169,55 @@ func TestAPISaysWhyCaptureIsOff(t *testing.T) {
 		if code != 200 || json.Unmarshal(body, &one) != nil || one.Session.CaptureOff != tt.want {
 			t.Errorf("%s: %d %s", name, code, body)
 		}
+	}
+}
+
+// perRepository answers the gate per repository, or fails.
+type perRepository struct {
+	off map[string]bool
+	err error
+}
+
+func (r perRepository) Preferences(context.Context) (repos.Preferences, error) {
+	return repos.DefaultPreferences(), r.err
+}
+func (r perRepository) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
+	off := !r.off[repository]
+	return repos.Settings{Decisions: &off}, true, nil
+}
+
+func TestAPIGateReadsTheTrackedRepositoryAndSurvivesTheRegistry(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	// Captured in acme/old, now working in acme/new.
+	if err := s.Skip(ctx, Meta{Agent: "claude-code", ID: "moved", Repository: "acme/old"}, ReasonTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	live := func() []livesessions.Session {
+		return []livesessions.Session{{Agent: "claude-code", ID: "moved", Repository: "acme/new"}}
+	}
+	read := func(api *API) SessionDecisions {
+		t.Helper()
+		code, body := serveDecisions(t, api, "agent=claude-code&session=moved")
+		var one struct{ Session SessionDecisions }
+		if code != 200 || json.Unmarshal(body, &one) != nil {
+			t.Fatalf("%d %s", code, body)
+		}
+		return one.Session
+	}
+	// On in acme/old, off in acme/new: the tracked repository decides.
+	if got := read(&API{Store: s, Registry: perRepository{off: map[string]bool{"acme/new": true}}, Live: live}); got.CaptureOff != CaptureOffRepository {
+		t.Fatalf("tracked repository not preferred: %+v", got)
+	}
+	if got := read(&API{Store: s, Registry: perRepository{off: map[string]bool{"acme/old": true}}, Live: live}); got.CaptureOff != "" {
+		t.Fatalf("stored repository used over the tracked one: %+v", got)
+	}
+	// Without the tracker, the stored repository decides.
+	if got := read(&API{Store: s, Registry: perRepository{off: map[string]bool{"acme/old": true}}}); got.CaptureOff != CaptureOffRepository {
+		t.Fatalf("stored repository not used: %+v", got)
+	}
+	// An unreadable registry leaves the reason out, not the answer.
+	if got := read(&API{Store: s, Registry: perRepository{err: errors.New("locked")}, Live: live}); got.CaptureOff != "" || got.Coverage != CoverageSkipped {
+		t.Fatalf("registry error: %+v", got)
 	}
 }

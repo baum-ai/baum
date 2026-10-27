@@ -17,7 +17,8 @@ const assert = require('node:assert/strict');
   const picked = new Set();
   const localClones = new Map([["acme/found", "/workspace/sample/found"]]);
   let cloning = false;
-  let reviews = { backend: 'auto', model: '', automatic: true, pull_requests: 'both', decisions_model: '' };
+  // A saved decision model the daemon reports capture ignores with the harness auto resolves to.
+  let reviews = { backend: 'auto', model: '', automatic: true, pull_requests: 'both', decisions_model: 'gpt-6-luna', decisions_backend: 'claude', decisions_effective_model: 'claude-haiku-5-5', decisions_model_ignored: true };
   const state = { first_run: true, home: '/workspace/sample', command: { installed: false, target: '/app/baum', plan: { link: '/workspace/sample/.local/bin/baum', on_path: true } }, hooks: { agents: ['codex', 'claude-code'].map(agent => ({ agent, name: agent === 'codex' ? 'Codex' : 'Claude Code', detected: true, installed: false, enabled: false, plugin: 'baum@baum' })) } };
   await page.exposeFunction('nativeInvoke', async (command, args) => {
     calls.push([command, args]);
@@ -110,8 +111,9 @@ const assert = require('node:assert/strict');
   // Auto and an unset model show as explicit choices, which opening baum saves.
   assert.equal(await page.locator('#review-model').inputValue(), 'claude-haiku-5-5');
   assert.equal(await page.locator('#review-model option', { hasText: 'default' }).count(), 0);
-  // The decision log model starts at the harness's cheap model, beside what capture sends.
-  assert.equal(await page.locator('#decisions-model').inputValue(), 'claude-haiku-5-5');
+  // A saved decision model capture ignores is kept and shown as not used, beside what capture sends.
+  assert.equal(await page.locator('#decisions-model').inputValue(), 'gpt-6-luna');
+  assert.equal(await page.locator('#decisions-model option:checked').textContent(), 'gpt-6-luna (not used)');
   await expect(page.locator('#review-panel')).toContainText('never tool output or file contents');
   assert.equal(await page.locator('#continue').textContent(), 'Continue →');
   await page.screenshot({ path: `${screenshots}/onboarding-reviews.png`, fullPage: true });

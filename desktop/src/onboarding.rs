@@ -608,8 +608,10 @@ pub struct ReviewSettings {
     /// The decision capture model, empty for the harness's default.
     #[serde(default)]
     decisions_model: String,
-    /// The model decision capture uses with the effective harness, and
-    /// whether it ignores `decisions_model`; read only, never saved.
+    /// The harness and model decision capture uses (empty when unknown),
+    /// and whether it ignores `decisions_model`; read only, never saved.
+    #[serde(default)]
+    decisions_backend: String,
     #[serde(default)]
     decisions_effective_model: String,
     #[serde(default)]

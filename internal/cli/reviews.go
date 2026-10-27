@@ -24,9 +24,10 @@ type reviewSettings struct {
 	// DecisionsModel is the decision capture model the app chose, empty for
 	// the backend's default.
 	DecisionsModel string `json:"decisions_model"`
-	// DecisionsEffectiveModel is the model capture uses with the effective
-	// backend (decisionlog.EffectiveModel), and DecisionsModelIgnored says
-	// it does not use DecisionsModel.
+	// DecisionsBackend and DecisionsEffectiveModel are the backend and model
+	// capture uses (decisionlog.EffectiveModel; empty when unknown), and
+	// DecisionsModelIgnored says it does not use DecisionsModel.
+	DecisionsBackend        string `json:"decisions_backend"`
 	DecisionsEffectiveModel string `json:"decisions_effective_model"`
 	DecisionsModelIgnored   bool   `json:"decisions_model_ignored"`
 }
@@ -61,7 +62,7 @@ func newReviewsCommand() *cobra.Command {
 		if prefs.Decisions.Model != nil {
 			settings.DecisionsModel = *prefs.Decisions.Model
 		}
-		settings.DecisionsEffectiveModel, settings.DecisionsModelIgnored = effective.Model, effective.Ignored
+		settings.DecisionsBackend, settings.DecisionsEffectiveModel, settings.DecisionsModelIgnored = effective.Backend, effective.Model, effective.Ignored
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(settings)
 	}}
 	set := &cobra.Command{Use: "set", Short: "Change the backend, model, automatic generation, which pull requests it covers or the decision capture model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

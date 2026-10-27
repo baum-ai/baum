@@ -119,8 +119,13 @@ export function Setup() {
         // is saved, so opening baum saves the explicit choice.
         const backend = settings.backend === "auto" ? autoBackend(view) : settings.backend;
         setReviews(withModel({ ...settings, backend }));
-        if (settings.decisions_model_ignored && settings.decisions_model)
-          setUnusedModel({ model: settings.decisions_model, backend });
+        // The daemon resolved the harness it ignores the model with.
+        if (
+          settings.decisions_model_ignored &&
+          settings.decisions_model &&
+          settings.decisions_backend
+        )
+          setUnusedModel({ model: settings.decisions_model, backend: settings.decisions_backend });
         setSavedReviews(JSON.stringify(storedReviews(settings)));
       })
       .catch((cause) => {

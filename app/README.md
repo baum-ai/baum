@@ -456,17 +456,20 @@ event, which carries no data. Settings' **Decision capture** section holds
 the switch, the decision log model (the harness's cheap default, or another
 of its models) and an optional daily cap, read with `GET
 api/settings/decisions` and saved with `PUT api/settings/decisions`
-(`enabled`, `model`, `daily_cap`; the whole object). Both answer with what the
-daemon makes of them: the harness capture resolves to, its model and
-whether the saved model is ignored, which the model picker then lists as
-"<model> (not used with <harness>)" with a note, so choosing the default
-clears it. `GET api/settings` also returns the settings as `decisions`. A repository's dialog turns
-capture off for it (`decisions: false`; on sends `null`). The desktop setup's
-review step offers the decision log model beside the harness, reset to that
+(`enabled`, `model`, `daily_cap`; the whole object). Only these two answer
+with what the daemon makes of them: the harness capture resolves to, its model
+and whether the saved model is ignored (unknown, with a note that capture
+does not run, when no harness resolves); the section reads them again when
+the review harness or model changes. A saved model it ignores is listed as
+"<model> (not used)" with a note naming the harness, so choosing the default
+clears it. `GET api/settings` returns the settings alone, as `decisions`. A
+repository's dialog turns capture off for it (`decisions: false`; on sends
+`null`). The desktop setup's review step offers the decision log model beside the harness, reset to that
 harness's cheap model when the harness changes, and says what capture sends;
 the default is saved as none, so it follows the harness, and a saved model
-the daemon reports ignored (`baum internal reviews show`) is shown the same
-way and kept unless changed.
+the daemon reports ignored (`baum internal reviews show`, with the harness it
+resolved) is shown the same way while that harness is chosen, and kept unless
+changed.
 Analytics shows decision capture's calls, failures by reason, calls cut short
 by a stop and spend under baum's work; an unknown cost stays unknown.
 
