@@ -134,18 +134,28 @@ fails is tried again after 15 minutes.
 - The first run for a repository records when the feature log was activated
   for it (`pull_sync.activated_at`); work from before is not assigned.
 - The repository's pull requests of every state are listed through the
-  GitHub REST API, most recently updated first, 100 a page, until one updated
-  before the latest update already stored (the first time, 180 days back).
-  The first page is read with the stored ETag, so an unchanged repository
-  costs one conditional request.
-- For each pull request whose head changed, the missing heads are fetched
-  from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head` of the clone, up
-  to 100 in one fetch, then each pull request's commits are read from the
-  clone as a review reads them (a head or base still missing is fetched as a
-  review fetches it). Its paths are the files its commits change; its
-  commits replace those recorded. A pull request whose commits cannot be
-  read has unknown paths until its head changes; GitHub's file list is never
-  read.
+  GitHub REST API, most recently updated first, 50 a page, until one updated
+  before the cursor (the first time, 180 days back); one updated exactly at
+  the cursor is listed again. The first page is read with the stored ETag, so
+  an unchanged repository costs one conditional request. A complete listing
+  moves the cursor to the latest update it saw, or to the start of its window
+  when it saw none; one stopped at its bound of 200 pages keeps the cursor
+  and ETag.
+- Only pull requests that can be placed in a feature are read from the
+  clone: open or merged ones not opened by a bot. For each whose head
+  changed, the missing heads are fetched from `refs/pull/<N>/head` into
+  `refs/baum/pull/<N>/head`, up to 100 in one fetch, then its commits are
+  read from the clone as a review reads them (a head or base still missing
+  is fetched as a review fetches it). Its paths are the files its commits
+  change; its commits replace those recorded. GitHub's file list is never
+  read. The refs stay: they may back saved reviews.
+- A pull request whose commits this clone will not get (too many, or missing
+  although the remote answered) has unknown paths at its head; the daily
+  re-link has them read again. A read that fails for now (the network,
+  credentials) leaves the pull request as it was and is tried again after 15
+  minutes; three in a row stop the sync, and the repository waits 15
+  minutes. The gate is read again before each pull request, so a repository
+  turned off during a long sync stops there.
 
 ### Sessions linked to pull requests
 
@@ -160,8 +170,11 @@ they had:
   session still running may yet link to;
 - once a day, every commit of the last 7 days.
 
+A commit linked to a session more than one way keeps its strongest link.
+
 A captured session's decisions are attributed (`features.SessionLinks`)
-from the pull requests its linked commits are in; a session with no capture
+from the feature pull requests its linked commits are in, each with the
+paths it touches and those it was assigned with; a session with no capture
 row has none.
 
 ### Stored data
@@ -195,4 +208,5 @@ capture that stops before rendering leaves it empty.
 runs one pull request sync without the gate (the first lists the last N
 days, default 180) and `baum internal features link --repo <owner/name>
 [--clone <path>]` links every commit of the last 7 days; each prints its
-counts as JSON. The clone defaults to the repository's registered one.
+counts as JSON. The clone defaults to the repository's registered one. They
+are for testing, with the daemon stopped: they write the daemon's store.

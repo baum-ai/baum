@@ -14,8 +14,11 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // A store an earlier release made gets the ledger's stage and item columns;
@@ -95,19 +98,51 @@ func TestLiveVersion(t *testing.T) {
 // its ETag.
 type fakeReader struct {
 	pulls []map[string]any
-	calls int
+	// version is the listing's ETag; changing the pulls changes it.
+	version int
+}
+
+func (r *fakeReader) set(pulls ...map[string]any) {
+	r.pulls = pulls
+	r.version++
 }
 
 func (r *fakeReader) Read(_ context.Context, path, etag string) (int, http.Header, []byte, error) {
-	r.calls++
-	if etag == `"e1"` {
+	current := fmt.Sprintf(`"e%d"`, r.version)
+	if etag == current {
 		return http.StatusNotModified, http.Header{}, nil, nil
 	}
 	if !strings.HasSuffix(path, "page=1") {
 		return http.StatusOK, http.Header{}, []byte("[]"), nil
 	}
 	body, _ := json.Marshal(r.pulls)
-	return http.StatusOK, http.Header{"Etag": []string{`"e1"`}}, body, nil
+	return http.StatusOK, http.Header{"Etag": []string{current}}, body, nil
+}
+
+func (s *Store) pathsAt(t *testing.T, number int) (head string, paths sql.NullString) {
+	t.Helper()
+	if err := s.db.QueryRow(`SELECT paths_head_sha, paths_json FROM pull_request WHERE number=?`, number).Scan(&head, &paths); err != nil {
+		t.Fatal(err)
+	}
+	return head, paths
+}
+
+// An empty first sync still moves the cursor to the start of its window, so
+// the next one does not list the repository's whole history.
+func TestFeatureSyncEmptyFirstListing(t *testing.T) {
+	c := &clock{t0}
+	s := openStore(t, c)
+	reader := &fakeReader{}
+	reader.set()
+	w := &FeatureWorker{Store: s, Now: c.Now, Window: 24 * time.Hour,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	if _, err := w.Sync(context.Background(), "acme/widgets", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || !state.Cursor.Equal(t0.Add(-24*time.Hour)) || state.ETag != `"e1"` {
+		t.Fatalf("state = %+v, %v", state, err)
+	}
 }
 
 func pullJSON(number int, head, base string) map[string]any {
@@ -145,15 +180,30 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 
 	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
 	s := openStore(t, c)
-	reader := &fakeReader{pulls: []map[string]any{pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base)}}
+	// Pull request 7's head is nowhere; 9 is a bot's and 10 was closed
+	// unmerged, so neither is read.
+	missing := strings.Repeat("e", 40)
+	bot, closed := pullJSON(9, f.Head, f.Base), pullJSON(10, f.Head, f.Base)
+	bot["user"] = map[string]any{"login": "dependabot[bot]", "type": "Bot"}
+	closed["state"] = "closed"
+	reader := &fakeReader{}
+	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(7, missing, f.Base), bot, closed)
 	w := &FeatureWorker{Store: s, Now: c.Now, Sessions: f.Store,
 		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
 	report, err := w.Sync(ctx, linktest.Repository, f.Repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Listed != 2 || report.PathsRead != 2 || report.PathsUnknown != 0 || report.Commits != 3 {
+	if report.Listed != 5 || report.PathsRead != 2 || report.PathsUnknown != 1 || report.PathsDeferred != 0 || report.Commits != 3 {
 		t.Fatalf("report = %+v", report)
+	}
+	if head, paths := s.pathsAt(t, 7); head != missing || paths.Valid {
+		t.Fatalf("pull request 7 = %s %v, want its head with unknown paths", head, paths)
+	}
+	for _, n := range []int{9, 10} {
+		if head, _ := s.pathsAt(t, n); head != "" {
+			t.Fatalf("pull request %d was read", n)
+		}
 	}
 	if got := linktest.Git(t, f.Repo, "rev-parse", "refs/baum/pull/6/head"); got != six {
 		t.Fatalf("pull request 6's head was not fetched: %s", got)
@@ -166,12 +216,39 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 		t.Fatalf("second sync = %+v, %v", report, err)
 	}
 
+	// With the remote out of reach, a new head is left as it was and not
+	// tried again before FeatureQuiet.
+	linktest.Git(t, f.Repo, "config", "--unset", "url."+remote+".insteadOf")
+	linktest.Git(t, f.Repo, "config", "url."+filepath.Join(t.TempDir(), "gone")+".insteadOf", "https://github.com/acme/widgets.git")
+	other := strings.Repeat("d", 40)
+	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base))
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsDeferred != 1 || report.PathsUnknown != 0 {
+		t.Fatalf("sync without the remote = %+v, %v", report, err)
+	}
+	if head, _ := s.pathsAt(t, 8); head != "" {
+		t.Fatalf("a failed read recorded head %s", head)
+	}
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsDeferred != 0 {
+		t.Fatalf("retried too soon: %+v, %v", report, err)
+	}
+	// Turned off during a sync, the repository's pull requests are left.
+	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base), pullJSON(12, f.Head, f.Base))
+	w.Registry = featureRegistry{prefs: repos.Preferences{Automatic: false}, repositories: []repos.Repository{{Repository: linktest.Repository}}}
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || !report.Stopped || report.PathsRead != 0 {
+		t.Fatalf("sync turned off = %+v, %v", report, err)
+	}
+	w.Registry = nil
+
 	indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !indexed.Full || indexed.Commits != 3 || indexed.Links != 1 || indexed.Sessions != 1 {
 		t.Fatalf("index = %+v", indexed)
+	}
+	// The daily re-link has unknown paths read again.
+	if head, _ := s.pathsAt(t, 7); head != "" {
+		t.Fatal("unknown paths are not retried")
 	}
 
 	// The session's decisions go to pull request 5's feature once the
@@ -219,11 +296,24 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 type featureRegistry struct {
 	prefs        repos.Preferences
 	repositories []repos.Repository
+	// listed is told each time the repositories are read.
+	listed chan struct{}
 }
 
 func (r featureRegistry) Preferences(context.Context) (repos.Preferences, error) { return r.prefs, nil }
 func (r featureRegistry) Repositories(context.Context) ([]repos.Repository, error) {
+	if r.listed != nil {
+		r.listed <- struct{}{}
+	}
 	return r.repositories, nil
+}
+func (r featureRegistry) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
+	for _, each := range r.repositories {
+		if each.Repository == repository {
+			return each.Settings, true, nil
+		}
+	}
+	return repos.Settings{}, false, nil
 }
 
 // A repository whose decisions are not captured is never synced, and Run
@@ -243,8 +333,9 @@ func TestFeatureWorkerGateAndShutdown(t *testing.T) {
 			}
 			registry.repositories[0].Repository = "acme/widgets"
 			registry.repositories[0].Clones = []repos.Clone{{Path: t.TempDir(), Available: true}}
+			registry.listed = make(chan struct{}, 16)
 			calls := 0
-			w := &FeatureWorker{Store: openStore(t, &clock{t0}), Registry: registry, Tick: time.Millisecond,
+			w := &FeatureWorker{Store: openStore(t, &clock{t0}), Registry: registry, Tick: time.Hour,
 				GitHub: func(context.Context, github.Repository) (github.Reader, error) {
 					calls++
 					return nil, fmt.Errorf("unexpected")
@@ -255,8 +346,11 @@ func TestFeatureWorkerGateAndShutdown(t *testing.T) {
 				w.Run(ctx)
 				close(done)
 			}()
-			time.Sleep(20 * time.Millisecond)
+			// The first pass reads the repositories; a wake starts a second,
+			// so the first has finished when it reads them again.
+			<-registry.listed
 			w.Wake()
+			<-registry.listed
 			cancel()
 			select {
 			case <-done:
@@ -267,5 +361,94 @@ func TestFeatureWorkerGateAndShutdown(t *testing.T) {
 				t.Fatalf("GitHub was called %d times, want %d", calls, want)
 			}
 		})
+	}
+}
+
+// A commit in two pull requests links the session to both; another
+// repository's rows never count, and a pull request's paths include those
+// it was assigned with.
+func TestSessionLinksAcrossPullRequests(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	if err := s.Skip(ctx, Meta{Agent: "codex", ID: "s1", Repository: "o/r"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, repository := range []string{"o/r", "o/other"} {
+		version, err := s.LiveVersion(ctx, repository)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, number := range []int{10, 11} {
+			feature := fmt.Sprintf("%s-F%d", repository, i)
+			for _, stmt := range []struct {
+				query string
+				args  []any
+			}{
+				{`INSERT INTO pull_request(repository, number, title, state, head_sha, base_sha, created_at, updated_at, paths_head_sha, paths_json)
+VALUES (?,?,'t','open','h','b',?,0,'h',?)`, []any{repository, number, number, fmt.Sprintf(`["p%d"]`, number)}},
+				{`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?,?,'X',0)`, []any{repository, number}},
+				{`INSERT INTO feature(id, version_id, repository, changed_at, created_at, updated_at) VALUES (?,?,?,0,0,0)`, []any{feature, version, repository}},
+				{`INSERT INTO feature_pull(version_id, repository, number, feature_id, assigned_by, assigned_at, assigned_paths_json)
+VALUES (?,?,?,?,'assigner',0,'["old"]')`, []any{version, repository, number, feature}},
+			} {
+				if _, err := s.db.Exec(stmt.query, stmt.args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := s.ReplaceSessionCommits(ctx, repository, []string{"X"}, []SessionCommit{
+			{Agent: "codex", SessionID: "s1", SHA: "X", Method: "files_overlap", Confidence: 0.5},
+			{Agent: "codex", SessionID: "s1", SHA: "X", Method: "commit_ref", Confidence: 0.9},
+			{Agent: "codex", SessionID: "s1", SHA: "X", Method: "start_commit", Confidence: 0.7},
+		}, time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var method string
+	if err := s.db.QueryRow(`SELECT method FROM session_commit WHERE repository='o/r'`).Scan(&method); err != nil || method != "commit_ref" {
+		t.Fatalf("kept %q, %v; want the strongest link", method, err)
+	}
+	links, err := s.SessionLinks(ctx, "o/r", "codex", "s1")
+	if err != nil || len(links.PullRequests) != 2 {
+		t.Fatalf("links = %+v, %v", links, err)
+	}
+	for i, pull := range links.PullRequests {
+		if pull.FeatureID != fmt.Sprintf("o/r-F%d", i) || !slices.Equal(pull.Commits, []string{"X"}) ||
+			!slices.Equal(pull.Paths, []string{"old", fmt.Sprintf("p%d", pull.Number)}) {
+			t.Fatalf("pull = %+v", pull)
+		}
+	}
+}
+
+// A linked session is keyed as capture keys it: a Codex session's agent and
+// id are the ones its live transcript is located by.
+func TestLinkedSessionsKeyAsCapture(t *testing.T) {
+	if agents["claude_code"] != livesessions.AgentClaudeCode || agents["codex"] != livesessions.AgentCodex || agents["cursor"] != livesessions.AgentCursor {
+		t.Fatalf("agents = %v", agents)
+	}
+	home, repo := t.TempDir(), t.TempDir()
+	linktest.Git(t, repo, "init", "-q")
+	const id = "019a0000-0000-7000-8000-000000000001"
+	rollout := filepath.Join(home, ".codex", "sessions", "2026", "07", "01", "rollout-2026-07-01T10-00-00-"+id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(rollout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rollout, []byte(fmt.Sprintf(`{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"id":%q,"cwd":%q,"cli_version":"0.69.0","model_provider":"openai"}}
+{"timestamp":"2026-07-01T10:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}
+`, id, repo)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found, _, err := sessions.Load(context.Background(), repo, sessions.Options{
+		Sources: []vendors.Slug{vendors.Codex}, CodexSessionsDir: filepath.Join(home, ".codex", "sessions"),
+	})
+	if err != nil || len(found) != 1 {
+		t.Fatalf("found = %+v, %v", found, err)
+	}
+	agent := agents[found[0].Vendor]
+	if agent != livesessions.AgentCodex || found[0].ID != id {
+		t.Fatalf("session %s %s", found[0].Vendor, found[0].ID)
+	}
+	if _, err := livesessions.Locate(home, "", agent, found[0].ID, ""); err != nil {
+		t.Fatalf("capture cannot locate the linked session: %v", err)
 	}
 }

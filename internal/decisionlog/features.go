@@ -2,6 +2,7 @@ package decisionlog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -22,6 +24,7 @@ import (
 type FeatureRegistry interface {
 	Preferences(context.Context) (repos.Preferences, error)
 	Repositories(context.Context) ([]repos.Repository, error)
+	RepositorySettings(ctx context.Context, repository string) (repos.Settings, bool, error)
 }
 
 // FeatureWorker runs the feature log's stages for every repository whose
@@ -45,15 +48,22 @@ type FeatureWorker struct {
 	once sync.Once
 	wake chan struct{}
 	// windowLinked is each repository's last re-link of the session window,
-	// retryAt when a failed repository is tried again; only Run's goroutine
-	// touches them.
+	// retryAt when a failed repository is tried again, and pathsRetryAt when
+	// a pull request whose commits failed to be read is; only Run's
+	// goroutine touches them.
 	windowLinked, retryAt map[string]time.Time
+	pathsRetryAt          map[pullKey]time.Time
+}
+
+type pullKey struct {
+	repository string
+	number     int
 }
 
 func (w *FeatureWorker) init() {
 	w.once.Do(func() {
 		w.wake = make(chan struct{}, 1)
-		w.windowLinked, w.retryAt = map[string]time.Time{}, map[string]time.Time{}
+		w.windowLinked, w.retryAt, w.pathsRetryAt = map[string]time.Time{}, map[string]time.Time{}, map[pullKey]time.Time{}
 	})
 }
 
@@ -142,16 +152,37 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 	}
 }
 
+// enabled reads the gate again for the repository during a long sync; a
+// worker without a registry (the command line's) has none.
+func (w *FeatureWorker) enabled(ctx context.Context, repository string) bool {
+	if w.Registry == nil {
+		return true
+	}
+	prefs, err := w.Registry.Preferences(ctx)
+	if err != nil {
+		return false
+	}
+	settings, picked, err := w.Registry.RepositorySettings(ctx, repository)
+	return err == nil && picked && settings.DecisionsEnabled(prefs)
+}
+
 // SyncReport says what Sync did.
 type SyncReport struct {
 	Repository  string `json:"repository"`
 	Calls       int    `json:"github_calls"`
 	NotModified bool   `json:"not_modified"`
 	Listed      int    `json:"pull_requests_listed"`
-	PathsRead   int    `json:"paths_read"`
-	// PathsUnknown are pull requests whose commits could not be read.
-	PathsUnknown int `json:"paths_unknown"`
-	Commits      int `json:"commits_recorded"`
+	// Truncated is a listing that stopped at its page bound; the cursor
+	// stays, so the next sync lists the same pull requests again.
+	Truncated bool `json:"truncated,omitempty"`
+	PathsRead int  `json:"paths_read"`
+	// PathsUnknown are pull requests whose commits this clone cannot get,
+	// PathsDeferred those whose read failed for now and is tried again.
+	PathsUnknown  int `json:"paths_unknown"`
+	PathsDeferred int `json:"paths_deferred"`
+	// Stopped is set when the repository was turned off during the sync.
+	Stopped bool `json:"stopped,omitempty"`
+	Commits int  `json:"commits_recorded"`
 	// commits are those recorded, for Index.
 	commits []gitlocal.Commit
 }
@@ -160,6 +191,7 @@ type SyncReport struct {
 // (the first lists those of Window) and reads the paths and commits of each
 // whose head changed from the clone in dir, fetching missing heads.
 func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncReport, error) {
+	w.init()
 	report := SyncReport{Repository: repository}
 	repo, err := github.ParseRepository(repository)
 	if err != nil {
@@ -182,18 +214,35 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		return report, err
 	}
 	list, err := github.ListPullRequests(ctx, reader, repo, state.ETag, since)
-	report.Calls, report.NotModified, report.Listed = list.Calls, list.NotModified, len(list.Pulls)
+	report.Calls, report.NotModified, report.Listed, report.Truncated = list.Calls, list.NotModified, len(list.Pulls), list.Truncated
 	if err != nil {
 		return report, err
 	}
 	if !list.NotModified {
-		if err := w.Store.SavePulls(ctx, repository, list.Pulls, list.ETag); err != nil {
+		// A complete listing moves the cursor to the latest update it saw,
+		// or to since when it saw none.
+		cursor := since
+		for _, p := range list.Pulls {
+			if p.UpdatedAt.After(cursor) {
+				cursor = p.UpdatedAt
+			}
+		}
+		etag := list.ETag
+		if list.Truncated {
+			cursor, etag = time.Time{}, ""
+		}
+		if err := w.Store.SavePulls(ctx, repository, list.Pulls, etag, cursor); err != nil {
 			return report, err
 		}
 	}
-	pulls, err := w.Store.PullsWithoutPaths(ctx, repository)
-	if err != nil || len(pulls) == 0 {
+	all, err := w.Store.PullsWithoutPaths(ctx, repository)
+	if err != nil {
 		return report, err
+	}
+	now := w.now()
+	pulls := slices.DeleteFunc(all, func(p StoredPull) bool { return now.Before(w.pathsRetryAt[pullKey{repository, p.Number}]) })
+	if len(pulls) == 0 {
+		return report, nil
 	}
 	clone, remote, err := openClone(ctx, dir, repository)
 	if err != nil {
@@ -210,17 +259,34 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		}
 		w.logger().Debug("feature log: pull request heads not fetched together", "repository", repository, "error", err)
 	}
+	deferred := 0
 	for _, p := range pulls {
+		if !w.enabled(ctx, repository) {
+			report.Stopped = true
+			return report, nil
+		}
 		commits, err := pullCommits(ctx, clone, remote, p)
 		var paths []string
 		var recorded []PullCommit
 		switch {
 		case ctx.Err() != nil:
 			return report, ctx.Err()
+		case err != nil && !permanentPathError(err):
+			// Left as it is, and tried again later.
+			report.PathsDeferred++
+			w.pathsRetryAt[pullKey{repository, p.Number}] = now.Add(FeatureQuiet)
+			w.logger().Debug("feature log: pull request commits not read for now", "repository", repository, "number", p.Number, "error", err)
+			// Several in a row: the remote is out of reach, so the rest wait
+			// with the repository.
+			if deferred++; deferred == maxDeferred {
+				return report, fmt.Errorf("reading pull request commits: %w", err)
+			}
+			continue
 		case err != nil:
 			report.PathsUnknown++
 			w.logger().Debug("feature log: pull request commits not read", "repository", repository, "number", p.Number, "error", err)
 		default:
+			deferred = 0
 			paths = []string{}
 			for _, c := range commits {
 				paths = append(paths, c.Files...)
@@ -239,6 +305,28 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		}
 	}
 	return report, nil
+}
+
+// maxDeferred is how many pull requests in a row may fail to be read for
+// now before a sync stops.
+const maxDeferred = 3
+
+// permanentPathError reports a pull request whose commits this clone will
+// not get: there are too many, or they are missing although the remote
+// answered every fetch, or answered that it does not have them. Anything
+// else (the network, credentials, a partial clone) may pass.
+func permanentPathError(err error) bool {
+	if errors.Is(err, bundle.ErrOutputTooLarge) {
+		return true
+	}
+	if !errors.Is(err, gitlocal.ErrObjectNotFound) {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	if !strings.Contains(text, "fetching pull request") {
+		return true
+	}
+	return strings.Contains(text, "couldn't find remote ref") || strings.Contains(text, "not our ref")
 }
 
 // openClone opens the clone in dir and names its remote for repository.
@@ -313,6 +401,12 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	for _, c := range fresh {
 		add(c, lookback)
+	}
+	if full {
+		// Pull requests whose commits could not be read get another try.
+		if err := w.Store.RetryUnknownPaths(ctx, repository); err != nil {
+			return report, err
+		}
 	}
 	if window {
 		since := now.Add(-locallink.SessionWindow)

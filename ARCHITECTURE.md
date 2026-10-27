@@ -2975,10 +2975,12 @@ newer one drops them. See [its README](internal/decisionlog/README.md).
 on the same store, every minute and on a settings change, for each picked
 repository with a clone that passes the capture gate. It lists the
 repository's pull requests through the REST API (`github.ListPullRequests`,
-`state=all`, sorted by update, paged to the stored cursor, the first page
-conditional on its ETag), fetches missing heads from `refs/pull/<N>/head` in
-batches of 100 (`gitlocal.FetchPullHeads`), records each changed pull
-request's commits and paths from the clone, and links commits to this
+`state=all`, sorted by update, 50 a page to the stored cursor, the first
+page conditional on its ETag), fetches the missing heads of open and merged
+non-bot pull requests from `refs/pull/<N>/head` in batches of 100
+(`gitlocal.FetchPullHeads`), records each changed one's commits and paths
+from the clone (a transient failure is retried, a permanent one leaves its
+paths unknown until the daily re-link), and links commits to this
 machine's sessions with `locallink.LinkCommits`, the per-commit matching
 `Resolve` uses. The constants are in `featureconfig.go` and the live feature
 version of a repository is chosen in one place (`liveVersion`). See

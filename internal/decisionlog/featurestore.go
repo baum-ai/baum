@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/features"
@@ -107,8 +109,9 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		{"stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`},
 		{"item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`},
 	} {
+		// Another process opening the store may add it first.
 		if !have[column.name] {
-			if _, err := db.ExecContext(ctx, column.ddl); err != nil {
+			if _, err := db.ExecContext(ctx, column.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 				return err
 			}
 		}
@@ -182,11 +185,11 @@ ON CONFLICT(repository) DO UPDATE SET repository=excluded.repository RETURNING e
 	return st, err
 }
 
-// SavePulls upserts the listed pull requests and advances the sync state to
-// etag and the latest updated_at among them.
-func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string) error {
+// SavePulls upserts the listed pull requests. A non-zero cursor records a
+// complete listing: the sync state moves to etag and the cursor, which never
+// goes back.
+func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var cursor int64
 		for _, p := range pulls {
 			var merged, closed any
 			if p.MergedAt != nil {
@@ -205,10 +208,12 @@ updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded
 				p.MergeCommitSHA, p.CreatedAt.UnixMilli(), p.UpdatedAt.UnixMilli(), merged, closed); err != nil {
 				return err
 			}
-			cursor = max(cursor, p.UpdatedAt.UnixMilli())
+		}
+		if cursor.IsZero() {
+			return nil
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
-			etag, cursor, repository)
+			etag, cursor.UnixMilli(), repository)
 		return err
 	})
 }
@@ -219,11 +224,19 @@ type StoredPull struct {
 	HeadSHA, BaseSHA, BaseRef string
 }
 
-// PullsWithoutPaths lists the repository's pull requests whose paths were
-// not read at their head, newest first.
+// PullsWithoutPaths lists the repository's pull requests that may be placed
+// in a feature, open or merged and not opened by a bot, whose paths were not
+// read at their head, newest first.
 func (s *Store) PullsWithoutPaths(ctx context.Context, repository string) ([]StoredPull, error) {
 	return s.pulls(ctx, `SELECT number, head_sha, base_sha, base_ref FROM pull_request WHERE repository=? AND paths_head_sha != head_sha
-ORDER BY updated_at DESC`, repository)
+AND bot=0 AND (state='open' OR merged_at IS NOT NULL) ORDER BY updated_at DESC`, repository)
+}
+
+// RetryUnknownPaths has the paths of the pull requests whose commits could
+// not be read read again.
+func (s *Store) RetryUnknownPaths(ctx context.Context, repository string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha='' WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
+	return err
 }
 
 // PullsWithCommitsSince lists the pull requests holding a commit made at or
@@ -305,7 +318,8 @@ func (s *Store) ReplaceSessionCommits(ctx context.Context, repository string, sh
 		}
 		for _, l := range links {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES (?,?,?,?,?,?)
-ON CONFLICT(repository, sha, agent, session_id) DO UPDATE SET method=excluded.method, confidence=MAX(confidence, excluded.confidence)`,
+ON CONFLICT(repository, sha, agent, session_id) DO UPDATE SET method=excluded.method, confidence=excluded.confidence
+WHERE excluded.confidence > session_commit.confidence`,
 				l.Agent, l.SessionID, repository, l.SHA, l.Method, l.Confidence); err != nil {
 				return err
 			}
@@ -328,7 +342,7 @@ func (s *Store) SessionLinks(ctx context.Context, repository, agent, sessionID s
 	if err != nil || version == 0 {
 		return links, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), sc.sha
+	rows, err := s.db.QueryContext(ctx, `SELECT fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), fp.assigned_paths_json, sc.sha
 FROM session_commit sc
 JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
 JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
@@ -342,17 +356,20 @@ WHERE sc.repository=?2 AND sc.agent=?3 AND sc.session_id=?4 ORDER BY pr.number, 
 	for rows.Next() {
 		var pull features.LinkedPullRequest
 		var opened int64
-		var paths, sha string
-		if err := rows.Scan(&pull.FeatureID, &pull.Number, &opened, &paths, &sha); err != nil {
+		var paths, assigned, sha string
+		if err := rows.Scan(&pull.FeatureID, &pull.Number, &opened, &paths, &assigned, &sha); err != nil {
 			_ = rows.Close()
 			return links, err
 		}
 		i, seen := byNumber[pull.Number]
 		if !seen {
-			if err := json.Unmarshal([]byte(paths), &pull.Paths); err != nil {
+			// The paths it touches now and those it was assigned with.
+			var now, then []string
+			if err := errors.Join(json.Unmarshal([]byte(paths), &now), json.Unmarshal([]byte(assigned), &then)); err != nil {
 				_ = rows.Close()
 				return links, err
 			}
+			pull.Paths = slices.Compact(slices.Sorted(slices.Values(append(now, then...))))
 			pull.PullRequestID, pull.OpenedAt = strconv.Itoa(int(pull.Number)), time.UnixMilli(opened)
 			i = len(links.PullRequests)
 			byNumber[pull.Number] = i

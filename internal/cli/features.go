@@ -41,7 +41,8 @@ func newFeaturesCommand() *cobra.Command {
 		Short: "List the repository's pull requests and record their paths and commits",
 		Long: `Sync runs the feature worker's pull request sync once, without its gate, and
 prints what it did as JSON. The first sync lists the pull requests updated in
-the last --days days.`,
+the last --days days. It writes the daemon's store: run it with the daemon
+stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFeatures(cmd, repository, clone, days, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
@@ -54,7 +55,9 @@ the last --days days.`,
 	link := &cobra.Command{
 		Use:   "link",
 		Short: "Link the commits of the last week's pull requests to this machine's sessions",
-		Args:  cobra.NoArgs,
+		Long: `Link runs the feature worker's full re-link once and prints its counts as
+JSON. It writes the daemon's store: run it with the daemon stopped.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Index(ctx, repository, dir, nil, true)

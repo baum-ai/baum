@@ -2,6 +2,7 @@ package gitlocal
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -35,5 +36,23 @@ func TestFetchPullHeads(t *testing.T) {
 	}
 	if err := r.FetchPullHeads(context.Background(), "origin", []PullRequest{{Number: 10, HeadSHA: strings.Repeat("e", 40)}}); err == nil {
 		t.Fatal("a missing head from a remote that is gone must fail")
+	}
+}
+
+// More heads than one fetch takes all arrive.
+func TestFetchPullHeadsBatches(t *testing.T) {
+	f := newRemoteFixture(t)
+	var prs []PullRequest
+	for n := 1; n <= maxFetchRefspecs+1; n++ {
+		head := git(t, f.remote, "commit-tree", "-p", f.base, "-m", fmt.Sprintf("pr %d", n), f.base+"^{tree}")
+		git(t, f.remote, "update-ref", fmt.Sprintf("refs/pull/%d/head", n), head)
+		prs = append(prs, PullRequest{Number: n, HeadSHA: head})
+	}
+	r := open(t, f.clone, Options{})
+	if err := r.FetchPullHeads(context.Background(), "", prs); err != nil {
+		t.Fatal(err)
+	}
+	if refs := strings.Fields(git(t, f.clone, "for-each-ref", "--format=%(objectname)", "refs/baum/pull")); len(refs) != len(prs) {
+		t.Fatalf("%d heads fetched, want %d", len(refs), len(prs))
 	}
 }

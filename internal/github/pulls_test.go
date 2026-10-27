@@ -54,21 +54,22 @@ func updated(n int) time.Time {
 
 func TestListPullRequests(t *testing.T) {
 	repo := Repository{Host: "github.com", Owner: "acme", Name: "widgets"}
-	full := make([]int, 100)
+	full := make([]int, pullsPerPage)
 	for i := range full {
 		full[i] = i + 1
 	}
-	reader := &pagesReader{pages: [][]int{full, {101, 102}}, etag: `"v1"`}
+	reader := &pagesReader{pages: [][]int{full, {51, 52}}, etag: `"v1"`}
 
-	// Paging stops at the first pull request updated before since.
-	list, err := ListPullRequests(context.Background(), reader, repo, "", updated(101))
+	// Paging stops at the first pull request updated before since; one
+	// updated exactly at since is listed.
+	list, err := ListPullRequests(context.Background(), reader, repo, "", updated(51))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list.Calls != 2 || len(list.Pulls) != 101 || list.ETag != `"v1"` || list.NotModified {
+	if list.Calls != 2 || len(list.Pulls) != 51 || list.Pulls[50].Number != 51 || list.ETag != `"v1"` || list.NotModified || list.Truncated {
 		t.Fatalf("list = %d calls, %d pulls, etag %q", list.Calls, len(list.Pulls), list.ETag)
 	}
-	if !strings.HasPrefix(reader.paths[0], "/repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1") {
+	if !strings.HasPrefix(reader.paths[0], "/repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=50&page=1") {
 		t.Fatalf("path = %s", reader.paths[0])
 	}
 	if reader.etags[1] != "" {
@@ -82,6 +83,20 @@ func TestListPullRequests(t *testing.T) {
 	// An unchanged first page reads nothing more.
 	list, err = ListPullRequests(context.Background(), reader, repo, `"v1"`, time.Time{})
 	if err != nil || !list.NotModified || list.Calls != 1 || len(list.Pulls) != 0 || list.ETag != `"v1"` {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+}
+
+// A listing that reaches its page bound says so.
+func TestListPullRequestsTruncated(t *testing.T) {
+	defer func(pages int) { maxPullPages = pages }(maxPullPages)
+	maxPullPages = 1
+	full := make([]int, pullsPerPage)
+	for i := range full {
+		full[i] = i + 1
+	}
+	list, err := ListPullRequests(context.Background(), &pagesReader{pages: [][]int{full, full}}, Repository{Host: "github.com", Owner: "acme", Name: "widgets"}, "", time.Time{})
+	if err != nil || !list.Truncated || list.Calls != 1 || len(list.Pulls) != pullsPerPage {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 }

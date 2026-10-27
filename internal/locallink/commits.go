@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
 // LinkOptions say where LinkCommits looks.
@@ -38,8 +40,13 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 	if len(commits) == 0 {
 		return nil, nil
 	}
+	// The remote is only a missing checkpoint's fetch hint: the clone is
+	// opened for it only when a commit names a checkpoint.
 	remote := ""
-	if opts.Repository != "" {
+	if opts.Repository != "" && slices.ContainsFunc(commits, func(c gitlocal.Commit) bool {
+		valid, _ := entirecheckpoint.ParseMessage(c.Message)
+		return len(valid) > 0
+	}) {
 		repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
 		if err != nil {
 			return nil, fmt.Errorf("opening the clone: %w", err)
