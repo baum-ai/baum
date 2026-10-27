@@ -791,9 +791,12 @@ export function SessionsPage({
   for (const s of needsYou(sessions))
     if (!asked.has(sessionKey(s)))
       waiting.push({ key: sessionKey(s), since: waitingSince(s), session: s });
+  // What the app can answer leads, then the longest wait.
   waiting.sort(
     (a, b) =>
-      new Date(a.since).getTime() - new Date(b.since).getTime() || a.key.localeCompare(b.key),
+      Number(!a.request) - Number(!b.request) ||
+      new Date(a.since).getTime() - new Date(b.since).getTime() ||
+      a.key.localeCompare(b.key),
   );
   const waitingKeys = new Set(waiting.flatMap((w) => (w.session ? [sessionKey(w.session)] : [])));
   // A session in Needs you is not listed again under Running now.

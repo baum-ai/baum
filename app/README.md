@@ -446,7 +446,7 @@ sections of cards; the `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
-  on the person, the longest wait first. A session with a pending `permission`
+  on the person: the requests the app can answer first, then the longest wait. A session with a pending `permission`
   request (from `api/agent-requests`) gets an amber card titled by its tool ("wants to
   run a command", "wants to edit a file", "wants to use X"), the session's title and
   branch, the agent's last message, what the request would do (`code` rows in a dark
