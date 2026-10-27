@@ -413,7 +413,7 @@ func TestRenderSplitOfALargeFeatureKeepsTitlesAndSummaries(t *testing.T) {
 	for i := range 199 {
 		var paths []string
 		for k := range 20 {
-			paths = append(paths, fmt.Sprintf("service/area%d/file%d.go", i%7, k))
+			paths = append(paths, fmt.Sprintf("services/internal/area%d/file%d.go", i%7, k))
 		}
 		input.PullRequests = append(input.PullRequests, PullRequest{
 			Number: int32(i + 1), Title: fmt.Sprintf("Change %d to the review flow", i), Body: strings.Repeat("long description ", 80),

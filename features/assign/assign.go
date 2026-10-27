@@ -68,7 +68,7 @@ const SchemaName = "feature_assignment"
 // hundred.
 const MaxOutputTokens = 4096
 
-// MaxCandidates bounds decision_log.features.assign.candidates.
+// MaxCandidates bounds the number of candidates a host offers one call.
 const MaxCandidates = 32
 
 // Bounds of the rendered input, so its size depends on the number of

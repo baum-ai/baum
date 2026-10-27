@@ -33,8 +33,8 @@ func PathChange(assigned, current []string) (differing, total int) {
 
 // LargeUpdate reports whether a pull request's paths changed enough since
 // its assignment to assign it again: the path change (1 - |A ∩ B| / |A ∪ B|)
-// is at least minChange and at least minPaths paths differ. The statement
-// that lists pending items applies the same rule.
+// is at least minChange and at least minPaths paths differ. A host that
+// selects pending items in its store applies the same rule.
 func LargeUpdate(assigned, current []string, minChange float64, minPaths int) bool {
 	differing, total := PathChange(assigned, current)
 	return differing >= max(minPaths, 1) && float64(differing) >= minChange*float64(total)

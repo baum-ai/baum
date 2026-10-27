@@ -847,7 +847,8 @@ A decision is a choice between plausible alternatives that lands in the
 repository, made by the human, by the agent, or proposed by the agent and
 approved by the human. `decisions` holds everything about extracting them
 that does not depend on where a session is stored or which prompt asks for
-them; the hosted service imports it with its own private prompt.
+them, and the published extraction prompt; the hosted service imports it
+with its own prompt.
 
 - **Transcript.** `Render` reduces a session tree
   (`sessions/session`) to one turn per root-session user input, numbered by

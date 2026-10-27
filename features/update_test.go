@@ -48,8 +48,7 @@ func TestLargeUpdateNeedsBothThresholds(t *testing.T) {
 			}
 		})
 	}
-	// Both thresholds are configurable; the statement that claims pending
-	// items applies the same rule (prreview's assigner tests).
+	// Both thresholds are configurable.
 	if !LargeUpdate(four, append(four[:4:4], "b.go"), 0.2, 1) || LargeUpdate(four, append(four[:4:4], paths("b", 6)...), 0.7, 3) {
 		t.Fatal("LargeUpdate ignores its thresholds")
 	}
