@@ -140,6 +140,13 @@ body {
 .local-rail-badge.warn {
   background: var(--status-critical);
 }
+/* Agent sessions waiting on the person. */
+.local-rail-badge.caution {
+  background: var(--status-caution);
+}
+:root[data-theme="dark"] .local-rail-badge.caution {
+  color: #1f1a15;
+}
 .local-rail-foot {
   margin-top: auto;
 }
@@ -1314,6 +1321,45 @@ a.local-session-pr:hover {
   margin-left: 0;
   text-decoration: none;
 }
+/* Needs you: the sessions waiting on the person, above the others. */
+.local-needs h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.local-needs-count {
+  min-width: 1.25rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.25rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.local-needs-reason.permission,
+.local-needs-reason.input {
+  color: var(--status-caution);
+  font-weight: 500;
+}
+.local-needs-reason.turn_finished svg {
+  color: var(--status-positive);
+}
+.local-needs-what {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.local-needs-message {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The session at the top of its transcript: the row's three columns, on its
    own panel. */
 .local-session-head {
@@ -1349,12 +1395,18 @@ a.local-session-pr:hover {
   .local-session-head {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .local-session-where {
+  .local-session-where,
+  .local-needs-what {
     grid-column: 1 / -1;
     grid-row: 2;
   }
-  .local-session-row:has(.local-session-open) .local-session-where {
+  .local-session-row:has(.local-session-open) .local-session-where,
+  .local-session-row:has(.local-session-open) .local-needs-what {
     grid-column: 1;
+  }
+  .local-needs-what .local-session-where {
+    grid-column: auto;
+    grid-row: auto;
   }
   .local-session-open {
     grid-column: 2;

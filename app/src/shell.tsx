@@ -20,12 +20,16 @@ export function Sidebar({
   page,
   activeJobs,
   runningSessions,
+  needsYou,
   problems,
   Link,
 }: {
   page: Page;
   activeJobs: number;
   runningSessions: number;
+  /** Agent sessions waiting on the person; the Sessions badge counts them,
+   *  in the caution tone, while there are any. */
+  needsYou: number;
   problems: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -35,6 +39,7 @@ export function Sidebar({
     href: string;
     icon: ComponentType<IconProps>;
     badge?: ReactNode;
+    tone?: "warn" | "caution";
   };
   const main: Item[] = [
     { page: "inbox", label: "Inbox", href: appURL(), icon: PullRequestIcon },
@@ -43,7 +48,8 @@ export function Sidebar({
       label: "Sessions",
       href: appURL("?page=sessions"),
       icon: SessionsIcon,
-      badge: runningSessions > 0 ? runningSessions : null,
+      badge: needsYou > 0 ? needsYou : runningSessions > 0 ? runningSessions : null,
+      tone: needsYou > 0 ? "caution" : undefined,
     },
     {
       page: "repositories",
@@ -69,7 +75,7 @@ export function Sidebar({
       badge: problems > 0 ? problems : null,
     },
   ];
-  const link = ({ page: target, label, href, icon: Icon, badge }: Item) => (
+  const link = ({ page: target, label, href, icon: Icon, badge, tone }: Item) => (
     <Link
       key={target}
       href={href}
@@ -82,7 +88,7 @@ export function Sidebar({
       {badge ? (
         <span
           aria-hidden="true"
-          className={target === "settings" ? "local-rail-badge warn" : "local-rail-badge"}
+          className={`local-rail-badge ${target === "settings" ? "warn" : (tone ?? "")}`.trim()}
         >
           {badge}
         </span>

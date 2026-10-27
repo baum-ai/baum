@@ -247,6 +247,111 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   );
 });
 
+it("puts the sessions waiting on the person in Needs you, longest wait first, and counts them on the sidebar", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    history.replaceState(null, "", "/s/test-ns/?page=sessions");
+    await act(async () => root.render(<App />));
+    expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    liveBody = {
+      sessions: [
+        session(),
+        session({
+          session_id: "finished",
+          state: "idle",
+          last_event: "stop",
+          waiting_reason: "turn_finished",
+          waiting_since: ago(2),
+        }),
+        session({
+          session_id: "asking",
+          agent: "codex",
+          state: "idle",
+          last_event: "wait",
+          waiting_reason: "permission",
+          waiting_since: ago(4),
+          branch: "wip",
+          pr: undefined,
+        }),
+        session({
+          session_id: "question",
+          state: "idle",
+          last_event: "wait",
+          waiting_reason: "input",
+          waiting_since: new Date(Date.now() - 30_000).toISOString(),
+          waiting_message: "Which database should the migration use?",
+        }),
+        // A reason the app does not know, from a newer daemon, is not listed.
+        session({
+          session_id: "later",
+          state: "idle",
+          waiting_reason: "something_new" as never,
+          waiting_since: ago(9),
+        }),
+        session({
+          session_id: "over",
+          state: "ended",
+          last_event: "end",
+          ended_at: ago(1),
+          waiting_reason: "permission",
+          waiting_since: ago(3),
+        }),
+      ],
+    };
+    await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+    const needs = node.querySelector('[aria-label="Needs you"]')!;
+    const rows = [...needs.querySelectorAll("li")];
+    expect(rows.map((r) => r.getAttribute("title"))).toEqual(["asking", "finished", "question"]);
+    expect(needs.querySelector("h2")!.textContent).toBe("Needs you 3");
+    expect(rows[0]!.textContent).toContain("Codex");
+    expect(rows[0]!.textContent).toContain("Asking permission");
+    expect(rows[0]!.textContent).toContain("Waiting 4 min");
+    expect(rows[0]!.querySelector(".local-session-branch")!.textContent).toBe("wip");
+    expect(rows[0]!.querySelector(".local-needs-message")).toBeNull();
+    expect(rows[1]!.textContent).toContain("Finished its turn");
+    expect(rows[2]!.textContent).toContain("Waiting for your answer");
+    expect(rows[2]!.textContent).toContain("Waiting under a minute");
+    expect(rows[2]!.querySelector(".local-needs-message")!.textContent).toBe(
+      "Which database should the migration use?",
+    );
+    expect(rows[2]!.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
+    expect(rows[2]!.querySelector("a.local-session-open")?.getAttribute("href")).toBe(
+      "/s/test-ns/?page=sessions&session=claude-code%3Aquestion",
+    );
+    // They are not listed again under Running now; the working session and
+    // the one of an unknown reason are.
+    const running = node.querySelector('[aria-label="Running now"]')!;
+    expect([...running.querySelectorAll("li")].map((r) => r.getAttribute("title"))).toEqual([
+      "s1",
+      "later",
+    ]);
+    // The sidebar counts what needs the person, in the caution tone.
+    expect(sidebarBadge()).toBe("3");
+    expect(
+      node
+        .querySelector('a[href$="?page=sessions"] .local-rail-badge')!
+        .classList.contains("caution"),
+    ).toBe(true);
+    // The wait's length goes on without an event.
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(rows[2]!.textContent).toContain("Waiting 2 min");
+    expect(needs.querySelector("li")!.textContent).toContain("Waiting 5 min");
+    // Once nothing waits, the section goes and the badge counts the running ones.
+    liveBody = { sessions: [session()] };
+    await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+    expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
+    expect(sidebarBadge()).toBe("1");
+    expect(
+      node
+        .querySelector('a[href$="?page=sessions"] .local-rail-badge')!
+        .classList.contains("caution"),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 async function renderReview(live: LiveSession[]) {
   await act(async () =>
     root.render(

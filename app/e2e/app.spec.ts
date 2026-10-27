@@ -453,6 +453,46 @@ test("a session's transcript opens from the Sessions page and grows without a re
   expect(errors).toEqual([]);
 });
 
+test("a session asking for a permission shows in Needs you and leaves once it works again", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // The fixture turns the marker into hook events of one Claude Code
+  // session; "permission" is a permission prompt notification.
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-needs");
+  await writeFile(marker, "running");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const running = page.getByRole("region", { name: "Running now", exact: true });
+  const needs = page.getByRole("region", { name: "Needs you", exact: true });
+  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible({ timeout: 10000 });
+  await expect(needs).toHaveCount(0);
+  await writeFile(marker, "permission");
+  const row = needs.locator('li[title="needs-e2e"]');
+  await expect(row).toBeVisible({ timeout: 10000 });
+  await expect(row.getByText("Asking permission")).toBeVisible();
+  await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
+  await expect(row.getByText("Waiting under a minute")).toBeVisible();
+  await expect(row.getByText("feature")).toBeVisible();
+  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
+  // The sidebar counts it, in the caution tone.
+  const badge = page.locator('a[href$="?page=sessions"] .local-rail-badge.caution');
+  await expect(badge).toHaveText("1");
+  // Its transcript opens from the row.
+  await row.getByRole("link", { name: /^Open transcript/ }).click();
+  await expect(page).toHaveURL(/[?&]session=claude-code%3Aneeds-e2e/);
+  await page.keyboard.press("u");
+  // Given the permission, the agent works again: the row goes back.
+  await writeFile(marker, "running");
+  await expect(needs).toHaveCount(0, { timeout: 10000 });
+  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible();
+  await expect(page.locator('a[href$="?page=sessions"] .local-rail-badge.caution')).toHaveCount(0);
+  await writeFile(marker, "ended");
+  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0, { timeout: 10000 });
+  expect(errors).toEqual([]);
+});
+
 test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
   page,
 }, testInfo) => {
