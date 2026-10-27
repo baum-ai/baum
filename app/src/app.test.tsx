@@ -893,7 +893,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     };
     await click("Install baum CLI");
     expect(invoke).toHaveBeenCalledWith("install_command", {});
-    await click("Install Codex hooks");
+    await click("Connect Codex");
     expect(invoke).toHaveBeenCalledWith("install_hooks", { agent: "codex" });
     expect(location.search).toBe("?page=settings");
   } finally {

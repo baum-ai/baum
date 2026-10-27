@@ -274,7 +274,7 @@ function DesktopIntegrations() {
                   variant="secondary"
                   onClick={() => void run("install_hooks", { agent: agent.agent })}
                 >
-                  {agent.installed ? "Enable" : "Install"} {agent.name} hooks
+                  {agent.installed ? "Enable" : "Connect"} {agent.name}
                 </Button>
               ) : null}
               {agent.installed ? (
