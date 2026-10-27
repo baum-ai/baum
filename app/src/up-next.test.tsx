@@ -219,6 +219,12 @@ const queue = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 const button = (name: string) =>
   Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.startsWith(name))!;
+// The card slides away before a skip or snooze lands.
+const leave = async (name: string) => {
+  await act(async () => button(name).click());
+  expect(card()!.classList).toContain("upnext-card-leaving");
+  await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+};
 
 it("opens on the one thing to do next, with the rest after it", async () => {
   await render();
@@ -239,7 +245,7 @@ it("opens on the one thing to do next, with the rest after it", async () => {
 
 it("skips, promotes and snoozes, and remembers it", async () => {
   await render();
-  await act(async () => button("Skip").click());
+  await leave("Skip");
   expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
   expect(queue()).toEqual(["Change 3", "Change 4", "Change 1"]);
   await act(async () =>
@@ -248,9 +254,9 @@ it("skips, promotes and snoozes, and remembers it", async () => {
       .click(),
   );
   expect(card()!.querySelector("h2")!.textContent).toBe("Change 4");
-  await act(async () => button("Snooze until").click());
+  await leave("Snooze until");
   expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
-  expect(node.textContent).toContain("1 pull request snoozed until");
+  expect(node.textContent).toContain("1 snoozed until");
   // A reload keeps the order and the snooze.
   await render();
   expect(card()!.querySelector("h2")!.textContent).toBe("Change 2");
@@ -272,7 +278,7 @@ it("counts what left the queue as cleared today", async () => {
   entries = [entry(6)];
   await render();
   expect(node.textContent).toContain("Inbox zero.");
-  expect(node.textContent).toContain("All 4 handled today.");
+  expect(node.textContent).toContain("All 4 handled. Go get a coffee.");
 });
 
 it("clears only what the person finished, and nothing of a repository missing from the read", async () => {
@@ -314,7 +320,7 @@ it("starts afresh from storage it cannot read", async () => {
 
 it("merges every ready pull request after one confirmation", async () => {
   await render();
-  await act(async () => button("Merge 2 ready").click());
+  await act(async () => button("Quick wins: merge 2 ready").click());
   const dialog = node.querySelector("dialog")!;
   expect(dialog.textContent).toContain("Squash and merge");
   await act(async () => button("Merge 2 pull requests").click());

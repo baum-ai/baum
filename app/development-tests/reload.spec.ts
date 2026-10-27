@@ -14,7 +14,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
     new URL(response.url()).pathname.endsWith("/api/events"),
   );
   await page.goto(launch.href);
-  await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");

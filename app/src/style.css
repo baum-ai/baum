@@ -1882,142 +1882,383 @@ span.inbox-fix svg {
   text-align: center;
 }
 /* The inbox: one card to act on, the queue after it, and what was cleared
-   today beside them. The aside drops below the queue on a narrow window. */
+   today beside them. Its colours and sizes are the Up next design's own, not
+   the app's tokens and type scale; in dark mode each colour falls back onto
+   the app's dark tokens, since the design has no dark variant. */
+:root {
+  --un-panel: #fffcf6;
+  --un-card: #fff;
+  --un-ink: #1f1a15;
+  --un-ink-soft: #3d342b;
+  --un-muted: #6e655b;
+  --un-faint: #8a7f72;
+  --un-line: #e3d9c8;
+  --un-line-strong: #d9ccb4;
+  --un-hairline: #efe6d6;
+  --un-wash: #fbf6ec;
+  --un-aside: #fbf6ec;
+  --un-hover: #fbf6ec;
+  --un-clock: #7a4a26;
+  --un-done: #4c8b34;
+  --un-on-done: #fff;
+  --un-link: #2e6b2f;
+  --un-link-hover: #1f4d20;
+  --un-focus: #2e7d3e;
+  --un-primary: #1f1a15;
+  --un-on-primary: #fffcf6;
+  --un-quick-bg: #e7f1e1;
+  --un-quick-line: #b9d4ad;
+  --un-quick-ink: #1f4d20;
+  --un-zero-bg: #f0f7ec;
+  --un-zero-line: #cfe2c6;
+  --un-review-bg: #faefd6;
+  --un-review: #6b4a12;
+  --un-fix-bg: #fbeeea;
+  --un-fix: #7a2a1c;
+  --un-merge-bg: #e7f1e1;
+  --un-merge: #1f4d20;
+  --un-update-bg: #e6edf5;
+  --un-update: #24405f;
+  --un-clone-bg: #efe6d6;
+  --un-clone: #3d342b;
+  --un-shadow-card: 0 2px 0 rgb(42 29 21 / 5%), 0 16px 36px rgb(42 29 21 / 8%);
+  --un-shadow-button: 0 2px 0 rgb(42 29 21 / 8%);
+  --un-shadow-primary: 0 2px 0 rgb(0 0 0 / 20%);
+  --un-shadow-quick: 0 2px 0 rgb(31 77 32 / 15%);
+}
+:root[data-theme="dark"] {
+  --un-panel: var(--surface-card);
+  --un-card: var(--paper-100);
+  --un-ink: var(--text-primary);
+  --un-ink-soft: var(--text-secondary);
+  --un-muted: var(--text-tertiary);
+  --un-faint: var(--text-tertiary);
+  --un-line: var(--border-subtle);
+  --un-line-strong: var(--border-default);
+  --un-hairline: var(--border-subtle);
+  --un-wash: var(--surface-wash);
+  --un-aside: var(--surface-aside);
+  --un-hover: var(--surface-hover);
+  --un-clock: var(--status-caution);
+  --un-done: var(--status-positive);
+  --un-on-done: var(--text-inverse);
+  --un-link: var(--text-link);
+  --un-link-hover: var(--text-link-hover);
+  --un-focus: var(--accent-600);
+  --un-primary: var(--action-primary);
+  --un-on-primary: var(--text-inverse);
+  --un-quick-bg: var(--status-positive-bg);
+  --un-quick-line: color-mix(in srgb, var(--status-positive) 40%, transparent);
+  --un-quick-ink: var(--status-positive);
+  --un-zero-bg: var(--status-positive-bg);
+  --un-zero-line: color-mix(in srgb, var(--status-positive) 40%, transparent);
+  --un-review-bg: var(--status-caution-bg);
+  --un-review: var(--status-caution);
+  --un-fix-bg: var(--status-critical-bg);
+  --un-fix: var(--status-critical);
+  --un-merge-bg: var(--status-positive-bg);
+  --un-merge: var(--status-positive);
+  --un-update-bg: var(--status-info-bg);
+  --un-update: var(--status-info);
+  --un-clone-bg: var(--status-neutral-bg);
+  --un-clone: var(--status-neutral);
+  --un-shadow-card: 0 2px 0 rgb(0 0 0 / 25%), 0 16px 36px rgb(0 0 0 / 30%);
+  --un-shadow-button: 0 2px 0 rgb(0 0 0 / 30%);
+  --un-shadow-primary: 0 2px 0 rgb(0 0 0 / 40%);
+  --un-shadow-quick: 0 2px 0 rgb(0 0 0 / 30%);
+}
+/* The page paints the whole panel and runs to its foot. */
+.local-frame:has(.upnext-page) {
+  background: var(--un-panel);
+}
+.local-main:has(.upnext-page) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.upnext-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  color: var(--un-ink);
+  font-family: var(--font-sans);
+  container-type: inline-size;
+}
+.upnext-page a {
+  color: var(--un-link);
+}
+.upnext-page a:hover {
+  color: var(--un-link-hover);
+}
+.upnext-page button {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.upnext-page :is(button, .upnext-primary, .upnext-secondary):active {
+  transform: translateY(1px);
+}
+.upnext-page :is(button, a):focus-visible {
+  outline: 2px solid var(--un-focus);
+  outline-offset: 2px;
+}
+.upnext-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--un-line);
+}
+.upnext-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.upnext-heading h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.upnext-heading p {
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 14px;
+}
+.upnext-quick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--un-quick-line);
+  border-radius: 8px;
+  background: var(--un-quick-bg);
+  box-shadow: var(--un-shadow-quick);
+  font-weight: 600;
+}
+.upnext-page .upnext-quick {
+  color: var(--un-quick-ink);
+}
 .upnext {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
-  min-height: calc(100vh - 8rem);
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  min-height: 0;
 }
 .upnext-main {
   display: flex;
+  flex: 999 1 620px;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 22px;
   min-width: 0;
-  padding: 1.5rem;
+  padding: 26px 28px;
 }
 .upnext-aside {
   display: flex;
+  flex: 1 1 320px;
   flex-direction: column;
-  gap: 1.25rem;
-  padding: 1.5rem;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--surface-aside);
+  gap: 18px;
+  min-width: 0;
+  padding: 26px 24px;
+  border-left: 1px solid var(--un-line);
+  background: var(--un-aside);
 }
-@media (width < 64rem) {
-  .upnext {
-    grid-template-columns: minmax(0, 1fr);
-    min-height: 0;
-  }
+/* Once the aside wraps below the queue, its rule moves to its top. */
+@container (width < 940px) {
   .upnext-aside {
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--un-line);
     border-left: 0;
   }
 }
 .upnext-card {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1.5rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  background: var(--surface-card);
-  box-shadow: var(--shadow-raised);
-  animation: upnext-enter 0.3s ease-out;
+  gap: 16px;
+  padding: 24px 26px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 16px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-card);
+  transition:
+    transform 0.25s,
+    opacity 0.25s;
+  animation: upnext-enter 0.35s ease-out;
+}
+.upnext-card-leaving {
+  opacity: 0;
+  transform: translateX(40px);
+  animation: none;
 }
 @keyframes upnext-enter {
   from {
     opacity: 0;
-    transform: translateY(1rem);
+    transform: translateY(24px);
+  }
+}
+@keyframes upnext-check {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  70% {
+    transform: scale(1.15);
   }
 }
 .upnext-card-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 8px;
 }
-.upnext-eyebrow {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.upnext-card-repo {
+  color: var(--un-muted);
+  font-size: 13px;
 }
 .upnext-minutes {
   margin-left: auto;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
+  color: var(--un-ink-soft);
+  font-size: 13px;
   white-space: nowrap;
+}
+.upnext-chip {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.upnext-chip-review {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.upnext-chip-fix {
+  background: var(--un-fix-bg);
+  color: var(--un-fix);
+}
+.upnext-chip-merge {
+  background: var(--un-merge-bg);
+  color: var(--un-merge);
+}
+.upnext-chip-update {
+  background: var(--un-update-bg);
+  color: var(--un-update);
+}
+.upnext-chip-clone {
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
 }
 .upnext-title {
   margin: 0;
+  font-size: 26px;
+  font-weight: 600;
   line-height: 1.25;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
-.upnext-title a {
+.upnext-page .upnext-title a {
   color: inherit;
   text-decoration: none;
 }
 .upnext-why {
   display: flex;
-  gap: 0.75rem;
+  align-items: flex-start;
+  gap: 12px;
   margin: 0;
-  padding: 0.75rem 0.875rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-wash);
-  color: var(--text-secondary);
+  padding: 12px 14px;
+  border: 1px solid var(--un-hairline);
+  border-radius: 10px;
+  background: var(--un-wash);
+  color: var(--un-ink-soft);
+  font-size: 15px;
   line-height: 1.5;
 }
+.upnext-why svg {
+  flex: none;
+  margin-top: 2px;
+  stroke: var(--un-clock);
+}
 .upnext-why strong {
-  color: var(--text-primary);
+  color: var(--un-ink);
 }
 .upnext-facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem 1.5rem;
+  gap: 18px;
   margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 13px;
+}
+.upnext-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .upnext-facts dt {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
+  color: var(--un-muted);
 }
 .upnext-facts dd {
   margin: 0;
+  font-size: 14px;
   font-weight: 600;
 }
 .upnext-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
+  gap: 8px;
+  margin-top: 4px;
 }
-/* Buttons and button-like links are raised, so a press reads at once. */
-.upnext-actions > :is(a, button) {
-  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+.upnext-page :is(.upnext-primary, .upnext-secondary) {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  text-decoration: none;
 }
-.upnext-actions > :is(a, button):active:not(:disabled) {
-  box-shadow: none;
-  transform: translateY(1px);
+.upnext-page .upnext-primary {
+  padding: 12px 20px;
+  border: 1px solid var(--un-primary);
+  background: var(--un-primary);
+  box-shadow: var(--un-shadow-primary);
+  color: var(--un-on-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+.upnext-page .upnext-secondary {
+  padding: 12px 16px;
+  border: 1px solid var(--un-line-strong);
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink);
+  font-weight: 500;
 }
 .upnext-zero {
-  display: grid;
-  gap: 0.5rem;
-  padding: 2.5rem 2rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--status-positive-bg);
-  animation: upnext-enter 0.3s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 40px 32px;
+  border: 1px solid var(--un-zero-line);
+  border-radius: 16px;
+  background: var(--un-zero-bg);
+  animation: upnext-enter 0.4s ease-out;
 }
 .upnext-zero h2,
 .upnext-zero p {
   margin: 0;
 }
+.upnext-zero h2 {
+  font-size: 28px;
+  font-weight: 600;
+}
 .upnext-zero p {
-  color: var(--text-secondary);
+  color: var(--un-ink-soft);
+  font-size: 15px;
+}
+.upnext-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .upnext-queue ol {
   margin: 0;
@@ -2028,95 +2269,131 @@ span.inbox-fix svg {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 0.4rem;
+  gap: 16px;
+  padding-bottom: 6px;
+  color: var(--un-muted);
+  font-size: 13px;
+}
+.upnext-queue-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 .upnext-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 12px;
   width: 100%;
-  padding: 0.6rem 0.75rem;
+  padding: 10px 12px;
   border: 0;
-  border-top: 1px solid var(--border-subtle);
-  background: none;
-  color: inherit;
-  font: inherit;
+  border-top: 1px solid var(--un-hairline);
+  background: transparent;
   text-align: left;
-  cursor: pointer;
+  transition: background 0.15s;
 }
 .upnext-row:hover {
-  background: var(--surface-hover);
+  background: var(--un-hover);
 }
 .upnext-row-number {
-  width: 1.25rem;
+  width: 18px;
   flex: none;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
+  color: var(--un-faint);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .upnext-row-kind {
-  min-width: 4.25rem;
-  flex: none;
-  justify-content: center;
+  width: 64px;
+  text-align: center;
+}
+.upnext-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 .upnext-row-title {
-  display: block;
   overflow: hidden;
+  font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.upnext-elsewhere {
-  display: grid;
-  gap: 0.4rem;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
+.upnext-row-repo {
+  color: var(--un-muted);
+  font-size: 12px;
 }
-.upnext-elsewhere p {
+.upnext-row-minutes {
+  flex: none;
+  color: var(--un-ink-soft);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.upnext-note {
   margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--un-hairline);
+  color: var(--un-muted);
+  font-size: 13px;
 }
-.upnext-elsewhere a,
-.upnext-zero a {
-  color: var(--text-link);
-  text-decoration: underline;
-}
-.upnext-link {
+.upnext-page .upnext-link {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--text-link);
-  font: inherit;
+  color: var(--un-link);
   text-decoration: underline;
-  cursor: pointer;
 }
-.upnext-ring {
-  position: relative;
-  display: grid;
-  width: 5.5rem;
-  height: 5.5rem;
+.upnext-page .upnext-link:hover {
+  color: var(--un-link-hover);
+}
+.upnext-page .upnext-link:active {
+  transform: none;
+}
+.upnext-progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.upnext-progress svg {
   flex: none;
-  place-items: center;
 }
-.upnext-ring svg {
-  position: absolute;
-  inset: 0;
-}
-.upnext-ring circle {
+.upnext-progress circle {
   fill: none;
   stroke-width: 10;
 }
 .upnext-ring-track {
-  stroke: var(--border-subtle);
+  stroke: var(--un-line);
 }
 .upnext-ring-fill {
-  stroke: var(--status-positive);
+  stroke: var(--un-done);
   stroke-linecap: round;
   transition: stroke-dasharray 0.6s cubic-bezier(0.3, 1.3, 0.5, 1);
 }
+.upnext-progress text {
+  fill: var(--un-ink);
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 700;
+}
+.upnext-progress-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.upnext-progress-text > :first-child {
+  font-size: 16px;
+  font-weight: 600;
+}
+.upnext-progress-text > :last-child {
+  color: var(--un-ink-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
 .upnext-cleared {
-  display: grid;
-  gap: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2124,30 +2401,39 @@ span.inbox-fix svg {
 .upnext-cleared li {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  font-size: var(--text-xs);
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+  background: var(--un-card);
 }
 .upnext-check {
-  display: grid;
-  width: 1.25rem;
-  height: 1.25rem;
+  display: flex;
+  width: 22px;
+  height: 22px;
   flex: none;
-  place-items: center;
-  border-radius: 999px;
-  background: var(--status-positive);
-  color: var(--text-inverse);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--un-done);
+  color: var(--un-on-done);
+  animation: upnext-check 0.4s ease-out;
+}
+.upnext-cleared-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .upnext-cleared-empty {
   margin: 0;
-  padding: 0.75rem;
-  border: 1px dashed var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
+  padding: 12px;
+  border: 1px dashed var(--un-line-strong);
+  border-radius: 8px;
+  color: var(--un-muted);
+  font-size: 13px;
 }
 .upnext-merges {
   display: grid;
@@ -2173,9 +2459,12 @@ span.inbox-fix svg {
 }
 @media (prefers-reduced-motion: reduce) {
   .upnext-card,
-  .upnext-zero {
+  .upnext-zero,
+  .upnext-check {
     animation: none;
   }
+  .upnext-card,
+  .upnext-row,
   .upnext-ring-fill {
     transition: none;
   }

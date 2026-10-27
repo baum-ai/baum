@@ -647,7 +647,6 @@ function Workspace({ url }: { url: UrlState }) {
               cloneFor={cloneFor}
               fix={setFixing}
               changed={reload}
-              refresh={loading ? undefined : () => void refresh()}
               Link={LocalLink}
             />
           ) : (

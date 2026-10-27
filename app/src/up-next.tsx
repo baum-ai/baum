@@ -1,9 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType } from "react";
-import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatCount } from "@baum/viewer/components/format";
-import { CheckIcon, LightbulbIcon, MergeIcon, RefreshIcon } from "@baum/viewer/components/icons";
-import { actionClassName } from "@baum/viewer/components/actions";
-import { Alert, Badge, Button, type BadgeTone } from "@baum/viewer/components/ui";
+import { Alert, Button } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
@@ -27,7 +24,6 @@ import {
   type MergeOptions,
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { PageBar } from "./shell";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
@@ -50,13 +46,13 @@ export type UpNextItem = {
 // The order of the queue: someone else waits on a review, the person's own
 // blocked work next, then what finishes a pull request, then the setup a
 // requested review needs.
-const KINDS: Record<UpNextKind, { label: string; tone: BadgeTone; done: string; order: number }> = {
-  review: { label: "Review", tone: "caution", done: "Reviewed", order: 0 },
-  fix: { label: "Fix", tone: "critical", done: "Fixed", order: 1 },
-  merge: { label: "Merge", tone: "positive", done: "Merged", order: 2 },
-  update: { label: "Update", tone: "info", done: "Updated", order: 3 },
+const KINDS: Record<UpNextKind, { label: string; done: string; order: number }> = {
+  review: { label: "Review", done: "Reviewed", order: 0 },
+  fix: { label: "Fix", done: "Fixed", order: 1 },
+  merge: { label: "Merge", done: "Merged", order: 2 },
+  update: { label: "Update", done: "Updated", order: 3 },
   // It leaves the queue only when the review request goes, whoever answered it.
-  clone: { label: "Clone", tone: "neutral", done: "Handled", order: 4 },
+  clone: { label: "Clone", done: "Handled", order: 4 },
 };
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
@@ -233,7 +229,7 @@ export function upNext(
       entry,
       why: why(kind, entry, sessions),
       facts: facts(kind, entry, sessions),
-      minutes: kind === "review" ? entry.review_minutes : null,
+      minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -255,6 +251,8 @@ type Seen = {
   title: string;
   repository: string;
   number: number;
+  /** Its reading estimate, summed into the work done once it is cleared. */
+  minutes?: number | null;
   /** When it left the queue; absent while it is in it. */
   cleared?: number;
 };
@@ -327,7 +325,8 @@ export function snoozeUntil(now: number): number {
 }
 
 export function snoozeText(until: number, now: number) {
-  const time = new Date(until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Snoozes always end on the hour.
+  const time = new Date(until).toLocaleTimeString([], { hour: "numeric" });
   return dayOf(until) === dayOf(now) ? time : `tomorrow ${time}`;
 }
 
@@ -380,7 +379,9 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     entries.filter(isOpen).map((entry) => entry.pull_request.repository.toLowerCase()),
   );
   const signature = [
-    ...items.map((item) => `${item.key}:${item.kind}:${item.entry.pull_request.title}`),
+    ...items.map(
+      (item) => `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.title}`,
+    ),
     ...[...waitingKeys].map((key) => `waiting:${key}`),
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
@@ -400,7 +401,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
           !seen ||
           seen.cleared != null ||
           seen.kind !== item.kind ||
-          seen.title !== item.entry.pull_request.title
+          seen.title !== item.entry.pull_request.title ||
+          seen.minutes !== item.minutes
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record));
@@ -416,6 +418,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
           title: pr.title,
           repository: pr.repository,
           number: pr.number,
+          minutes: item.minutes,
         };
       }
       return {
@@ -468,6 +471,12 @@ function minutesText(minutes: number) {
   return minutes < 1 ? "<1 min" : `~${formatCount(Math.round(minutes))} min`;
 }
 
+const sumMinutes = (items: { minutes?: number | null }[]) =>
+  items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
+
+// How long the card takes to slide away before a skip or snooze takes effect.
+const LEAVE_MS = 260;
+
 /** The inbox: the one thing to do next, what follows it, and what the person
  *  cleared today. */
 export function UpNextPage({
@@ -477,7 +486,6 @@ export function UpNextPage({
   cloneFor,
   fix,
   changed,
-  refresh,
   Link,
 }: {
   inbox: UpNextState;
@@ -488,8 +496,6 @@ export function UpNextPage({
   fix: (entry: Entry) => void;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
-  /** Refreshes from GitHub; absent while a read runs. */
-  refresh?: () => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -499,71 +505,72 @@ export function UpNextPage({
   const current = queue[0];
   const rest = queue.slice(1);
   const ready = queue.filter((item) => item.kind === "merge").map((item) => item.entry);
-  const minutes = queue.reduce((sum, item) => sum + (item.minutes ?? 0), 0);
+  const minutes = Math.round(sumMinutes(queue));
   const detail = loading
-    ? undefined
+    ? null
     : queue.length === 0
-      ? "Nothing waiting on you"
-      : `${plural(queue.length, "thing")} waiting on you${minutes ? `, about ${formatCount(Math.round(minutes))} min of reading` : ""}, sorted by what unblocks the most`;
+      ? "Nothing left"
+      : `${plural(queue.length, "thing")} in your inbox${minutes ? ` · about ${plural(minutes, "minute")} of work` : ""}, sorted by what unblocks the most`;
   return (
     <>
-      <PageBar
-        title="Inbox"
-        detail={detail}
-        actions={
-          <>
-            {ready.length > 1 ? (
-              <Button variant="secondary" size="compact" onClick={() => setMergingAll(ready)}>
-                <MergeIcon size={14} className="mr-1.5 flex-none" />
-                Merge {formatCount(ready.length)} ready
-              </Button>
-            ) : null}
-            <button
-              type="button"
-              aria-label="Refresh from GitHub"
-              title="Refresh from GitHub"
-              disabled={!refresh}
-              onClick={refresh}
-              className="local-icon-button"
-            >
-              <RefreshIcon size={16} className={refresh ? undefined : "local-spin"} />
-            </button>
-          </>
-        }
-      />
-      {loading ? (
-        <div className="local-page-body">
-          <LoadingStatus block>Loading your inbox…</LoadingStatus>
-        </div>
-      ) : (
-        <div className="upnext">
-          <div className="upnext-main">
-            {current ? (
-              <Card
-                key={current.key}
-                item={current}
-                href={prHref(current.entry, cloneFor)}
-                Link={Link}
-                fix={
-                  fixLabel(current.entry) && cloneFor(current.entry)
-                    ? () => fix(current.entry)
-                    : undefined
-                }
-                merge={() => setMerging(current.entry)}
-                update={() => setUpdating(current.entry)}
-                snooze={() => inbox.snooze(current.key)}
-                snoozeLabel={`Snooze until ${snoozeText(snoozeUntil(inbox.now), inbox.now)}`}
-                skip={rest.length > 0 ? () => inbox.skip(current.key) : undefined}
-              />
-            ) : (
-              <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
-            )}
-            {rest.length > 0 ? <Queue items={rest} promote={inbox.promote} /> : null}
-            <Elsewhere inbox={inbox} Link={Link} />
+      <div className="upnext-page">
+        <header className="upnext-header">
+          <div className="upnext-heading">
+            <h1>Up next</h1>
+            {detail ? <p>{detail}</p> : null}
           </div>
-          <Cleared cleared={cleared} remaining={queue.length} />
-        </div>
-      )}
+          {ready.length > 1 ? (
+            <button type="button" className="upnext-quick" onClick={() => setMergingAll(ready)}>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M13 2 3 14h9l-1 8 10-12h-9z" />
+              </svg>
+              Quick wins: merge {formatCount(ready.length)} ready · under a minute
+            </button>
+          ) : null}
+        </header>
+        {loading ? (
+          <div className="local-page-body">
+            <LoadingStatus block>Loading your inbox…</LoadingStatus>
+          </div>
+        ) : (
+          <div className="upnext">
+            <div className="upnext-main">
+              {current ? (
+                <Card
+                  key={current.key}
+                  item={current}
+                  href={prHref(current.entry, cloneFor)}
+                  Link={Link}
+                  fix={
+                    fixLabel(current.entry) && cloneFor(current.entry)
+                      ? () => fix(current.entry)
+                      : undefined
+                  }
+                  merge={() => setMerging(current.entry)}
+                  update={() => setUpdating(current.entry)}
+                  snooze={() => inbox.snooze(current.key)}
+                  snoozeLabel={`Snooze until ${snoozeText(snoozeUntil(inbox.now), inbox.now)}`}
+                  skip={rest.length > 0 ? () => inbox.skip(current.key) : undefined}
+                />
+              ) : (
+                <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
+              )}
+              <Queue items={rest} promote={inbox.promote} inbox={inbox} Link={Link} />
+            </div>
+            <Cleared cleared={cleared} remaining={queue.length} />
+          </div>
+        )}
+      </div>
       {merging ? (
         <MergeDialog
           key={upNextKey(merging.pull_request)}
@@ -587,11 +594,11 @@ export function UpNextPage({
   );
 }
 
-function KindBadge({ kind, className }: { kind: UpNextKind; className?: string }) {
+function KindChip({ kind, className }: { kind: UpNextKind; className?: string }) {
   return (
-    <Badge tone={KINDS[kind].tone} className={cn("font-semibold", className)}>
+    <span className={`upnext-chip upnext-chip-${kind}${className ? ` ${className}` : ""}`}>
       {KINDS[kind].label}
-    </Badge>
+    </span>
   );
 }
 
@@ -618,49 +625,62 @@ function Card({
 }) {
   const title = useId();
   const pr = item.entry.pull_request;
-  const primary = actionClassName({ variant: "primary", size: "standard" });
-  const secondary = actionClassName({ variant: "secondary", size: "standard" });
+  // The card slides away at once, and the skip or snooze lands as it goes.
+  const [leaving, setLeaving] = useState(false);
+  const leave = (then: () => void) => () => {
+    if (leaving) return;
+    setLeaving(true);
+    setTimeout(then, LEAVE_MS);
+  };
   const open = (
-    <Link href={href} className={secondary}>
+    <Link href={href} className="upnext-secondary">
       Open pull request
     </Link>
   );
   // The one thing the card asks for; a write to GitHub opens its confirmation.
   const action =
     item.kind === "review" ? (
-      <Link href={href} className={primary}>
+      <Link href={href} className="upnext-primary">
         Start reviewing
       </Link>
     ) : item.kind === "clone" ? (
-      <Link href={href} className={primary}>
+      <Link href={href} className="upnext-primary">
         Choose a local clone
       </Link>
     ) : item.kind === "merge" ? (
       <>
-        <Button onClick={merge}>Merge</Button>
+        <button type="button" className="upnext-primary" onClick={merge}>
+          Merge
+        </button>
         {open}
       </>
     ) : item.kind === "update" ? (
       <>
-        <Button onClick={update}>Update branch</Button>
+        <button type="button" className="upnext-primary" onClick={update}>
+          Update branch
+        </button>
         {open}
       </>
     ) : fix ? (
       <>
-        <Button onClick={fix}>{fixLabel(item.entry)}</Button>
+        <button type="button" className="upnext-primary" onClick={fix}>
+          {fixLabel(item.entry)}
+        </button>
         {open}
       </>
     ) : (
-      <Link href={href} className={primary}>
+      <Link href={href} className="upnext-primary">
         Open pull request
       </Link>
     );
   return (
-    <article aria-labelledby={title} className="upnext-card">
+    <article
+      aria-labelledby={title}
+      className={`upnext-card${leaving ? " upnext-card-leaving" : ""}`}
+    >
       <div className="upnext-card-meta">
-        <span className="upnext-eyebrow">Up next</span>
-        <KindBadge kind={item.kind} />
-        <span className="text-xs text-(--text-tertiary)">
+        <KindChip kind={item.kind} />
+        <span className="upnext-card-repo">
           {pr.repository} · #{pr.number}
           {pr.draft ? " · Draft" : ""}
           {pr.fork ? " · Fork" : ""}
@@ -671,13 +691,23 @@ function Card({
           </span>
         ) : null}
       </div>
-      <h2 id={title} className="upnext-title text-2xl font-semibold">
-        <Link href={href} className="hover:underline">
-          {pr.title || "Untitled pull request"}
-        </Link>
+      <h2 id={title} className="upnext-title">
+        <Link href={href}>{pr.title || "Untitled pull request"}</Link>
       </h2>
       <p className="upnext-why">
-        <LightbulbIcon size={16} className="mt-0.5 flex-none text-(--text-tertiary)" />
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </svg>
         <span>
           <strong>Why now:</strong> {item.why}
         </span>
@@ -694,76 +724,79 @@ function Card({
       ) : null}
       <div className="upnext-actions">
         {action}
-        <Button variant="secondary" onClick={snooze}>
+        <button type="button" className="upnext-secondary" onClick={leave(snooze)}>
           {snoozeLabel}
-        </Button>
+        </button>
         {skip ? (
-          <Button variant="ghost" onClick={skip}>
+          <button type="button" className="upnext-secondary" onClick={leave(skip)}>
             Skip
-          </Button>
+          </button>
         ) : null}
       </div>
     </article>
   );
 }
 
-function Queue({ items, promote }: { items: UpNextItem[]; promote: (key: string) => void }) {
+/** What follows the card, then what is not in the queue: snoozed pull
+ *  requests and the person's own that wait on someone or something else. */
+function Queue({
+  items,
+  promote,
+  inbox,
+  Link,
+}: {
+  items: UpNextItem[];
+  promote: (key: string) => void;
+  inbox: UpNextState;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
   const heading = useId();
-  const minutes = items.reduce((sum, item) => sum + (item.minutes ?? 0), 0);
+  const minutes = Math.round(sumMinutes(items));
+  const { snoozed, waiting, now } = inbox;
+  const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
   return (
     <section aria-labelledby={heading} className="upnext-queue">
       <div className="upnext-queue-head">
-        <h2 id={heading} className="upnext-eyebrow">
-          Then
-        </h2>
-        <span className="text-xs text-(--text-tertiary)">
-          {formatCount(items.length)} more
-          {minutes ? ` · about ${formatCount(Math.round(minutes))} min of reading` : ""}
+        <h2 id={heading}>Then</h2>
+        <span>
+          {items.length
+            ? `${formatCount(items.length)} more${minutes ? ` · ~${formatCount(minutes)} min` : ""}`
+            : "Nothing after this"}
         </span>
       </div>
-      <ol>
-        {items.map((item, index) => {
-          const pr = item.entry.pull_request;
-          return (
-            <li key={item.key}>
-              <button
-                type="button"
-                className={cn("upnext-row", FOCUS_RING)}
-                onClick={() => promote(item.key)}
-                title="Take this one next"
-              >
-                <span className="upnext-row-number">{index + 2}</span>
-                <KindBadge kind={item.kind} className="upnext-row-kind" />
-                <span className="min-w-0 flex-1">
-                  <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
-                  <span className="block text-xs text-(--text-tertiary)">
-                    {pr.repository} · #{pr.number}
+      {items.length > 0 ? (
+        <ol>
+          {items.map((item, index) => {
+            const pr = item.entry.pull_request;
+            return (
+              <li key={item.key}>
+                <button
+                  type="button"
+                  className="upnext-row"
+                  onClick={() => promote(item.key)}
+                  title="Take this one next"
+                >
+                  <span className="upnext-row-number">{index + 2}</span>
+                  <KindChip kind={item.kind} className="upnext-row-kind" />
+                  <span className="upnext-row-text">
+                    <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
+                    <span className="upnext-row-repo">
+                      {pr.repository} · #{pr.number}
+                    </span>
                   </span>
-                </span>
-                {item.minutes != null ? (
-                  <span className="upnext-minutes">{minutesText(item.minutes)}</span>
-                ) : null}
-                <span className="sr-only">: take this one next</span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
-  );
-}
-
-/** What is not in the queue: snoozed pull requests and the person's own that
- *  wait on someone or something else. */
-function Elsewhere({ inbox, Link }: { inbox: UpNextState; Link: ComponentType<ViewerLinkProps> }) {
-  const { snoozed, waiting, now } = inbox;
-  if (snoozed.length === 0 && waiting.length === 0) return null;
-  const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
-  return (
-    <div className="upnext-elsewhere">
+                  {item.minutes != null ? (
+                    <span className="upnext-row-minutes">{minutesText(item.minutes)}</span>
+                  ) : null}
+                  <span className="sr-only">: take this one next</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
       {snoozed.length > 0 ? (
-        <p>
-          {plural(snoozed.length, "pull request")} snoozed until {snoozeText(latest, now)}:{" "}
+        <p className="upnext-note">
+          {formatCount(snoozed.length)} snoozed until {snoozeText(latest, now)}:{" "}
           {snoozed.map((item) => `#${item.entry.pull_request.number}`).join(", ")}.{" "}
           <button type="button" className="upnext-link" onClick={inbox.wake}>
             Bring them back
@@ -771,13 +804,13 @@ function Elsewhere({ inbox, Link }: { inbox: UpNextState; Link: ComponentType<Vi
         </p>
       ) : null}
       {waiting.length > 0 ? (
-        <p>
+        <p className="upnext-note">
           {plural(waiting.length, "pull request")} of yours{" "}
           {waiting.length === 1 ? "waits" : "wait"} on reviewers, checks or an agent.{" "}
           <Link href={appURL("?page=pulls&filter=mine")}>See them in Pull requests</Link>
         </p>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -793,24 +826,24 @@ function Zero({
   if (!hasRepositories)
     return (
       <div className="upnext-zero">
-        <h2 className="text-2xl font-semibold">Nothing to do yet</h2>
+        <h2>Nothing to do yet</h2>
         <p>
           Pick GitHub repositories in <Link href={appURL("?page=repositories")}>Repositories</Link>{" "}
           to get started.
         </p>
       </div>
     );
-  const { snoozed, cleared } = inbox;
+  const { snoozed, cleared, now } = inbox;
+  const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
   return (
     <div className="upnext-zero">
-      <h2 className="text-2xl font-semibold">Inbox zero.</h2>
+      <h2>Inbox zero.</h2>
       <p>
         {snoozed.length > 0
-          ? `Everything else is handled; ${plural(snoozed.length, "pull request")} ${snoozed.length === 1 ? "is" : "are"} snoozed.`
+          ? `Everything is handled except ${formatCount(snoozed.length)} snoozed until ${snoozeText(latest, now)}.`
           : cleared.length > 0
-            ? `All ${formatCount(cleared.length)} handled today.`
-            : "No review is asked of you and none of your pull requests needs you."}{" "}
-        Everyone else's are in <Link href={appURL("?page=pulls")}>Pull requests</Link>.
+            ? `All ${formatCount(cleared.length)} handled. Go get a coffee.`
+            : "No review is asked of you and none of your pull requests needs you."}
       </p>
     </div>
   );
@@ -821,34 +854,33 @@ const RING = 2 * Math.PI * 42;
 function Cleared({ cleared, remaining }: { cleared: UpNextState["cleared"]; remaining: number }) {
   const total = cleared.length + remaining;
   const share = total ? cleared.length / total : 0;
+  const done = Math.round(sumMinutes(cleared));
   const label = `${formatCount(cleared.length)} of ${formatCount(total)} cleared today`;
   return (
     <aside aria-label="Cleared today" className="upnext-aside">
-      <div className="flex items-center gap-4">
-        <div className="upnext-ring" role="img" aria-label={label}>
-          <svg viewBox="0 0 100 100" aria-hidden="true">
-            <circle cx="50" cy="50" r="42" className="upnext-ring-track" />
-            {/* A round cap on an empty arc would still draw a dot. */}
-            {share > 0 ? (
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                className="upnext-ring-fill"
-                strokeDasharray={`${RING * share} ${RING}`}
-                transform="rotate(-90 50 50)"
-              />
-            ) : null}
-          </svg>
-          <span aria-hidden="true" className="text-lg font-semibold tabular-nums">
+      <div className="upnext-progress">
+        <svg width="96" height="96" viewBox="0 0 100 100" role="img" aria-label={label}>
+          <circle cx="50" cy="50" r="42" className="upnext-ring-track" />
+          {/* A round cap on an empty arc would still draw a dot. */}
+          {share > 0 ? (
+            <circle
+              cx="50"
+              cy="50"
+              r="42"
+              className="upnext-ring-fill"
+              strokeDasharray={`${RING * share} ${RING}`}
+              transform="rotate(-90 50 50)"
+            />
+          ) : null}
+          <text x="50" y="56" textAnchor="middle" aria-hidden="true">
             {formatCount(cleared.length)}/{formatCount(total)}
-          </span>
-        </div>
-        <div className="grid gap-1">
-          <span className="text-base font-semibold">Cleared today</span>
-          <span className="text-xs text-(--text-secondary)">
+          </text>
+        </svg>
+        <div className="upnext-progress-text">
+          <span>Cleared today</span>
+          <span>
             {cleared.length
-              ? `${formatCount(remaining)} to go.`
+              ? `${done ? `About ${formatCount(done)} min of work done. ` : ""}${formatCount(remaining)} to go.`
               : "Clear the card on the left to start."}
           </span>
         </div>
@@ -858,9 +890,21 @@ function Cleared({ cleared, remaining }: { cleared: UpNextState["cleared"]; rema
           {cleared.map((item) => (
             <li key={item.key} title={`${item.repository} #${item.number}`}>
               <span className="upnext-check">
-                <CheckIcon size={12} />
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M5 12.5 10 17 19 7" />
+                </svg>
               </span>
-              <span className="min-w-0 truncate">
+              <span className="upnext-cleared-text">
                 {KINDS[item.kind].done} #{item.number} {item.title}
               </span>
             </li>

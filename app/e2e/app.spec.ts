@@ -49,7 +49,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const launch = await launchURL();
   await page.goto(launch);
   // The app opens on the Inbox; the pull request list is one click away.
-  await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
@@ -58,7 +58,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const relaunched = await page.context().browser()?.newPage();
   if (relaunched) {
     await relaunched.goto(launch);
-    await expect(relaunched.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+    await expect(relaunched.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
     // The desktop app's first run opens the diagnostics page; the bootstrap
     // carries only that page over, and the address keeps no token.
     await relaunched.goto(`${launch}&page=diagnostics`);
@@ -318,7 +318,7 @@ test("the Inbox shows one card to do next, the queue and what was cleared", asyn
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
   const card = page.locator("article.upnext-card");
   await expect(card).toBeVisible({ timeout: 15000 });
   const title = card.locator("h2");
