@@ -598,6 +598,12 @@ func (s *Store) Coverage(ctx context.Context, sessions ...SessionKey) (map[Sessi
 type SessionDecisions struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"session_id"`
+	// Repository is the session's, as last captured; empty for a session
+	// never captured.
+	Repository string `json:"repository,omitempty"`
+	// CaptureOff says why capture does not run for the session now
+	// (API.Registry; CaptureOff* values), empty when it does or is not known.
+	CaptureOff string `json:"capture_off,omitempty"`
 	// Coverage is CoverageExtracted, CoverageSkipped, or empty for a session
 	// never captured.
 	Coverage   string     `json:"coverage"`
@@ -619,7 +625,7 @@ func (s *Store) Sessions(ctx context.Context, keys ...SessionKey) ([]SessionDeci
 		view := SessionDecisions{Agent: key.Agent, SessionID: key.ID, Decisions: []Decision{}}
 		if found {
 			updated := row.UpdatedAt
-			view.Coverage, view.SkipReason, view.UpdatedAt = row.Coverage, row.SkipReason, &updated
+			view.Repository, view.Coverage, view.SkipReason, view.UpdatedAt = row.Repository, row.Coverage, row.SkipReason, &updated
 		}
 		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM capture_attempt WHERE agent=? AND session_id=? AND state=?)`,
 			key.Agent, key.ID, AttemptPending).Scan(&view.Capturing); err != nil {

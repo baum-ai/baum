@@ -5,6 +5,7 @@ import {
   describeCommand,
   displayPath,
   withModel,
+  storedReviews,
   type Outcome,
   type ReviewSettings,
   type SetupView,
@@ -178,7 +179,9 @@ export function Setup() {
   const done = view
     ? [github && pickedCount > 0, true, Boolean(command?.ok) && agentsDone][step]
     : false;
-  const reviewsChanged = reviews !== null && JSON.stringify(reviews) !== savedReviews;
+  // A default decision model is saved as none, so it follows the harness.
+  const reviewsChanged =
+    reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
   // A custom model needs a name, both to leave the review step and to finish.
   const modelMissing =
     (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
@@ -191,12 +194,14 @@ export function Setup() {
     : false;
   async function finish() {
     if (reviews && reviewsChanged) {
-      const outcome = await invoke<Outcome>("save_review_settings", { settings: reviews });
+      const outcome = await invoke<Outcome>("save_review_settings", {
+        settings: storedReviews(reviews),
+      });
       if (!outcome.ok) {
         setError(outcome.lines.join("\n"));
         return;
       }
-      setSavedReviews(JSON.stringify(reviews));
+      setSavedReviews(JSON.stringify(storedReviews(reviews)));
     }
     await invoke<void>("finish_setup");
   }

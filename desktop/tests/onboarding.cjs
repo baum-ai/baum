@@ -180,7 +180,7 @@ const assert = require('node:assert/strict');
   await page.locator('#continue').click();
   await expect.poll(() => calls.some(([c]) => c === 'finish_setup')).toBe(true);
   const saved = calls.filter(([c]) => c === 'save_review_settings');
-  assert.deepEqual(saved.map(([, a]) => a.settings), [{ backend: 'codex', model: 'gpt-6-sol', automatic: true, pull_requests: 'requested', decisions_model: 'gpt-6-luna' }]);
+  assert.deepEqual(saved.map(([, a]) => a.settings), [{ backend: 'codex', model: 'gpt-6-sol', automatic: true, pull_requests: 'requested', decisions_model: '' }]);
   assert(calls.findIndex(([c]) => c === 'save_review_settings') < calls.findIndex(([c]) => c === 'finish_setup'), 'Settings save before setup finishes');
   await page.reload();
   await page.waitForSelector('#panels');

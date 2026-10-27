@@ -5,32 +5,29 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
 )
 
-// agentOfVendor names a linked session's vendor as the hooks name its agent.
-var agentOfVendor = map[string]string{"claude_code": "claude-code", "codex": "codex", "cursor": "cursor"}
-
-// LinkedSession is a session a pull request's saved review links on this
-// machine, named as the hooks name its agent.
-type LinkedSession struct{ Agent, ID, Title string }
-
 // LinkedSessions lists the sessions a pull request's latest saved review
-// links, and when that review was generated (zero without one).
-type LinkedSessions func(ctx context.Context, repository string, number int) ([]LinkedSession, time.Time, error)
+// links on this machine, and when that review was generated (zero without
+// one). It is an alias, so decisionlog.API takes it as it is.
+type LinkedSessions = func(ctx context.Context, repository string, number int) ([]locallink.Session, time.Time, error)
 
 // linkedSessions lists the sessions the latest saved review of a pull request
 // links on this machine, as its PR page's sessions list does (sharing that
 // computation), and when the review was generated. A pull request without a
-// saved review, or whose sessions cannot be linked, links none.
+// saved review links none; one whose sessions cannot be linked links none and
+// is logged.
 func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
-	return func(ctx context.Context, repository string, number int) ([]LinkedSession, time.Time, error) {
+	return func(ctx context.Context, repository string, number int) ([]locallink.Session, time.Time, error) {
 		clones, err := a.Registry.List(ctx)
 		if err != nil {
 			return nil, time.Time{}, err
@@ -50,35 +47,39 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 			if err != nil {
 				return nil, time.Time{}, err
 			}
-			if len(version.Document) > viewserver.MaxDocumentBytes {
-				return nil, time.Time{}, nil
-			}
 			var parsed struct {
 				Review struct {
 					GeneratedAt time.Time `json:"generated_at"`
 				} `json:"review"`
 			}
-			_ = json.Unmarshal(version.Document, &parsed)
+			generated := func() time.Time {
+				_ = json.Unmarshal(version.Document, &parsed)
+				return parsed.Review.GeneratedAt
+			}
+			unlinked := func(reason string, args ...any) ([]locallink.Session, time.Time, error) {
+				slog.Warn("decisions: the saved review's sessions were not linked", append([]any{"repository", repository, "pr", number, "reason", reason}, args...)...)
+				return nil, generated(), nil
+			}
+			if len(version.Document) > viewserver.MaxDocumentBytes {
+				return unlinked("document too large")
+			}
 			if !acquire(ctx, cache.requests) {
 				return nil, time.Time{}, ctx.Err()
 			}
 			defer func() { <-cache.requests }()
 			viewer, release, err := cache.get(c, version.Document)
 			if err != nil {
-				return nil, parsed.Review.GeneratedAt, nil
+				return unlinked("viewer", "error", err)
 			}
 			defer release()
 			result, ok := viewer.LinkedSessions(ctx)
 			if !ok {
 				return nil, time.Time{}, context.Cause(ctx)
 			}
-			var linked []LinkedSession
-			for _, session := range result.Sessions {
-				if agent, known := agentOfVendor[session.Vendor]; known {
-					linked = append(linked, LinkedSession{Agent: agent, ID: session.ID, Title: session.Title})
-				}
+			if !result.Available && result.Code == locallink.CodeError {
+				return unlinked(result.Code)
 			}
-			return linked, parsed.Review.GeneratedAt, nil
+			return result.Sessions, generated(), nil
 		}
 		return nil, time.Time{}, nil
 	}

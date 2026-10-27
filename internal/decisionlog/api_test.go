@@ -10,6 +10,8 @@ import (
 
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/livesessions"
+	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 func serveDecisions(t *testing.T, api *API, query string) (int, []byte) {
@@ -51,11 +53,12 @@ func TestAPISessionAndPullRequest(t *testing.T) {
 				{Agent: "claude-code", ID: "gone", State: livesessions.StateEnded, Repository: "acme/demo", PR: 7},
 			}
 		},
-		Linked: func(_ context.Context, repository string, number int) ([]Linked, time.Time, error) {
+		Linked: func(_ context.Context, repository string, number int) ([]locallink.Session, time.Time, error) {
 			if repository != "acme/demo" || number != 7 {
 				t.Errorf("linked asked for %s#%d", repository, number)
 			}
-			return []Linked{{SessionKey{"codex", "old"}, "Port the parser"}, {SessionKey{"claude-code", "run"}, "Live one"}}, generated, nil
+			return []locallink.Session{{ID: "old", Vendor: "codex", Title: "Port the parser"}, {ID: "run", Vendor: "claude_code", Title: "Live one"},
+				{ID: "gone", Vendor: "claude_code"}, {ID: "x", Vendor: "someone_else"}}, generated, nil
 		}}
 
 	code, body := serveDecisions(t, api, "agent=claude-code&session=run")
@@ -77,10 +80,15 @@ func TestAPISessionAndPullRequest(t *testing.T) {
 	if code != 200 || json.Unmarshal(body, &pr) != nil {
 		t.Fatalf("%d %s", code, body)
 	}
-	if pr.ReviewGeneratedAt == nil || !pr.ReviewGeneratedAt.Equal(generated) || len(pr.Sessions) != 2 {
+	// The tracker's sessions first, the ended one included, then the
+	// review's, each once; an unknown vendor is left out.
+	if pr.ReviewGeneratedAt == nil || !pr.ReviewGeneratedAt.Equal(generated) || len(pr.Sessions) != 3 {
 		t.Fatalf("pull request %s", body)
 	}
-	live, old := pr.Sessions[0], pr.Sessions[1]
+	live, gone, old := pr.Sessions[0], pr.Sessions[1], pr.Sessions[2]
+	if gone.SessionID != "gone" || gone.Live {
+		t.Fatalf("ended tracked session %+v", gone)
+	}
 	if live.SessionID != "run" || !live.Live || live.Title != "Live one" || len(live.Decisions) != 2 ||
 		live.Decisions[0].Provisional || !live.Decisions[1].Provisional {
 		t.Fatalf("live session %+v", live)
@@ -126,5 +134,39 @@ func TestLedgerReadsAttemptsSince(t *testing.T) {
 	}
 	if later, _ := s.Ledger(ctx, t0.Add(time.Minute)); len(later) != 1 {
 		t.Fatalf("since a minute later: %+v", later)
+	}
+}
+
+func TestAPISaysWhyCaptureIsOff(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	if err := s.Skip(ctx, Meta{Agent: "claude-code", ID: "kept", Repository: "acme/demo"}, ReasonTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	for name, tt := range map[string]struct {
+		edit    func(*fakeRegistry)
+		session string
+		want    string
+	}{
+		"on":             {func(*fakeRegistry) {}, "kept", ""},
+		"paused":         {func(r *fakeRegistry) { r.prefs.Automatic = false }, "kept", CaptureOffPaused},
+		"switch off":     {func(r *fakeRegistry) { r.prefs.Decisions.Enabled = &off }, "kept", CaptureOffSwitch},
+		"repository off": {func(r *fakeRegistry) { r.settings.Decisions = &off }, "kept", CaptureOffRepository},
+		"not picked":     {func(r *fakeRegistry) { r.picked = false }, "kept", CaptureOffNotPicked},
+		// A session never captured takes its repository from the tracker.
+		"tracked": {func(r *fakeRegistry) { r.settings.Decisions = &off }, "tracked", CaptureOffRepository},
+		"unknown": {func(*fakeRegistry) {}, "unknown", CaptureOffNotPicked},
+	} {
+		registry := &fakeRegistry{prefs: repos.DefaultPreferences(), picked: true}
+		tt.edit(registry)
+		api := &API{Store: s, Registry: registry, Live: func() []livesessions.Session {
+			return []livesessions.Session{{Agent: "claude-code", ID: "tracked", Repository: "acme/demo"}}
+		}}
+		code, body := serveDecisions(t, api, "agent=claude-code&session="+tt.session)
+		var one struct{ Session SessionDecisions }
+		if code != 200 || json.Unmarshal(body, &one) != nil || one.Session.CaptureOff != tt.want {
+			t.Errorf("%s: %d %s", name, code, body)
+		}
 	}
 }

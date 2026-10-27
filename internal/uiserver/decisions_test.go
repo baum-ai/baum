@@ -68,8 +68,8 @@ func TestLinkedSessionsFollowTheSavedReview(t *testing.T) {
 	}
 	linked := LocalAPI{Registry: registry}.linkedSessions(cache)
 	sessions, generated, err := linked(ctx, "Owner/Repo", 7)
-	if err != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) || len(sessions) != 2 ||
-		sessions[0] != (LinkedSession{Agent: "claude-code", ID: "s1", Title: "Port the parser"}) || sessions[1].Agent != "codex" {
+	if err != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) || len(sessions) != 3 ||
+		sessions[0].ID != "s1" || sessions[0].Title != "Port the parser" || sessions[1].Vendor != "codex" {
 		t.Fatalf("%+v %v %v", sessions, generated, err)
 	}
 	// The PR page's sessions list shares the computation.

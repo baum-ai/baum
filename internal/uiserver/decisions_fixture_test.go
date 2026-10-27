@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/decisions"
-	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -76,27 +75,8 @@ func browserDecisions(home string) (*decisionlog.Store, error) {
 }
 
 // browserDecisionsAPI serves the fixture's store as the daemon does.
-func browserDecisionsAPI(store *decisionlog.Store, live *livesessions.Tracker) func(uiserver.LinkedSessions) http.Handler {
+func browserDecisionsAPI(store *decisionlog.Store, registry decisionlog.Registry, live *livesessions.Tracker) func(uiserver.LinkedSessions) http.Handler {
 	return func(linked uiserver.LinkedSessions) http.Handler {
-		return (&decisionlog.API{Store: store, Live: live.Sessions, Linked: func(ctx context.Context, repository string, number int) ([]decisionlog.Linked, time.Time, error) {
-			sessions, generated, err := linked(ctx, repository, number)
-			out := make([]decisionlog.Linked, len(sessions))
-			for i, s := range sessions {
-				out[i] = decisionlog.Linked{SessionKey: decisionlog.SessionKey{Agent: s.Agent, ID: s.ID}, Title: s.Title}
-			}
-			return out, generated, err
-		}}).Handler()
-	}
-}
-
-// browserCaptures reads the fixture's ledger for analytics.
-func browserCaptures(store *decisionlog.Store) func(context.Context, time.Time) ([]analytics.Capture, error) {
-	return func(ctx context.Context, since time.Time) ([]analytics.Capture, error) {
-		ledger, err := store.Ledger(ctx, since)
-		out := make([]analytics.Capture, len(ledger))
-		for i, e := range ledger {
-			out[i] = analytics.Capture{Repository: e.Repository, Backend: e.Backend, State: e.State, Reason: e.Reason, StartedAt: e.StartedAt, Cost: e.Cost}
-		}
-		return out, err
+		return (&decisionlog.API{Store: store, Registry: registry, Live: live.Sessions, Linked: linked}).Handler()
 	}
 }

@@ -50,10 +50,18 @@ const parsePullRequest = (body: unknown) =>
     ? (body as PullRequestDecisions)
     : null;
 
-/** Where a session's capture stands: a call in flight, why it was skipped,
- *  when it was last looked at, or not yet. */
+const captureOff: Record<string, string> = {
+  paused: "Capture is paused with automatic reviews.",
+  off: "Decision capture is off in Settings.",
+  repository_off: "Capture is off for this repository.",
+  not_picked: "Capture runs only in picked repositories.",
+};
+
+/** Where a session's capture stands: a call in flight, why it will not run,
+ *  why it was skipped, when it was last looked at, or not yet. */
 export function captureState(s: SessionDecisions, now: number): string {
   if (s.capturing) return "Capturing…";
+  if (s.capture_off) return captureOff[s.capture_off] ?? "Capture is off.";
   if (s.coverage === "skipped") return skipReasonText(s.skip_reason);
   if (s.updated_at) return `Updated ${formatRelative(s.updated_at, now)}`;
   return "Not captured yet: decisions are captured once the session pauses.";
@@ -125,8 +133,7 @@ function DecisionRow({ decision: d }: { decision: CapturedDecision }) {
       {d.title && d.summary ? <p className="local-decision-summary">{d.summary}</p> : null}
       {details ? <p className="local-decision-why">{details}</p> : null}
       <p className="local-decision-meta">
-        {label(d.category)} · {who[d.who] ?? label(d.who)} ·{" "}
-        <span title={formatDateTime(d.decided_at)}>{formatDateTime(d.decided_at)}</span>
+        {label(d.category)} · {who[d.who] ?? label(d.who)} · {formatDateTime(d.decided_at)}
         {d.files.length
           ? ` · ${d.files.length === 1 ? d.files[0] : `${d.files.length} files`}`
           : ""}
@@ -158,7 +165,9 @@ export function PullRequestDecisionsList({
     parsePullRequest,
     revision,
   );
-  const sessions = (answer?.sessions ?? []).filter((s) => s.decisions.length > 0 || s.coverage);
+  const sessions = (answer?.sessions ?? []).filter(
+    (s) => s.decisions.length > 0 || s.coverage || s.capturing,
+  );
   if (sessions.length === 0) return null;
   const total = sessions.reduce((n, s) => n + s.decisions.length, 0);
   const provisional = sessions.reduce(

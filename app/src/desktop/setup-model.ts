@@ -149,11 +149,35 @@ export const decisionModelDefaults: Record<string, string> = {
 
 /** Settings with an explicit model: an unset one becomes the harness's
  *  default, so the user always sees and saves a real choice. The decision
- *  capture model, when the settings carry one, is filled the same way. */
+ *  capture model, when the settings carry one, is filled the same way, and
+ *  so is one of another provider's family, which the harness would ignore. */
 export function withModel(settings: ReviewSettings): ReviewSettings {
   const next = settings.model.trim()
     ? settings
     : { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
-  if (next.decisions_model === undefined || next.decisions_model.trim()) return next;
+  if (
+    next.decisions_model === undefined ||
+    (next.decisions_model.trim() && decisionModelFits(next.decisions_model, next.backend))
+  )
+    return next;
   return { ...next, decisions_model: decisionModelDefaults[next.backend] ?? "" };
+}
+
+/** Settings as they are saved: a decision capture model that is the
+ *  harness's default is stored as none, so it follows the harness. */
+export function storedReviews(settings: ReviewSettings): ReviewSettings {
+  if (settings.decisions_model === undefined) return settings;
+  return settings.decisions_model === decisionModelDefaults[settings.backend]
+    ? { ...settings, decisions_model: "" }
+    : settings;
+}
+
+/** Whether a decision capture model can run on the harness: a model of the
+ *  other provider's family is ignored there. Unknown names count as its own. */
+export function decisionModelFits(model: string, backend: string): boolean {
+  const claude = /^claude/i.test(model);
+  const gpt = /^(gpt|o\d|codex)/i.test(model);
+  if (backend === "codex") return !claude;
+  if (backend === "claude" || backend === "anthropic") return !gpt;
+  return true;
 }

@@ -49,6 +49,7 @@ import {
   type SetupView,
   type Outcome,
   decisionModelDefaults,
+  decisionModelFits,
   modelPresets,
   withModel,
   type PullRequests,
@@ -539,6 +540,9 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
     }
   };
   const fallback = decisionModelDefaults[backend];
+  // A model of another provider's family is ignored with this harness:
+  // show the default it uses instead.
+  const ignored = draft.model && !decisionModelFits(draft.model, backend) ? draft.model : "";
   return (
     <section aria-labelledby="decisions-heading" className="local-panel settings-card p-0!">
       <PanelHeader
@@ -564,7 +568,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         <DecisionModelPicker
           id="settings-decisions-model"
           backend={backend}
-          value={draft.model || null}
+          value={ignored ? null : draft.model || null}
           inherit={`Default${fallback ? ` (${fallback})` : ""}`}
           disabled={pending || !draft.enabled}
           onChange={(model) => {
@@ -572,6 +576,14 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
             setDraft({ ...draft, model: model ?? "" });
           }}
         />
+        {ignored ? (
+          <div className="review-section">
+            <p className="review-note">
+              The saved model {ignored} doesn't run with {harnessName(backend)}, so capture uses the
+              default. Choose a model to replace it.
+            </p>
+          </div>
+        ) : null}
         <div className="review-section">
           <label htmlFor="decisions-cap" className="review-label">
             Daily spending cap (US$)

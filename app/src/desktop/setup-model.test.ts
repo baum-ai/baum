@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
-import { displayPath, repositoryPath, describeCommand } from "./setup-model";
+import {
+  decisionModelFits,
+  describeCommand,
+  displayPath,
+  repositoryPath,
+  storedReviews,
+  withModel,
+} from "./setup-model";
 
 it("abbreviates only the current home and expands repository input for native actions", () => {
   expect(displayPath("Install /home/user/.local/bin/baum", "/home/user")).toBe(
@@ -21,4 +28,25 @@ it("keeps a replacement's real path separate from its displayed text", () => {
   });
   expect(displayPath(command.state, "/home/user")).toContain("~/.local/bin/baum");
   expect(command.replace).toBe(found.path);
+});
+
+it("saves the harness's default decision model as none and never keeps one it ignores", () => {
+  const base = {
+    backend: "codex",
+    model: "gpt-6-sol",
+    automatic: true,
+    pull_requests: "both" as const,
+  };
+  expect(withModel({ ...base, decisions_model: "" }).decisions_model).toBe("gpt-6-luna");
+  expect(withModel({ ...base, decisions_model: "claude-haiku-5-5" }).decisions_model).toBe(
+    "gpt-6-luna",
+  );
+  expect(withModel({ ...base, decisions_model: "gpt-6-sol" }).decisions_model).toBe("gpt-6-sol");
+  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" }).decisions_model).toBe("");
+  expect(storedReviews({ ...base, decisions_model: "gpt-6-sol" }).decisions_model).toBe(
+    "gpt-6-sol",
+  );
+  expect(decisionModelFits("claude-sonnet-5-5", "codex")).toBe(false);
+  expect(decisionModelFits("gpt-6-luna", "anthropic")).toBe(false);
+  expect(decisionModelFits("my-proxy-model", "claude")).toBe(true);
 });

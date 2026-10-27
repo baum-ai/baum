@@ -124,6 +124,7 @@ export type Analytics = {
       attempts: number;
       succeeded: number;
       failed: number;
+      abandoned?: number;
       cost: Cost;
       failures: { reason: string; count: number }[];
     } | null;
@@ -752,6 +753,8 @@ function BaumWork({ data }: { data: Analytics }) {
     >
       {!b.available ? (
         <p className="analytics-note">The jobs list is not available.</p>
+      ) : runs === 0 && b.decisions?.attempts ? (
+        <p className="analytics-note">No reviews or fixes in this window.</p>
       ) : runs === 0 ? (
         <div className="analytics-empty">
           <h3>baum ran nothing in this window</h3>
@@ -829,6 +832,9 @@ function DecisionCapture({
         items={[
           { label: "Capture calls", value: formatCount(d.attempts) },
           { label: "Failed calls", value: formatCount(d.failed) },
+          ...(d.abandoned
+            ? [{ label: "Cut short by a stop", value: formatCount(d.abandoned) }]
+            : []),
           {
             label: "Capture spend",
             value: d.cost.usd === null ? null : cost.text,

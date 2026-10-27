@@ -437,6 +437,11 @@ export type CapturedDecision = {
 export type SessionDecisions = {
   agent: string;
   session_id: string;
+  repository?: string;
+  /** Why capture does not run for the session now: "paused", "off",
+   *  "repository_off" or "not_picked"; absent when it does. Only the
+   *  per-session answer carries it. */
+  capture_off?: string;
   /** Empty for a session never captured. */
   coverage: "extracted" | "skipped" | "";
   skip_reason?: string;

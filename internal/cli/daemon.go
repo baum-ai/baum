@@ -533,9 +533,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
 		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
 		if decisionStore != nil {
-			insights.Captures = decisionCaptures(decisionStore)
+			insights.Captures = decisionStore.Ledger
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
-				return (&decisionlog.API{Store: decisionStore, Live: live.Sessions, Linked: decisionLinks(linked)}).Handler()
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked}).Handler()
 			}
 		}
 		// A session that ended has its last lines written: read it soon.
@@ -610,34 +610,6 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				_ = registry.Close()
 			},
 		}, nil
-	}
-}
-
-// decisionCaptures reads decision capture's ledger for analytics.
-func decisionCaptures(store *decisionlog.Store) func(context.Context, time.Time) ([]analytics.Capture, error) {
-	return func(ctx context.Context, since time.Time) ([]analytics.Capture, error) {
-		ledger, err := store.Ledger(ctx, since)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]analytics.Capture, len(ledger))
-		for i, e := range ledger {
-			out[i] = analytics.Capture{Repository: e.Repository, Backend: e.Backend, State: e.State, Reason: e.Reason, StartedAt: e.StartedAt, Cost: e.Cost}
-		}
-		return out, nil
-	}
-}
-
-// decisionLinks lists the sessions a pull request's saved review links for
-// the decisions API.
-func decisionLinks(linked uiserver.LinkedSessions) func(context.Context, string, int) ([]decisionlog.Linked, time.Time, error) {
-	return func(ctx context.Context, repository string, number int) ([]decisionlog.Linked, time.Time, error) {
-		sessions, generated, err := linked(ctx, repository, number)
-		out := make([]decisionlog.Linked, len(sessions))
-		for i, s := range sessions {
-			out[i] = decisionlog.Linked{SessionKey: decisionlog.SessionKey{Agent: s.Agent, ID: s.ID}, Title: s.Title}
-		}
-		return out, generated, err
 	}
 }
 

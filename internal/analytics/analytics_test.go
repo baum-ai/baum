@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
@@ -651,14 +652,15 @@ func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 func TestDecisionCaptureCounts(t *testing.T) {
 	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
 	cost := 0.03
-	captures := []Capture{
+	captures := []decisionlog.LedgerEntry{
 		{Repository: "acme/demo", Backend: "claude", State: "succeeded", StartedAt: at, Cost: &cost},
 		{Repository: "acme/demo", Backend: "claude", State: "failed", Reason: "timeout", StartedAt: at},
 		{Repository: "acme/demo", Backend: "claude", State: "pending", StartedAt: at},
 		{Repository: "acme/other", Backend: "codex", State: "failed", Reason: "timeout", StartedAt: at},
+		{Repository: "acme/demo", Backend: "claude", State: "abandoned", StartedAt: at, Cost: &cost},
 	}
 	all := decisionCapture(captures, Query{})
-	if all.Attempts != 4 || all.Succeeded != 1 || all.Failed != 2 || all.Cost.USD == nil || *all.Cost.USD != 0.03 || !all.Cost.Incomplete ||
+	if all.Attempts != 5 || all.Succeeded != 1 || all.Failed != 2 || all.Abandoned != 1 || all.Cost.USD == nil || *all.Cost.USD != 0.06 || !all.Cost.Incomplete ||
 		len(all.Failures) != 1 || all.Failures[0] != (ReasonCount{Reason: "timeout", Count: 2}) {
 		t.Fatalf("all %+v", all)
 	}

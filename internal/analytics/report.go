@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -190,22 +191,13 @@ type BaumWork struct {
 	Decisions *DecisionCapture `json:"decisions"`
 }
 
-// Capture is one model call of decision capture, from its ledger.
-type Capture struct {
-	Repository, Backend string
-	// State is pending, succeeded, failed or abandoned; Reason a failure's
-	// code.
-	State, Reason string
-	StartedAt     time.Time
-	// Cost is nil when unknown.
-	Cost *float64
-}
-
 // DecisionCapture counts decision capture's calls started in the window.
 type DecisionCapture struct {
 	Attempts  int `json:"attempts"`
 	Succeeded int `json:"succeeded"`
 	Failed    int `json:"failed"`
+	// Abandoned calls were cut short by the daemon stopping.
+	Abandoned int `json:"abandoned"`
 	// Cost sums the known costs of settled calls; any without one makes it
 	// incomplete, and none known leaves it unknown.
 	Cost     Cost          `json:"cost"`
@@ -594,7 +586,7 @@ func groupCost(prices *pricing.List, vendor string, g Usage) Cost {
 
 // decisionCapture counts the calls matching q; the agent filter matches the
 // backend that made them, as it matches a job's harness.
-func decisionCapture(captures []Capture, q Query) *DecisionCapture {
+func decisionCapture(captures []decisionlog.LedgerEntry, q Query) *DecisionCapture {
 	out := &DecisionCapture{Cost: Cost{Reasons: []string{}}, Failures: []ReasonCount{}}
 	failures := map[string]int{}
 	for _, c := range captures {
@@ -603,13 +595,15 @@ func decisionCapture(captures []Capture, q Query) *DecisionCapture {
 		}
 		out.Attempts++
 		switch c.State {
-		case "succeeded":
+		case decisionlog.AttemptSucceeded:
 			out.Succeeded++
-		case "failed":
+		case decisionlog.AttemptFailed:
 			out.Failed++
 			failures[cmp.Or(c.Reason, "call_failed")]++
+		case decisionlog.AttemptAbandoned:
+			out.Abandoned++
 		}
-		if c.State == "pending" {
+		if c.State == decisionlog.AttemptPending {
 			continue
 		}
 		if c.Cost != nil {

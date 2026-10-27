@@ -845,6 +845,20 @@ it("shows a repository's decision capture turned off", async () => {
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
 });
+it("shows a saved decision model the harness would ignore as the default it uses", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+    decisions: { enabled: true, model: "claude-sonnet-5-5", daily_cap: null },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
+  expect(section.textContent).toContain("The saved model claude-sonnet-5-5 doesn't run with Codex");
+});
 it("saves the decision capture switch, model and daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

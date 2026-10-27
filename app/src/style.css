@@ -1532,14 +1532,18 @@ a.local-session-pr:hover {
 }
 .local-decisions-session h4 {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.25rem 0.5rem;
   margin: 0 0 0.15rem;
   font-size: var(--text-base);
   font-weight: 600;
 }
+.local-decisions-session h4 > :not(.local-decisions-session-title) {
+  flex: none;
+}
 .local-decisions-session-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   font-weight: 400;
@@ -1559,11 +1563,15 @@ a.local-session-pr:hover {
 }
 .local-decision-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-wrap: nowrap;
+  align-items: baseline;
   gap: 0.25rem 0.5rem;
 }
+.local-decision-head > :not(.local-decision-title) {
+  flex: none;
+}
 .local-decision-title {
+  min-width: 0;
   font-weight: 500;
   color: var(--text-primary);
 }

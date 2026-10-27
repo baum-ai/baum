@@ -185,4 +185,11 @@ it("puts where a capture stands in words", () => {
   expect(captureState(captured({ coverage: "", updated_at: null }), now)).toContain(
     "Not captured yet",
   );
+  // When capture will not run, the state says why instead of promising one.
+  expect(
+    captureState(captured({ coverage: "", updated_at: null, capture_off: "repository_off" }), now),
+  ).toBe("Capture is off for this repository.");
+  expect(captureState(captured({ capture_off: "paused" }), now)).toBe(
+    "Capture is paused with automatic reviews.",
+  );
 });
