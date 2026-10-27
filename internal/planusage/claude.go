@@ -25,6 +25,10 @@ var errNoCredential = errors.New("not signed in")
 type Credential struct {
 	Token     string
 	ExpiresAt time.Time // zero when unknown
+	// Plan is the plan's name as Anthropic sells it ("Pro", "Max 5x",
+	// "Team Premium"), from what Claude Code recorded with the token; empty
+	// when it did not say.
+	Plan string
 }
 
 // Claude asks Anthropic for the usage of the plan Claude Code is signed in to.
@@ -102,7 +106,7 @@ func (c *Claude) Read(ctx context.Context) Plan {
 	if !ok {
 		return c.unavailable("Claude's usage came back in a form baum does not understand.")
 	}
-	return Plan{Provider: "claude", Available: true, Windows: windows, FetchedAt: c.now()}
+	return Plan{Provider: "claude", Available: true, Plan: cred.Plan, Windows: windows, FetchedAt: c.now()}
 }
 
 type claudeWindow struct {
@@ -137,8 +141,10 @@ func parseClaudeUsage(body []byte) ([]Window, bool) {
 
 type storedCredential struct {
 	ClaudeAIOAuth struct {
-		AccessToken string `json:"accessToken"`
-		ExpiresAt   int64  `json:"expiresAt"`
+		AccessToken      string `json:"accessToken"`
+		ExpiresAt        int64  `json:"expiresAt"`
+		SubscriptionType string `json:"subscriptionType"`
+		RateLimitTier    string `json:"rateLimitTier"`
 	} `json:"claudeAiOauth"`
 }
 
@@ -147,11 +153,45 @@ func parseCredential(data []byte) (Credential, error) {
 	if json.Unmarshal(data, &s) != nil || s.ClaudeAIOAuth.AccessToken == "" {
 		return Credential{}, errNoCredential
 	}
-	cred := Credential{Token: s.ClaudeAIOAuth.AccessToken}
+	cred := Credential{
+		Token: s.ClaudeAIOAuth.AccessToken,
+		Plan:  claudePlanName(s.ClaudeAIOAuth.SubscriptionType, s.ClaudeAIOAuth.RateLimitTier),
+	}
 	if s.ClaudeAIOAuth.ExpiresAt > 0 {
 		cred.ExpiresAt = time.UnixMilli(s.ClaudeAIOAuth.ExpiresAt)
 	}
 	return cred, nil
+}
+
+// claudePlanName names the plan as Anthropic sells it, from Claude Code's
+// subscriptionType and rateLimitTier ("default_claude_max_5x"): Pro, Max 5x
+// and Max 20x for a person; a Team seat is Standard or Premium (the 5x tier);
+// Enterprise is billed at API prices and has no tier. Anything else is passed
+// on as it came, so a new plan still says something.
+func claudePlanName(subscription, tier string) string {
+	switch subscription {
+	case "pro":
+		return "Pro"
+	case "max":
+		switch {
+		case strings.HasSuffix(tier, "max_20x"):
+			return "Max 20x"
+		case strings.HasSuffix(tier, "max_5x"):
+			return "Max 5x"
+		}
+		return "Max"
+	case "team":
+		switch {
+		case strings.HasSuffix(tier, "max_5x"):
+			return "Team Premium"
+		case tier != "":
+			return "Team Standard"
+		}
+		return "Team"
+	case "enterprise":
+		return "Enterprise"
+	}
+	return subscription
 }
 
 // StoredCredential reads Claude Code's credential: on macOS the Keychain item

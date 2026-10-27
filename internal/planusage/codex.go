@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,12 +22,19 @@ const (
 	codexTailBytes = 1 << 20
 )
 
-// Codex reads the newest rate-limit snapshot Codex wrote to its session files.
-// It reads no credential and makes no network request.
+// Codex asks Codex's usage endpoint with the ChatGPT sign-in Codex stored,
+// and otherwise (an API key sign-in, an expired token, no network) reads the
+// newest rate-limit snapshot Codex wrote to its session files.
 type Codex struct {
 	// Home is CODEX_HOME; empty means $CODEX_HOME, else ~/.codex.
 	Home string
-	Now  func() time.Time
+	// Credential finds Codex's sign-in; nil reads Home's auth.json.
+	Credential func(ctx context.Context) (CodexCredential, error)
+	// Client makes the request; nil uses a client that refuses redirects.
+	Client *http.Client
+	// URL overrides the endpoint in tests.
+	URL string
+	Now func() time.Time
 }
 
 func NewCodex() *Codex { return &Codex{} }
@@ -79,6 +87,9 @@ func (c *Codex) Read(ctx context.Context) Plan {
 	if home == "" {
 		out.Reason = "Codex's home folder could not be found."
 		return out
+	}
+	if plan, ok := c.readAPI(ctx, home); ok {
+		return plan
 	}
 	files := newestRollouts(filepath.Join(home, "sessions"), codexMaxFiles)
 	if len(files) == 0 {
@@ -179,9 +190,37 @@ func codexSnapshot(name string, now time.Time) (Plan, bool) {
 		if len(windows) == 0 {
 			continue
 		}
-		return Plan{Provider: "codex", Available: true, Plan: rl.PlanType, Windows: windows, FetchedAt: taken}, true
+		return Plan{Provider: "codex", Available: true, Plan: codexPlanName(rl.PlanType), Windows: windows, FetchedAt: taken}, true
 	}
 	return Plan{}, false
+}
+
+// codexPlanNames are the names Codex itself shows for its plan_type values
+// (its status line reads "Pro 100" for "prolite"). The Pro tiers are named by
+// their monthly price: the original Pro is the $200 one.
+var codexPlanNames = map[string]string{
+	"free":                      "Free",
+	"go":                        "Go",
+	"plus":                      "Plus",
+	"prolite":                   "Pro 100",
+	"pro":                       "Pro 200",
+	"promax":                    "Pro 500",
+	"team":                      "Team",
+	"business":                  "Business",
+	"enterprise":                "Enterprise",
+	"enterprise_cbp_automation": "Enterprise (Automation)",
+	"edu":                       "Edu",
+	"edu_pro":                   "Edu Pro",
+	"education":                 "Education",
+}
+
+// codexPlanName is the name Codex shows for a plan_type; an unknown one is
+// passed on as it came, so a new plan still says something.
+func codexPlanName(planType string) string {
+	if name, ok := codexPlanNames[planType]; ok {
+		return name
+	}
+	return planType
 }
 
 func codexWindowOf(w *codexWindow, taken, now time.Time) Window {
