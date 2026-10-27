@@ -440,25 +440,48 @@ never a path; a session's transcript comes only when the Sessions page opens it
 from disk again, where the full session is. A daemon without the record serves
 none.
 
-The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
-now" (agent, working or waiting for you, the session's title and, once the agent
-compacted it, the request its compaction summary records, repository and branch,
-a link to the pull request's page when the inbox has it, start and last activity) and
-"Ended recently"
-(sessions that ended in the last 24 hours, newest first, with when they ended and how
-long they ran). Times are relative, with the exact time on hover. The daemon keeps
-ended sessions for 24 hours, across restarts, and the `live` event updates the page
-and the sidebar count.
+The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
+sections of cards; the `live` event updates it and the sidebar count, and times
+tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
 
-"Needs you" (`NeedsYou` in `src/sessions.tsx`) is the first card, shown only while a
-session waits on the person: one whose `waiting_reason` is `permission` ("Asking
-permission"), `input` ("Waiting for your answer") or `turn_finished` ("Finished its
-turn"), the longest wait (`waiting_since`) first. Each row has the agent's mark, the
-reason in words, the session's title, the agent's message when it sent one ("Claude needs your permission
-to use Bash"), "Waiting 4 min" (redrawn every 10 seconds, without waiting for a `live`
-event), the repository, branch chip and pull request link, and Open transcript. A
-session there is not listed again under Running now; a session idle only because it
-went silent, or with a reason this app does not know, stays there. While anything
+- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
+  on the person, the longest wait first. A session with a pending `permission`
+  request (from `api/agent-requests`) gets an amber card titled by its tool ("wants to
+  run a command", "wants to edit a file", "wants to use X"), the session's title and
+  branch, the agent's last message, what the request would do (`code` rows in a dark
+  mono block) and the buttons Allow once, one Always allow per suggestion, and Deny. A
+  `question` request shows its options as buttons (toggles and Submit for
+  multi-select or several questions). A button disables the card and shows "Sending…"
+  at once; the card says "Sent" until the next `live` refresh drops the request, and a
+  409 `request_gone` shows "Already answered in the terminal". A green notice says
+  what was done, and when nobody waits it reads "Nobody is waiting on you." with the
+  last action. A session waiting with no request (it finished its turn, or asks for
+  something only its terminal can answer) gets a quieter card with the reason, the
+  wait, the agent's last message, the line it showed and Open transcript, plus
+  "Answer in the terminal" for a permission or an answer. It has no reply box: the app
+  sends messages only to running sessions. A daemon without `api/agent-requests`
+  shows no requests.
+- "Running now" has one card per running session, or one quiet for a while (a muted
+  dot and "Quiet for 12 min"): the agent, title, branch, pull request link, and the time
+  since it started. From the session's `activity` it shows the current step (the tool
+  in its colour and its target, with a blinking caret while running, still under
+  reduced motion), a "Trail" of chips for the earlier steps and "N files touched";
+  without `activity` it reads "Active 2 min ago". "Send when it finishes" posts a
+  message to `api/agent-messages`; the daemon delivers it when the session's turn
+  ends, one per session, and the card then shows "Queued for when it finishes" with
+  Cancel.
+- "Ended recently" has one compact row per session that ended in the last 24 hours,
+  newest first: the agent, title, how long it ran and the files it touched, when it
+  ended, and Open transcript.
+
+The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, saved
+through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
+while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
+answer from the app.
+
+A session in Needs you is not listed again under Running now; a session idle only
+because it went silent, or with a reason this app does not know, stays there. Times
+are relative where they are not clocks, with the exact time on hover. While anything
 needs the person the sidebar's Sessions badge counts those sessions in the caution
 tone; otherwise it counts the running ones. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
