@@ -144,14 +144,17 @@ tried again after 15 minutes.
   A listing stops at about 10,000 pull requests; older ones still due are
   skipped and logged.
 - Only pull requests that can be placed in a feature are read from the
-  clone: open or merged ones not opened by a bot. Each pass makes one fetch
-  of the heads its due pull requests lack, from `refs/pull/<N>/head` into
-  `refs/baum/pull/<N>/head`, 100 refspecs to a `git fetch`; the refs stay,
-  as they may back saved reviews. Each pull request's commits, from its base
-  to its head, are then read from the clone's own objects, never fetched.
-  Its paths are the files its commits change; its commits replace those
-  recorded. GitHub's file list is never read.
-- When that fetch fails, nothing is counted against any pull request and
+  clone: open or merged ones not opened by a bot. Each pass fetches what
+  its due pull requests lack, as a review fetches a missing pull request
+  commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`,
+  a base by its id into `refs/baum/pull/<N>/base`, 100 refspecs to a
+  `git fetch`, and one at a time when such a fetch fails, so a ref the
+  remote lacks keeps out no other. The refs stay, as they may back saved
+  reviews. Each pull request's commits, from its base to its head, are then
+  read from the clone's own objects, never fetched. Its paths are the files
+  its commits change; its commits replace those recorded. GitHub's file
+  list is never read.
+- When every fetch fails, nothing is counted against any pull request and
   the repository waits. A pull request whose commits then cannot be read
   (its head or base is missing, or it has too many) is read again after 15
   minutes; after 3 failures at its head its paths are unknown at that head.
@@ -173,7 +176,7 @@ they had:
   back a day; a laptop may be off for days);
 - every 15 minutes, the commits within the session window of now, which a
   session still running may yet link to, read from the clone without
-  fetching;
+  fetching, at the head their commits were recorded at;
 - once a day, every commit of the last 7 days.
 
 A commit linked to a session more than one way keeps its strongest link.

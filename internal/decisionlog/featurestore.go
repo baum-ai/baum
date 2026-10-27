@@ -269,10 +269,12 @@ WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
 	})
 }
 
-// PullsWithCommitsSince lists the pull requests holding a commit made at or
-// after since.
+// PullsWithCommitsSince lists the pull requests holding a recorded commit
+// made at or after since, at the head their commits were recorded at, so
+// they are linked again while a newer head cannot be read.
 func (s *Store) PullsWithCommitsSince(ctx context.Context, repository string, since time.Time) ([]StoredPull, error) {
-	return s.pulls(ctx, `SELECT number, head_sha, base_sha, base_ref FROM pull_request p WHERE repository=?1 AND EXISTS
+	return s.pulls(ctx, `SELECT number, CASE WHEN paths_head_sha != '' THEN paths_head_sha ELSE head_sha END, base_sha, base_ref
+FROM pull_request p WHERE repository=?1 AND EXISTS
 (SELECT 1 FROM pull_commit c WHERE c.repository=p.repository AND c.number=p.number AND c.committed_at >= ?2) ORDER BY number`,
 		repository, since.UnixMilli())
 }

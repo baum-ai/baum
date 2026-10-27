@@ -245,7 +245,7 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 	}
 	// The pass's one network step: when it fails, nothing is counted and the
 	// repository waits.
-	if err := clone.FetchPullHeads(ctx, remote, wanted); err != nil {
+	if err := clone.FetchPulls(ctx, remote, wanted); err != nil {
 		return report, fmt.Errorf("fetching pull request heads: %w", err)
 	}
 	for _, p := range pulls {

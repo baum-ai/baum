@@ -473,11 +473,17 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 // maxFetchRefspecs bounds the refspecs of one fetch.
 const maxFetchRefspecs = 100
 
-// FetchPullHeads fetches refs/pull/<N>/head into refs/baum/pull/<N>/head, as
-// ResolvePull does, for each pull request whose head commit the clone lacks,
-// up to 100 in one fetch. A clone with every head makes no network call. A
-// pull request still missing its commits afterwards is left to ResolvePull.
-func (r *Repo) FetchPullHeads(ctx context.Context, remote string, prs []PullRequest) error {
+// FetchPulls fetches what the clone lacks of the pull requests' commits, as
+// ResolvePull fetches them: a missing head from refs/pull/<N>/head into
+// refs/baum/pull/<N>/head and a missing base by its id into
+// refs/baum/pull/<N>/base of the first pull request it is the base of, up to
+// 100 refspecs in one fetch. A clone with
+// every commit makes no network call, and a pull request without a valid
+// number and ids is skipped. When a fetch fails, its refspecs are fetched
+// one at a time, so one the remote lacks does not keep the others out; an
+// error is returned only when every fetch failed. A pull request whose
+// commits are still missing is left for the caller to find so.
+func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest) error {
 	if remote == "" {
 		remote = r.opts.Remote
 	}
@@ -490,22 +496,44 @@ func (r *Repo) FetchPullHeads(ctx context.Context, remote string, prs []PullRequ
 	}
 	defer done()
 	var refspecs []string
+	// A base several pull requests share is fetched once.
+	bases := map[string]bool{}
 	for _, pr := range prs {
-		if pr.Number <= 0 || !validOID(pr.HeadSHA) {
-			return ErrInvalidInput
+		if pr.Number <= 0 || !validOID(pr.HeadSHA) || !validOID(pr.BaseSHA) {
+			continue
 		}
 		if !r.hasCommit(ctx, pr.HeadSHA) {
 			refspecs = append(refspecs, fmt.Sprintf("+refs/pull/%d/head:refs/baum/pull/%d/head", pr.Number, pr.Number))
 		}
+		if !bases[pr.BaseSHA] && !r.hasCommit(ctx, pr.BaseSHA) {
+			bases[pr.BaseSHA] = true
+			refspecs = append(refspecs, fmt.Sprintf("+%s:refs/baum/pull/%d/base", pr.BaseSHA, pr.Number))
+		}
 	}
 	var errs []error
+	fetched := false
 	for start := 0; start < len(refspecs); start += maxFetchRefspecs {
-		if err := r.fetch(ctx, remote, refspecs[start:min(start+maxFetchRefspecs, len(refspecs))]); err != nil {
-			if isContextError(err) {
-				return err
-			}
-			errs = append(errs, err)
+		chunk := refspecs[start:min(start+maxFetchRefspecs, len(refspecs))]
+		err := r.fetch(ctx, remote, chunk)
+		if err == nil {
+			fetched = true
+			continue
 		}
+		if isContextError(err) {
+			return err
+		}
+		for _, refspec := range chunk {
+			if err := r.fetch(ctx, remote, []string{refspec}); err == nil {
+				fetched = true
+			} else if isContextError(err) {
+				return err
+			} else {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if fetched {
+		return nil
 	}
 	return errors.Join(errs...)
 }

@@ -579,3 +579,29 @@ func TestPathFailuresFollowTheHead(t *testing.T) {
 		t.Fatalf("a new head kept %d failures, retry %v", failures, retry)
 	}
 }
+
+// A pull request's recorded commits are linked again at the head they were
+// recorded at while a newer head cannot be read.
+func TestRelinkReadsTheRecordedHead(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	if _, err := s.Activate(ctx, "o/r"); err != nil {
+		t.Fatal(err)
+	}
+	save := func(head string) {
+		t.Helper()
+		pull := github.ListedPull{Number: 1, State: "open", HeadSHA: head, BaseSHA: "b", UpdatedAt: t0}
+		if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("h1")
+	if err := s.SetPullPaths(ctx, "o/r", 1, "h1", []string{"a"}, []PullCommit{{SHA: "c1", CommittedAt: t0}}); err != nil {
+		t.Fatal(err)
+	}
+	save("h2")
+	pulls, err := s.PullsWithCommitsSince(ctx, "o/r", t0.Add(-time.Hour))
+	if err != nil || len(pulls) != 1 || pulls[0].HeadSHA != "h1" {
+		t.Fatalf("pulls = %+v, %v", pulls, err)
+	}
+}
