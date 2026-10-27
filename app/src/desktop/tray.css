@@ -43,9 +43,18 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+}
+html {
+  overflow: hidden;
+}
+/* The window grows with the page up to a limit; past it the page scrolls, so
+   the actions at the foot stay reachable however many sessions wait. */
+body {
+  height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: none;
 }
 
 .tray-menu {
