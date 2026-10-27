@@ -11,8 +11,9 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// completeMaxTurns bounds a completion: one turn answers it.
-const completeMaxTurns = 2
+// completeMaxTurns bounds a completion: one turn without tools answers it with
+// one model call. The CLI has no option capping the reply's tokens.
+const completeMaxTurns = 1
 
 // Complete runs `codex exec` once for a single structured reply
 // (agent.Completer): ephemeral, without the user's config, rules or hooks, in

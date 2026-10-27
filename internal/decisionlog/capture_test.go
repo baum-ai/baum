@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -40,6 +41,7 @@ type fakeBackend struct {
 	users    []string
 	fail     error
 	summary  string
+	onCall   func()
 }
 
 func (f *fakeBackend) Name() string                          { return f.name }
@@ -53,6 +55,9 @@ var turnPattern = regexp.MustCompile(`## Turn (\d+)`)
 func (f *fakeBackend) Complete(_ context.Context, request agent.CompleteRequest) (agent.Completion, error) {
 	f.calls++
 	f.users = append(f.users, request.User)
+	if f.onCall != nil {
+		f.onCall()
+	}
 	completion := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}}
 	if f.fail != nil {
 		return completion, f.fail
@@ -373,4 +378,47 @@ func TestCaptureAutoFollowsTheReviewBackendSelection(t *testing.T) {
 			t.Fatalf("%+v", report)
 		}
 	})
+}
+
+func TestCaptureCancelledIsNotAFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newFixture(t)
+	f.backend.fail = context.Canceled
+	f.backend.onCall = cancel
+	report, err := f.capturer.Capture(ctx, f.target, Options{})
+	if !errors.Is(err, context.Canceled) || report.Reason != "cancelled" {
+		t.Fatalf("%+v %v", report, err)
+	}
+	var state string
+	_ = f.store.db.QueryRow(`SELECT state FROM capture_attempt`).Scan(&state)
+	row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
+	if state != AttemptAbandoned || row.Failures != 0 {
+		t.Fatalf("state %q, failures %d", state, row.Failures)
+	}
+	f.backend.fail, f.backend.onCall = nil, nil
+	if report := f.capture(t, Options{Force: true}); report.Outcome != OutcomeExtracted {
+		t.Fatalf("%+v", report)
+	}
+}
+
+func TestDecisionModelFollowsTheBackend(t *testing.T) {
+	list := pricing.Active()
+	claudeModel, gptModel, unknown := "claude-sonnet-5-5", "gpt-6-luna", "house-model"
+	cases := []struct {
+		backend string
+		model   *string
+		want    string
+	}{
+		{agent.BackendClaude, nil, "claude-haiku-5-5"},
+		{agent.BackendCodex, nil, "gpt-6-luna"},
+		{agent.BackendClaude, &claudeModel, claudeModel},
+		{agent.BackendCodex, &claudeModel, "gpt-6-luna"},
+		{agent.BackendAnthropic, &gptModel, "claude-haiku-5-5"},
+		{agent.BackendCodex, &unknown, unknown},
+	}
+	for _, tc := range cases {
+		if got := decisionModel(list, tc.backend, tc.model); got != tc.want {
+			t.Errorf("%s %v: %q, want %q", tc.backend, tc.model, got, tc.want)
+		}
+	}
 }

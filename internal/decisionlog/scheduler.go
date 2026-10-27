@@ -12,11 +12,12 @@ import (
 
 // Trigger timings (README.md, "When a session is captured").
 const (
-	// StopWait is how long a session must wait after its turn ended.
-	StopWait = 2 * time.Minute
+	// SettleAfter is how long a session that is not running must have been
+	// quiet: its turn ended, it waits on its user, or it went silent.
+	SettleAfter = 2 * time.Minute
 	// RunningEvery captures a session that keeps running.
 	RunningEvery = 20 * time.Minute
-	// BackstopEvery looks at every tracked session that is not running.
+	// BackstopEvery looks again at every settled session.
 	BackstopEvery = 5 * time.Minute
 	// TickEvery is how often the triggers are evaluated.
 	TickEvery = 30 * time.Second
@@ -36,54 +37,64 @@ type Source interface {
 	SubscribeCounted(buffer int, match func(hookevents.Event) bool) (events <-chan hookevents.Record, cancel func(), dropped func() uint64)
 }
 
+// Worker captures one session and prunes the store; *Capturer is one.
+type Worker interface {
+	Capture(context.Context, Target, Options) (Report, error)
+	Prune(context.Context) error
+}
+
 // memo is what the scheduler remembers of a session between ticks.
 type memo struct {
-	// fired is the LastActivityAt an event trigger (stop, idle, ended)
-	// fired for.
+	// fired is the LastActivityAt a settled session was queued for.
 	fired time.Time
-	// lastRun is when a running session was last captured.
-	lastRun time.Time
+	// running is when the session was last seen to enter StateRunning, zero
+	// while it is not running; lastRun is when it was last queued for running
+	// long.
+	running, lastRun time.Time
+}
+
+// settled reports whether the session is not running and has been quiet for
+// SettleAfter, or ended.
+func settled(s livesessions.Session, now time.Time) bool {
+	return s.State == livesessions.StateEnded || (s.State != livesessions.StateRunning && now.Sub(s.LastActivityAt) >= SettleAfter)
 }
 
 // due reports why the session is to be captured now, empty when it is not:
-// it ended or went silent since its last trigger, its turn ended StopWait
-// ago, or it has run RunningEvery since it started or was last captured
-// while running.
+// it settled since it was last queued, or it has been running RunningEvery
+// since it entered StateRunning or was last queued for that.
 func due(s livesessions.Session, m memo, now time.Time) (string, memo) {
-	if s.LastActivityAt.Equal(m.fired) && s.State != livesessions.StateRunning {
+	if s.State != livesessions.StateRunning {
+		m.running = time.Time{}
+		if settled(s, now) && !s.LastActivityAt.Equal(m.fired) {
+			m.fired = s.LastActivityAt
+			return "settled", m
+		}
 		return "", m
 	}
-	switch {
-	case s.State == livesessions.StateEnded:
-		m.fired = s.LastActivityAt
-		return "ended", m
-	case s.LastEvent == livesessions.EventStop && now.Sub(s.LastActivityAt) >= StopWait:
-		m.fired = s.LastActivityAt
-		return "stop", m
-	case s.State == livesessions.StateIdle && s.WaitingReason == "":
-		m.fired = s.LastActivityAt
-		return "idle", m
-	case s.State == livesessions.StateRunning:
-		since := s.StartedAt
-		if m.lastRun.After(since) {
-			since = m.lastRun
-		}
-		if now.Sub(since) >= RunningEvery {
-			m.lastRun = now
-			return "running", m
-		}
+	if m.running.IsZero() {
+		m.running = now
+	}
+	since := m.running
+	if m.lastRun.After(since) {
+		since = m.lastRun
+	}
+	if now.Sub(since) >= RunningEvery {
+		m.lastRun = now
+		return "running", m
 	}
 	return "", m
 }
 
 // Scheduler decides when the tracked sessions are captured and hands them,
-// one at a time, to the Capturer. Run it once in the daemon.
+// one at a time, to the worker. Run it once in the daemon.
 type Scheduler struct {
-	Tracker  Tracker
-	Source   Source
-	Capturer *Capturer
-	Now      func() time.Time
-	Log      *slog.Logger
+	Tracker Tracker
+	Source  Source
+	Worker  Worker
+	Now     func() time.Time
+	// Tick is how often the triggers are evaluated; zero is TickEvery.
+	Tick time.Duration
+	Log  *slog.Logger
 
 	once   sync.Once
 	mu     sync.Mutex
@@ -99,6 +110,10 @@ func (s *Scheduler) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+func (s *Scheduler) init() {
+	s.once.Do(func() { s.queued, s.wake = map[key]bool{}, make(chan struct{}, 1) })
 }
 
 // Enqueue asks for the session to be captured; a session already waiting is
@@ -119,10 +134,6 @@ func (s *Scheduler) Enqueue(agent, id string) {
 	}
 }
 
-func (s *Scheduler) init() {
-	s.once.Do(func() { s.queued, s.wake = map[key]bool{}, make(chan struct{}, 1) })
-}
-
 func (s *Scheduler) next() (key, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,9 +146,8 @@ func (s *Scheduler) next() (key, bool) {
 	return k, true
 }
 
-// tick evaluates the triggers; backstop also queues every session that is
-// not running, which the capturer leaves alone when its transcript did not
-// change.
+// tick evaluates the triggers; backstop also queues every settled session,
+// which the worker leaves alone when its transcript did not change.
 func (s *Scheduler) tick(memos map[key]memo, backstop bool) {
 	now := s.now()
 	seen := map[key]bool{}
@@ -146,7 +156,7 @@ func (s *Scheduler) tick(memos map[key]memo, backstop bool) {
 		seen[k] = true
 		reason, m := due(session, memos[k], now)
 		memos[k] = m
-		if reason != "" || (backstop && session.State != livesessions.StateRunning) {
+		if reason != "" || (backstop && settled(session, now)) {
 			s.Enqueue(k.agent, k.id)
 		}
 	}
@@ -157,9 +167,9 @@ func (s *Scheduler) tick(memos map[key]memo, backstop bool) {
 	}
 }
 
-// Run evaluates the triggers every TickEvery, queues a session that is about
-// to compact at once, and captures the queued sessions one at a time, until
-// ctx ends.
+// Run evaluates the triggers every Tick, queues a session that is about to
+// compact at once, and captures the queued sessions one at a time, until ctx
+// ends. It returns once the capture in progress has.
 func (s *Scheduler) Run(ctx context.Context) {
 	s.init()
 	var compacting <-chan hookevents.Record
@@ -170,12 +180,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 		defer cancel()
 		compacting = events
 	}
-	go s.work(ctx)
-	if err := s.Capturer.Store.Prune(ctx); err != nil && ctx.Err() == nil {
-		s.logger().Warn("decision store not pruned", "error", err)
-	}
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Go(func() { s.work(ctx) })
+	s.prune(ctx)
 	memos := map[key]memo{}
-	ticker := time.NewTicker(TickEvery)
+	tick := s.Tick
+	if tick <= 0 {
+		tick = TickEvery
+	}
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	lastBackstop, lastPrune := s.now(), s.now()
 	for {
@@ -197,11 +211,15 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.tick(memos, backstop)
 			if now.Sub(lastPrune) >= PruneEvery {
 				lastPrune = now
-				if err := s.Capturer.Store.Prune(ctx); err != nil && ctx.Err() == nil {
-					s.logger().Warn("decision store not pruned", "error", err)
-				}
+				s.prune(ctx)
 			}
 		}
+	}
+}
+
+func (s *Scheduler) prune(ctx context.Context) {
+	if err := s.Worker.Prune(ctx); err != nil && ctx.Err() == nil {
+		s.logger().Warn("decision store not pruned", "error", err)
 	}
 }
 
@@ -221,7 +239,7 @@ func (s *Scheduler) work(ctx context.Context) {
 		if !tracked {
 			continue
 		}
-		report, err := s.Capturer.Capture(ctx, Target{Agent: k.agent, ID: k.id, Path: path, Repository: session.Repository,
+		report, err := s.Worker.Capture(ctx, Target{Agent: k.agent, ID: k.id, Path: path, Repository: session.Repository,
 			Branch: session.Branch, Ended: session.State == livesessions.StateEnded}, Options{})
 		switch {
 		case ctx.Err() != nil:

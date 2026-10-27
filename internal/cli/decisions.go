@@ -45,6 +45,8 @@ A Claude Code session is looked up in ~/.claude/projects by its id unless
 	capture.Flags().BoolVar(&options.DryRun, "dry-run", false, "stop before the model call and write nothing")
 	capture.Flags().StringVar(&options.Backend, "backend", "", "backend: claude, codex or anthropic")
 	capture.Flags().StringVar(&options.Model, "model", "", "model")
+	capture.Flags().StringVar(&options.DebugDir, "debug-dir", "", "directory to write the rendered transcript, the message sent and the raw reply to")
+	_ = capture.Flags().MarkHidden("debug-dir")
 	_ = capture.MarkFlagRequired("session")
 	cmd.AddCommand(capture)
 	return cmd
@@ -57,7 +59,7 @@ func runDecisionCapture(ctx context.Context, cmd *cobra.Command, target decision
 	}
 	var registry decisionlog.Registry = defaultRegistry{}
 	if found, err := repos.OpenReadOnly(""); err == nil {
-		defer found.Close()
+		defer func() { _ = found.Close() }()
 		registry = found
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -66,11 +68,11 @@ func runDecisionCapture(ctx context.Context, cmd *cobra.Command, target decision
 	if err != nil {
 		return err
 	}
-	store, err := decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"))
+	store, err := decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{ReadOnly: options.DryRun})
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if target.Path == "" && target.Agent == livesessions.AgentClaudeCode {
 		matches, _ := filepath.Glob(filepath.Join(transcript.UserHome(), ".claude", "projects", "*", target.ID+".jsonl"))
 		if len(matches) > 0 {

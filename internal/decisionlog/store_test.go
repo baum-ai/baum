@@ -2,6 +2,8 @@ package decisionlog
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,7 +19,7 @@ func (c *clock) Now() time.Time { return c.now }
 
 func openStore(t *testing.T, c *clock) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "decisions", "decisions.sqlite"))
+	s, err := Open(filepath.Join(t.TempDir(), "decisions", "decisions.sqlite"), OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +116,7 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 	ctx := context.Background()
 	c := &clock{t0}
 	path := filepath.Join(t.TempDir(), "decisions", "decisions.sqlite")
-	s, err := Open(path)
+	s, err := Open(path, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,10 +133,10 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 	_, _ = s.Begin(ctx, Attempt{Agent: "codex", ID: "s9", Backend: "codex", Model: "m", Mode: "full", Reserved: 0.03})
 	_ = s.Close()
 	// Reopening settles the pending attempt as abandoned; its reservation counts.
-	if s, err = Open(path); err != nil {
+	if s, err = Open(path, OpenOptions{AbandonPending: true}); err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	s.now = c.Now
 	var state string
 	if err := s.db.QueryRow(`SELECT state FROM capture_attempt WHERE agent='codex'`).Scan(&state); err != nil || state != AttemptAbandoned {
@@ -164,3 +166,41 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 }
 
 func near(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+
+func TestOpenOptionsAndEmptyHead(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "decisions")
+	path := filepath.Join(dir, "decisions.sqlite")
+	// A dry run on a machine without a store writes nothing.
+	s, err := Open(path, OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a read-only open created %s: %v", dir, err)
+	}
+	s, err = Open(path, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Begin(ctx, Attempt{Agent: "a", ID: "s", Backend: "claude", Model: "m", Mode: "full", Reserved: 0.01}); err != nil {
+		t.Fatal(err)
+	}
+	// A session with no turns has an empty head that a later capture hits.
+	if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "a", ID: "empty"}, ContentHash: "h0"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	// Only the daemon's open abandons a pending attempt.
+	if s, err = Open(path, OpenOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	var state string
+	_ = s.db.QueryRow(`SELECT state FROM capture_attempt`).Scan(&state)
+	row, _, _ := s.Session(ctx, "a", "empty")
+	if state != AttemptPending || row.ContentHash != "h0" || row.Decisions == nil {
+		t.Fatalf("state %q, head %+v", state, row)
+	}
+}

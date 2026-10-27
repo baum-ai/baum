@@ -28,7 +28,7 @@ func TestCompleteRunsOneToollessCall(t *testing.T) {
 	}
 	arguments, _ := os.ReadFile(filepath.Join(out, "arguments.txt"))
 	for _, flag := range []string{"--tools\n\n", "--json-schema\n{\"type\":\"object\"}\n", "--no-session-persistence\n", "--setting-sources\n\n",
-		"--strict-mcp-config\n", "--mcp-config\n{\"mcpServers\":{}}\n", "--max-turns\n3\n", "--model\nclaude-haiku-5-5\n", "--system-prompt\nExtract decisions."} {
+		"--strict-mcp-config\n", "--mcp-config\n{\"mcpServers\":{}}\n", "--max-turns\n2\n", "--model\nclaude-haiku-5-5\n", "--system-prompt\nExtract decisions."} {
 		if !bytes.Contains(arguments, []byte(flag)) {
 			t.Fatalf("missing %q in %s", flag, arguments)
 		}

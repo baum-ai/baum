@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
@@ -51,16 +52,17 @@ func vendor(backend string) string {
 	return pricing.VendorClaudeCode
 }
 
-// reserve is the most a call with at most inputTokens of prompt and
-// MaxOutputTokens of reply costs at the model's rates, as hosted extraction
-// reserves; false when the list would not price it.
+// reserve is the most a completion with at most inputTokens of prompt and
+// MaxOutputTokens of reply per call costs at the model's rates, for every
+// call the backend can make (maxCalls), as hosted extraction reserves one
+// call; false when the list would not price it.
 func reserve(list *pricing.List, backend, model string, inputTokens int64) (float64, bool) {
 	v := vendor(backend)
 	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: MaxOutputTokens, SingleRequest: true})
 	if !ok {
 		return 0, false
 	}
-	return (float64(inputTokens)*rates.Input + float64(MaxOutputTokens)*rates.Output) / 1_000_000, true
+	return float64(maxCalls(backend)) * (float64(inputTokens)*rates.Input + float64(MaxOutputTokens)*rates.Output) / 1_000_000, true
 }
 
 // cost prices a call's reported usage, whose buckets are disjoint
@@ -101,8 +103,11 @@ type completerModel struct {
 	completer agent.Completer
 	redactor  *bundle.Redactor
 	called    bool
-	model     string
-	usage     agent.Usage
+	// raw is the last reply as the provider returned it.
+	raw   []byte
+	user  string
+	model string
+	usage agent.Usage
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
@@ -110,9 +115,9 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 	if err != nil {
 		return decisions.ModelResponse{}, err
 	}
-	m.called = true
+	m.called, m.user = true, req.User
 	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema, MaxOutputTokens: int(req.MaxOutputTokens)})
-	m.model, m.usage = out.Model, out.Usage
+	m.model, m.usage, m.raw = out.Model, out.Usage, out.Document
 	billed := func(err error) error {
 		return &decisions.BilledError{Model: out.Model, Usage: decisionUsage(out.Usage), Err: err}
 	}
@@ -144,10 +149,29 @@ func resolveBackend(ctx context.Context, requested config.Backend, backends gene
 }
 
 // decisionModel is the preferences' decision model, else the backend's
-// default (DefaultDecisionModel).
-func decisionModel(backend string, model *string) string {
-	if model != nil && *model != "" {
-		return *model
+// default (DefaultDecisionModel). A model of another provider's family than
+// the backend's, such as a Claude model with codex, is ignored.
+func decisionModel(list *pricing.List, backend string, model *string) string {
+	if model == nil || *model == "" {
+		return DefaultDecisionModel(backend)
 	}
-	return DefaultDecisionModel(backend)
+	family := list.Normalize(*model, "").Family
+	want := pricing.FamilyClaude
+	if backend == agent.BackendCodex {
+		want = pricing.FamilyGPT
+	}
+	if family != pricing.FamilyUnknown && family != want {
+		return DefaultDecisionModel(backend)
+	}
+	return *model
+}
+
+// maxCalls is the most model calls one completion of the backend can make:
+// claude may answer after its StructuredOutput call; codex runs one turn
+// without tools and the anthropic backend sends one request.
+func maxCalls(backend string) int {
+	if backend == agent.BackendClaude {
+		return claude.CompleteMaxTurns
+	}
+	return 1
 }

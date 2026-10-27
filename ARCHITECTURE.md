@@ -2943,10 +2943,11 @@ replace it.
 "Live sessions") into `<state>/decisions/decisions.sqlite`, with the published
 prompt (`decisions-public-v1`) and the `decisions` package's renderer,
 parser and validator. Its scheduler reads `Tracker.Sessions` every 30 seconds
-and keeps no per-session timers: a session that ended or went silent, whose
-turn ended two minutes ago, that has run 20 minutes since it started or was
-last captured, or that sends `pre-compact` is queued, and every five minutes
-so is every tracked session that is not running. One worker captures the
+and keeps no per-session timers: a session that ended, or is not running and
+has been quiet for two minutes, is queued once per last activity; one running
+20 minutes since it last entered running or was queued for it, or that sends
+`pre-compact`, is queued at once; and every five minutes so is every settled
+session. One worker captures the
 queue, deduplicated. The gate is the automatic master switch, the decisions
 switch (`preferences.decisions.enabled`) and the repository's
 `settings.decisions`, all on by default.
@@ -2958,7 +2959,8 @@ estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its single structured call goes through
 the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
 `gpt-6-luna`); cursor-agent has none. Every call is reserved before it is
-made (byte bound plus 16,384 output tokens at list price) and recorded in a
+made (byte bound plus 16,384 output tokens at list price, per call the backend
+can make) and recorded in a
 ledger that throttles a session (5 minutes apart, 10 after a failure, 12 a
 day unless it ended) and caps its spend at $0.25 a day, with an optional
 global daily cap. The reply is masked before it is parsed; decisions keep

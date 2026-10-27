@@ -76,10 +76,22 @@ type Store struct {
 	now func() time.Time
 }
 
-// Open creates or opens the private store at path, in a 0700 directory, and
-// settles the attempts a previous daemon left pending as abandoned: their
-// reservation counts as spent.
-func Open(path string) (*Store, error) {
+// OpenOptions choose how Open opens the store.
+type OpenOptions struct {
+	// AbandonPending settles the attempts a previous run left pending as
+	// abandoned: their reservation counts as spent. Only the daemon, the one
+	// writer that makes calls unattended, sets it.
+	AbandonPending bool
+	// ReadOnly opens an existing store without writing to it, and an empty
+	// in-memory one when there is none, for a dry run.
+	ReadOnly bool
+}
+
+// Open creates or opens the private store at path, in a 0700 directory.
+func Open(path string, o OpenOptions) (*Store, error) {
+	if o.ReadOnly {
+		return openReadOnly(path)
+	}
 	if err := privatefs.MkdirAll(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -108,7 +120,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, now: time.Now}
-	if _, err = db.Exec(schema); err == nil {
+	if _, err = db.Exec(schema); err == nil && o.AbandonPending {
 		_, err = db.Exec(`UPDATE capture_attempt SET state=?, settled_at=?, reason='daemon_stopped' WHERE state=?`, AttemptAbandoned, s.now().UnixMilli(), AttemptPending)
 	}
 	if err != nil {
@@ -116,6 +128,31 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func openReadOnly(path string) (*Store, error) {
+	dsn := "file::memory:"
+	if _, err := os.Stat(path); err == nil {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		dsn = (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: "mode=ro"}).String()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if dsn == "file::memory:" {
+		if _, err := db.Exec(schema); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	return &Store{db: db, now: time.Now}, nil
 }
 
 // Close closes the database.
@@ -255,6 +292,9 @@ type Extraction struct {
 // else the date its ID had, else the time of the extraction.
 func (s *Store) Save(ctx context.Context, e Extraction) error {
 	now := s.now()
+	if e.Decisions == nil {
+		e.Decisions = []decisions.Decision{}
+	}
 	head, err := json.Marshal(e.Decisions)
 	if err != nil {
 		return err
@@ -380,8 +420,8 @@ WHERE id=?`, state, reason, value, s.now().UnixMilli(), usage.InputTokens, usage
 // Stats are what the throttle and the caps read from the ledger.
 type Stats struct {
 	// Count and Spent are the session's attempts and spend since the day's
-	// start; LastStart is its latest attempt and LastFailed its latest failed
-	// or abandoned one, zero for none.
+	// start; LastStart is its latest attempt and LastFail its latest failed
+	// one, zero for none.
 	Count     int
 	Spent     float64
 	LastStart time.Time
@@ -403,8 +443,8 @@ FROM capture_attempt WHERE started_at >= ?3`, agent, id, day.UnixMilli()).Scan(&
 	if err != nil {
 		return st, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT MAX(started_at), MAX(started_at) FILTER (WHERE state IN (?3, ?4))
-FROM capture_attempt WHERE agent=?1 AND session_id=?2`, agent, id, AttemptFailed, AttemptAbandoned).Scan(&last, &failed)
+	err = s.db.QueryRowContext(ctx, `SELECT MAX(started_at), MAX(started_at) FILTER (WHERE state = ?3)
+FROM capture_attempt WHERE agent=?1 AND session_id=?2`, agent, id, AttemptFailed).Scan(&last, &failed)
 	if last.Valid {
 		st.LastStart = time.UnixMilli(last.Int64)
 	}

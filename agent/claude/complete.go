@@ -11,9 +11,9 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// completeMaxTurns bounds a completion's model calls: the StructuredOutput
-// call, and room for the harness to ask again after a rejected one.
-const completeMaxTurns = 3
+// CompleteMaxTurns bounds a completion's model calls: the StructuredOutput
+// call, and the model's answer to its result should the harness ask for one.
+const CompleteMaxTurns = 2
 
 // Complete runs Claude Code once with no tools but the StructuredOutput tool
 // --json-schema registers (agent.Completer): the request's system prompt, no
@@ -31,12 +31,12 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	}
 	defer os.RemoveAll(dir)
 	run := agent.Request{Directory: dir, Prompt: sessions.GenerationRunMarker + "\n" + request.User, Schema: request.Schema,
-		MaxCalls: completeMaxTurns, MaxTokens: 1 << 30}
+		MaxCalls: CompleteMaxTurns, MaxTokens: 1 << 30}
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
-	args = append(args, "--system-prompt", request.System+"\n\n"+submitPrompt, "--max-turns", strconv.Itoa(completeMaxTurns),
+	args = append(args, "--system-prompt", request.System+"\n\n"+submitPrompt, "--max-turns", strconv.Itoa(CompleteMaxTurns),
 		"--restricted", "--tools", "", "--json-schema", string(request.Schema), "--no-session-persistence",
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
 	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(cmp.Or(request.MaxOutputTokens, maxOutputTokens))}

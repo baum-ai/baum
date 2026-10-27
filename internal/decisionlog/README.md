@@ -24,18 +24,20 @@ turned off, is not read and leaves no row.
 The scheduler reads the live session tracker every 30 seconds; it keeps no
 per-session timers. A session is queued when:
 
-- it ended, or went silent for the tracker's idle time;
-- its turn ended (`stop`) at least 2 minutes ago and no prompt followed;
-- it has been running for 20 minutes since it started or was last captured
-  while running;
-- it is about to compact (`pre-compact` hook event);
-- every 5 minutes, it is tracked and not running (the backstop; a session whose
-  transcript did not change is left alone).
+- it settled: it ended, or it is not running and its last activity is at
+  least 2 minutes old (its turn ended, it waits on its user, or it went
+  silent); once per last activity;
+- it has been running for 20 minutes since it last entered the running state
+  or was last queued for running long;
+- it is about to compact (`pre-compact` hook event), at once;
+- every 5 minutes, it is settled (the backstop, for a transcript that changed
+  without new activity; an unchanged one is left alone).
 
 One worker captures the queued sessions one at a time; a session already
 queued is not queued twice. Before a call, the ledger throttles a session: at
 most one attempt every 5 minutes, none within 10 minutes of a failed one, and
-after 12 attempts in a day only once it ended.
+after 12 attempts in a day only once it ended. A capture cut short by the
+daemon stopping settles its attempt as abandoned and is not a failure.
 
 ## Capture
 
@@ -47,28 +49,38 @@ after 12 attempts in a day only once it ended.
    unchanged and the session is covered, nothing happens.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
-   content hash, the head still covers it and no call is made. When a head
-   exists, the call extends it (existing decisions keep their IDs; new turns
-   after the head's prefix are read); otherwise it reads the whole transcript.
+   content hash (an empty head included), the head still covers it and no call
+   is made. When a head exists, the call extends it: the message lists the
+   existing decisions by handle and then the whole transcript, with a marker
+   after the turns the head's prefix covered; existing decisions keep their
+   IDs. Otherwise the call reads the whole transcript.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
 6. The backend is the one reviews use (config file, app preferences,
    repository settings), and `auto` resolves as for reviews: the first of
    claude, codex and anthropic that passes its check, never cursor-agent; none
    is `backend_unavailable`. The model follows the resolved backend:
-   `preferences.decisions.model`, else `claude-haiku-5-5` for claude and
-   anthropic and `gpt-6-luna` for codex. cursor-agent cannot make a single
+   `preferences.decisions.model` unless it names another provider's family,
+   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for
+   codex. cursor-agent cannot make a single
    structured call (`backend_unsupported`); a backend that does not pass its
    check is `backend_unavailable`.
-7. The call's cost is reserved before it is made: the prompt's byte bound and
-   16,384 output tokens at the model's list price. A model the price list does
-   not price is skipped (`unpriced_model`). A session's spend may not pass
-   $0.25 a day (`over_cost_cap`), and all capture's spend may not pass
+7. The cost is reserved before the call: the prompt's byte bound and 16,384
+   output tokens at the model's list price, for each model call the backend
+   can make (two for claude, which may answer after its structured reply; one
+   for codex and anthropic). The Codex CLI has no option capping the reply, so
+   its 16,384 tokens are an estimate rather than a limit. A model the price
+   list does not price is skipped (`unpriced_model`). A reservation over the
+   session's $0.25 daily allowance can never be paid and is skipped like the
+   token cap (`over_token_cap`). A session's spend may not pass $0.25 a day
+   (`over_cost_cap`), and all capture's spend may not pass
    `preferences.decisions.daily_cap` when set (`daily_cap`; no default).
-8. The attempt is recorded as pending, the call made (one structured call, no
-   tools), and the attempt settled with its cost from the reported usage, or
-   none when it cannot be priced. Spend counts the cost, else the reservation.
-   An attempt still pending when the daemon starts is settled as abandoned and
-   its reservation counts.
+8. The attempt is recorded as pending and the completion made: one request
+   for anthropic, `claude -p` with no tools besides its structured reply and
+   at most two turns, or one `codex exec` turn with its tools off. The attempt
+   is settled with its cost from the reported usage, or none when it cannot be
+   priced. Spend counts the cost, else the reservation. An attempt still
+   pending when the daemon starts is settled as abandoned and its reservation
+   counts.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
@@ -101,4 +113,7 @@ transcripts, never the transcripts themselves.
 `baum internal decisions capture --agent <agent> --session <id> [--path
 <transcript>] [--dry-run] [--backend <b>] [--model <m>]` runs one capture
 without the gate, throttle or unchanged check and prints its report as JSON.
-`--dry-run` stops before the call and writes nothing.
+`--dry-run` stops before the call and writes nothing: it reads an existing
+store read-only, and uses an empty one in memory when there is none. A hidden
+`--debug-dir <dir>` writes the rendered transcript, the message sent and the
+raw reply there.

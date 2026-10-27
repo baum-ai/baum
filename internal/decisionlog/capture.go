@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -114,6 +116,9 @@ type Options struct {
 	Force bool
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
+	// DebugDir, when set, receives the rendered transcript (transcript.txt),
+	// the user message sent (user.txt) and the raw reply (reply.json), for testing by hand. The daemon never sets it.
+	DebugDir string
 }
 
 // Report is what a capture did.
@@ -184,6 +189,9 @@ func covered(row Session, fingerprint string, day time.Time) bool {
 	return row.Coverage == CoverageExtracted || !transient[row.SkipReason] || !row.UpdatedAt.Before(day)
 }
 
+// Prune prunes the store (Store.Prune).
+func (c *Capturer) Prune(ctx context.Context) error { return c.Store.Prune(ctx) }
+
 // Capture runs the pipeline for one session. An error is one the store or the
 // registry returned, or a failed call; what was skipped is in the report.
 func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, error) {
@@ -242,7 +250,11 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if meta.Fingerprint, err = loc.Version(); err != nil {
 		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
 	}
-	if size, err := loc.Size(); err != nil || size > MaxTranscriptBytes {
+	size, err := loc.Size()
+	if err != nil {
+		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
+	}
+	if size > MaxTranscriptBytes {
 		return skip(ReasonTooLarge)
 	}
 	head, found, err := c.Store.Session(ctx, t.Agent, t.ID)
@@ -272,7 +284,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	hash := decisions.ContentHash(rendered)
 	options := decisions.ExtractOptions{MaxInputTokens: MaxInputTokens, MaxOutputTokens: MaxOutputTokens}
 	report.Mode = "full"
-	if found && head.Decisions != nil {
+	if found && head.ContentHash != "" {
 		if head.ContentHash == hash {
 			report.Outcome, report.Decisions = OutcomeHit, len(head.Decisions)
 			if o.DryRun {
@@ -283,6 +295,11 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		options.Existing = head.Decisions
 		options.Cutoff, _ = decisions.ExtensionCutoff(rendered, head.PrefixHash)
 		report.Mode = "extend"
+	}
+	if o.DebugDir != "" {
+		if err := os.WriteFile(filepath.Join(o.DebugDir, "transcript.txt"), []byte(rendered.Text()), 0o600); err != nil {
+			return report, err
+		}
 	}
 	report.Tokens = c.Extractor.EstimateTokens(rendered, options)
 	report.MaxTokens = c.Extractor.MaxTokens(rendered, options)
@@ -316,7 +333,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		c.logger().Info("decision capture backend unavailable", "backend", requested, "error", err)
 		return skip(ReasonUnavailable)
 	}
-	report.Model = decisionModel(report.Backend, prefs.Decisions.Model)
+	report.Model = decisionModel(c.prices(), report.Backend, prefs.Decisions.Model)
 	if o.Model != "" {
 		report.Model = o.Model
 	}
@@ -329,6 +346,10 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(ReasonUnpriced)
 	}
 	report.Reserved = reserved
+	if reserved > SessionDailyCap {
+		// No day's allowance would ever pay for it: lasting, like the token cap.
+		return skip(ReasonOverTokenCap)
+	}
 	st, err := c.Store.Stats(ctx, t.Agent, t.ID, day)
 	if err != nil {
 		return report, err
@@ -359,6 +380,10 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 	model := &completerModel{completer: completer, redactor: c.redactor}
 	result, callErr := c.Extractor.Extract(ctx, model, rendered, options)
+	if o.DebugDir != "" {
+		_ = os.WriteFile(filepath.Join(o.DebugDir, "user.txt"), []byte(model.user), 0o600)
+		_ = os.WriteFile(filepath.Join(o.DebugDir, "reply.json"), model.raw, 0o600)
+	}
 	// The ledger and the store outlive a cancelled capture: the call may be
 	// paid for.
 	write := context.WithoutCancel(ctx)
@@ -368,6 +393,14 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 	report.Cost = spent
 	usage := decisionUsage(model.usage)
+	if callErr != nil && ctx.Err() != nil {
+		// Cut short by the daemon stopping: not the session's failure.
+		report.Outcome, report.Reason = OutcomeFailed, "cancelled"
+		if err := c.Store.Settle(write, attempt, AttemptAbandoned, report.Reason, spent, usage); err != nil {
+			return report, err
+		}
+		return report, ctx.Err()
+	}
 	if callErr != nil {
 		report.Outcome, report.Reason = OutcomeFailed, failureReason(callErr)
 		if err := c.Store.Settle(write, attempt, AttemptFailed, report.Reason, spent, usage); err != nil {
@@ -415,8 +448,8 @@ func isSession(graph *session.Graph, id string) bool {
 func failureReason(err error) string {
 	var billed *decisions.BilledError
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
 	case errors.As(err, &billed):
 		return "unusable_reply"
 	}

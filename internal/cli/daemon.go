@@ -483,11 +483,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
 		if live != nil {
-			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite")); err != nil {
+			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
-					Capturer: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
+					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
 			}
 		}
 		home, _ := os.UserHomeDir()
