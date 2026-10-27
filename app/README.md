@@ -256,8 +256,30 @@ they are; a provider the daemon cannot read shows "Unavailable: <reason>" and a
 failed request shows nothing. See the daemon's
 [plan usage README](../internal/planusage/README.md).
 
-The app's sidebar leads to the Inbox, Sessions, Repositories, Jobs and Settings; Sessions
-shows the number of agent sessions working now.
+The app's sidebar leads to the Inbox, Sessions, Analytics, Repositories, Jobs and Settings;
+Sessions shows the number of agent sessions working now.
+
+The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
+reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
+Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
+repository and agent selects in the inbox's select style; all three live in the
+address. A new choice shows at once and the last report stays, faded, until the
+new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
+the estimated cost marked "Incomplete" when part is unpriced, and the
+agent-written share of commits); agent activity per day, sessions or active time
+stacked by agent, with a legend and a table behind "Show as a table"; a breakdown
+by agent, model or repository (sessions, prompts, tool calls, failed share, active
+time, tokens, estimated cost); agent-written commits by evidence; baum's work
+(reviews, fixes pushed, threads resolved, spend, failures by reason, merges,
+branch updates and re-runs from the app); delivery from GitHub ("Loading from
+GitHub…" for that card only while the daemon searches); plan usage over time per
+provider, with how often each window hit its limit; busiest hours; and the longest
+sessions. A figure that is unknown is "—" with its reason as a tooltip and to
+screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+with tooltips on hover and focus. The page reads again every two seconds while
+the daemon is still indexing or searching GitHub, then every five minutes. An
+older daemon without the capability gets a note to update baum.
 In the desktop app, Settings has separate Command line and Agent hooks sections
 with inline CLI install, update and removal controls, plus installation,
 enablement and removal for each agent. Home paths are displayed with `~`.
@@ -374,7 +396,10 @@ and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
 `updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
 unknown costs, selection and filters, automatic settings and pause notices,
-and the automatic job labels.
+and the automatic job labels. The fixture also writes two Claude Code sessions in
+the demo clone under its fake home, commits of the person's in the other clone,
+plan usage samples and GitHub's answer to the delivery search, and a test opens
+Analytics and checks the figures they make, at desktop and narrow widths.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call

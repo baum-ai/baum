@@ -42,7 +42,7 @@ prompt, message, tool input or output, or file path is stored.
 
 ## Counting
 
-The hosted rules apply ([hosted analytics](../../../platform/internal/analytics/README.md)):
+The hosted service's counting rules apply:
 
 - A session is a root session: nested agents add subagents, never sessions.
   One session read twice (two registrations of one clone) counts once, from
