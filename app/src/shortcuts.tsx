@@ -23,11 +23,19 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["g"], action: "generate", label: "Generate the review" },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
-const GENERAL_SHORTCUTS = [
-  { keys: ["?"], label: "Show or hide this list" },
-  { keys: ["Escape"], label: "Close this list, or clear the row focus" },
+/** The Up next inbox's keys, which `UpNextPage` handles itself. */
+const UP_NEXT_SHORTCUTS = [
+  { keys: ["j", "ArrowDown"], label: "Next pull request" },
+  { keys: ["k", "ArrowUp"], label: "Previous pull request" },
+  { keys: ["Enter"], label: "Open the pull request" },
+  { keys: ["m"], label: "Merge, where offered" },
+  { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
+  { keys: ["u"], label: "Undo a snooze" },
 ];
+/** Where each group of keys works; the sheet lists the current one first. */
+export type ShortcutsPlace = "anywhere" | "inbox" | "pulls" | "page";
 const KEY_NAMES: Record<string, string> = { ArrowDown: "↓", ArrowUp: "↑", Escape: "Esc" };
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /** The action a keydown asks for on the inbox, if it is one of its keys. */
 export function inboxAction(event: Pick<KeyboardEvent, "key">): InboxAction | null {
@@ -79,6 +87,27 @@ export function useShortcuts(
   }, [allowSheet]);
 }
 
+/** Shows the app's keyboard hints (`.key-hint`) while Alt, Option on a Mac,
+ *  is held, and hides them when it is let go or the window loses focus. */
+export function useKeyHints() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const show = (shown: boolean) => root.toggleAttribute("data-key-hints", shown);
+    const down = (event: KeyboardEvent) => show(event.key === "Alt" || event.altKey);
+    const up = (event: KeyboardEvent) => show(event.key !== "Alt" && event.altKey);
+    const hide = () => show(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", hide);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", hide);
+      hide();
+    };
+  }, []);
+}
+
 /** A key that is the page itself's: pressed with nothing focused in it. */
 export function onBody(event: KeyboardEvent) {
   return (
@@ -88,13 +117,47 @@ export function onBody(event: KeyboardEvent) {
   );
 }
 
-/** The keys of the page, as a small native dialog like the others. */
-export function ShortcutsSheet({ close }: { close: () => void }) {
+/** Every key of the app, grouped by where it works, as a small native dialog
+ *  like the others. `?` opens it from any page. */
+export function ShortcutsSheet({
+  close,
+  current = "anywhere",
+}: {
+  close: () => void;
+  /** Where it was opened, listed first. */
+  current?: ShortcutsPlace;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const rows = [...INBOX_SHORTCUTS, ...GENERAL_SHORTCUTS];
+  const groups: { place: ShortcutsPlace; title: string; rows: { keys: string[]; label: string }[] }[] =
+    [
+      {
+        place: "anywhere",
+        title: "Anywhere",
+        rows: [
+          { keys: ["?"], label: "Show or hide this list" },
+          { keys: [MAC ? "⌥ Option" : "Alt"], label: "Hold to show the keys on buttons" },
+          { keys: ["Escape"], label: "Close this list" },
+        ],
+      },
+      { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+      {
+        place: "pulls",
+        title: "Pull requests",
+        rows: [...INBOX_SHORTCUTS, { keys: ["Escape"], label: "Clear the row focus" }],
+      },
+      {
+        place: "page",
+        title: "A pull request, group or session",
+        rows: [{ keys: ["u", "Escape"], label: "Back to the list" }],
+      },
+    ];
+  const ordered = [
+    ...groups.filter((group) => group.place === current),
+    ...groups.filter((group) => group.place !== current),
+  ];
   return (
     <dialog
       ref={dialog}
@@ -106,21 +169,23 @@ export function ShortcutsSheet({ close }: { close: () => void }) {
       <h2 id="shortcuts-title" className="text-lg font-semibold">
         Keyboard shortcuts
       </h2>
-      <dl className="shortcuts-list">
-        {rows.map((row) => (
-          <div key={row.keys.join()}>
-            <dt>
-              {row.keys.map((key) => (
-                <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-              ))}
-            </dt>
-            <dd>{row.label}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-3 text-xs text-(--text-tertiary)">
-        On a pull request or group page, <kbd>u</kbd> or <kbd>Esc</kbd> goes back to the inbox.
-      </p>
+      {ordered.map((group) => (
+        <section key={group.place} aria-label={group.title} className="shortcuts-group">
+          <h3>{group.title}</h3>
+          <dl className="shortcuts-list">
+            {group.rows.map((row) => (
+              <div key={row.keys.join()}>
+                <dt>
+                  {row.keys.map((key) => (
+                    <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                  ))}
+                </dt>
+                <dd>{row.label}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
       <div className="mt-4 flex justify-end">
         <Button size="compact" onClick={close}>
           Close

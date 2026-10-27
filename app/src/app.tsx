@@ -19,7 +19,13 @@ import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
 import { UpNextPage, useUpNext } from "./up-next";
-import { onBody, ShortcutsSheet, useShortcuts } from "./shortcuts";
+import {
+  onBody,
+  ShortcutsSheet,
+  useKeyHints,
+  useShortcuts,
+  type ShortcutsPlace,
+} from "./shortcuts";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
@@ -423,6 +429,14 @@ function Workspace({ url }: { url: UrlState }) {
   const onList = page === "pulls" && !groupId && !selectedEntry;
   // A session's transcript, `?page=sessions&session=<agent>:<id>`.
   const openSession = url.search.get("session");
+  // The shortcuts sheet lists the keys of where it was opened first.
+  const shortcutsPlace: ShortcutsPlace = onList
+    ? "pulls"
+    : groupId || selectedEntry || (page === "sessions" && openSession)
+      ? "page"
+      : page === "inbox"
+        ? "inbox"
+        : "anywhere";
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -441,9 +455,10 @@ function Workspace({ url }: { url: UrlState }) {
       `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${s.pr}`,
     );
   };
+  useKeyHints();
   useShortcuts(
     (event) => {
-      if (event.key === "?" && onList) {
+      if (event.key === "?") {
         event.preventDefault();
         setShortcuts((open) => !open);
       } else if (
@@ -828,7 +843,9 @@ function Workspace({ url }: { url: UrlState }) {
             </>
           )}
           {generationError ? <Alert>{generationError}</Alert> : null}
-          {shortcuts && onList ? <ShortcutsSheet close={() => setShortcuts(false)} /> : null}
+          {shortcuts ? (
+            <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
+          ) : null}
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"

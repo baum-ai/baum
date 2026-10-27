@@ -567,6 +567,9 @@ function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
       onClick={merge}
     >
       Merge
+      <kbd aria-hidden="true" className="key-hint">
+        m
+      </kbd>
     </button>
   );
 }
@@ -591,6 +594,9 @@ function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fi
     >
       <SparkleIcon size={12} className="flex-none" />
       Fix
+      <kbd aria-hidden="true" className="key-hint">
+        f
+      </kbd>
     </button>
   );
 }
