@@ -257,7 +257,8 @@ failed request shows nothing. See the daemon's
 [plan usage README](../internal/planusage/README.md).
 
 The app's sidebar leads to the Inbox, Sessions, Analytics, Repositories, Jobs and Settings;
-Sessions shows the number of agent sessions working now.
+Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
+else the number working now.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
@@ -323,18 +324,33 @@ running" or "Agent idle" marker on the inbox rows of their pull request and as
 a "Sessions in progress" panel (agent, working or waiting, branch, start and
 last activity) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
-event kind, repository, branch and PR number reach the app in the list, never
-a path; a session's transcript comes only when the Sessions page opens it
+event kind, why and since when it waits on the person with the one masked line
+its agent showed, repository, branch and PR number reach the app in the list,
+never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
 
-The Sessions page (`?page=sessions`) lists the same sessions: "Running now" (agent,
-working or waiting for you, repository and branch, a link to the pull request's page
-when the inbox has it, start and last activity) and "Ended recently" (sessions that
-ended in the last 24 hours, newest first, with when they ended and how long they ran).
-Times are relative, with the exact time on hover. The daemon keeps ended sessions for
-24 hours, across restarts, and the `live` event updates the page and the sidebar count.
+The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
+now" (agent, working or waiting for you, repository and branch, a link to the pull
+request's page when the inbox has it, start and last activity) and "Ended recently"
+(sessions that ended in the last 24 hours, newest first, with when they ended and how
+long they ran). Times are relative, with the exact time on hover. The daemon keeps
+ended sessions for 24 hours, across restarts, and the `live` event updates the page
+and the sidebar count.
+
+"Needs you" (`NeedsYou` in `src/sessions.tsx`) is the first card, shown only while a
+session waits on the person: one whose `waiting_reason` is `permission` ("Asking
+permission"), `input` ("Waiting for your answer") or `turn_finished` ("Finished its
+turn"), the longest wait (`waiting_since`) first. Each row has the agent's mark, the
+reason in words, the agent's message when it sent one ("Claude needs your permission
+to use Bash"), "Waiting 4 min" (redrawn every 10 seconds, without waiting for a `live`
+event), the repository, branch chip and pull request link, and Open transcript. A
+session there is not listed again under Running now; a session idle only because it
+went silent, or with a reason this app does not know, stays there. While anything
+needs the person the sidebar's Sessions badge counts those sessions in the caution
+tone; otherwise it counts the running ones. The desktop app notifies when a session
+starts asking for a permission or an answer (see the desktop README).
 
 Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`): the session's header (agent, working, waiting
@@ -411,7 +427,10 @@ another session whose hooks name a Claude Code transcript the fixture writes
 under its home's `.claude/projects` (the marker's first line is the state, the
 others the prompts); a test opens it from the Sessions page, adds a turn
 without a hook event and sees it appear, its e-mail address masked, without a
-reload. The fixture also runs the
+reload. A third, `live-needs`, also takes `permission` (a Claude Code
+permission prompt notification): a test sees that session move from Running now
+to Needs you, with its message and the caution badge, open its transcript, and
+leave Needs you once it works again. The fixture also runs the
 automatic generation scheduler, fed a discovery snapshot every quarter second;
 a second test writes `push-10` in the state directory to give PR 10 a new head
 and follows the automatic review it starts on the PR page and in the jobs list,

@@ -2,12 +2,14 @@
 // events the desktop app shows as operating system notifications: a review
 // finished or failed, a review requested from the user, a change in the state
 // of the user's own pull request (checks failing, a conflict, changes
-// requested, ready to merge) and a fix that pushed or failed. A notice is the
-// smallest record that can name its pull request: kind, repository, number,
-// the clone that routes the click, the title as GitHub returned it, the risk
-// score the stored review already holds, a failure category and a fix's short
-// commit. It never carries review text, paths, session content or error
-// messages.
+// requested, ready to merge), a fix that pushed or failed, and an agent
+// session that began waiting for its user's permission or answer. A notice
+// is the smallest record that can name its pull request or session: kind,
+// repository, number, the clone that routes the click, the title as GitHub
+// returned it, the risk score the stored review already holds, a failure
+// category, a fix's short commit, and a session's agent, id, branch and the
+// one masked line its agent showed. It never carries review text, paths,
+// transcripts or error messages.
 //
 // The daily cap pause is not a notice: the scheduler's own "automatic" event
 // already says it, and the app reads it there.
@@ -23,6 +25,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 )
@@ -44,6 +47,10 @@ const (
 	// A fix job's outcome: pushed (with its short commit) or failed.
 	KindFixPushed = "fix_pushed"
 	KindFixFailed = "fix_failed"
+	// An agent session began waiting for the user: to allow a tool, or to
+	// answer it. A finished turn is not news.
+	KindSessionPermission = "session_permission"
+	KindSessionInput      = "session_input"
 )
 
 // maxTitle bounds the title: GitHub allows 256 characters and a notification
@@ -68,6 +75,14 @@ type Notice struct {
 	Reason string `json:"reason,omitempty"`
 	// Commit is the short hash of the commit a fix pushed.
 	Commit string `json:"commit,omitempty"`
+	// Agent and Session name the agent session a session notice is about,
+	// Branch the branch it works on and Message the line its agent showed,
+	// already cleaned and masked by the tracker. PR is 0 when the branch has
+	// no pull request.
+	Agent   string `json:"agent,omitempty"`
+	Session string `json:"session,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // Registry lists the registered clones.
@@ -233,6 +248,36 @@ func (s *Service) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 			s.Publish(Notice{Kind: KindRequested, Repository: repository, PR: pr.Number, Clone: clone, Title: clip(pr.Title)})
 		}
 	}
+}
+
+// SessionWaiting publishes the notice for an agent session that began waiting
+// for its user's permission or answer. The live sessions tracker calls it
+// once per wait; a finished turn, or any other reason, is not a notice.
+func (s *Service) SessionWaiting(ctx context.Context, session livesessions.Session) {
+	kind := ""
+	switch session.WaitingReason {
+	case livesessions.WaitPermission:
+		kind = KindSessionPermission
+	case livesessions.WaitInput:
+		kind = KindSessionInput
+	default:
+		return
+	}
+	n := Notice{Kind: kind, Repository: session.Repository, PR: session.PR, Agent: session.Agent, Session: session.ID,
+		Branch: clip(session.Branch), Message: clip(session.WaitingMessage)}
+	// The repository as the registry stores it, like the other notices: the
+	// tracker's is in lower case.
+	if s.Registry != nil {
+		if clones, err := s.Registry.List(ctx); err == nil {
+			for _, c := range clones {
+				if strings.EqualFold(c.Repository, session.Repository) {
+					n.Repository = c.Repository
+					break
+				}
+			}
+		}
+	}
+	s.Publish(n)
 }
 
 func keep(now, before string) string {

@@ -342,8 +342,12 @@ export type Diagnostics = {
   index: boolean;
   report: DiagnosticReport | null;
 };
+/** Why a session waits on its user: it asks to run a tool, it asked a
+ *  question, or its turn ended. */
+export type WaitingReason = "permission" | "input" | "turn_finished";
 /** An agent session in progress, from `api/live-sessions`: identifiers and
- * times only, never a path or any transcript content. */
+ * times, and the one masked line a waiting agent showed; never a path or any
+ * transcript content. */
 export type LiveSession = {
   agent: string;
   session_id: string;
@@ -353,7 +357,15 @@ export type LiveSession = {
   /** When an ended session ended; absent otherwise. */
   ended_at?: string;
   /** The normalised kind of the latest hook event. */
-  last_event: "start" | "prompt" | "tool" | "stop" | "end";
+  last_event: "start" | "prompt" | "tool" | "wait" | "stop" | "end";
+  /** Why it waits on its user; absent while it works, once it ended, and
+   *  from a daemon older than this field. */
+  waiting_reason?: WaitingReason;
+  /** When that wait began. */
+  waiting_since?: string;
+  /** The line the agent showed, such as "Claude needs your permission to
+   *  use Bash", masked by the daemon. */
+  waiting_message?: string;
   repository: string;
   branch?: string;
   /** Absent while the branch has no pull request. */

@@ -465,11 +465,17 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			clones.Trigger()
 		}
 		cloneEvents, cloneDropped, unsubscribeClones := events.SubscribeCounted(clonefind.Buffer, clonefind.MatchEvent)
+		// The live transcripts are written as the review page's are, and a
+		// waiting session's message is masked the same way.
+		renderer := transcript.NewRenderer("")
 		live := events.liveSessions(paths, registry, discover, server, log)
 		var liveAPI http.Handler
 		if live != nil {
-			// The live transcripts are written as the review page's are.
-			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render, Log: log}).Handler()
+			live.Mask = func(text string) string { return renderer.Mask(ctx, text) }
+			// A session that starts waiting for a permission or an answer is
+			// a notice; reading the registry for it must not hold the tracker.
+			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
+			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}).Handler()
 		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{

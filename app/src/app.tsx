@@ -22,7 +22,7 @@ import { onBody, ShortcutsSheet, useShortcuts } from "./shortcuts";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
-import { SessionsPage } from "./sessions";
+import { needsYou, SessionsPage } from "./sessions";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { Notice, PageBar, Sidebar } from "./shell";
@@ -477,6 +477,7 @@ function Workspace({ url }: { url: UrlState }) {
         }
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
+        needsYou={needsYou(live).length}
         problems={diagnostics.problems}
         Link={LocalLink}
       />

@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,15 @@ func TestReplaceHome(t *testing.T) {
 		if got := string(replaceHome([]byte(c.in), homeForms(c.home))); got != c.want {
 			t.Errorf("replaceHome(%s, %q)\n got %s\nwant %s", c.in, c.home, got, c.want)
 		}
+	}
+}
+
+// A live session's waiting message is masked as its transcript is.
+func TestMaskMasksALineAsATranscript(t *testing.T) {
+	const home = "/home/user"
+	got := NewRenderer(home).Mask(context.Background(), "Mail ada.lovelace@example.com the diff in "+home+"/src")
+	if strings.Contains(got, "ada.lovelace@example.com") || !strings.HasSuffix(got, " the diff in ~/src") {
+		t.Errorf("Mask = %q", got)
 	}
 }
 

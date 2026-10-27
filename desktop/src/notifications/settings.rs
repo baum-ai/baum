@@ -37,6 +37,8 @@ pub struct Kinds {
     pub ready_to_merge: bool,
     pub fix_pushed: bool,
     pub fix_failed: bool,
+    pub session_permission: bool,
+    pub session_input: bool,
 }
 
 impl Default for Kinds {
@@ -53,6 +55,8 @@ impl Default for Kinds {
             ready_to_merge: true,
             fix_pushed: true,
             fix_failed: true,
+            session_permission: true,
+            session_input: true,
         }
     }
 }
@@ -71,6 +75,8 @@ impl Kinds {
             Kind::ReadyToMerge => self.ready_to_merge,
             Kind::FixPushed => self.fix_pushed,
             Kind::FixFailed => self.fix_failed,
+            Kind::SessionPermission => self.session_permission,
+            Kind::SessionInput => self.session_input,
         }
     }
 
@@ -87,6 +93,8 @@ impl Kinds {
             Kind::ReadyToMerge => self.ready_to_merge = on,
             Kind::FixPushed => self.fix_pushed = on,
             Kind::FixFailed => self.fix_failed = on,
+            Kind::SessionPermission => self.session_permission = on,
+            Kind::SessionInput => self.session_input = on,
         }
     }
 }
@@ -194,11 +202,31 @@ mod tests {
                 Kind::ChangesRequested,
                 Kind::ReadyToMerge,
                 Kind::FixPushed,
-                Kind::FixFailed
+                Kind::FixFailed,
+                Kind::SessionPermission,
+                Kind::SessionInput
             ]
             .into_iter()
             .all(|k| settings.kinds.get(k))
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_file_from_before_the_session_kinds_keeps_its_choices() {
+        let dir = scratch("before-sessions");
+        fs::create_dir_all(&dir).unwrap();
+        // Every kind the previous release had, one of them off.
+        fs::write(
+            dir.join(FILE),
+            r#"{"kinds":{"finished":true,"failed":true,"requested":true,"cap_reached":true,"automatic":true,"checks_failed":true,"conflict":false,"changes_requested":true,"ready_to_merge":true,"fix_pushed":true,"fix_failed":true},"permission":"granted","announced":["cap:acme/widgets:2026-10-21T00:00:00Z"]}"#,
+        )
+        .unwrap();
+        let settings = Store::in_dir(dir.clone()).load();
+        assert!(!settings.kinds.conflict && settings.kinds.fix_failed);
+        assert!(settings.kinds.session_permission && settings.kinds.session_input);
+        assert_eq!(settings.permission, Permission::Granted);
+        assert_eq!(settings.announced.len(), 1);
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -106,7 +106,9 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   set `BAUM_NO_DAEMON=1`, or `CI` is set: the agent and event or Git hook,
   the working directory and exit status, and from the agent's payload only
   its session id, transcript path, working directory, event name, start
-  source and end reason, never prompts or tool input and output. A Git
+  source and end reason, and of a Claude Code notification its type and the
+  sentence it showed you, cut to 512 bytes (see "Authenticated local
+  application"), never prompts or tool input and output. A Git
   `pre-push` event never keeps the remote URL, which can carry credentials,
   and keeps the refs being pushed. When the daemon cannot take it within
   300 ms, the event waits in a private spool (`spool/` in the daemon's state
@@ -966,15 +968,33 @@ authentication, Origin and Host checks, and are limited to `GET`. A session is
 tracked only when its working directory is inside a registered clone, and the
 app receives only: the agent, the session id, the state (running, idle or
 ended), when it started and was last active, the kind of the last event
-(start, prompt, tool, stop or end), and the repository, branch and pull
-request number it links to. The working directory, the transcript path, and
+(start, prompt, tool, wait, stop or end), why and since when it waits on you
+(a permission, an answer, or a finished turn), and the repository, branch and
+pull request number it links to. The working directory, the transcript path, and
 anything of a prompt or a tool, which hook events never carry, stay out of it,
 and the `live` event carries no data at all: the app reads the list. At most
-32 sessions are held, in memory only, and rebuilt from the local record of
-hook events when the daemon starts; a session silent for two hours is dropped.
-Nothing of it goes to a baum server. A finished session's content is still
-read from the session files on disk, through the redacted transcript routes
-below.
+200 sessions are held in memory, rebuilt from the local record of hook events
+when the daemon starts; a session silent for two hours is dropped, and an
+ended one is kept for a day, its identifiers and times also in
+`live-sessions.json` beside the record. Nothing of it goes to a baum server.
+A finished session's content is still read from the session files on disk,
+through the redacted transcript routes below.
+
+One line of text is the exception: a Claude Code notification's `message`,
+the sentence Claude Code shows you when it asks for something ("Claude needs
+your permission to use Bash"). Only the `notification` hook's event keeps it,
+with its `notification_type`, cut to 512 bytes in the local record of hook
+events (the record keeps it as long as it keeps the event). The daemon serves
+it as the session's `waiting_message`: format characters dropped, control
+characters made spaces, masked as transcripts are (secrets and e-mail
+addresses, your home directory as `~`) and cut to 160 characters, and only
+while the session waits. The desktop app shows it as the text of the
+"needs your permission" or "waiting for your answer" notification, the
+`notice` event that names the session (agent, id, repository, branch, pull
+request number) and carries the same masked line. Codex's permission request
+keeps nothing of the command it asks about. Nothing of it goes to a baum
+server, and an ended session's saved state (`live-sessions.json`) holds none
+of it.
 
 The Sessions page opens a listed session's transcript through
 `GET /api/live-sessions/{agent}/{id}/transcript`, behind the same

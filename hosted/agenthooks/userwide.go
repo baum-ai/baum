@@ -5,16 +5,26 @@ import (
 	"fmt"
 )
 
-// Placement says where the user-wide hook for one Entire event goes in an
-// agent's settings: the agent's own hook event, the tool matcher of its group
-// and the handler timeout in seconds. A nil Matcher writes no matcher key; zero
-// Timeout writes no timeout. They mirror what `entire enable` writes for the
-// pinned release (the onboarding templates hold a captured copy).
+// Placement says where the user-wide hook for one event goes in an agent's
+// settings: the agent's own hook event, the tool matcher of its group and the
+// handler timeout in seconds. A nil Matcher writes no matcher key; zero
+// Timeout writes no timeout. For Entire's events they mirror what `entire
+// enable` writes for the pinned release (the onboarding templates hold a
+// captured copy).
 type Placement struct {
 	Event     string
 	HookEvent string
 	Matcher   *string
 	Timeout   int
+	// Async runs the hook in the background (Claude Code's "async"), so a
+	// hook that fires on every tool call never makes the agent wait for it.
+	Async bool
+	// RecordOnly is an event Entire has no hook for, which only the daemon
+	// reads (a live session waiting on its user, or working again): baum
+	// records it and never hands it to Entire. No committed hook file
+	// carries one, so the committed vocabulary and the hosted onboarding
+	// stay as they are.
+	RecordOnly bool
 }
 
 // UserWide describes the agent events a user-scoped marketplace plugin runs,
@@ -37,6 +47,13 @@ var userWide = map[string]UserWide{
 			{Event: "stop", HookEvent: "Stop", Matcher: matcher("")},
 			{Event: "session-end", HookEvent: "SessionEnd", Matcher: matcher("")},
 			{Event: "subagent-stop", HookEvent: "SubagentStop", Matcher: matcher("")},
+			// Claude Code asks for a permission or an answer through its
+			// notifications.
+			{Event: "notification", HookEvent: "Notification", Matcher: matcher(""), RecordOnly: true},
+			// Every tool call, so a session that waited for a permission is
+			// seen working again once it was given: the hooks above report
+			// only subagent and todo tools.
+			{Event: "post-tool-use", HookEvent: "PostToolUse", Matcher: matcher(""), Async: true, RecordOnly: true},
 		},
 		ProjectFiles: []string{".claude/settings.json", ".claude/settings.local.json"},
 	},
@@ -49,6 +66,9 @@ var userWide = map[string]UserWide{
 			{Event: "session-end", HookEvent: "SessionEnd", Timeout: 3},
 			{Event: "subagent-start", HookEvent: "SubagentStart", Timeout: 30},
 			{Event: "subagent-stop", HookEvent: "SubagentStop", Timeout: 30},
+			// Codex is about to ask its user to approve a command. The hook
+			// prints nothing, so it decides nothing and Codex asks as usual.
+			{Event: "permission-request", HookEvent: "PermissionRequest", Timeout: 30, RecordOnly: true},
 		},
 		ProjectFiles: []string{".codex/hooks.json", ".codex/config.toml"},
 	},
@@ -59,6 +79,33 @@ var userWide = map[string]UserWide{
 func LookupUserWide(agent string) (UserWide, bool) {
 	settings, ok := userWide[agent]
 	return settings, ok
+}
+
+// UserWidePlacement returns the placement of an agent's user-wide hook for an
+// event.
+func UserWidePlacement(agent, event string) (Placement, bool) {
+	for _, p := range userWide[agent].Placements {
+		if p.Event == event {
+			return p, true
+		}
+	}
+	return Placement{}, false
+}
+
+// ValidateUserWide is Validate for a user-wide hook, which runs the
+// record-only events too.
+func ValidateUserWide(agent, event string) error {
+	if RecordOnly(agent, event) {
+		return nil
+	}
+	return Validate(agent, event)
+}
+
+// RecordOnly reports whether a user-wide hook's event is one baum only
+// records (Placement.RecordOnly).
+func RecordOnly(agent, event string) bool {
+	p, ok := UserWidePlacement(agent, event)
+	return ok && p.RecordOnly
 }
 
 // UserDispatcher renders the hook command baum installs in an agent's
