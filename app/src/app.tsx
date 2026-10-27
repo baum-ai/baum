@@ -48,6 +48,9 @@ import {
   jobReasonText,
   automaticNotice,
   parseLive,
+  parseAgentRequests,
+  noAgentRequests,
+  type AgentRequests,
   parseGroups,
   sameRepository,
   MAX_GROUP_MEMBERS,
@@ -189,6 +192,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  // What agents wait on and the messages queued for them; none from a daemon
+  // without the route.
+  const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
@@ -200,8 +206,14 @@ function Workspace({ url }: { url: UrlState }) {
   const reloadLive = useCallback(async () => {
     const sequence = ++lastLive.current;
     // A failed read keeps what the page shows: it is not the end of every session.
-    const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => null);
-    if (sessions && sequence === lastLive.current) setLive(sessions);
+    const [sessions, pending] = await Promise.all([
+      request<unknown>("api/live-sessions").then(parseLive, () => null),
+      // A daemon without the route has no requests or messages to show.
+      request<unknown>("api/agent-requests").then(parseAgentRequests, () => noAgentRequests),
+    ]);
+    if (sequence !== lastLive.current) return;
+    if (sessions) setLive(sessions);
+    setAgentRequests(pending);
   }, []);
   const reloadPending = useRef(false);
   const reloadInFlight = useRef<Promise<void> | null>(null);
@@ -580,9 +592,14 @@ function Workspace({ url }: { url: UrlState }) {
             <AnalyticsPage Link={LocalLink} />
           ) : page === "sessions" ? (
             <>
-              <PageBar title="Sessions" detail="Agent sessions on this computer" />
+              <PageBar title="Sessions" detail="Agent sessions on this computer, live" />
               <div className="local-page-body">
-                <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
+                <SessionsPage
+                  sessions={live}
+                  requests={agentRequests}
+                  Link={LocalLink}
+                  prHref={sessionPR}
+                />
               </div>
             </>
           ) : page === "jobs" && url.search.get("job") ? (
