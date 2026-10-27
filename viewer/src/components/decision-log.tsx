@@ -502,7 +502,10 @@ function OpenSession<T>({ at, source }: { at: SessionTurn; source: OpenSessionSo
     const controller = new AbortController();
     latest
       .current(sessionId, controller.signal)
-      .then((session) => setLoaded({ status: "ready", session }))
+      .then((session) => {
+        // A session the panel moved on from must not land on another's.
+        if (!controller.signal.aborted) setLoaded({ status: "ready", session });
+      })
       .catch(() => {
         if (!controller.signal.aborted) setLoaded({ status: "failed" });
       });

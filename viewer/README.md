@@ -392,8 +392,8 @@ filters, the address and which decision or feature is open.
   current turn. The panel loads once per session, the first time the reader
   opens it, and keeps it while closed; another turn of the same session
   redraws without loading, and another session loads afresh. Closing the
-  panel during a load aborts it, and a rejection says the session could not
-  be loaded.
+  panel or moving to another session during a load aborts it, and a
+  rejection says the session could not be loaded.
 - `FeatureItem`, `TimelineHeading`, `TimelineRail` and `TIMELINE_ROW` lay out
   the feature timeline: month and day headings, a dot per feature by status,
   and each feature's card with its people, counts and up to three key

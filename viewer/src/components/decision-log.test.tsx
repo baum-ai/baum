@@ -32,6 +32,18 @@ const detail: DecisionDetail = {
       superseded: false,
       files: [],
     },
+    {
+      id: "d2",
+      turn: 5,
+      turns: [5],
+      decided_at: "2026-10-06T15:00:00Z",
+      who: "agent",
+      category: "interface",
+      summary: "Page with an opaque cursor",
+      rejected_alternative: null,
+      superseded: false,
+      files: [],
+    },
   ],
   turns: [],
   prompts_withheld: false,
@@ -53,15 +65,18 @@ function host(load: OpenSessionSource<string>["load"] = async (id) => id) {
   };
 }
 
-/** The detail as the route draws it for an opened decision that its page
- *  does not list: `at` changes as the address opens another decision. */
-function draw(source: OpenSessionSource<string>, at?: SessionTurn) {
+/** What the detail shows: a decision of a loaded detail, or a decision no
+ *  longer available, known only by its session and turn. The route changes
+ *  either as the address opens another decision. */
+type View = { ready: string } | { missing: SessionTurn };
+
+function draw(source: OpenSessionSource<string>, view: View) {
   act(() =>
     root!.render(
       <DecisionDetailBody
-        state={{ status: "missing" }}
-        decisionId="d1"
-        at={at}
+        state={"ready" in view ? { status: "ready", detail } : { status: "missing" }}
+        decisionId={"ready" in view ? view.ready : "gone"}
+        at={"missing" in view ? view.missing : undefined}
         pullRequestHref={(number) => `/pulls/${number}`}
         openSession={source}
         onFile={() => {}}
@@ -71,26 +86,11 @@ function draw(source: OpenSessionSource<string>, at?: SessionTurn) {
   );
 }
 
-function render(source: OpenSessionSource<string>, at?: SessionTurn) {
+function render(source: OpenSessionSource<string>, view: View = { ready: "d1" }) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  if (at) {
-    draw(source, at);
-    return;
-  }
-  act(() =>
-    root!.render(
-      <DecisionDetailBody
-        state={{ status: "ready", detail }}
-        decisionId="d1"
-        pullRequestHref={(number) => `/pulls/${number}`}
-        openSession={source}
-        onFile={() => {}}
-        onRetry={() => {}}
-      />,
-    ),
-  );
+  draw(source, view);
 }
 
 function toggle() {
@@ -137,20 +137,20 @@ describe("a decision's session", () => {
     expect(container.textContent).toContain("session s1 at turn 3");
   });
 
-  it("follows another turn of the same session open, and loads another session", async () => {
+  it("follows another missing decision's turn open, and loads another session", async () => {
     const source = host();
-    render(source, { sessionId: "s1", turn: 3 });
+    render(source, { missing: { sessionId: "s1", turn: 3 } });
     toggle();
     await flush();
     expect(container.textContent).toContain("session s1 at turn 3");
 
-    draw(source, { sessionId: "s1", turn: 5 });
+    draw(source, { missing: { sessionId: "s1", turn: 5 } });
     await flush();
     expect(container.textContent).toContain("Hide session");
     expect(container.textContent).toContain("session s1 at turn 5");
     expect(source.load).toHaveBeenCalledTimes(1);
 
-    draw(source, { sessionId: "s2", turn: 1 });
+    draw(source, { missing: { sessionId: "s2", turn: 1 } });
     await flush();
     expect(container.textContent).toContain("Hide session");
     expect(container.textContent).toContain("session s2 at turn 1");
@@ -192,5 +192,50 @@ describe("a decision's session", () => {
     expect(source.load).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Loading this session…");
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("follows another decision of the same session in a loaded detail", async () => {
+    const source = host();
+    render(source, { ready: "d1" });
+    toggle();
+    await flush();
+    expect(container.textContent).toContain("session s1 at turn 3");
+
+    draw(source, { ready: "d2" });
+    await flush();
+    expect(container.textContent).toContain("Hide session");
+    expect(container.textContent).toContain("session s1 at turn 5");
+    expect(source.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a load in flight for another session, and never shows its answer", async () => {
+    const pending: { signal: AbortSignal; resolve: (session: string) => void }[] = [];
+    const source = host(
+      (id, signal) =>
+        new Promise((resolve) => {
+          pending.push({ signal, resolve: () => resolve(id) });
+        }),
+    );
+    render(source, { missing: { sessionId: "s1", turn: 3 } });
+    toggle();
+    await flush();
+    expect(source.load).toHaveBeenCalledTimes(1);
+
+    draw(source, { missing: { sessionId: "s2", turn: 1 } });
+    await flush();
+    expect(pending[0]!.signal.aborted).toBe(true);
+    expect(source.load).toHaveBeenCalledTimes(2);
+    expect(source.load.mock.calls[1]![0]).toBe("s2");
+
+    // The first session answers late, after the reset: it must not land.
+    pending[0]!.resolve("s1");
+    await flush();
+    expect(container.textContent).not.toContain("session s1");
+    expect(container.textContent).toContain("Loading this session…");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    pending[1]!.resolve("s2");
+    await flush();
+    expect(container.textContent).toContain("session s2 at turn 1");
   });
 });
