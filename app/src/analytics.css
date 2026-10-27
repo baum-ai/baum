@@ -65,16 +65,18 @@
 }
 .analytics-empty p {
   margin: 0;
+  font-size: var(--text-xs);
 }
 .analytics-unknown {
   color: var(--text-tertiary);
   cursor: help;
 }
 
-/* The headline tiles, one strip divided by hairlines. */
+/* The headline tiles, one strip divided by hairlines. They wrap as a row,
+   not a grid, so a short last row stretches instead of leaving a hole. */
 .local-panel.analytics-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 1px;
   margin: 0;
   padding: 0;
@@ -82,6 +84,7 @@
   background: var(--border-subtle);
 }
 .analytics-tile {
+  flex: 1 1 11rem;
   min-width: 0;
   padding: 1rem 1.25rem;
   background: var(--surface-card);

@@ -549,7 +549,7 @@ export function GroupPage({
               </ul>
               <footer className="local-group-foot">
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="tiny"
                   disabled={managing}
                   onClick={() => setRenaming(true)}
@@ -557,7 +557,7 @@ export function GroupPage({
                   Rename
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="tiny"
                   disabled={managing}
                   onClick={() => setDeleting(true)}

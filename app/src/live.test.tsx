@@ -375,10 +375,11 @@ it("lists sessions in progress on the pull request page and has no section witho
   expect(section.textContent).toContain("Claude Code");
   expect(section.textContent).toContain("Working");
   expect(section.textContent).toContain("feature");
-  expect(section.textContent).toContain("Started 5 minutes ago");
   expect(section.textContent).toContain("Last activity 20 seconds ago");
   expect(section.textContent).toContain("Codex");
   expect(section.textContent).toContain("Waiting for you");
+  // Each session opens its transcript, as on the Sessions page.
+  expect(section.querySelectorAll('a[aria-label^="Open transcript"]')).toHaveLength(2);
   await renderReview([session({ pr: 8 })]);
   expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
 });

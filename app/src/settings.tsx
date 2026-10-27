@@ -228,7 +228,7 @@ function DesktopIntegrations() {
               <Button
                 disabled={busy}
                 size="compact"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => void run("uninstall_command")}
               >
                 {doing === "uninstall_command:" ? "Removing…" : "Remove CLI"}
@@ -300,7 +300,7 @@ function DesktopIntegrations() {
                 <Button
                   disabled={busy}
                   size="compact"
-                  variant="ghost"
+                  variant="secondary"
                   aria-label={`Remove ${agent.name} hooks`}
                   onClick={() => void run("uninstall_hooks", { agent: agent.agent })}
                 >
@@ -314,7 +314,7 @@ function DesktopIntegrations() {
           <p className="text-xs text-(--text-tertiary)">
             Installed something new? Refresh to check its status.
           </p>
-          <Button disabled={busy} size="compact" variant="ghost" onClick={() => void run()}>
+          <Button disabled={busy} size="compact" variant="secondary" onClick={() => void run()}>
             {doing === "refresh" && busy ? "Checking…" : "Check again"}
           </Button>
         </footer>
@@ -391,7 +391,7 @@ function ReviewSettingsSection({
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {dirty ? (
-            <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
+            <Button variant="secondary" size="compact" onClick={() => setDraft(saved)}>
               Discard changes
             </Button>
           ) : null}
@@ -703,7 +703,7 @@ function RepositoryRow({
       <div className="local-repo-actions">
         {clone.available ? (
           <Button
-            variant="ghost"
+            variant="secondary"
             size="compact"
             aria-expanded={changing}
             onClick={() => setChanging(!changing)}
@@ -745,7 +745,8 @@ function RepositoryRow({
                 {c.available ? null : <span className="local-pill">Unavailable</span>}
                 <Button
                   size="compact"
-                  variant="ghost"
+                  variant="secondary"
+                  className="text-base"
                   disabled={removingClone !== ""}
                   onClick={() => {
                     setRemovingClone(c.id);

@@ -147,6 +147,51 @@ function WaitingFor({ reason }: { reason: WaitingReason }) {
   );
 }
 
+/** The agent sessions in progress on a pull request's branch, on its page,
+ *  each with the way into its transcript. Once one ends the page reads its
+ *  full session from disk, as for any finished session. */
+export function LiveSessions({
+  sessions,
+  Link,
+}: {
+  sessions: LiveSession[];
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  const now = useNow();
+  if (sessions.length === 0) return null;
+  return (
+    <section aria-label="Sessions in progress" className="mb-3 local-panel local-pr-sessions">
+      <h3>Sessions in progress</h3>
+      <ul>
+        {sessions.map((s) => (
+          <li key={sessionKey(s)} title={s.session_id}>
+            <span className="local-pr-session-who">
+              <Agent agent={s.agent} />
+              {s.state !== "running" && s.waiting_reason ? (
+                <WaitingFor reason={s.waiting_reason} />
+              ) : (
+                <SessionState session={s} />
+              )}
+            </span>
+            <span className="local-pr-session-meta">
+              {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
+              <span title={absolute(s.last_activity_at)}>
+                Last activity {formatRelative(s.last_activity_at, now)}
+              </span>
+              <Link
+                href={transcriptHref(s)}
+                aria-label={`Open transcript: ${agentName(s.agent)} on ${s.branch ?? s.repository}`}
+              >
+                Open transcript
+              </Link>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** The sessions waiting on their user, at the top of the Sessions page and
  *  only while there are some, the longest wait first. The wait's length
  *  ticks on its own between `live` events. */
@@ -166,7 +211,7 @@ function NeedsYou({
   return (
     <section aria-label="Needs you" className="local-panel local-sessions local-needs">
       <h2>
-        Needs you <span className="local-needs-count">{sessions.length}</span>
+        Needs you <span className="local-sessions-count">{sessions.length}</span>
       </h2>
       <ul>
         {sessions.map((s) => {
@@ -233,7 +278,10 @@ export function SessionsPage({
     <div className="local-stack">
       <NeedsYou sessions={waiting} prHref={prHref} Link={Link} open={open} />
       <section aria-label="Running now" className="local-panel local-sessions">
-        <h2>Running now</h2>
+        <h2>
+          Running now
+          {active.length > 0 ? <span className="local-sessions-count">{active.length}</span> : null}
+        </h2>
         {active.length === 0 ? (
           <p className="local-sessions-empty">
             {waiting.length > 0
@@ -264,7 +312,10 @@ export function SessionsPage({
         )}
       </section>
       <section aria-label="Ended recently" className="local-panel local-sessions">
-        <h2>Ended recently</h2>
+        <h2>
+          Ended recently
+          {ended.length > 0 ? <span className="local-sessions-count">{ended.length}</span> : null}
+        </h2>
         {ended.length === 0 ? (
           <p className="local-sessions-empty">No sessions ended in the last day.</p>
         ) : (

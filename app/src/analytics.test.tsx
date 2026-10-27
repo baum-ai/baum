@@ -228,7 +228,7 @@ it("draws known figures, an incomplete estimate and the limit hits", () => {
   expect(html).toContain("2 of 4 commits");
   expect(html).toContain("3 h");
   expect(html).toContain("30 min");
-  expect(html).toContain("1 · 33%");
+  expect(html).toContain("1 (33%)");
   expect(html).toContain("at its limit 1 time");
   expect(html).toContain("Sessions per day by agent");
 });

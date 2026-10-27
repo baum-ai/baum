@@ -277,9 +277,7 @@ export function Setup() {
             {step === reviewStep && reviews && (
               <>
                 <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
-                <div className="setup-card">
-                  <PlanUsage />
-                </div>
+                <PlanUsage className="setup-card" />
               </>
             )}
             {step === reviewStep && !reviews && !error && (

@@ -832,7 +832,7 @@ function Delivery({ data }: { data: Analytics }) {
               { label: "Opened", value: formatCount(d.opened) },
               {
                 label: "Merged",
-                value: `${formatCount(d.merged)}${d.opened ? ` · ${formatShare(d.merged / d.opened)}` : ""}`,
+                value: `${formatCount(d.merged)}${d.opened ? ` (${formatShare(d.merged / d.opened)})` : ""}`,
               },
               {
                 label: "Median time to merge",
@@ -849,7 +849,7 @@ function Delivery({ data }: { data: Analytics }) {
                 value:
                   d.conflict_or_failing_share === null
                     ? null
-                    : `${formatCount(d.conflict_or_failing)} · ${formatShare(d.conflict_or_failing_share)}`,
+                    : `${formatCount(d.conflict_or_failing)} (${formatShare(d.conflict_or_failing_share)})`,
                 reason: "No pull requests opened.",
               },
               { label: "Drafts, not counted above", value: formatCount(d.drafts) },

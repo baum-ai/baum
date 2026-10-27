@@ -698,12 +698,16 @@ function RiskCell({ risk }: { risk: Entry["risk_score"] }) {
     </span>
   );
 }
+/** What PullRequestState draws; empty when there is nothing to say. */
+export function pullRequestStates(entry: Entry): StateStyle[] {
+  return [REVIEW[entry.review], mergeStatus(entry)].filter((style): style is StateStyle =>
+    Boolean(style),
+  );
+}
 /** A pull request's GitHub review and merge status on one line, drawn as the
  *  inbox's cells draw them, for places that list pull requests outside it. */
 export function PullRequestState({ entry }: { entry: Entry }) {
-  const parts = [REVIEW[entry.review], mergeStatus(entry)].filter((style): style is StateStyle =>
-    Boolean(style),
-  );
+  const parts = pullRequestStates(entry);
   if (parts.length === 0) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

@@ -229,7 +229,7 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
           </p>
         </div>
         <Button
-          variant="ghost"
+          variant="secondary"
           size="compact"
           disabled={cancelling}
           onClick={() => {

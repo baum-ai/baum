@@ -331,6 +331,7 @@ export function ReviewHeader({
             {slots.approval ? (
               <span aria-label="Review approval state">{slots.approval}</span>
             ) : null}
+            {!document && number !== undefined ? <Badge tone="info">Preview</Badge> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
             {repositoryFullName ? <span>{repositoryFullName}</span> : null}
@@ -386,7 +387,6 @@ export function ReviewHeader({
               <BranchChip name={facts.branches.base} fit className="max-w-1/2 flex-none" />
             </div>
           ) : null}
-          {!document && number !== undefined ? <Badge tone="info">Preview</Badge> : null}
         </div>
         {slots.statistics ? (
           <div className="border-t border-(--border-subtle) py-3">{slots.statistics}</div>

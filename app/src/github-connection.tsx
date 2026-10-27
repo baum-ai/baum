@@ -62,7 +62,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
           idle ? (
             <>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="compact"
                 disabled={busy}
                 onClick={() => void action("retry")}
@@ -168,7 +168,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                   Open GitHub <ExternalLinkIcon size={14} />
                 </ActionLink>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="compact"
                   disabled={busy}
                   onClick={() => void action("cancel")}
@@ -203,14 +203,14 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
             ) : null}
           </div>
           {connection.saved && !pending ? (
-            <button
-              type="button"
+            <Button
+              variant="danger-outline"
+              size="compact"
               disabled={busy}
               onClick={() => void action("disconnect")}
-              className="cursor-pointer text-(--status-critical) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               {working === "disconnect" ? "Disconnecting…" : "Disconnect"}
-            </button>
+            </Button>
           ) : null}
         </footer>
       ) : null}

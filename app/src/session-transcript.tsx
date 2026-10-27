@@ -256,7 +256,11 @@ export function SessionTranscriptPage({
             </div>
           </section>
         ) : null}
-        <TranscriptBody state={state} retry={retry} />
+        <TranscriptBody
+          state={state}
+          retry={retry}
+          live={session !== null && session.state !== "ended"}
+        />
       </div>
     </>
   );
@@ -267,9 +271,12 @@ export function SessionTranscriptPage({
 const TranscriptBody = memo(function TranscriptBody({
   state,
   retry,
+  live,
 }: {
   state: LiveTranscriptState;
   retry: () => void;
+  /** The session still runs, so it has no outcome yet. */
+  live: boolean;
 }) {
   // The card's loader answers from the transcript shown, and its revision
   // has the card load an opened turn's activity again when that changes.
@@ -304,6 +311,12 @@ const TranscriptBody = memo(function TranscriptBody({
       );
   }
   const { transcript } = state;
+  // A running session's transcript has no outcome to report; the card would
+  // say "unknown" where the session is simply not done.
+  const session =
+    live && transcript.session.outcome === "unknown"
+      ? { ...transcript.session, outcome: "in progress" }
+      : transcript.session;
   return (
     <section aria-label="Transcript" className="local-transcript">
       <p className="local-transcript-note">
@@ -311,7 +324,7 @@ const TranscriptBody = memo(function TranscriptBody({
         {transcript.truncated ? " Some content was omitted." : ""}
       </p>
       <div className="local-panel local-transcript-card">
-        <SessionCard defaultOpen={true} session={transcript.session} source={source} />
+        <SessionCard defaultOpen={true} session={session} source={source} />
       </div>
     </section>
   );

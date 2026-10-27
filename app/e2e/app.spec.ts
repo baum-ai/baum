@@ -386,7 +386,8 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await expect(live.getByText("feature")).toBeVisible();
   await page.screenshot({ path: "test-results/live-pr.png", animations: "disabled" });
   await writeFile(marker, "idle");
-  await expect(live.getByText("Waiting for you")).toBeVisible({ timeout: 10000 });
+  // A stop ends the agent's turn; the card says so, as Needs you does.
+  await expect(live.getByText("Finished its turn")).toBeVisible({ timeout: 10000 });
   await writeFile(marker, "ended");
   await expect(live).toHaveCount(0, { timeout: 10000 });
   // The Sessions page keeps it under "Ended recently" and has none running.
@@ -713,7 +714,7 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   await expect(delivery).toContainText("Median time to first review");
   await expect(delivery.locator("dd").first()).toHaveText("2");
   await expect(delivery).toContainText("6 h");
-  await expect(delivery).toContainText("1 · 50%");
+  await expect(delivery).toContainText("1 (50%)");
   const baum = page.getByRole("region", { name: "baum's work" });
   await expect(baum.locator("div").filter({ hasText: /^Merges from baum/ })).toContainText("1");
   await expect(page.getByRole("region", { name: "Plan usage" })).toContainText(

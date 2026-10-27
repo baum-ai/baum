@@ -36,9 +36,10 @@ import {
 import { FixNotice } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
-import { LiveSessions } from "./live";
+import { LiveSessions } from "./sessions";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
@@ -256,15 +257,20 @@ export function LocalReview({
             back: { href: appURL(), label: "Inbox" },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
-            // A fix, when the pull request is broken, comes first; re-running
-            // checks and updating the branch are its smaller remedies.
+            // The GitHub state leads, so a reader sees why a fix, a re-run or an
+            // update is offered; a fix comes first of those, re-running checks
+            // and updating the branch are its smaller remedies.
             beside:
               doc ||
+              pullRequestStates(entry).length > 0 ||
               (fix && fixLabelText) ||
               canMerge(entry) ||
               canRerunChecks(entry) ||
               canUpdateBranch(entry) ? (
                 <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-2 empty:hidden">
+                    <PullRequestState entry={entry} />
+                  </span>
                   {fix && fixLabelText ? (
                     <Button
                       variant="secondary"
@@ -382,7 +388,7 @@ export function LocalReview({
               {showFix && fixJob ? (
                 <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
               ) : null}
-              <LiveSessions sessions={running} />
+              <LiveSessions sessions={running} Link={ViewerLink} />
               {entry.needs_clone && doc ? (
                 <Notice>
                   Needs a local clone. This saved review remains available.
@@ -528,7 +534,7 @@ export function CancelJob({ job, changed }: { job: Job; changed: () => Promise<v
   return (
     <>
       <Button
-        variant="ghost"
+        variant="secondary"
         size="compact"
         disabled={cancelling}
         onClick={() => {
