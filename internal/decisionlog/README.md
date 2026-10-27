@@ -71,8 +71,8 @@ not a failure.
    claude's call is reserved at the cache-write rate when that is higher. It
    may make a second call, after the harness rejected its first reply against
    the schema; that resends the cached prompt, so it is reserved at the
-   cache-read rate plus another reply. The Codex CLI has no option capping the reply, so its 16,384 tokens
-   are an estimate rather than a limit. A model the price list does not price
+   cache-read rate plus another reply. The Codex CLI has no option capping
+   the reply, so its 16,384 tokens are an estimate rather than a limit. A model the price list does not price
    is skipped (`unpriced_model`). A session's spend, this reservation
    included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
    spend may not pass `preferences.decisions.daily_cap` when set
@@ -126,4 +126,5 @@ without the gate, throttle or unchanged check and prints its report as JSON.
 files: it reads an existing store read-only, and uses an empty one in memory
 when there is none. The hidden `--debug-dir <dir>` creates the private
 directory and writes the rendered transcript, and after a call the message
-sent and the raw reply, there.
+sent and the raw reply, there, replacing a previous capture's files; a
+capture that stops before rendering leaves it empty.

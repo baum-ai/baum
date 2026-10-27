@@ -120,7 +120,9 @@ type Options struct {
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
 	// DebugDir, when set, receives the rendered transcript (transcript.txt),
-	// the user message sent (user.txt) and the raw reply (reply.json), for testing by hand. The daemon never sets it.
+	// the user message sent (user.txt) and the raw reply (reply.json), for
+	// testing by hand. Each capture first removes the previous capture's
+	// files. The daemon never sets it.
 	DebugDir string
 }
 

@@ -486,8 +486,10 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 	f.capture(t, Options{DebugDir: dir, DryRun: true, Force: true})
 	for name, want := range map[string]bool{"transcript.txt": true, "user.txt": false, "reply.json": false} {
 		info, err := os.Stat(filepath.Join(dir, name))
-		if (err == nil) != want || (want && info.Mode().Perm() != 0o600) {
+		if (err == nil) != want {
 			t.Errorf("%s: %v", name, err)
+		} else if want && info.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
 		}
 	}
 }
