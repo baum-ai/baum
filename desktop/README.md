@@ -374,7 +374,17 @@ daemon serves are not involved.
 | My pull request: ready to merge | `notice` `ready_to_merge` |
 | Fix pushed, with its short commit | `notice` `fix_pushed` |
 | Fix failed, with its failure category | `notice` `fix_failed` |
+| Agent needs my permission | `notice` `session_permission` |
+| Agent waiting for my answer | `notice` `session_input` |
 | Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
+
+The agent session notifications read like "Claude Code needs your
+permission · acme/demo" or "Codex is waiting for your answer · acme/demo",
+with the line the agent showed (masked by the daemon; Codex sends none, so
+"It asks to run a tool.") and the branch and pull request as the text. The
+daemon publishes one when a session begins waiting for a permission or an
+answer, once per wait, never for a turn that just finished (see "Live
+sessions" in ARCHITECTURE.md).
 
 The pull request notifications read like "Checks failing · acme/demo #12",
 with the pull request's title as the text. They are about the user's own pull
@@ -387,28 +397,31 @@ repository.
 `automatic` event. There is no default cap, so the cap notification exists only
 for a user who set one. The text comes only from fields the daemon already
 redacted: the repository, the pull request title as GitHub returned it
-(control characters stripped, 200 characters at most), the stored risk score
-and the failure category. A title is shown unchanged; where a Linux
+(control characters stripped, 200 characters at most), the stored risk score,
+the failure category, and an agent session's branch and masked message. A title is shown unchanged; where a Linux
 notification server renders markup, its `<`, `>` and `&` are escaped so the
 title is not interpreted.
 
 - **Click.** Clicking a notification shows the window if it is hidden or
   minimised, brings it to the front and loads
-  the pull request (`?clone=<id>&pr=<number>`) or, for the cap and for a
+  the pull request (`?clone=<id>&pr=<number>`), for an agent session its
+  transcript (`?page=sessions&session=<agent>:<id>`) or, for the cap and for a
   notice with no registered clone, the jobs list (`?page=jobs`). The app learns
   the daemon's secret app path with one `POST /api/auth/exchange` and loads the
   URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
   toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
   platform; no real notification was shown in testing.
 - **Focus.** No notification shows while the window has focus on the same pull
-  request (the same clone and number).
+  request (the same clone and number), nor an agent session's while it has
+  focus on that session's transcript.
 - **Permission.** The app never asks at launch. The operating system is asked
   when the first notification is due. Linux and Windows have no per-app prompt
   and macOS prompts when the first notification posts; `notify-rust` does not
   report a macOS refusal, so a refusal there simply shows nothing. A refusal
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
-- **Settings.** Each kind is on by default. A "Notifications" submenu with one
+- **Settings.** Each kind is on by default, and so is a kind added after
+  `notifications.json` was written. A "Notifications" submenu with one
   check item per kind is in the macOS menu bar and in the tray menu. Linux and
   Windows windows have no menu bar, so there the tray holds them. The choices, the
   permission answer, and the daily-cap pauses already announced (so a restart

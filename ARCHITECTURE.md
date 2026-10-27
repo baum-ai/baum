@@ -1844,10 +1844,16 @@ It does not persist a second review index.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
-"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?,"commit"?}` with `kind` one of
+"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?,"commit"?,"agent"?,"session"?,
+"branch"?,"message"?}` with `kind` one of
 `review_finished`, `review_failed`, `review_automatic` (an automatic review
 finished), `review_requested`, `checks_failed`, `conflict`,
-`changes_requested`, `ready_to_merge`, `fix_pushed` and `fix_failed`. They are
+`changes_requested`, `ready_to_merge`, `fix_pushed`, `fix_failed`,
+`session_permission` and `session_input`. The last two are an agent session
+that began waiting for the user's permission or answer (see "Live
+sessions"): `agent`, `session` (its id), `branch` and `message` (the
+tracker's cleaned, masked `waiting_message`) name it, `pr` is 0 when its
+branch has none, and the tracker hands each wait over once. The others are
 published when a job finishes or fails (not when it is cancelled, interrupted
 or superseded) and when a discovery snapshot shows a pull request newly
 review-requested from the user (a repository's first snapshot after the
@@ -1864,7 +1870,8 @@ report keeps the previous one; one that changed several ways gives one notice
 The title is GitHub's, trimmed to 200 characters; `risk` (1 to 5) is the
 stored review's score, with `risk_status` `lower_bound` when incomplete
 coverage may hide a higher one; `reason` is the job's failure category and
-nothing free-form. A notice never holds review text, paths or error messages.
+nothing free-form. A notice never holds review text, paths, transcripts or
+error messages.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
 
@@ -2504,8 +2511,10 @@ endpoint.
   `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
-  `hook_event`, `source`, `reason`, read by a streaming scanner from the whole
-  payload, the last of a repeated member winning; nothing else of it) or `git`
+  `hook_event`, `source`, `reason`, and for Claude Code's `notification` its
+  `notification_type` and `message`, cut to 512 bytes, read by a streaming
+  scanner from the whole payload, the last of a repeated member winning;
+  nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
   wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
   trims Git lines and halves the longest fields until the escaped encoding fits
@@ -2651,8 +2660,12 @@ replace it.
   to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
   `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
-  runs, and Cursor prompts and compaction); `stop` to `stop`; `session-end` to
-  `end`. Other names are ignored. A session is keyed by agent and id; an id
+  runs, and Cursor prompts and compaction; the user-wide Claude Code plugin
+  also reports every tool call as `post-tool-use`); `notification` (Claude
+  Code) and `permission-request` (Codex) to `wait`; `stop` to `stop`;
+  `session-end` to `end`. Other names are ignored, so an older daemon ignores
+  the wait events a newer plugin sends, and nothing changes for a newer
+  daemon whose plugin sends none. A session is keyed by agent and id; an id
   over 128 bytes or an agent over 32 is not a session baum's hooks describe and
   is ignored. An event id is applied once (the last 4096 are remembered).
 - **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
@@ -2666,11 +2679,34 @@ replace it.
   seconds rather than leaving a session waiting until it times out. Without a
   drop the record is not read, since reading it takes the store's lock, which
   every hook's event needs too.
-- **States.** `running` after a start, prompt or tool event. `idle` after a
-  `stop`, which agents send at the end of every turn (waiting for the user),
-  and for a running session silent longer than `IdleAfter` (10 minutes): an
-  agent that crashed sends nothing, and one thinking for long reports nothing
-  either. `ended` after `end`. Any later work event makes an idle session
+- **States.** `running` after a start, prompt or tool event. `idle` while it
+  waits on its user, and for a running session silent longer than
+  `IdleAfter` (10 minutes): an agent that crashed sends nothing, and one
+  thinking for long reports nothing either.
+- **Waiting.** A session waits on its user for a `waiting_reason`, from
+  `waiting_since`: `permission` after a Claude Code `permission_prompt`
+  notification or a Codex permission request; `input` after a notification
+  asking a question (`elicitation_dialog`, `elicitation_url_dialog`,
+  `agent_needs_input`, `quota_auto_resume_stale`) or of a type it does not
+  know or with none; `turn_finished` after a `stop`, which agents send at the
+  end of every turn, and after Claude Code's `idle_prompt`, which repeats a
+  stop a minute later and never replaces a question asked since.
+  Notifications that ask nothing (`auth_success`, `elicitation_complete`,
+  `elicitation_response`, `agent_completed`, `quota_auto_resume_fired`,
+  `quota_auto_resume_disabled`, `plugin_notification`) are ignored. The same
+  reason again keeps the wait (and its start); a start, prompt or tool event,
+  or the end, clears it. A notification's `message` becomes
+  `waiting_message`: format characters dropped, control characters and runs of
+  spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
+  before it is cut), and cut to 160 characters. Claude Code says nothing when
+  a permission is given, so the user-wide plugin's every-tool-call hook (run
+  in the background, so the agent never waits for it) is what clears a
+  permission wait: at the end of the tool the user allowed. A Codex wait is
+  cleared by its own tool event. `Tracker.Waiting` is told of each
+  `permission` and `input` wait of a shown session once, as it begins (a new
+  session's once it is linked), never of a finished turn, of the waits a
+  rebuild replays or of one that began more than `AnnounceWithin` (5
+  minutes) ago; the daemon hands it to `notices`. `ended` after `end`. Any later work event makes an idle session
   running again; an event after the end, newer than it, starts a new run (a
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
@@ -2686,6 +2722,9 @@ replace it.
   record's directory when they change, and a rebuild loads them first and then
   applies the record's events over them; a rebuild also takes all events of a
   session that ended within `EndedFor`, not only those of the last two hours.
+  An ended session waits for nothing, so the file holds no waiting fields,
+  and files written before them load unchanged; a running session's wait is
+  rebuilt from the record's events, its message included.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -2714,8 +2753,11 @@ replace it.
   `{"available":false,"code":"live_sessions_unavailable"}`) answers
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
-  "last_event","repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
-  `last_event` is `start`, `prompt`, `tool`, `stop` or `end`, `repository` is
+  "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
+  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
+  `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
+  waiting fields are present while the session waits (see "Waiting"; the
+  message only when the agent sent one), `repository` is
   `owner/name` in lower case, `branch` is absent when detached and `pr` when
   the branch has no pull request, and `ended_at` unless the state is `ended`. The working directory and transcript path
   stay inside the tracker.
@@ -2766,9 +2808,11 @@ replace it.
   sessions of its pull request, matched by repository and number across
   clones; the PR page lists them in a "Sessions in progress" panel, with their
   agent, state, branch, start and last activity, above the review. The
-  Sessions page (`?page=sessions`, with a sidebar entry counting the running
-  ones) lists the running and idle sessions, and those that ended within the
-  retention, newest end first. The inbox and the PR page never show an ended
+  Sessions page (`?page=sessions`, with a sidebar entry counting the sessions
+  waiting on the user, in the caution tone, or else the running ones) lists
+  first, under "Needs you", the sessions with a `waiting_reason` the app
+  knows, longest wait first, then the other running and idle sessions, and
+  those that ended within the retention, newest end first. The inbox and the PR page never show an ended
   session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.

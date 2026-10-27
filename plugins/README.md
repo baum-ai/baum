@@ -34,16 +34,26 @@ running Entire cannot be enumerated; avoid enabling overlapping plugins.
 
 ## Compatibility and behavior
 
-Plugin **1.0.0** uses the existing shared user-wide dispatcher:
+Plugin **1.1.0** uses the existing shared user-wide dispatcher:
 `baum hooks agent --check --user AGENT EVENT`, then
 `baum hooks agent --user AGENT EVENT`. It needs a CLI supporting that contract;
 a missing baum or one too old to recognize the check makes the plugin quietly
-do nothing. Install/update the CLI or desktop app before relying on the
+do nothing.
+
+1.1.0 adds events baum only records, for the desktop app's "Needs you"
+(sessions waiting on their user): Claude Code's `Notification` (every type:
+permission prompts, questions, idle prompts) and `PostToolUse` for every tool
+(`async`, so a tool call never waits for it; it tells the daemon a session
+works again once a permission was given), and Codex's `PermissionRequest`,
+which prints nothing, so it never allows or denies anything. They never run
+Entire. A baum older than them refuses their check and the hooks stay quiet;
+an older daemon ignores their events. Codex asks you to trust the new hook
+definitions; the ones 1.0.0 had are unchanged, so their trust stands. Install/update the CLI or desktop app before relying on the
 plugin. Keep `baum` and `sh` available in the agent's execution environment;
 on Windows use an environment providing a POSIX shell. Plugins never download
 or upgrade the CLI.
 
-Events, matchers, timeouts and commands come from the shared `agenthooks`
+Events, matchers, timeouts, `async` and commands come from the shared `agenthooks`
 placements and dispatcher.
 All existing opt-ins apply: a Git worktree with Entire enabled, no active
 project/user/managed hook already delegating that event to Entire, and a login,
