@@ -290,16 +290,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(ReasonOverTokenCap)
 	}
 
-	cfg := settings.Resolve(prefs.Resolve(c.Config))
-	report.Backend, report.Model = decisionBackend(cfg, prefs.Decisions.Model)
-	if o.Backend != "" {
-		report.Backend, report.Model = decisionBackend(config.Config{Backend: config.Backend(o.Backend)}, prefs.Decisions.Model)
-	}
-	if o.Model != "" {
-		report.Model = o.Model
-	}
 	extraction := Extraction{Meta: meta, ContentHash: hash, PrefixHash: decisions.PrefixHash(rendered),
-		PromptVersion: c.Extractor.PromptVersion(), Backend: report.Backend, Model: report.Model, TurnTimes: turnTimes(graph)}
+		PromptVersion: c.Extractor.PromptVersion(), TurnTimes: turnTimes(graph)}
 	if len(rendered.Turns) == 0 {
 		// No turns, no call: the existing decisions stand.
 		report.Outcome = OutcomeExtracted
@@ -311,6 +303,24 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		report.Decisions = len(extraction.Decisions)
 		return report, c.Store.Save(ctx, extraction)
 	}
+	cfg := settings.Resolve(prefs.Resolve(c.Config))
+	requested := cfg.Backend
+	if o.Backend != "" {
+		requested = config.Backend(o.Backend)
+	}
+	backends := c.Backends
+	if backends.Claude == nil {
+		backends = generate.DefaultBackendsFor(cfg)
+	}
+	if report.Backend, err = resolveBackend(ctx, requested, backends); err != nil {
+		c.logger().Info("decision capture backend unavailable", "backend", requested, "error", err)
+		return skip(ReasonUnavailable)
+	}
+	report.Model = decisionModel(report.Backend, prefs.Decisions.Model)
+	if o.Model != "" {
+		report.Model = o.Model
+	}
+	extraction.Backend, extraction.Model = report.Backend, report.Model
 	if report.Backend == agent.BackendCursorAgent {
 		return skip(ReasonUnsupported)
 	}
@@ -334,10 +344,6 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, nil
 	}
 
-	backends := c.Backends
-	if backends.Claude == nil {
-		backends = generate.DefaultBackendsFor(cfg)
-	}
 	selected, err := generate.Select(ctx, config.Backend(report.Backend), report.Model, backends, io.Discard)
 	if err != nil {
 		c.logger().Info("decision capture backend unavailable", "backend", report.Backend, "error", err)

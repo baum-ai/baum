@@ -34,15 +34,16 @@ func claudeTurn(session string, n int, prompt, reply string) string {
 // fakeBackend answers completions with one decision citing the transcript's
 // last turn, or fails.
 type fakeBackend struct {
-	name    string
-	calls   int
-	users   []string
-	fail    error
-	summary string
+	name     string
+	checkErr error
+	calls    int
+	users    []string
+	fail     error
+	summary  string
 }
 
 func (f *fakeBackend) Name() string                          { return f.name }
-func (f *fakeBackend) Check(context.Context) (string, error) { return "1.0.0", nil }
+func (f *fakeBackend) Check(context.Context) (string, error) { return "1.0.0", f.checkErr }
 func (f *fakeBackend) Run(context.Context, agent.Request) (agent.Result, error) {
 	return agent.Result{}, errors.New("not used")
 }
@@ -320,4 +321,56 @@ func TestCaptureMasksSecretsInTheReplyAndDryRunWritesNothing(t *testing.T) {
 	if len(current) != 1 || strings.Contains(current[0].Summary, plantedMail) {
 		t.Fatalf("%+v", current)
 	}
+}
+
+func TestCaptureAutoFollowsTheReviewBackendSelection(t *testing.T) {
+	missing := &fakeBackend{name: agent.BackendClaude, checkErr: errors.New("claude is not installed")}
+	codex := &fakeBackend{name: agent.BackendCodex}
+	anthropic := &fakeBackend{name: agent.BackendAnthropic}
+	cursor := &fakeBackend{name: agent.BackendCursorAgent}
+	for name, tc := range map[string]struct {
+		claude  *fakeBackend
+		backend string
+		model   string
+		called  *fakeBackend
+	}{
+		"claude first":         {&fakeBackend{name: agent.BackendClaude}, agent.BackendClaude, "claude-haiku-5-5", nil},
+		"codex when no claude": {missing, agent.BackendCodex, "gpt-6-luna", codex},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.capturer.Config = config.Config{Backend: config.BackendAuto}
+			f.capturer.Backends = generate.Backends{
+				Claude:      func(string) generate.CheckedBackend { return tc.claude },
+				Codex:       func(string) generate.CheckedBackend { return codex },
+				Anthropic:   func(string) generate.CheckedBackend { return anthropic },
+				CursorAgent: func(string) generate.CheckedBackend { return cursor },
+			}
+			called := tc.called
+			if called == nil {
+				called = tc.claude
+			}
+			before := called.calls
+			report := f.capture(t, Options{})
+			if report.Outcome != OutcomeExtracted || report.Backend != tc.backend || report.Model != tc.model || called.calls != before+1 || cursor.calls != 0 {
+				t.Fatalf("%+v", report)
+			}
+			row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
+			if row.Backend != tc.backend {
+				t.Fatalf("stored backend %q", row.Backend)
+			}
+		})
+	}
+	t.Run("nothing usable", func(t *testing.T) {
+		f := newFixture(t)
+		f.capturer.Config = config.Config{Backend: config.BackendAuto}
+		failing := func(name string) func(string) generate.CheckedBackend {
+			return func(string) generate.CheckedBackend { return &fakeBackend{name: name, checkErr: errors.New("missing")} }
+		}
+		f.capturer.Backends = generate.Backends{Claude: failing(agent.BackendClaude), Codex: failing(agent.BackendCodex),
+			Anthropic: failing(agent.BackendAnthropic), CursorAgent: func(string) generate.CheckedBackend { return cursor }}
+		if report := f.capture(t, Options{}); report.Outcome != OutcomeSkipped || report.Reason != ReasonUnavailable || cursor.calls != 0 {
+			t.Fatalf("%+v", report)
+		}
+	})
 }

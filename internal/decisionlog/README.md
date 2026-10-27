@@ -52,7 +52,9 @@ after 12 attempts in a day only once it ended.
    after the head's prefix are read); otherwise it reads the whole transcript.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
 6. The backend is the one reviews use (config file, app preferences,
-   repository settings; `auto` means claude). The model is
+   repository settings), and `auto` resolves as for reviews: the first of
+   claude, codex and anthropic that passes its check, never cursor-agent; none
+   is `backend_unavailable`. The model follows the resolved backend:
    `preferences.decisions.model`, else `claude-haiku-5-5` for claude and
    anthropic and `gpt-6-luna` for codex. cursor-agent cannot make a single
    structured call (`backend_unsupported`); a backend that does not pass its

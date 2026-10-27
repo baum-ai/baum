@@ -3,12 +3,14 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
 )
 
@@ -127,16 +129,25 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 	return decisions.ModelResponse{JSON: document, Model: out.Model, Usage: decisionUsage(out.Usage)}, nil
 }
 
-// decisionBackend is the backend name config chooses for capture and the
-// decision model: the preferences' model, else the backend's default. auto
-// stands for its first choice, claude.
-func decisionBackend(cfg config.Config, model *string) (string, string) {
-	backend := string(cfg.Backend)
-	if cfg.Backend == config.BackendAuto || backend == "" {
-		backend = agent.BackendClaude
+// resolveBackend names the backend capture uses: the requested one, or for
+// auto the one reviews would use, which generate.Select picks (the first of
+// generate.AutoOrder that passes its check; never cursor-agent).
+func resolveBackend(ctx context.Context, requested config.Backend, backends generate.Backends) (string, error) {
+	if requested != config.BackendAuto && requested != "" {
+		return string(requested), nil
 	}
+	selected, err := generate.Select(ctx, config.BackendAuto, "", backends, io.Discard)
+	if err != nil {
+		return "", err
+	}
+	return selected.Backend.Name(), nil
+}
+
+// decisionModel is the preferences' decision model, else the backend's
+// default (DefaultDecisionModel).
+func decisionModel(backend string, model *string) string {
 	if model != nil && *model != "" {
-		return backend, *model
+		return *model
 	}
-	return backend, DefaultDecisionModel(backend)
+	return DefaultDecisionModel(backend)
 }
