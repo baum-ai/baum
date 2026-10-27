@@ -370,6 +370,11 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no pull request. */
   pr?: number;
+  /** The session's name as its agent shows it (Claude Code's title, Codex's
+   *  thread name, Cursor's conversation name), else its first prompt; one
+   *  line, masked by the daemon. Absent when the agent's files cannot be
+   *  read, and from a daemon older than this field. */
+  title?: string;
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",

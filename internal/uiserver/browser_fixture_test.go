@@ -170,6 +170,16 @@ func feedLiveSession(ctx context.Context, events *hookevents.Store, marker, id, 
 	}
 }
 
+// writeFixtureTitle leaves a Claude Code transcript holding only the title
+// Claude Code generated for the session id, where the store keeps it, so the
+// session's hooks need not name it: the Sessions page finds it by the id.
+func writeFixtureTitle(home, id, title string) {
+	line, _ := json.Marshal(map[string]any{"type": "ai-title", "aiTitle": title, "sessionId": id})
+	path := filepath.Join(home, ".claude", "projects", "-fixture-live", id+".jsonl")
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, append(line, '\n'), 0o600)
+}
+
 // writeFixtureTranscript replaces the Claude Code transcript at path with one
 // turn per prompt, each answered "Done: <prompt>", in the lines Claude Code
 // writes.
@@ -458,6 +468,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// A third, which the browser test sends to Needs you and back.
 	needsMarker := filepath.Join(state, "live-needs")
 	_ = os.Remove(needsMarker)
+	// The first and third have titles; the second's is its first prompt.
+	writeFixtureTitle(home, "live-e2e", "Reuse the PR page in the local app")
+	writeFixtureTitle(home, "needs-e2e", "Run the migration tests")
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)

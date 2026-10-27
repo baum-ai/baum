@@ -228,8 +228,10 @@ export function SessionTranscriptPage({
   return (
     <>
       <PageBar
-        title={`${agentName(agent)} session`}
-        detail={session?.repository ?? "Agent session on this computer"}
+        title={session?.title || `${agentName(agent)} session`}
+        detail={
+          session ? `${agentName(agent)} · ${session.repository}` : "Agent session on this computer"
+        }
         actions={back}
       />
       <div className="local-page-body">
@@ -260,6 +262,7 @@ export function SessionTranscriptPage({
           state={state}
           retry={retry}
           live={session !== null && session.state !== "ended"}
+          title={session?.title}
         />
       </div>
     </>
@@ -272,11 +275,15 @@ const TranscriptBody = memo(function TranscriptBody({
   state,
   retry,
   live,
+  title,
 }: {
   state: LiveTranscriptState;
   retry: () => void;
   /** The session still runs, so it has no outcome yet. */
   live: boolean;
+  /** The listed session's title, for a transcript that holds none, such as
+   *  a Codex rollout or one named only by its first prompt. */
+  title?: string;
 }) {
   // The card's loader answers from the transcript shown, and its revision
   // has the card load an opened turn's activity again when that changes.
@@ -313,10 +320,12 @@ const TranscriptBody = memo(function TranscriptBody({
   const { transcript } = state;
   // A running session's transcript has no outcome to report; the card would
   // say "unknown" where the session is simply not done.
-  const session =
-    live && transcript.session.outcome === "unknown"
-      ? { ...transcript.session, outcome: "in progress" }
-      : transcript.session;
+  const session = {
+    ...transcript.session,
+    title: transcript.session.title || title || "",
+    outcome:
+      live && transcript.session.outcome === "unknown" ? "in progress" : transcript.session.outcome,
+  };
   return (
     <section aria-label="Transcript" className="local-transcript">
       <p className="local-transcript-note">

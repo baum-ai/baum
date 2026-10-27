@@ -173,6 +173,11 @@ export function LiveSessions({
                 <SessionState session={s} />
               )}
             </span>
+            {s.title ? (
+              <span className="local-pr-session-title" title={s.title}>
+                {s.title}
+              </span>
+            ) : null}
             <span className="local-pr-session-meta">
               {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
               <span title={absolute(s.last_activity_at)}>
@@ -189,6 +194,32 @@ export function LiveSessions({
         ))}
       </ul>
     </section>
+  );
+}
+
+/** What the session is about and where: its title, the line it waits on
+ *  (Needs you only), and its repository, branch and pull request. */
+function SessionWhat({
+  session: s,
+  message,
+  prHref,
+  Link,
+}: {
+  session: LiveSession;
+  message?: string;
+  prHref: (session: LiveSession) => string | null;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  return (
+    <div className="local-session-what">
+      {s.title ? (
+        <p className="local-session-title" title={s.title}>
+          {s.title}
+        </p>
+      ) : null}
+      {message ? <p className="local-needs-message">{message}</p> : null}
+      <SessionWhere session={s} prHref={prHref} Link={Link} />
+    </div>
   );
 }
 
@@ -223,12 +254,7 @@ function NeedsYou({
                 <Agent agent={s.agent} />
                 {s.waiting_reason ? <WaitingFor reason={s.waiting_reason} /> : null}
               </div>
-              <div className="local-needs-what">
-                {s.waiting_message ? (
-                  <p className="local-needs-message">{s.waiting_message}</p>
-                ) : null}
-                <SessionWhere session={s} prHref={prHref} Link={Link} />
-              </div>
+              <SessionWhat session={s} message={s.waiting_message} prHref={prHref} Link={Link} />
               <div className="local-session-times">
                 <span title={absolute(since)}>Waiting {waited(seconds)}</span>
                 <span title={absolute(s.started_at)}>
@@ -296,7 +322,7 @@ export function SessionsPage({
                   <Agent agent={s.agent} />
                   <SessionState session={s} />
                 </div>
-                <SessionWhere session={s} prHref={prHref} Link={Link} />
+                <SessionWhat session={s} prHref={prHref} Link={Link} />
                 <div className="local-session-times">
                   <span title={absolute(s.last_activity_at)}>
                     Active {formatRelative(s.last_activity_at, now)}
@@ -332,7 +358,7 @@ export function SessionsPage({
                     <Agent agent={s.agent} />
                     <SessionState session={s} />
                   </div>
-                  <SessionWhere session={s} prHref={prHref} Link={Link} />
+                  <SessionWhat session={s} prHref={prHref} Link={Link} />
                   <div className="local-session-times">
                     <span title={absolute(endedAt)}>Ended {formatRelative(endedAt, now)}</span>
                     <span>Lasted {lasted(seconds)}</span>

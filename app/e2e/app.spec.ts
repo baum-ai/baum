@@ -419,8 +419,9 @@ test("a session's transcript opens from the Sessions page and grows without a re
     .getByRole("link", { name: /^Open transcript/ });
   await expect(open).toBeVisible({ timeout: 10000 });
   await open.click();
+  // The session has no title of its own yet, so its first prompt names it.
   await expect(
-    page.getByRole("heading", { name: "Claude Code session", exact: true }),
+    page.getByRole("heading", { name: "Fix the flaky retry test", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Working");
   await expect(
@@ -474,6 +475,8 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await expect(row).toBeVisible({ timeout: 10000 });
   await expect(row.getByText("Asking permission")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
+  // The title Claude Code gave the session leads the row.
+  await expect(row.getByText("Run the migration tests", { exact: true })).toBeVisible();
   await expect(row.getByText("Waiting under a minute")).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
   await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);

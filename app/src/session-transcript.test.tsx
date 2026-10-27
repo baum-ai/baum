@@ -180,6 +180,11 @@ it("reads the daemon's answers", () => {
   expect(parseLiveTranscript(null)).toBeNull();
 });
 
+it("titles the page with the session's title when its agent gave one", async () => {
+  await show(session({ title: "Wire the retry budget" }));
+  expect(node.querySelector("h1")?.textContent).toBe("Wire the retry budget");
+});
+
 it("opens a running session's transcript under the session's header", async () => {
   await show(session());
   expect(requests).toEqual(["/s/test-ns/api/live-sessions/claude-code/s1/transcript"]);

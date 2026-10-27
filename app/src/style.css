@@ -1386,6 +1386,14 @@ a.local-session-pr:hover {
   align-items: center;
   gap: 0.25rem 0.75rem;
 }
+.local-pr-session-title {
+  display: -webkit-box;
+  overflow: hidden;
+  padding-left: 1.625rem;
+  color: var(--text-primary);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 .local-pr-session-who .local-session-state {
   padding-left: 0;
 }
@@ -1431,16 +1439,25 @@ a.local-session-pr:hover {
 .local-needs-reason.turn_finished svg {
   color: var(--status-positive);
 }
-.local-needs-what {
+/* A row's middle: the session's title, the line it waits on, then where. */
+.local-session-what {
   display: grid;
   gap: 0.3rem;
   min-width: 0;
 }
-.local-needs-message {
+.local-session-title {
   margin: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-needs-message {
+  margin: 0;
+  overflow: hidden;
+  color: var(--status-caution);
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1480,15 +1497,15 @@ a.local-session-pr:hover {
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .local-session-where,
-  .local-needs-what {
+  .local-session-what {
     grid-column: 1 / -1;
     grid-row: 2;
   }
   .local-session-row:has(.local-session-open) .local-session-where,
-  .local-session-row:has(.local-session-open) .local-needs-what {
+  .local-session-row:has(.local-session-open) .local-session-what {
     grid-column: 1;
   }
-  .local-needs-what .local-session-where {
+  .local-session-what .local-session-where {
     grid-column: auto;
     grid-row: auto;
   }

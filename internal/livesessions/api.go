@@ -21,7 +21,8 @@ func (t *Tracker) Handler() http.Handler {
 	return mux
 }
 
-// Handler serves the tracker's list (Tracker.Handler) and GET
+// Handler serves the tracker's list as Tracker.Handler does, each session
+// with its title (Listed), and GET
 // /api/live-sessions/{agent}/{id}/transcript: the transcript of a session
 // the list has, for as long as it has it. The answer is
 // {"available":true,"version","live","transcript"}, the transcript as GET
@@ -32,7 +33,11 @@ func (t *Tracker) Handler() http.Handler {
 // session the tracker does not list is 404.
 func (t *Transcripts) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/live-sessions", t.Tracker.Handler())
+	mux.HandleFunc("GET /api/live-sessions", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, struct {
+			Sessions []Listed `json:"sessions"`
+		}{t.listed()})
+	})
 	mux.HandleFunc("GET /api/live-sessions/{agent}/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
 		answer, err := t.Get(r.Context(), r.PathValue("agent"), r.PathValue("id"))
 		w.Header().Set("Cache-Control", "no-store")

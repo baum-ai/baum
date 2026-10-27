@@ -996,6 +996,18 @@ keeps nothing of the command it asks about. Nothing of it goes to a baum
 server, and an ended session's saved state (`live-sessions.json`) holds none
 of it.
 
+The list also gives each session a `title`, one line read from your own
+agent's files on this computer, as the transcript routes below read them: the
+title Claude Code shows for it (the one you set, else the one it generated),
+Codex's thread name (`~/.codex/session_index.jsonl`), or Cursor's conversation
+name; without one, the session's first prompt. The files are read only inside
+the agent's own store under your home directory, with the same path checks as
+a transcript, and for a session whose hooks named no transcript (such as an
+ended one after a restart), found there by its session id. The title is
+cleaned, masked and cut as the waiting message is (120 characters), held in
+memory only while the session is listed, never written to
+`live-sessions.json`, and never sent to a baum server.
+
 The Sessions page opens a listed session's transcript through
 `GET /api/live-sessions/{agent}/{id}/transcript`, behind the same
 authentication, Origin and Host checks, `GET` only. The daemon reads, for it,

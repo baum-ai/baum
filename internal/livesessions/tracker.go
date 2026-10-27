@@ -330,12 +330,18 @@ func (e *entry) wait(reason string, at time.Time, message string) {
 	}
 }
 
-// message is a notification's text as the application is shown it: format
+// message is a notification's text as the application is shown it: one
+// line (oneLine) of at most maxWaitingMessage characters.
+func (t *Tracker) message(e hookevents.Event) string {
+	return t.oneLine(e.Session.Message, maxWaitingMessage)
+}
+
+// oneLine is text an agent wrote as the application is shown it: format
 // characters dropped, control characters and runs of spaces made one space,
 // masked (before it is cut, so a secret is never cut where the mask cannot
-// see it), then cut to maxWaitingMessage characters.
-func (t *Tracker) message(e hookevents.Event) string {
-	text := strings.Map(func(r rune) rune {
+// see it), then cut to limit characters.
+func (t *Tracker) oneLine(text string, limit int) string {
+	text = strings.Map(func(r rune) rune {
 		switch {
 		case unicode.Is(unicode.Cf, r):
 			return -1
@@ -343,15 +349,15 @@ func (t *Tracker) message(e hookevents.Event) string {
 			return ' '
 		}
 		return r
-	}, strings.ToValidUTF8(e.Session.Message, "�"))
+	}, strings.ToValidUTF8(text, "�"))
 	text = strings.Join(strings.Fields(text), " ")
 	if text != "" && t.Mask != nil {
 		text = t.Mask(text)
 	}
-	if utf8.RuneCountInString(text) <= maxWaitingMessage {
+	if utf8.RuneCountInString(text) <= limit {
 		return text
 	}
-	return string([]rune(text)[:maxWaitingMessage-1]) + "…"
+	return string([]rune(text)[:limit-1]) + "…"
 }
 
 // expired reports whether the session is dropped at now.

@@ -321,19 +321,21 @@ any window) reload the page and are what the desktop app can notify on.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
 running" or "Agent idle" marker on the inbox rows of their pull request and as
-a "Sessions in progress" panel (agent, working or waiting, branch, start and
-last activity) on its PR page, updated by the `live` event, which carries no
+a "Sessions in progress" panel (agent, working or waiting, title, branch, last
+activity and Open transcript) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
 event kind, why and since when it waits on the person with the one masked line
-its agent showed, repository, branch and PR number reach the app in the list,
+its agent showed, repository, branch, PR number and the session's title (see
+"Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
 
 The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
-now" (agent, working or waiting for you, repository and branch, a link to the pull
-request's page when the inbox has it, start and last activity) and "Ended recently"
+now" (agent, working or waiting for you, the session's title, repository and branch,
+a link to the pull request's page when the inbox has it, start and last activity) and
+"Ended recently"
 (sessions that ended in the last 24 hours, newest first, with when they ended and how
 long they ran). Times are relative, with the exact time on hover. The daemon keeps
 ended sessions for 24 hours, across restarts, and the `live` event updates the page
@@ -343,7 +345,7 @@ and the sidebar count.
 session waits on the person: one whose `waiting_reason` is `permission` ("Asking
 permission"), `input` ("Waiting for your answer") or `turn_finished` ("Finished its
 turn"), the longest wait (`waiting_since`) first. Each row has the agent's mark, the
-reason in words, the agent's message when it sent one ("Claude needs your permission
+reason in words, the session's title, the agent's message when it sent one ("Claude needs your permission
 to use Bash"), "Waiting 4 min" (redrawn every 10 seconds, without waiting for a `live`
 event), the repository, branch chip and pull request link, and Open transcript. A
 session there is not listed again under Running now; a session idle only because it
@@ -353,7 +355,8 @@ tone; otherwise it counts the running ones. The desktop app notifies when a sess
 starts asking for a permission or an answer (see the desktop README).
 
 Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
-(`src/session-transcript.tsx`): the session's header (agent, working, waiting
+(`src/session-transcript.tsx`), titled with the session's title (else "Claude
+Code session"): the session's header (agent, working, waiting
 or ended, repository, branch, pull request, start and last activity) above its
 transcript, drawn with the viewer's `SessionCard` as a review's linked session
 is on the PR page, with the same "Local transcript; secrets and e-mail

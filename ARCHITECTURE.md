@@ -2783,13 +2783,27 @@ replace it.
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
   "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
-  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
+  "repository","branch"?,"pr"?,"title"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
   waiting fields are present while the session waits (see "Waiting"; the
   message only when the agent sent one), `repository` is
   `owner/name` in lower case, `branch` is absent when detached and `pr` when
   the branch has no pull request, and `ended_at` unless the state is `ended`. The working directory and transcript path
   stay inside the tracker.
+- **Titles.** The list is served by `Transcripts`, which adds each session's
+  `title` (`Listed`, `title.go`): Claude Code's last `custom-title`, else its
+  last `ai-title`, read from the transcript's last 256 KiB and, only when
+  that holds none, from its first 64 MiB; Codex's last `thread_name` for the
+  id in `~/.codex/session_index.jsonl`; Cursor's composer name. Without one
+  it is the first prompt the user typed (a Claude Code user line that is not
+  meta, a compaction summary, a tool result or a tag-wrapped command; a
+  Codex `user_message` event). The files are the transcript's, under the
+  same store checks (`inStore`); a session the hooks named no path for is
+  found by its id (`~/.claude/projects/*/<id>.jsonl`, or the Codex store's
+  index). A title is read at most every 5 seconds (30 for Cursor), again only
+  when the files' sizes or times changed, and right away after a failed
+  read; it is one line, masked and cut to 120 characters, and dropped with
+  the session.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
