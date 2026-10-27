@@ -5,7 +5,7 @@
 //
 // Five review files are embedded:
 //
-//	review-public-v3.md   the review instructions shared by every backend,
+//	review-public-v4.md   the review instructions shared by every backend,
 //	                      ending with the "## 10. Submitting" heading
 //	group-public-v1.md    what changes for a review group's combined
 //	                      review, inserted before that heading by
@@ -34,23 +34,23 @@ import (
 )
 
 // Version is the prompt version recorded in the document's generator block.
-// Change it with the text of review-public-v3.md.
-const Version = "review-public-v3"
+// Change it with the text of review-public-v4.md.
+const Version = "review-public-v4"
 
-//go:embed review-public-v3.md
+//go:embed review-public-v4.md
 var reviewPublic string
 
 //go:embed submit-claude.md
 var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
-// Change it with the text of group-public-v1.md or review-public-v3.md.
-const GroupVersion = "group-review-public-v1"
+// Change it with the text of group-public-v1.md or review-public-v4.md.
+const GroupVersion = "group-review-public-v2"
 
 //go:embed group-public-v1.md
 var groupPublic string
 
-// submitting is the heading review-public-v3.md ends with, under which the
+// submitting is the heading review-public-v4.md ends with, under which the
 // backend's submit block goes.
 const submitting = "## 10. Submitting\n"
 

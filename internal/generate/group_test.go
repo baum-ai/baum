@@ -164,7 +164,7 @@ func TestGroupRunReviewsEveryMemberAsOneDocument(t *testing.T) {
 	if err := json.Unmarshal(result.Document, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Review.PullRequest != 7 || doc.Review.Head != f.repo.Head || doc.Review.Generator.PromptVersion != "group-review-public-v1" {
+	if doc.Review.PullRequest != 7 || doc.Review.Head != f.repo.Head || doc.Review.Generator.PromptVersion != "group-review-public-v2" {
 		t.Errorf("review block %+v", doc.Review)
 	}
 	want := []reviewgroups.ReviewedMember{{Number: 7, HeadSHA: f.repo.Head, ReviewVersion: 3}, {Number: 8, HeadSHA: f.repo.ShiftHead, ReviewVersion: 1}}
