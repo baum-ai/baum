@@ -301,8 +301,9 @@ running" or "Agent idle" marker on the inbox rows of their pull request and as
 a "Sessions in progress" panel (agent, working or waiting, branch, start and
 last activity) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
-event kind, repository, branch and PR number reach the app, never a path or
-transcript. When a session ends the panel goes and the page reads its sessions
+event kind, repository, branch and PR number reach the app in the list, never
+a path; a session's transcript comes only when the Sessions page opens it
+(below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
 
@@ -312,6 +313,25 @@ when the inbox has it, start and last activity) and "Ended recently" (sessions t
 ended in the last 24 hours, newest first, with when they ended and how long they ran).
 Times are relative, with the exact time on hover. The daemon keeps ended sessions for
 24 hours, across restarts, and the `live` event updates the page and the sidebar count.
+
+Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
+(`src/session-transcript.tsx`): the session's header (agent, working, waiting
+or ended, repository, branch, pull request, start and last activity) above its
+transcript, drawn with the viewer's `SessionCard` as a review's linked session
+is on the PR page, with the same "Local transcript; secrets and e-mail
+addresses masked." note. It reads
+`GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
+ARCHITECTURE.md) when it opens, 500 ms after the last of a burst of `live`
+events, and every 3 seconds while the session works (15 while it waits for
+you, never once it ended), since an agent writes its replies between hook
+events. Each read names the version shown, so an unchanged transcript costs a
+few bytes and draws nothing again; a new version keeps the turns the reader
+opened (the card's source carries the version as its `revision`, so an opened
+turn's activity is read again) and, when the reader is at the end of the page,
+keeps them there; a running session opens at its end. A transcript the daemon
+does not serve says why (the agent named no transcript, it is outside the
+agent's session folder, the file is gone), and a failed read keeps what is
+shown. Back to sessions, `u` or Esc returns to the list.
 
 GitHub connection is available in Settings, the first-run
 diagnostics dialog and the desktop setup's first step, which share
@@ -364,7 +384,12 @@ viewing and reloading a PR deep link, narrow layout, estimation,
 generation/progress and repository settings. The fixture also runs a live
 session tracker over a real hook event record, fed from a marker file in the
 state directory, and a test follows that session from the inbox and the PR page
-through running, idle and ended. The fixture also runs the
+through running, idle and ended. A second marker, `live-transcript`, drives
+another session whose hooks name a Claude Code transcript the fixture writes
+under its home's `.claude/projects` (the marker's first line is the state, the
+others the prompts); a test opens it from the Sessions page, adds a turn
+without a hook event and sees it appear, its e-mail address masked, without a
+reload. The fixture also runs the
 automatic generation scheduler, fed a discovery snapshot every quarter second;
 a second test writes `push-10` in the state directory to give PR 10 a new head
 and follows the automatic review it starts on the PR page and in the jobs list,

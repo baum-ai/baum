@@ -1369,7 +1369,8 @@ answer is 404. The answer keeps the linked sessions' graphs for this
 (`Result.Graphs`, never part of its JSON).
 
 The transcript is shaped and bounded first, from the graph as read, and
-redacted after, so nothing past the limits below is ever redacted or held:
+redacted after, so nothing past the limits below is ever redacted or held
+(`transcript.Renderer`, which the live sessions' transcripts use too):
 
 1. `internal/transcript` builds it (below). Each text it keeps (a prompt, a
    reply, an agent message, a tool call's input or output) is read up to 8 KiB past its
@@ -2718,6 +2719,41 @@ replace it.
   `owner/name` in lower case, `branch` is absent when detached and `pr` when
   the branch has no pull request, and `ended_at` unless the state is `ended`. The working directory and transcript path
   stay inside the tracker.
+- **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
+  (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
+  provider) serves the transcript of a session the tracker lists, and only
+  those: any other agent and id is 404, whatever the disk holds. The file is
+  never named by the request. It is the `transcript_path` the session's
+  hooks last reported (kept in the tracker's entry, never served, and not in
+  `live-sessions.json`), read only when, its symbolic links resolved
+  (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
+  file strictly inside the agent's own store under the home directory, the
+  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  subagent transcript beside it that resolves outside the store is left out.
+  Without a path a Codex session is looked up by id in its store's
+  first-line index (`codex.ScanStore`, once per session); a Claude Code one
+  has no such lookup and is unavailable, as after a restart has only the
+  saved ended sessions. A Cursor session is read from Cursor's own database
+  (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
+  id, since Cursor keeps no transcript file baum reads. The files are mapped
+  with `sessions.Map`, as discovery maps them (a Codex root rollout without
+  its collaboration children, which only a scan of the whole store finds), and
+  rendered by `transcript.Renderer`, the same code as `GET /api/sessions/{id}`
+  (shaped, bounded and redacted as "Session transcripts" describes, home as
+  `~`). Each session's answer is cached: its files are stat'ed at most once a
+  second (Cursor's database, which Cursor writes all the time and whose
+  lookup reads its whole index, once every 5 seconds), and rebuilt only when
+  a file's size or modification time changed; requests arriving together wait
+  for one build. At most 8 transcripts are held, the least recently asked for
+  dropped first, and a session the tracker no longer lists is dropped at the
+  next request. A rebuild that fails (a line caught mid-write) keeps the last
+  good transcript. The answer is `{"available":true,"version","live",
+  "transcript"}`, `version` a hash of the files' paths, sizes and times and
+  `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
+  request's `?version=` is the current one; or `{"available":false,"live",
+  "code":"transcript_unavailable","message"}` with why, in a sentence the app
+  shows.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like
@@ -2736,6 +2772,14 @@ replace it.
   session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
+  Each Sessions row opens the session's transcript
+  (`?page=sessions&session=<agent>:<id>`), drawn with the viewer's
+  `SessionCard`. The view reads it 500 ms after the last of a burst of `live`
+  events and every 3 seconds while the session works (15 while it waits; a
+  change that only moves `last_activity_at` sends no event, and replies are
+  written between hooks), naming the version it shows, and draws again only
+  for a new one, keeping the reader's open turns and, at the end of the page,
+  their place at the end.
 
 ### Transports and control protocol
 

@@ -15,11 +15,11 @@ import (
 
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 	"github.com/baum-ai/baum/sessions/collector/codex"
 	"github.com/baum-ai/baum/sessions/collector/model"
-	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/cursortranscript"
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/vendors"

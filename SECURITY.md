@@ -931,6 +931,25 @@ Nothing of it goes to a baum server. A finished session's content is still
 read from the session files on disk, through the redacted transcript routes
 below.
 
+The Sessions page opens a listed session's transcript through
+`GET /api/live-sessions/{agent}/{id}/transcript`, behind the same
+authentication, Origin and Host checks, `GET` only. The daemon reads, for it,
+only the transcript of a session it is tracking from its hook events: the
+request names the session, never a file. The file is the transcript path the
+session's own hooks reported (Claude Code and Codex send one), and it is read
+only when, with its symbolic links resolved, it is a regular file inside that
+agent's own session folder in your home directory, the one baum already reads
+sessions from: `~/.claude/projects` for Claude Code and `~/.codex/sessions`
+for Codex. A path elsewhere, a link out of the folder, a directory or a file of
+another kind is not read, and the app is told only that the transcript is not
+available. A Codex session whose hooks named no path is looked up by id in
+that folder; a Cursor session is read from Cursor's own conversation database
+by its id. The transcript is redacted exactly as the PR page's linked sessions
+(the same code): secrets and e-mail addresses masked, your home directory
+written as `~`, nothing else removed. The path itself never reaches the app.
+At most 8 transcripts are held in memory, and only while their session is
+listed.
+
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
