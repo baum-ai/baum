@@ -227,6 +227,18 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 				Command  string `json:"command"`
 				ExitCode *int   `json:"exit_code"`
 				Status   string `json:"status"`
+				Output   string `json:"aggregated_output"`
+				Message  string `json:"message"`
+				Query    string `json:"query"`
+				Server   string `json:"server"`
+				Tool     string `json:"tool"`
+				Changes  []struct {
+					Path string `json:"path"`
+					Kind string `json:"kind"`
+				} `json:"changes"`
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
 			} `json:"item"`
 			Error struct {
 				Message string `json:"message"`
@@ -242,9 +254,19 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 			break
 		}
 		request.Activity.Progress()
+		if strings.HasPrefix(event.Type, "item.") {
+			var paths []string
+			for _, change := range event.Item.Changes {
+				paths = append(paths, change.Kind+" "+change.Path)
+			}
+			emitItem(request, event.Type, itemFields{ID: event.Item.ID, Type: event.Item.Type, Status: event.Item.Status, Text: event.Item.Text,
+				Command: event.Item.Command, Output: event.Item.Output, Message: event.Item.Message, Query: event.Item.Query,
+				Server: event.Item.Server, Tool: event.Item.Tool, Error: event.Item.Error.Message, ExitCode: event.Item.ExitCode, Paths: paths})
+		}
 		switch event.Type {
 		case "error":
 			lastError = event.Message
+			request.Emit(agent.TranscriptEntry{Kind: "error", Text: event.Message})
 		case "turn.started":
 			// Codex exposes turn totals, not the model cycles inside each turn.
 			// Count every started turn; never overwrite an earlier turn.

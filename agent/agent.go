@@ -76,6 +76,41 @@ type Request struct {
 	// write to besides Directory: their TMPDIR. Empty leaves the backend's
 	// own temporary directory.
 	Scratch string
+	// Transcript, when set, receives each step of the run as the person
+	// watching sees it (see TranscriptEntry); nil when none is kept.
+	Transcript func(TranscriptEntry)
+}
+
+// TranscriptEntry is one step of a run as the person watching it sees it:
+// local only, never sent anywhere, and never part of an Event. Entries are
+// append-only: a tool that starts is a "tool" entry with status "running";
+// when it ends, another with the same ID, status "completed" or "failed" and
+// its output in Text. A consumer merges them by ID.
+type TranscriptEntry struct {
+	Time time.Time `json:"time"`
+	// Kind is "message", "reasoning", "tool" or "error".
+	Kind string `json:"kind"`
+	// ID, Tool, Title and Status are a tool entry's: the harness's id, the
+	// tool ("command", "file_change", "Read", ...), its command line or name
+	// and main argument, and "running", "completed" or "failed".
+	ID     string `json:"id,omitempty"`
+	Tool   string `json:"tool,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status,omitempty"`
+	// Text is a message's or reasoning's text, or a finished tool's output.
+	Text string `json:"text,omitempty"`
+}
+
+// Emit sends an entry to Transcript, stamped with the time unless it has one.
+// It does nothing when there is no Transcript.
+func (r Request) Emit(entry TranscriptEntry) {
+	if r.Transcript == nil {
+		return
+	}
+	if entry.Time.IsZero() {
+		entry.Time = time.Now().UTC()
+	}
+	r.Transcript(entry)
 }
 
 type Result struct {

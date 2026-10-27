@@ -2198,6 +2198,21 @@ a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 fix of review comments alone fails with `workflow_changed` when its commit
 changes a path under `.github/workflows/` or `.github/actions/`.
 
+A fix also keeps a live transcript of its agent's run for the app: the
+messages, reasoning, tool calls and tool output, taken from the harness's own
+event stream as it is already parsed (`agent.Request.Transcript`, entries of
+`agent.TranscriptEntry`; deliberately apart from `agent.Event`, which never
+holds text). The queue gives the executor `transcripts/<job id>.jsonl` beside
+`jobs.json`, created private (0700/0600), one `{"seq":N,...}` line per entry,
+appended and flushed as each arrives. Title and text are masked with the bundle
+redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
+entry, and only the 50 most recently written transcripts are kept. A tool
+appears as a `running` entry and again, with the same `id`, as `completed` or
+`failed` with its output. `Job.has_transcript` says one exists, and
+`GET /api/jobs/{id}/transcript?after=N` returns `{"entries","next","more","done"}`
+(at most 500 entries after `seq` N; `404` without a transcript). Transcripts
+never leave the machine.
+
 Review threads reach the prompt as untrusted blocks headed with local ids
 (`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
 contains. The agent ends its final message with a JSON array of
