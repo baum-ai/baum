@@ -1305,12 +1305,59 @@ a.local-session-pr:hover {
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
+/* Each row opens its transcript, in the column after the times. */
+.local-session-row:has(.local-session-open) {
+  grid-template-columns: 12rem minmax(0, 1fr) 10rem auto;
+}
+.local-session-open {
+  justify-self: end;
+  margin-left: 0;
+  text-decoration: none;
+}
+/* The session at the top of its transcript: the row's three columns, on its
+   own panel. */
+.local-session-head {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr) 10rem;
+  align-items: center;
+  column-gap: 1.5rem;
+  row-gap: 0.5rem;
+  padding: 0.875rem 1.25rem;
+}
+.local-transcript {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.local-transcript-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.local-transcript-card {
+  min-width: 0;
+  padding: 0;
+  overflow: clip;
+}
+.local-transcript-missing p {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+}
 @media (width < 64rem) {
-  .local-session-row {
+  .local-session-row,
+  .local-session-row:has(.local-session-open),
+  .local-session-head {
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .local-session-where {
     grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .local-session-row:has(.local-session-open) .local-session-where {
+    grid-column: 1;
+  }
+  .local-session-open {
+    grid-column: 2;
     grid-row: 2;
   }
 }

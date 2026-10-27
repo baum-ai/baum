@@ -23,6 +23,7 @@ import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
 import { SessionsPage } from "./sessions";
+import { SessionTranscriptPage } from "./session-transcript";
 import { Notice, PageBar, Sidebar } from "./shell";
 import {
   appBase,
@@ -179,6 +180,8 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  // Counts the `live` events, which an open transcript reads itself again on.
+  const [liveTick, setLiveTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   // The pull requests being grouped, while the group name is asked.
   const [grouping, setGrouping] = useState<Entry[] | null>(null);
@@ -267,7 +270,10 @@ function Workspace({ url }: { url: UrlState }) {
     void reloadLive();
     const source = new EventSource(appURL("api/events"));
     const refresh = () => void reload();
-    const refreshLive = () => void reloadLive();
+    const refreshLive = () => {
+      setLiveTick((n) => n + 1);
+      void reloadLive();
+    };
     source.addEventListener("open", refresh);
     source.addEventListener("open", refreshLive);
     source.addEventListener("live", refreshLive);
@@ -407,6 +413,26 @@ function Workspace({ url }: { url: UrlState }) {
   // The inbox's own keys live in `Inbox`, which knows its rows; these are the
   // page's: the shortcuts sheet, and the way back from a pull request or group.
   const onInbox = page === "inbox" && !groupId && !selectedEntry;
+  // A session's transcript, `?page=sessions&session=<agent>:<id>`.
+  const openSession = url.search.get("session");
+  const [openAgent = "", openID = ""] = openSession
+    ? [
+        openSession.slice(0, openSession.indexOf(":")),
+        openSession.slice(openSession.indexOf(":") + 1),
+      ]
+    : [];
+  const sessionPR = (s: LiveSession) => {
+    const entry = indexedEntries.find(
+      (e) =>
+        e.pull_request.number === s.pr &&
+        e.pull_request.repository.toLowerCase() === s.repository.toLowerCase(),
+    );
+    if (!entry) return null;
+    const clone = cloneFor(entry);
+    return appURL(
+      `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${s.pr}`,
+    );
+  };
   useShortcuts(
     (event) => {
       if (event.key === "?" && onInbox) {
@@ -421,6 +447,17 @@ function Workspace({ url }: { url: UrlState }) {
         event.preventDefault();
         url.update((current) => {
           for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
+          return current;
+        });
+      } else if (
+        page === "sessions" &&
+        openSession &&
+        (event.key === "u" || (event.key === "Escape" && onBody(event)))
+      ) {
+        // The same way back, from a session's transcript to the list.
+        event.preventDefault();
+        url.update((current) => {
+          current.delete("session");
           return current;
         });
       }
@@ -500,26 +537,21 @@ function Workspace({ url }: { url: UrlState }) {
               }
               onDiagnostics={diagnostics.update}
             />
+          ) : page === "sessions" && openSession ? (
+            <SessionTranscriptPage
+              key={openSession}
+              agent={openAgent}
+              id={openID}
+              session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
+              tick={liveTick}
+              prHref={sessionPR}
+              Link={LocalLink}
+            />
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer" />
               <div className="local-page-body">
-                <SessionsPage
-                  sessions={live}
-                  Link={LocalLink}
-                  prHref={(s) => {
-                    const entry = indexedEntries.find(
-                      (e) =>
-                        e.pull_request.number === s.pr &&
-                        e.pull_request.repository.toLowerCase() === s.repository.toLowerCase(),
-                    );
-                    if (!entry) return null;
-                    const clone = cloneFor(entry);
-                    return appURL(
-                      `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${s.pr}`,
-                    );
-                  }}
-                />
+                <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
               </div>
             </>
           ) : page === "jobs" ? (

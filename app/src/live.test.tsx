@@ -225,7 +225,11 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   expect(running.textContent).toContain("Codex");
   expect(running.textContent).toContain("Waiting for you");
   expect(running.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
-  expect(running.querySelector("li:nth-child(2) a")).toBeNull();
+  expect(running.querySelector("li:nth-child(2) a.local-session-pr")).toBeNull();
+  // Every row opens its transcript.
+  expect(running.querySelector("li a.local-session-open")?.getAttribute("href")).toBe(
+    "/s/test-ns/?page=sessions&session=claude-code%3As1",
+  );
   const ended = node.querySelector('[aria-label="Ended recently"]')!;
   expect(ended.querySelectorAll("li")).toHaveLength(1);
   expect(ended.textContent).toContain("Ended 2 hours ago");

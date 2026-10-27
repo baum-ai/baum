@@ -3,7 +3,7 @@ import { formatRelative } from "@baum/viewer/components/format";
 import { CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { agentName, type LiveSession } from "./api";
+import { agentName, appURL, type LiveSession } from "./api";
 import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
@@ -27,9 +27,17 @@ export function lasted(seconds: number): string {
 }
 
 /** The tooltip of a relative time: when it was, in the viewer's locale. */
-const absolute = (iso: string) => new Date(iso).toLocaleString();
+export const absolute = (iso: string) => new Date(iso).toLocaleString();
 
-function Agent({ agent }: { agent: string }) {
+/** The key a session goes by in the app's URL: `agent:id`. */
+export const sessionKey = (s: Pick<LiveSession, "agent" | "session_id">) =>
+  `${s.agent}:${s.session_id}`;
+
+/** Where a session's transcript opens in the app. */
+export const transcriptHref = (s: LiveSession) =>
+  appURL(`?page=sessions&session=${encodeURIComponent(sessionKey(s))}`);
+
+export function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
     <span className="flex min-w-0 items-center gap-2 font-medium text-(--text-primary)">
@@ -39,9 +47,60 @@ function Agent({ agent }: { agent: string }) {
   );
 }
 
+/** What the session is doing: working (with the live dot), waiting for its
+ *  user, or ended. */
+export function SessionState({ session }: { session: LiveSession }) {
+  return (
+    <span className="local-session-state">
+      {session.state === "running" ? (
+        <>
+          <LiveDot className="text-(--status-positive)" /> Working
+        </>
+      ) : session.state === "idle" ? (
+        <>
+          <CircleDashedIcon size={12} className="flex-none text-(--status-caution)" /> Waiting for
+          you
+        </>
+      ) : (
+        "Ended"
+      )}
+    </span>
+  );
+}
+
+/** Where the session works: the repository, its branch as a chip and the
+ *  pull request it is on, linked into the app when the inbox knows it. */
+export function SessionWhere({
+  session: s,
+  prHref,
+  Link,
+}: {
+  session: LiveSession;
+  prHref: (session: LiveSession) => string | null;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  const href = s.pr ? prHref(s) : null;
+  return (
+    <div className="local-session-where">
+      <span className="local-session-repo">{s.repository}</span>
+      {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
+      {s.pr ? (
+        href ? (
+          <Link href={href} className="local-session-pr">
+            PR #{s.pr}
+          </Link>
+        ) : (
+          <span className="local-session-pr">PR #{s.pr}</span>
+        )
+      ) : null}
+    </div>
+  );
+}
+
 /** The sessions page: what agents are doing on this computer now, and what
  * ended in the last day. `prHref` is where a session's pull request opens in
- * the app, or null when it is not one the app knows. */
+ * the app, or null when it is not one the app knows. Each row opens the
+ * session's transcript. */
 export function SessionsPage({
   sessions,
   prHref,
@@ -57,26 +116,15 @@ export function SessionsPage({
   const ended = sessions
     .filter((s) => s.state === "ended")
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
-  // Where the session works: the repository, its branch as a chip and the
-  // pull request it is on, linked into the app when the inbox knows it.
-  const where = (s: LiveSession) => {
-    const href = s.pr ? prHref(s) : null;
-    return (
-      <div className="local-session-where">
-        <span className="local-session-repo">{s.repository}</span>
-        {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
-        {s.pr ? (
-          href ? (
-            <Link href={href} className="local-session-pr">
-              PR #{s.pr}
-            </Link>
-          ) : (
-            <span className="local-session-pr">PR #{s.pr}</span>
-          )
-        ) : null}
-      </div>
-    );
-  };
+  const open = (s: LiveSession) => (
+    <Link
+      href={transcriptHref(s)}
+      className="inbox-action local-session-open"
+      aria-label={`Open transcript: ${agentName(s.agent)} on ${s.branch ?? s.repository}`}
+    >
+      Open transcript
+    </Link>
+  );
   return (
     <div className="local-stack">
       <section aria-label="Running now" className="local-panel local-sessions">
@@ -89,27 +137,12 @@ export function SessionsPage({
         ) : (
           <ul>
             {active.map((s) => (
-              <li
-                key={`${s.agent}:${s.session_id}`}
-                className="local-session-row"
-                title={s.session_id}
-              >
+              <li key={sessionKey(s)} className="local-session-row" title={s.session_id}>
                 <div className="local-session-agent">
                   <Agent agent={s.agent} />
-                  <span className="local-session-state">
-                    {s.state === "running" ? (
-                      <>
-                        <LiveDot className="text-(--status-positive)" /> Working
-                      </>
-                    ) : (
-                      <>
-                        <CircleDashedIcon size={12} className="flex-none text-(--status-caution)" />{" "}
-                        Waiting for you
-                      </>
-                    )}
-                  </span>
+                  <SessionState session={s} />
                 </div>
-                {where(s)}
+                <SessionWhere session={s} prHref={prHref} Link={Link} />
                 <div className="local-session-times">
                   <span title={absolute(s.last_activity_at)}>
                     Active {formatRelative(s.last_activity_at, now)}
@@ -118,6 +151,7 @@ export function SessionsPage({
                     Started {formatRelative(s.started_at, now)}
                   </span>
                 </div>
+                {open(s)}
               </li>
             ))}
           </ul>
@@ -136,20 +170,17 @@ export function SessionsPage({
                 (new Date(endedAt).getTime() - new Date(s.started_at).getTime()) / 1000,
               );
               return (
-                <li
-                  key={`${s.agent}:${s.session_id}`}
-                  className="local-session-row"
-                  title={s.session_id}
-                >
+                <li key={sessionKey(s)} className="local-session-row" title={s.session_id}>
                   <div className="local-session-agent">
                     <Agent agent={s.agent} />
-                    <span className="local-session-state">Ended</span>
+                    <SessionState session={s} />
                   </div>
-                  {where(s)}
+                  <SessionWhere session={s} prHref={prHref} Link={Link} />
                   <div className="local-session-times">
                     <span title={absolute(endedAt)}>Ended {formatRelative(endedAt, now)}</span>
                     <span>Lasted {lasted(seconds)}</span>
                   </div>
+                  {open(s)}
                 </li>
               );
             })}
