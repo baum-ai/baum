@@ -154,7 +154,7 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 	}
 	var assessed []byte
 	return Task{
-		Directory: run.Directory, Schema: schema, Budgets: run.Budgets, Endpoint: run.Endpoint, Review: true,
+		Directory: run.Directory, Schema: schema, Budgets: run.Budgets, Endpoint: run.Endpoint, Framing: BackendFraming,
 		PassPrompt: func(pass TaskPass) (string, error) {
 			if pass.Number == 1 {
 				return contextPack, nil
