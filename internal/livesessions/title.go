@@ -139,7 +139,7 @@ func (t *Transcripts) describe(k key, path string) (title, excerpt, summary stri
 	if err != nil {
 		return e.title, e.excerpt, e.summary
 	}
-	version, err := location{files: src.files(), store: src.store}.version()
+	version, err := Location{files: src.files(), store: src.store}.Version()
 	if err != nil {
 		return e.title, e.excerpt, e.summary
 	}

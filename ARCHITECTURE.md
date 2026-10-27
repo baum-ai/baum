@@ -481,6 +481,17 @@ type Backend interface {
 }
 ```
 
+A backend may also implement `agent.Completer`: one structured call with a
+system prompt, a user message and a schema, no tools or directory, used by
+decision capture. The anthropic backend makes one Messages call offering only
+the StructuredOutput tool (`tool_choice` auto, one call, since current models
+refuse a forced choice while thinking); claude runs `claude -p` with no tools
+but StructuredOutput, no settings, MCP servers or session persistence; codex
+runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
+tools disabled, low reasoning effort and the system prompt as its model
+instructions. Both CLIs run in an empty temporary directory with the prompt on
+stdin after `sessions.GenerationRunMarker`.
+
 A request carries the prompt, the model-facing schema, the checkout directory
 and the call and token budgets, and optionally an `Endpoint` (a complete
 provider base URL and key) that replaces the backend's default. A result
@@ -2649,8 +2660,8 @@ endpoint.
   also reports how many it missed, so it rereads only after a miss. This is the
   interface the live features (in-progress sessions, refresh on session end
   or push, decision capture) build on. In-progress sessions (see "Live
-  sessions") and refresh on session end or push (see "Refresh on hook
-  events") do; decision capture is not built yet.
+  sessions"), refresh on session end or push (see "Refresh on hook
+  events") and decision capture (see "Decision capture") do.
 
 ### Refresh on hook events
 
@@ -2925,6 +2936,34 @@ replace it.
   written between hooks), naming the version it shows, and draws again only
   for a new one, keeping the reader's open turns and, at the end of the page,
   their place at the end.
+
+### Decision capture
+
+`internal/decisionlog` extracts the decisions of the tracked sessions (see
+"Live sessions") into `<state>/decisions/decisions.sqlite`, with the published
+prompt (`decisions-public-v1`) and the `decisions` package's renderer,
+parser and validator. Its scheduler reads `Tracker.Sessions` every 30 seconds
+and keeps no per-session timers: a session that ended or went silent, whose
+turn ended two minutes ago, that has run 20 minutes since it started or was
+last captured, or that sends `pre-compact` is queued, and every five minutes
+so is every tracked session that is not running. One worker captures the
+queue, deduplicated. The gate is the automatic master switch, the decisions
+switch (`preferences.decisions.enabled`) and the repository's
+`settings.decisions`, all on by default.
+
+A capture locates the transcript with `livesessions.Locate` (the agent's own
+store, symbolic links resolved, the mapped root session the event's), skips
+files over 64 MiB, baum's own generation runs and prompts over 272,000
+estimated tokens, and reuses, extends or replaces the session's head
+extraction as hosted extraction does. Its single structured call goes through
+the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
+`gpt-6-luna`); cursor-agent has none. Every call is reserved before it is
+made (byte bound plus 16,384 output tokens at list price) and recorded in a
+ledger that throttles a session (5 minutes apart, 10 after a failure, 12 a
+day unless it ended) and caps its spend at $0.25 a day, with an optional
+global daily cap. The reply is masked before it is parsed; decisions keep
+their IDs across extractions and are marked obsolete, never deleted, when a
+newer one drops them. See [its README](internal/decisionlog/README.md).
 
 ### Transports and control protocol
 

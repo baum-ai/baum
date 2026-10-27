@@ -159,7 +159,7 @@ func (t *Transcripts) Get(ctx context.Context, agent, id string) (Answer, error)
 		c.version, c.body, c.err = "", nil, err
 		return Answer{Session: session}, err
 	}
-	version, err := src.version()
+	version, err := src.Version()
 	if err != nil {
 		c.version, c.body, c.err = "", nil, unavailable("The transcript file is not there any more.")
 		return Answer{Session: session}, c.err
@@ -167,7 +167,7 @@ func (t *Transcripts) Get(ctx context.Context, agent, id string) (Answer, error)
 	if version == c.version && c.body != nil {
 		return Answer{Session: session, Version: c.version, Body: c.body}, nil
 	}
-	body, err := t.build(ctx, src, transcript.Meta{ID: id, Vendor: string(src.slug), Branch: session.Branch})
+	body, err := t.build(ctx, src, transcript.Meta{ID: id, Vendor: string(src.Vendor), Branch: session.Branch})
 	switch {
 	case ctx.Err() != nil:
 		// Looked at again by the next request.
@@ -238,18 +238,34 @@ func (t *Transcripts) cachedLen() int {
 	return len(t.cache)
 }
 
-// location is where a session's transcript is read from: files of an agent's
-// store, or one conversation of Cursor's database.
-type location struct {
-	slug  vendors.Slug
+// Location is where a session's transcript is read from: files of an agent's
+// store, or one conversation of Cursor's database (Locate).
+type Location struct {
+	Vendor vendors.Slug
+	// ID is the session's id: Cursor's conversation.
+	ID    string
 	files model.Files
-	// store and id are Cursor's database and conversation.
-	store, id string
+	// store is Cursor's database.
+	store string
 }
 
-// version is a fingerprint of the size and modification time of every file
+// Size is the total size of the session's own files; zero for a Cursor
+// conversation, which shares one database with every other.
+func (s Location) Size() (int64, error) {
+	var total int64
+	for _, f := range s.files {
+		info, err := os.Stat(f.Path)
+		if err != nil {
+			return 0, err
+		}
+		total += info.Size()
+	}
+	return total, nil
+}
+
+// Version is a fingerprint of the size and modification time of every file
 // the transcript is read from.
-func (s location) version() (string, error) {
+func (s Location) Version() (string, error) {
 	paths := make([]string, 0, len(s.files)+2)
 	for _, f := range s.files {
 		paths = append(paths, f.Path)
@@ -273,18 +289,37 @@ func (s location) version() (string, error) {
 }
 
 // locate finds the files of the session's transcript and checks that they
-// are the agent's own.
-func (t *Transcripts) locate(agent, id, path string, c *cached) (location, error) {
-	home := t.home()
+// are the agent's own. A Codex rollout found by id is remembered in c.
+func (t *Transcripts) locate(agent, id, path string, c *cached) (Location, error) {
+	if agent == AgentCodex && path == "" {
+		path = c.found
+	}
+	cursorStore := t.CursorStore
+	if cursorStore == "" {
+		cursorStore = cursortranscript.DefaultStorePath()
+	}
+	loc, err := Locate(t.home(), cursorStore, agent, id, path)
+	if err == nil && agent == AgentCodex && path == "" {
+		c.found = loc.files[0].Path
+	}
+	return loc, err
+}
+
+// Locate finds the files of the transcript of the agent's session id, whose
+// hooks named path (empty when none did), and checks that they are the
+// agent's own: inside its session store under home, its symbolic links
+// resolved. A Codex session without a path is looked up in its store by id;
+// a Cursor session is read from cursorStore. Errors are *Unavailable.
+func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 	switch agent {
 	case AgentClaudeCode:
 		root := filepath.Join(home, ".claude", "projects")
 		if path == "" {
-			return location{}, unavailable("Claude Code did not say where this session's transcript is.")
+			return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
 		}
 		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
 		if err != nil {
-			return location{}, err
+			return Location{}, err
 		}
 		// Its subagents' transcripts, which must be inside the store too.
 		files := model.Files{}
@@ -298,46 +333,39 @@ func (t *Transcripts) locate(agent, id, path string, c *cached) (location, error
 			}
 			files = append(files, f)
 		}
-		return location{slug: vendors.ClaudeCode, files: files}, nil
+		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files}, nil
 	case AgentCodex:
 		root := filepath.Join(home, ".codex", "sessions")
 		rollout := func(name string) bool {
 			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
 		}
 		if path == "" {
-			path = c.found
-		}
-		if path == "" {
 			found, err := findRollout(filepath.Join(home, ".codex"), id)
 			if err != nil {
-				return location{}, err
+				return Location{}, err
 			}
-			path, c.found = found, found
+			path = found
 		}
 		main, err := inStore(root, path, rollout)
 		if err != nil {
-			return location{}, err
+			return Location{}, err
 		}
 		// The root rollout alone: finding its children scans every rollout
 		// of the store, too much to do each time the session writes. The
 		// mapper reads a root without them, as discovery does when it
 		// cannot place them.
-		return location{slug: vendors.Codex, files: codex.RootFile(main)}, nil
+		return Location{Vendor: vendors.Codex, ID: id, files: codex.RootFile(main)}, nil
 	case AgentCursor:
-		store := t.CursorStore
-		if store == "" {
-			store = cursortranscript.DefaultStorePath()
-		}
-		resolved, err := filepath.EvalSymlinks(store)
+		resolved, err := filepath.EvalSymlinks(cursorStore)
 		if err != nil {
-			return location{}, unavailable("Cursor's conversation database was not found on this computer.")
+			return Location{}, unavailable("Cursor's conversation database was not found on this computer.")
 		}
 		if info, err := os.Stat(resolved); err != nil || !info.Mode().IsRegular() {
-			return location{}, unavailable("Cursor's conversation database was not found on this computer.")
+			return Location{}, unavailable("Cursor's conversation database was not found on this computer.")
 		}
-		return location{slug: vendors.Cursor, store: resolved, id: id}, nil
+		return Location{Vendor: vendors.Cursor, ID: id, store: resolved}, nil
 	}
-	return location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
+	return Location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
 }
 
 // inStore resolves path and reports it when it is a regular file inside the
@@ -383,14 +411,23 @@ func findRollout(codexHome, id string) (string, error) {
 
 // build reads the session's graph with the mapper discovery uses and renders
 // it.
-func (t *Transcripts) build(ctx context.Context, src location, meta transcript.Meta) ([]byte, error) {
-	found := collector.Session{Source: src.slug, SessionID: meta.ID, Files: src.files}
-	if src.slug == vendors.Cursor {
-		store, err := cursortranscript.Open(src.store)
+func (t *Transcripts) build(ctx context.Context, src Location, meta transcript.Meta) ([]byte, error) {
+	graph, err := src.Graph()
+	if err != nil {
+		return nil, err
+	}
+	return t.Render(ctx, graph, meta)
+}
+
+// Graph reads the session's graph with the mapper discovery uses.
+func (s Location) Graph() (*session.Graph, error) {
+	found := collector.Session{Source: s.Vendor, SessionID: s.ID, Files: s.files}
+	if s.Vendor == vendors.Cursor {
+		store, err := cursortranscript.Open(s.store)
 		if err != nil {
 			return nil, err
 		}
-		tree, err := store.Tree(src.id)
+		tree, err := store.Tree(s.ID)
 		_ = store.Close()
 		if err != nil {
 			return nil, unavailable("Cursor has no conversation of this session yet.")
@@ -402,8 +439,5 @@ func (t *Transcripts) build(ctx context.Context, src location, meta transcript.M
 		found.Files = []model.SessionFile{{Data: body, Name: "cursor-tree.json", Kind: model.KindTranscript}}
 	}
 	graph, _, err := sessions.Map(found)
-	if err != nil {
-		return nil, err
-	}
-	return t.Render(ctx, graph, meta)
+	return graph, err
 }

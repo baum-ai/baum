@@ -126,6 +126,20 @@ func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Res
 	return fixer.Fix(ctx, request)
 }
 
+// ErrCannotComplete is a backend without single-call completions
+// (agent.Completer): cursor-agent.
+var ErrCannotComplete = errors.New("the backend cannot make a single structured call")
+
+// Complete forwards a completion (agent.Completer) to a backend that can make
+// one, and fails with ErrCannotComplete otherwise.
+func (e explicitPath) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
+	completer, ok := e.CheckedBackend.(agent.Completer)
+	if !ok {
+		return agent.Completion{}, fmt.Errorf("%s: %w", e.name, ErrCannotComplete)
+	}
+	return completer.Complete(ctx, request)
+}
+
 // Selected is the backend a run uses.
 type Selected struct {
 	Backend CheckedBackend

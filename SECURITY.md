@@ -35,6 +35,18 @@ so is a hunk's section heading that is pure base64 of that length. Base64
 data embedded in a file, such as an inline image or a test fixture, is
 masked the same way.
 
+Local decision capture, on by default for picked repositories, also sends
+to the provider of the backend reviews use, without asking each time: the
+redacted transcript of a coding-agent session in such a repository (your
+prompts, the agent's visible text, its plans and question-and-answer
+dialogue, and the names of the files it edited, never tool output or file
+contents), with the published extraction prompt. The `claude` and `codex`
+CLIs get no tools besides the structured reply, run in an empty temporary
+directory and persist no session; Codex's read-only sandbox applies and its
+shell tools are turned off. The reply is masked again before it is stored in
+the private decision store. Turning off automatic generation (the tray's
+pause), the decisions switch or a repository's decisions setting stops it.
+
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your

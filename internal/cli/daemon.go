@@ -25,6 +25,7 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/github"
@@ -477,6 +478,18 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
 			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}).Handler()
 		}
+		// Decision capture follows the tracked sessions; its store keeps the
+		// derived, redacted decisions in the daemon's state.
+		var capture *decisionlog.Scheduler
+		var decisionStore *decisionlog.Store
+		if live != nil {
+			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite")); err != nil {
+				log.Warn("decision capture is off: its store did not open", "error", err)
+			} else {
+				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
+					Capturer: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
+			}
+		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{
 			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry,
@@ -546,6 +559,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				if live != nil {
 					wg.Go(func() { live.Run(ctx) })
 				}
+				if capture != nil {
+					wg.Go(func() { capture.Run(ctx) })
+				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
@@ -578,6 +594,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				unsubscribeClones()
 				unsubscribeEnded()
 				events.Close()
+				if decisionStore != nil {
+					_ = decisionStore.Close()
+				}
 				_ = groups.Close()
 				_ = registry.Close()
 			},
