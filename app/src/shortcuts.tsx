@@ -32,9 +32,24 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
+/** The walkthrough's keys, which `Walkthrough` handles itself. */
+const WALKTHROUGH_SHORTCUTS = [
+  { keys: ["ArrowRight", "j"], label: "Tour: next stop" },
+  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop" },
+  { keys: ["c"], label: "Comment on the stop or row" },
+  { keys: ["o", "Enter"], label: "Everything: details and evidence" },
+  { keys: ["t"], label: "Everything: walk me through it" },
+  { keys: ["e"], label: "Switch between the tour and everything" },
+];
 /** Where each group of keys works; the sheet lists the current one first. */
-export type ShortcutsPlace = "anywhere" | "inbox" | "pulls" | "page";
-const KEY_NAMES: Record<string, string> = { ArrowDown: "↓", ArrowUp: "↑", Escape: "Esc" };
+export type ShortcutsPlace = "anywhere" | "inbox" | "pulls" | "page" | "walkthrough";
+const KEY_NAMES: Record<string, string> = {
+  ArrowDown: "↓",
+  ArrowUp: "↑",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+  Escape: "Esc",
+};
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /** The action a keydown asks for on the inbox, if it is one of its keys. */
@@ -156,6 +171,7 @@ export function ShortcutsSheet({
       title: "A pull request, group or session",
       rows: [{ keys: ["u", "Escape"], label: "Back to the list" }],
     },
+    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
   ];
   const ordered = [
     ...groups.filter((group) => group.place === current),

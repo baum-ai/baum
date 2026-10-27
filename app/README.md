@@ -72,8 +72,35 @@ navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
-re-running checks and a fix the person confirms, with its replies on the review
-threads it addressed, are the app's only GitHub writes (see below).
+re-running checks, a review submitted from the walkthrough and a fix the person
+confirms, with its replies on the review threads it addressed, are the app's
+only GitHub writes (see below).
+
+The PR page's **Walk through** button (beside Regenerate, once a review is
+saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
+`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+`buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
+logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
+sections are left out), and stops, one per behaviour step: its `title`,
+`before`, `after` and `question` (schema revision 2026-10-27.1), falling back to
+the step's `text` for a review written before them, and to the section summary
+for a section without steps. A stop's code is the viewer's `HunkEvidence` for
+the step's hunk anchors, reading omitted excerpts through the page's patch
+source. **Guided tour** walks intro, stops and wrap-up; Next and → skip stops
+already looked at. **Everything** lists every stop by chapter with filters,
+details and a comment box per row, and the submit panel beside it. Leaving a
+stop, opening its details or commenting marks it looked at; seen marks and
+drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
+request and review version, the 40 most recent. Submitting posts
+`POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
+`head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
+body}` sits on the step's anchored lines (or the hunk's first added line), and
+a stop without a place goes into the body under the overall comment. The
+daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
+`not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
+`invalid_line` the panel offers to resend with every comment in the body. A
+sent review clears the drafts and links to it on GitHub. The tour's keys (→/j,
+←/k, c, e; in Everything j/k, o, c, t, e) are listed in the shortcuts sheet.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request

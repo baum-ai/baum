@@ -301,6 +301,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Inbox",
     "Pull requests",
     "A pull request, group or session",
+    "Walkthrough",
   ]);
   expect(listed("Anywhere")).toEqual(["?", "Alt", "Esc"]);
   expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "s", "u"]);
@@ -319,6 +320,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Esc",
   ]);
   expect(listed("A pull request, group or session")).toEqual(["u", "Esc"]);
+  expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e"]);
   expect(INBOX_SHORTCUTS.flatMap((s) => s.keys)).toEqual([
     "j",
     "ArrowDown",
@@ -341,6 +343,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Anywhere",
     "Inbox",
     "A pull request, group or session",
+    "Walkthrough",
   ]);
 });
 
