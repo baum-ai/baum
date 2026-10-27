@@ -361,8 +361,7 @@ requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
 preferences over the config file; `GET api/settings` reports the effective
 harness and model. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
-and push a fix, such as `GIT_CONFIG_GLOBAL` to sign agent commits with another
-key: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates, at most
+and push a fix: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates, at most
 32) saved with `PUT api/settings/agent-env` (`{"agent_env": {...}}`; an empty
 object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
