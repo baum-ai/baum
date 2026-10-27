@@ -459,9 +459,13 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			changed()
 			scheduler.Wake()
 		}, log)
+		// The feature log follows the decision capture gate, so a settings
+		// change wakes it too.
+		var featureLog *decisionlog.FeatureWorker
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
+			featureLog.Wake()
 			// A repository may just have been picked.
 			clones.Trigger()
 		}
@@ -488,6 +492,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			} else {
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Log: log}
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -561,6 +566,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				}
 				if capture != nil {
 					wg.Go(func() { capture.Run(ctx) })
+					wg.Go(func() { featureLog.Run(ctx) })
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })

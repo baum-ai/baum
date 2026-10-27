@@ -46,6 +46,13 @@ directory and persist no session; Codex's read-only sandbox applies and its
 shell tools are turned off. The reply is masked again before it is stored in
 the private decision store. Turning off automatic generation (the tray's
 pause), the decisions switch or a repository's decisions setting stops it.
+For the same repositories, and stopped by the same switches, the daemon
+lists the repository's pull requests through the GitHub API with your
+GitHub credential, about once a minute and conditionally, and fetches their
+heads (`refs/pull/<N>/head`) into the clone under `refs/baum/pull/`, as a
+review fetches a missing pull request commit. It keeps their titles,
+descriptions, authors, commits and changed paths in the private decision
+store, and links the commits to the sessions on this machine there.
 
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and

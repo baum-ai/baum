@@ -470,6 +470,46 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 	return Pull{BaseOID: pr.BaseSHA, HeadOID: pr.HeadSHA, MergeBaseOID: mergeBase}, nil
 }
 
+// maxFetchRefspecs bounds the refspecs of one fetch.
+const maxFetchRefspecs = 100
+
+// FetchPullHeads fetches refs/pull/<N>/head into refs/baum/pull/<N>/head, as
+// ResolvePull does, for each pull request whose head commit the clone lacks,
+// up to 100 in one fetch. A clone with every head makes no network call. A
+// pull request still missing its commits afterwards is left to ResolvePull.
+func (r *Repo) FetchPullHeads(ctx context.Context, remote string, prs []PullRequest) error {
+	if remote == "" {
+		remote = r.opts.Remote
+	}
+	if !validRemoteName(remote) {
+		return ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return err
+	}
+	defer done()
+	var refspecs []string
+	for _, pr := range prs {
+		if pr.Number <= 0 || !validOID(pr.HeadSHA) {
+			return ErrInvalidInput
+		}
+		if !r.hasCommit(ctx, pr.HeadSHA) {
+			refspecs = append(refspecs, fmt.Sprintf("+refs/pull/%d/head:refs/baum/pull/%d/head", pr.Number, pr.Number))
+		}
+	}
+	var errs []error
+	for start := 0; start < len(refspecs); start += maxFetchRefspecs {
+		if err := r.fetch(ctx, remote, refspecs[start:min(start+maxFetchRefspecs, len(refspecs))]); err != nil {
+			if isContextError(err) {
+				return err
+			}
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 	_, err := r.read(ctx, 0, "cat-file", "-e", oid+"^{commit}")
 	return err == nil

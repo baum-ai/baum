@@ -2969,6 +2969,21 @@ global daily cap. The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
 newer one drops them. See [its README](internal/decisionlog/README.md).
 
+### Feature log
+
+`decisionlog.FeatureWorker` runs in the daemon beside the capture scheduler,
+on the same store, every minute and on a settings change, for each picked
+repository with a clone that passes the capture gate. It lists the
+repository's pull requests through the REST API (`github.ListPullRequests`,
+`state=all`, sorted by update, paged to the stored cursor, the first page
+conditional on its ETag), fetches missing heads from `refs/pull/<N>/head` in
+batches of 100 (`gitlocal.FetchPullHeads`), records each changed pull
+request's commits and paths from the clone, and links commits to this
+machine's sessions with `locallink.LinkCommits`, the per-commit matching
+`Resolve` uses. The constants are in `featureconfig.go` and the live feature
+version of a repository is chosen in one place (`liveVersion`). See
+[its README](internal/decisionlog/README.md#feature-log).
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless

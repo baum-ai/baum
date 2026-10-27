@@ -31,6 +31,7 @@ and the agent hooks.`,
 		newDoctorCommand(),
 		newGitHubCredentialCommand(),
 		newDecisionsCommand(),
+		newFeaturesCommand(),
 	)
 	return cmd
 }
