@@ -214,6 +214,20 @@ func TestFixThatCannotSignRunsNoAgent(t *testing.T) {
 	checkCleanedUp(t, r, o)
 }
 
+// A remote that fetches the pull request's repository but pushes to a fork
+// would take the fix elsewhere; no agent runs for it.
+func TestFixRefusesARemoteThatPushesElsewhere(t *testing.T) {
+	r := NewRepositories(t)
+	gitIn(t, r.Clone, "config", "--add", "remote.origin.pushurl", "https://github.com/owner/repo.git")
+	gitIn(t, r.Clone, "config", "--add", "remote.origin.pushurl", "https://github.com/someone/fork.git")
+	o := options(t, r, &fakeAgent{fix: func(context.Context, string) error { t.Error("the agent ran"); return nil }})
+	o.Checks = true
+	if _, err := Run(context.Background(), o); reasonOf(err) != ReasonNoRemote {
+		t.Fatalf("err %v (reason %q), want %s", err, reasonOf(err), ReasonNoRemote)
+	}
+	checkCleanedUp(t, r, o)
+}
+
 func TestFixRefusesAMovedHead(t *testing.T) {
 	r := NewRepositories(t)
 	o := options(t, r, &fakeAgent{fix: func(context.Context, string) error { t.Error("the agent ran"); return nil }})

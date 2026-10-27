@@ -317,18 +317,21 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 	}
 	name := ""
 	for _, remote := range remotes {
-		pushURL, err := repo.RemotePushURL(ctx, remote.Name)
-		if err != nil || pushURL == "" {
+		// Every URL git pushes to must name the repository too, as configured
+		// or as rewritten, the same trust the fetch URL gets: a pushurl to a
+		// fork would otherwise take the fix and leave the pull request as it was.
+		configured, effective, err := repo.RemotePushURLs(ctx, remote.Name)
+		if err != nil || len(effective) == 0 || len(configured) != len(effective) {
 			continue
 		}
-		validPushURLs := true
-		for _, destination := range strings.Split(pushURL, "\n") {
-			if !names(destination) {
-				validPushURLs = false
+		pushes := true
+		for i := range effective {
+			if !names(configured[i]) && !names(effective[i]) {
+				pushes = false
 				break
 			}
 		}
-		if !validPushURLs {
+		if !pushes {
 			continue
 		}
 		if !names(remote.URL) {
