@@ -50,12 +50,21 @@ func (r *listReader) Read(_ context.Context, path, etag string) (int, http.Heade
 		rows = append(rows, map[string]any{
 			"number": n, "title": fmt.Sprintf("PR %d", n), "body": nil, "state": "open", "draft": n == 3,
 			"created_at": "2026-10-01T00:00:00Z", "updated_at": updated(n).Format(time.RFC3339), "user": user,
-			"head": map[string]any{"ref": "feature", "sha": strings.Repeat("a", 40)},
-			"base": map[string]any{"ref": "main", "sha": strings.Repeat("b", 40)},
+			"head": map[string]any{"ref": "feature", "sha": strings.Repeat("a", 40), "repo": map[string]any{"id": headRepo(n)}},
+			"base": map[string]any{"ref": "main", "sha": strings.Repeat("b", 40), "repo": map[string]any{"id": 1, "default_branch": "main"}},
 		})
 	}
 	body, _ := json.Marshal(rows)
 	return http.StatusOK, http.Header{"Etag": []string{r.etag}}, body, nil
+}
+
+// headRepo is the repository id of pull request n's head: a fork's for
+// pull request 4.
+func headRepo(n int) int {
+	if n == 4 {
+		return 2
+	}
+	return 1
 }
 
 // updated is pull request n's update time: higher numbers are older.
@@ -86,6 +95,9 @@ func TestListPullRequests(t *testing.T) {
 	bot, draft := list.Pulls[1], list.Pulls[2]
 	if !bot.Bot || bot.Author != "dependabot[bot]" || list.Pulls[0].Bot || !draft.Draft || draft.HeadSHA != strings.Repeat("a", 40) || draft.BaseRef != "main" {
 		t.Fatalf("pulls = %+v", list.Pulls[:3])
+	}
+	if fork := list.Pulls[3]; !fork.CrossRepository || list.Pulls[0].CrossRepository || fork.DefaultBranch != "main" {
+		t.Fatalf("fork = %+v", fork)
 	}
 
 	// An unchanged first page reads nothing more.

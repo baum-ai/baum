@@ -2,7 +2,9 @@ package decisionlog
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -500,14 +502,8 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 		return nil, w.initErr
 	}
 	r := &featureRun{w: w, repository: repository, dir: dir, opts: o, now: w.now(), reviews: map[int]string{}, prefs: repos.DefaultPreferences()}
-	if w.Registry != nil {
-		var err error
-		if r.prefs, err = w.Registry.Preferences(ctx); err != nil {
-			return nil, err
-		}
-		if r.settings, _, err = w.Registry.RepositorySettings(ctx, repository); err != nil {
-			return nil, err
-		}
+	if _, err := r.refresh(ctx); err != nil {
+		return nil, err
 	}
 	prices := pricing.Active()
 	if w.Prices != nil {
@@ -517,6 +513,44 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	var err error
 	r.version, err = liveVersion(ctx, w.Store.db, repository, !o.DryRun, r.now)
 	return r, err
+}
+
+// refresh reads the preferences and the repository's settings again, so a
+// gate or cap changed during a run applies to its next item. It reports
+// whether the repository's decisions are still captured; a manual run
+// ignores the gate.
+func (r *featureRun) refresh(ctx context.Context) (bool, error) {
+	if r.w.Registry == nil {
+		return true, nil
+	}
+	prefs, err := r.w.Registry.Preferences(ctx)
+	if err != nil {
+		return false, err
+	}
+	settings, picked, err := r.w.Registry.RepositorySettings(ctx, r.repository)
+	if err != nil {
+		return false, err
+	}
+	r.prefs, r.settings = prefs, settings
+	return r.opts.Manual || (picked && settings.DecisionsEnabled(prefs)), nil
+}
+
+// activation is when placement was turned on for the repository, recorded
+// the first time; zero for a manual run. A dry run records nothing.
+func (r *featureRun) activation(ctx context.Context) (time.Time, error) {
+	switch {
+	case r.opts.Manual:
+		return time.Time{}, nil
+	case r.opts.DryRun:
+		var at int64
+		err := r.w.Store.db.QueryRowContext(ctx, `SELECT activated_at FROM pull_sync WHERE repository=?`, r.repository).Scan(&at)
+		if errors.Is(err, sql.ErrNoRows) {
+			return r.now, nil
+		}
+		return time.UnixMilli(at), err
+	}
+	state, err := r.w.Store.Activate(ctx, r.repository)
+	return state.ActivatedAt, err
 }
 
 // reviewSummary is the summary of the pull request's latest review saved

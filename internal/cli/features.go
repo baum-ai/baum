@@ -134,10 +134,12 @@ func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage f
 	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Config: cfg, Window: time.Duration(days) * 24 * time.Hour}
 	// The preferences and the repository's settings choose the backend and
 	// hold the daily cap.
-	if registry, err := repos.OpenReadOnly(""); err == nil {
-		defer func() { _ = registry.Close() }()
-		worker.Registry = registry
+	registry, err := repos.OpenReadOnly("")
+	if err != nil {
+		return fmt.Errorf("reading the preferences: %w", err)
 	}
+	defer func() { _ = registry.Close() }()
+	worker.Registry = registry
 	report, err := stage(ctx, worker, clone)
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")

@@ -84,6 +84,10 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
+		if on, err := r.refresh(ctx); err != nil || !on {
+			report.Stopped = "disabled"
+			return report, err
+		}
 		out, err := r.summarize(ctx, p[0])
 		if out.Cost != nil {
 			report.Spent += *out.Cost
@@ -106,22 +110,13 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 // members, unchanged since quiet, longest behind first, each with its
 // membership version.
 func (s *Store) pendingSummaries(ctx context.Context, version int64, repository string, quiet time.Time) ([][2]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, membership_version FROM feature WHERE version_id=? AND repository=? AND merged_into IS NULL
-AND summarized_version < membership_version AND changed_at <= ? ORDER BY COALESCE(dirty_since, changed_at), id`, version, repository, quiet.UnixMilli())
-	if err != nil {
-		return nil, err
-	}
-	var out [][2]string
-	for rows.Next() {
+	return collect(func(rows *sql.Rows) ([2]string, error) {
 		var id string
 		var membership int64
-		if err := rows.Scan(&id, &membership); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		out = append(out, [2]string{id, strconv.FormatInt(membership, 10)})
-	}
-	return out, errors.Join(rows.Err(), rows.Close())
+		err := rows.Scan(&id, &membership)
+		return [2]string{id, strconv.FormatInt(membership, 10)}, err
+	})(s.db.QueryContext(ctx, `SELECT id, membership_version FROM feature WHERE version_id=? AND repository=? AND merged_into IS NULL
+AND summarized_version < membership_version AND changed_at <= ? ORDER BY COALESCE(dirty_since, changed_at), id`, version, repository, quiet.UnixMilli()))
 }
 
 // featureText is a feature's stored text.
@@ -170,63 +165,58 @@ FROM feature WHERE id=?`, featureID).Scan(&src.Version, &src.Text.Title, &src.Te
 		return src, err
 	}
 	paths := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.number, p.title, p.body, CASE WHEN p.merged_at IS NOT NULL THEN 'merged' ELSE p.state END,
+	type pullRow struct {
+		pull              summaryPull
+		current, assigned string
+	}
+	pulls, err := collect(func(rows *sql.Rows) (pullRow, error) {
+		var p pullRow
+		return p, rows.Scan(&p.pull.Number, &p.pull.Title, &p.pull.Body, &p.pull.State, &p.current, &p.assigned)
+	})(s.db.QueryContext(ctx, `SELECT p.number, p.title, p.body, CASE WHEN p.merged_at IS NOT NULL THEN 'merged' ELSE p.state END,
 COALESCE(p.paths_json, '[]'), fp.assigned_paths_json FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
-WHERE fp.feature_id=? ORDER BY p.created_at, p.number`, featureID)
+WHERE fp.feature_id=? ORDER BY p.created_at, p.number`, featureID))
 	if err != nil {
 		return src, err
 	}
-	for rows.Next() {
-		var pull summaryPull
-		var current, assigned string
-		if err := rows.Scan(&pull.Number, &pull.Title, &pull.Body, &pull.State, &current, &assigned); err != nil {
-			_ = rows.Close()
-			return src, err
-		}
-		for _, list := range []string{current, assigned} {
+	for _, p := range pulls {
+		for _, list := range []string{p.current, p.assigned} {
 			var held []string
 			if err := json.Unmarshal([]byte(list), &held); err != nil {
-				_ = rows.Close()
 				return src, err
 			}
 			for _, path := range held {
 				paths[path] = true
 			}
 		}
-		src.Pulls = append(src.Pulls, pull)
+		src.Pulls = append(src.Pulls, p.pull)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return src, err
+	type linkRow struct {
+		number int
+		key    SessionKey
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT DISTINCT pc.number, sc.agent, sc.session_id FROM feature_pull fp
+	links, err := collect(func(rows *sql.Rows) (linkRow, error) {
+		var l linkRow
+		return l, rows.Scan(&l.number, &l.key.Agent, &l.key.ID)
+	})(s.db.QueryContext(ctx, `SELECT DISTINCT pc.number, sc.agent, sc.session_id FROM feature_pull fp
 JOIN pull_commit pc ON pc.repository=fp.repository AND pc.number=fp.number
 JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha
 JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
 WHERE fp.feature_id=?1
 UNION SELECT 0, fs.agent, fs.session_id FROM feature_session fs JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
-WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID)
+WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 	if err != nil {
 		return src, err
 	}
 	var sessions []SessionKey
-	for rows.Next() {
-		var number int
-		var key SessionKey
-		if err := rows.Scan(&number, &key.Agent, &key.ID); err != nil {
-			_ = rows.Close()
-			return src, err
-		}
-		if !slices.Contains(sessions, key) {
-			sessions = append(sessions, key)
+	for _, l := range links {
+		if !slices.Contains(sessions, l.key) {
+			sessions = append(sessions, l.key)
 		}
 		for i := range src.Pulls {
-			if src.Pulls[i].Number == number {
-				src.Pulls[i].Sessions = append(src.Pulls[i].Sessions, key)
+			if src.Pulls[i].Number == l.number {
+				src.Pulls[i].Sessions = append(src.Pulls[i].Sessions, l.key)
 			}
 		}
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return src, err
 	}
 	for _, key := range sessions {
 		links, err := s.SessionLinks(ctx, repository, key.Agent, key.ID)
@@ -294,6 +284,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	out := SummarizedFeature{Feature: featureID, PullRequests: []int{}}
 	src, err := s.summarySource(ctx, r.repository, featureID)
 	if errors.Is(err, sql.ErrNoRows) {
+		out.Outcome, out.Reason = FeatureSkipped, "gone"
 		return out, nil
 	}
 	if err != nil {
@@ -329,7 +320,9 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 			switch {
 			case skip != "":
 				out.Reason = skip
-				return out, nil
+				return out, err
+			case err != nil && ctx.Err() != nil:
+				return out, ctx.Err()
 			case err != nil:
 				// The text is written without it and stays behind; a call
 				// that may have been billed counts.
@@ -388,17 +381,25 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	case result.Skip != "":
 		out.Reason = result.Skip
 		return out, callErr
+	case callErr != nil && ctx.Err() != nil:
+		// Cut short by the daemon stopping: not the feature's failure.
+		return out, ctx.Err()
 	case callErr != nil:
-		return r.deferFeature(write, featureID, key, out, map[bool]int{true: 1}[result.Called]+failed, callErr)
+		return r.featureFailed(write, featureID, key, out, map[bool]int{true: 1}[result.Called]+failed, callErr)
 	}
 	text, err := summary.ParseFeatureReply(result.JSON, rendered)
 	if err != nil {
 		// Paid for, and never written.
-		return r.deferFeature(write, featureID, key, out, 1+failed, err)
+		return r.featureFailed(write, featureID, key, out, 1+failed, err)
 	}
 	stored := featureText{Title: text.Title, Description: text.Description, Digest: text.Digest}
+	keyed := map[decisionAddress]bool{}
 	for _, index := range text.KeyDecisions {
-		stored.KeyDecisions = append(stored.KeyDecisions, src.Decisions[index].ID)
+		// One key decision per address, the first named.
+		if address := addressOf(src.Decisions[index]); !keyed[address] {
+			keyed[address] = true
+			stored.KeyDecisions = append(stored.KeyDecisions, src.Decisions[index].ID)
+		}
 	}
 	if pullErr == nil {
 		stored.InputHash = featureTextHash(inputHash, stored, src.Decisions)
@@ -411,7 +412,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	if pullErr != nil {
 		// Incomplete: retried after the backoff, the feature call counting
 		// too.
-		return r.deferFeature(write, featureID, key, out, 1+failed, pullErr)
+		return r.featureFailed(write, featureID, key, out, 1+failed, pullErr)
 	}
 	out.Outcome = FeatureSummarized
 	if !written {
@@ -464,47 +465,60 @@ func (r *featureRun) pullSummary(ctx context.Context, src summarySource, pull su
 	return text, true, "", r.w.Store.storePullSummary(context.WithoutCancel(ctx), r.repository, pull.Number, hash, text)
 }
 
-// deferFeature backs a feature off after a failure, counting failed calls
+// featureFailed backs a feature off (backOff), counting failed calls
 // against its membership version.
-func (r *featureRun) deferFeature(ctx context.Context, featureID, key string, out SummarizedFeature, failed int, cause error) (SummarizedFeature, error) {
-	count, err := r.w.Store.deferItem(ctx, r.version, r.repository, kindFeature, featureID, key, failed, r.now.Add(FeatureBackoff))
-	out.Outcome, out.Error = FeatureDeferred, cause.Error()
-	if count >= FeatureMaxFailures {
-		out.Outcome = FeatureGivenUp
-	}
-	r.w.logger().Warn("feature log: text deferred", "repository", r.repository, "feature", featureID, "error", cause)
+func (r *featureRun) featureFailed(ctx context.Context, featureID, key string, out SummarizedFeature, failed int, cause error) (SummarizedFeature, error) {
+	var err error
+	out.Error = cause.Error()
+	out.Outcome, err = r.backOff(ctx, kindFeature, featureID, key, failed, cause)
 	return out, err
 }
 
-// featureInputHash identifies a feature's rendered input under the prompt
-// version together with the decisions it renders, in order.
-func featureInputHash(rendered summary.RenderedFeature, decisions []Decision) string {
-	ids := make([]string, 0, len(rendered.Rendered))
-	for _, index := range rendered.Rendered {
-		ids = append(ids, decisions[index].ID)
+// decisionAddress names a decision in the text hashes as hosted does: by its
+// session and first cited turn, so a re-extraction holding the same
+// decisions under new IDs keeps the text.
+type decisionAddress struct {
+	Agent   string `json:"agent"`
+	Session string `json:"session"`
+	Turn    int    `json:"turn"`
+}
+
+func addressOf(d Decision) decisionAddress {
+	turn := 0
+	if len(d.Turns) > 0 {
+		turn = d.Turns[0]
 	}
-	encoded, _ := json.Marshal(ids)
+	return decisionAddress{Agent: d.Agent, Session: d.SessionID, Turn: turn}
+}
+
+// featureInputHash identifies a feature's rendered input under the prompt
+// version together with the decisions it renders, in order, by address.
+func featureInputHash(rendered summary.RenderedFeature, decisions []Decision) string {
+	addresses := make([]decisionAddress, 0, len(rendered.Rendered))
+	for _, index := range rendered.Rendered {
+		addresses = append(addresses, addressOf(decisions[index]))
+	}
+	encoded, _ := json.Marshal(addresses)
 	return summary.ContentHash(SummaryVersion, rendered.Input+"\n"+string(encoded))
 }
 
-// featureTextHash binds an input hash to the text written from it, so text
-// stored any other way never matches; "" when a key decision is none of
-// decisions, so such text is never reused.
+// featureTextHash binds an input hash to the text written from it, its key
+// decisions by address, so text stored any other way never matches; "" when
+// a key decision is none of decisions, so such text is never reused.
 func featureTextHash(inputHash string, text featureText, decisions []Decision) string {
+	keys := []decisionAddress{}
 	for _, id := range text.KeyDecisions {
-		if !slices.ContainsFunc(decisions, func(d Decision) bool { return d.ID == id }) {
+		i := slices.IndexFunc(decisions, func(d Decision) bool { return d.ID == id })
+		if i < 0 {
 			return ""
 		}
-	}
-	keys := text.KeyDecisions
-	if keys == nil {
-		keys = []string{}
+		keys = append(keys, addressOf(decisions[i]))
 	}
 	encoded, _ := json.Marshal(struct {
-		Title        string   `json:"title"`
-		Description  string   `json:"description"`
-		Digest       string   `json:"digest"`
-		KeyDecisions []string `json:"key_decisions"`
+		Title        string            `json:"title"`
+		Description  string            `json:"description"`
+		Digest       string            `json:"digest"`
+		KeyDecisions []decisionAddress `json:"key_decisions"`
 	}{text.Title, text.Description, text.Digest, keys})
 	return summary.ContentHash(inputHash, string(encoded))
 }

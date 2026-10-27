@@ -79,10 +79,11 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 	return p.Automatic && (p.Decisions.Enabled == nil || *p.Decisions.Enabled) && (s.Decisions == nil || *s.Decisions)
 }
 
-// DecisionPreferences are the global choices for local decision capture. A
-// nil Enabled is on. Model, when set, replaces the backend's default decision
-// model. DailyCap, when set, bounds the day's decision capture spending in
-// US dollars across repositories; nil is no global cap.
+// DecisionPreferences are the global choices for local decision capture and
+// the feature log. A nil Enabled is on. Model, when set, replaces the
+// backend's default decision model. DailyCap, when set, bounds the day's
+// spending of decision capture and the feature log together, in US dollars
+// across repositories; nil is no global cap.
 type DecisionPreferences struct {
 	Enabled  *bool    `json:"enabled,omitempty"`
 	Model    *string  `json:"model,omitempty"`

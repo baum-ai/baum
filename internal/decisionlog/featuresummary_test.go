@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/decisions"
 )
 
 func (f *featureFixture) summarize(o FeatureOptions) SummaryReport {
@@ -141,5 +143,37 @@ func TestFeatureTextInputAndFailures(t *testing.T) {
 	}
 	if report = f.summarize(FeatureOptions{Manual: true}); report.Features[0].Outcome != FeatureSummarized {
 		t.Fatalf("report = %+v", report)
+	}
+}
+
+// Decisions extracted again under new IDs keep the text without a call, as
+// they are hashed by session and first cited turn; a feature gone since is
+// skipped.
+func TestFeatureTextHashesDecisionsByAddress(t *testing.T) {
+	f := newFeatureFixture(t)
+	feature := f.placed()
+	f.backend.text = func() (string, error) {
+		return `{"title":"Widget export","description":"Exports widgets.","digest":"D.","key_decisions":[]}`, nil
+	}
+	f.summarize(FeatureOptions{Manual: true})
+	d := decisions.Decision{ID: "renamed", Summary: "Export as CSV.", Category: decisions.CategoryImplementation, Who: decisions.WhoHuman,
+		Turns: []int{1}, Files: []string{"export.go"}}
+	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "s1", Repository: repo},
+		ContentHash: "c-s1b", Decisions: []decisions.Decision{d}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, clean := f.text(feature); clean {
+		t.Fatal("new decisions did not mark the feature")
+	}
+	report := f.summarize(FeatureOptions{Manual: true})
+	if report.Features[0].Outcome != FeatureReused || f.backend.calls["text"] != 1 {
+		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+	r, err := f.worker.newRun(context.Background(), repo, "", FeatureOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := r.summarize(context.Background(), "gone"); err != nil || out.Outcome != FeatureSkipped {
+		t.Fatalf("a missing feature: %+v, %v", out, err)
 	}
 }

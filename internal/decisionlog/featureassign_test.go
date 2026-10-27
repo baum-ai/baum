@@ -73,11 +73,13 @@ type featureFixture struct {
 	backend *scriptBackend
 	worker  *FeatureWorker
 	prefs   repos.Preferences
+	// off turns the repository's decisions off.
+	off bool
 }
 
 func newFeatureFixture(t *testing.T) *featureFixture {
 	t.Helper()
-	f := &featureFixture{t: t, clock: &clock{t0}, prefs: repos.DefaultPreferences()}
+	f := &featureFixture{t: t, clock: &clock{t0}, prefs: repos.Preferences{Automatic: true}}
 	f.store = openStore(t, f.clock)
 	f.backend = &scriptBackend{calls: map[string]int{},
 		assign: func(string) (string, error) { return choose("new", "", "Widgets"), nil },
@@ -107,7 +109,8 @@ func (r fixtureRegistry) Repositories(context.Context) ([]repos.Repository, erro
 	return nil, nil
 }
 func (r fixtureRegistry) RepositorySettings(context.Context, string) (repos.Settings, bool, error) {
-	return repos.Settings{}, true, nil
+	on := !r.f.off
+	return repos.Settings{Decisions: &on}, true, nil
 }
 
 // pull records a pull request opened at, with paths at head (nil: not read).
@@ -504,5 +507,141 @@ func TestFeatureCallsShareTheDailyCap(t *testing.T) {
 	st, err := f.store.Stats(context.Background(), "", "", startOfDay(f.clock.now))
 	if err != nil || st.AllSpent <= 1 {
 		t.Fatalf("all spent %v, %v", st.AllSpent, err)
+	}
+}
+
+// A fork's pull request, or a branch shared with the default branch, links
+// nothing as a stack.
+func TestPlacementStackSkipsForksAndTheDefaultBranch(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Fork from main", t0.Add(time.Minute), "h1", []string{"a"})
+	f.exec(`UPDATE pull_request SET head_ref='main', cross_repository=1, default_branch='main'`)
+	f.assign(FeatureOptions{})
+	f.pull(2, "Targets the fork's branch", t0.Add(2*time.Minute), "h2", []string{"z"})
+	f.pull(3, "On develop", t0.Add(3*time.Minute), "h3", []string{"y"})
+	f.exec(`UPDATE pull_request SET default_branch='main' WHERE number IN (2, 3)`)
+	f.exec(`UPDATE pull_request SET base_ref='main' WHERE number=2`)
+	links, err := f.store.pullLinks(context.Background(), repo, 2, nil)
+	if err != nil || len(links["stacked"]) != 0 {
+		t.Fatalf("links of a pull request on main = %v, %v", links, err)
+	}
+	// The same stack within the repository links.
+	f.exec(`UPDATE pull_request SET cross_repository=0, head_ref='branch-1' WHERE number=1`)
+	f.exec(`UPDATE pull_request SET base_ref='branch-1' WHERE number=3`)
+	if links, err = f.store.pullLinks(context.Background(), repo, 3, nil); err != nil || !links["stacked"][1] {
+		t.Fatalf("links of a stacked pull request = %v, %v", links, err)
+	}
+	f.exec(`UPDATE pull_request SET cross_repository=1 WHERE number=1`)
+	if links, err = f.store.pullLinks(context.Background(), repo, 3, nil); err != nil || len(links["stacked"]) != 0 {
+		t.Fatalf("a fork's branch links: %v, %v", links, err)
+	}
+}
+
+// A pull request placed before its paths were known gets them, with no
+// call, and its feature is marked; new commits or links mark the features
+// they reach, an unchanged re-link none.
+func TestFeatureMarksOnPathsAndLinks(t *testing.T) {
+	f := newFeatureFixture(t)
+	ctx := context.Background()
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Export widgets", t0.Add(time.Minute), "h1", nil)
+	f.assign(FeatureOptions{})
+	feature := f.featureOf(1)
+	if feature == "" || f.membership(feature) != 1 {
+		t.Fatalf("placed without paths in %q", feature)
+	}
+	at := time.Unix(0, 0)
+	if err := f.store.SetPullPaths(ctx, repo, 1, "h1", []string{"export.go"}, []PullCommit{{SHA: "c1", CommittedAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	var placed string
+	_ = f.store.db.QueryRow(`SELECT assigned_paths_json FROM feature_pull WHERE number=1`).Scan(&placed)
+	if placed != `["export.go"]` || f.membership(feature) != 2 || f.backend.calls["assign"] != 1 {
+		t.Fatalf("placed paths %s, membership %d, calls %v", placed, f.membership(feature), f.backend.calls)
+	}
+	// Recording the same again marks nothing.
+	if err := f.store.SetPullPaths(ctx, repo, 1, "h1", []string{"export.go"}, []PullCommit{{SHA: "c1", CommittedAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.membership(feature) != 2 {
+		t.Fatalf("an unchanged read marked the feature: %d", f.membership(feature))
+	}
+	// A session placed on its own elsewhere, then linked to the commit:
+	// both features are marked; the same links again mark nothing.
+	f.pull(2, "Import widgets", t0.Add(2*time.Minute), "h2", []string{"import.go"})
+	f.backend.assign = func(string) (string, error) { return choose("new", "", "Import"), nil }
+	f.assign(FeatureOptions{})
+	other := f.featureOf(2)
+	f.saveSession("s1", "import.go")
+	f.exec(`INSERT INTO feature_session(version_id, repository, agent, session_id, feature_id, assigned_at)
+SELECT version_id, repository, 'claude-code', 's1', ?, 0 FROM feature WHERE id=?`, other, other)
+	before, otherBefore := f.membership(feature), f.membership(other)
+	link := []SessionCommit{{Agent: "claude-code", SessionID: "s1", SHA: "c1", Method: "entire", Confidence: 1}}
+	if err := f.store.ReplaceSessionCommits(ctx, repo, []string{"c1"}, link, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.membership(feature) != before+1 || f.membership(other) != otherBefore+1 {
+		t.Fatalf("a new link marked %d→%d, %d→%d", before, f.membership(feature), otherBefore, f.membership(other))
+	}
+	if err := f.store.ReplaceSessionCommits(ctx, repo, []string{"c1"}, link, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.membership(feature) != before+1 {
+		t.Fatal("an unchanged re-link marked the feature")
+	}
+	// A new head's commits mark the feature and the linked session's.
+	if err := f.store.SetPullPaths(ctx, repo, 1, "h1b", []string{"export.go"}, []PullCommit{{SHA: "c1", CommittedAt: at}, {SHA: "c2", CommittedAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.membership(feature) != before+2 || f.membership(other) != otherBefore+2 {
+		t.Fatalf("new commits marked %d, %d", f.membership(feature), f.membership(other))
+	}
+}
+
+// A repository turned off, or a daily cap reached, during a run stops it
+// before the next item; a run cut short counts no failure.
+func TestPlacementRereadsTheGateAndCap(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
+	f.pull(2, "Two", t0.Add(2*time.Minute), "h2", []string{"b"})
+	f.pull(3, "Three", t0.Add(3*time.Minute), "h3", []string{"c"})
+	f.backend.onCall = func() { f.off = true }
+	if report := f.assign(FeatureOptions{}); len(report.Items) != 1 || report.Stopped != "disabled" {
+		t.Fatalf("report = %+v", report)
+	}
+	f.off = false
+	limit := 100.0
+	f.prefs.Decisions.DailyCap = &limit
+	f.backend.onCall = func() { limit = 0 }
+	if report := f.assign(FeatureOptions{}); len(report.Items) != 1 || report.Stopped != ReasonDailyCap {
+		t.Fatalf("report = %+v", report)
+	}
+	limit = 100
+	ctx, cancel := context.WithCancel(context.Background())
+	f.backend.onCall = cancel
+	f.backend.assign = func(string) (string, error) { return "", context.Canceled }
+	if _, err := f.worker.Assign(ctx, repo, t.TempDir(), FeatureOptions{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	var failures int
+	_ = f.store.db.QueryRow(`SELECT COALESCE(SUM(failures), 0) FROM feature_settle`).Scan(&failures)
+	if failures != 0 || !slices.Equal(f.pending(), []string{"opened:3"}) {
+		t.Fatalf("failures %d, pending %v", failures, f.pending())
+	}
+}
+
+// A dry run on a repository never placed records nothing.
+func TestPlacementDryRunWritesNothing(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.exec(`DELETE FROM pull_sync`)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
+	f.assign(FeatureOptions{DryRun: true})
+	var rows int
+	_ = f.store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM pull_sync) + (SELECT COUNT(*) FROM feature_version) + (SELECT COUNT(*) FROM feature_settle)`).Scan(&rows)
+	if rows != 0 {
+		t.Fatalf("a dry run wrote %d rows", rows)
 	}
 }

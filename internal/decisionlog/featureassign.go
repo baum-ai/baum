@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -113,13 +115,9 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 	if err != nil {
 		return report, err
 	}
-	state, err := w.Store.Activate(ctx, repository)
+	activated, err := r.activation(ctx)
 	if err != nil {
 		return report, err
-	}
-	activated := state.ActivatedAt
-	if o.Manual {
-		activated = time.Time{}
 	}
 	items, small, err := r.pendingPlacements(ctx, activated)
 	report.SmallUpdates = small
@@ -133,6 +131,10 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 	for _, item := range items[:min(len(items), limit)] {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
+		}
+		if on, err := r.refresh(ctx); err != nil || !on {
+			report.Stopped = "disabled"
+			return report, err
 		}
 		placed, err := r.place(ctx, item)
 		if placed.Cost != nil {
@@ -159,55 +161,30 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 func (r *featureRun) pendingPlacements(ctx context.Context, activated time.Time) ([]assignItem, int, error) {
 	s, version := r.w.Store, r.version
 	opened := later(activated, r.now.Add(-FeatureLookback))
-	var items []assignItem
-	add := func(rows *sql.Rows, scan func() (assignItem, error)) error {
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			item, err := scan()
-			if err != nil {
-				return err
-			}
-			items = append(items, item)
-		}
-		return rows.Err()
-	}
 	// A pull request in no feature, opened since the activation and within
 	// the lookback, once its paths are known or it waited for them.
-	rows, err := s.db.QueryContext(ctx, `SELECT number, head_sha, created_at FROM pull_request p WHERE repository=?1 AND bot=0
+	items, err := collect(func(rows *sql.Rows) (assignItem, error) {
+		item := assignItem{Kind: kindPull, Trigger: TriggerOpened}
+		return item, rows.Scan(&item.Number, &item.Key, &item.at)
+	})(s.db.QueryContext(ctx, `SELECT number, head_sha, created_at FROM pull_request p WHERE repository=?1 AND bot=0
 AND created_at >= ?2 AND ((paths_head_sha = head_sha AND paths_json IS NOT NULL) OR created_at <= ?3)
 AND NOT EXISTS (SELECT 1 FROM feature_pull fp WHERE fp.version_id=?4 AND fp.repository=p.repository AND fp.number=p.number)`,
-		r.repository, opened.UnixMilli(), r.now.Add(-FeatureQuiet).UnixMilli(), version)
+		r.repository, opened.UnixMilli(), r.now.Add(-FeatureQuiet).UnixMilli(), version))
 	if err != nil {
-		return nil, 0, err
-	}
-	if err := add(rows, func() (assignItem, error) {
-		item := assignItem{Kind: kindPull, Trigger: TriggerOpened}
-		err := rows.Scan(&item.Number, &item.Key, &item.at)
-		return item, err
-	}); err != nil {
 		return nil, 0, err
 	}
 	// A pull request the assigner placed that merged since, once.
-	rows, err = s.db.QueryContext(ctx, `SELECT p.number, p.merged_at FROM feature_pull fp
+	merged, err := collect(func(rows *sql.Rows) (assignItem, error) {
+		item := assignItem{Kind: kindPull, Trigger: TriggerMerged, Key: TriggerMerged}
+		return item, rows.Scan(&item.Number, &item.at)
+	})(s.db.QueryContext(ctx, `SELECT p.number, p.merged_at FROM feature_pull fp
 JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE fp.version_id=?1 AND fp.repository=?2 AND fp.assigned_by=?3 AND fp.assigned_merged=0 AND p.merged_at IS NOT NULL`,
-		version, r.repository, assignedByAssigner)
+		version, r.repository, assignedByAssigner))
 	if err != nil {
 		return nil, 0, err
 	}
-	if err := add(rows, func() (assignItem, error) {
-		item := assignItem{Kind: kindPull, Trigger: TriggerMerged, Key: TriggerMerged}
-		err := rows.Scan(&item.Number, &item.at)
-		return item, err
-	}); err != nil {
-		return nil, 0, err
-	}
-	merged := map[int]bool{}
-	for _, item := range items {
-		if item.Trigger == TriggerMerged {
-			merged[item.Number] = true
-		}
-	}
+	items = append(items, merged...)
 	// An open pull request whose new head, its paths known, changed them
 	// enough; one that did not is checked once.
 	type moved struct {
@@ -216,23 +193,14 @@ WHERE fp.version_id=?1 AND fp.repository=?2 AND fp.assigned_by=?3 AND fp.assigne
 		paths, assigned string
 		at              int64
 	}
-	var heads []moved
-	rows, err = s.db.QueryContext(ctx, `SELECT p.number, p.head_sha, p.paths_json, fp.assigned_paths_json, p.updated_at FROM feature_pull fp
+	heads, err := collect(func(rows *sql.Rows) (moved, error) {
+		var m moved
+		return m, rows.Scan(&m.number, &m.head, &m.paths, &m.assigned, &m.at)
+	})(s.db.QueryContext(ctx, `SELECT p.number, p.head_sha, p.paths_json, fp.assigned_paths_json, p.updated_at FROM feature_pull fp
 JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE fp.version_id=?1 AND fp.repository=?2 AND p.state='open' AND p.merged_at IS NULL AND p.head_sha != fp.assigned_head_sha
-AND p.head_sha != fp.checked_head_sha AND p.paths_head_sha = p.head_sha AND p.paths_json IS NOT NULL`, version, r.repository)
+AND p.head_sha != fp.checked_head_sha AND p.paths_head_sha = p.head_sha AND p.paths_json IS NOT NULL`, version, r.repository))
 	if err != nil {
-		return nil, 0, err
-	}
-	for rows.Next() {
-		var m moved
-		if err := rows.Scan(&m.number, &m.head, &m.paths, &m.assigned, &m.at); err != nil {
-			_ = rows.Close()
-			return nil, 0, err
-		}
-		heads = append(heads, m)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, 0, err
 	}
 	small := 0
@@ -242,9 +210,7 @@ AND p.head_sha != fp.checked_head_sha AND p.paths_head_sha = p.head_sha AND p.pa
 			return nil, 0, err
 		}
 		if features.LargeUpdate(assigned, current, FeatureReassignShare, FeatureReassignPaths) {
-			if !merged[m.number] {
-				items = append(items, assignItem{Kind: kindPull, Trigger: TriggerUpdated, Key: m.head, Number: m.number, at: m.at})
-			}
+			items = append(items, assignItem{Kind: kindPull, Trigger: TriggerUpdated, Key: m.head, Number: m.number, at: m.at})
 			continue
 		}
 		small++
@@ -257,23 +223,20 @@ AND p.head_sha != fp.checked_head_sha AND p.paths_head_sha = p.head_sha AND p.pa
 	}
 	// A captured session with current decisions, quiet since its last
 	// extraction, in no feature and linked to no pull request's commit.
-	rows, err = s.db.QueryContext(ctx, `SELECT cs.agent, cs.session_id, cs.content_hash, cs.extracted_at FROM capture_session cs
+	sessions, err := collect(func(rows *sql.Rows) (assignItem, error) {
+		item := assignItem{Kind: kindSession, Trigger: TriggerQuiet}
+		return item, rows.Scan(&item.Session.Agent, &item.Session.ID, &item.Key, &item.at)
+	})(s.db.QueryContext(ctx, `SELECT cs.agent, cs.session_id, cs.content_hash, cs.extracted_at FROM capture_session cs
 WHERE cs.repository=?1 AND cs.extracted_at >= ?2 AND cs.extracted_at <= ?3
 AND EXISTS (SELECT 1 FROM current_decision d WHERE d.agent=cs.agent AND d.session_id=cs.session_id AND d.superseded=0)
 AND NOT EXISTS (SELECT 1 FROM feature_session fs WHERE fs.version_id=?4 AND fs.repository=cs.repository AND fs.agent=cs.agent AND fs.session_id=cs.session_id)
 AND NOT EXISTS (SELECT 1 FROM session_commit sc JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
   WHERE sc.repository=cs.repository AND sc.agent=cs.agent AND sc.session_id=cs.session_id)`,
-		r.repository, later(activated.Add(-FeatureQuiet), r.now.Add(-FeatureLookback)).UnixMilli(), r.now.Add(-FeatureQuiet).UnixMilli(), version)
+		r.repository, later(activated.Add(-FeatureQuiet), r.now.Add(-FeatureLookback)).UnixMilli(), r.now.Add(-FeatureQuiet).UnixMilli(), version))
 	if err != nil {
 		return nil, 0, err
 	}
-	if err := add(rows, func() (assignItem, error) {
-		item := assignItem{Kind: kindSession, Trigger: TriggerQuiet}
-		err := rows.Scan(&item.Session.Agent, &item.Session.ID, &item.Key, &item.at)
-		return item, err
-	}); err != nil {
-		return nil, 0, err
-	}
+	items = append(items, sessions...)
 
 	settled, err := s.settleRows(ctx, version, r.repository)
 	if err != nil {
@@ -384,13 +347,20 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 	case result.Skip != "":
 		out.Reason = result.Skip
 		return out, callErr
+	case callErr != nil && ctx.Err() != nil:
+		// Cut short by the daemon stopping: not the item's failure.
+		return out, ctx.Err()
 	case callErr != nil:
-		return r.deferItem(ctx, item, out, map[bool]int{true: 1}[result.Called], callErr)
+		out.Outcome, err = r.backOff(ctx, item.Kind, item.name(), item.Key, map[bool]int{true: 1}[result.Called], callErr)
+		out.Error = callErr.Error()
+		return out, err
 	}
 	choice, err := assign.Public.ParseReply(AssignVersion, result.JSON, candidates)
 	if err != nil {
 		// Paid for, and never written.
-		return r.deferItem(ctx, item, out, 1, err)
+		out.Error = err.Error()
+		out.Outcome, err = r.backOff(ctx, item.Kind, item.name(), item.Key, 1, err)
+		return out, err
 	}
 	if item.Kind == kindSession && (choice.New != nil || choice.Skip) {
 		// A session never starts a feature.
@@ -419,7 +389,9 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 	}
 	if err != nil {
 		// Paid for but not kept.
-		return r.deferItem(write, item, out, 1, err)
+		out.Error = err.Error()
+		out.Outcome, err = r.backOff(write, item.Kind, item.name(), item.Key, 1, err)
+		return out, err
 	}
 	return out, r.w.Store.settleItem(write, r.version, r.repository, item.Kind, item.name(), item.Key, "")
 }
@@ -433,16 +405,16 @@ func (r *featureRun) settle(ctx context.Context, item assignItem, out PlacedItem
 	return out, r.w.Store.settleItem(context.WithoutCancel(ctx), r.version, r.repository, item.Kind, item.name(), item.Key, "settled")
 }
 
-// deferItem backs off from the item after a failure, counting failed calls
-// against its trigger; at FeatureMaxFailures it waits for the next trigger.
-func (r *featureRun) deferItem(ctx context.Context, item assignItem, out PlacedItem, failed int, cause error) (PlacedItem, error) {
-	count, err := r.w.Store.deferItem(context.WithoutCancel(ctx), r.version, r.repository, item.Kind, item.name(), item.Key, failed, r.now.Add(FeatureBackoff))
-	out.Outcome, out.Error = FeatureDeferred, cause.Error()
+// backOff backs an item or feature off after a failure, counting failed
+// calls against its trigger key; at FeatureMaxFailures it waits for the next
+// trigger. It returns the outcome.
+func (r *featureRun) backOff(ctx context.Context, kind, item, key string, failed int, cause error) (string, error) {
+	count, err := r.w.Store.deferItem(context.WithoutCancel(ctx), r.version, r.repository, kind, item, key, failed, r.now.Add(FeatureBackoff))
+	r.w.logger().Warn("feature log: backing off", "repository", r.repository, "kind", kind, "error", cause)
 	if count >= FeatureMaxFailures {
-		out.Outcome = FeatureGivenUp
+		return FeatureGivenUp, err
 	}
-	r.w.logger().Warn("feature log: item deferred", "repository", r.repository, "kind", item.Kind, "error", cause)
-	return out, err
+	return FeatureDeferred, err
 }
 
 // candidateFeature is a feature an item may join, as ranked.
@@ -450,9 +422,9 @@ type candidateFeature struct {
 	ID, Title, Description, Digest string
 	last                           int64
 	Paths                          []string
-	// Pulls are its pull requests, earliest opened first.
-	Pulls []candidatePull
-	Links assign.Links
+	// PullRequests are its pull requests, earliest opened first.
+	PullRequests []candidatePull
+	Links        assign.Links
 
 	score                   float64
 	current, linked, byPath bool
@@ -477,16 +449,14 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 			return nil, err
 		}
 		for _, f := range found {
-			for i := len(f.Pulls) - 1; i >= 0; i-- {
-				number := f.Pulls[i].Number
-				for kind, list := range map[string]*[]int32{"stacked": &f.Links.Stacked, "sessions": &f.Links.SharedSessions, "mentioned": &f.Links.Mentioned} {
-					if links[kind][number] {
-						*list = append(*list, int32(number))
+			for kind, list := range map[string]*[]int32{"stacked": &f.Links.Stacked, "sessions": &f.Links.SharedSessions, "mentioned": &f.Links.Mentioned} {
+				for _, p := range f.PullRequests {
+					if links[kind][p.Number] {
+						*list = append(*list, int32(p.Number))
 					}
 				}
-			}
-			for _, list := range []*[]int32{&f.Links.Stacked, &f.Links.SharedSessions, &f.Links.Mentioned} {
-				slices.SortFunc(*list, func(a, b int32) int { return cmp.Compare(b, a) })
+				// Newest first.
+				slices.Reverse(*list)
 			}
 		}
 	}
@@ -499,12 +469,16 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 	for i, f := range ranked {
 		out[i] = assign.Candidate{ID: f.ID, Title: f.Title, Description: f.Description, Paths: f.Paths, Current: f.current,
 			Digest: f.Digest, Links: f.Links}
-		for _, p := range f.Pulls {
-			summary := r.reviewSummary(ctx, p.Number)
-			if summary == "" {
-				summary = generated[p.Number].Summary
+		out[i].PullRequests = make([]assign.CandidatePullRequest, len(f.PullRequests))
+		for j, p := range f.PullRequests {
+			out[i].PullRequests[j].Title = p.Title
+		}
+		// Only the sample the input shows needs its summaries.
+		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
+			number := f.PullRequests[j].Number
+			if out[i].PullRequests[j].Summary = r.reviewSummary(ctx, number); out[i].PullRequests[j].Summary == "" {
+				out[i].PullRequests[j].Summary = generated[number].Summary
 			}
-			out[i].PullRequests = append(out[i].PullRequests, assign.CandidatePullRequest{Title: p.Title, Summary: summary})
 		}
 	}
 	return out, nil
@@ -567,96 +541,76 @@ func rankCandidates(found []*candidateFeature, paths []string, current string, k
 // decisions of its sessions in it on their own that follow no feature pull
 // request) and pull requests.
 func (s *Store) candidateFeatures(ctx context.Context, version int64, repository string, since time.Time, current string) ([]*candidateFeature, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT f.id, f.title, f.description, f.digest,
+	found, err := collect(func(rows *sql.Rows) (*candidateFeature, error) {
+		f := &candidateFeature{}
+		return f, rows.Scan(&f.ID, &f.Title, &f.Description, &f.Digest, &f.last)
+	})(s.db.QueryContext(ctx, `SELECT f.id, f.title, f.description, f.digest,
 MAX(f.updated_at, COALESCE(MAX(MAX(p.created_at, p.updated_at, COALESCE(p.merged_at, 0), COALESCE(p.closed_at, 0), fp.assigned_at)), 0)) AS last
 FROM feature f LEFT JOIN feature_pull fp ON fp.version_id=f.version_id AND fp.feature_id=f.id
 LEFT JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE f.version_id=?1 AND f.repository=?2 AND f.merged_into IS NULL GROUP BY f.id HAVING last >= ?3 OR f.id = ?4`,
-		version, repository, since.UnixMilli(), current)
-	if err != nil {
+		version, repository, since.UnixMilli(), current))
+	if err != nil || len(found) == 0 {
 		return nil, err
 	}
 	byID := map[string]*candidateFeature{}
-	var found []*candidateFeature
-	for rows.Next() {
-		f := &candidateFeature{}
-		if err := rows.Scan(&f.ID, &f.Title, &f.Description, &f.Digest, &f.last); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
+	for _, f := range found {
 		byID[f.ID] = f
-		found = append(found, f)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil || len(found) == 0 {
-		return nil, err
+	type member struct {
+		feature string
+		pull    candidatePull
+		paths   string
 	}
-	paths := map[string]map[string]bool{}
-	hold := func(id, path string) {
-		if paths[id] == nil {
-			paths[id] = map[string]bool{}
-		}
-		paths[id][path] = true
-	}
-	rows, err = s.db.QueryContext(ctx, `SELECT fp.feature_id, p.number, p.title, fp.assigned_paths_json FROM feature_pull fp
+	members, err := collect(func(rows *sql.Rows) (member, error) {
+		var m member
+		return m, rows.Scan(&m.feature, &m.pull.Number, &m.pull.Title, &m.paths)
+	})(s.db.QueryContext(ctx, `SELECT fp.feature_id, p.number, p.title, fp.assigned_paths_json FROM feature_pull fp
 JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
-WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at, p.number`, version, repository)
+WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at, p.number`, version, repository))
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var id, assigned string
-		var pull candidatePull
-		if err := rows.Scan(&id, &pull.Number, &pull.Title, &assigned); err != nil {
-			_ = rows.Close()
-			return nil, err
+	paths := map[string]map[string]bool{}
+	hold := func(id string, held ...string) {
+		if paths[id] == nil {
+			paths[id] = map[string]bool{}
 		}
-		f := byID[id]
+		for _, path := range held {
+			paths[id][path] = true
+		}
+	}
+	for _, m := range members {
+		f := byID[m.feature]
 		if f == nil {
 			continue
 		}
-		f.Pulls = append(f.Pulls, pull)
+		f.PullRequests = append(f.PullRequests, m.pull)
 		var held []string
-		if err := json.Unmarshal([]byte(assigned), &held); err != nil {
-			_ = rows.Close()
+		if err := json.Unmarshal([]byte(m.paths), &held); err != nil {
 			return nil, err
 		}
-		for _, path := range held {
-			hold(id, path)
-		}
+		hold(m.feature, held...)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	rows, err = s.db.QueryContext(ctx, `SELECT DISTINCT fs.feature_id, df.path FROM feature_session fs
+	cited, err := collect(func(rows *sql.Rows) ([2]string, error) {
+		var pair [2]string
+		return pair, rows.Scan(&pair[0], &pair[1])
+	})(s.db.QueryContext(ctx, `SELECT DISTINCT fs.feature_id, df.path FROM feature_session fs
 JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
 JOIN current_decision d ON d.agent=fs.agent AND d.session_id=fs.session_id
 JOIN decision_file df ON df.decision_id=d.decision_id
 WHERE fs.version_id=?1 AND fs.repository=?2 AND NOT EXISTS (SELECT 1 FROM session_commit sc
   JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
   JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
-  WHERE sc.repository=fs.repository AND sc.agent=fs.agent AND sc.session_id=fs.session_id)`, version, repository)
+  WHERE sc.repository=fs.repository AND sc.agent=fs.agent AND sc.session_id=fs.session_id)`, version, repository))
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var id, path string
-		if err := rows.Scan(&id, &path); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		hold(id, path)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
+	for _, pair := range cited {
+		hold(pair[0], pair[1])
 	}
 	for _, f := range found {
-		f.Paths = slices.Sorted(func(yield func(string) bool) {
-			for path := range paths[f.ID] {
-				if !yield(path) {
-					return
-				}
-			}
-		})
+		f.Paths = slices.Sorted(maps.Keys(paths[f.ID]))
 	}
 	return found, nil
 }
@@ -675,7 +629,9 @@ func (s *Store) pullLinks(ctx context.Context, repository string, number int, me
 	}
 	for kind, query := range map[string]string{
 		"stacked": `SELECT o.number FROM pull_request i JOIN pull_request o ON o.repository=i.repository AND o.number != i.number
-WHERE i.repository=?1 AND i.number=?2 AND (o.head_ref = i.base_ref OR o.base_ref = i.head_ref)
+WHERE i.repository=?1 AND i.number=?2 AND i.cross_repository=0 AND o.cross_repository=0
+AND ((o.head_ref = i.base_ref AND i.base_ref NOT IN ('', i.default_branch))
+  OR (o.base_ref = i.head_ref AND i.head_ref NOT IN ('', i.default_branch)))
 AND (SELECT COUNT(*) FROM pull_request same WHERE same.repository=i.repository
   AND same.head_ref = CASE WHEN o.head_ref = i.base_ref THEN i.base_ref ELSE i.head_ref END) = 1`,
 		"sessions": `SELECT DISTINCT other.number FROM pull_commit item
@@ -684,20 +640,12 @@ JOIN session_commit shared ON shared.repository=linked.repository AND shared.age
 JOIN pull_commit other ON other.repository=shared.repository AND other.sha=shared.sha
 WHERE item.repository=?1 AND item.number=?2 AND other.number != item.number`,
 	} {
-		rows, err := s.db.QueryContext(ctx, query, repository, number)
+		numbers, err := collect(scanInt)(s.db.QueryContext(ctx, query, repository, number))
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var n int
-			if err := rows.Scan(&n); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
+		for _, n := range numbers {
 			links[kind][n] = true
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return nil, err
 		}
 	}
 	return links, nil
@@ -757,7 +705,12 @@ assigned_merged=excluded.assigned_merged, checked_head_sha=''`,
 			return nil
 		}
 		marked := []string{id, previous}
-		linked, err := pullSessionFeatures(ctx, tx, version, repository, pull.Number)
+		sessions, err := collect(scanSession)(tx.QueryContext(ctx, `SELECT DISTINCT sc.agent, sc.session_id FROM pull_commit pc
+JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha WHERE pc.repository=? AND pc.number=?`, repository, pull.Number))
+		if err != nil {
+			return err
+		}
+		linked, err := sessionFeatures(ctx, tx, version, repository, sessions)
 		if err != nil {
 			return err
 		}
@@ -785,60 +738,82 @@ assigned_at=excluded.assigned_at`, version, repository, session.Agent, session.I
 	return id, err
 }
 
-// pullSessionFeatures are the features of the captured sessions linked to
-// the pull request's commits (sessionFeatures).
-func pullSessionFeatures(ctx context.Context, tx *sql.Tx, version int64, repository string, number int) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT sc.agent, sc.session_id FROM pull_commit pc
-JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha WHERE pc.repository=? AND pc.number=?`, repository, number)
-	if err != nil {
-		return nil, err
+// sessionFeatures are the features the sessions' decisions may be
+// attributed to: those of the pull requests their commits are linked to,
+// and those they are in on their own.
+func sessionFeatures(ctx context.Context, tx *sql.Tx, version int64, repository string, sessions []SessionKey) ([]string, error) {
+	if len(sessions) == 0 {
+		return nil, nil
 	}
-	var sessions []SessionKey
-	for rows.Next() {
-		var key SessionKey
-		if err := rows.Scan(&key.Agent, &key.ID); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		sessions = append(sessions, key)
+	args := []any{version, repository}
+	values := make([]string, len(sessions))
+	for i, key := range sessions {
+		values[i] = "(" + placeholders(len(args)+1, 2) + ")"
+		args = append(args, key.Agent, key.ID)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
+	return collect(scanString)(tx.QueryContext(ctx, `WITH linked(agent, session_id) AS (VALUES `+strings.Join(values, ",")+`)
+SELECT fp.feature_id FROM linked JOIN session_commit sc ON sc.repository=?2 AND sc.agent=linked.agent AND sc.session_id=linked.session_id
+JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
+JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
+UNION SELECT fs.feature_id FROM linked JOIN feature_session fs ON fs.version_id=?1 AND fs.repository=?2
+AND fs.agent=linked.agent AND fs.session_id=linked.session_id`, args...))
+}
+
+// commitSessions are the sessions linked to the commits shas.
+func commitSessions(ctx context.Context, tx *sql.Tx, repository string, shas []string) ([]SessionKey, error) {
+	if len(shas) == 0 {
+		return nil, nil
 	}
-	var ids []string
-	for _, key := range sessions {
-		features, err := sessionFeatures(ctx, tx, version, repository, key)
+	args := []any{repository}
+	for _, sha := range shas {
+		args = append(args, sha)
+	}
+	return collect(scanSession)(tx.QueryContext(ctx, `SELECT DISTINCT agent, session_id FROM session_commit
+WHERE repository=?1 AND sha IN (`+placeholders(2, len(shas))+`)`, args...))
+}
+
+// placeholders are n numbered parameters from first: "?3,?4".
+func placeholders(first, n int) string {
+	list := make([]string, n)
+	for i := range list {
+		list[i] = "?" + strconv.Itoa(first+i)
+	}
+	return strings.Join(list, ",")
+}
+
+// collect scans every row with scan and closes the rows; it takes a query's
+// results as they are returned.
+func collect[T any](scan func(*sql.Rows) (T, error)) func(*sql.Rows, error) ([]T, error) {
+	return func(rows *sql.Rows, err error) ([]T, error) {
 		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, features...)
+		var out []T
+		for rows.Next() {
+			value, err := scan(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out = append(out, value)
+		}
+		return out, errors.Join(rows.Err(), rows.Close())
 	}
-	return ids, nil
 }
 
-// sessionFeatures are the features a session's decisions may be attributed
-// to: those of the pull requests its commits are linked to, and the one it
-// is in on its own.
-func sessionFeatures(ctx context.Context, tx *sql.Tx, version int64, repository string, session SessionKey) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT fp.feature_id FROM session_commit sc
-JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
-JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
-WHERE sc.repository=?2 AND sc.agent=?3 AND sc.session_id=?4
-UNION SELECT feature_id FROM feature_session WHERE version_id=?1 AND repository=?2 AND agent=?3 AND session_id=?4`,
-		version, repository, session.Agent, session.ID)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, errors.Join(rows.Err(), rows.Close())
+func scanString(rows *sql.Rows) (string, error) {
+	var value string
+	return value, rows.Scan(&value)
+}
+
+func scanInt(rows *sql.Rows) (int, error) {
+	var value int
+	return value, rows.Scan(&value)
+}
+
+func scanSession(rows *sql.Rows) (SessionKey, error) {
+	var key SessionKey
+	return key, rows.Scan(&key.Agent, &key.ID)
 }
 
 // markFeatures records a change to the features' inputs: their membership
@@ -874,22 +849,20 @@ func (s settleStates) waiting(kind, item, key string, now time.Time) bool {
 }
 
 func (s *Store) settleRows(ctx context.Context, version int64, repository string) (settleStates, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT kind, item, trigger_key, outcome, failures, COALESCE(next_at, 0) FROM feature_settle
-WHERE version_id=? AND repository=?`, version, repository)
-	if err != nil {
-		return nil, err
+	type row struct {
+		kind, item string
+		state      settleState
 	}
+	rows, err := collect(func(rows *sql.Rows) (row, error) {
+		var r row
+		return r, rows.Scan(&r.kind, &r.item, &r.state.key, &r.state.outcome, &r.state.failures, &r.state.next)
+	})(s.db.QueryContext(ctx, `SELECT kind, item, trigger_key, outcome, failures, COALESCE(next_at, 0) FROM feature_settle
+WHERE version_id=? AND repository=?`, version, repository))
 	out := settleStates{}
-	for rows.Next() {
-		var kind, item string
-		var row settleState
-		if err := rows.Scan(&kind, &item, &row.key, &row.outcome, &row.failures, &row.next); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		out[[2]string{kind, item}] = row
+	for _, r := range rows {
+		out[[2]string{r.kind, r.item}] = r.state
 	}
-	return out, errors.Join(rows.Err(), rows.Close())
+	return out, err
 }
 
 // settleItem records an item settled for its trigger key with outcome, or,
@@ -924,19 +897,17 @@ type generatedSummary struct {
 
 // pullSummaries reads the repository's generated pull request summaries.
 func (s *Store) pullSummaries(ctx context.Context, repository string) (map[int]generatedSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT number, content_hash, summary FROM pr_summary WHERE repository=?`, repository)
-	if err != nil {
-		return nil, err
+	type row struct {
+		number  int
+		summary generatedSummary
 	}
+	rows, err := collect(func(rows *sql.Rows) (row, error) {
+		var r row
+		return r, rows.Scan(&r.number, &r.summary.Hash, &r.summary.Summary)
+	})(s.db.QueryContext(ctx, `SELECT number, content_hash, summary FROM pr_summary WHERE repository=?`, repository))
 	out := map[int]generatedSummary{}
-	for rows.Next() {
-		var number int
-		var g generatedSummary
-		if err := rows.Scan(&number, &g.Hash, &g.Summary); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		out[number] = g
+	for _, r := range rows {
+		out[r.number] = r.summary
 	}
-	return out, errors.Join(rows.Err(), rows.Close())
+	return out, err
 }

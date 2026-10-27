@@ -26,10 +26,15 @@ type ListedPull struct {
 	Draft bool
 	// Author is the opener's login; Bot is set when GitHub reports the
 	// account as a bot.
-	Author               string
-	Bot                  bool
-	HeadRef, HeadSHA     string
-	BaseRef, BaseSHA     string
+	Author           string
+	Bot              bool
+	HeadRef, HeadSHA string
+	BaseRef, BaseSHA string
+	// CrossRepository is set when the head is in another repository than
+	// the base (a fork's, or one deleted since).
+	CrossRepository bool
+	// DefaultBranch is the base repository's default branch.
+	DefaultBranch        string
 	MergeCommitSHA       string
 	CreatedAt, UpdatedAt time.Time
 	MergedAt, ClosedAt   *time.Time
@@ -124,8 +129,12 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 				Type  string `json:"type"`
 			} `json:"user"`
 			Head, Base struct {
-				Ref string `json:"ref"`
-				SHA string `json:"sha"`
+				Ref  string `json:"ref"`
+				SHA  string `json:"sha"`
+				Repo *struct {
+					ID            int64  `json:"id"`
+					DefaultBranch string `json:"default_branch"`
+				} `json:"repo"`
 			}
 		}
 		if err := json.Unmarshal(body, &rows); err != nil {
@@ -147,6 +156,10 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 			}
 			if row.Body != nil {
 				pull.Body = *row.Body
+			}
+			if base := row.Base.Repo; base != nil {
+				pull.DefaultBranch = base.DefaultBranch
+				pull.CrossRepository = row.Head.Repo == nil || row.Head.Repo.ID != base.ID
 			}
 			if row.MergeCommitSHA != nil {
 				pull.MergeCommitSHA = *row.MergeCommitSHA

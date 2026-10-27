@@ -313,12 +313,7 @@ type callResult struct {
 // finish; the attempt names its stage and item. An error is a failed call
 // or a ledger write.
 func (c caller) complete(ctx context.Context, prefs repos.Preferences, settings repos.Settings, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
-	schema, err := json.Marshal(req.Schema)
-	if err != nil {
-		return callResult{}, err
-	}
-	maxTokens := int64(len(req.System)+len(req.User)+len(schema)) + decisions.FramingTokens
-	p, skip := c.plan(ctx, prefs, settings, backend, model, maxTokens, req.MaxOutputTokens)
+	p, skip := c.plan(ctx, prefs, settings, backend, model, decisions.MaxRequestTokens(req), req.MaxOutputTokens)
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}

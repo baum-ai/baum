@@ -231,8 +231,10 @@ by the decisions of its sessions placed on their own that follow no feature
 pull request. Each of the item's paths a feature holds scores one over the
 number of these features holding it. The current feature comes first, then
 the features holding a pull request linked to the item (stacked on it or it
-on them, by base and head branch when one pull request only was opened from
-that branch; sharing a linked session; or mentioned as `#N`), best path
+on them: one's base branch is the other's head branch, other than the
+default branch, both in the repository rather than a fork, and opened from
+by one pull request only; sharing a linked session; or mentioned as `#N`),
+best path
 score first, then the best path scores of the rest (10), then the most
 recently changed. Each candidate shows its digest and its pull requests'
 titles with their saved review summaries, else generated ones.
@@ -246,11 +248,21 @@ their next trigger (`feature_settle`). A failed call, an invalid reply or a
 failed write after a call backs the item off for 10 minutes; after 3 counted
 failures for one trigger it waits for the next.
 
+The preferences and the repository's settings are read again before each
+item, so a repository turned off stops the run and a lowered daily cap
+holds for the next call. A call cut short by the daemon stopping counts no
+failure. A pull request placed at its head before its paths were known gets
+them as the paths it was placed with once they are recorded, with no call.
+
 A placement marks every feature it changes: the one joined, the one left
 and the features of the pull request's linked sessions; an identical one
-marks none. New decisions of a session mark its features, and a pull
-request whose title, description or state changed marks its feature.
-Marking raises `membership_version` and sets `dirty_since` and `changed_at`.
+marks none. Also marked: a session's features when its decisions are saved;
+a feature pull request's feature when its title, description or state
+changes, and, with the features of the sessions linked to its old and new
+commits, when its commits or paths change; and when the sessions linked to
+a commit change, the features holding a pull request with it and the
+features of those sessions (an unchanged re-link marks none). Marking
+raises `membership_version` and sets `dirty_since` and `changed_at`.
 
 ### Feature text
 
@@ -268,7 +280,9 @@ its title, description and the feature's decisions of the sessions linked
 to it, kept in `pr_summary` with its input's hash and reused while that is
 unchanged; one with neither a description nor such a decision gets none.
 
-The text is kept with the hash of its input and its own text. When a
+The text is kept with the hash of its input and its own text, decisions
+named by session and first cited turn, so the same decisions extracted again
+under new IDs keep it. When a
 feature's input hash is unchanged, its text is kept and it is marked clean
 without a call. The text is stored only when the feature's members did not
 change during the call; otherwise it stays behind for the next run. Up to
@@ -312,7 +326,8 @@ days, default 180) and `baum internal features link --repo <owner/name>
 counts as JSON. `baum internal features assign --repo <owner/name> [--clone
 <path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
 once, ignoring the activation, and prints each item; `--dry-run` prints each
-item's candidates and input size, makes no call and writes nothing.
+item's candidates and input size, makes no call and writes nothing. Both fail
+when the preferences cannot be read.
 `baum internal features summarize` takes the same flags but `--dry-run` and
 writes the text of the features behind, without the debounce. The clone
 defaults to the repository's registered one. They are for testing, with the

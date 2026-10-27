@@ -417,7 +417,7 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 		if err != nil || version == 0 {
 			return err
 		}
-		marked, err := sessionFeatures(ctx, tx, version, e.Repository, SessionKey{Agent: e.Agent, ID: e.ID})
+		marked, err := sessionFeatures(ctx, tx, version, e.Repository, []SessionKey{{Agent: e.Agent, ID: e.ID}})
 		if err != nil {
 			return err
 		}

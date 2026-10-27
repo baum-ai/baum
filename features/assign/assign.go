@@ -306,15 +306,29 @@ func renderCandidate(i int, candidate Candidate, first []string, listed bool) re
 // samplePullRequests is at most limit of pulls, evenly spread from the
 // earliest to the latest, which is always included.
 func samplePullRequests(pulls []CandidatePullRequest, limit int) []CandidatePullRequest {
-	if len(pulls) <= limit {
-		return pulls
-	}
-	sample := make([]CandidatePullRequest, 0, limit)
-	for i := range limit {
-		sample = append(sample, pulls[i*(len(pulls)-1)/(limit-1)])
+	sample := make([]CandidatePullRequest, 0, min(len(pulls), limit))
+	for _, i := range sampleIndexes(len(pulls), limit) {
+		sample = append(sample, pulls[i])
 	}
 	return sample
 }
+
+func sampleIndexes(n, limit int) []int {
+	indexes := make([]int, 0, min(n, limit))
+	for i := range min(n, limit) {
+		if n <= limit {
+			indexes = append(indexes, i)
+		} else {
+			indexes = append(indexes, i*(n-1)/(limit-1))
+		}
+	}
+	return indexes
+}
+
+// SampledPullRequests are the indexes, among a candidate's n pull requests,
+// of those a listing version shows with their summaries, so a host reads
+// only those summaries.
+func SampledPullRequests(n int) []int { return sampleIndexes(n, maxCandidatePullRequests) }
 
 // maxLinkNumbers bounds each kind of a candidate's links.
 const maxLinkNumbers = 10
