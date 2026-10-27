@@ -402,6 +402,57 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await expect(row.getByText("Agent")).toHaveCount(0);
 });
 
+test("a session's transcript opens from the Sessions page and grows without a reload", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // The fixture turns the marker's first line into hook events of one Claude
+  // Code session and its other lines into the transcript its hooks name.
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-transcript");
+  await writeFile(marker, "running\nFix the flaky retry test\n");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const open = page
+    .getByRole("region", { name: "Running now", exact: true })
+    .getByRole("link", { name: /^Open transcript/ });
+  await expect(open).toBeVisible({ timeout: 10000 });
+  await open.click();
+  await expect(
+    page.getByRole("heading", { name: "Claude Code session", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Working");
+  await expect(
+    page.getByText("Local transcript; secrets and e-mail addresses masked."),
+  ).toBeVisible();
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  await expect(transcript.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Done: Fix the flaky retry test")).toBeVisible();
+  // The agent writes another turn without a hook event: the open view shows
+  // it without a reload, and masks the address in it.
+  let loads = 0;
+  page.on("load", () => loads++);
+  await writeFile(
+    marker,
+    "running\nFix the flaky retry test\nMail ada.lovelace@example.com the summary\n",
+  );
+  await expect(transcript.getByText(/^Mail .* the summary$/)).toBeVisible({ timeout: 15000 });
+  await expect(transcript.getByText("ada.lovelace@example.com")).toHaveCount(0);
+  await expect(transcript.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  expect(loads).toBe(0);
+  // Ended, the view says so; u goes back to the list, which keeps it.
+  await writeFile(
+    marker,
+    "ended\nFix the flaky retry test\nMail ada.lovelace@example.com the summary\n",
+  );
+  await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Ended", {
+    timeout: 10000,
+  });
+  await page.keyboard.press("u");
+  await expect(page.getByRole("region", { name: "Ended recently", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
   page,
 }, testInfo) => {

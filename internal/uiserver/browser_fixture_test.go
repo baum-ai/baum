@@ -38,6 +38,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
 
@@ -128,19 +129,31 @@ func (browserLiveLinker) Link(_ context.Context, cwd string) (livesessions.Link,
 	return livesessions.Link{Repository: "acme/demo", Branch: "feature", PR: 7}, cwd == "/fixture/live"
 }
 
-// feedLiveSession records a hook event for the agent session "live-e2e"
-// whenever the browser test writes its marker file: "running", "idle" or
-// "ended".
-func feedLiveSession(ctx context.Context, events *hookevents.Store, marker string) {
+// feedLiveSession records a hook event for the Claude Code session id
+// whenever the first line of the browser test's marker file changes:
+// "running", "idle" or "ended". With a transcript path, the hooks name it and
+// the marker's other lines are the session's prompts: each change of them
+// rewrites the transcript there, each prompt with a reply, without a hook
+// event, as an agent writes its transcript between hooks.
+func feedLiveSession(ctx context.Context, events *hookevents.Store, marker, id, transcript string) {
 	names := map[string]string{"running": "user-prompt-submit", "idle": "stop", "ended": "session-end"}
-	var last string
+	var last, lastPrompts string
+	// The turns started a few minutes ago, a minute apart.
+	start := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 	for ticker := time.NewTicker(100 * time.Millisecond); ; {
-		if data, err := os.ReadFile(marker); err == nil && string(data) != last {
-			last = string(data)
-			if name, ok := names[last]; ok {
-				e := hookevents.New(hookevents.KindAgent, "claude-code", name, "/fixture/live", "fixture")
-				e.Session = &hookevents.Session{ID: "live-e2e", Cwd: "/fixture/live"}
-				_, _ = events.Add(e, hookevents.ViaSocket)
+		if data, err := os.ReadFile(marker); err == nil {
+			state, prompts, _ := strings.Cut(string(data), "\n")
+			if transcript != "" && prompts != lastPrompts {
+				lastPrompts = prompts
+				writeFixtureTranscript(transcript, id, start, strings.Split(strings.TrimSpace(prompts), "\n"))
+			}
+			if state != last {
+				last = state
+				if name, ok := names[state]; ok {
+					e := hookevents.New(hookevents.KindAgent, "claude-code", name, "/fixture/live", "fixture")
+					e.Session = &hookevents.Session{ID: id, Cwd: "/fixture/live", TranscriptPath: transcript}
+					_, _ = events.Add(e, hookevents.ViaSocket)
+				}
 			}
 		}
 		select {
@@ -148,6 +161,36 @@ func feedLiveSession(ctx context.Context, events *hookevents.Store, marker strin
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// writeFixtureTranscript replaces the Claude Code transcript at path with one
+// turn per prompt, each answered "Done: <prompt>", in the lines Claude Code
+// writes.
+func writeFixtureTranscript(path, id string, start time.Time, prompts []string) {
+	var lines strings.Builder
+	for i, prompt := range prompts {
+		if prompt == "" {
+			continue
+		}
+		at := start.Add(time.Duration(i) * time.Minute)
+		user, _ := json.Marshal(map[string]any{"parentUuid": nil, "isSidechain": false, "cwd": "/fixture/live", "gitBranch": "feature",
+			"type": "user", "uuid": fmt.Sprintf("u-%d", i), "sessionId": id, "timestamp": at.Format(time.RFC3339Nano), "promptId": fmt.Sprintf("p-%d", i),
+			"message": map[string]any{"role": "user", "content": prompt}})
+		reply, _ := json.Marshal(map[string]any{"parentUuid": fmt.Sprintf("u-%d", i), "isSidechain": false, "cwd": "/fixture/live", "gitBranch": "feature",
+			"type": "assistant", "uuid": fmt.Sprintf("a-%d", i), "sessionId": id, "timestamp": at.Add(20 * time.Second).Format(time.RFC3339Nano), "requestId": fmt.Sprintf("req-%d", i),
+			"message": map[string]any{"id": fmt.Sprintf("msg-%d", i), "role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn",
+				"usage":   map[string]any{"input_tokens": 1200, "output_tokens": 80},
+				"content": []any{map[string]any{"type": "text", "text": "Done: " + prompt}}}})
+		lines.Write(user)
+		lines.WriteByte('\n')
+		lines.Write(reply)
+		lines.WriteByte('\n')
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	temporary := path + ".tmp"
+	if os.WriteFile(temporary, []byte(lines.String()), 0o600) == nil {
+		_ = os.Rename(temporary, path)
 	}
 }
 
@@ -392,6 +435,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	defer stop()
 	liveMarker := filepath.Join(state, "live-session")
 	_ = os.Remove(liveMarker)
+	// A second session, whose transcript the browser test opens and grows.
+	transcriptMarker := filepath.Join(state, "live-transcript")
+	_ = os.Remove(transcriptMarker)
+	transcriptPath := filepath.Join(home, ".claude", "projects", "-fixture-live", "transcript-e2e.jsonl")
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
@@ -439,7 +486,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}).Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
 			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
@@ -448,7 +495,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				go repositoryService.Run(ctx)
 				go scheduler.Run(ctx)
 				go live.Run(ctx)
-				go feedLiveSession(ctx, events, liveMarker)
+				go feedLiveSession(ctx, events, liveMarker, "live-e2e", "")
+				go feedLiveSession(ctx, events, transcriptMarker, "transcript-e2e", transcriptPath)
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {
