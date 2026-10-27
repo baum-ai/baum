@@ -37,6 +37,8 @@ type Response struct {
 	Status *Status         `json:"status,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *Error          `json:"error,omitempty"`
+	// written is the Delivery's Written of the method that answered.
+	written func(error)
 }
 
 // Error is a failed request. Code is stable; Message is for people.

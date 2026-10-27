@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,9 @@ func startFakeAppDaemon(t *testing.T, paths daemon.Paths) *fakeAppDaemon {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
+	// An interactive Claude Code session, whatever runs the tests.
+	t.Setenv(claudeEntrypointEnv, "cli")
+	t.Setenv(claudeAttendedEnv, "1")
 	fake := &fakeAppDaemon{}
 	go func() {
 		for {
@@ -173,9 +177,10 @@ func TestPermissionRequestSendsTheDaemonWhatTheAppShows(t *testing.T) {
 		t.Fatal(err)
 	}
 	ask := fake.lastAsk(t)
-	want := []agentrequests.Row{{Label: "Command", Value: "just platform::test ./internal/githubgit/...", Code: true}, {Label: "Description", Value: "Run the githubgit tests"}}
-	if ask.Agent != "claude-code" || ask.SessionID != "s-1" || ask.Kind != "permission" || ask.Tool != "Bash" || len(ask.Input) != 2 || ask.Input[0] != want[0] || ask.Input[1] != want[1] ||
-		ask.StartedAt.Before(start.Add(-time.Second)) || ask.Questions != nil {
+	want := []agentrequests.Row{{Label: "Command", Value: "just platform::test ./internal/githubgit/...", Code: true}, {Label: "Description", Value: "Run the githubgit tests"},
+		{Label: "Other input", Value: `{"timeout":120000}`, Code: true}}
+	if ask.Agent != "claude-code" || ask.SessionID != "s-1" || ask.AgentID != "" || ask.Kind != "permission" || ask.Tool != "Bash" || len(ask.Input) != 3 ||
+		ask.Input[0] != want[0] || ask.Input[1] != want[1] || ask.Input[2] != want[2] || ask.StartedAt.Before(start.Add(-time.Second)) || ask.Questions != nil {
 		t.Fatalf("ask = %+v", ask)
 	}
 	if len(ask.Suggestions) != 2 || ask.Suggestions[0] != "Always allow Bash(just platform::test:*) in this project" || ask.Suggestions[1] != "Switch to acceptEdits mode for this session" {
@@ -299,22 +304,144 @@ func TestStopCarriesTheQueuedMessage(t *testing.T) {
 	})
 }
 
-// A finished tool call's event carries the digest of its input, never the
-// input.
+// A finished or failed tool call's event carries the digest of its input,
+// never the input, and the subagent it ran in.
 func TestPostToolUseEventCarriesOnlyADigest(t *testing.T) {
-	paths := useTestHookDaemon(t)
-	withoutEntire(t)
-	t.Chdir(t.TempDir())
-	payload := `{"session_id":"s-1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat ~/.netrc"},"tool_response":{"stdout":"` + strings.Repeat("x", 300<<10) + `"}}`
-	if stdout, _, err := runCLIWithInput(t, payload, "hooks", "agent", "--user", "claude-code", "post-tool-use"); err != nil || stdout != "" {
-		t.Fatalf("hook: %q, %v", stdout, err)
+	for _, event := range []string{"post-tool-use", "post-tool-use-failure"} {
+		t.Run(event, func(t *testing.T) {
+			paths := useTestHookDaemon(t)
+			withoutEntire(t)
+			t.Chdir(t.TempDir())
+			payload := `{"session_id":"s-1","agent_id":"agent-1","tool_name":"Bash","tool_input":{"command":"cat ~/.netrc"},"tool_response":{"stdout":"` + strings.Repeat("x", 300<<10) + `"}}`
+			if stdout, _, err := runCLIWithInput(t, payload, "hooks", "agent", "--user", "claude-code", event); err != nil || stdout != "" {
+				t.Fatalf("hook: %q, %v", stdout, err)
+			}
+			events, raw := spooledHookEvents(t, paths)
+			if len(events) != 1 || events[0].Session == nil || events[0].Session.AgentID != "agent-1" ||
+				events[0].Session.ToolDigest != agentrequests.Digest("Bash", json.RawMessage(`{"command":"cat ~/.netrc"}`)) {
+				t.Fatalf("events = %+v", events)
+			}
+			if strings.Contains(string(raw[0]), "netrc") {
+				t.Fatalf("the event kept the tool input: %s", raw[0])
+			}
+		})
 	}
-	events, raw := spooledHookEvents(t, paths)
-	if len(events) != 1 || events[0].Session == nil || events[0].Session.ToolDigest != agentrequests.Digest("Bash", json.RawMessage(`{"command":"cat ~/.netrc"}`)) {
-		t.Fatalf("events = %+v", events)
+}
+
+// An event is stamped with when its hook started, not when its work ended.
+func TestHookEventIsStampedWithTheHooksStart(t *testing.T) {
+	started := time.Now().Add(-time.Minute)
+	if event := newHookEvent(hookevents.KindAgent, "claude-code", "post-tool-use", started); !event.Time.Equal(started) || event.Time.Location() != time.UTC {
+		t.Fatalf("time %s, want %s", event.Time, started)
 	}
-	if strings.Contains(string(raw[0]), "netrc") {
-		t.Fatalf("the event kept the tool input: %s", raw[0])
+}
+
+// A Claude Code session nobody answers in a terminal (`claude -p`, the SDK)
+// is not held: the hook decides nothing at once. Without either variable it
+// holds as before.
+func TestUnattendedClaudeSessionIsNotHeld(t *testing.T) {
+	for name, tt := range map[string]struct {
+		entrypoint, attended string
+		asked                bool
+	}{
+		"interactive":   {"cli", "1", true},
+		"print mode":    {"sdk-cli", "0", false},
+		"sdk":           {"sdk-ts", "", false},
+		"unattended":    {"", "0", false},
+		"not said":      {"", "", true},
+		"attended only": {"", "1", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := useTestHookDaemon(t)
+			withoutEntire(t)
+			t.Chdir(t.TempDir())
+			fake := startFakeAppDaemon(t, paths)
+			fake.decision = agentrequests.Decision{Behavior: "allow"}
+			for variable, value := range map[string]string{claudeEntrypointEnv: tt.entrypoint, claudeAttendedEnv: tt.attended} {
+				t.Setenv(variable, value)
+				if value == "" {
+					_ = os.Unsetenv(variable)
+				}
+			}
+			stdout, _, err := runCLIWithInput(t, claudeBashRequest, "hooks", "agent", "--user", "claude-code", "permission-request")
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake.mu.Lock()
+			asked := len(fake.asks) > 0
+			fake.mu.Unlock()
+			if asked != tt.asked || (stdout != "") != tt.asked {
+				t.Fatalf("asked %v, stdout %q", asked, stdout)
+			}
+		})
+	}
+}
+
+func TestSubagentRequestCarriesItsAgent(t *testing.T) {
+	prompt, ok := parsePermissionRequest("claude-code", []byte(`{"session_id":"s-1","agent_id":"agent-1","tool_name":"Bash","tool_input":{"command":"make"}}`))
+	if !ok || prompt.ask.AgentID != "agent-1" {
+		t.Fatalf("%+v %v", prompt, ok)
+	}
+}
+
+func TestInputRowsShowEverythingTheApprovalCovers(t *testing.T) {
+	rows := func(agent, tool, input string) []agentrequests.Row {
+		var members map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(input), &members)
+		return inputRows(agent, tool, members, json.RawMessage(input))
+	}
+	same := func(t *testing.T, got []agentrequests.Row, want ...agentrequests.Row) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("rows = %+v\nwant   %+v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	}
+	same(t, rows("claude-code", "Bash", `{"command":"make","dangerouslyDisableSandbox":true,"run_in_background":true,"timeout":5}`),
+		agentrequests.Row{Label: "Command", Value: "make", Code: true},
+		agentrequests.Row{Label: "Sandbox", Value: "Off: runs outside the sandbox"},
+		agentrequests.Row{Label: "Background", Value: "Runs in the background"},
+		agentrequests.Row{Label: "Other input", Value: `{"timeout":5}`, Code: true})
+	// A switch that is off changes nothing and is not shown.
+	same(t, rows("claude-code", "Bash", `{"command":"make","dangerouslyDisableSandbox":false,"description":""}`),
+		agentrequests.Row{Label: "Command", Value: "make", Code: true})
+	same(t, rows("claude-code", "Edit", `{"file_path":"/a","old_string":"x","new_string":"y","replace_all":true}`),
+		agentrequests.Row{Label: "File", Value: "/a", Code: true},
+		agentrequests.Row{Label: "Replace", Value: "x", Code: true},
+		agentrequests.Row{Label: "With", Value: "y", Code: true},
+		agentrequests.Row{Label: "Replace all", Value: "Every occurrence"})
+	same(t, rows("claude-code", "Agent", `{"description":"Look","prompt":"Find it","subagent_type":"Explore","model":"opus"}`),
+		agentrequests.Row{Label: "Description", Value: "Look"},
+		agentrequests.Row{Label: "Subagent", Value: "Explore", Code: true},
+		agentrequests.Row{Label: "Model", Value: "opus", Code: true},
+		agentrequests.Row{Label: "Prompt", Value: "Find it"})
+	same(t, rows("claude-code", "NotebookEdit", `{"notebook_path":"/n.ipynb","cell_id":"c1","edit_mode":"delete","new_source":""}`),
+		agentrequests.Row{Label: "Notebook", Value: "/n.ipynb", Code: true},
+		agentrequests.Row{Label: "Edit mode", Value: "delete", Code: true},
+		agentrequests.Row{Label: "Cell", Value: "c1", Code: true})
+	same(t, rows("claude-code", "mcp__fs__write", `{"path":"/a","content":"x"}`),
+		agentrequests.Row{Label: "Input", Value: `{"content":"x","path":"/a"}`, Code: true})
+	same(t, rows("codex", "Bash", `{"command":["rm","-rf","build"],"sandbox_permissions":"require_escalated"}`),
+		agentrequests.Row{Label: "Command", Value: "rm -rf build", Code: true},
+		agentrequests.Row{Label: "Other input", Value: `{"sandbox_permissions":"require_escalated"}`, Code: true})
+
+	var edits []string
+	for i := range maxShownEdits + 2 {
+		all := ""
+		if i == 1 {
+			all = `,"replace_all":true`
+		}
+		edits = append(edits, `{"old_string":"o`+strconv.Itoa(i)+`","new_string":"n`+strconv.Itoa(i)+`"`+all+`}`)
+	}
+	got := rows("claude-code", "MultiEdit", `{"file_path":"/a","edits":[`+strings.Join(edits, ",")+`]}`)
+	if len(got) != 2+2*maxShownEdits+1 || got[1] != (agentrequests.Row{Label: "Edits", Value: strconv.Itoa(maxShownEdits + 2)}) ||
+		got[2] != (agentrequests.Row{Label: "Edit 1: replace", Value: "o0", Code: true}) || got[3] != (agentrequests.Row{Label: "Edit 1: with", Value: "n0", Code: true}) ||
+		got[4].Label != "Edit 2: replace every occurrence of" || got[len(got)-1].Label != "More edits" || !strings.Contains(got[len(got)-1].Value, `"o9"`) {
+		t.Fatalf("MultiEdit rows = %+v", got)
 	}
 }
 

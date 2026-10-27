@@ -37,10 +37,15 @@ func sendHookEvent(ctx context.Context, event hookevents.Event) bool {
 	return sender.Send(context.WithoutCancel(ctx), event) == hookevents.Delivered
 }
 
-// newHookEvent starts the event of a hook run in the working directory.
-func newHookEvent(kind, agent, name string) hookevents.Event {
+// newHookEvent starts the event of a hook run in the working directory,
+// stamped with when the hook started rather than when its work ended: the
+// daemon orders a tool call's events against the requests of later calls by
+// these times.
+func newHookEvent(kind, agent, name string, started time.Time) hookevents.Event {
 	dir, _ := os.Getwd()
-	return hookevents.New(kind, agent, name, dir, version())
+	event := hookevents.New(kind, agent, name, dir, version())
+	event.Time = started.UTC()
+	return event
 }
 
 // exitStatus is the status a hook's result makes the process exit with.
@@ -66,7 +71,7 @@ const (
 
 // payloadIdentifiers are the members of an agent hook's payload its event
 // keeps; agentSession keeps the last two for a notification only.
-var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "notification_type", "message"}
+var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "agent_id", "notification_type", "message"}
 
 // notificationEvent is Claude Code's Notification hook, the one event whose
 // event keeps the text the agent showed its user.
@@ -226,6 +231,7 @@ func agentSession(event string, fields map[string]string) *hookevents.Session {
 		HookEvent:      text("hook_event_name"),
 		Source:         text("source"),
 		Reason:         text("reason"),
+		AgentID:        text("agent_id"),
 	}
 	if event == notificationEvent {
 		session.NotificationType, session.Message = text("notification_type"), text("message")

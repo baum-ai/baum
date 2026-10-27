@@ -74,7 +74,7 @@ const (
 	MaxMessage   = 4000
 	maxLabel     = 300
 	maxText      = 1000
-	maxRows      = 8
+	maxRows      = 24
 	MaxQuestions = 8
 	MaxOptions   = 16
 	// MaxSuggestions bounds the suggestions shown; a hook sends the first
@@ -137,10 +137,14 @@ type Question struct {
 type Ask struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"session_id"`
-	Kind      string `json:"kind"`
-	Tool      string `json:"tool"`
+	// AgentID is the Claude Code subagent asking, empty for the session's
+	// main agent: the main turn's boundaries leave its requests alone.
+	AgentID string `json:"agent_id,omitempty"`
+	Kind    string `json:"kind"`
+	Tool    string `json:"tool"`
 	// Digest is Digest of the tool's name and input, which the session's
-	// post-tool-use event carries once the tool ran.
+	// post-tool-use (or post-tool-use-failure) event carries once the tool
+	// ran.
 	Digest string `json:"digest,omitempty"`
 	// StartedAt is when the hook started: a turn boundary or a finished
 	// tool call recorded since makes the request moot.
@@ -254,15 +258,52 @@ type Store struct {
 
 type key struct{ agent, id string }
 
-// mark is a turn boundary (no digest) or a finished tool call of a session.
+// mark is an event of a session that withdraws the requests it moots.
 type mark struct {
 	key
-	digest string
-	at     time.Time
+	kind    markKind
+	digest  string
+	agentID string
+	at      time.Time
+}
+
+type markKind int
+
+const (
+	// markTurn is a boundary of the main agent's turn (stop,
+	// user-prompt-submit): a subagent's requests outlive it.
+	markTurn markKind = iota
+	// markEnd is the session's end.
+	markEnd
+	// markSubagent is a subagent's stop.
+	markSubagent
+	// markTool is a tool call that finished or failed.
+	markTool
+)
+
+// withdraws reports whether the mark moots the request: it is the request's
+// session, no older than the request's hook, and ends what the request
+// belongs to.
+func (m mark) withdraws(p *pending) bool {
+	if m.key != p.key() || m.at.Before(p.startedAt) {
+		return false
+	}
+	switch m.kind {
+	case markTurn:
+		return p.agentID == ""
+	case markEnd:
+		return true
+	case markSubagent:
+		return p.agentID != "" && p.agentID == m.agentID
+	case markTool:
+		return p.digest != "" && p.digest == m.digest
+	}
+	return false
 }
 
 type pending struct {
 	Request
+	agentID   string
 	digest    string
 	startedAt time.Time
 	decided   chan Decision
@@ -298,26 +339,31 @@ func (s *Store) logger() *slog.Logger {
 
 // Ask shows a request to the app and waits until it is answered (the
 // Decision), withdrawn, ctx ends or, for Codex, CodexWait passed; all but the
-// first decide nothing. A Codex request decides nothing at once unless the
-// user turned CodexApprovals on.
+// first decide nothing. It decides nothing at once for a Codex request unless
+// the user turned CodexApprovals on, and for a request that cannot be shown
+// safely (newPending).
 func (s *Store) Ask(ctx context.Context, ask Ask) (Decision, error) {
 	s.init()
 	if err := ask.check(); err != nil {
 		return Decision{}, err
 	}
+	if ask.Agent == AgentCodex && !s.Settings().CodexApprovals {
+		return Decision{}, nil
+	}
+	p, ok := s.newPending(ask)
+	if !ok {
+		return Decision{}, nil
+	}
 	var timeout <-chan time.Time
 	if ask.Agent == AgentCodex {
-		if !s.Settings().CodexApprovals {
-			return Decision{}, nil
-		}
-		wait := cmp.Or(s.CodexWait, DefaultCodexWait)
-		timer := time.NewTimer(wait)
+		timer := time.NewTimer(cmp.Or(s.CodexWait, DefaultCodexWait))
 		defer timer.Stop()
 		timeout = timer.C
 	}
-	p := s.newPending(ask)
 	s.mu.Lock()
-	if len(s.pending) >= maxPending || s.passedLocked(p) {
+	// Checked again under the lock that SetSettings withdraws under, so a
+	// request is never left waiting after Codex approvals were turned off.
+	if len(s.pending) >= maxPending || s.passedLocked(p) || (ask.Agent == AgentCodex && !s.settings.CodexApprovals) {
 		s.mu.Unlock()
 		return Decision{}, nil
 	}
@@ -359,31 +405,62 @@ func (a Ask) check() error {
 }
 
 // newPending is the request as the app is shown it: every string the agent
-// wrote cleaned, masked and bounded.
-func (s *Store) newPending(ask Ask) *pending {
+// wrote cleaned, masked and bounded. It is refused (false), so the agent asks
+// in its terminal, when masking failed (it turned text into nothing: the app
+// must never show what it could not mask), or when a question's answers
+// could not be told apart as the app gives them back: two questions, or two
+// options of one question, that read the same once cleaned and cut, or a
+// label containing ", " in a question that takes several.
+func (s *Store) newPending(ask Ask) (*pending, bool) {
+	masked := true
+	line := func(text string, limit int) string {
+		out, ok := s.line(text, limit)
+		masked = masked && ok
+		return out
+	}
+	block := func(text string, limit int) string {
+		out, ok := s.block(text, limit)
+		masked = masked && ok
+		return out
+	}
 	r := Request{
 		ID: newID(), Agent: ask.Agent, SessionID: ask.SessionID, Kind: ask.Kind,
-		Tool: s.line(ask.Tool, maxLabel), CreatedAt: s.now(),
+		Tool: line(ask.Tool, maxLabel), CreatedAt: s.now(),
 		Input: []Row{}, Suggestions: []Suggestion{}, Questions: []Question{},
 	}
 	for _, row := range ask.Input {
-		r.Input = append(r.Input, Row{Label: s.line(row.Label, maxLabel), Value: s.block(row.Value, MaxValue), Code: row.Code})
+		r.Input = append(r.Input, Row{Label: line(row.Label, maxLabel), Value: block(row.Value, MaxValue), Code: row.Code})
 	}
 	for i, label := range ask.Suggestions {
-		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: s.line(label, maxLabel)})
+		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, maxLabel)})
 	}
+	questions := map[string]bool{}
 	for _, q := range ask.Questions {
-		shown := Question{Question: s.line(q.Question, maxText), Header: s.line(q.Header, maxLabel), MultiSelect: q.MultiSelect, Options: []Option{}}
+		shown := Question{Question: line(q.Question, maxText), Header: line(q.Header, maxLabel), MultiSelect: q.MultiSelect, Options: []Option{}}
+		if questions[shown.Question] {
+			return nil, false
+		}
+		questions[shown.Question] = true
+		labels := map[string]bool{}
 		for _, o := range q.Options {
-			shown.Options = append(shown.Options, Option{Label: s.line(o.Label, maxLabel), Description: s.line(o.Description, maxText)})
+			option := Option{Label: line(o.Label, maxLabel), Description: line(o.Description, maxText)}
+			if labels[option.Label] || (q.MultiSelect && strings.Contains(option.Label, ", ")) {
+				return nil, false
+			}
+			labels[option.Label] = true
+			shown.Options = append(shown.Options, option)
 		}
 		r.Questions = append(r.Questions, shown)
+	}
+	if !masked {
+		s.logger().Warn("an agent request was not shown: its text could not be masked")
+		return nil, false
 	}
 	startedAt := ask.StartedAt.UTC()
 	if startedAt.IsZero() || startedAt.After(r.CreatedAt) {
 		startedAt = r.CreatedAt
 	}
-	return &pending{Request: r, digest: ask.Digest, startedAt: startedAt, decided: make(chan Decision, 1), gone: make(chan struct{})}
+	return &pending{Request: r, agentID: ask.AgentID, digest: ask.Digest, startedAt: startedAt, decided: make(chan Decision, 1), gone: make(chan struct{})}, true
 }
 
 func newID() string {
@@ -506,32 +583,34 @@ func matchOptions(q Question, value string) Answer {
 }
 
 // passedLocked reports whether the session moved on since the request's hook
-// started: its turn ended or a new one began, or the same tool call finished,
-// so the user answered in the terminal before the request arrived.
+// started (a mark recorded since withdraws it), so the user answered in the
+// terminal, or the turn ended, before the request arrived.
 func (s *Store) passedLocked(p *pending) bool {
-	k := key{p.Agent, p.SessionID}
-	for _, m := range s.recent {
-		if m.key == k && !m.at.Before(p.startedAt) && (m.digest == "" || (p.digest != "" && m.digest == p.digest)) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.recent, func(m mark) bool { return m.withdraws(p) })
 }
 
-// Observe applies a recorded hook event: a turn boundary of a session
-// (user-prompt-submit, stop, session-end) withdraws its requests, a finished
-// tool call (post-tool-use) the request for the same call, the oldest when
-// several match, and a session's end drops its message too. Only requests
+// Observe applies a recorded hook event (Match): the main turn's boundaries
+// of a session (user-prompt-submit, stop) withdraw its main agent's requests,
+// a subagent's stop that subagent's, the session's end all of them, and a
+// finished or failed tool call (post-tool-use, post-tool-use-failure) the
+// request for the same call, the oldest when several match. Only requests
 // whose hooks started before the event are withdrawn, so a late event never
-// withdraws a newer request.
+// withdraws a newer request. A new prompt and the session's end also drop
+// the message queued before them, which belonged to the turn that is over;
+// a stop leaves it, since the Stop hook takes it after recording its event.
 func (s *Store) Observe(e hookevents.Event) {
 	s.init()
 	if !Match(e) {
 		return
 	}
 	m := mark{key: key{e.Agent, e.Session.ID}, at: e.Time.UTC()}
-	if e.Name == "post-tool-use" {
-		m.digest = e.Session.ToolDigest
+	switch e.Name {
+	case "post-tool-use", "post-tool-use-failure":
+		m.kind, m.digest = markTool, e.Session.ToolDigest
+	case "subagent-stop":
+		m.kind, m.agentID = markSubagent, e.Session.AgentID
+	case "session-end":
+		m.kind = markEnd
 	}
 	now := s.now()
 	s.mu.Lock()
@@ -541,11 +620,11 @@ func (s *Store) Observe(e hookevents.Event) {
 	}
 	var withdrawn []*pending
 	for _, p := range s.pending {
-		if p.key() == m.key && !m.at.Before(p.startedAt) && (m.digest == "" || m.digest == p.digest) {
+		if m.withdraws(p) {
 			withdrawn = append(withdrawn, p)
 		}
 	}
-	if m.digest != "" && len(withdrawn) > 1 {
+	if m.kind == markTool && len(withdrawn) > 1 {
 		slices.SortFunc(withdrawn, func(a, b *pending) int { return a.CreatedAt.Compare(b.CreatedAt) })
 		withdrawn = withdrawn[:1]
 	}
@@ -553,13 +632,13 @@ func (s *Store) Observe(e hookevents.Event) {
 		delete(s.pending, p.ID)
 		close(p.gone)
 	}
-	_, queued := s.messages[m.key]
-	ended := e.Name == "session-end" && queued
-	if ended {
+	dropped := false
+	if message, queued := s.messages[m.key]; queued && (e.Name == "user-prompt-submit" || e.Name == "session-end") && message.QueuedAt.Before(m.at) {
 		delete(s.messages, m.key)
+		dropped = true
 	}
 	s.mu.Unlock()
-	if len(withdrawn) > 0 || ended {
+	if len(withdrawn) > 0 || dropped {
 		s.notify()
 	}
 }
@@ -575,8 +654,10 @@ func Match(e hookevents.Event) bool {
 	switch e.Name {
 	case "user-prompt-submit", "stop", "session-end":
 		return true
-	case "post-tool-use":
+	case "post-tool-use", "post-tool-use-failure":
 		return e.Session.ToolDigest != ""
+	case "subagent-stop":
+		return e.Session.AgentID != ""
 	}
 	return false
 }
@@ -625,7 +706,7 @@ func (s *Store) running(agent, id string) bool {
 }
 
 // TakeMessage removes and returns the message queued for a session.
-func (s *Store) TakeMessage(agent, id string) (string, bool) {
+func (s *Store) TakeMessage(agent, id string) (Message, bool) {
 	s.init()
 	s.mu.Lock()
 	m, ok := s.messages[key{agent, id}]
@@ -634,7 +715,23 @@ func (s *Store) TakeMessage(agent, id string) (string, bool) {
 	if ok {
 		s.notify()
 	}
-	return m.Text, ok
+	return m, ok
+}
+
+// Requeue puts back a message taken but not delivered, unless a newer one
+// was queued since.
+func (s *Store) Requeue(m Message) {
+	s.init()
+	s.mu.Lock()
+	k := key{m.Agent, m.SessionID}
+	_, replaced := s.messages[k]
+	if !replaced {
+		s.messages[k] = m
+	}
+	s.mu.Unlock()
+	if !replaced {
+		s.notify()
+	}
 }
 
 // DeleteMessage removes the message queued for a session, if any.
@@ -666,8 +763,11 @@ func (s *Store) List() ([]Request, []Message) {
 				continue
 			}
 		}
-		m.Text = s.block(m.Text, MaxMessage)
-		shown = append(shown, m)
+		// A message whose text could not be masked is not shown.
+		var ok bool
+		if m.Text, ok = s.block(m.Text, MaxMessage); ok {
+			shown = append(shown, m)
+		}
 	}
 	return requests, shown
 }
@@ -752,7 +852,7 @@ func writeAtomic(path string, data []byte) error {
 // line is text an agent wrote as one line: format characters dropped,
 // control characters and runs of spaces made one space, masked before it is
 // cut, so a secret is never cut where the mask cannot see it.
-func (s *Store) line(text string, limit int) string {
+func (s *Store) line(text string, limit int) (string, bool) {
 	text = strings.Map(func(r rune) rune {
 		switch {
 		case unicode.Is(unicode.Cf, r):
@@ -766,7 +866,7 @@ func (s *Store) line(text string, limit int) string {
 }
 
 // block is line for a value that keeps its line breaks and tabs.
-func (s *Store) block(text string, limit int) string {
+func (s *Store) block(text string, limit int) (string, bool) {
 	text = strings.ReplaceAll(strings.ToValidUTF8(text, "�"), "\r\n", "\n")
 	text = strings.Map(func(r rune) rune {
 		switch {
@@ -782,14 +882,18 @@ func (s *Store) block(text string, limit int) string {
 	return s.finish(strings.TrimRight(text, " \t\n"), limit)
 }
 
-func (s *Store) finish(text string, limit int) string {
+// finish masks text and cuts it. It reports false when the mask turned text
+// into nothing, which a mask does only when it failed.
+func (s *Store) finish(text string, limit int) (string, bool) {
 	if text != "" && s.Mask != nil {
-		text = s.Mask(text)
+		if text = s.Mask(text); text == "" {
+			return "", false
+		}
 	}
 	if utf8.RuneCountInString(text) <= limit {
-		return text
+		return text, true
 	}
-	return string([]rune(text)[:limit-1]) + "…"
+	return string([]rune(text)[:limit-1]) + "…", true
 }
 
 // Digest identifies a tool call by its tool's name and input, so a request

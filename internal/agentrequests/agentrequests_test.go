@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/livesessions"
 )
@@ -126,7 +127,7 @@ func TestQuestionAnswersMapToOptions(t *testing.T) {
 	s, _ := newStore(t)
 	a := Ask{Agent: AgentClaudeCode, SessionID: "s1", Kind: KindQuestion, Tool: "AskUserQuestion", Questions: []Question{
 		{Question: "Which approach for sekrit?", Header: "Approach", Options: []Option{{Label: "A"}, {Label: "B"}}},
-		{Question: "Which parts?", MultiSelect: true, Options: []Option{{Label: "x, y"}, {Label: "z"}}},
+		{Question: "Which parts?", MultiSelect: true, Options: []Option{{Label: "x"}, {Label: "y"}, {Label: "z"}}},
 	}}
 	ch, id := ask(t, context.Background(), s, a)
 	requests, _ := s.List()
@@ -139,11 +140,11 @@ func TestQuestionAnswersMapToOptions(t *testing.T) {
 	if err := s.Answer(id, Reply{Behavior: BehaviorAllow, Answers: map[string]string{"Which approach for [masked]?": "B", "Who?": "me"}}); err == nil {
 		t.Fatal("an unknown question was accepted")
 	}
-	if err := s.Answer(id, Reply{Behavior: BehaviorAllow, Answers: map[string]string{"Which approach for [masked]?": "something else", "Which parts?": "x, y, z"}}); err != nil {
+	if err := s.Answer(id, Reply{Behavior: BehaviorAllow, Answers: map[string]string{"Which approach for [masked]?": "something else", "Which parts?": "x, z"}}); err != nil {
 		t.Fatal(err)
 	}
 	d := decision(t, ch)
-	if d.Behavior != BehaviorAllow || len(d.Answers) != 2 || d.Answers[0].Text != "something else" || len(d.Answers[1].Options) != 2 || d.Answers[1].Options[0] != 0 || d.Answers[1].Options[1] != 1 {
+	if d.Behavior != BehaviorAllow || len(d.Answers) != 2 || d.Answers[0].Text != "something else" || len(d.Answers[1].Options) != 2 || d.Answers[1].Options[0] != 0 || d.Answers[1].Options[1] != 2 {
 		t.Fatalf("decision %+v", d)
 	}
 }
@@ -287,8 +288,8 @@ func TestMessages(t *testing.T) {
 	if _, messages := s.List(); len(messages) != 2 || messages[0].Text != "use the [masked]" {
 		t.Fatalf("messages %+v", messages)
 	}
-	if text, ok := s.TakeMessage(AgentClaudeCode, "s1"); !ok || text != "use the sekrit" {
-		t.Fatalf("take %q %v", text, ok)
+	if m, ok := s.TakeMessage(AgentClaudeCode, "s1"); !ok || m.Text != "use the sekrit" {
+		t.Fatalf("take %+v %v", m, ok)
 	}
 	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
 		t.Fatal("a message was taken twice")
@@ -304,6 +305,147 @@ func TestMessages(t *testing.T) {
 	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "session-end", Time: time.Now(), Session: &hookevents.Session{ID: "s1"}})
 	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
 		t.Fatal("an ended session kept its message")
+	}
+}
+
+// A message belongs to the turn it was sent in: a new prompt drops one queued
+// before it, a stop does not (its hook takes the message after recording the
+// stop), and one queued after the prompt stays.
+func TestMessagesDoNotOutliveTheirTurn(t *testing.T) {
+	s, notified := newStore(t)
+	event := func(name string, at time.Time) hookevents.Event {
+		return hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: name, Time: at, Session: &hookevents.Session{ID: "s1"}}
+	}
+	if err := s.Queue(AgentClaudeCode, "s1", "for this turn"); err != nil {
+		t.Fatal(err)
+	}
+	s.Observe(event("stop", time.Now().Add(time.Second)))
+	if _, messages := s.List(); len(messages) != 1 {
+		t.Fatal("a stop dropped the message its hook takes")
+	}
+	s.Observe(event("user-prompt-submit", time.Now().Add(-time.Minute)))
+	if _, messages := s.List(); len(messages) != 1 {
+		t.Fatal("a prompt from before the message dropped it")
+	}
+	before := notified.Load()
+	s.Observe(event("user-prompt-submit", time.Now().Add(time.Second)))
+	if _, messages := s.List(); len(messages) != 0 || notified.Load() == before {
+		t.Fatalf("the next prompt kept the message: %+v", messages)
+	}
+}
+
+// A message whose answer could not be written to the Stop hook is queued
+// again, unless a newer one replaced it.
+func TestUndeliveredMessageIsRequeued(t *testing.T) {
+	s, _ := newStore(t)
+	take := func() daemon.Delivery {
+		t.Helper()
+		result, err := s.take(context.Background(), json.RawMessage(`{"agent":"claude-code","session_id":"s1"}`))
+		delivery, ok := result.(daemon.Delivery)
+		if err != nil || !ok || delivery.Result.(Taken).Text == "" {
+			t.Fatalf("take: %#v %v", result, err)
+		}
+		return delivery
+	}
+	if err := s.Queue(AgentClaudeCode, "s1", "first"); err != nil {
+		t.Fatal(err)
+	}
+	take().Written(errors.New("broken pipe"))
+	if m, ok := s.TakeMessage(AgentClaudeCode, "s1"); !ok || m.Text != "first" {
+		t.Fatalf("not requeued: %+v", m)
+	}
+	if err := s.Queue(AgentClaudeCode, "s1", "first"); err != nil {
+		t.Fatal(err)
+	}
+	delivery := take()
+	if err := s.Queue(AgentClaudeCode, "s1", "newer"); err != nil {
+		t.Fatal(err)
+	}
+	delivery.Written(errors.New("broken pipe"))
+	if m, _ := s.TakeMessage(AgentClaudeCode, "s1"); m.Text != "newer" {
+		t.Fatalf("the requeue replaced a newer message: %+v", m)
+	}
+	if err := s.Queue(AgentClaudeCode, "s1", "delivered"); err != nil {
+		t.Fatal(err)
+	}
+	take().Written(nil)
+	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
+		t.Fatal("a delivered message was queued again")
+	}
+	if result, err := s.take(context.Background(), json.RawMessage(`{"agent":"claude-code","session_id":"s1"}`)); err != nil || result != (Taken{}) {
+		t.Fatalf("nothing queued: %#v %v", result, err)
+	}
+}
+
+func TestRequestsThatCannotBeShownSafelyAreRefused(t *testing.T) {
+	question := func(questions ...Question) Ask {
+		return Ask{Agent: AgentClaudeCode, SessionID: "s1", Kind: KindQuestion, Tool: "AskUserQuestion", Questions: questions}
+	}
+	for name, tt := range map[string]struct {
+		mask func(string) string
+		ask  Ask
+	}{
+		"the mask failed": {func(string) string { return "" }, bash("make")},
+		"the same question twice": {nil, question(
+			Question{Question: "Which?", Options: []Option{{Label: "A"}}},
+			Question{Question: "Which?\n", Options: []Option{{Label: "B"}}})},
+		"the same option twice": {nil, question(Question{Question: "Which?", Options: []Option{{Label: "A"}, {Label: " A"}}})},
+		"a label that joins":    {nil, question(Question{Question: "Which?", MultiSelect: true, Options: []Option{{Label: "x, y"}, {Label: "z"}}})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newStore(t)
+			s.Mask = tt.mask
+			start := time.Now()
+			d, err := s.Ask(context.Background(), tt.ask)
+			if err != nil || d.Behavior != "" || time.Since(start) > time.Second {
+				t.Fatalf("%+v %v", d, err)
+			}
+			if requests, _ := s.List(); len(requests) != 0 {
+				t.Fatalf("shown: %+v", requests)
+			}
+		})
+	}
+}
+
+// A subagent's request outlives the main turn's boundaries, not its own stop
+// or the session's end.
+func TestSubagentRequests(t *testing.T) {
+	event := func(name, agentID string) hookevents.Event {
+		return hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: name, Time: time.Now().UTC(), Session: &hookevents.Session{ID: "s1", AgentID: agentID}}
+	}
+	s, _ := newStore(t)
+	a := bash("make")
+	a.AgentID = "agent-1"
+	ch, _ := ask(t, context.Background(), s, a)
+	mainAgent, _ := ask(t, context.Background(), s, bash("ls"))
+	s.Observe(event("stop", ""))
+	s.Observe(event("user-prompt-submit", ""))
+	if d := decision(t, mainAgent); d.Behavior != "" {
+		t.Fatalf("main %+v", d)
+	}
+	s.Observe(event("subagent-stop", "agent-2"))
+	if requests, _ := s.List(); len(requests) != 1 {
+		t.Fatalf("requests %+v", requests)
+	}
+	s.Observe(event("subagent-stop", "agent-1"))
+	if d := decision(t, ch); d.Behavior != "" {
+		t.Fatalf("subagent %+v", d)
+	}
+	// Later hooks start after the marks so far.
+	time.Sleep(time.Millisecond)
+	a.StartedAt = time.Now()
+	ch, _ = ask(t, context.Background(), s, a)
+	s.Observe(event("session-end", ""))
+	if d := decision(t, ch); d.Behavior != "" {
+		t.Fatalf("subagent at the end %+v", d)
+	}
+	time.Sleep(time.Millisecond)
+	a.StartedAt = time.Now()
+	ch, _ = ask(t, context.Background(), s, a)
+	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "post-tool-use-failure", Time: time.Now().UTC(),
+		Session: &hookevents.Session{ID: "s1", AgentID: "agent-1", ToolDigest: a.Digest}})
+	if d := decision(t, ch); d.Behavior != "" {
+		t.Fatalf("failed tool %+v", d)
 	}
 }
 

@@ -273,7 +273,7 @@ func normalise(name string) (string, bool) {
 		return EventStart, true
 	case "user-prompt-submit", "before-submit-prompt":
 		return EventPrompt, true
-	case "pre-task", "post-task", "post-todo", "post-tool-use", "pre-compact", "subagent-start", "subagent-stop":
+	case "pre-task", "post-task", "post-todo", "post-tool-use", "post-tool-use-failure", "pre-compact", "subagent-start", "subagent-stop":
 		return EventTool, true
 	case "notification", "permission-request":
 		return EventWait, true

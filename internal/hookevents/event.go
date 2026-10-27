@@ -112,6 +112,9 @@ type Session struct {
 	// matches it to the permission request the user answered in the
 	// terminal.
 	ToolDigest string `json:"tool_digest,omitempty"`
+	// AgentID is the Claude Code subagent (or in-process teammate) the hook
+	// fired in, when it fired in one.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // Git is a Git hook run.
@@ -184,7 +187,7 @@ func (e *Event) Bound() {
 func (e *Event) fields() []*string {
 	fields := []*string{&e.Agent, &e.Name, &e.Dir, &e.Client}
 	if s := e.Session; s != nil {
-		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason, &s.NotificationType, &s.Message, &s.ToolDigest)
+		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason, &s.NotificationType, &s.Message, &s.ToolDigest, &s.AgentID)
 	}
 	if g := e.Git; g != nil {
 		for i := range g.Args {

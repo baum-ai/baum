@@ -51,6 +51,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				}
 				return hooksEnabled(cmd.Context(), ".")
 			}
+			started := time.Now()
 			entireArgs, ok := entireGitHookArgs(args)
 			if !ok {
 				return nil
@@ -63,7 +64,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 			hosted := hookRunsHosted(cmd.Context(), ".")
 			err := runEntireGitHook(cmd, hosted, args, entireArgs, input, stdout, stderr)
-			event := newHookEvent(hookevents.KindGit, "", args[0])
+			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
 			event.Exit = exitStatus(err)
 			sendHookEvent(cmd.Context(), event)
@@ -146,9 +147,9 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			} else {
 				err = runEntireAgentHook(cmd, hosted, agent, event, input, stdout, stderr)
 			}
-			hookEvent := newHookEvent(hookevents.KindAgent, agent, event)
+			hookEvent := newHookEvent(hookevents.KindAgent, agent, event, started)
 			hookEvent.Session = agentSession(event, input.identifiers())
-			if hookEvent.Session != nil && event == postToolUseEvent && appAgent(agent) {
+			if hookEvent.Session != nil && digestsToolCall(agent, event) {
 				hookEvent.Session.ToolDigest = toolDigest(input)
 			}
 			hookEvent.Exit = exitStatus(err)

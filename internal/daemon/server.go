@@ -520,7 +520,11 @@ func (c *controller) handle(conn net.Conn) {
 			return
 		}
 		response, stop := c.dispatch(line)
-		if err = writeResponse(conn, response); err != nil {
+		err = writeResponse(conn, response)
+		if response.written != nil {
+			response.written(err)
+		}
+		if err != nil {
 			return
 		}
 		if stop {
@@ -617,7 +621,19 @@ func (c *controller) wait(conn net.Conn, r *bufio.Reader, method Method, params 
 	}()
 	response := call(ctx, method, params)
 	_ = conn.SetWriteDeadline(time.Now().Add(idleTimeout))
-	_ = writeResponse(conn, response)
+	err := writeResponse(conn, response)
+	if response.written != nil {
+		response.written(err)
+	}
+}
+
+// Delivery is a method's result when the method must know whether its answer
+// was written to the client, such as one that hands something over once:
+// Result is answered, and Written is told how writing the answer went. A
+// written answer can still be lost by a client that goes away after it.
+type Delivery struct {
+	Result  any
+	Written func(error)
 }
 
 func call(ctx context.Context, method Method, params json.RawMessage) Response {
@@ -629,11 +645,18 @@ func call(ctx context.Context, method Method, params json.RawMessage) Response {
 		}
 		return Response{Error: &Error{Code: CodeFailed, Message: err.Error()}}
 	}
+	var written func(error)
+	if delivery, ok := result.(Delivery); ok {
+		result, written = delivery.Result, delivery.Written
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
+		if written != nil {
+			written(err)
+		}
 		return Response{Error: &Error{Code: CodeFailed, Message: "result could not be encoded"}}
 	}
-	return Response{OK: true, Result: data}
+	return Response{OK: true, Result: data, written: written}
 }
 
 var errLineTooLong = errors.New("line too long")
