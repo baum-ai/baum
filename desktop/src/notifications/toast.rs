@@ -1,7 +1,8 @@
 //! What a daemon event says, as the notification the user sees. Everything
 //! here is a pure function of the event: the text comes only from fields the
 //! daemon already redacted (the repository, the title as GitHub returned it,
-//! the stored risk score, a failure category) and is only stripped of control
+//! the stored risk score, a failure category, an agent session's branch and
+//! the masked line its agent showed) and is only stripped of control
 //! characters and bounded in length, never reworded.
 
 use serde::Deserialize;
@@ -26,10 +27,14 @@ pub enum Kind {
     /// A fix pushed a commit to the pull request's branch.
     FixPushed,
     FixFailed,
+    /// An agent session asks to be allowed to run a tool.
+    SessionPermission,
+    /// ... asks the user a question.
+    SessionInput,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 11] = [
+    pub const ALL: [Kind; 13] = [
         Kind::Finished,
         Kind::Failed,
         Kind::Requested,
@@ -41,6 +46,8 @@ impl Kind {
         Kind::ReadyToMerge,
         Kind::FixPushed,
         Kind::FixFailed,
+        Kind::SessionPermission,
+        Kind::SessionInput,
     ];
 
     /// The menu entry's label.
@@ -57,6 +64,8 @@ impl Kind {
             Kind::ReadyToMerge => "My pull request: ready to merge",
             Kind::FixPushed => "Fix pushed",
             Kind::FixFailed => "Fix failed",
+            Kind::SessionPermission => "Agent needs my permission",
+            Kind::SessionInput => "Agent waiting for my answer",
         }
     }
 
@@ -74,6 +83,8 @@ impl Kind {
             Kind::ReadyToMerge => "notifications:ready_to_merge",
             Kind::FixPushed => "notifications:fix_pushed",
             Kind::FixFailed => "notifications:fix_failed",
+            Kind::SessionPermission => "notifications:session_permission",
+            Kind::SessionInput => "notifications:session_input",
         }
     }
 
@@ -91,6 +102,8 @@ pub enum Route {
     RepositoryPr { repository: String, number: u64 },
     /// The jobs list.
     Jobs,
+    /// An agent session's transcript, by its `agent:id` key.
+    Session { key: String },
 }
 
 impl Route {
@@ -113,6 +126,10 @@ impl Route {
                 Route::Jobs => {
                     query.append_pair("page", "jobs");
                 }
+                Route::Session { key } => {
+                    query.append_pair("page", "sessions");
+                    query.append_pair("session", key);
+                }
             }
         }
         url
@@ -123,7 +140,15 @@ impl Route {
         match self {
             Route::Pr { clone, number } => Some((clone, *number)),
             Route::RepositoryPr { repository, number } => Some((repository, *number)),
-            Route::Jobs => None,
+            Route::Jobs | Route::Session { .. } => None,
+        }
+    }
+
+    /// The agent session this route shows, if it is one.
+    pub fn session(&self) -> Option<&str> {
+        match self {
+            Route::Session { key } => Some(key),
+            _ => None,
         }
     }
 }
@@ -159,6 +184,14 @@ struct Notice {
     reason: Option<String>,
     #[serde(default)]
     commit: Option<String>,
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    session: String,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 /// The daemon's `automatic` event: one repository's automatic generation.
@@ -201,8 +234,13 @@ fn from_notice(n: Notice) -> Option<Toast> {
         "ready_to_merge" => Kind::ReadyToMerge,
         "fix_pushed" => Kind::FixPushed,
         "fix_failed" => Kind::FixFailed,
+        "session_permission" => Kind::SessionPermission,
+        "session_input" => Kind::SessionInput,
         _ => return None,
     };
+    if matches!(kind, Kind::SessionPermission | Kind::SessionInput) {
+        return from_session_notice(kind, n);
+    }
     if n.pr == 0 {
         return None;
     }
@@ -226,6 +264,9 @@ fn from_notice(n: Notice) -> Option<Toast> {
         Kind::FixPushed => "Fix pushed",
         Kind::FixFailed => "Fix failed",
         Kind::CapReached => unreachable!("a notice never names the cap"),
+        Kind::SessionPermission | Kind::SessionInput => {
+            unreachable!("a session notice is read by from_session_notice")
+        }
     };
     let reason = n
         .reason
@@ -280,6 +321,66 @@ fn from_notice(n: Notice) -> Option<Toast> {
         title,
         body,
         route,
+        dedupe: None,
+    })
+}
+
+/// The agent's name as the app writes it.
+fn agent_name(agent: &str) -> String {
+    match agent {
+        "claude-code" => "Claude Code".into(),
+        "codex" => "Codex".into(),
+        "cursor" => "Cursor".into(),
+        other => clean(other, 32),
+    }
+}
+
+/// An agent session waiting on the user, like "Claude Code needs your
+/// permission · acme/demo" over the line the agent showed and the branch. A
+/// click opens the session's transcript. The daemon announces each wait once,
+/// so there is nothing to dedupe here.
+fn from_session_notice(kind: Kind, n: Notice) -> Option<Toast> {
+    if n.agent.is_empty() || n.session.is_empty() {
+        return None;
+    }
+    let agent = agent_name(&n.agent);
+    let headline = match kind {
+        Kind::SessionPermission => format!("{agent} needs your permission"),
+        _ => format!("{agent} is waiting for your answer"),
+    };
+    let repository = clean(&n.repository, MAX_FIELD);
+    let title = if repository.is_empty() {
+        headline
+    } else {
+        format!("{headline} · {repository}")
+    };
+    let message = n
+        .message
+        .as_deref()
+        .map(|m| clean(m, MAX_TITLE))
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| match kind {
+            Kind::SessionPermission => "It asks to run a tool.".into(),
+            _ => "It asked you a question.".into(),
+        });
+    let place = match (n.branch.as_deref().map(|b| clean(b, MAX_FIELD)), n.pr) {
+        (Some(branch), pr) if !branch.is_empty() && pr > 0 => format!("{branch} · #{pr}"),
+        (Some(branch), _) if !branch.is_empty() => branch,
+        (_, pr) if pr > 0 => format!("#{pr}"),
+        _ => String::new(),
+    };
+    let body = if place.is_empty() {
+        message
+    } else {
+        format!("{message}\n{place}")
+    };
+    Some(Toast {
+        kind,
+        title,
+        body,
+        route: Route::Session {
+            key: format!("{}:{}", n.agent, n.session),
+        },
         dedupe: None,
     })
 }
@@ -443,6 +544,60 @@ mod tests {
             toast("fix_failed", "").title,
             "Fix failed · acme/widgets #7"
         );
+    }
+
+    #[test]
+    fn a_waiting_session_names_its_agent_and_opens_its_transcript() {
+        let data = r#"{"kind":"session_permission","repository":"acme/demo","pr":7,"agent":"claude-code","session":"s-1","branch":"feature","message":"Claude needs your permission to use Bash"}"#;
+        let t = from_event("notice", data).unwrap();
+        assert_eq!(t.kind, Kind::SessionPermission);
+        assert_eq!(t.title, "Claude Code needs your permission · acme/demo");
+        assert_eq!(
+            t.body,
+            "Claude needs your permission to use Bash\nfeature · #7"
+        );
+        assert_eq!(
+            t.route,
+            Route::Session {
+                key: "claude-code:s-1".into()
+            }
+        );
+        assert_eq!(t.route.pr(), None);
+        assert_eq!(t.route.session(), Some("claude-code:s-1"));
+        assert_eq!(
+            t.route
+                .url(&Url::parse("http://127.0.0.1:1234/s/ns/").unwrap())
+                .query(),
+            Some("page=sessions&session=claude-code%3As-1")
+        );
+        // Codex sends no message; a branch without a pull request is named alone.
+        let data = r#"{"kind":"session_input","repository":"acme/demo","pr":0,"agent":"codex","session":"c-1","branch":"main"}"#;
+        let t = from_event("notice", data).unwrap();
+        assert_eq!(t.kind, Kind::SessionInput);
+        assert_eq!(t.title, "Codex is waiting for your answer · acme/demo");
+        assert_eq!(t.body, "It asked you a question.\nmain");
+        let data = r#"{"kind":"session_permission","repository":"acme/demo","pr":0,"agent":"codex","session":"c-1"}"#;
+        assert_eq!(
+            from_event("notice", data).unwrap().body,
+            "It asks to run a tool."
+        );
+        // Without the session it names, there is nothing to open.
+        assert!(
+            from_event(
+                "notice",
+                r#"{"kind":"session_input","repository":"acme/demo","agent":"codex"}"#
+            )
+            .is_none()
+        );
+        // The message is cleaned like a title.
+        let data = serde_json::json!({
+            "kind": "session_permission", "repository": "acme/demo", "agent": "claude-code", "session": "s",
+            "message": format!("use\u{1b}[0m\u{202e} Bash {}", "x".repeat(400)),
+        })
+        .to_string();
+        let t = from_event("notice", &data).unwrap();
+        assert!(t.body.starts_with("use [0m Bash xx"), "{}", t.body);
+        assert_eq!(t.body.chars().count(), MAX_TITLE);
     }
 
     #[test]
