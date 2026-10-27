@@ -374,14 +374,20 @@ function PermissionCard({
       {request.input.length > 0 ? (
         <div className="local-feed-inputs">
           {request.input.map((row, i) =>
-            row.code ? (
-              <pre
-                key={i}
-                className={`local-feed-code ${row.label === "Command" ? "command" : ""}`}
-              >
+            row.code && row.label === "Command" ? (
+              <pre key={i} className="local-feed-code command">
                 <span className="sr-only">{row.label}: </span>
                 {row.value}
               </pre>
+            ) : row.code ? (
+              // Any other code row says what it is: "Other input" changes
+              // what an approval does as much as the command.
+              <div key={i} className="local-feed-code-row">
+                <p className="local-feed-row">
+                  <span>{row.label}</span>
+                </p>
+                <pre className="local-feed-code">{row.value}</pre>
+              </div>
             ) : (
               <p key={i} className="local-feed-row">
                 <span>{row.label}</span> {row.value}

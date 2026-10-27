@@ -1793,6 +1793,12 @@ a.local-session-pr:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.local-feed-code-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
 :root[data-theme="dark"] .local-feed-code {
   border: 1px solid var(--border-default);
   background: #0c0c0c;
