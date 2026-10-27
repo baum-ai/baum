@@ -126,14 +126,17 @@ transcripts, never the transcripts themselves.
   and `capturing`, true while one of its calls is pending, and
   `capture_off`, why the gate keeps capture from running for its repository
   now (`paused`, `off`, `repository_off` or `not_picked`; the repository is
-  the stored one, else the tracker's).
+  the tracker's, where the session works now, else the one it was last
+  captured in). A registry that cannot be read leaves it empty and is
+  logged.
 - `?repository=&pr=`: the same for each session of the pull request, resolved
   when read: the tracked sessions whose pull request it is (the live
   tracker's `prlink` link), ended ones it still holds included so their
   provisional decisions stay, then the sessions its latest saved review links
   on this machine (`locallink`, the computation its PR page's sessions list
-  shares; a failure to link is logged and links none). A session in both
-  appears once; `live` is a tracked session not over. Decisions dated after the
+  shares; a failure to link is logged and links none, and a review too large
+  to serve links none but still dates the provisional marks). A session in
+  both appears once; `live` is a tracked session not over. Decisions dated after the
   review's `generated_at` are `provisional`; without a saved review none are,
   and only the tracked sessions are listed.
 
@@ -141,8 +144,12 @@ transcripts, never the transcripts themselves.
 a save, an attempt beginning or settling; the beginning is what shows
 "Capturing…", and the settling ends it when no save or skip follows); the daemon publishes the app's
 `decisions` event, which carries no data, with it. The settings are
-`preferences.decisions` (`GET /api/settings` and `PUT /api/settings/decisions`
-in `internal/uiserver`), and a repository's `settings.decisions` through the
+`preferences.decisions` (`GET /api/settings`, and `GET` and `PUT
+/api/settings/decisions` in `internal/uiserver`, which also report
+`EffectiveModel`: the backend and model a capture would use, resolved as it
+does, `auto` included, and whether the chosen model is ignored; `baum internal
+reviews show` reports the same as `decisions_effective_model` and
+`decisions_model_ignored`), and a repository's `settings.decisions` through the
 repository settings API. Analytics counts the ledger (`Store.Ledger`) under
 baum's work.
 

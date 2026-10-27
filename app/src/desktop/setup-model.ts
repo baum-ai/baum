@@ -126,6 +126,10 @@ export type ReviewSettings = {
   /** The decision capture model; empty is the harness's default. Only the
    *  desktop setup edits it here. */
   decisions_model?: string;
+  /** What the daemon reports, never saved: the model capture uses with the
+   *  saved harness, and whether it ignores `decisions_model`. */
+  decisions_effective_model?: string;
+  decisions_model_ignored?: boolean;
 };
 
 const claudeModels = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
@@ -149,35 +153,23 @@ export const decisionModelDefaults: Record<string, string> = {
 
 /** Settings with an explicit model: an unset one becomes the harness's
  *  default, so the user always sees and saves a real choice. The decision
- *  capture model, when the settings carry one, is filled the same way, and
- *  so is one of another provider's family, which the harness would ignore. */
+ *  capture model, when the settings carry one, is filled the same way; a
+ *  chosen one is kept, even one the harness ignores, which is shown so. */
 export function withModel(settings: ReviewSettings): ReviewSettings {
   const next = settings.model.trim()
     ? settings
     : { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
-  if (
-    next.decisions_model === undefined ||
-    (next.decisions_model.trim() && decisionModelFits(next.decisions_model, next.backend))
-  )
-    return next;
+  if (next.decisions_model === undefined || next.decisions_model.trim()) return next;
   return { ...next, decisions_model: decisionModelDefaults[next.backend] ?? "" };
 }
 
-/** Settings as they are saved: a decision capture model that is the
- *  harness's default is stored as none, so it follows the harness. */
+/** Settings as they are saved: what the daemon reports is left out, and a
+ *  decision capture model that is the harness's default is stored as none,
+ *  so it follows the harness. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
-  if (settings.decisions_model === undefined) return settings;
-  return settings.decisions_model === decisionModelDefaults[settings.backend]
-    ? { ...settings, decisions_model: "" }
-    : settings;
-}
-
-/** Whether a decision capture model can run on the harness: a model of the
- *  other provider's family is ignored there. Unknown names count as its own. */
-export function decisionModelFits(model: string, backend: string): boolean {
-  const claude = /^claude/i.test(model);
-  const gpt = /^(gpt|o\d|codex)/i.test(model);
-  if (backend === "codex") return !claude;
-  if (backend === "claude" || backend === "anthropic") return !gpt;
-  return true;
+  const { decisions_effective_model: _, decisions_model_ignored: __, ...saved } = settings;
+  if (saved.decisions_model === undefined) return saved;
+  return saved.decisions_model === decisionModelDefaults[saved.backend]
+    ? { ...saved, decisions_model: "" }
+    : saved;
 }

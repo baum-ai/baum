@@ -709,6 +709,10 @@ function stubAutomatic(
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
+    if (path === "/s/test-ns/api/settings/decisions")
+      return Promise.resolve(
+        Response.json({ decisions: (settings as { decisions?: unknown }).decisions }),
+      );
     return original(...args);
   });
   return puts;
@@ -845,19 +849,49 @@ it("shows a repository's decision capture turned off", async () => {
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
 });
-it("shows a saved decision model the harness would ignore as the default it uses", async () => {
+it("shows a saved decision model capture ignores, and lets it be cleared", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  stubAutomatic(demoClone, automaticOverview, {
+  const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6-sol",
-    decisions: { enabled: true, model: "claude-sonnet-5-5", daily_cap: null },
   });
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/settings/decisions" &&
+    (args[1] as RequestInit | undefined)?.method !== "PUT"
+      ? Promise.resolve(
+          Response.json({
+            decisions: {
+              enabled: true,
+              model: "claude-sonnet-5-5",
+              daily_cap: null,
+              backend: "codex",
+              effective_model: "gpt-6-luna",
+              model_ignored: true,
+            },
+          }),
+        )
+      : stubbed(...args),
+  );
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
   const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
-  expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
-  expect(section.textContent).toContain("The saved model claude-sonnet-5-5 doesn't run with Codex");
+  expect(model.selectedOptions[0]!.textContent).toBe("claude-sonnet-5-5 (not used with Codex)");
+  expect(section.textContent).toContain("Codex doesn't use claude-sonnet-5-5");
+  await act(async () => {
+    model.value = model.options[0]!.value;
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () =>
+    [...section.querySelectorAll("button")]
+      .find((b) => b.textContent === "Save decision capture")!
+      .click(),
+  );
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "", daily_cap: null },
+  });
 });
 it("saves the decision capture switch, model and daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");

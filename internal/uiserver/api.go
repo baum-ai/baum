@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,7 +63,12 @@ type LocalAPI struct {
 	// from agent sessions (internal/decisionlog), given the sessions a pull
 	// request's saved review links, as its PR page lists them.
 	Decisions func(LinkedSessions) http.Handler
-	Changed   func()
+	// DecisionModel resolves the decision model capture uses with the given
+	// preferences, for GET and PUT /api/settings/decisions; nil reports none.
+	DecisionModel func(context.Context, repos.Preferences) DecisionModel
+	// Log receives what the API logs; nil is slog.Default.
+	Log     *slog.Logger
+	Changed func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -172,6 +178,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Decisions      decisionSettings  `json:"decisions"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, decisions})
 	})
+	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.

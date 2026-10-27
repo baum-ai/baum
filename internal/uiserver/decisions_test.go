@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/viewserver"
 )
 
 func decisionsRegistry(t *testing.T) (*repos.Registry, repos.Clone) {
@@ -88,6 +89,11 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	handler := LocalAPI{Registry: registry, Config: config.Default(), Decisions: func(l LinkedSessions) http.Handler {
 		linked = l
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
+	}, DecisionModel: func(_ context.Context, p repos.Preferences) DecisionModel {
+		if p.Decisions.Model != nil && *p.Decisions.Model == "claude-haiku-5-5" {
+			return DecisionModel{Backend: "codex", Model: "gpt-6-luna", Ignored: true}
+		}
+		return DecisionModel{Backend: "codex", Model: "gpt-6-luna"}
 	}}.Handler()
 	defer handler.Close()
 	serve := func(method, path, body string) (int, string) {
@@ -111,11 +117,20 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		t.Fatalf("defaults %+v", got)
 	}
 	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":false,"model":" gpt-6-luna ","daily_cap":1.5}`); code != 200 ||
-		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","daily_cap":1.5}}`+"\n" {
+		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","daily_cap":1.5,"backend":"codex","effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
 		t.Fatalf("put %d %q", code, body)
 	}
 	if got := settings(); got.Enabled || got.Model != "gpt-6-luna" || got.DailyCap == nil || *got.DailyCap != 1.5 {
 		t.Fatalf("after put %+v", got)
+	}
+	// The settings' own route also says what capture makes of them.
+	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null}`); code != 200 ||
+		!strings.Contains(body, `"effective_model":"gpt-6-luna","model_ignored":true`) {
+		t.Fatalf("put an ignored model %d %s", code, body)
+	}
+	if code, body := serve("GET", "/api/settings/decisions", ""); code != 200 ||
+		body != `{"decisions":{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null,"backend":"codex","effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
+		t.Fatalf("get %d %s", code, body)
 	}
 	for _, body := range []string{`{"enabled":true,"daily_cap":-1}`, `{"model":"x"}`, `{"enabled":true,"other":1}`} {
 		if code, _ := serve("PUT", "/api/settings/decisions", body); code != http.StatusBadRequest {
@@ -129,6 +144,31 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	prefs, _ := registry.Preferences(context.Background())
 	if prefs.Decisions != (repos.DecisionPreferences{}) {
 		t.Fatalf("stored %+v", prefs.Decisions)
+	}
+}
+
+// A saved review too large to serve links no sessions, but its time still
+// marks the decisions made after it provisional.
+func TestLinkedSessionsOfAnOversizedReview(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := decisionsRegistry(t)
+	versions, err := store.Open(clone.CommonDir, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"generated_at":"2026-10-20T09:00:00Z"},"pad":"` + strings.Repeat("x", viewserver.MaxDocumentBytes) + `"}`)
+	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document}); err != nil {
+		t.Fatal(err)
+	}
+	cache := newDocumentCache()
+	defer cache.close()
+	cache.resolve = func(context.Context, locallink.Request) (locallink.Result, error) {
+		t.Error("an oversized review was linked")
+		return locallink.Result{}, nil
+	}
+	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache)(ctx, "owner/repo", 7)
+	if err != nil || sessions != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("%+v %v %v", sessions, generated, err)
 	}
 }
 

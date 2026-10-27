@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import {
-  decisionModelFits,
   describeCommand,
   displayPath,
   repositoryPath,
@@ -30,7 +29,7 @@ it("keeps a replacement's real path separate from its displayed text", () => {
   expect(command.replace).toBe(found.path);
 });
 
-it("saves the harness's default decision model as none and never keeps one it ignores", () => {
+it("keeps a chosen decision model and saves the harness's default as none", () => {
   const base = {
     backend: "codex",
     model: "gpt-6-sol",
@@ -38,15 +37,17 @@ it("saves the harness's default decision model as none and never keeps one it ig
     pull_requests: "both" as const,
   };
   expect(withModel({ ...base, decisions_model: "" }).decisions_model).toBe("gpt-6-luna");
+  // Only the daemon says whether a model is used; the setup keeps it.
   expect(withModel({ ...base, decisions_model: "claude-haiku-5-5" }).decisions_model).toBe(
-    "gpt-6-luna",
+    "claude-haiku-5-5",
   );
-  expect(withModel({ ...base, decisions_model: "gpt-6-sol" }).decisions_model).toBe("gpt-6-sol");
   expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" }).decisions_model).toBe("");
-  expect(storedReviews({ ...base, decisions_model: "gpt-6-sol" }).decisions_model).toBe(
-    "gpt-6-sol",
-  );
-  expect(decisionModelFits("claude-sonnet-5-5", "codex")).toBe(false);
-  expect(decisionModelFits("gpt-6-luna", "anthropic")).toBe(false);
-  expect(decisionModelFits("my-proxy-model", "claude")).toBe(true);
+  expect(
+    storedReviews({
+      ...base,
+      decisions_model: "gpt-6-sol",
+      decisions_effective_model: "gpt-6-sol",
+      decisions_model_ignored: false,
+    }),
+  ).toEqual({ ...base, decisions_model: "gpt-6-sol" });
 });

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,6 +43,8 @@ type API struct {
 	Live func() []livesessions.Session
 	// Linked is nil to link none.
 	Linked LinkedSessions
+	// Log is nil for slog.Default.
+	Log *slog.Logger
 }
 
 // agentOfVendor names a linked session's vendor as the hooks name its agent.
@@ -112,15 +115,22 @@ func (a *API) session(ctx context.Context, key SessionKey) (map[string]SessionDe
 		return nil, err
 	}
 	view := views[0]
-	if view.Repository == "" {
-		for _, s := range a.live() {
-			if s.Agent == key.Agent && s.ID == key.ID {
-				view.Repository = s.Repository
-			}
+	// The gate reads the repository the session works in now: the tracker's,
+	// else the one it was last captured in.
+	repository := view.Repository
+	for _, s := range a.live() {
+		if s.Agent == key.Agent && s.ID == key.ID && s.Repository != "" {
+			repository = s.Repository
 		}
 	}
-	if view.CaptureOff, err = a.captureOff(ctx, view.Repository); err != nil {
-		return nil, err
+	// An unreadable registry leaves the reason out rather than the answer.
+	if view.CaptureOff, err = a.captureOff(ctx, repository); err != nil {
+		log := a.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("decisions: the capture gate was not read", "error", err)
+		view.CaptureOff = ""
 	}
 	return map[string]SessionDecisions{"session": view}, nil
 }

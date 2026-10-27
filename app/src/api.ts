@@ -456,7 +456,16 @@ export type PullRequestDecisions = {
   review_generated_at: string | null;
 };
 /** The global decision capture settings, from `api/settings`. */
-export type DecisionSettings = { enabled: boolean; model: string; daily_cap: number | null };
+export type DecisionSettings = {
+  enabled: boolean;
+  model: string;
+  daily_cap: number | null;
+  /** What the daemon makes of them (`api/settings/decisions` only): the
+   *  harness capture resolves to, its model, and whether `model` is ignored. */
+  backend?: string;
+  effective_model?: string;
+  model_ignored?: boolean;
+};
 const skipReasons: Record<string, string> = {
   too_large: "The session is too large to capture.",
   unreadable: "The session's transcript could not be read.",

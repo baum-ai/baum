@@ -77,6 +77,9 @@ export function Setup() {
   const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
+  // The saved decision model when the daemon reports capture ignores it, and
+  // the harness shown for that report.
+  const [unusedModel, setUnusedModel] = useState<{ model: string; backend: string } | null>(null);
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -116,7 +119,9 @@ export function Setup() {
         // is saved, so opening baum saves the explicit choice.
         const backend = settings.backend === "auto" ? autoBackend(view) : settings.backend;
         setReviews(withModel({ ...settings, backend }));
-        setSavedReviews(JSON.stringify(settings));
+        if (settings.decisions_model_ignored && settings.decisions_model)
+          setUnusedModel({ model: settings.decisions_model, backend });
+        setSavedReviews(JSON.stringify(storedReviews(settings)));
       })
       .catch((cause) => {
         if (active) setError(String(cause));
@@ -286,6 +291,9 @@ export function Setup() {
                   disabled={busy}
                   onChange={setReviews}
                   decisions
+                  unusedDecisionModel={
+                    unusedModel?.backend === reviews.backend ? unusedModel.model : undefined
+                  }
                 />
                 <PlanUsage className="setup-card" />
               </>

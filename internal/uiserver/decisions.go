@@ -16,6 +16,13 @@ import (
 	"github.com/baum-ai/baum/internal/viewserver"
 )
 
+func (a LocalAPI) logger() *slog.Logger {
+	if a.Log != nil {
+		return a.Log
+	}
+	return slog.Default()
+}
+
 // LinkedSessions lists the sessions a pull request's latest saved review
 // links on this machine, and when that review was generated (zero without
 // one). It is an alias, so decisionlog.API takes it as it is.
@@ -57,7 +64,7 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 				return parsed.Review.GeneratedAt
 			}
 			unlinked := func(reason string, args ...any) ([]locallink.Session, time.Time, error) {
-				slog.Warn("decisions: the saved review's sessions were not linked", append([]any{"repository", repository, "pr", number, "reason", reason}, args...)...)
+				a.logger().Warn("decisions: the saved review's sessions were not linked", append([]any{"repository", repository, "pr", number, "reason", reason}, args...)...)
 				return nil, generated(), nil
 			}
 			if len(version.Document) > viewserver.MaxDocumentBytes {
@@ -77,7 +84,7 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 				return nil, time.Time{}, context.Cause(ctx)
 			}
 			if !result.Available && result.Code == locallink.CodeError {
-				return unlinked(result.Code)
+				return unlinked(result.Reason)
 			}
 			return result.Sessions, generated(), nil
 		}
@@ -92,6 +99,40 @@ type decisionSettings struct {
 	Enabled  bool     `json:"enabled"`
 	Model    string   `json:"model"`
 	DailyCap *float64 `json:"daily_cap"`
+}
+
+// DecisionModel is the backend and decision model capture uses
+// (decisionlog.EffectiveModel), and whether the chosen model is ignored.
+type DecisionModel struct {
+	Backend string `json:"backend"`
+	Model   string `json:"effective_model"`
+	Ignored bool   `json:"model_ignored"`
+}
+
+// decisionView is GET /api/settings/decisions: the settings and what
+// capture makes of them.
+type decisionView struct {
+	decisionSettings
+	DecisionModel
+}
+
+func (a LocalAPI) decisionView(ctx context.Context, p repos.Preferences) decisionView {
+	view := decisionView{decisionSettings: decisionSettingsOf(p)}
+	if a.DecisionModel != nil {
+		view.DecisionModel = a.DecisionModel(ctx, p)
+	}
+	return view
+}
+
+// getDecisionSettings serves GET /api/settings/decisions. Resolving an auto
+// backend runs the backends' checks, so it is apart from GET /api/settings.
+func (a LocalAPI) getDecisionSettings(w http.ResponseWriter, r *http.Request) {
+	prefs, err := a.Registry.Preferences(r.Context())
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]decisionView{"decisions": a.decisionView(r.Context(), prefs)})
 }
 
 func decisionSettingsOf(p repos.Preferences) decisionSettings {
@@ -141,5 +182,5 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, invalid.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]decisionSettings{"decisions": decisionSettingsOf(prefs)})
+	writeJSON(w, map[string]decisionView{"decisions": a.decisionView(r.Context(), prefs)})
 }

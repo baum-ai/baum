@@ -28,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -535,7 +536,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		if decisionStore != nil {
 			insights.Captures = decisionStore.Ledger
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
-				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked}).Handler()
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
 			}
 		}
 		// A session that ended has its last lines written: read it soon.
@@ -543,8 +544,12 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
-			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
-			Decisions:   decisionsAPI,
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Decisions: decisionsAPI, Log: log,
+			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
+				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
+				return uiserver.DecisionModel{Backend: e.Backend, Model: e.Model, Ignored: e.Ignored}
+			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,

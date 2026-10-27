@@ -96,9 +96,9 @@ pull request number) when GitHub accepts them, kept 90 days; they are `null`
 when there is no ledger. The agent filter matches a job's harness.
 `decisions` counts decision capture's calls started in the window from its
 ledger (`Captures`; null without one): calls, those that succeeded, failed
-and were abandoned when the daemon stopped, failures by reason code, and the spend of settled calls, incomplete
-when one has no cost and unknown, never zero, when none has. The agent filter
-matches the backend that made the call.
+and were abandoned when the daemon stopped, failures by reason code, and the
+spend of settled calls, incomplete when one has no cost and unknown, never
+zero, when none has. The agent filter matches the backend that made the call.
 
 ## Delivery
 

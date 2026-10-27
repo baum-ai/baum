@@ -88,6 +88,7 @@ export function ModelPicker({
   inherit,
   id,
   label = "Model",
+  unused,
 }: {
   backend: string;
   value: string | null;
@@ -96,8 +97,11 @@ export function ModelPicker({
   inherit?: string;
   id: string;
   label?: string;
+  /** A saved model the harness does not use, listed as its own option so
+   *  it shows as chosen and choosing another is a change. */
+  unused?: string;
 }) {
-  const presets = modelPresets[backend] ?? [];
+  const presets = [...(modelPresets[backend] ?? []), ...(unused ? [unused] : [])];
   const [custom, setCustom] = useState(value !== null && !presets.includes(value));
   const selected = value === null ? INHERIT : custom ? CUSTOM : value;
   return (
@@ -120,7 +124,7 @@ export function ModelPicker({
             {inherit ? <option value={INHERIT}>{inherit}</option> : null}
             {presets.map((model) => (
               <option key={model} value={model}>
-                {model}
+                {model === unused ? `${model} (not used with ${harnessName(backend)})` : model}
               </option>
             ))}
             <option value={CUSTOM}>Custom…</option>
@@ -166,6 +170,7 @@ export function DecisionModelPicker({
   disabled,
   inherit,
   id,
+  unused,
 }: {
   backend: string;
   value: string | null;
@@ -173,6 +178,8 @@ export function DecisionModelPicker({
   disabled: boolean;
   inherit?: string;
   id: string;
+  /** The saved model, when the daemon reports that capture ignores it. */
+  unused?: string;
 }) {
   if (!decisionModelDefaults[backend])
     return (
@@ -184,16 +191,27 @@ export function DecisionModelPicker({
       </div>
     );
   return (
-    <ModelPicker
-      key={backend}
-      id={id}
-      label="Decision log model"
-      backend={backend}
-      value={value}
-      disabled={disabled}
-      inherit={inherit}
-      onChange={onChange}
-    />
+    <>
+      <ModelPicker
+        key={`${backend}:${unused ?? ""}`}
+        id={id}
+        label="Decision log model"
+        backend={backend}
+        value={value}
+        disabled={disabled}
+        inherit={inherit}
+        onChange={onChange}
+        unused={unused}
+      />
+      {unused && value === unused ? (
+        <div className="review-section">
+          <p className="review-note">
+            {harnessName(backend)} doesn't use {unused}, so capture uses its default,{" "}
+            {decisionModelDefaults[backend]}. Choose a model to replace it.
+          </p>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -203,6 +221,7 @@ export function ReviewSettingsForm({
   onChange,
   className = "setup-card",
   decisions = false,
+  unusedDecisionModel,
 }: {
   settings: ReviewSettings;
   disabled: boolean;
@@ -210,6 +229,9 @@ export function ReviewSettingsForm({
   className?: string;
   /** Also offer the decision capture model, which follows the harness. */
   decisions?: boolean;
+  /** The saved decision model, when the daemon reports capture ignores it
+   *  with the harness shown. */
+  unusedDecisionModel?: string;
 }) {
   const update = (patch: Partial<ReviewSettings>) => onChange({ ...settings, ...patch });
   return (
@@ -290,6 +312,7 @@ export function ReviewSettingsForm({
             backend={settings.backend}
             value={settings.decisions_model ?? ""}
             disabled={disabled}
+            unused={unusedDecisionModel}
             onChange={(model) => update({ decisions_model: model ?? "" })}
           />
           <div className="review-section">

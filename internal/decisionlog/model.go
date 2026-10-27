@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 // Limits of one capture.
@@ -184,4 +185,43 @@ func maxCalls(backend string) int {
 		return claude.CompleteMaxTurns
 	}
 	return 1
+}
+
+// Effective is the backend and model decision capture uses.
+type Effective struct {
+	// Backend is the backend reviews resolve to, empty when none passes its
+	// check.
+	Backend string `json:"backend"`
+	// Model is the decision model; empty without a backend and with
+	// cursor-agent, which cannot capture.
+	Model string `json:"effective_model"`
+	// Ignored is a chosen model (preferences.decisions.model) that capture
+	// does not use with Backend.
+	Ignored bool `json:"model_ignored"`
+}
+
+// EffectiveModel resolves the backend and decision model as a capture does
+// (resolveBackend, decisionModel), from the config file with the app's
+// preferences over it; a repository's own backend can still differ. Backends
+// zero builds them from the configuration and list nil is pricing.Active.
+// With auto it runs the backends' checks.
+func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Preferences, backends generate.Backends, list *pricing.List) Effective {
+	cfg := prefs.Resolve(file)
+	if backends.Claude == nil {
+		backends = generate.DefaultBackendsFor(cfg)
+	}
+	if list == nil {
+		list = pricing.Active()
+	}
+	var out Effective
+	backend, err := resolveBackend(ctx, cfg.Backend, backends)
+	if err != nil {
+		return out
+	}
+	out.Backend = backend
+	if backend != agent.BackendCursorAgent {
+		out.Model = decisionModel(list, backend, prefs.Decisions.Model)
+	}
+	out.Ignored = prefs.Decisions.Model != nil && *prefs.Decisions.Model != "" && *prefs.Decisions.Model != out.Model
+	return out
 }

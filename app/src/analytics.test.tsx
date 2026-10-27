@@ -266,6 +266,19 @@ it("counts decision capture's calls and keeps its unknown spend unknown", () => 
   });
   expect(known).toContain("≥ $0.0400");
   expect(known).toContain("Model call failed");
+  const cut = capture({
+    attempts: 2,
+    succeeded: 1,
+    failed: 0,
+    abandoned: 1,
+    cost: { usd: 0.01, incomplete: false, reasons: [] },
+    failures: [],
+  });
+  expect(cut).toContain("Cut short by a stop");
+  // Only captures ran: the reviews part says so instead of "ran nothing".
+  expect(cut).toContain("No reviews or fixes in this window.");
+  expect(cut).not.toContain("baum ran nothing in this window");
+  expect(known).not.toContain("Cut short by a stop");
   // An older daemon, or none of its ledger, shows no section.
   expect(renderToStaticMarkup(<AnalyticsReport data={report()} Link={Link} />)).not.toContain(
     "Decision capture",

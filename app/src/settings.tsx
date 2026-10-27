@@ -49,7 +49,6 @@ import {
   type SetupView,
   type Outcome,
   decisionModelDefaults,
-  decisionModelFits,
   modelPresets,
   withModel,
   type PullRequests,
@@ -508,7 +507,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
     setCap(settings.daily_cap === null ? "" : String(settings.daily_cap));
   };
   useEffect(() => {
-    request<{ decisions?: DecisionSettings }>("api/settings").then(
+    request<{ decisions?: DecisionSettings }>("api/settings/decisions").then(
       (settings) => {
         if (settings.decisions) load(settings.decisions);
       },
@@ -516,11 +515,18 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
     );
   }, []);
   if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
-  const backend = shownBackend(defaults.backend);
+  // The daemon resolves the harness capture uses, auto included.
+  const backend = saved.backend || shownBackend(defaults.backend);
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capInvalid = capValue !== null && (!Number.isFinite(capValue) || capValue < 0);
-  const next = { ...draft, daily_cap: capInvalid ? draft.daily_cap : capValue };
-  const dirty = JSON.stringify(next) !== JSON.stringify(saved);
+  const next = {
+    enabled: draft.enabled,
+    model: draft.model,
+    daily_cap: capInvalid ? draft.daily_cap : capValue,
+  };
+  const dirty =
+    JSON.stringify(next) !==
+    JSON.stringify({ enabled: saved.enabled, model: saved.model, daily_cap: saved.daily_cap });
   const save = async () => {
     setPending(true);
     setError("");
@@ -540,9 +546,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
     }
   };
   const fallback = decisionModelDefaults[backend];
-  // A model of another provider's family is ignored with this harness:
-  // show the default it uses instead.
-  const ignored = draft.model && !decisionModelFits(draft.model, backend) ? draft.model : "";
+  // A saved model the daemon reports capture ignores is shown as such.
+  const ignored = saved.model_ignored && saved.model ? saved.model : undefined;
   return (
     <section aria-labelledby="decisions-heading" className="local-panel settings-card p-0!">
       <PanelHeader
@@ -568,7 +573,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         <DecisionModelPicker
           id="settings-decisions-model"
           backend={backend}
-          value={ignored ? null : draft.model || null}
+          value={draft.model || null}
+          unused={ignored}
           inherit={`Default${fallback ? ` (${fallback})` : ""}`}
           disabled={pending || !draft.enabled}
           onChange={(model) => {
@@ -576,14 +582,6 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
             setDraft({ ...draft, model: model ?? "" });
           }}
         />
-        {ignored ? (
-          <div className="review-section">
-            <p className="review-note">
-              The saved model {ignored} doesn't run with {harnessName(backend)}, so capture uses the
-              default. Choose a model to replace it.
-            </p>
-          </div>
-        ) : null}
         <div className="review-section">
           <label htmlFor="decisions-cap" className="review-label">
             Daily spending cap (US$)

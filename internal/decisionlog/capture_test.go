@@ -493,3 +493,39 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 		}
 	}
 }
+
+// The model the app shows is the one a capture would use, auto resolved by
+// the backends' checks.
+func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
+	ctx := context.Background()
+	missing := func(name string) func(string) generate.CheckedBackend {
+		return func(string) generate.CheckedBackend { return &fakeBackend{name: name, checkErr: errors.New("missing")} }
+	}
+	present := func(name string) func(string) generate.CheckedBackend {
+		return func(string) generate.CheckedBackend { return &fakeBackend{name: name} }
+	}
+	noClaude := generate.Backends{Claude: missing(agent.BackendClaude), Codex: present(agent.BackendCodex),
+		Anthropic: missing(agent.BackendAnthropic), CursorAgent: present(agent.BackendCursorAgent)}
+	sonnet, house := "claude-sonnet-5-5", "house-model"
+	auto, cursor := config.BackendAuto, config.BackendCursorAgent
+	for name, tc := range map[string]struct {
+		prefs repos.Preferences
+		want  Effective
+	}{
+		"auto picks codex, default model": {repos.Preferences{Backend: &auto}, Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna"}},
+		"a claude model is ignored with codex": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &sonnet}},
+			Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna", Ignored: true}},
+		"an unknown family is kept": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &house}},
+			Effective{Backend: agent.BackendCodex, Model: house}},
+		"cursor-agent captures nothing": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
+			Effective{Backend: agent.BackendCursorAgent, Ignored: true}},
+	} {
+		if got := EffectiveModel(ctx, config.Config{Backend: config.BackendClaude}, tc.prefs, noClaude, pricing.Active()); got != tc.want {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+	none := generate.Backends{Claude: missing(agent.BackendClaude), Codex: missing(agent.BackendCodex), Anthropic: missing(agent.BackendAnthropic), CursorAgent: present(agent.BackendCursorAgent)}
+	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, repos.Preferences{}, none, nil); got != (Effective{}) {
+		t.Errorf("nothing usable: %+v", got)
+	}
+}

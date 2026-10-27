@@ -57,14 +57,21 @@ const captureOff: Record<string, string> = {
   not_picked: "Capture runs only in picked repositories.",
 };
 
-/** Where a session's capture stands: a call in flight, why it will not run,
- *  why it was skipped, when it was last looked at, or not yet. */
+/** Where a session's capture stands: a call in flight, why it was skipped,
+ *  when it was last looked at, or not yet; and why capture will not run
+ *  again, beside what it did before. */
 export function captureState(s: SessionDecisions, now: number): string {
   if (s.capturing) return "Capturing…";
-  if (s.capture_off) return captureOff[s.capture_off] ?? "Capture is off.";
-  if (s.coverage === "skipped") return skipReasonText(s.skip_reason);
-  if (s.updated_at) return `Updated ${formatRelative(s.updated_at, now)}`;
-  return "Not captured yet: decisions are captured once the session pauses.";
+  const off = s.capture_off ? (captureOff[s.capture_off] ?? "Capture is off.") : "";
+  const state =
+    s.coverage === "skipped"
+      ? skipReasonText(s.skip_reason)
+      : s.updated_at
+        ? `Updated ${formatRelative(s.updated_at, now)}`
+        : off
+          ? ""
+          : "Not captured yet: decisions are captured once the session pauses.";
+  return [state, off].filter(Boolean).join(" · ");
 }
 
 const who: Record<string, string> = {

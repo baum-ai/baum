@@ -173,6 +173,27 @@ it("lists a pull request's decisions by session and marks the provisional ones",
   expect(sessions[1]!.textContent).toContain("Dependency · Agent proposed, you approved");
 });
 
+it("shows a session whose first capture is in flight on the pull request", async () => {
+  answers[prPath] = {
+    review_generated_at: null,
+    sessions: [
+      {
+        ...captured({ coverage: "", updated_at: null, decisions: [], capturing: true }),
+        live: true,
+      },
+    ],
+  };
+  await act(async () =>
+    root.render(
+      <PullRequestDecisionsList repository="acme/demo" number={7} live={[live]} revision={0} />,
+    ),
+  );
+  const section = node.querySelector('[aria-labelledby="pr-decisions-heading"]')!;
+  expect(section.querySelector("h3")!.textContent).toBe("Decisions from sessions (0)");
+  expect(section.textContent).toContain("Add a retry budget");
+  expect(section.textContent).toContain("Capturing…");
+});
+
 it("puts where a capture stands in words", () => {
   const now = Date.now();
   expect(captureState(captured({ capturing: true }), now)).toBe("Capturing…");
@@ -190,6 +211,6 @@ it("puts where a capture stands in words", () => {
     captureState(captured({ coverage: "", updated_at: null, capture_off: "repository_off" }), now),
   ).toBe("Capture is off for this repository.");
   expect(captureState(captured({ capture_off: "paused" }), now)).toBe(
-    "Capture is paused with automatic reviews.",
+    "Updated 3 minutes ago · Capture is paused with automatic reviews.",
   );
 });
