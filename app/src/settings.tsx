@@ -505,7 +505,7 @@ function AgentEnvSection() {
         id="agent-env-heading"
         icon={<TerminalIcon size={20} />}
         title="Environment for agents"
-        detail="Extra environment variables for the agents baum runs, and for the commit and push after a fix. Values can use ~ and $HOME. Stored on this computer, so don't put secrets here."
+        detail="Extra environment variables for the agents baum runs, and for the commit and push after a fix. Values can reference other environment variables. Stored on this computer, so don't put secrets here."
       />
       {loadError ? <Alert className="mx-5 mb-4">{loadError}</Alert> : null}
       {source === "file" ? (
