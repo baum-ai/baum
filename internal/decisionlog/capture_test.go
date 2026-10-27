@@ -439,7 +439,8 @@ func TestReservationFitsMidSizedSessions(t *testing.T) {
 		rendered       int
 	}{
 		{agent.BackendClaude, "claude-haiku-5-5", 100_000},
-		{agent.BackendClaude, "claude-haiku-5-5", 250_000},
+		{agent.BackendClaude, "claude-haiku-5-5", 200_000},
+		{agent.BackendClaude, "claude-haiku-5-5", 235_000},
 		{agent.BackendAnthropic, "claude-haiku-5-5", 300_000},
 		{agent.BackendCodex, "gpt-6-luna", 300_000},
 		{agent.BackendCodex, "gpt-6-luna", 1_000_000},
@@ -449,11 +450,11 @@ func TestReservationFitsMidSizedSessions(t *testing.T) {
 			t.Errorf("%s %s, %d bytes rendered: reserved $%.4f, priced %v", tc.backend, tc.model, tc.rendered, reserved, ok)
 		}
 	}
-	// claude's possible retry costs the cached prompt and another reply, far
-	// less than a second full call.
+	// claude caches its prompt and may retry once with the cached prompt:
+	// more than one plain call, less than two.
 	single, _ := reserve(pricing.Active(), agent.BackendAnthropic, "claude-haiku-5-5", bound(250_000))
 	double, _ := reserve(pricing.Active(), agent.BackendClaude, "claude-haiku-5-5", bound(250_000))
-	if double <= single || double > 1.5*single {
+	if double <= single || double >= 2*single {
 		t.Fatalf("claude reserves $%.4f against one call's $%.4f", double, single)
 	}
 }
@@ -472,5 +473,21 @@ func TestCaptureOverTheSessionAllowanceIsRetried(t *testing.T) {
 	f.later(24 * time.Hour)
 	if covered(row, row.Fingerprint, startOfDay(f.clock.now)) {
 		t.Fatal("a session over the allowance is never tried again")
+	}
+}
+
+func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(t.TempDir(), "debug")
+	f.capture(t, Options{DebugDir: dir})
+	if _, err := os.Stat(filepath.Join(dir, "reply.json")); err != nil {
+		t.Fatal(err)
+	}
+	f.capture(t, Options{DebugDir: dir, DryRun: true, Force: true})
+	for name, want := range map[string]bool{"transcript.txt": true, "user.txt": false, "reply.json": false} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if (err == nil) != want || (want && info.Mode().Perm() != 0o600) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

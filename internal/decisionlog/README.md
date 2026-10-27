@@ -67,16 +67,19 @@ not a failure.
    structured call (`backend_unsupported`); a backend that does not pass its
    check is `backend_unavailable`.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
-   output tokens at the model's list price. claude may make a second call,
-   after the harness rejected its first reply against the schema; it resends
-   the cached prompt, so it is reserved at the cache-read rate plus another
-   reply. The Codex CLI has no option capping the reply, so its 16,384 tokens
+   output tokens at the model's list price. Claude Code caches the prompt, so
+   claude's call is reserved at the cache-write rate when that is higher. It
+   may make a second call, after the harness rejected its first reply against
+   the schema; that resends the cached prompt, so it is reserved at the
+   cache-read rate plus another reply. The Codex CLI has no option capping the reply, so its 16,384 tokens
    are an estimate rather than a limit. A model the price list does not price
    is skipped (`unpriced_model`). A session's spend, this reservation
    included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
    spend may not pass `preferences.decisions.daily_cap` when set
    (`daily_cap`; no default). No call is made for either, so the session is
-   tried again the next day or when it changes.
+   tried again the next day or when it changes; a session whose reservation
+   alone exceeds the allowance stays skipped at no cost, since every try
+   stops before the call.
 8. The attempt is recorded as pending and the completion made: one request
    for anthropic; `claude -p` with no tools besides its structured reply,
    which normally ends after one call and may retry a rejected reply once; or

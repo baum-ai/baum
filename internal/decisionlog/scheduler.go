@@ -47,9 +47,9 @@ type Worker interface {
 type memo struct {
 	// fired is the LastActivityAt a settled session was queued for.
 	fired time.Time
-	// running is when the session was last seen to enter StateRunning, zero
-	// while it is not running; lastRun is when it was last queued for running
-	// long.
+	// running is when the session was first seen running after it last
+	// settled, zero until then: a brief stop between prompts leaves it as it
+	// is. lastRun is when it was last queued for running long.
 	running, lastRun time.Time
 }
 

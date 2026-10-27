@@ -207,6 +207,15 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if c.initErr != nil {
 		return Report{}, c.initErr
 	}
+	if o.DebugDir != "" {
+		// What a previous capture rendered, sent and got back is not this
+		// one's.
+		for _, stale := range []string{"transcript.txt", "user.txt", "reply.json"} {
+			if err := os.Remove(filepath.Join(o.DebugDir, stale)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return Report{}, err
+			}
+		}
+	}
 	now := c.now()
 	day := startOfDay(now)
 	report := Report{}
@@ -284,6 +293,9 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(ReasonUnreadable)
 	}
 	report.Turns = len(rendered.Turns)
+	if err := debugFile(o.DebugDir, "transcript.txt", []byte(rendered.Text())); err != nil {
+		return report, err
+	}
 	hash := decisions.ContentHash(rendered)
 	options := decisions.ExtractOptions{MaxInputTokens: MaxInputTokens, MaxOutputTokens: MaxOutputTokens}
 	report.Mode = "full"
@@ -299,9 +311,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		options.Cutoff, _ = decisions.ExtensionCutoff(rendered, head.PrefixHash)
 		report.Mode = "extend"
 	}
-	if err := debugFile(o.DebugDir, "transcript.txt", []byte(rendered.Text())); err != nil {
-		return report, err
-	}
+
 	report.Tokens = c.Extractor.EstimateTokens(rendered, options)
 	report.MaxTokens = c.Extractor.MaxTokens(rendered, options)
 	if report.Tokens > MaxInputTokens {

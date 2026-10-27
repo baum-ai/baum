@@ -42,28 +42,6 @@ func TestDue(t *testing.T) {
 // TestDueFollowsTheTracker drives a real tracker through Claude Code's events:
 // a stop, then the idle_prompt notification a minute later, a new prompt, a
 // long run and the end.
-func TestDueKeepsCountingAcrossBriefStops(t *testing.T) {
-	m := memo{}
-	start := t0
-	running := livesessions.Session{State: livesessions.StateRunning, LastActivityAt: start}
-	_, m = due(running, m, start)
-	// A stop answered within a minute is not a settle.
-	stopped := livesessions.Session{State: livesessions.StateIdle, WaitingReason: livesessions.WaitTurnFinished, LastActivityAt: start.Add(15 * time.Minute)}
-	if got, next := due(stopped, m, start.Add(16*time.Minute)); got != "" || next.running.IsZero() {
-		t.Fatalf("%q %+v", got, next)
-	} else {
-		m = next
-	}
-	if got, _ := due(running, m, start.Add(RunningEvery)); got != "running" {
-		t.Fatalf("due = %q", got)
-	}
-	// A settle restarts the count.
-	_, m = due(livesessions.Session{State: livesessions.StateIdle, LastActivityAt: start}, m, start.Add(time.Hour))
-	if got, _ := due(running, m, start.Add(time.Hour+time.Minute)); got != "" {
-		t.Fatalf("due = %q", got)
-	}
-}
-
 func TestDueFollowsTheTracker(t *testing.T) {
 	c := &clock{t0}
 	tracker := &livesessions.Tracker{Source: &fakeSource{}, Linker: demoLinker{}, Now: c.Now}
@@ -113,6 +91,28 @@ func TestDueFollowsTheTracker(t *testing.T) {
 	c.now = c.now.Add(time.Minute)
 	send("session-end", "")
 	check("settled")
+}
+
+func TestDueKeepsCountingAcrossBriefStops(t *testing.T) {
+	m := memo{}
+	start := t0
+	running := livesessions.Session{State: livesessions.StateRunning, LastActivityAt: start}
+	_, m = due(running, m, start)
+	// A stop answered within a minute is not a settle.
+	stopped := livesessions.Session{State: livesessions.StateIdle, WaitingReason: livesessions.WaitTurnFinished, LastActivityAt: start.Add(15 * time.Minute)}
+	if got, next := due(stopped, m, start.Add(16*time.Minute)); got != "" || next.running.IsZero() {
+		t.Fatalf("%q %+v", got, next)
+	} else {
+		m = next
+	}
+	if got, _ := due(running, m, start.Add(RunningEvery)); got != "running" {
+		t.Fatalf("due = %q", got)
+	}
+	// A settle restarts the count.
+	_, m = due(livesessions.Session{State: livesessions.StateIdle, LastActivityAt: start}, m, start.Add(time.Hour))
+	if got, _ := due(running, m, start.Add(time.Hour+time.Minute)); got != "" {
+		t.Fatalf("due = %q", got)
+	}
 }
 
 type demoLinker struct{}

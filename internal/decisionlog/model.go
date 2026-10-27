@@ -54,10 +54,11 @@ func vendor(backend string) string {
 
 // reserve is the most a completion with at most inputTokens of prompt and
 // MaxOutputTokens of reply per call costs at the model's rates, as hosted
-// extraction reserves one call; false when the list would not price it. A
-// further call the backend can make (maxCalls) resends the same prompt, which
-// the first call cached, so it is reserved at the cache-read rate plus its
-// reply.
+// extraction reserves one call; false when the list would not price it.
+// Claude Code caches the prompt, so claude's first call is reserved at the
+// higher of the input and cache-write rates. A further call the backend can
+// make (maxCalls) resends the same prompt, which the first call cached, so it
+// is reserved at the cache-read rate plus its reply.
 func reserve(list *pricing.List, backend, model string, inputTokens int64) (float64, bool) {
 	v := vendor(backend)
 	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: MaxOutputTokens, SingleRequest: true})
@@ -65,7 +66,11 @@ func reserve(list *pricing.List, backend, model string, inputTokens int64) (floa
 		return 0, false
 	}
 	reply := float64(MaxOutputTokens) * rates.Output
-	first := float64(inputTokens)*rates.Input + reply
+	input := rates.Input
+	if backend == agent.BackendClaude {
+		input = max(input, rates.CacheWrite)
+	}
+	first := float64(inputTokens)*input + reply
 	further := float64(maxCalls(backend)-1) * (float64(inputTokens)*rates.CacheRead + reply)
 	return (first + further) / 1_000_000, true
 }

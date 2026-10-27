@@ -344,6 +344,10 @@ WHERE agent=? AND session_id=?`, e.ContentHash, e.PrefixHash, e.PromptVersion, e
 			}
 			previous[id] = at
 		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
 		if err := rows.Close(); err != nil {
 			return err
 		}
@@ -524,6 +528,10 @@ WHERE agent=? AND session_id=? ORDER BY ordinal`, key.Agent, key.ID)
 			d.Files = []string{}
 			out = append(out, d)
 		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
@@ -539,6 +547,10 @@ WHERE agent=? AND session_id=? ORDER BY ordinal`, key.Agent, key.ID)
 					return nil, err
 				}
 				out[i].Files = append(out[i].Files, path)
+			}
+			if err := files.Err(); err != nil {
+				_ = files.Close()
+				return nil, err
 			}
 			if err := files.Close(); err != nil {
 				return nil, err
