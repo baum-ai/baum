@@ -2,6 +2,7 @@ package decisionlog
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -9,11 +10,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -35,6 +41,11 @@ type FeatureWorker struct {
 	GitHub func(context.Context, github.Repository) (github.Reader, error)
 	// Sessions narrows the session stores linked; zero reads the defaults.
 	Sessions sessions.Options
+	// Config, Backends and Prices make the placement and text calls as
+	// capture's (Capturer).
+	Config   config.Config
+	Backends generate.Backends
+	Prices   func() *pricing.List
 	Now      func() time.Time
 	// Tick is how often the stages run; zero is FeatureTick.
 	Tick time.Duration
@@ -43,8 +54,10 @@ type FeatureWorker struct {
 	Window time.Duration
 	Log    *slog.Logger
 
-	once sync.Once
-	wake chan struct{}
+	once     sync.Once
+	wake     chan struct{}
+	redactor *bundle.Redactor
+	initErr  error
 	// windowLinked is each repository's last re-link of the session window,
 	// retryAt when a failed repository is tried again; only Run's goroutine
 	// touches them.
@@ -55,6 +68,7 @@ func (w *FeatureWorker) init() {
 	w.once.Do(func() {
 		w.wake = make(chan struct{}, 1)
 		w.windowLinked, w.retryAt = map[string]time.Time{}, map[string]time.Time{}
+		w.redactor, w.initErr = bundle.NewRedactor()
 	})
 }
 
@@ -105,8 +119,8 @@ func (w *FeatureWorker) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce runs the stages for every repository whose decisions are captured
-// and that has a clone. A repository turned off is not read and makes no
+// RunOnce runs the stages (sync, index, placement and text) for every
+// repository whose decisions are captured and that has a clone. A repository turned off is not read and makes no
 // GitHub call.
 func (w *FeatureWorker) RunOnce(ctx context.Context) {
 	w.init()
@@ -138,9 +152,15 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if err == nil && !synced.Stopped && w.enabled(ctx, repository.Repository) {
 			_, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
 		}
+		if err == nil && !synced.Stopped {
+			_, err = w.Assign(ctx, repository.Repository, dir, FeatureOptions{})
+		}
+		if err == nil && !synced.Stopped {
+			_, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
+		}
 		if err != nil && ctx.Err() == nil {
 			w.retryAt[repository.Repository] = w.now().Add(FeatureQuiet)
-			w.logger().Warn("feature log: repository not synced", "repository", repository.Repository, "error", err)
+			w.logger().Warn("feature log: repository not brought up to date", "repository", repository.Repository, "error", err)
 		}
 	}
 }
@@ -441,4 +461,97 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	report.Commits, report.Links, report.Sessions = len(list), len(rows), len(linked)
 	return report, nil
+}
+
+// FeatureOptions change one run of placement or the text stage, for testing
+// by hand.
+type FeatureOptions struct {
+	// DryRun renders placement's calls without making them, and writes
+	// nothing.
+	DryRun bool
+	// Limit bounds the items or features taken; zero is the stage's limit.
+	Limit int
+	// Manual ignores the activation and the text stage's debounce.
+	Manual bool
+	// Backend and Model, when set, replace the configured ones.
+	Backend, Model string
+}
+
+// featureRun is one repository's run of placement or the text stage.
+type featureRun struct {
+	w               *FeatureWorker
+	repository, dir string
+	prefs           repos.Preferences
+	settings        repos.Settings
+	opts            FeatureOptions
+	calls           caller
+	version         int64
+	now             time.Time
+	reviews         map[int]string
+	versions        *store.Store
+	versionsRead    bool
+}
+
+// newRun reads the preferences and the repository's settings and its
+// feature version, made unless the run is dry.
+func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o FeatureOptions) (*featureRun, error) {
+	w.init()
+	if w.initErr != nil {
+		return nil, w.initErr
+	}
+	r := &featureRun{w: w, repository: repository, dir: dir, opts: o, now: w.now(), reviews: map[int]string{}, prefs: repos.DefaultPreferences()}
+	if w.Registry != nil {
+		var err error
+		if r.prefs, err = w.Registry.Preferences(ctx); err != nil {
+			return nil, err
+		}
+		if r.settings, _, err = w.Registry.RepositorySettings(ctx, repository); err != nil {
+			return nil, err
+		}
+	}
+	prices := pricing.Active()
+	if w.Prices != nil {
+		prices = w.Prices()
+	}
+	r.calls = caller{store: w.Store, config: w.Config, backends: w.Backends, prices: prices, redactor: w.redactor, log: w.logger(), now: r.now}
+	var err error
+	r.version, err = liveVersion(ctx, w.Store.db, repository, !o.DryRun, r.now)
+	return r, err
+}
+
+// reviewSummary is the summary of the pull request's latest review saved
+// in the clone, "" for none.
+func (r *featureRun) reviewSummary(ctx context.Context, number int) string {
+	if summary, ok := r.reviews[number]; ok {
+		return summary
+	}
+	r.reviews[number] = ""
+	if !r.versionsRead {
+		r.versionsRead = true
+		clone, err := gitlocal.Open(ctx, r.dir, gitlocal.Options{})
+		if err != nil {
+			return ""
+		}
+		common := clone.CommonDir()
+		_ = clone.Close()
+		if r.versions, err = store.Open(common, "", false); err != nil {
+			r.versions = nil
+		}
+	}
+	if r.versions == nil {
+		return ""
+	}
+	latest, err := r.versions.Latest(ctx, store.Key{Repository: r.repository, Number: number})
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Summary struct {
+			Text string `json:"text"`
+		} `json:"summary"`
+	}
+	if json.Unmarshal(latest.Document, &doc) == nil {
+		r.reviews[number] = strings.TrimSpace(doc.Summary.Text)
+	}
+	return r.reviews[number]
 }

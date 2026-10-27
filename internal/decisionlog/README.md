@@ -75,7 +75,8 @@ not a failure.
    the reply, so its 16,384 tokens are an estimate rather than a limit. A model the price list does not price
    is skipped (`unpriced_model`). A session's spend, this reservation
    included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
-   spend may not pass `preferences.decisions.daily_cap` when set
+   spend, the feature log's calls included, may not pass
+   `preferences.decisions.daily_cap` when set
    (`daily_cap`; no default). No call is made for either, so the session is
    tried again the next day or when it changes; a session whose reservation
    alone exceeds the allowance stays skipped at no cost, since every try
@@ -193,6 +194,90 @@ A commit linked to a session more than one way keeps its strongest link.
 in, each with the paths it touches and those it was assigned with; a
 session with no capture row has none.
 
+### Model calls
+
+Placement and feature text call as capture does (steps 6 to 8 above): the
+same backend, model, reservation (the request's byte bound and the call's
+reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
+summary), daily cap and ledger, each attempt recorded with its stage
+(`feature_assign`, `feature_summary` or `pr_summary`) and item. A missing
+backend, an unpriced model or the daily cap stops the stage until its next
+run, with no failure counted.
+
+### Placement
+
+After the sync and the linking, each run places at most 100 pending items,
+oldest trigger first, one call each with the published assigner prompt. An
+item is pending when:
+
+- a pull request is in no feature, was opened at or after the activation and
+  within the last 7 days (whatever its state), was not opened by a bot, and
+  its paths are known or it opened 15 minutes ago;
+- a pull request the assigner placed has merged since, once;
+- an open pull request's head is not the one it was placed at and its paths
+  changed enough (`features.LargeUpdate` with the paths it was placed with,
+  0.5 and 3); a head that changed too little is recorded as checked
+  (`checked_head_sha`) and left until the next push;
+- a captured session with current decisions, extracted in the last 7 days
+  and not since 15 minutes ago, is in no feature and linked to no pull
+  request's commit. A session linked to one is never placed on its own: it
+  follows that pull request's feature.
+
+Its candidates are at most 16 features of the live version not merged into
+another, changed in the last 90 days (a change to the feature, or one of its
+pull requests or their placements), or the item's current feature. A
+feature's paths are those its pull requests were placed with and those cited
+by the decisions of its sessions placed on their own that follow no feature
+pull request. Each of the item's paths a feature holds scores one over the
+number of these features holding it. The current feature comes first, then
+the features holding a pull request linked to the item (stacked on it or it
+on them, by base and head branch when one pull request only was opened from
+that branch; sharing a linked session; or mentioned as `#N`), best path
+score first, then the best path scores of the rest (10), then the most
+recently changed. Each candidate shows its digest and its pull requests'
+titles with their saved review summaries, else generated ones.
+
+The reply joins a candidate, starts a feature with its provisional text, or
+skips a small change. A session only joins: with no candidate it is settled
+without a call, and a reply starting a feature or skipping settles it. A
+skipped pull request in no feature is settled for its head; one already in
+a feature stays in it, as if the reply chose it. Settled items wait for
+their next trigger (`feature_settle`). A failed call, an invalid reply or a
+failed write after a call backs the item off for 10 minutes; after 3 counted
+failures for one trigger it waits for the next.
+
+A placement marks every feature it changes: the one joined, the one left
+and the features of the pull request's linked sessions; an identical one
+marks none. New decisions of a session mark its features, and a pull
+request whose title, description or state changed marks its feature.
+Marking raises `membership_version` and sets `dirty_since` and `changed_at`.
+
+### Feature text
+
+Each run writes the text of at most 50 features behind their members, not
+changed for 15 minutes, longest behind first, with the published summary
+prompt. A feature's input is its pull requests, earliest opened first
+(title, description, state, and the summary of the latest review saved in
+the clone, else a generated one), the current decisions of its sessions that
+attribution gives it (what was decided and why and the cited files, never a
+session's prompts or quoted evidence) and its paths. The call also reads the
+repository's name and the feature's current title and description.
+
+A pull request with no saved review summary gets one from its own call, from
+its title, description and the feature's decisions of the sessions linked
+to it, kept in `pr_summary` with its input's hash and reused while that is
+unchanged; one with neither a description nor such a decision gets none.
+
+The text is kept with the hash of its input and its own text. When a
+feature's input hash is unchanged, its text is kept and it is marked clean
+without a call. The text is stored only when the feature's members did not
+change during the call; otherwise it stays behind for the next run. Up to
+three key decisions are kept by ID. A feature with neither pull requests nor
+decisions keeps its text, loses its key decisions and is marked clean. A
+failed pull request summary still writes the text, leaving the feature
+behind; failures back off and count as placement's do, per membership
+version.
+
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
@@ -224,5 +309,11 @@ capture that stops before rendering leaves it empty.
 runs one pull request sync without the gate (the first lists the last N
 days, default 180) and `baum internal features link --repo <owner/name>
 [--clone <path>]` links every commit of the last 7 days; each prints its
-counts as JSON. The clone defaults to the repository's registered one. They
-are for testing, with the daemon stopped: they write the daemon's store.
+counts as JSON. `baum internal features assign --repo <owner/name> [--clone
+<path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
+once, ignoring the activation, and prints each item; `--dry-run` prints each
+item's candidates and input size, makes no call and writes nothing.
+`baum internal features summarize` takes the same flags but `--dry-run` and
+writes the text of the features behind, without the debounce. The clone
+defaults to the repository's registered one. They are for testing, with the
+daemon stopped: they write the daemon's store.

@@ -32,9 +32,10 @@ const (
 	// pull requests and sessions are picked up for assignment. Hosted looks
 	// back a day; a laptop may be off for days, so locally it is a week.
 	FeatureLookback = 7 * 24 * time.Hour
-	// FeatureQuiet is how long a pull request or session must have been
-	// unchanged before it is assigned, and how long one without known paths
-	// waits for them; it is also the debounce of the session window's
+	// FeatureQuiet is how long a session must have been unchanged before it
+	// is placed, how long a pull request without known paths waits for them
+	// and how long a feature's members must have been unchanged before its
+	// text is written; it is also the debounce of the session window's
 	// re-link.
 	FeatureQuiet = 15 * time.Minute
 	// FeaturePathTries is how many failed reads of a pull request's commits
@@ -47,6 +48,15 @@ const (
 	// (features.LargeUpdate) for assigning a pull request again.
 	FeatureReassignShare = 0.5
 	FeatureReassignPaths = 3
+	// FeatureAssignRunLimit and FeatureSummaryRunLimit bound the items one
+	// run of placement and the features one run of the text stage take.
+	FeatureAssignRunLimit  = 100
+	FeatureSummaryRunLimit = 50
+	// FeatureBackoff is how long an item or feature whose call failed
+	// waits; after FeatureMaxFailures counted failures for one trigger it
+	// waits for the next.
+	FeatureBackoff     = 10 * time.Minute
+	FeatureMaxFailures = 3
 	// FeatureBatch is how many items one batch assignment holds.
 	FeatureBatch = 25
 	// FeatureConsolidateEvery is how often a repository's features are

@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
@@ -333,40 +331,23 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		report.Decisions = len(extraction.Decisions)
 		return report, c.Store.Save(ctx, extraction)
 	}
-	cfg := settings.Resolve(prefs.Resolve(c.Config))
-	requested := cfg.Backend
-	if o.Backend != "" {
-		requested = config.Backend(o.Backend)
-	}
-	backends := c.Backends
-	if backends.Claude == nil {
-		backends = generate.DefaultBackendsFor(cfg)
-	}
-	if report.Backend, err = resolveBackend(ctx, requested, backends); err != nil {
-		c.logger().Info("decision capture backend unavailable", "backend", requested, "error", err)
-		return skip(ReasonUnavailable)
-	}
-	report.Model = decisionModel(c.prices(), report.Backend, prefs.Decisions.Model)
-	if o.Model != "" {
-		report.Model = o.Model
-	}
+	calls := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: c.prices(), redactor: c.redactor, log: c.logger(), now: now}
+	planned, reason := calls.plan(ctx, prefs, settings, o.Backend, o.Model, report.MaxTokens, MaxOutputTokens)
+	report.Backend, report.Model, report.Reserved = planned.Backend, planned.Model, planned.Reserved
 	extraction.Backend, extraction.Model = report.Backend, report.Model
-	if report.Backend == agent.BackendCursorAgent {
-		return skip(ReasonUnsupported)
+	if reason != "" {
+		return skip(reason)
 	}
-	reserved, ok := reserve(c.prices(), report.Backend, report.Model, report.MaxTokens)
-	if !ok {
-		return skip(ReasonUnpriced)
-	}
-	report.Reserved = reserved
 	st, err := c.Store.Stats(ctx, t.Agent, t.ID, day)
 	if err != nil {
 		return report, err
 	}
-	if st.Spent+reserved > SessionDailyCap {
+	if st.Spent+planned.Reserved > SessionDailyCap {
 		return skip(ReasonOverCostCap)
 	}
-	if limit := prefs.Decisions.DailyCap; limit != nil && st.AllSpent+reserved > *limit {
+	if over, err := calls.overDailyCap(ctx, prefs, planned.Reserved); err != nil {
+		return report, err
+	} else if over {
 		return skip(ReasonDailyCap)
 	}
 	if o.DryRun {
@@ -374,20 +355,13 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, nil
 	}
 
-	selected, err := generate.Select(ctx, config.Backend(report.Backend), report.Model, backends, io.Discard)
-	if err != nil {
-		c.logger().Info("decision capture backend unavailable", "backend", report.Backend, "error", err)
-		return skip(ReasonUnavailable)
-	}
-	completer, ok := selected.Backend.(agent.Completer)
-	if !ok {
-		return skip(ReasonUnsupported)
-	}
-	attempt, err := c.Store.Begin(ctx, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Backend: report.Backend, Model: report.Model, Mode: report.Mode, Reserved: reserved})
+	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode})
 	if err != nil {
 		return report, err
 	}
-	model := &completerModel{completer: completer, redactor: c.redactor}
+	if reason != "" {
+		return skip(reason)
+	}
 	result, callErr := c.Extractor.Extract(ctx, model, rendered, options)
 	if model.called {
 		_ = debugFile(o.DebugDir, "user.txt", []byte(model.user))
@@ -396,25 +370,18 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	// The ledger and the store outlive a cancelled capture: the call may be
 	// paid for.
 	write := context.WithoutCancel(ctx)
-	spent := cost(c.prices(), model.model, model.usage)
-	if !model.called {
-		spent = new(0.0)
-	}
+	state, spent, _, err := calls.finish(write, attempt, model, callErr, ctx.Err() != nil)
 	report.Cost = spent
-	usage := decisionUsage(model.usage)
-	if callErr != nil && ctx.Err() != nil {
+	if err != nil {
+		return report, err
+	}
+	if state == AttemptAbandoned {
 		// Cut short by the daemon stopping: not the session's failure.
 		report.Outcome, report.Reason = OutcomeAbandoned, "cancelled"
-		if err := c.Store.Settle(write, attempt, AttemptAbandoned, report.Reason, spent, usage); err != nil {
-			return report, err
-		}
 		return report, ctx.Err()
 	}
 	if callErr != nil {
 		report.Outcome, report.Reason = OutcomeFailed, failureReason(callErr)
-		if err := c.Store.Settle(write, attempt, AttemptFailed, report.Reason, spent, usage); err != nil {
-			return report, err
-		}
 		failures, err := c.Store.Failed(write, meta)
 		if err != nil {
 			return report, err
@@ -425,9 +392,6 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 			}
 		}
 		return report, fmt.Errorf("extracting the decisions of %s session %s: %w", t.Agent, t.ID, callErr)
-	}
-	if err := c.Store.Settle(write, attempt, AttemptSucceeded, "", spent, usage); err != nil {
-		return report, err
 	}
 	extraction.Decisions = decisions.Identified(result.Decisions)
 	extraction.Dropped, extraction.Usage, extraction.Cost = result.Dropped, result.Usage, spent

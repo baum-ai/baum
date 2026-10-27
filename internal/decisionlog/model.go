@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"math"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
@@ -13,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 // Limits of one capture.
@@ -60,12 +63,17 @@ func vendor(backend string) string {
 // make (maxCalls) resends the same prompt, which the first call cached, so it
 // is reserved at the cache-read rate plus its reply.
 func reserve(list *pricing.List, backend, model string, inputTokens int64) (float64, bool) {
+	return reserveFor(list, backend, model, inputTokens, MaxOutputTokens)
+}
+
+// reserveFor is reserve for a call whose reply is at most outputTokens.
+func reserveFor(list *pricing.List, backend, model string, inputTokens, outputTokens int64) (float64, bool) {
 	v := vendor(backend)
-	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: MaxOutputTokens, SingleRequest: true})
+	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: outputTokens, SingleRequest: true})
 	if !ok {
 		return 0, false
 	}
-	reply := float64(MaxOutputTokens) * rates.Output
+	reply := float64(outputTokens) * rates.Output
 	input := rates.Input
 	if backend == agent.BackendClaude {
 		input = max(input, rates.CacheWrite)
@@ -184,4 +192,149 @@ func maxCalls(backend string) int {
 		return claude.CompleteMaxTurns
 	}
 	return 1
+}
+
+// caller makes the decision log's model calls, decision capture's and the
+// feature log's (README.md, "Capture", steps 6 to 8): it resolves the
+// backend and model, reserves the cost, holds the daily cap, which every
+// stage's spend counts against, and records each call in the ledger.
+type caller struct {
+	store    *Store
+	config   config.Config
+	backends generate.Backends
+	prices   *pricing.List
+	redactor *bundle.Redactor
+	log      *slog.Logger
+	now      time.Time
+}
+
+// planned is a call's backend, model and reservation.
+type planned struct {
+	Backend, Model string
+	Reserved       float64
+	backends       generate.Backends
+}
+
+// plan resolves the backend and model for the preferences and the
+// repository's settings, backend and model replacing them when set, and
+// reserves a prompt of at most maxTokens and a reply of at most maxOutput.
+// A call it may not make returns its skip reason, with what was resolved.
+func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repos.Settings, backend, model string, maxTokens, maxOutput int64) (planned, string) {
+	cfg := settings.Resolve(prefs.Resolve(c.config))
+	requested := cfg.Backend
+	if backend != "" {
+		requested = config.Backend(backend)
+	}
+	p := planned{backends: c.backends}
+	if p.backends.Claude == nil {
+		p.backends = generate.DefaultBackendsFor(cfg)
+	}
+	var err error
+	if p.Backend, err = resolveBackend(ctx, requested, p.backends); err != nil {
+		c.log.Info("decision log backend unavailable", "backend", requested, "error", err)
+		return p, ReasonUnavailable
+	}
+	p.Model = decisionModel(c.prices, p.Backend, prefs.Decisions.Model)
+	if model != "" {
+		p.Model = model
+	}
+	if p.Backend == agent.BackendCursorAgent {
+		return p, ReasonUnsupported
+	}
+	reserved, ok := reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
+	if !ok {
+		return p, ReasonUnpriced
+	}
+	p.Reserved = reserved
+	return p, ""
+}
+
+// overDailyCap reports whether reserved would take the day's spend of every
+// stage past preferences.decisions.daily_cap; there is none when unset.
+func (c caller) overDailyCap(ctx context.Context, prefs repos.Preferences, reserved float64) (bool, error) {
+	limit := prefs.Decisions.DailyCap
+	if limit == nil {
+		return false, nil
+	}
+	st, err := c.store.Stats(ctx, "", "", startOfDay(c.now))
+	return st.AllSpent+reserved > *limit, err
+}
+
+// begin selects the planned backend's completer and records the attempt as
+// pending with its reservation. A backend that no longer passes its check,
+// or cannot complete, is a skip and records nothing.
+func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerModel, int64, string, error) {
+	selected, err := generate.Select(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
+	if err != nil {
+		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
+		return nil, 0, ReasonUnavailable, nil
+	}
+	completer, ok := selected.Backend.(agent.Completer)
+	if !ok {
+		return nil, 0, ReasonUnsupported, nil
+	}
+	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
+	id, err := c.store.Begin(ctx, a)
+	return &completerModel{completer: completer, redactor: c.redactor}, id, "", err
+}
+
+// finish settles the attempt once its call returned: abandoned when the
+// call was cut short (cancelled), failed with callErr, else succeeded. It
+// returns the state, the spend (nil when it cannot be priced, zero when no
+// call was made) and the usage.
+func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr error, cancelled bool) (string, *float64, decisions.Usage, error) {
+	spent := cost(c.prices, m.model, m.usage)
+	if !m.called {
+		spent = new(0.0)
+	}
+	usage := decisionUsage(m.usage)
+	state, reason := AttemptSucceeded, ""
+	switch {
+	case callErr != nil && cancelled:
+		state, reason = AttemptAbandoned, "cancelled"
+	case callErr != nil:
+		state, reason = AttemptFailed, failureReason(callErr)
+	}
+	return state, spent, usage, c.store.Settle(ctx, id, state, reason, spent, usage)
+}
+
+// callResult is one feature stage call: its reply, or why none was made.
+type callResult struct {
+	JSON []byte
+	// Skip is the reason no call was made (a backend, price or cap reason).
+	Skip string
+	// Called is set once the backend was called, so a failure may have been
+	// billed.
+	Called bool
+	Cost   *float64
+}
+
+// complete makes one feature stage call with plan, overDailyCap, begin and
+// finish; the attempt names its stage and item. An error is a failed call
+// or a ledger write.
+func (c caller) complete(ctx context.Context, prefs repos.Preferences, settings repos.Settings, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
+	schema, err := json.Marshal(req.Schema)
+	if err != nil {
+		return callResult{}, err
+	}
+	maxTokens := int64(len(req.System)+len(req.User)+len(schema)) + decisions.FramingTokens
+	p, skip := c.plan(ctx, prefs, settings, backend, model, maxTokens, req.MaxOutputTokens)
+	if skip != "" {
+		return callResult{Skip: skip}, nil
+	}
+	if over, err := c.overDailyCap(ctx, prefs, p.Reserved); err != nil || over {
+		return callResult{Skip: ReasonDailyCap}, err
+	}
+	m, id, skip, err := c.begin(ctx, p, a)
+	if err != nil || skip != "" {
+		return callResult{Skip: skip}, err
+	}
+	response, callErr := m.Complete(ctx, req)
+	// The ledger outlives a cancelled call: it may be paid for.
+	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
+	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
+	if callErr != nil {
+		return result, callErr
+	}
+	return result, err
 }

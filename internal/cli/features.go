@@ -65,7 +65,44 @@ JSON. It writes the daemon's store: run it with the daemon stopped.`,
 		},
 	}
 	flags(link)
-	cmd.AddCommand(sync, link)
+	var o decisionlog.FeatureOptions
+	callFlags := func(c *cobra.Command) {
+		flags(c)
+		c.Flags().IntVar(&o.Limit, "limit", 0, "most items or features to take; default the stage's limit")
+		c.Flags().StringVar(&o.Backend, "backend", "", "backend to call instead of the configured one")
+		c.Flags().StringVar(&o.Model, "model", "", "model to call instead of the configured one")
+	}
+	place := &cobra.Command{
+		Use:   "assign",
+		Short: "Place the repository's pending pull requests and sessions in features",
+		Long: `Assign runs the feature worker's placement once, without its gate and
+ignoring the activation, and prints each item taken as JSON. --dry-run prints
+each item's candidates and input size and makes no call.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Assign(ctx, repository, dir, o)
+			})
+		},
+	}
+	callFlags(place)
+	place.Flags().BoolVar(&o.DryRun, "dry-run", false, "render the calls without making them; write nothing")
+	summarize := &cobra.Command{
+		Use:   "summarize",
+		Short: "Write the text of the repository's features whose members changed",
+		Long: `Summarize runs the feature worker's text stage once, without its gate and
+its debounce, and prints each feature taken as JSON.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Summarize(ctx, repository, dir, o)
+			})
+		},
+	}
+	callFlags(summarize)
+	cmd.AddCommand(sync, link, place, summarize)
 	return cmd
 }
 
@@ -94,7 +131,13 @@ func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage f
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Window: time.Duration(days) * 24 * time.Hour}
+	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Config: cfg, Window: time.Duration(days) * 24 * time.Hour}
+	// The preferences and the repository's settings choose the backend and
+	// hold the daily cap.
+	if registry, err := repos.OpenReadOnly(""); err == nil {
+		defer func() { _ = registry.Close() }()
+		worker.Registry = registry
+	}
 	report, err := stage(ctx, worker, clone)
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")

@@ -412,7 +412,16 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 				}
 			}
 		}
-		return nil
+		// The session's features read its decisions.
+		version, err := liveVersion(ctx, tx, e.Repository, false, now)
+		if err != nil || version == 0 {
+			return err
+		}
+		marked, err := sessionFeatures(ctx, tx, version, e.Repository, SessionKey{Agent: e.Agent, ID: e.ID})
+		if err != nil {
+			return err
+		}
+		return markFeatures(ctx, tx, marked, now)
 	})
 }
 

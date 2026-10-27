@@ -62,6 +62,16 @@ cannot be read is tried again after 15 minutes. It keeps the pull
 requests' titles, descriptions, authors, commits and changed paths in the private decision store, and links
 the commits to the sessions on this machine there; these rows are not
 pruned.
+The feature log then sends to the same provider, with the published feature
+prompts: a pull request's title, description, branch and
+changed paths, with candidate features' titles, descriptions, digests and
+their pull requests' titles and summaries, to place it; and, to write a
+feature's text, its pull requests' titles, descriptions, states and the
+summaries of their reviews saved in the clone, the attributed decisions of
+your captured sessions (what was decided and why, and the files cited, never
+your prompts or quoted evidence) and the feature's paths. A pull request
+without a saved review summary gets one generated from its title,
+description and those decisions.
 
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and

@@ -196,13 +196,32 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 	return st, nil
 }
 
-// SavePulls upserts the listed pull requests and, for a non-zero cursor,
+// SavePulls upserts the listed pull requests, marking the feature of one
+// whose title, description or state changed, and, for a non-zero cursor,
 // moves the sync state to etag and the cursor; the cursor never goes back. A
 // new head or base starts the count of failed reads again, and a new base
 // has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
+	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		version, err := liveVersion(ctx, tx, repository, false, now)
+		if err != nil {
+			return err
+		}
 		for _, p := range pulls {
+			// A feature's text reads its pull requests' title, description
+			// and state.
+			var changed string
+			err := tx.QueryRowContext(ctx, `SELECT fp.feature_id FROM pull_request p
+JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=p.repository AND fp.number=p.number
+WHERE p.repository=?2 AND p.number=?3 AND (p.title != ?4 OR p.body != ?5 OR p.state != ?6 OR (p.merged_at IS NOT NULL) != ?7)`,
+				version, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil).Scan(&changed)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err := markFeatures(ctx, tx, []string{changed}, now); err != nil {
+				return err
+			}
 			var merged, closed any
 			if p.MergedAt != nil {
 				merged = p.MergedAt.UnixMilli()
@@ -227,7 +246,7 @@ updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded
 		if cursor.IsZero() {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
 			etag, cursor.UnixMilli(), repository)
 		return err
 	})
