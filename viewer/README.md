@@ -383,8 +383,8 @@ filters, the address and which decision or feature is open.
 - `DecisionDetailBody` draws a decision's detail from a `DetailState`
   (loading, failed with a retry, missing, ready): the rejected alternative,
   its files (each calling `onFile`), pull requests, session facts and cited
-  prompts. `pullRequestHref` says where a pull request opens, rendered through
-  `ViewerLink`. `openSession` (`OpenSessionSource`) loads a session and
+  prompts. `pullRequestHref` says where a pull request opens; the link is a
+  `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. `openSession` (`OpenSessionSource`) loads a session and
   answers what to draw for it at the cited turn; the detail asks once, when
   the reader first opens it, and says so when the promise rejects. A detail
   whose prompts are withheld offers no session.
