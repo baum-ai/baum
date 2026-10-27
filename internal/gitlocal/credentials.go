@@ -10,15 +10,15 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 )
 
-// fetchCredentials carries a narrowly scoped HTTPS credential in Git's private
-// child environment. It never changes Git configuration on disk or argv, and
+// fetchCredentials carries a narrowly scoped HTTPS credential for remote in
+// Git's private child environment. It never changes Git configuration on disk or argv, and
 // redirects are disabled so the header cannot reach another endpoint.
-func (r *Repo) fetchCredentials(ctx context.Context, env []string) ([]string, bool, error) {
-	remote, err := r.RemoteFetchURL(ctx, r.opts.Remote)
+func (r *Repo) fetchCredentials(ctx context.Context, remote string, env []string) ([]string, bool, error) {
+	fetchURL, err := r.RemoteFetchURL(ctx, remote)
 	if err != nil {
 		return nil, false, err
 	}
-	u, err := url.Parse(remote)
+	u, err := url.Parse(fetchURL)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
 		return env, false, nil
 	}

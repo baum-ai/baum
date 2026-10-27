@@ -96,13 +96,13 @@ func sshRemote(url string) bool {
 	return colon > 1 && (slash < 0 || colon < slash)
 }
 
-// fetchEnv is the environment of a fetch in the clone at dir.
-func (r *Repo) fetchEnv(ctx context.Context) []string {
+// fetchEnv is the environment of a fetch from remote in the clone at dir.
+func (r *Repo) fetchEnv(ctx context.Context, remote string) []string {
 	env := userEnv()
 	b := background.Load()
 	if b == nil {
 		return env
 	}
-	url, err := r.RemoteFetchURL(ctx, r.opts.Remote)
+	url, err := r.RemoteFetchURL(ctx, remote)
 	return b.env(ctx, r.dir, env, err != nil || sshRemote(url))
 }

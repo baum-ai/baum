@@ -1637,10 +1637,14 @@ the hosted service's own command, `git archive --format=tar
 --worktree-attributes`, so it is the same archive: the clone's attributes and
 filters are not applied.
 
-The clone is written to only when it lacks a pull request commit: baum
-fetches it under `refs/baum/`, with the user's git configuration and no
-hooks. A partial clone missing the pull request's objects is reported, not
-fetched from on demand.
+The clone is written to only when it lacks a pull request commit: generation
+(`baum internal generate` and the daemon's jobs) fetches the head from
+`refs/pull/<N>/head` and the base from its branch, falling back to the commit
+id, into `refs/baum/pull/<N>/`, from the remote whose URL names the pull
+request's repository (`upstream` in a fork clone), with the user's git
+configuration and no hooks. A fetch that fails, or a clone with no such
+remote, fails the run with the `git fetch` to run. A partial clone missing the
+pull request's objects is reported, not fetched from on demand.
 
 `baum internal bundle` stops after step 5, and never fetches: a pull request commit
 the clone lacks fails the command with the `git fetch` to run, so it reads

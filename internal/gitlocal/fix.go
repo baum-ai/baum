@@ -99,7 +99,7 @@ func (r *Repo) StartFix(ctx context.Context, opts FixOptions) (*Fix, error) {
 		refspecs = append(refspecs, "+refs/heads/"+opts.BaseRef+":"+prefix+"base")
 		f.refs = append(f.refs, prefix+"base")
 	}
-	if err := r.fetch(ctx, refspecs); err != nil {
+	if err := r.fetch(ctx, f.remote, refspecs); err != nil {
 		return nil, err
 	}
 	head, err := f.resolve(ctx, prefix+"head")

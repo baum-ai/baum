@@ -277,7 +277,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		return nil, errors.New("price list changed; estimate again")
 	}
 	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
-	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
+	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
 	var guarded generate.Assembler = headAssembler{Assembler: assembler, head: p.HeadSHA}
 	var published generate.Versions = identityVersions{versions, manager}
