@@ -154,8 +154,10 @@ tried again after 15 minutes.
   read from the clone's own objects, never fetched. Its paths are the files
   its commits change; its commits replace those recorded. GitHub's file
   list is never read.
-- When every fetch fails, nothing is counted against any pull request and
-  the repository waits. A pull request whose commits then cannot be read
+- When every fetch fails and the remote does not answer `git ls-remote`
+  either, nothing is counted against any pull request and the repository
+  waits; when it answers, the refs are missing and the pull requests fail
+  as below. A pull request whose commits then cannot be read
   (its head or base is missing, or it has too many) is read again after 15
   minutes; after 3 failures at its head its paths are unknown at that head.
   A new head starts the count again, and the daily re-link has every

@@ -480,9 +480,10 @@ const maxFetchRefspecs = 100
 // 100 refspecs in one fetch. A clone with
 // every commit makes no network call, and a pull request without a valid
 // number and ids is skipped. When a fetch fails, its refspecs are fetched
-// one at a time, so one the remote lacks does not keep the others out; an
-// error is returned only when every fetch failed. A pull request whose
-// commits are still missing is left for the caller to find so.
+// one at a time, so one the remote lacks does not keep the others out. When
+// every fetch failed, the remote is asked for its HEAD: an error is returned
+// only when it does not answer either. A pull request whose commits are
+// still missing is left for the caller to find so.
 func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest) error {
 	if remote == "" {
 		remote = r.opts.Remote
@@ -532,10 +533,30 @@ func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest)
 			}
 		}
 	}
-	if fetched {
+	if fetched || len(errs) == 0 {
 		return nil
 	}
-	return errors.Join(errs...)
+	// Every fetch failed: when the remote answers, it lacks the refs, and
+	// the pull requests are left missing their commits.
+	if err := r.lsRemote(ctx, remote); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	return nil
+}
+
+// lsRemote asks the remote for its HEAD with the credentials and limits a
+// fetch has, to tell a remote out of reach from refs it lacks.
+func (r *Repo) lsRemote(ctx context.Context, remote string) error {
+	env, authenticated, err := r.fetchCredentials(ctx, remote, r.fetchEnv(ctx, remote))
+	if err != nil {
+		return err
+	}
+	_, err = run(ctx, runSpec{dir: r.dir, env: env, limit: 64 << 10, timeout: r.opts.FetchTimeout,
+		config: []string{"protocol.ext.allow=never"}}, "ls-remote", remote, "HEAD")
+	if err != nil && authenticated && ctx.Err() == nil {
+		return errors.New("GitHub HTTPS request failed; check repository access, organization SSO authorization and GitHub connection")
+	}
+	return err
 }
 
 func (r *Repo) hasCommit(ctx context.Context, oid string) bool {

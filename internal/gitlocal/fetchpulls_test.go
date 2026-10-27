@@ -51,8 +51,15 @@ func TestFetchPullsPastAMissingRef(t *testing.T) {
 	if refs := git(t, f.clone, "for-each-ref", "--format=%(refname)", "refs/baum"); refs != "refs/baum/pull/7/head" {
 		t.Fatalf("refs = %q", refs)
 	}
+	// Only missing refs, from a remote that answers: nothing to fetch, and
+	// no error.
+	if err := r.FetchPulls(context.Background(), "", prs[1:]); err != nil {
+		t.Fatalf("refs the remote lacks: %v", err)
+	}
+	// A remote out of reach fails.
+	git(t, f.clone, "remote", "set-url", "origin", "/nonexistent")
 	if err := r.FetchPulls(context.Background(), "", prs[1:]); err == nil {
-		t.Fatal("a fetch that brought nothing must fail")
+		t.Fatal("a remote out of reach must fail")
 	}
 }
 

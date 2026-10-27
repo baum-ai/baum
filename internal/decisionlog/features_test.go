@@ -167,9 +167,8 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	linktest.Git(t, f.Repo, "clone", "-q", "--bare", f.Repo, remote)
 	linktest.Git(t, remote, "update-ref", "refs/pull/5/head", f.Head)
-	// Pull request 7 was force-pushed since GitHub listed it: its ref no
-	// longer brings the listed head.
-	linktest.Git(t, remote, "update-ref", "refs/pull/7/head", f.Head)
+	// Pull request 7 has no ref on the remote: its fetches fail although the
+	// remote answers, so it is counted as failing rather than blocking.
 	work := filepath.Join(t.TempDir(), "work")
 	linktest.Git(t, f.Repo, "clone", "-q", remote, work)
 	linktest.Git(t, work, "checkout", "-q", "-b", "six", f.Base)
