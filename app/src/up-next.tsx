@@ -501,9 +501,10 @@ const sumMinutes = (items: { minutes?: number | null }[]) =>
  *  own that an agent is fixing now. */
 type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job };
 
-/** The saved review of the selected pull request, once read; read again only
- *  when a new version is saved. */
-function useReviewDocument(entry: Entry | undefined, clone: string) {
+/** The saved review of a pull request, once read, or "failed"; read again
+ *  only when a new version is saved. Nothing while it is read, or for a pull
+ *  request without a saved review. */
+export function useSavedReview(entry: Entry | undefined, clone: string) {
   const [docs, setDocs] = useState<Record<string, ReviewDocument | "failed">>({});
   const id =
     entry && clone && entry.version_count > 0
@@ -521,7 +522,12 @@ function useReviewDocument(entry: Entry | undefined, clone: string) {
     return () => abort.abort();
     // `id` stands for the entry and clone.
   }, [id]);
-  const doc = id ? docs[id] : undefined;
+  return id ? docs[id] : undefined;
+}
+
+/** The saved review of the selected pull request, once read. */
+function useReviewDocument(entry: Entry | undefined, clone: string) {
+  const doc = useSavedReview(entry, clone);
   return doc && doc !== "failed" ? doc : null;
 }
 
@@ -1306,7 +1312,7 @@ type Merge = {
 /** Merges every ready pull request in one confirmation, each with GitHub's
  *  default method for it and at the head commit the inbox showed. One that
  *  GitHub refuses is named with the reason; the others still merge. */
-function MergeReadyDialog({
+export function MergeReadyDialog({
   entries,
   close,
   merged,

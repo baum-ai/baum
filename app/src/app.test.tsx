@@ -162,7 +162,7 @@ it("shows actionable launch authorization failure", async () => {
   fail = true;
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Open this page from the baum desktop app");
-  expect(node.textContent).not.toContain("Generate selected");
+  expect(node.textContent).not.toContain("Generate reviews");
 });
 it("keeps generating and failed indications without old generation columns", async () => {
   entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
@@ -202,9 +202,10 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
   const states = rows.map((row) =>
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
-  // A ready pull request also carries its Merge button.
-  // Its key hint is drawn inside it, shown only while Alt is held.
-  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: ReadyMergem"]);
+  expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
+  // A ready pull request carries its Merge button beside Peek, in the row's
+  // actions; each key hint is drawn inside, shown only while Alt is held.
+  expect(rows[0]!.querySelector(".inbox-row-actions")!.textContent).toBe("MergemPeekspace");
   expect(states[1]).toEqual([
     "Review time: ~240 min",
     "Review: Changes requested3 unresolved",
@@ -289,7 +290,7 @@ it("selects multiple rows before generation", async () => {
     'input[aria-label="Select all visible pull requests"]',
   )!;
   await act(async () => box.click());
-  expect(node.textContent).toContain("Generate selected (2)");
+  expect(node.textContent).toContain("Generate reviews (2)");
 });
 
 /** Answers POST api/jobs as the daemon would, recording each request. */
@@ -325,7 +326,7 @@ const generateSelected = async () => {
   );
   await act(async () =>
     Array.from(node.querySelectorAll("button"))
-      .find((b) => b.textContent?.includes("Generate selected"))!
+      .find((b) => b.textContent?.includes("Generate reviews"))!
       .click(),
   );
 };
@@ -453,14 +454,14 @@ it("keeps collapsed selections and selects only expanded visible rows", async ()
     'input[aria-label="Select all visible pull requests"]',
   )!;
   await act(async () => box.click());
-  expect(node.textContent).toContain("Generate selected (3)");
+  expect(node.textContent).toContain("Generate reviews (3)");
   const requested = Array.from(node.querySelectorAll("button")).find((button) =>
     button.textContent?.includes("Review requested"),
   )!;
   await act(async () => requested.click());
   expect(requested.getAttribute("aria-expanded")).toBe("false");
   await act(async () => box.click());
-  expect(node.textContent).toContain("Generate selected (1)");
+  expect(node.textContent).toContain("Generate reviews (1)");
   await act(async () => requested.click());
   expect(
     node.querySelector<HTMLInputElement>('input[aria-label="Select acme/demo #1"]')!.checked,

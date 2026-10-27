@@ -102,9 +102,29 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
+  // Peek opens the saved review under its row.
+  await approved.hover();
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  const peek = approved.getByRole("region", { name: "Peek at #7" });
+  await expect(peek).toContainText("Summary");
+  await expect(peek.getByRole("link", { name: "Open the review", exact: true })).toBeVisible();
+  // Selecting rows draws their actions in a bar over the list.
+  await page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Select acme/demo #8", exact: true }).check();
+  const bar = page.getByRole("toolbar", { name: "Selected pull requests" });
+  await expect(bar).toContainText("2 selected");
+  await expect(bar.getByRole("button", { name: "Merge 1", exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/inbox-peek.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  await bar.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  await expect(peek).toHaveCount(0);
   await page.setViewportSize({ width: 720, height: 900 });
   await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
-  // The cell also holds the Merge button of a ready pull request.
   await expect(
     approved.locator(".inbox-status").filter({ hasText: "Status: Ready" }),
   ).toBeVisible();
@@ -139,7 +159,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(unknown).not.toContainText("—");
   await page.screenshot({ path: "test-results/inbox-others.png", animations: "disabled" });
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
-  await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
+  await page.getByRole("button", { name: "Generate reviews (1)", exact: true }).click();
   // Only a fork asks before generating, in a batch as on its own page.
   await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();

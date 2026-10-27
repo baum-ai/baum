@@ -17,7 +17,7 @@ import {
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
-import { Inbox } from "./inbox";
+import { Inbox, UpdatedAgo } from "./inbox";
 import { UpNextPage, useUpNext } from "./up-next";
 import {
   onBody,
@@ -164,6 +164,8 @@ function Workspace({ url }: { url: UrlState }) {
   >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // When the latest read of the daemon completed, for Pull requests' bar.
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
   const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
@@ -261,6 +263,7 @@ function Workspace({ url }: { url: UrlState }) {
           setDefaults(settings);
           setGitHub(connection);
           setError("");
+          setUpdatedAt(Date.now());
           setRevision((n) => n + 1);
         } catch (e) {
           setError(errorText(e));
@@ -677,37 +680,7 @@ function Workspace({ url }: { url: UrlState }) {
                 title="Pull requests"
                 actions={
                   <>
-                    {selection.size > 1 ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        disabled={generating}
-                        onClick={reviewTogether}
-                      >
-                        Review together ({selection.size})
-                      </Button>
-                    ) : null}
-                    {selection.size > 0 ? (
-                      <Button
-                        size="compact"
-                        disabled={
-                          generating ||
-                          indexedEntries.some(
-                            (entry) =>
-                              selection.has(rowKey(entry)) &&
-                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
-                          )
-                        }
-                        onClick={() =>
-                          void generate(
-                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
-                            "batch",
-                          )
-                        }
-                      >
-                        {generating ? "Starting reviews…" : `Generate selected (${selection.size})`}
-                      </Button>
-                    ) : null}
+                    <UpdatedAgo at={updatedAt} busy={loading} />
                     <button
                       type="button"
                       aria-label="Keyboard shortcuts"
@@ -838,6 +811,42 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
                   refresh={loading ? undefined : () => void refresh()}
+                  bulk={
+                    <>
+                      <button
+                        type="button"
+                        className="inbox-bulk"
+                        disabled={
+                          generating ||
+                          indexedEntries.some(
+                            (entry) =>
+                              selection.has(rowKey(entry)) &&
+                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
+                          )
+                        }
+                        onClick={() =>
+                          void generate(
+                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
+                            "batch",
+                          )
+                        }
+                      >
+                        {generating
+                          ? "Starting reviews…"
+                          : `Generate reviews (${formatCount(selection.size)})`}
+                      </button>
+                      {selection.size > 1 ? (
+                        <button
+                          type="button"
+                          className="inbox-bulk"
+                          disabled={generating}
+                          onClick={reviewTogether}
+                        >
+                          Review together ({formatCount(selection.size)})
+                        </button>
+                      ) : null}
+                    </>
+                  }
                 />
               ) : null}
             </>

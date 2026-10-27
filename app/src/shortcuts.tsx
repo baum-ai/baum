@@ -6,6 +6,7 @@ export type InboxAction =
   | "previous"
   | "open"
   | "select"
+  | "peek"
   | "merge"
   | "fix"
   | "generate"
@@ -18,6 +19,7 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row" },
   { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group" },
   { keys: ["x"], action: "select", label: "Select or deselect" },
+  { keys: [" "], action: "peek", label: "Peek at the review below the row" },
   { keys: ["m"], action: "merge", label: "Merge, where offered" },
   { keys: ["f"], action: "fix", label: "Fix, where offered" },
   { keys: ["g"], action: "generate", label: "Generate the review" },
@@ -34,7 +36,12 @@ const UP_NEXT_SHORTCUTS = [
 ];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace = "anywhere" | "inbox" | "pulls" | "page";
-const KEY_NAMES: Record<string, string> = { ArrowDown: "↓", ArrowUp: "↑", Escape: "Esc" };
+const KEY_NAMES: Record<string, string> = {
+  ArrowDown: "↓",
+  ArrowUp: "↑",
+  Escape: "Esc",
+  " ": "Space",
+};
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /** The action a keydown asks for on the inbox, if it is one of its keys. */

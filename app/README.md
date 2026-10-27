@@ -85,7 +85,7 @@ request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
 button first beside the version menu, Pull requests puts a small **Fix** in
-the row's Status cell, and the Inbox's card offers it as its action. Either opens
+the row's actions, and the Inbox's card offers it as its action. Either opens
 `FixDialog` (`src/fix.tsx`), which estimates the fix
 (`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
 (the review's), the branch the result is pushed to, the estimate, and that the
@@ -122,9 +122,9 @@ after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
-Merge button in the PR page header and, on hover or keyboard focus, beside Ready
-in its Pull requests row (always drawn on touch screens), and as the Inbox
-card's action. It opens a confirmation dialog
+Merge button in the PR page header and, on hover or keyboard focus, in its
+Pull requests row's actions (always drawn on touch screens and below 72rem,
+where the columns fold), and as the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -139,7 +139,7 @@ Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling an
 the sheet read). On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek, `m` opens Merge and `f` Fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -159,9 +159,9 @@ returns to the page it was opened from (the Inbox, or Pull requests with the
 filter kept).
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in Pull requests: the Status cell is
-9.5rem wide and holds one action (Merge on a ready row, else Fix), and a second
-button would crowd "Checks failing" or wrap. `canUpdateBranch` offers the first
+PR page header beside Fix and Merge…, not in Pull requests: a row's actions
+hold one action (Merge on a ready row, else Fix) beside Peek, and a third
+button would crowd the column or wrap. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
 conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
 `canRerunChecks` offers the second when `checks` is `failing`, the pull request
@@ -271,7 +271,20 @@ open pull requests with a paginated GraphQL query per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
 when more threads exist the unresolved count shows a lower bound (`N+`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
-the title below 1024px. Generating and failed reviews remain visible under the
+the title below 72rem. The list is drawn as the Up next design's live table,
+in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
+when the list last read the daemon ("Updated just now", then how long ago,
+with the exact time as a tooltip), with a turning mark while a refresh runs.
+A row's last cell holds its action and **Peek**, which wait for the pointer or
+keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
+the saved review under the row, read when first opened and again only for a
+new version: the summary, the first reason for its risk (in the critical tone
+at 4 and 5), the first four sections in review order with their lines added
+and removed, and **Open the review**. Without a saved review it says why (no
+clone, being written, failed, none yet) and offers **Generate the review**
+where it can run. A row whose state (review, checks, merge state, threads,
+score, estimate or version) changed in the latest read flashes once. The keys
+that work on the list are listed at its foot, except on touch screens. Generating and failed reviews remain visible under the
 title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
@@ -293,7 +306,11 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server. Checkbox selection requests a batch estimate;
+GitHub through the local server. While anything is selected a dark bar over
+the list counts it and offers **Merge N** for the selected pull requests that
+can merge (one opens its Merge confirmation; more open the Inbox's Merge all
+confirmation), **Generate reviews (N)**, **Review together (N)** for two or
+more, and **Clear**. Checkbox selection requests a batch estimate;
 restricted fork/author entries are excluded from batches and require explicit
 isolation confirmation when generated individually. Generation confirms an
 approximate price and configured model; an unknown model price cannot start a
@@ -316,7 +333,7 @@ bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
 Review groups (`internal/reviewgroups` owns the daemon side). Selecting two or
-more rows shows "Review together (N)": it asks for a name (prefilled with the
+more rows shows "Review together (N)" in the selection bar: it asks for a name (prefilled with the
 first pull request's title) and creates a group of 2 to 8 pull requests of one
 repository, then opens `?group=<id>`; a selection across repositories or of
 more than eight is refused in the app without a request. In Pull requests a group
