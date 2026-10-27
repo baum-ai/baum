@@ -2,7 +2,6 @@ package decisionlog
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -10,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -48,22 +46,15 @@ type FeatureWorker struct {
 	once sync.Once
 	wake chan struct{}
 	// windowLinked is each repository's last re-link of the session window,
-	// retryAt when a failed repository is tried again, and pathsRetryAt when
-	// a pull request whose commits failed to be read is; only Run's
-	// goroutine touches them.
+	// retryAt when a failed repository is tried again; only Run's goroutine
+	// touches them.
 	windowLinked, retryAt map[string]time.Time
-	pathsRetryAt          map[pullKey]time.Time
-}
-
-type pullKey struct {
-	repository string
-	number     int
 }
 
 func (w *FeatureWorker) init() {
 	w.once.Do(func() {
 		w.wake = make(chan struct{}, 1)
-		w.windowLinked, w.retryAt, w.pathsRetryAt = map[string]time.Time{}, map[string]time.Time{}, map[pullKey]time.Time{}
+		w.windowLinked, w.retryAt = map[string]time.Time{}, map[string]time.Time{}
 	})
 }
 
@@ -142,7 +133,7 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		}
 		dir := repository.Clones[i].Path
 		synced, err := w.Sync(ctx, repository.Repository, dir)
-		if err == nil {
+		if err == nil && !synced.Stopped {
 			_, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
 		}
 		if err != nil && ctx.Err() == nil {
@@ -172,14 +163,15 @@ type SyncReport struct {
 	Calls       int    `json:"github_calls"`
 	NotModified bool   `json:"not_modified"`
 	Listed      int    `json:"pull_requests_listed"`
-	// Truncated is a listing that stopped at its page bound; the cursor
-	// stays, so the next sync lists the same pull requests again.
+	// Truncated is a listing that stopped at its bound: older pull requests
+	// still due were skipped.
 	Truncated bool `json:"truncated,omitempty"`
 	PathsRead int  `json:"paths_read"`
-	// PathsUnknown are pull requests whose commits this clone cannot get,
-	// PathsDeferred those whose read failed for now and is tried again.
-	PathsUnknown  int `json:"paths_unknown"`
-	PathsDeferred int `json:"paths_deferred"`
+	// PathsFailed are pull requests whose commits failed to be read, to be
+	// tried again; PathsUnknown those of them that failed FeaturePathTries
+	// times at their head and now have unknown paths.
+	PathsFailed  int `json:"paths_failed"`
+	PathsUnknown int `json:"paths_unknown"`
 	// Stopped is set when the repository was turned off during the sync.
 	Stopped bool `json:"stopped,omitempty"`
 	Commits int  `json:"commits_recorded"`
@@ -219,29 +211,27 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		return report, err
 	}
 	if !list.NotModified {
-		// A complete listing moves the cursor to the latest update it saw,
-		// or to since when it saw none.
+		// The cursor moves to the latest update listed, or to since when
+		// none was. A truncated listing's older tail is skipped.
 		cursor := since
 		for _, p := range list.Pulls {
 			if p.UpdatedAt.After(cursor) {
 				cursor = p.UpdatedAt
 			}
 		}
-		etag := list.ETag
 		if list.Truncated {
-			cursor, etag = time.Time{}, ""
+			w.logger().Warn("feature log: older pull requests skipped, too many to list", "repository", repository, "listed", len(list.Pulls))
 		}
-		if err := w.Store.SavePulls(ctx, repository, list.Pulls, etag, cursor); err != nil {
+		if err := w.Store.SavePulls(ctx, repository, list.Pulls, list.ETag, cursor); err != nil {
 			return report, err
 		}
 	}
-	all, err := w.Store.PullsWithoutPaths(ctx, repository)
-	if err != nil {
+	pulls, err := w.Store.PullsWithoutPaths(ctx, repository)
+	if err != nil || len(pulls) == 0 {
 		return report, err
 	}
-	now := w.now()
-	pulls := slices.DeleteFunc(all, func(p StoredPull) bool { return now.Before(w.pathsRetryAt[pullKey{repository, p.Number}]) })
-	if len(pulls) == 0 {
+	if !w.enabled(ctx, repository) {
+		report.Stopped = true
 		return report, nil
 	}
 	clone, remote, err := openClone(ctx, dir, repository)
@@ -259,7 +249,6 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		}
 		w.logger().Debug("feature log: pull request heads not fetched together", "repository", repository, "error", err)
 	}
-	deferred := 0
 	for _, p := range pulls {
 		if !w.enabled(ctx, repository) {
 			report.Stopped = true
@@ -271,22 +260,18 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		switch {
 		case ctx.Err() != nil:
 			return report, ctx.Err()
-		case err != nil && !permanentPathError(err):
-			// Left as it is, and tried again later.
-			report.PathsDeferred++
-			w.pathsRetryAt[pullKey{repository, p.Number}] = now.Add(FeatureQuiet)
-			w.logger().Debug("feature log: pull request commits not read for now", "repository", repository, "number", p.Number, "error", err)
-			// Several in a row: the remote is out of reach, so the rest wait
-			// with the repository.
-			if deferred++; deferred == maxDeferred {
-				return report, fmt.Errorf("reading pull request commits: %w", err)
+		case err != nil:
+			report.PathsFailed++
+			w.logger().Debug("feature log: pull request commits not read", "repository", repository, "number", p.Number, "error", err)
+			unknown, err := w.Store.PathsFailed(ctx, repository, p.Number, p.HeadSHA)
+			if err != nil {
+				return report, err
+			}
+			if unknown {
+				report.PathsUnknown++
 			}
 			continue
-		case err != nil:
-			report.PathsUnknown++
-			w.logger().Debug("feature log: pull request commits not read", "repository", repository, "number", p.Number, "error", err)
 		default:
-			deferred = 0
 			paths = []string{}
 			for _, c := range commits {
 				paths = append(paths, c.Files...)
@@ -305,28 +290,6 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 		}
 	}
 	return report, nil
-}
-
-// maxDeferred is how many pull requests in a row may fail to be read for
-// now before a sync stops.
-const maxDeferred = 3
-
-// permanentPathError reports a pull request whose commits this clone will
-// not get: there are too many, or they are missing although the remote
-// answered every fetch, or answered that it does not have them. Anything
-// else (the network, credentials, a partial clone) may pass.
-func permanentPathError(err error) bool {
-	if errors.Is(err, bundle.ErrOutputTooLarge) {
-		return true
-	}
-	if !errors.Is(err, gitlocal.ErrObjectNotFound) {
-		return false
-	}
-	text := strings.ToLower(err.Error())
-	if !strings.Contains(text, "fetching pull request") {
-		return true
-	}
-	return strings.Contains(text, "couldn't find remote ref") || strings.Contains(text, "not our ref")
 }
 
 // openClone opens the clone in dir and names its remote for repository.

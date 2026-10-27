@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -188,17 +190,16 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	closed["state"] = "closed"
 	reader := &fakeReader{}
 	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(7, missing, f.Base), bot, closed)
-	w := &FeatureWorker{Store: s, Now: c.Now, Sessions: f.Store,
+	on := featureRegistry{prefs: repos.Preferences{Automatic: true}, repositories: []repos.Repository{
+		{Repository: linktest.Repository, Clones: []repos.Clone{{Path: f.Repo, Available: true}}}}}
+	w := &FeatureWorker{Store: s, Registry: on, Now: c.Now, Sessions: f.Store,
 		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
-	report, err := w.Sync(ctx, linktest.Repository, f.Repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.Listed != 5 || report.PathsRead != 2 || report.PathsUnknown != 1 || report.PathsDeferred != 0 || report.Commits != 3 {
-		t.Fatalf("report = %+v", report)
-	}
-	if head, paths := s.pathsAt(t, 7); head != missing || paths.Valid {
-		t.Fatalf("pull request 7 = %s %v, want its head with unknown paths", head, paths)
+
+	// One pass reads the others and links their commits although pull
+	// request 7 cannot be read.
+	w.RunOnce(ctx)
+	if head, paths := s.pathsAt(t, 7); head != "" || paths.Valid {
+		t.Fatalf("pull request 7 = %s %v after one failure", head, paths)
 	}
 	for _, n := range []int{9, 10} {
 		if head, _ := s.pathsAt(t, n); head != "" {
@@ -208,12 +209,28 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if got := linktest.Git(t, f.Repo, "rev-parse", "refs/baum/pull/6/head"); got != six {
 		t.Fatalf("pull request 6's head was not fetched: %s", got)
 	}
-	var paths string
-	if err := s.db.QueryRow(`SELECT paths_json FROM pull_request WHERE repository=? AND number=5`, linktest.Repository).Scan(&paths); err != nil || paths != `["b.txt","c.txt"]` {
-		t.Fatalf("paths = %s, %v", paths, err)
+	if head, paths := s.pathsAt(t, 5); head != f.Head || paths.String != `["b.txt","c.txt"]` {
+		t.Fatalf("pull request 5 = %s %v", head, paths)
 	}
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || !report.NotModified || report.Calls != 1 || report.PathsRead != 0 {
+	var linked int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit`).Scan(&linked); err != nil || linked != 1 {
+		t.Fatalf("%d links after the pass, %v", linked, err)
+	}
+
+	// Pull request 7 is read again after FeatureQuiet, and its paths are
+	// unknown after its third failure at its head.
+	report, err := w.Sync(ctx, linktest.Repository, f.Repo)
+	if err != nil || !report.NotModified || report.Calls != 1 || report.PathsFailed != 0 {
 		t.Fatalf("second sync = %+v, %v", report, err)
+	}
+	for try := 2; try <= FeaturePathTries; try++ {
+		c.now = c.now.Add(FeatureQuiet)
+		if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 1 || report.PathsUnknown != map[bool]int{true: 1}[try == FeaturePathTries] {
+			t.Fatalf("try %d = %+v, %v", try, report, err)
+		}
+	}
+	if head, paths := s.pathsAt(t, 7); head != missing || paths.Valid {
+		t.Fatalf("pull request 7 = %s %v, want its head with unknown paths", head, paths)
 	}
 
 	// With the remote out of reach, a new head is left as it was and not
@@ -222,24 +239,29 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	linktest.Git(t, f.Repo, "config", "url."+filepath.Join(t.TempDir(), "gone")+".insteadOf", "https://github.com/acme/widgets.git")
 	other := strings.Repeat("d", 40)
 	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base))
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsDeferred != 1 || report.PathsUnknown != 0 {
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 1 || report.PathsUnknown != 0 {
 		t.Fatalf("sync without the remote = %+v, %v", report, err)
 	}
 	if head, _ := s.pathsAt(t, 8); head != "" {
 		t.Fatalf("a failed read recorded head %s", head)
 	}
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsDeferred != 0 {
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 0 {
 		t.Fatalf("retried too soon: %+v, %v", report, err)
 	}
-	// Turned off during a sync, the repository's pull requests are left.
+
+	// Turned off during a pass, the repository's pull requests are left
+	// and its commits not linked.
 	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base), pullJSON(12, f.Head, f.Base))
-	w.Registry = featureRegistry{prefs: repos.Preferences{Automatic: false}, repositories: []repos.Repository{{Repository: linktest.Repository}}}
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || !report.Stopped || report.PathsRead != 0 {
-		t.Fatalf("sync turned off = %+v, %v", report, err)
+	c.now = c.now.Add(FeatureQuiet)
+	linkedAt := w.windowLinked[linktest.Repository]
+	w.Registry = turnedOff{on}
+	w.RunOnce(ctx)
+	if head, _ := s.pathsAt(t, 12); head != "" || !w.windowLinked[linktest.Repository].Equal(linkedAt) {
+		t.Fatalf("a repository turned off was read (head %q) or linked", head)
 	}
 	w.Registry = nil
 
-	indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, false)
+	indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,6 +329,16 @@ func (r featureRegistry) Repositories(context.Context) ([]repos.Repository, erro
 	}
 	return r.repositories, nil
 }
+
+// turnedOff lists the repository but reads it as off: it was turned off
+// after the pass began.
+type turnedOff struct{ featureRegistry }
+
+func (turnedOff) RepositorySettings(context.Context, string) (repos.Settings, bool, error) {
+	off := false
+	return repos.Settings{Decisions: &off}, true, nil
+}
+
 func (r featureRegistry) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
 	for _, each := range r.repositories {
 		if each.Repository == repository {
@@ -450,5 +482,48 @@ func TestLinkedSessionsKeyAsCapture(t *testing.T) {
 	}
 	if _, err := livesessions.Locate(home, "", agent, found[0].ID, ""); err != nil {
 		t.Fatalf("capture cannot locate the linked session: %v", err)
+	}
+}
+
+// manyReader lists count pull requests by bots, newest first, a minute apart
+// from updated down.
+type manyReader struct {
+	count   int
+	updated time.Time
+}
+
+func (r manyReader) Read(_ context.Context, path, _ string) (int, http.Header, []byte, error) {
+	parsed, err := url.Parse(path)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	perPage, _ := strconv.Atoi(parsed.Query().Get("per_page"))
+	page, _ := strconv.Atoi(parsed.Query().Get("page"))
+	rows := []map[string]any{}
+	for n := (page-1)*perPage + 1; n <= min(page*perPage, r.count); n++ {
+		row := pullJSON(n, strings.Repeat("a", 40), strings.Repeat("b", 40))
+		row["updated_at"] = r.updated.Add(-time.Duration(n) * time.Minute).Format(time.RFC3339)
+		row["user"] = map[string]any{"login": "bot", "type": "Bot"}
+		rows = append(rows, row)
+	}
+	body, _ := json.Marshal(rows)
+	return http.StatusOK, http.Header{"Etag": []string{`"many"`}}, body, nil
+}
+
+// A listing cut at its bound skips the older tail: the cursor moves to the
+// newest update, so the next sync does not list them all again.
+func TestFeatureSyncTruncatedListing(t *testing.T) {
+	c := &clock{t0}
+	s := openStore(t, c)
+	reader := manyReader{count: 10100, updated: t0}
+	w := &FeatureWorker{Store: s, Now: c.Now, Window: 30 * 24 * time.Hour,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	report, err := w.Sync(context.Background(), "acme/widgets", t.TempDir())
+	if err != nil || !report.Truncated || report.Listed < 10000 || report.Listed >= reader.count {
+		t.Fatalf("report = truncated %t, %d listed, %v", report.Truncated, report.Listed, err)
+	}
+	state, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || !state.Cursor.Equal(t0.Add(-time.Minute)) {
+		t.Fatalf("cursor = %v, %v", state.Cursor, err)
 	}
 }

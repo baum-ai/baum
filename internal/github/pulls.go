@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -45,36 +46,47 @@ type PullList struct {
 	NotModified bool
 	// Calls counts the requests made.
 	Calls int
-	// Truncated is set when the listing stopped at its page bound before
-	// reaching since.
+	// Truncated is set when the listing stopped at its bound with older pull
+	// requests still updated at or after since unlisted.
 	Truncated bool
 }
 
-// pullsPerPage keeps a page of pull requests, bodies included, well under
-// the REST reader's 8 MiB bound; maxPullPages bounds one listing at 10,000.
-const pullsPerPage = 50
+// pullsPerPage is the page size a listing starts with; a page the REST
+// reader refuses as too large (pull request bodies can be long) is read again
+// at half the size, down to minPullsPerPage. A listing stops at the first
+// page boundary at or past maxPulls.
+const (
+	pullsPerPage    = 64
+	minPullsPerPage = 8
+)
 
-var maxPullPages = 200
+var maxPulls = 10000
 
 // ListPullRequests lists the repository's pull requests of every state,
-// most recently updated first, 50 a page, until one was last updated before
-// since; one updated exactly at since is listed. The first page is read with
-// etag; when GitHub answers that it is unchanged nothing else is read.
+// most recently updated first, until one was last updated before since; one
+// updated exactly at since is listed. The first page is read with etag; when
+// GitHub answers that it is unchanged nothing else is read. A listing that
+// reaches maxPulls with more still to list stops there and is Truncated.
 func ListPullRequests(ctx context.Context, reader Reader, repository Repository, etag string, since time.Time) (PullList, error) {
 	var list PullList
-	for page := 1; page <= maxPullPages; page++ {
+	perPage := pullsPerPage
+	for offset := 0; ; {
 		path := fmt.Sprintf("/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d&page=%d",
-			url.PathEscape(repository.Owner), url.PathEscape(repository.Name), pullsPerPage, page)
+			url.PathEscape(repository.Owner), url.PathEscape(repository.Name), perPage, offset/perPage+1)
 		send := ""
-		if page == 1 {
+		if offset == 0 {
 			send = etag
 		}
 		status, header, body, err := reader.Read(ctx, path, send)
 		list.Calls++
+		if errors.Is(err, ErrResponseTooLarge) && perPage > minPullsPerPage {
+			perPage /= 2
+			continue
+		}
 		if err != nil {
 			return list, err
 		}
-		if page == 1 && status == http.StatusNotModified {
+		if offset == 0 && status == http.StatusNotModified {
 			list.NotModified, list.ETag = true, etag
 			return list, nil
 		}
@@ -84,7 +96,7 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 			}
 			return list, fmt.Errorf("listing pull requests: GitHub answered %d", status)
 		}
-		if page == 1 {
+		if offset == 0 {
 			list.ETag = header.Get("ETag")
 		}
 		var rows []struct {
@@ -110,6 +122,11 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 		if err := json.Unmarshal(body, &rows); err != nil {
 			return list, fmt.Errorf("listing pull requests: %w", err)
 		}
+		if offset >= maxPulls {
+			// Past the bound: this page only says whether more were due.
+			list.Truncated = len(rows) > 0 && !rows[0].UpdatedAt.Before(since)
+			return list, nil
+		}
 		for _, row := range rows {
 			if row.UpdatedAt.Before(since) {
 				return list, nil
@@ -130,10 +147,9 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 			}
 			list.Pulls = append(list.Pulls, pull)
 		}
-		if len(rows) < pullsPerPage {
+		if len(rows) < perPage {
 			return list, nil
 		}
+		offset += perPage
 	}
-	list.Truncated = true
-	return list, nil
 }

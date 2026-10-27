@@ -52,7 +52,8 @@ GitHub credential, about once a minute and conditionally. For the open and
 merged ones not opened by a bot it fetches what the clone lacks, as a
 review fetches a missing pull request commit: their heads
 (`refs/pull/<N>/head`), their base branches, and commits by id, all into
-`refs/baum/pull/<N>/` of the clone, where they stay. It keeps the pull
+`refs/baum/pull/<N>/` of the clone, where they stay. A failed fetch is tried
+again after 15 minutes, three times for a head, then once a day. It keeps the pull
 requests' titles, descriptions, authors, commits and changed paths in the
 private decision store, and links the commits to the sessions on this
 machine there.

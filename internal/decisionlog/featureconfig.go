@@ -37,6 +37,9 @@ const (
 	// waits for them; it is also the debounce of the session window's
 	// re-link.
 	FeatureQuiet = 15 * time.Minute
+	// FeaturePathTries is how many failed reads of a pull request's commits
+	// at one head leave its paths unknown until the daily re-link.
+	FeaturePathTries = 3
 	// FeatureRelinkEvery is how often every commit of the lookback is linked
 	// again.
 	FeatureRelinkEvery = 24 * time.Hour

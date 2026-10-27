@@ -126,21 +126,22 @@ and published prompts. Its choices are in `featureconfig.go`. It shares the
 store with capture. `FeatureWorker` runs in the daemon beside the capture
 scheduler, every minute and when settings change, for each picked repository
 with an available clone whose decisions are captured (the gate above); a
-repository turned off is not read and makes no GitHub call. A repository that
-fails is tried again after 15 minutes.
+repository turned off is not read and makes no GitHub call. A repository whose
+listing or clone fails is tried again after 15 minutes.
 
 ### Pull requests
 
 - The first run for a repository records when the feature log was activated
   for it (`pull_sync.activated_at`); work from before is not assigned.
 - The repository's pull requests of every state are listed through the
-  GitHub REST API, most recently updated first, 50 a page, until one updated
+  GitHub REST API, most recently updated first, 64 a page (a page too large
+  to read is read again at half the size, down to 8), until one updated
   before the cursor (the first time, 180 days back); one updated exactly at
-  the cursor is listed again. The first page is read with the stored ETag, so
-  an unchanged repository costs one conditional request. A complete listing
-  moves the cursor to the latest update it saw, or to the start of its window
-  when it saw none; one stopped at its bound of 200 pages keeps the cursor
-  and ETag.
+  the cursor is listed again. The first page is read with the stored ETag,
+  so an unchanged repository costs one conditional request. The cursor moves
+  to the latest update listed, or to the start of the window when none was.
+  A listing stops at about 10,000 pull requests; older ones still due are
+  skipped and logged.
 - Only pull requests that can be placed in a feature are read from the
   clone: open or merged ones not opened by a bot. For each whose head
   changed, the missing heads are fetched from `refs/pull/<N>/head` into
@@ -149,13 +150,13 @@ fails is tried again after 15 minutes.
   is fetched as a review fetches it). Its paths are the files its commits
   change; its commits replace those recorded. GitHub's file list is never
   read. The refs stay: they may back saved reviews.
-- A pull request whose commits this clone will not get (too many, or missing
-  although the remote answered) has unknown paths at its head; the daily
-  re-link has them read again. A read that fails for now (the network,
-  credentials) leaves the pull request as it was and is tried again after 15
-  minutes; three in a row stop the sync, and the repository waits 15
-  minutes. The gate is read again before each pull request, so a repository
-  turned off during a long sync stops there.
+- A failed read of a pull request's commits, whatever the cause, is tried
+  again after 15 minutes; after 3 failures at the same head its paths are
+  unknown at that head, and the daily re-link has them read again. A failure
+  never stops the sync or the linking: the other pull requests are read.
+- The gate is read again before the fetch and before each pull request; a
+  repository turned off during a sync stops there and its commits are not
+  linked.
 
 ### Sessions linked to pull requests
 

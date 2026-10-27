@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS pull_request(
   merge_commit_sha TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, merged_at INTEGER, closed_at INTEGER,
   paths_head_sha TEXT NOT NULL DEFAULT '', paths_json TEXT,
+  paths_failed_sha TEXT NOT NULL DEFAULT '', paths_failures INTEGER NOT NULL DEFAULT 0, paths_retry_at INTEGER,
   PRIMARY KEY(repository, number));
 CREATE TABLE IF NOT EXISTS pull_commit(
   repository TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT NOT NULL, committed_at INTEGER NOT NULL,
@@ -226,16 +227,38 @@ type StoredPull struct {
 
 // PullsWithoutPaths lists the repository's pull requests that may be placed
 // in a feature, open or merged and not opened by a bot, whose paths were not
-// read at their head, newest first.
+// read at their head and are due to be, newest first.
 func (s *Store) PullsWithoutPaths(ctx context.Context, repository string) ([]StoredPull, error) {
 	return s.pulls(ctx, `SELECT number, head_sha, base_sha, base_ref FROM pull_request WHERE repository=? AND paths_head_sha != head_sha
-AND bot=0 AND (state='open' OR merged_at IS NOT NULL) ORDER BY updated_at DESC`, repository)
+AND bot=0 AND (state='open' OR merged_at IS NOT NULL) AND (paths_retry_at IS NULL OR paths_retry_at <= ?) ORDER BY updated_at DESC`,
+		repository, s.now().UnixMilli())
+}
+
+// PathsFailed counts a failed read of the pull request's commits at head.
+// It is tried again after FeatureQuiet; after FeaturePathTries failures at
+// one head its paths are unknown at that head, and true is returned.
+func (s *Store) PathsFailed(ctx context.Context, repository string, number int, head string) (bool, error) {
+	unknown := false
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var failures int
+		if err := tx.QueryRowContext(ctx, `UPDATE pull_request SET paths_failures=CASE WHEN paths_failed_sha=?1 THEN paths_failures+1 ELSE 1 END,
+paths_failed_sha=?1, paths_retry_at=?2 WHERE repository=?3 AND number=?4 RETURNING paths_failures`,
+			head, s.now().Add(FeatureQuiet).UnixMilli(), repository, number).Scan(&failures); err != nil {
+			return err
+		}
+		if unknown = failures >= FeaturePathTries; unknown {
+			return setPaths(ctx, tx, repository, number, head, nil, nil)
+		}
+		return nil
+	})
+	return unknown, err
 }
 
 // RetryUnknownPaths has the paths of the pull requests whose commits could
 // not be read read again.
 func (s *Store) RetryUnknownPaths(ctx context.Context, repository string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha='' WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
+	_, err := s.db.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha='', paths_failures=0, paths_failed_sha='', paths_retry_at=NULL
+WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
 	return err
 }
 
@@ -273,6 +296,10 @@ type PullCommit struct {
 // SetPullPaths records what the pull request touches at head: its paths, nil
 // when they cannot be read, and its commits, which replace those it had.
 func (s *Store) SetPullPaths(ctx context.Context, repository string, number int, head string, paths []string, commits []PullCommit) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error { return setPaths(ctx, tx, repository, number, head, paths, commits) })
+}
+
+func setPaths(ctx context.Context, tx *sql.Tx, repository string, number int, head string, paths []string, commits []PullCommit) error {
 	var encoded any
 	if paths != nil {
 		raw, err := json.Marshal(paths)
@@ -281,22 +308,20 @@ func (s *Store) SetPullPaths(ctx context.Context, repository string, number int,
 		}
 		encoded = string(raw)
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha=?, paths_json=? WHERE repository=? AND number=?`,
-			head, encoded, repository, number); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha=?, paths_json=?, paths_failures=0, paths_failed_sha='', paths_retry_at=NULL
+WHERE repository=? AND number=?`, head, encoded, repository, number); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pull_commit WHERE repository=? AND number=?`, repository, number); err != nil {
+		return err
+	}
+	for _, c := range commits {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pull_commit(repository, number, sha, committed_at) VALUES (?,?,?,?)`,
+			repository, number, c.SHA, c.CommittedAt.UnixMilli()); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM pull_commit WHERE repository=? AND number=?`, repository, number); err != nil {
-			return err
-		}
-		for _, c := range commits {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pull_commit(repository, number, sha, committed_at) VALUES (?,?,?,?)`,
-				repository, number, c.SHA, c.CommittedAt.UnixMilli()); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // SessionCommit is one session linked to a commit.
