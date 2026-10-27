@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "connecting-screen",
-  "description": "The bundled connecting and error screen may read the connection state and ask to reconnect. It has no remote URLs, so pages the daemon serves get no capability at all.",
+  "description": "The bundled connecting and error screen may read the connection state, ask to reconnect and use the zoom shortcuts. It has no remote URLs, so pages the daemon serves get no capability at all.",
   "windows": ["main"],
-  "permissions": ["allow-connection", "allow-reconnect"]
+  "permissions": ["allow-connection", "allow-reconnect", "allow-step-zoom"]
 }

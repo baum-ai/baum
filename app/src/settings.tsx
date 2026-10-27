@@ -16,7 +16,13 @@ import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
-import { SlidersIcon, TerminalIcon, SessionsIcon, CheckIcon } from "@baum/viewer/components/icons";
+import {
+  SlidersIcon,
+  TerminalIcon,
+  SessionsIcon,
+  CheckIcon,
+  SearchIcon,
+} from "@baum/viewer/components/icons";
 import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
 import {
   describeCommand,
@@ -96,7 +102,12 @@ export function SettingsPage({
       ) : null}
       <div className="local-page-body local-settings">
         {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
-        {hasFolderPicker() ? <DesktopIntegrations /> : null}
+        {hasFolderPicker() ? (
+          <>
+            <DesktopIntegrations />
+            <ZoomSection />
+          </>
+        ) : null}
         {automatic && defaults ? (
           <ReviewSettingsSection
             key={JSON.stringify([automatic.enabled, automatic.pull_requests, defaults])}
@@ -303,6 +314,71 @@ function DesktopIntegrations() {
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
       {feedback}
     </>
+  );
+}
+
+type ZoomState = { level: number; levels: number[] };
+
+/** The desktop window's zoom, which the app saves; the shortcuts change it too. */
+function ZoomSection() {
+  const [zoom, setZoom] = useState<ZoomState | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    // A daemon newer or older than the app may serve this page without the
+    // app offering zoom; the card then stays hidden.
+    void invoke<ZoomState>("zoom_state").then(setZoom, () => setHidden(true));
+    // The shortcuts announce each new level.
+    const changed = (event: Event) => {
+      const level = (event as CustomEvent<number>).detail;
+      setZoom((current) => (current ? { ...current, level } : current));
+    };
+    window.addEventListener("baum:zoom", changed);
+    return () => window.removeEventListener("baum:zoom", changed);
+  }, []);
+  async function choose(level: number) {
+    setError("");
+    try {
+      const applied = await invoke<number>("set_zoom", { level });
+      setZoom((current) => (current ? { ...current, level: applied } : current));
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }
+  if (hidden) return null;
+  const mod = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl";
+  return (
+    <section className="local-panel settings-card p-0!" aria-labelledby="zoom-heading">
+      <PanelHeader
+        id="zoom-heading"
+        icon={<SearchIcon size={20} />}
+        title="Zoom"
+        detail="Make everything in this window larger or smaller."
+      />
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
+        <p className="min-w-0 flex-1 text-xs text-(--text-secondary)">
+          {mod} + and {mod} − also change it, and {mod} 0 resets it to 100%.
+        </p>
+        <select
+          className="local-field"
+          aria-label="Zoom"
+          disabled={!zoom}
+          value={zoom?.level ?? 1}
+          onChange={(e) => void choose(Number(e.target.value))}
+        >
+          {(zoom?.levels ?? [1]).map((level) => (
+            <option key={level} value={level}>
+              {Math.round(level * 100)}%
+            </option>
+          ))}
+        </select>
+      </div>
+      {error ? (
+        <div className="px-5 pb-4">
+          <Alert>{error}</Alert>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

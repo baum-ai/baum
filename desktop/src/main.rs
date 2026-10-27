@@ -21,6 +21,7 @@ mod onboarding;
 mod status;
 mod tray;
 mod updater;
+mod zoom;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -312,6 +313,9 @@ fn main() {
             onboarding::github_connection,
             onboarding::repositories,
             onboarding::finish_setup,
+            zoom::zoom_state,
+            zoom::set_zoom,
+            zoom::step_zoom,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
@@ -319,6 +323,7 @@ fn main() {
             let opener = app.handle().clone();
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
+            zoom::install(app.handle())?;
             tray::setup(app.handle());
             let page = onboarding::start(app.handle());
             development::grant_setup(app.handle())?;
@@ -330,11 +335,17 @@ fn main() {
             } else {
                 WebviewUrl::App(page.into())
             };
-            WebviewWindowBuilder::new(app, MAIN, page)
+            let window = WebviewWindowBuilder::new(app, MAIN, page)
                 .title("baum")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .visible(!hidden)
+                .initialization_script(zoom::SCRIPT)
+                .on_page_load(|webview, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        zoom::apply(webview.as_ref());
+                    }
+                })
                 .on_navigation(move |url| {
                     let daemon = state.lock().daemon.clone();
                     let setup = onboarding::is_open(&handle);
@@ -357,6 +368,7 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            zoom::apply(window.as_ref());
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
@@ -379,13 +391,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
-    /// picker and CLI/hook management, on loopback; the bundled screens get
-    /// exactly their commands and no remote URL.
+    /// picker, CLI/hook management and the zoom, on loopback; the bundled
+    /// screens get exactly their commands and no remote URL. Every page gets
+    /// the zoom shortcuts.
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
-            "connecting-screen": ["allow-connection", "allow-reconnect"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks"],
+            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",
@@ -398,7 +411,8 @@ mod tests {
                 "allow-save-review-settings",
                 "allow-github-connection",
                 "allow-repositories",
-                "allow-finish-setup"
+                "allow-finish-setup",
+                "allow-step-zoom"
             ],
         });
         let mut found = serde_json::Map::new();

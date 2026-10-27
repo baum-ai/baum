@@ -405,6 +405,30 @@ title is not interpreted.
   resumes after the last event it saw. A review requested or finished while the
   daemon was down is not announced.
 
+## Zoom
+
+The window zooms with the webview's own page zoom (WebKitGTK, WebView2 or
+WKWebView), not CSS or the desktop's scale factor. It therefore works the same on X11,
+Wayland, macOS and Windows, and it scales every page the window shows: the
+bundled screens, the daemon's pages and any page added later, without that page
+doing anything (`src/zoom.rs`).
+
+- **Shortcuts.** Ctrl (Cmd on macOS) with `+` or `=` zooms in, `-` zooms out
+  and `0` returns to 100%, from 67% to 200% in browser-like steps. Linux and
+  Windows windows have no menu bar to hold accelerators, so the window injects
+  a small script (`src/zoom.js`) into every page it loads. The script calls
+  `step_zoom` and announces the new level to the page as a `baum:zoom` event.
+  It matches the typed character and, for layouts where it differs (AZERTY's
+  0 key types `à`), the physical key.
+  The webview's built-in zoom keys, mouse-wheel and pinch zoom are not used.
+- **Settings.** The desktop Settings page has a Zoom card with the same levels,
+  through `zoom_state` and `set_zoom`. It follows changes made by the shortcuts.
+  It stays hidden when the app does not offer these commands, as when a
+  different daemon's pages show in an older app.
+- **Saved.** The level is saved in `window.json` in the app's config
+  directory and applied when the window opens and whenever a page starts
+  loading. A missing, damaged or unknown level is 100%.
+
 ## What pages may do
 
 - The window loads only the bundled screens and the attached daemon's origin.
@@ -419,14 +443,17 @@ title is not interpreted.
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
   button opens, which changes nothing and returns only the chosen folder. The
-  page registers it through the daemon's own API. They can call no other Tauri
-  command or plugin. `withGlobalTauri` is off.
+  page registers it through the daemon's own API. It also allows the zoom
+  commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
+  offered levels. They can call no other Tauri command or plugin.
+  `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
   origin only: `connecting-screen` allows the app's `connection` and
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Every change they make runs in the
+  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
   share `setup_state`, the four CLI and hook install/removal commands and

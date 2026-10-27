@@ -16,6 +16,9 @@ fn main() {
         "github_connection",
         "repositories",
         "finish_setup",
+        "zoom_state",
+        "set_zoom",
+        "step_zoom",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri build script");

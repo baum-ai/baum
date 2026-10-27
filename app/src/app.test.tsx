@@ -891,6 +891,67 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
   }
 });
 
+it("sets the desktop window's zoom in Settings and follows the shortcuts", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  const invoke = vi.fn(async (command: string, args?: { level: number }) => {
+    if (command === "zoom_state") return { level: 1, levels: [0.9, 1, 1.25] };
+    if (command === "set_zoom") return args!.level;
+    return {
+      first_run: false,
+      command: {
+        installed: false,
+        target: "/app/baum",
+        plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+      },
+      hooks: { agents: [] },
+    };
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const select = node.querySelector<HTMLSelectElement>('select[aria-label="Zoom"]')!;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["90%", "100%", "125%"]);
+    expect(select.value).toBe("1");
+    await act(async () => {
+      select.value = "1.25";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(invoke).toHaveBeenCalledWith("set_zoom", { level: 1.25 });
+    expect(select.value).toBe("1.25");
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("baum:zoom", { detail: 0.9 }));
+    });
+    expect(select.value).toBe("0.9");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("hides the zoom card when the desktop app does not offer zoom", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "zoom_state") throw new Error("zoom_state not allowed");
+    return {
+      first_run: false,
+      command: {
+        installed: false,
+        target: "/app/baum",
+        plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+      },
+      hooks: { agents: [] },
+    };
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    expect(invoke).toHaveBeenCalledWith("zoom_state", undefined);
+    expect(node.querySelector('select[aria-label="Zoom"]')).toBeNull();
+    expect(node.textContent).not.toContain("zoom_state not allowed");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("opens clone-less PR deep links by repository and refreshes picked repositories", async () => {
   const row = { ...entry(7), clone_id: undefined, needs_clone: true };
   entries = [row];
