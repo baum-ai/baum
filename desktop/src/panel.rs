@@ -64,7 +64,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     if cfg!(target_os = "linux") {
         return Ok(());
     }
-    let bundled = navigation::bundled_screen().origin();
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("tray.html".into()))
         .title("baum")
         .inner_size(WIDTH, 360.0)
@@ -77,7 +76,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .visible_on_all_workspaces(true)
         .visible(false)
         .focused(false)
-        .on_navigation(move |url| url.origin() == bundled)
+        .on_navigation(navigation::is_tray_panel)
         .build()?;
     Ok(())
 }

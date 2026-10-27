@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "setup-screen",
-  "description": "The bundled setup screen may read what is installed, install or remove the baum command and the user-wide agent hooks, sign in to GitHub through the daemon, register repositories and change review settings when the user asks, and leave setup. It has no remote URLs, so pages the daemon serves cannot call these commands.",
+  "description": "The bundled setup screen may read what is installed, install or remove the baum command and the user-wide agent hooks, sign in to GitHub through the daemon, register repositories and change review settings when the user asks, use the zoom shortcuts, and leave setup. It has no remote URLs, so pages the daemon serves cannot call these commands.",
   "windows": ["main"],
   "permissions": [
     "allow-setup-state",
@@ -15,6 +15,7 @@
     "allow-save-review-settings",
     "allow-github-connection",
     "allow-repositories",
-    "allow-finish-setup"
+    "allow-finish-setup",
+    "allow-step-zoom"
   ]
 }

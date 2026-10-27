@@ -80,7 +80,8 @@ type Preferences struct {
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
-	// PullRequestsAuthored, PullRequestsRequested, or empty for both.
+	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
+	// for both authored and requested.
 	PullRequests string `json:"pull_requests,omitempty"`
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
@@ -91,7 +92,23 @@ type Preferences struct {
 const (
 	PullRequestsAuthored  = "authored"
 	PullRequestsRequested = "requested"
+	// PullRequestsAll covers every open pull request in the repository.
+	PullRequestsAll = "all"
 )
+
+// Covers reports whether automatic reviews cover a pull request the viewer
+// authored or was asked to review, as PullRequests chooses.
+func (p Preferences) Covers(authored, requested bool) bool {
+	switch p.PullRequests {
+	case PullRequestsAuthored:
+		return authored
+	case PullRequestsRequested:
+		return requested
+	case PullRequestsAll:
+		return true
+	}
+	return authored || requested
+}
 
 // Validate accepts an empty Model, unlike Settings: it means the backend's
 // default even when the config file names a model.
@@ -106,10 +123,10 @@ func (p Preferences) Validate() error {
 		return fmt.Errorf("agent environment: %w", err)
 	}
 	switch p.PullRequests {
-	case "", PullRequestsAuthored, PullRequestsRequested:
+	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll:
 		return nil
 	}
-	return fmt.Errorf("unknown pull requests choice %q; use %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested)
+	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll)
 }
 
 // Resolve overlays the app's backend, model and agent environment on the

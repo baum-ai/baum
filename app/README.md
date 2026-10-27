@@ -420,7 +420,7 @@ It shows the installed state, paths, trust guidance and action results.
 Settings holds the global review settings in the same form as the desktop
 setup's review step: the harness, its model (a listed model or a custom name),
 whether reviews run automatically and for which pull requests (authored,
-requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
+requested, both, or all open pull requests in the repository). Saving sends them to `PUT api/automatic` (`enabled`,
 `backend`, `model`, `pull_requests`), which the daemon keeps as app
 preferences over the config file; `GET api/settings` reports the effective
 harness and model. **Environment for agents** (`AgentEnvSection`) edits

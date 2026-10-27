@@ -43,6 +43,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-github-connection",
     "allow-repositories",
     "allow-finish-setup",
+    "allow-step-zoom",
 ];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";

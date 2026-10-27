@@ -440,6 +440,20 @@ func TestMovedHeadQueuesExactlyOneJobThroughTheScheduler(t *testing.T) {
 	}
 }
 
+// With automatic reviews on all pull requests, a push to someone else's pull
+// request triggers the scheduler too.
+func TestMovedHeadOfAnotherAuthorQueuesAJobForAllPullRequests(t *testing.T) {
+	h := newHarness(t)
+	h.registry.edit(func(r *registry) { r.prefs.PullRequests = repos.PullRequestsAll })
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.AuthoredByMe = false })
+	h.cache = h.gh.snapshot(h.now)
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.HeadSHA = newHead })
+	h.prePush("origin", pushLine("feature", newHead, oldHead))
+	h.advance(PushDelay)
+	h.wantRefreshes(7, 1)
+	h.wantJobs("acme/app#7@b:new_head")
+}
+
 func TestNoJobWhenAutomaticGenerationDoesNotApply(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
