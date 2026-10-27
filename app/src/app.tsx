@@ -56,7 +56,8 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, FixDialog } from "./fix";
+import { FixDetails, FixDialog, TranscriptLink } from "./fix";
+import { JobPage } from "./job-transcript";
 
 function useLocation() {
   const [search, setSearch] = useState(() => new URLSearchParams(location.search));
@@ -569,6 +570,12 @@ function Workspace({ url }: { url: UrlState }) {
                 <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
               </div>
             </>
+          ) : page === "jobs" && url.search.get("job") ? (
+            <JobPage
+              job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
+              loading={loading}
+              Link={LocalLink}
+            />
           ) : page === "jobs" ? (
             <>
               <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
@@ -1025,6 +1032,7 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => Promise<void> }) {
       <span className="local-job-figure">{calls}</span>
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
       <div className="local-job-actions">
+        <TranscriptLink job={job} />
         {active ? (
           <Button
             variant="secondary"

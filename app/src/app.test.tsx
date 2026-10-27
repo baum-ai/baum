@@ -684,6 +684,7 @@ const automaticOverview = {
 function stubAutomatic(
   clone: Omit<Clone, "settings"> & { settings: Partial<Clone["settings"]> } = demoClone,
   overview: object = automaticOverview,
+  settings: object = { backend: "auto", model: "" },
 ) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const puts: { path: string; body: unknown }[] = [];
@@ -692,6 +693,8 @@ function stubAutomatic(
     const init = args[1] as RequestInit | undefined;
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
+      if (path.endsWith("api/settings/agent-env"))
+        return Promise.resolve(Response.json(puts.at(-1)!.body));
       return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
@@ -702,8 +705,7 @@ function stubAutomatic(
         ]),
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
-    if (path === "/s/test-ns/api/settings")
-      return Promise.resolve(Response.json({ backend: "auto", model: "" }));
+    if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
     return original(...args);
   });
   return puts;
@@ -726,6 +728,60 @@ it("saves the global review settings from the form the desktop setup uses", asyn
     path: "/s/test-ns/api/automatic",
     body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "both" },
   });
+});
+it("edits the environment agents run with and shows server errors inline", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "auto",
+    model: "",
+    agent_env: { GIT_CONFIG_GLOBAL: "~/.gitconfig-agent" },
+    agent_env_source: "file",
+  });
+  await act(async () => root.render(<App />));
+  const section = () => node.querySelector('[aria-labelledby="agent-env-heading"]')!;
+  const save = () =>
+    [...section().querySelectorAll("button")].find((b) => b.textContent === "Save environment")!;
+  const add = () =>
+    [...section().querySelectorAll("button")].find((b) => b.textContent === "Add variable")!;
+  const type = async (input: HTMLInputElement, value: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  const names = () =>
+    section().querySelectorAll<HTMLInputElement>('input[aria-label="Variable name"]');
+  const inputs = () => section().querySelectorAll<HTMLInputElement>("input");
+  expect(section().textContent).toContain("[agent_env]");
+  expect(names()[0]!.value).toBe("GIT_CONFIG_GLOBAL");
+  expect(save().disabled).toBe(true);
+  await act(async () => add().click());
+  await type(names()[1]!, "1BAD");
+  expect(section().textContent).toContain("not starting with a digit");
+  expect(save().disabled).toBe(true);
+  await type(names()[1]!, "GIT_CONFIG_GLOBAL");
+  expect(section().textContent).toContain("Another row has this name");
+  await type(names()[1]!, "EDITOR");
+  await type(inputs()[3]!, "$HOME/bin/edit");
+  expect(save().disabled).toBe(false);
+  await act(async () => save().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/agent-env",
+    body: { agent_env: { GIT_CONFIG_GLOBAL: "~/.gitconfig-agent", EDITOR: "$HOME/bin/edit" } },
+  });
+  expect(section().textContent).toContain("Saved.");
+  expect(save().disabled).toBe(true);
+  // A refusal from the server stays by the form.
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/agent-env")
+      ? Promise.resolve(Response.json({ message: "GIT_DIR cannot be set" }, { status: 400 }))
+      : accepted(...args),
+  );
+  await act(async () => add().click());
+  await type(names()[2]!, "GIT_DIR");
+  await act(async () => save().click());
+  expect(section().textContent).toContain("GIT_DIR cannot be set");
 });
 it("sets automatic reviews per repository and clears an old daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");

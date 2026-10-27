@@ -108,6 +108,19 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
+A fix can be watched live. A fix job with `has_transcript` has a transcript
+page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
+`src/job-transcript.tsx`): the job's phase while it runs, then its summary or
+failure, above the agent's messages, collapsed reasoning, tool calls (a status
+mark, expandable to their output) and errors. `JobTranscript` reads
+`GET api/jobs/{id}/transcript?after=N` from 0, again at once while `more`,
+otherwise every second until `done`, and follows the end while the reader is
+there (`useFollowScroll`). Entries are append-only; a later entry with a tool's
+`id` replaces the earlier one in place. The Jobs list, the PR page's fix
+notice and Up next link to it: **Watch** while the fix runs, **Transcript**
+after. A failure's `detail` (git's own words for the `signing` reason, which the
+daemon checks before the agent runs) shows under **What happened**.
+
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, beside Ready
 in its Pull requests row (always drawn on touch screens), and as the Inbox
@@ -173,9 +186,10 @@ review is requested), **Fix** (theirs, with changes requested, unresolved
 threads, a conflict or failing checks), **Merge** (theirs, and `canMerge`),
 **Update** (theirs, and `canUpdateBranch`) and **Clone** (a requested review
 whose repository has no local clone). Their own pull requests with nothing to
-do (drafts, those waiting on reviewers or checks, and those a fix agent is
-working on) are counted under the queue and linked to Pull requests; everyone
-else's are only there. The queue runs in that order of kinds, so a review
+do (drafts, and those waiting on reviewers or checks) are counted under the
+queue and linked to Pull requests; one a fix agent is working on has its own
+line there ("An agent is fixing #N … · <phase>") with a **Watch** link to the
+job's transcript. Everyone else's are only there. The queue runs in that order of kinds, so a review
 someone waits on comes first; within Review a saved review ready to read comes
 before one being written, then the riskier first; otherwise the lower number
 first. Each pull request appears once, whatever clones hold it.
@@ -196,8 +210,12 @@ another, and names any GitHub refused with the reason; leaving the page stops
 the merges not yet sent. "Cleared today" lists the pull requests that left the
 queue since first seen today because the person's part is done: it merged or
 closed, the review request went ("Reviewed", or "Handled" for one that needed a
-clone), or their fix or branch update left it waiting on checks or reviewers.
-Their own pull request that only stopped being mergeable (a push, checks
+clone), their fix pushed (a fix counts only once its job completed with a
+commit: never while it runs, nor after it failed or was cancelled) and left it
+waiting on checks or reviewers, or their branch update did. A pull request
+back in the queue as a Fix whose latest fix job failed says "The last fix
+failed: <reason>" on its card, with **See what the agent did** (the
+transcript, else the job in the list); its button starts a new fix. Their own pull request that only stopped being mergeable (a push, checks
 running) waits uncleared, and nothing is cleared for a repository the latest
 read lists no open pull request of, since GitHub may only be unreachable. A
 ring shows cleared against cleared plus remaining, with the reading minutes of
@@ -341,7 +359,15 @@ whether reviews run automatically and for which pull requests (authored,
 requested or both). Saving sends them to `PUT api/automatic` (`enabled`,
 `backend`, `model`, `pull_requests`), which the daemon keeps as app
 preferences over the config file; `GET api/settings` reports the effective
-harness and model. Choosing cursor-agent, globally or for a repository, is the
+harness and model. **Environment for agents** (`AgentEnvSection`) edits
+variables set for every agent baum runs and for the git commands that commit
+and push a fix, such as `GIT_CONFIG_GLOBAL` to sign agent commits with another
+key: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates, at most
+32) saved with `PUT api/settings/agent-env` (`{"agent_env": {...}}`; an empty
+object clears the app's value). `GET api/settings` returns `agent_env` and
+`agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
+applies, which the section notes). `~` and `$VARS` are expanded; the values
+are stored on this computer, so no secrets belong there. Choosing cursor-agent, globally or for a repository, is the
 one-time acknowledgement that its cost cannot be estimated.
 Automatic reviews are on by default. The global switch is a master switch (the
 desktop tray's pause sets it): off stops automatic generation everywhere. Each
