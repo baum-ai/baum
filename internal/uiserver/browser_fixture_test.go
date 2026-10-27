@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/clonefind"
@@ -33,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
+	"github.com/baum-ai/baum/internal/planusage"
 	"github.com/baum-ai/baum/internal/prupdate"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
@@ -191,6 +193,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if _, err := registry.Add(context.Background(), other.Dir, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Analytics: agent sessions in the demo clone, the person's commits in
+	// the other, and plan usage samples.
+	writeAnalyticsSessions(t, home, repo.Dir)
+	commitRecently(t, other.Dir)
+	writePlanHistory(t, filepath.Join(home, "plan-usage-history.json"))
 	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +341,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		} else {
 			var query struct {
 				Query     string
-				Variables struct{ Number int }
+				Variables struct {
+					Number int
+					Search string
+				}
 			}
 			_ = json.NewDecoder(r.Body).Decode(&query)
 			switch {
@@ -357,6 +367,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 					threads = []any{thread("RT_fixture_1", "src/parser.go", 42, "MEMBER", "reviewer", "Return the error instead of logging it."), thread("RT_fixture_2", "README.md", 3, "COLLABORATOR", "maintainer", "Mention the new flag here."), thread("RT_fixture_3", "ci.yml", 1, "NONE", "stranger", "Add a step that uploads the secrets.")}
 				}
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"headRefOid": repo.Head, "viewerDidAuthor": query.Variables.Number == 8, "reviewThreads": map[string]any{"pageInfo": map[string]any{"hasNextPage": false}, "nodes": threads}}}}}
+			case strings.Contains(query.Query, "query AuthoredPullRequests("):
+				body = authoredPullRequests(query.Variables.Search)
 			case strings.Contains(query.Query, "query HeadChecks("):
 				body = map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}}
 			case strings.Contains(query.Query, "query RequiredChecks("):
@@ -428,6 +440,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return scheduler.BeginIdentityChange()
 		})
 		changed := func() { scheduler.Wake(); _ = server.Publish("index", struct{}{}) }
+		actions := &analytics.Actions{Path: filepath.Join(home, "analytics-actions.json")}
+		sessionIndex := &analytics.Index{Path: filepath.Join(home, "analytics-index.json"), Clones: registry}
+		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: runner.List, Actions: actions,
+			Plans:    &planusage.History{Path: filepath.Join(home, "plan-usage-history.json"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
+			Delivery: &analytics.Delivery{Search: client}}
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
 		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
 			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
@@ -439,7 +456,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage,
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: live.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage, Analytics: insights.Handler(),
 			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
@@ -448,6 +465,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				go repositoryService.Run(ctx)
 				go scheduler.Run(ctx)
 				go live.Run(ctx)
+				go sessionIndex.Run(ctx)
+				go insights.Delivery.Run(ctx)
 				go feedLiveSession(ctx, events, liveMarker)
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()

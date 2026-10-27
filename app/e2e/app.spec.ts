@@ -592,3 +592,65 @@ test("updates the branch of a pull request that is behind its base from its page
   await expect(page.getByRole("button", { name: "Update branch", exact: true })).toHaveCount(0);
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "updated-11"), { force: true });
 });
+
+// The fixture writes two Claude Code sessions in the demo clone (13 minutes of
+// work and two prompts each; one on a model the price list does not know),
+// two commits of the person's in the other clone (one co-authored by Claude),
+// plan samples and GitHub's answer to the delivery search. The specs before
+// this one merged, updated and re-ran from the app.
+test("Analytics shows what the agents did, cost and delivered", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Analytics", exact: true })).toBeVisible();
+  expect(new URL(page.url()).search).toBe("?page=analytics");
+  const tile = (label: string) =>
+    page
+      .getByLabel("Summary")
+      .locator(".analytics-tile")
+      .filter({ has: page.locator("dt", { hasText: new RegExp(`^${label}$`) }) });
+  await expect(tile("Sessions")).toContainText("2");
+  await expect(tile("Human prompts")).toContainText("4");
+  await expect(tile("Active agent time")).toContainText("26 min");
+  // One model has no price: the estimate is a floor, never a full figure.
+  await expect(tile("Estimated cost")).toContainText("≥ $");
+  await expect(tile("Estimated cost")).toContainText("Incomplete");
+  await expect(tile("Agent-written")).toContainText("50%");
+  await expect(tile("Agent-written")).toContainText("1 of 2 of your commits");
+  const delivery = page.getByRole("region", { name: "Delivery" });
+  await expect(delivery).toContainText("Median time to first review");
+  await expect(delivery.locator("dd").first()).toHaveText("2");
+  await expect(delivery).toContainText("6 h");
+  await expect(delivery).toContainText("1 · 50%");
+  const baum = page.getByRole("region", { name: "baum's work" });
+  await expect(baum.locator("div").filter({ hasText: /^Merges from baum/ })).toContainText("1");
+  await expect(page.getByRole("region", { name: "Plan usage" })).toContainText(
+    "5-hour: peak 100%, at its limit 1 time",
+  );
+  const breakdown = page.getByRole("region", { name: "Breakdown" });
+  await expect(breakdown.getByRole("row", { name: /Claude Code/ })).toContainText("50%");
+  await breakdown.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(breakdown).toContainText("claude-sonnet-4-5");
+  await expect(breakdown.getByRole("row", { name: /fixture-model-x/ })).toContainText("—");
+  // The window and filters are in the address and change the figures.
+  await page.getByRole("button", { name: "90 days", exact: true }).click();
+  await expect(page).toHaveURL(/days=90/);
+  await page.getByLabel("Repository").selectOption("acme/other");
+  await expect(page).toHaveURL(/repo=acme%2Fother/);
+  await expect(tile("Sessions")).toContainText("0");
+  await expect(page.getByRole("region", { name: "Agent activity" })).toContainText(
+    "No agent sessions in this window",
+  );
+  await expect(tile("Agent-written")).toContainText("50%");
+  await page.reload();
+  await expect(page.getByLabel("Repository")).toHaveValue("acme/other");
+  // Narrow: the page folds without scrolling sideways.
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.getByLabel("Repository").selectOption("");
+  await expect(tile("Sessions")).toContainText("2");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  expect(errors).toEqual([]);
+});
