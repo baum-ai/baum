@@ -70,6 +70,9 @@ type App struct {
 	// Methods registers further control requests the application serves,
 	// beside Options.Methods; they require the client's protocol to match.
 	Methods map[string]Method
+	// Waits registers further control requests that may wait for as long as
+	// their client stays connected, beside Options.Waits.
+	Waits map[string]Method
 }
 
 // Options configure Run.
@@ -87,6 +90,14 @@ type Options struct {
 	// Methods registers further control requests; they require the client's
 	// protocol to match.
 	Methods map[string]Method
+	// Waits registers control requests that may wait for as long as their
+	// client stays connected, such as a hook holding its agent until the app
+	// answers: neither the method timeout nor the idle timeout applies, and
+	// the method's context ends when the client disconnects (or sends
+	// anything more) or the daemon stops. The connection closes after the
+	// answer. They require the client's protocol to match; clients send them
+	// with Client.Wait.
+	Waits map[string]Method
 	// Respawn starts the daemon executable a newer client named, detached,
 	// to take over once this daemon exits (see StopParams). The daemon gives
 	// it only an executable it trusts (see executablePolicy), with symbolic
@@ -212,11 +223,14 @@ func Run(ctx context.Context, opts Options) error {
 	methods := map[string]Method{}
 	maps.Copy(methods, opts.Methods)
 	maps.Copy(methods, app.Methods)
+	waits := map[string]Method{}
+	maps.Copy(waits, opts.Waits)
+	maps.Copy(waits, app.Waits)
 	trust := opts.trust
 	if trust == nil {
 		trust = trustedExecutable
 	}
-	control := &controller{status: status, stop: stop, methods: methods, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
+	control := &controller{status: status, stop: stop, methods: methods, waits: waits, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
 	if opts.Respawn != nil {
 		executable := opts.executable
 		if executable == "" {
@@ -340,6 +354,7 @@ type controller struct {
 	status  Status
 	stop    func()
 	methods map[string]Method
+	waits   map[string]Method
 	log     *slog.Logger
 	conns   map[net.Conn]struct{}
 	drain   func() bool
@@ -500,6 +515,10 @@ func (c *controller) handle(conn net.Conn) {
 			}
 			return
 		}
+		if method, params, ok := c.waiting(line); ok {
+			c.wait(conn, r, method, params)
+			return
+		}
 		response, stop := c.dispatch(line)
 		if err = writeResponse(conn, response); err != nil {
 			return
@@ -571,19 +590,50 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, methodTimeout)
 	defer cancel()
-	result, err := method(ctx, req.Params)
+	return call(ctx, method, req.Params), false
+}
+
+// waiting returns the waiting method (Options.Waits) a request line names,
+// when the client speaks the daemon's protocol; anything else is dispatched.
+func (c *controller) waiting(line []byte) (Method, json.RawMessage, bool) {
+	var req Request
+	if json.Unmarshal(line, &req) != nil || req.Protocol != Protocol {
+		return nil, nil, false
+	}
+	method := c.waits[req.Method]
+	return method, req.Params, method != nil
+}
+
+// wait runs a waiting method with no deadline and answers it. The client
+// sends nothing more, so anything read from it, its end included, cancels
+// the method.
+func (c *controller) wait(conn net.Conn, r *bufio.Reader, method Method, params json.RawMessage) {
+	_ = conn.SetDeadline(time.Time{})
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+	go func() {
+		_, _ = r.ReadByte()
+		cancel()
+	}()
+	response := call(ctx, method, params)
+	_ = conn.SetWriteDeadline(time.Now().Add(idleTimeout))
+	_ = writeResponse(conn, response)
+}
+
+func call(ctx context.Context, method Method, params json.RawMessage) Response {
+	result, err := method(ctx, params)
 	if err != nil {
 		// A method names its own code with an *Error.
 		if coded, ok := errors.AsType[*Error](err); ok {
-			return Response{Error: coded}, false
+			return Response{Error: coded}
 		}
-		return Response{Error: &Error{Code: CodeFailed, Message: err.Error()}}, false
+		return Response{Error: &Error{Code: CodeFailed, Message: err.Error()}}
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return Response{Error: &Error{Code: CodeFailed, Message: "result could not be encoded"}}, false
+		return Response{Error: &Error{Code: CodeFailed, Message: "result could not be encoded"}}
 	}
-	return Response{OK: true, Result: data}, false
+	return Response{OK: true, Result: data}
 }
 
 var errLineTooLong = errors.New("line too long")

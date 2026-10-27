@@ -84,9 +84,9 @@ type Event struct {
 }
 
 // Session is the part of an agent hook's payload an event keeps: identifiers
-// and paths, and for a notification the line the agent showed its user.
-// Prompts, tool input and output, and anything else the payload carries are
-// never kept.
+// and paths, for a notification the line the agent showed its user, and for
+// a finished tool call a digest of its input. Prompts, tool input and
+// output, and anything else the payload carries are never kept.
 type Session struct {
 	// ID is the agent's session id (Cursor's conversation id).
 	ID string `json:"id,omitempty"`
@@ -107,6 +107,11 @@ type Session struct {
 	// bytes. No other event carries them.
 	NotificationType string `json:"notification_type,omitempty"`
 	Message          string `json:"message,omitempty"`
+	// ToolDigest is a post-tool-use event's digest of the tool's name and
+	// input (agentrequests.Digest), never the input itself: the daemon
+	// matches it to the permission request the user answered in the
+	// terminal.
+	ToolDigest string `json:"tool_digest,omitempty"`
 }
 
 // Git is a Git hook run.
@@ -179,7 +184,7 @@ func (e *Event) Bound() {
 func (e *Event) fields() []*string {
 	fields := []*string{&e.Agent, &e.Name, &e.Dir, &e.Client}
 	if s := e.Session; s != nil {
-		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason, &s.NotificationType, &s.Message)
+		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason, &s.NotificationType, &s.Message, &s.ToolDigest)
 	}
 	if g := e.Git; g != nil {
 		for i := range g.Args {

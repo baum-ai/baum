@@ -106,12 +106,28 @@ func (c *Client) socket() string {
 func (c *Client) Call(ctx context.Context, method string, params any) (Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	return c.exchange(ctx, ctx, method, params)
+}
+
+// Wait sends a request the daemon may hold for as long as the connection
+// stays open (Options.Waits) and reads its response. It connects as Call
+// does, then waits until ctx ends; ending it closes the connection, which
+// cancels the request in the daemon.
+func (c *Client) Wait(ctx context.Context, method string, params any) (Response, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	return c.exchange(dialCtx, ctx, method, params)
+}
+
+// exchange connects within dialCtx, then sends the request and reads its
+// response within ctx.
+func (c *Client) exchange(dialCtx, ctx context.Context, method string, params any) (Response, error) {
 	socket := c.socket()
 	if err := checkSocketDirectory(socket); err != nil {
 		return Response{}, fmt.Errorf("connect to the baum daemon: %w", err)
 	}
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", socket)
+	conn, err := dialer.DialContext(dialCtx, "unix", socket)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || refused(err) {
 			return Response{}, ErrNotRunning
@@ -122,6 +138,7 @@ func (c *Client) Call(ctx context.Context, method string, params any) (Response,
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
+	defer context.AfterFunc(ctx, func() { _ = conn.Close() })()
 	req := Request{Protocol: Protocol, Method: method, Client: c.Version}
 	if params != nil {
 		if req.Params, err = json.Marshal(params); err != nil {

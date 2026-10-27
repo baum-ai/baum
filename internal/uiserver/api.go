@@ -35,6 +35,10 @@ type LocalAPI struct {
 	// Live serves /api/live-sessions: the agent sessions in progress, and
 	// /api/live-sessions/{agent}/{id}/transcript: one of their transcripts.
 	Live http.Handler
+	// AgentRequests serves /api/agent-requests and /api/agent-messages: the
+	// permission requests and questions agents wait on the app to answer, and
+	// the messages queued for running sessions (internal/agentrequests).
+	AgentRequests http.Handler
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
 	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
@@ -122,6 +126,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
 	mux.Handle("/api/live-sessions/", provider(a.Live, "live_sessions_unavailable"))
+	agentRequests := provider(a.AgentRequests, "agent_requests_unavailable")
+	mux.Handle("/api/agent-requests", agentRequests)
+	mux.Handle("/api/agent-requests/", agentRequests)
+	mux.Handle("/api/agent-messages", agentRequests)
+	mux.Handle("/api/agent-messages/", agentRequests)
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))

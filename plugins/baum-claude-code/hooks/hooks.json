@@ -106,6 +106,18 @@
         ],
         "matcher": ""
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code permission-request >/dev/null 2>&1; then exec baum hooks agent --user claude-code permission-request; fi'",
+            "timeout": 3600
+          }
+        ],
+        "matcher": ""
+      }
     ]
   }
 }

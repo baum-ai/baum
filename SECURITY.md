@@ -1005,8 +1005,9 @@ addresses, your home directory as `~`) and cut to 160 characters, and only
 while the session waits. The desktop app shows it as the text of the
 "needs your permission" or "waiting for your answer" notification, the
 `notice` event that names the session (agent, id, repository, branch, pull
-request number) and carries the same masked line. Codex's permission request
-keeps nothing of the command it asks about. Nothing of it goes to a baum
+request number) and carries the same masked line. A permission request's
+event keeps nothing of the command it asks about (what the app is shown of
+it is held in memory only, below). Nothing of it goes to a baum
 server, and an ended session's saved state (`live-sessions.json`) holds none
 of it.
 
@@ -1048,6 +1049,48 @@ by its id. The transcript is redacted exactly as the PR page's linked sessions
 written as `~`, nothing else removed. The path itself never reaches the app.
 At most 8 transcripts are held in memory, and only while their session is
 listed.
+
+The desktop app can answer what your agents ask you, and send a running
+session a message. Approving from the app means that anything that can reach
+the daemon's authenticated local API (the app, or a process running as you
+that reads its credential file) can approve commands, file edits and other
+tool calls for your Claude Code sessions, and for Codex sessions once you turn
+on Codex approvals in the app (`codex_approvals`, off by default).
+`GET /api/agent-requests`, `POST /api/agent-requests/{id}/answer`,
+`PUT /api/agent-requests/settings`, `POST /api/agent-messages` and
+`DELETE /api/agent-messages/{agent}/{id}` sit behind the same authentication,
+Origin and Host checks as every application route. How it works:
+
+- Claude Code's `PermissionRequest` hook (user-wide plugin 1.2.0) and Codex's
+  hold their agent while the daemon waits for your answer, over the control
+  socket only you can reach. Claude Code keeps its own dialog in the terminal
+  at the same time, and the first answer wins; the hook stops waiting when
+  the same tool call finishes, the session's turn ends or a new prompt is
+  submitted, and Claude Code kills it after an hour, leaving the dialog as it
+  was. Codex hides its prompt while the hook waits, so the daemon answers a
+  Codex request only with the setting on, and only for about 25 seconds;
+  then the hook prints nothing and Codex asks in its terminal. With no
+  daemon, an older one or any failure, the hooks print nothing and the agent
+  asks as it always did.
+- The app is shown exactly what you approve: the command, file and text of
+  the edit, URL, or the tool's input as compact JSON, Claude Code's own
+  suggestions for "always allow" (only the one you pick is applied), and a
+  question's options. Every string is cleaned and masked as transcripts are
+  (secrets and e-mail addresses masked, your home directory as `~`) and cut
+  (4000 characters for a value), so what you approve can differ from the
+  real input only where a secret was masked or a long value cut. The hook
+  keeps the agent's own payload and builds the answer from it; the daemon
+  never hands tool input back to an agent.
+- To notice an answer given in the terminal, the `post-tool-use` hook event
+  carries a SHA-256 digest of the tool's name and input (`tool_digest`),
+  never the input.
+- A message you queue is held for its session until that session's next
+  Stop hook, which tells the agent it came from you through the baum app.
+  One message per session; a new one replaces it.
+- Pending requests and messages are held in the daemon's memory only: never
+  written to disk, logged or sent to a baum server, and gone when the daemon
+  stops. Only the Codex setting is saved, in `agent-requests.json` in the
+  daemon's state directory.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are

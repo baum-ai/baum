@@ -196,12 +196,45 @@ handshake, in [`apiclient`](../apiclient).
   records the event: no Entire, no bootstrap, no output, exit status 0, as
   where `--check` refuses.
 - The user-wide hooks also run record-only events, which Entire has no hook
-  for and only the daemon's live sessions read: Claude Code's `notification`
-  (its Notification hook, every type) and `post-tool-use` (PostToolUse for
-  every tool, run with `async`), and Codex's `permission-request`. For them
-  `baum hooks agent --user` only records the event, hosted or not: no Entire,
-  no output (so Codex's permission request decides nothing and Codex asks as
-  usual), exit status 0. `--check --user` applies the same rules (the second
+  for and only the daemon reads: Claude Code's `notification` (its
+  Notification hook, every type), `post-tool-use` (PostToolUse for every
+  tool, run with `async`) and `permission-request` (PermissionRequest, every
+  tool, timeout 3600 s, since plugin 1.2.0), and Codex's
+  `permission-request`. For them `baum hooks agent --user` records the
+  event, hosted or not, and runs no Entire; it exits 0 and prints nothing,
+  except as the next item says.
+- The desktop app answers permission requests and questions, and sends
+  messages, through these hooks (`internal/agentrequests`). Once the daemon
+  took a `permission-request` event, the hook reads the whole payload (up to
+  16 MiB, waiting at most 2 s for it to end), sends the daemon what the app
+  shows of it (rows describing the tool call, suggestion labels, questions)
+  with the `agent.request` control request, and holds until the app answers,
+  the daemon withdraws the request or the hook is killed. It then prints the
+  agent's answer from its own copy of the payload:
+  `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{…}}}`
+  with `behavior` `allow` or `deny` (a deny says, in `message`, that the user
+  denied it in the baum app). For Claude Code an "always allow" carries the
+  one `permission_suggestions` entry picked as `updatedPermissions`, an
+  AskUserQuestion answer carries the tool's input with `answers` added as
+  `updatedInput`, and an ExitPlanMode approval echoes its input there. Codex
+  gets the behaviour and message only; the daemon answers a Codex request
+  only when the user turned `codex_approvals` on, and the hook gives up after
+  28 s so Codex, which hides its prompt meanwhile, asks in its terminal. The
+  Codex hook's definition is unchanged, so its trust stands. With no daemon,
+  one that did not take the event in time, an incompatible one or any error,
+  the hook prints nothing and never starts a daemon to wait for.
+- `post-tool-use` events of Claude Code and Codex carry `tool_digest`, the
+  SHA-256 of the tool's name and canonical input (`agentrequests.Digest`),
+  read from the whole payload, so the daemon withdraws a request the user
+  answered in the terminal; the input itself is never kept.
+- A Claude Code or Codex `stop` hook, user-wide or committed, takes the
+  message the user queued in the app for its session (`agent.take-message`,
+  within 300 ms, only when the daemon took the stop's event) and prints
+  `{"decision":"block","reason":"<the message, introduced as sent from the
+  baum app>"}`, which makes the agent go on with it. It never waits for one.
+  Entire's output for the stop is held until then: when it is empty, or a
+  JSON object that does not already decide or stop, the decision is added
+  to it; otherwise it is printed as it is and the message stays queued. `--check --user` applies the same rules (the second
   never matches, as no hook file hands them to Entire). They are not in the
   committed vocabulary: a committed dispatcher or `baum hooks agent` without
   `--user` refuses them as unsupported, so repositories and the hosted
@@ -262,8 +295,10 @@ handshake, in [`apiclient`](../apiclient).
   nothing: where it refuses, baum does not run at all, so the opt-in rules
   above decide which hooks report. Sending changes nothing the agent or Git
   sees: Entire still reads the hook's standard input byte for byte (through a
-  pipe the hook fills, keeping a copy of at most 256 KiB), its output still
-  reaches them untouched, and the exit status is the one it was. The event
+  pipe the hook fills, keeping a copy of at most 256 KiB, or 16 MiB for a
+  Claude Code or Codex `post-tool-use` or `permission-request`), its output
+  still reaches them untouched (a stop's carries a queued message, above),
+  and the exit status is the one it was. The event
   writes nothing to standard output or error.
 - An agent event keeps only the payload's top-level identifiers:
   `session_id` (Cursor: `conversation_id`), `transcript_path`, `cwd`,
@@ -272,7 +307,7 @@ handshake, in [`apiclient`](../apiclient).
   keeps its last value; a payload cut short yields the members before the
   cut). A Claude Code `notification` event also keeps `notification_type` and
   `message`, the sentence Claude Code showed, cut to 512 bytes; no other event
-  keeps them. Prompts, tool input
+  keeps them. A `post-tool-use` event keeps `tool_digest`. Prompts, tool input
   and output and every other member are never kept. A Git event keeps the
   hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
   (refs and commits), but never a pre-push remote URL, which can carry
