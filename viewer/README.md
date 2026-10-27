@@ -65,6 +65,7 @@ A host connects it through props and context:
 | file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
+| decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
 
 ## The review page
 
@@ -361,6 +362,46 @@ bars (`--z-sticky`, 30).
 Section attention callouts show high and critical risks with evidence and lifecycle
 badges, without repeating their explanation in a nested card. Medium and low risks
 appear under **Risks** below **Key decisions**. Empty risk sections are omitted.
+
+## Decision log
+
+The decision log's timeline and feature log are drawn by
+`@baum/viewer/components/decision-log` and
+`@baum/viewer/components/feature-log` from the view models in
+`@baum/viewer/decision-log` (`DecisionSummary`, `DecisionDetail`,
+`FeatureSummary`, `FeatureDetail` and the types beside them, in the hosted
+API's field names), with the pure helpers that say how a person, who decided,
+a category, a feature's status, span and counts and a pull request's review
+read. Like the review page, they never fetch and never decide who may read
+what: the host hands them rows, details and their loading state, and owns the
+filters, the address and which decision or feature is open.
+
+- `DecisionRow` is one decision as a disclosure: time (and day with
+  `withDate`), who decided, the author with their `Avatar`, the category's
+  dot, an optional repository name and the summary. Its panel holds whatever
+  the host passes, usually `DecisionDetailBody`.
+- `DecisionDetailBody` draws a decision's detail from a `DetailState`
+  (loading, failed with a retry, missing, ready): the rejected alternative,
+  its files (each calling `onFile`), pull requests, session facts and cited
+  prompts. `pullRequestHref` says where a pull request opens, rendered through
+  `ViewerLink`. `openSession` (`OpenSessionSource`) loads a session and
+  answers what to draw for it at the cited turn; the detail asks once, when
+  the reader first opens it, and says so when the promise rejects. A detail
+  whose prompts are withheld offers no session.
+- `FeatureItem`, `TimelineHeading`, `TimelineRail` and `TIMELINE_ROW` lay out
+  the feature timeline: month and day headings, a dot per feature by status,
+  and each feature's card with its people, counts and up to three key
+  decisions. With `panelElsewhere` the card only marks itself selected and
+  `FeatureSidePanel` shows the drill-down beside the timeline.
+- `FeatureDrillDown` draws a feature's `FeatureState` (loading, moved,
+  archived, missing, failed or ready): its digest, then its pull requests and
+  sessions without one, each a group of `DecisionRow`s. A
+  `DecisionOpening` from the host says which decision is open, toggles it and
+  renders its detail, and the group holding the open decision opens and
+  scrolls it into view. `pullRequestHref` opens a pull request as above.
+
+`Avatar` (`@baum/viewer/components/avatar`) draws a person's picture, falling
+back to their initials when there is none or it fails to load.
 
 ## Syntax highlighting
 
