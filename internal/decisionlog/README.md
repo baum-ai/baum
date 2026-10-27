@@ -127,7 +127,8 @@ store with capture. `FeatureWorker` runs in the daemon beside the capture
 scheduler, every minute and when settings change, for each picked repository
 with an available clone whose decisions are captured (the gate above); a
 repository turned off is not read and makes no GitHub call. A repository whose
-listing or clone fails is tried again after 15 minutes.
+listing fails, whose clone cannot be read or whose heads cannot be fetched is
+tried again after 15 minutes.
 
 ### Pull requests
 
@@ -143,20 +144,23 @@ listing or clone fails is tried again after 15 minutes.
   A listing stops at about 10,000 pull requests; older ones still due are
   skipped and logged.
 - Only pull requests that can be placed in a feature are read from the
-  clone: open or merged ones not opened by a bot. For each whose head
-  changed, the missing heads are fetched from `refs/pull/<N>/head` into
-  `refs/baum/pull/<N>/head`, up to 100 in one fetch, then its commits are
-  read from the clone as a review reads them (a head or base still missing
-  is fetched as a review fetches it). Its paths are the files its commits
-  change; its commits replace those recorded. GitHub's file list is never
-  read. The refs stay: they may back saved reviews.
-- A failed read of a pull request's commits, whatever the cause, is tried
-  again after 15 minutes; after 3 failures at the same head its paths are
-  unknown at that head, and the daily re-link has them read again. A failure
-  never stops the sync or the linking: the other pull requests are read.
+  clone: open or merged ones not opened by a bot. Each pass makes one fetch
+  of the heads its due pull requests lack, from `refs/pull/<N>/head` into
+  `refs/baum/pull/<N>/head`, 100 refspecs to a `git fetch`; the refs stay,
+  as they may back saved reviews. Each pull request's commits, from its base
+  to its head, are then read from the clone's own objects, never fetched.
+  Its paths are the files its commits change; its commits replace those
+  recorded. GitHub's file list is never read.
+- When that fetch fails, nothing is counted against any pull request and
+  the repository waits. A pull request whose commits then cannot be read
+  (its head or base is missing, or it has too many) is read again after 15
+  minutes; after 3 failures at its head its paths are unknown at that head.
+  A new head starts the count again, and the daily re-link has every
+  failed pull request read again at once, an unknown one 3 more times. A
+  pull request that fails never stops the others or the linking.
 - The gate is read again before the fetch and before each pull request; a
-  repository turned off during a sync stops there and its commits are not
-  linked.
+  repository turned off during a sync stops there, and its commits are not
+  linked now.
 
 ### Sessions linked to pull requests
 
@@ -168,7 +172,8 @@ they had:
 - each run, the commits just recorded, made in the last 7 days (hosted looks
   back a day; a laptop may be off for days);
 - every 15 minutes, the commits within the session window of now, which a
-  session still running may yet link to;
+  session still running may yet link to, read from the clone without
+  fetching;
 - once a day, every commit of the last 7 days.
 
 A commit linked to a session more than one way keeps its strongest link.

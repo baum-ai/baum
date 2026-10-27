@@ -96,8 +96,7 @@ func TestListPullRequests(t *testing.T) {
 
 // A listing stops at its bound, and is truncated only when more were due.
 func TestListPullRequestsTruncated(t *testing.T) {
-	defer func(bound int) { maxPulls = bound }(maxPulls)
-	maxPulls = 2 * pullsPerPage
+	defer SetMaxPulls(2 * pullsPerPage)()
 	list, err := ListPullRequests(context.Background(), &listReader{count: 3 * pullsPerPage}, widgets, "", time.Time{})
 	if err != nil || !list.Truncated || list.Calls != 3 || len(list.Pulls) != maxPulls {
 		t.Fatalf("list = %d calls, %d pulls, truncated %t, %v", list.Calls, len(list.Pulls), list.Truncated, err)
@@ -124,6 +123,11 @@ func TestListPullRequestsShrinksOversizedPages(t *testing.T) {
 	}
 	if last := reader.paths[len(reader.paths)-1]; !strings.Contains(last, "per_page=16&page=3") {
 		t.Fatalf("last path = %s", last)
+	}
+	// A first page read smaller keeps no ETag.
+	list, err = ListPullRequests(context.Background(), &listReader{count: 40, tooLarge: 16, etag: `"v1"`}, widgets, "", time.Time{})
+	if err != nil || list.ETag != "" {
+		t.Fatalf("list = etag %q, %v", list.ETag, err)
 	}
 	if _, err := ListPullRequests(context.Background(), &listReader{count: 40, tooLarge: 4}, widgets, "", time.Time{}); err != ErrResponseTooLarge {
 		t.Fatalf("err = %v, want too large below the floor", err)

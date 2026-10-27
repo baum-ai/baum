@@ -2978,10 +2978,11 @@ repository's pull requests through the REST API (`github.ListPullRequests`,
 `state=all`, sorted by update, to the stored cursor, the first page
 conditional on its ETag, a page too large read again at half the size),
 fetches the missing heads of open and merged non-bot pull requests from
-`refs/pull/<N>/head` in batches of 100 (`gitlocal.FetchPullHeads`), records
-each changed one's commits and paths from the clone (a failed read is
-retried after 15 minutes, and after 3 failures at one head its paths are
-unknown until the daily re-link), and links commits to this
+`refs/pull/<N>/head` in one fetch per pass (`gitlocal.FetchPullHeads`, 100
+refspecs a `git fetch`), records each changed one's commits and paths from
+the clone's own objects (a failed read is retried after 15 minutes, and
+after 3 failures at one head its paths are unknown until the daily
+re-link), and links commits to this
 machine's sessions with `locallink.LinkCommits`, the per-commit matching
 `Resolve` uses. The constants are in `featureconfig.go` and the live feature
 version of a repository is chosen in one place (`liveVersion`). See

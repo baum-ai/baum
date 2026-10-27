@@ -243,18 +243,17 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 	for _, p := range pulls {
 		wanted = append(wanted, gitlocal.PullRequest{Number: p.Number, HeadSHA: p.HeadSHA, BaseSHA: p.BaseSHA, BaseRef: p.BaseRef})
 	}
+	// The pass's one network step: when it fails, nothing is counted and the
+	// repository waits.
 	if err := clone.FetchPullHeads(ctx, remote, wanted); err != nil {
-		if ctx.Err() != nil {
-			return report, err
-		}
-		w.logger().Debug("feature log: pull request heads not fetched together", "repository", repository, "error", err)
+		return report, fmt.Errorf("fetching pull request heads: %w", err)
 	}
 	for _, p := range pulls {
 		if !w.enabled(ctx, repository) {
 			report.Stopped = true
 			return report, nil
 		}
-		commits, err := pullCommits(ctx, clone, remote, p)
+		commits, err := pullCommits(ctx, clone, p)
 		var paths []string
 		var recorded []PullCommit
 		switch {
@@ -312,14 +311,10 @@ func openClone(ctx context.Context, dir, repository string) (*gitlocal.Repo, str
 	return nil, "", fmt.Errorf("no remote of the clone names %s", repository)
 }
 
-// pullCommits reads the pull request's commits from the clone, fetching
-// what it lacks as ResolvePull does.
-func pullCommits(ctx context.Context, clone *gitlocal.Repo, remote string, p StoredPull) ([]gitlocal.Commit, error) {
-	pull, err := clone.ResolvePull(ctx, gitlocal.PullRequest{Number: p.Number, HeadSHA: p.HeadSHA, BaseSHA: p.BaseSHA, BaseRef: p.BaseRef, Remote: remote})
-	if err != nil {
-		return nil, err
-	}
-	return clone.Commits(ctx, pull.MergeBaseOID, pull.HeadOID)
+// pullCommits reads the pull request's commits, from its merge base to its
+// head, from the clone's own objects; it never fetches.
+func pullCommits(ctx context.Context, clone *gitlocal.Repo, p StoredPull) ([]gitlocal.Commit, error) {
+	return clone.Commits(ctx, p.BaseSHA, p.HeadSHA)
 }
 
 // IndexReport says what Index did.
@@ -381,12 +376,12 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 			return report, err
 		}
 		if len(pulls) > 0 {
-			clone, remote, err := openClone(ctx, dir, repository)
+			clone, _, err := openClone(ctx, dir, repository)
 			if err != nil {
 				return report, err
 			}
 			for _, p := range pulls {
-				read, err := pullCommits(ctx, clone, remote, p)
+				read, err := pullCommits(ctx, clone, p)
 				if err != nil {
 					if ctx.Err() != nil {
 						_ = clone.Close()

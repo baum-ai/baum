@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS pull_request(
   merge_commit_sha TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, merged_at INTEGER, closed_at INTEGER,
   paths_head_sha TEXT NOT NULL DEFAULT '', paths_json TEXT,
-  paths_failed_sha TEXT NOT NULL DEFAULT '', paths_failures INTEGER NOT NULL DEFAULT 0, paths_retry_at INTEGER,
+  paths_failures INTEGER NOT NULL DEFAULT 0, paths_retry_at INTEGER,
   PRIMARY KEY(repository, number));
 CREATE TABLE IF NOT EXISTS pull_commit(
   repository TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT NOT NULL, committed_at INTEGER NOT NULL,
@@ -201,7 +201,9 @@ func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
 head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET title=excluded.title, body=excluded.body,
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
+paths_failures=CASE WHEN head_sha=excluded.head_sha THEN paths_failures ELSE 0 END,
+paths_retry_at=CASE WHEN head_sha=excluded.head_sha THEN paths_retry_at END, title=excluded.title, body=excluded.body,
 state=excluded.state, draft=excluded.draft, author=excluded.author, bot=excluded.bot, head_ref=excluded.head_ref, head_sha=excluded.head_sha,
 base_ref=excluded.base_ref, base_sha=excluded.base_sha, merge_commit_sha=excluded.merge_commit_sha, created_at=excluded.created_at,
 updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded.closed_at`,
@@ -234,16 +236,16 @@ AND bot=0 AND (state='open' OR merged_at IS NOT NULL) AND (paths_retry_at IS NUL
 		repository, s.now().UnixMilli())
 }
 
-// PathsFailed counts a failed read of the pull request's commits at head.
-// It is tried again after FeatureQuiet; after FeaturePathTries failures at
-// one head its paths are unknown at that head, and true is returned.
+// PathsFailed counts a failed read of the pull request's commits at head
+// (a new head starts the count again, SavePulls). It is tried again after
+// FeatureQuiet; after FeaturePathTries failures its paths are unknown at
+// that head, and true is returned.
 func (s *Store) PathsFailed(ctx context.Context, repository string, number int, head string) (bool, error) {
 	unknown := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var failures int
-		if err := tx.QueryRowContext(ctx, `UPDATE pull_request SET paths_failures=CASE WHEN paths_failed_sha=?1 THEN paths_failures+1 ELSE 1 END,
-paths_failed_sha=?1, paths_retry_at=?2 WHERE repository=?3 AND number=?4 RETURNING paths_failures`,
-			head, s.now().Add(FeatureQuiet).UnixMilli(), repository, number).Scan(&failures); err != nil {
+		if err := tx.QueryRowContext(ctx, `UPDATE pull_request SET paths_failures=paths_failures+1, paths_retry_at=?
+WHERE repository=? AND number=? RETURNING paths_failures`, s.now().Add(FeatureQuiet).UnixMilli(), repository, number).Scan(&failures); err != nil {
 			return err
 		}
 		if unknown = failures >= FeaturePathTries; unknown {
@@ -254,12 +256,17 @@ paths_failed_sha=?1, paths_retry_at=?2 WHERE repository=?3 AND number=?4 RETURNI
 	return unknown, err
 }
 
-// RetryUnknownPaths has the paths of the pull requests whose commits could
-// not be read read again.
+// RetryUnknownPaths has every pull request whose commits failed to be read
+// read again now, those with unknown paths FeaturePathTries more times.
 func (s *Store) RetryUnknownPaths(ctx context.Context, repository string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha='', paths_failures=0, paths_failed_sha='', paths_retry_at=NULL
-WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
-	return err
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha='', paths_failures=0
+WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_retry_at=NULL WHERE repository=? AND paths_retry_at IS NOT NULL`, repository)
+		return err
+	})
 }
 
 // PullsWithCommitsSince lists the pull requests holding a commit made at or
@@ -308,7 +315,7 @@ func setPaths(ctx context.Context, tx *sql.Tx, repository string, number int, he
 		}
 		encoded = string(raw)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha=?, paths_json=?, paths_failures=0, paths_failed_sha='', paths_retry_at=NULL
+	if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha=?, paths_json=?, paths_failures=0, paths_retry_at=NULL
 WHERE repository=? AND number=?`, head, encoded, repository, number); err != nil {
 		return err
 	}

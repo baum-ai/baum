@@ -167,6 +167,9 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	linktest.Git(t, f.Repo, "clone", "-q", "--bare", f.Repo, remote)
 	linktest.Git(t, remote, "update-ref", "refs/pull/5/head", f.Head)
+	// Pull request 7 was force-pushed since GitHub listed it: its ref no
+	// longer brings the listed head.
+	linktest.Git(t, remote, "update-ref", "refs/pull/7/head", f.Head)
 	work := filepath.Join(t.TempDir(), "work")
 	linktest.Git(t, f.Repo, "clone", "-q", remote, work)
 	linktest.Git(t, work, "checkout", "-q", "-b", "six", f.Base)
@@ -182,7 +185,7 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 
 	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
 	s := openStore(t, c)
-	// Pull request 7's head is nowhere; 9 is a bot's and 10 was closed
+	// Pull request 7's listed head is nowhere; 9 is a bot's and 10 was closed
 	// unmerged, so neither is read.
 	missing := strings.Repeat("e", 40)
 	bot, closed := pullJSON(9, f.Head, f.Base), pullJSON(10, f.Head, f.Base)
@@ -217,40 +220,43 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 		t.Fatalf("%d links after the pass, %v", linked, err)
 	}
 
-	// Pull request 7 is read again after FeatureQuiet, and its paths are
-	// unknown after its third failure at its head.
+	// The pass's full re-link had pull request 7 read again at once; then it
+	// waits FeatureQuiet, and its paths are unknown after its third failure.
 	report, err := w.Sync(ctx, linktest.Repository, f.Repo)
-	if err != nil || !report.NotModified || report.Calls != 1 || report.PathsFailed != 0 {
+	if err != nil || !report.NotModified || report.Calls != 1 || report.PathsFailed != 1 || report.PathsUnknown != 0 {
 		t.Fatalf("second sync = %+v, %v", report, err)
 	}
-	for try := 2; try <= FeaturePathTries; try++ {
-		c.now = c.now.Add(FeatureQuiet)
-		if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 1 || report.PathsUnknown != map[bool]int{true: 1}[try == FeaturePathTries] {
-			t.Fatalf("try %d = %+v, %v", try, report, err)
-		}
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 0 {
+		t.Fatalf("retried too soon: %+v, %v", report, err)
+	}
+	c.now = c.now.Add(FeatureQuiet)
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 1 || report.PathsUnknown != 1 {
+		t.Fatalf("third try = %+v, %v", report, err)
 	}
 	if head, paths := s.pathsAt(t, 7); head != missing || paths.Valid {
 		t.Fatalf("pull request 7 = %s %v, want its head with unknown paths", head, paths)
 	}
 
-	// With the remote out of reach, a new head is left as it was and not
-	// tried again before FeatureQuiet.
+	// With the remote out of reach, the pass fails without counting a
+	// failure against any pull request.
 	linktest.Git(t, f.Repo, "config", "--unset", "url."+remote+".insteadOf")
 	linktest.Git(t, f.Repo, "config", "url."+filepath.Join(t.TempDir(), "gone")+".insteadOf", "https://github.com/acme/widgets.git")
 	other := strings.Repeat("d", 40)
 	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base))
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 1 || report.PathsUnknown != 0 {
+	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err == nil || report.PathsFailed != 0 {
 		t.Fatalf("sync without the remote = %+v, %v", report, err)
 	}
-	if head, _ := s.pathsAt(t, 8); head != "" {
-		t.Fatalf("a failed read recorded head %s", head)
+	var failures int
+	if err := s.db.QueryRow(`SELECT paths_failures FROM pull_request WHERE number=8`).Scan(&failures); err != nil || failures != 0 {
+		t.Fatalf("failures = %d, %v", failures, err)
 	}
-	if report, err = w.Sync(ctx, linktest.Repository, f.Repo); err != nil || report.PathsFailed != 0 {
-		t.Fatalf("retried too soon: %+v, %v", report, err)
+	if head, _ := s.pathsAt(t, 8); head != "" {
+		t.Fatalf("a failed fetch recorded head %s", head)
 	}
 
 	// Turned off during a pass, the repository's pull requests are left
-	// and its commits not linked.
+	// and its commits not linked; nothing is fetched (the remote is still
+	// gone, so a fetch would fail the pass).
 	reader.set(pullJSON(5, f.Head, f.Base), pullJSON(6, six, f.Base), pullJSON(8, other, f.Base), pullJSON(12, f.Head, f.Base))
 	c.now = c.now.Add(FeatureQuiet)
 	linkedAt := w.windowLinked[linktest.Repository]
@@ -513,17 +519,63 @@ func (r manyReader) Read(_ context.Context, path, _ string) (int, http.Header, [
 // A listing cut at its bound skips the older tail: the cursor moves to the
 // newest update, so the next sync does not list them all again.
 func TestFeatureSyncTruncatedListing(t *testing.T) {
+	defer github.SetMaxPulls(128)()
 	c := &clock{t0}
 	s := openStore(t, c)
-	reader := manyReader{count: 10100, updated: t0}
+	reader := manyReader{count: 300, updated: t0}
 	w := &FeatureWorker{Store: s, Now: c.Now, Window: 30 * 24 * time.Hour,
 		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
 	report, err := w.Sync(context.Background(), "acme/widgets", t.TempDir())
-	if err != nil || !report.Truncated || report.Listed < 10000 || report.Listed >= reader.count {
+	if err != nil || !report.Truncated || report.Listed != 128 {
 		t.Fatalf("report = truncated %t, %d listed, %v", report.Truncated, report.Listed, err)
 	}
 	state, err := s.Activate(context.Background(), "acme/widgets")
 	if err != nil || !state.Cursor.Equal(t0.Add(-time.Minute)) {
 		t.Fatalf("cursor = %v, %v", state.Cursor, err)
+	}
+}
+
+// A new head starts a pull request's failure count again; the daily re-link
+// has every failed one read again at once.
+func TestPathFailuresFollowTheHead(t *testing.T) {
+	ctx := context.Background()
+	c := &clock{t0}
+	s := openStore(t, c)
+	list := func(head string) {
+		t.Helper()
+		pull := github.ListedPull{Number: 1, State: "open", HeadSHA: head, BaseSHA: "b", UpdatedAt: t0}
+		if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() (failures int, retry sql.NullInt64) {
+		t.Helper()
+		if err := s.db.QueryRow(`SELECT paths_failures, paths_retry_at FROM pull_request WHERE number=1`).Scan(&failures, &retry); err != nil {
+			t.Fatal(err)
+		}
+		return failures, retry
+	}
+	if _, err := s.Activate(ctx, "o/r"); err != nil {
+		t.Fatal(err)
+	}
+	list("h1")
+	for range 2 {
+		if unknown, err := s.PathsFailed(ctx, "o/r", 1, "h1"); err != nil || unknown {
+			t.Fatalf("unknown %t, %v", unknown, err)
+		}
+	}
+	list("h1")
+	if failures, retry := state(); failures != 2 || !retry.Valid {
+		t.Fatalf("the same head kept %d failures, retry %v", failures, retry)
+	}
+	if err := s.RetryUnknownPaths(ctx, "o/r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, retry := state(); retry.Valid {
+		t.Fatal("the re-link must clear the retry time")
+	}
+	list("h2")
+	if failures, retry := state(); failures != 0 || retry.Valid {
+		t.Fatalf("a new head kept %d failures, retry %v", failures, retry)
 	}
 }

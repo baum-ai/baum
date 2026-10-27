@@ -62,10 +62,19 @@ const (
 
 var maxPulls = 10000
 
+// SetMaxPulls sets the listing bound and returns a function restoring it,
+// for tests.
+func SetMaxPulls(n int) (restore func()) {
+	previous := maxPulls
+	maxPulls = n
+	return func() { maxPulls = previous }
+}
+
 // ListPullRequests lists the repository's pull requests of every state,
 // most recently updated first, until one was last updated before since; one
 // updated exactly at since is listed. The first page is read with etag; when
-// GitHub answers that it is unchanged nothing else is read. A listing that
+// GitHub answers that it is unchanged nothing else is read. The ETag is kept
+// only for a first page read at the default size. A listing that
 // reaches maxPulls with more still to list stops there and is Truncated.
 func ListPullRequests(ctx context.Context, reader Reader, repository Repository, etag string, since time.Time) (PullList, error) {
 	var list PullList
@@ -74,7 +83,7 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 		path := fmt.Sprintf("/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d&page=%d",
 			url.PathEscape(repository.Owner), url.PathEscape(repository.Name), perPage, offset/perPage+1)
 		send := ""
-		if offset == 0 {
+		if offset == 0 && perPage == pullsPerPage {
 			send = etag
 		}
 		status, header, body, err := reader.Read(ctx, path, send)
@@ -96,7 +105,7 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 			}
 			return list, fmt.Errorf("listing pull requests: GitHub answered %d", status)
 		}
-		if offset == 0 {
+		if offset == 0 && perPage == pullsPerPage {
 			list.ETag = header.Get("ETag")
 		}
 		var rows []struct {
