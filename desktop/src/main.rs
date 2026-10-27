@@ -18,6 +18,7 @@ mod lifecycle;
 mod navigation;
 mod notifications;
 mod onboarding;
+mod panel;
 mod status;
 mod tray;
 mod updater;
@@ -312,6 +313,9 @@ fn main() {
             onboarding::github_connection,
             onboarding::repositories,
             onboarding::finish_setup,
+            panel::tray_panel,
+            panel::tray_panel_height,
+            panel::tray_action,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
@@ -357,6 +361,10 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // The panel is a convenience: the menu still works without it.
+            if let Err(e) = panel::create(app.handle()) {
+                eprintln!("baum desktop: no tray panel: {e}");
+            }
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
@@ -380,7 +388,8 @@ fn main() {
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
     /// picker and CLI/hook management, on loopback; the bundled screens get
-    /// exactly their commands and no remote URL.
+    /// exactly their commands and no remote URL, and the tray panel's page
+    /// only its own, in its own window.
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
@@ -400,6 +409,7 @@ mod tests {
                 "allow-repositories",
                 "allow-finish-setup"
             ],
+            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action"],
         });
         let mut found = serde_json::Map::new();
         for entry in
@@ -416,7 +426,12 @@ mod tests {
             } else {
                 assert!(capability.get("remote").is_none(), "{capability}");
             }
-            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            let window = if capability["identifier"] == "tray-panel" {
+                crate::panel::LABEL
+            } else {
+                crate::MAIN
+            };
+            assert_eq!(capability["windows"], serde_json::json!([window]));
             found.insert(
                 capability["identifier"].as_str().unwrap().to_string(),
                 capability["permissions"].clone(),
@@ -433,7 +448,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen", "setup-screen", "daemon-pages"])
+            serde_json::json!([
+                "connecting-screen",
+                "setup-screen",
+                "daemon-pages",
+                "tray-panel"
+            ])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

@@ -257,10 +257,24 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
-  1 queued"); anything needing attention; Pause or Resume automatic reviews;
-  Start at login; Command Line and Hooks… (see "First run"); a Notifications
-  submenu (see "Notifications"); Quit; Quit and stop background reviews.
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
+  anything needing attention; each agent session asking for a permission or
+  an answer (clicking one opens its transcript); "Plan usage left" with a
+  line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
+  3 h"); Open baum; Pause or Resume automatic reviews; Start at login; Command
+  Line and Hooks… (see "First run"); a Notifications submenu (see
+  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  only the plans the daemon could read, and nothing when it can read neither
+  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  read differently, which the 3–10 s polls check.
+- **Tray panel (macOS and Windows):** a left click on the icon opens a small
+  borderless window under the icon (above it, on a bottom taskbar), drawn
+  like a menu: the status line, waiting sessions as highlighted rows that
+  open them, the plan usage left as coloured meters, Open baum, Pause or
+  Resume automatic reviews and Quit and stop background reviews. It hides
+  when it loses focus; the right click keeps the full menu. Linux tray hosts
+  report no clicks, so Linux has the menu only. The panel is the bundled
+  `tray.html`, created hidden at startup.
 - **Waiting on you.** While some pull requests wait on the user (review
   requested from them, or their own with changes requested, failing checks or
   a conflict, the "Review requested" and "Needs changes" groups of the app's
@@ -306,9 +320,12 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs` and
-   `GET /api/automatic` and `GET /api/index?view=waiting` every 3 s while jobs run and every 10 s otherwise,
-   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks), and
+   for what the daemon exposes only there: `GET /api/jobs`,
+   `GET /api/automatic`, `GET /api/index?view=waiting` and
+   `GET /api/live-sessions` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
+   `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
+   daemon reads again at most once a minute), and
    `PUT /api/automatic`. This is the credential the app already reads for the
    window and the health check, accepted on `/api/` routes only; the request
    that changes state sends the daemon's own origin and JSON, as the daemon
@@ -317,9 +334,13 @@ Two channels, each the least that does the job:
 
 Notifications read the events stream separately (see "Notifications").
 
-The tray adds no Tauri capability, and none names a remote URL: the tray, the
-dialogs and the autostart entry are used from Rust only, so pages the daemon
-serves still reach no command or plugin.
+The tray menu adds no Tauri capability, and none names a remote URL: the
+tray, the dialogs and the autostart entry are used from Rust only, so pages
+the daemon serves still reach no command or plugin. The tray panel's
+capability (`tray-panel`) lets only its bundled page, in its own window, read
+the tray's last view (`tray_panel`), fit the window to its height
+(`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
+waiting session (`tray_action`, which refuses any other menu id).
 
 ## Start at login
 

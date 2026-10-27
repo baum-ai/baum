@@ -95,6 +95,9 @@ pub fn stop_confirmation(counts: Option<(usize, usize)>) -> Option<String> {
 
 /// The window's close button and focus.
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
+    if window.label() == crate::panel::LABEL {
+        return crate::panel::on_window_event(window, event);
+    }
     let app = window.app_handle();
     match event {
         WindowEvent::CloseRequested { api, .. } => {

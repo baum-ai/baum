@@ -223,6 +223,17 @@ fn sync_window_menu(app: &AppHandle) {
     }
 }
 
+/// Opens an agent session's transcript in the window, as a click on its
+/// notification does, for the tray's waiting sessions. The app path is asked
+/// of the daemon, so this runs off the main thread.
+pub fn open_session(app: &AppHandle, key: String) {
+    let Some(service) = app.try_state::<Service>() else {
+        return;
+    };
+    let host = service.host.clone();
+    thread::spawn(move || host.open(&Route::Session { key }));
+}
+
 /// Starts reading the attached daemon's events until `stop` returns true (the
 /// app attached to another daemon, or gave up on this one).
 pub fn attach(app: &AppHandle, launch: &Launch, stop: impl Fn() -> bool + Send + 'static) {

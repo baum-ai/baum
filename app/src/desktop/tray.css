@@ -1,0 +1,183 @@
+/* The tray panel (tray.html): a menu with meters under the tray icon, in
+   baum's bundled type. */
+@import "../../../viewer/src/fonts/fonts.css";
+
+:root {
+  color-scheme: light dark;
+  --bg: #fcfaf6;
+  --fg: #1f1a15;
+  --muted: #6e655b;
+  --line: rgb(0 0 0 / 10%);
+  --track: #e9e2d5;
+  --hover: #2f6fd1;
+  --on-hover: #fff;
+  --needs: #faefd6;
+  --needs-ink: #6b4a12;
+  --status-positive: #2e7d3e;
+  --status-caution: #b7791f;
+  --status-critical: #b3261e;
+  font-family: var(--font-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #211c18;
+    --fg: #f3ebe0;
+    --muted: #b3a597;
+    --line: rgb(255 255 255 / 12%);
+    --track: #3a322b;
+    --needs: #3b2e17;
+    --needs-ink: #e8c98c;
+    --status-positive: #6cbf7b;
+    --status-caution: #e0a43c;
+    --status-critical: #ef7b6f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tray-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  font-size: 13.5px;
+}
+
+.tray-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+}
+.tray-status > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tray-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-positive);
+}
+.tray-dot.paused {
+  background: var(--muted);
+}
+
+.tray-item {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.tray-item:hover:not(:disabled),
+.tray-item:focus-visible {
+  background: var(--hover);
+  color: var(--on-hover);
+  outline: none;
+}
+.tray-item:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+.tray-item:disabled {
+  color: var(--muted);
+}
+
+.tray-needs {
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--needs);
+}
+.tray-needs strong {
+  font-weight: 600;
+}
+.tray-needs span {
+  font-size: 12px;
+  color: var(--needs-ink);
+}
+.tray-needs:hover span,
+.tray-needs:focus-visible span {
+  color: var(--on-hover);
+}
+
+.tray-attention {
+  margin: 0;
+  padding: 2px 10px;
+  font-size: 12.5px;
+  color: var(--status-critical);
+}
+
+hr {
+  width: calc(100% - 12px);
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--line);
+}
+
+.tray-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.tray-usage-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tray-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tray-meter-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  column-gap: 8px;
+  font-size: 12.5px;
+}
+.tray-meter-line strong {
+  font-weight: 600;
+}
+.tray-muted {
+  color: var(--muted);
+}
+.tray-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--track);
+}
+.tray-track > div {
+  height: 100%;
+  border-radius: 3px;
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-panel",
+  "description": "The bundled tray panel may read the tray's view, fit its window to its height and run the panel's own actions (Open, pause, Quit and stop, a waiting session), in its own window only. It has no remote URLs.",
+  "windows": [
+    "tray-panel"
+  ],
+  "permissions": [
+    "allow-tray-panel",
+    "allow-tray-panel-height",
+    "allow-tray-action"
+  ]
+}
