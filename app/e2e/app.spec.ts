@@ -19,6 +19,9 @@ async function launchURL(): Promise<string> {
 }
 
 test("local inbox, reused PR viewer, versions, generation and settings", async ({ page }) => {
+  // The longest story here waits on several real generations: about 10 s
+  // locally, close to the default 30 s on a busy CI runner.
+  test.slow();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const evidence: string[] = [];
