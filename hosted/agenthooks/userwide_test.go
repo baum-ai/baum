@@ -26,6 +26,23 @@ func TestUserWidePlacementsCoverEveryEvent(t *testing.T) {
 		}
 		var events []string
 		for _, placement := range settings.Placements {
+			if placement.RecordOnly {
+				// Never handed to Entire, so never one of its events, and
+				// never a committed hook.
+				if slices.Contains(spec.Events, placement.Event) {
+					t.Errorf("%s record-only %s is an Entire event", spec.Slug, placement.Event)
+				}
+				if agenthooks.Validate(spec.Slug, placement.Event) == nil {
+					t.Errorf("%s record-only %s is valid for a committed hook", spec.Slug, placement.Event)
+				}
+				if err := agenthooks.ValidateUserWide(spec.Slug, placement.Event); err != nil {
+					t.Errorf("%s record-only %s: %v", spec.Slug, placement.Event, err)
+				}
+				continue
+			}
+			if agenthooks.RecordOnly(spec.Slug, placement.Event) || agenthooks.ValidateUserWide(spec.Slug, placement.Event) != nil {
+				t.Errorf("%s %s is not an Entire event of a user-wide hook", spec.Slug, placement.Event)
+			}
 			events = append(events, placement.Event)
 		}
 		slices.Sort(events)

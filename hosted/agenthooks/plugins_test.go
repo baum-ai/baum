@@ -8,6 +8,12 @@ import (
 	"testing"
 )
 
+// pluginVersion is the version both plugin manifests and the Claude catalog
+// carry. A hook change ships as a new version, which agents update to; 1.1.0
+// added the record-only events (Claude Code's notifications and every tool
+// call, Codex's permission requests).
+const pluginVersion = "1.1.0"
+
 // Read the shipped files, not generated fixtures: the OSS subtree is the
 // marketplace root after publication and must carry everything it references.
 func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
@@ -26,7 +32,7 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 			if agent == "codex" && manifest["$schema"] != "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" {
 				t.Fatalf("Codex portable manifest must declare its format: %#v", manifest)
 			}
-			if manifest["name"] != "baum" || manifest["version"] != "1.0.0" || manifest["hooks"] != nil {
+			if manifest["name"] != "baum" || manifest["version"] != pluginVersion || manifest["hooks"] != nil {
 				t.Fatalf("manifest = %#v", manifest)
 			}
 			expected := map[string][]map[string]any{}
@@ -34,6 +40,9 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 				handler := map[string]any{"type": "command", "command": UserDispatcher(spec, p.Event)}
 				if p.Timeout != 0 {
 					handler["timeout"] = float64(p.Timeout)
+				}
+				if p.Async {
+					handler["async"] = true
 				}
 				group := map[string]any{"hooks": []any{handler}}
 				if p.Matcher != nil {
@@ -56,7 +65,7 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 		Plugins []struct{ Name, Source, Version string }
 	}
 	readPluginJSON(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), &claude)
-	if claude.Name != "baum" || len(claude.Owner) == 0 || len(claude.Plugins) != 1 || claude.Plugins[0].Source != "./plugins/baum-claude-code" || claude.Plugins[0].Version != "1.0.0" {
+	if claude.Name != "baum" || len(claude.Owner) == 0 || len(claude.Plugins) != 1 || claude.Plugins[0].Source != "./plugins/baum-claude-code" || claude.Plugins[0].Version != pluginVersion {
 		t.Fatalf("Claude catalog = %#v", claude)
 	}
 	var codex struct {

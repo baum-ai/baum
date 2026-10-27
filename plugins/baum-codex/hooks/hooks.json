@@ -76,6 +76,17 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user codex permission-request >/dev/null 2>&1; then exec baum hooks agent --user codex permission-request; fi'",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

@@ -74,7 +74,7 @@ func TestAgentHookEventKeepsOnlySessionIdentifiers(t *testing.T) {
 	paths := useTestHookDaemon(t)
 	stubEntireBinary(t, "#!/bin/sh\ncat\nexit 3\n")
 	payload := `{"session_id":"s-1","transcript_path":"/work/.claude/s-1.jsonl","cwd":"/work/demo","hook_event_name":"SessionEnd","reason":"prompt_input_exit",` +
-		`"prompt":"use ` + fakeGitHubToken + `","tool_input":{"command":"cat ~/.netrc"}}`
+		`"prompt":"use ` + fakeGitHubToken + `","tool_input":{"command":"cat ~/.netrc"},"message":"only a notification keeps this"}`
 	stdout, _, err := runCLIWithInput(t, payload, "hooks", "agent", "claude-code", "session-end")
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 3 {
@@ -95,6 +95,42 @@ func TestAgentHookEventKeepsOnlySessionIdentifiers(t *testing.T) {
 	}
 	if bytes.Contains(raw[0], []byte(fakeGitHubToken)) || bytes.Contains(raw[0], []byte("netrc")) {
 		t.Errorf("the event kept payload content: %s", raw[0])
+	}
+}
+
+// A Claude Code notification is an event baum only records: a user-wide hook
+// keeps its type and the line it showed, cut short, runs no Entire even for a
+// hosted user, and answers the agent nothing. A committed hook, whose
+// vocabulary is Entire's, does not know the event.
+func TestUserWideNotificationIsOnlyRecorded(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	t.Setenv(tokenEnvVar, "provisioned")
+	stubEntireBinary(t, "#!/bin/sh\necho entire ran\nexit 3\n")
+	message := "Claude needs your permission to use Bash " + strings.Repeat("x", 600)
+	payload := `{"session_id":"s-9","cwd":"/work/demo","hook_event_name":"Notification","notification_type":"permission_prompt",` +
+		`"message":"` + message + `","title":"Permission needed","tool_input":{"command":"cat ~/.netrc"}}`
+	stdout, _, err := runCLIWithInput(t, payload, "hooks", "agent", "--user", "claude-code", "notification")
+	if err != nil || stdout != "" {
+		t.Fatalf("hook: %v, stdout %q", err, stdout)
+	}
+	events, raw := spooledHookEvents(t, paths)
+	if len(events) != 1 || events[0].Session == nil {
+		t.Fatalf("events = %+v", events)
+	}
+	s := events[0].Session
+	if events[0].Name != "notification" || s.ID != "s-9" || s.NotificationType != "permission_prompt" || !strings.HasPrefix(message, s.Message) || len(s.Message) != 512 {
+		t.Errorf("event = %+v, session %+v", events[0], s)
+	}
+	if bytes.Contains(raw[0], []byte("netrc")) || bytes.Contains(raw[0], []byte("Permission needed")) {
+		t.Errorf("the event kept payload content: %s", raw[0])
+	}
+	for _, args := range [][]string{{"hooks", "agent", "claude-code", "notification"}, {"hooks", "agent", "--check", "claude-code", "notification"}} {
+		if _, _, err := runCLIWithInput(t, payload, args...); err == nil || !strings.Contains(err.Error(), "unsupported") {
+			t.Errorf("%v: err = %v, want an unsupported event", args, err)
+		}
+	}
+	if events, _ := spooledHookEvents(t, paths); len(events) != 1 {
+		t.Errorf("the committed hook recorded an event: %+v", events)
 	}
 }
 
@@ -471,6 +507,34 @@ func TestUserHooksOnlyRecordForADaemonUser(t *testing.T) {
 	}
 	if n := world.requests.Load(); n != 0 {
 		t.Errorf("%d requests reached the baum server", n)
+	}
+}
+
+// Codex's permission request runs through the shipped user-wide dispatcher
+// like any other event, records its event and prints nothing, so Codex asks
+// its user as it would without the hook.
+func TestUserWidePermissionRequestRecordsAndDecidesNothing(t *testing.T) {
+	world := newHookWorld(t)
+	commitEntireSettings(t, world.repo)
+	paths := makeDaemonState(t)
+	spec, _ := agenthooks.Lookup("codex")
+	cmd := exec.Command("sh", "-c", agenthooks.UserDispatcher(spec, "permission-request"))
+	cmd.Dir = world.repo
+	cmd.Stdin = strings.NewReader(`{"session_id":"s-6","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}`)
+	output, err := cmd.CombinedOutput()
+	if err != nil || len(output) != 0 {
+		t.Fatalf("user-wide hook: %v, output %q", err, output)
+	}
+	baum, entire := world.logs(t)
+	if want := []string{"hooks agent --check --user codex permission-request", "hooks agent --user codex permission-request"}; !slices.Equal(baum, want) {
+		t.Errorf("baum calls = %q, want %q", baum, want)
+	}
+	if len(entire) != 0 {
+		t.Errorf("Entire ran: %q", entire)
+	}
+	events, _ := spooledHookEvents(t, paths)
+	if len(events) != 1 || events[0].Name != "permission-request" || events[0].Session == nil || events[0].Session.ID != "s-6" || events[0].Session.Message != "" {
+		t.Errorf("events = %+v", events)
 	}
 }
 
