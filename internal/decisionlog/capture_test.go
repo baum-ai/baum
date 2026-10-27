@@ -2,6 +2,7 @@ package decisionlog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -386,7 +388,7 @@ func TestCaptureCancelledIsNotAFailure(t *testing.T) {
 	f.backend.fail = context.Canceled
 	f.backend.onCall = cancel
 	report, err := f.capturer.Capture(ctx, f.target, Options{})
-	if !errors.Is(err, context.Canceled) || report.Reason != "cancelled" {
+	if !errors.Is(err, context.Canceled) || report.Outcome != OutcomeAbandoned || report.Reason != "cancelled" {
 		t.Fatalf("%+v %v", report, err)
 	}
 	var state string
@@ -420,5 +422,55 @@ func TestDecisionModelFollowsTheBackend(t *testing.T) {
 		if got := decisionModel(list, tc.backend, tc.model); got != tc.want {
 			t.Errorf("%s %v: %q, want %q", tc.backend, tc.model, got, tc.want)
 		}
+	}
+}
+
+// TestReservationFitsMidSizedSessions prices sessions of realistic rendered
+// sizes as Capture reserves them (decisions.Extractor.MaxTokens: one token
+// per byte of the prompt, the transcript and the schema, plus framing).
+func TestReservationFitsMidSizedSessions(t *testing.T) {
+	extractor := newExtractor()
+	schema, _ := json.Marshal(decisions.ExtractSchema())
+	bound := func(rendered int) int64 {
+		return int64(len(extractor.SystemPrompt()) + rendered + len(schema) + decisions.FramingTokens)
+	}
+	for _, tc := range []struct {
+		backend, model string
+		rendered       int
+	}{
+		{agent.BackendClaude, "claude-haiku-5-5", 100_000},
+		{agent.BackendClaude, "claude-haiku-5-5", 250_000},
+		{agent.BackendAnthropic, "claude-haiku-5-5", 300_000},
+		{agent.BackendCodex, "gpt-6-luna", 300_000},
+		{agent.BackendCodex, "gpt-6-luna", 1_000_000},
+	} {
+		reserved, ok := reserve(pricing.Active(), tc.backend, tc.model, bound(tc.rendered))
+		if !ok || reserved > SessionDailyCap {
+			t.Errorf("%s %s, %d bytes rendered: reserved $%.4f, priced %v", tc.backend, tc.model, tc.rendered, reserved, ok)
+		}
+	}
+	// claude's possible retry costs the cached prompt and another reply, far
+	// less than a second full call.
+	single, _ := reserve(pricing.Active(), agent.BackendAnthropic, "claude-haiku-5-5", bound(250_000))
+	double, _ := reserve(pricing.Active(), agent.BackendClaude, "claude-haiku-5-5", bound(250_000))
+	if double <= single || double > 1.5*single {
+		t.Fatalf("claude reserves $%.4f against one call's $%.4f", double, single)
+	}
+}
+
+func TestCaptureOverTheSessionAllowanceIsRetried(t *testing.T) {
+	f := newFixture(t)
+	expensive := "claude-opus-5"
+	f.registry.prefs.Decisions.Model = &expensive
+	f.capturer.Store.now = f.clock.Now
+	write(t, f.path, claudeTurn("s1", 1, strings.Repeat("Use SQLite for the cache. ", 12_000), "Done."))
+	report := f.capture(t, Options{})
+	if report.Outcome != OutcomeSkipped || report.Reason != ReasonOverCostCap || f.backend.calls != 0 {
+		t.Fatalf("%+v", report)
+	}
+	row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
+	f.later(24 * time.Hour)
+	if covered(row, row.Fingerprint, startOfDay(f.clock.now)) {
+		t.Fatal("a session over the allowance is never tried again")
 	}
 }

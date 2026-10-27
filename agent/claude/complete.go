@@ -11,8 +11,11 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// CompleteMaxTurns bounds a completion's model calls: the StructuredOutput
-// call, and the model's answer to its result should the harness ask for one.
+// CompleteMaxTurns bounds a completion's model calls. Claude Code ends the
+// run once a StructuredOutput call is accepted, so a completion normally
+// makes one call; the second turn lets the model submit once more after the
+// harness rejected its reply against the schema, and no further retry is
+// made.
 const CompleteMaxTurns = 2
 
 // Complete runs Claude Code once with no tools but the StructuredOutput tool

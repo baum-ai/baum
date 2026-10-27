@@ -481,15 +481,17 @@ type Backend interface {
 }
 ```
 
-A backend may also implement `agent.Completer`: one structured call with a
-system prompt, a user message and a schema, no tools or directory, used by
-decision capture. The anthropic backend makes one Messages call offering only
+A backend may also implement `agent.Completer`: one structured completion
+with a system prompt, a user message and a schema, no working files, used by
+decision capture. It is normally one model call. The anthropic backend makes one Messages call offering only
 the StructuredOutput tool (`tool_choice` auto, one call, since current models
 refuse a forced choice while thinking); claude runs `claude -p` with no tools
-but StructuredOutput, no settings, MCP servers or session persistence; codex
+but StructuredOutput, no settings, MCP servers or session persistence, and at
+most two turns so a reply the harness rejects is retried once; codex
 runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
 tools disabled, low reasoning effort and the system prompt as its model
-instructions. Both CLIs run in an empty temporary directory with the prompt on
+instructions, in one turn, which a call to one of its remaining tools would
+extend by a request. Both CLIs run in an empty temporary directory with the prompt on
 stdin after `sessions.GenerationRunMarker`.
 
 A request carries the prompt, the model-facing schema, the checkout directory
@@ -2956,11 +2958,11 @@ A capture locates the transcript with `livesessions.Locate` (the agent's own
 store, symbolic links resolved, the mapped root session the event's), skips
 files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
-extraction as hosted extraction does. Its single structured call goes through
+extraction as hosted extraction does. Its structured completion goes through
 the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
 `gpt-6-luna`); cursor-agent has none. Every call is reserved before it is
-made (byte bound plus 16,384 output tokens at list price, per call the backend
-can make) and recorded in a
+made (byte bound plus 16,384 output tokens at list price, and for claude's
+possible retry the cached prompt and another reply) and recorded in a
 ledger that throttles a session (5 minutes apart, 10 after a failure, 12 a
 day unless it ended) and caps its spend at $0.25 a day, with an optional
 global daily cap. The reply is masked before it is parsed; decisions keep

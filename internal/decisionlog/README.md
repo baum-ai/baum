@@ -27,8 +27,9 @@ per-session timers. A session is queued when:
 - it settled: it ended, or it is not running and its last activity is at
   least 2 minutes old (its turn ended, it waits on its user, or it went
   silent); once per last activity;
-- it has been running for 20 minutes since it last entered the running state
-  or was last queued for running long;
+- it has been running for 20 minutes since it started running after it last
+  settled, or since it was last queued for running long (a brief wait between
+  prompts does not restart the count);
 - it is about to compact (`pre-compact` hook event), at once;
 - every 5 minutes, it is settled (the backstop, for a transcript that changed
   without new activity; an unchanged one is left alone).
@@ -37,7 +38,8 @@ One worker captures the queued sessions one at a time; a session already
 queued is not queued twice. Before a call, the ledger throttles a session: at
 most one attempt every 5 minutes, none within 10 minutes of a failed one, and
 after 12 attempts in a day only once it ended. A capture cut short by the
-daemon stopping settles its attempt as abandoned and is not a failure.
+daemon stopping settles its attempt as abandoned (outcome `abandoned`) and is
+not a failure.
 
 ## Capture
 
@@ -65,18 +67,22 @@ daemon stopping settles its attempt as abandoned and is not a failure.
    structured call (`backend_unsupported`); a backend that does not pass its
    check is `backend_unavailable`.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
-   output tokens at the model's list price, for each model call the backend
-   can make (two for claude, which may answer after its structured reply; one
-   for codex and anthropic). The Codex CLI has no option capping the reply, so
-   its 16,384 tokens are an estimate rather than a limit. A model the price
-   list does not price is skipped (`unpriced_model`). A reservation over the
-   session's $0.25 daily allowance can never be paid and is skipped like the
-   token cap (`over_token_cap`). A session's spend may not pass $0.25 a day
-   (`over_cost_cap`), and all capture's spend may not pass
-   `preferences.decisions.daily_cap` when set (`daily_cap`; no default).
+   output tokens at the model's list price. claude may make a second call,
+   after the harness rejected its first reply against the schema; it resends
+   the cached prompt, so it is reserved at the cache-read rate plus another
+   reply. The Codex CLI has no option capping the reply, so its 16,384 tokens
+   are an estimate rather than a limit. A model the price list does not price
+   is skipped (`unpriced_model`). A session's spend, this reservation
+   included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
+   spend may not pass `preferences.decisions.daily_cap` when set
+   (`daily_cap`; no default). No call is made for either, so the session is
+   tried again the next day or when it changes.
 8. The attempt is recorded as pending and the completion made: one request
-   for anthropic, `claude -p` with no tools besides its structured reply and
-   at most two turns, or one `codex exec` turn with its tools off. The attempt
+   for anthropic; `claude -p` with no tools besides its structured reply,
+   which normally ends after one call and may retry a rejected reply once; or
+   one `codex exec` turn with its shell tools off, normally one request (a
+   call to a tool Codex still offers, such as its patch or plan tool, makes
+   another within the turn). The attempt
    is settled with its cost from the reported usage, or none when it cannot be
    priced. Spend counts the cost, else the reservation. An attempt still
    pending when the daemon starts is settled as abandoned and its reservation
@@ -113,7 +119,8 @@ transcripts, never the transcripts themselves.
 `baum internal decisions capture --agent <agent> --session <id> [--path
 <transcript>] [--dry-run] [--backend <b>] [--model <m>]` runs one capture
 without the gate, throttle or unchanged check and prints its report as JSON.
-`--dry-run` stops before the call and writes nothing: it reads an existing
-store read-only, and uses an empty one in memory when there is none. A hidden
-`--debug-dir <dir>` writes the rendered transcript, the message sent and the
-raw reply there.
+`--dry-run` stops before the call and writes nothing but the `--debug-dir`
+files: it reads an existing store read-only, and uses an empty one in memory
+when there is none. The hidden `--debug-dir <dir>` creates the private
+directory and writes the rendered transcript, and after a call the message
+sent and the raw reply, there.

@@ -106,19 +106,10 @@ func Open(path string, o OpenOptions) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	absolute, err := filepath.Abs(path)
+	db, err := openDB(path, false)
 	if err != nil {
 		return nil, err
 	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?_pragma=busy_timeout(10000)")
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
 	s := &Store{db: db, now: time.Now}
 	if _, err = db.Exec(schema); err == nil && o.AbandonPending {
 		_, err = db.Exec(`UPDATE capture_attempt SET state=?, settled_at=?, reason='daemon_stopped' WHERE state=?`, AttemptAbandoned, s.now().UnixMilli(), AttemptPending)
@@ -130,27 +121,49 @@ func Open(path string, o OpenOptions) (*Store, error) {
 	return s, nil
 }
 
-func openReadOnly(path string) (*Store, error) {
-	dsn := "file::memory:"
-	if _, err := os.Stat(path); err == nil {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return nil, err
-		}
-		dsn = (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: "mode=ro"}).String()
-	} else if !errors.Is(err, os.ErrNotExist) {
+// openDB opens the database file at path, read-only when asked, waiting for
+// a writer's lock rather than failing.
+func openDB(path string, readOnly bool) (*sql.DB, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", dsn)
+	uriPath := filepath.ToSlash(absolute)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	query := "_pragma=busy_timeout(10000)"
+	if readOnly {
+		query += "&mode=ro"
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?"+query)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if dsn == "file::memory:" {
-		if _, err := db.Exec(schema); err != nil {
-			_ = db.Close()
+	return db, nil
+}
+
+// openReadOnly opens an existing store read-only, or an empty one in memory
+// when there is none.
+func openReadOnly(path string) (*Store, error) {
+	if _, err := os.Stat(path); err == nil {
+		db, err := openDB(path, true)
+		if err != nil {
 			return nil, err
 		}
+		return &Store{db: db, now: time.Now}, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(schema); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
 }

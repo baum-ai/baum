@@ -55,6 +55,9 @@ const (
 	OutcomeDryRun      = "dry_run"
 	OutcomeExtracted   = "extracted"
 	OutcomeFailed      = "failed"
+	// OutcomeAbandoned is a capture the daemon stopping cut short; its
+	// attempt is abandoned and nothing else is recorded.
+	OutcomeAbandoned = "abandoned"
 )
 
 // Throttle bounds.
@@ -296,10 +299,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		options.Cutoff, _ = decisions.ExtensionCutoff(rendered, head.PrefixHash)
 		report.Mode = "extend"
 	}
-	if o.DebugDir != "" {
-		if err := os.WriteFile(filepath.Join(o.DebugDir, "transcript.txt"), []byte(rendered.Text()), 0o600); err != nil {
-			return report, err
-		}
+	if err := debugFile(o.DebugDir, "transcript.txt", []byte(rendered.Text())); err != nil {
+		return report, err
 	}
 	report.Tokens = c.Extractor.EstimateTokens(rendered, options)
 	report.MaxTokens = c.Extractor.MaxTokens(rendered, options)
@@ -346,10 +347,6 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(ReasonUnpriced)
 	}
 	report.Reserved = reserved
-	if reserved > SessionDailyCap {
-		// No day's allowance would ever pay for it: lasting, like the token cap.
-		return skip(ReasonOverTokenCap)
-	}
 	st, err := c.Store.Stats(ctx, t.Agent, t.ID, day)
 	if err != nil {
 		return report, err
@@ -380,9 +377,9 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 	model := &completerModel{completer: completer, redactor: c.redactor}
 	result, callErr := c.Extractor.Extract(ctx, model, rendered, options)
-	if o.DebugDir != "" {
-		_ = os.WriteFile(filepath.Join(o.DebugDir, "user.txt"), []byte(model.user), 0o600)
-		_ = os.WriteFile(filepath.Join(o.DebugDir, "reply.json"), model.raw, 0o600)
+	if model.called {
+		_ = debugFile(o.DebugDir, "user.txt", []byte(model.user))
+		_ = debugFile(o.DebugDir, "reply.json", model.raw)
 	}
 	// The ledger and the store outlive a cancelled capture: the call may be
 	// paid for.
@@ -395,7 +392,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	usage := decisionUsage(model.usage)
 	if callErr != nil && ctx.Err() != nil {
 		// Cut short by the daemon stopping: not the session's failure.
-		report.Outcome, report.Reason = OutcomeFailed, "cancelled"
+		report.Outcome, report.Reason = OutcomeAbandoned, "cancelled"
 		if err := c.Store.Settle(write, attempt, AttemptAbandoned, report.Reason, spent, usage); err != nil {
 			return report, err
 		}
@@ -427,6 +424,29 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 	report.Outcome, report.Decisions = OutcomeExtracted, len(extraction.Decisions)
 	return report, c.Store.Save(write, extraction)
+}
+
+// debugFile writes data to name in dir, a private directory it creates, as a
+// private file replacing any earlier one; nothing without a dir.
+func debugFile(dir, name string, data []byte) error {
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	err = file.Chmod(0o600)
+	if _, writeErr := file.Write(data); err == nil {
+		err = writeErr
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // isSession reports whether the graph's root session is the agent's session

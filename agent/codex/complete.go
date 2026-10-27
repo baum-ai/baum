@@ -11,8 +11,11 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// completeMaxTurns bounds a completion: one turn without tools answers it with
-// one model call. The CLI has no option capping the reply's tokens.
+// completeMaxTurns bounds a completion to one turn. With the shell tools off a
+// turn is normally one model request, but a turn that calls a tool Codex
+// still offers (its patch or plan tools, which the read-only sandbox and an
+// empty directory leave nothing to act on) makes another request within it.
+// The CLI has no option capping the reply's tokens.
 const completeMaxTurns = 1
 
 // Complete runs `codex exec` once for a single structured reply

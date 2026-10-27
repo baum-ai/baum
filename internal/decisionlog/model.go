@@ -53,16 +53,21 @@ func vendor(backend string) string {
 }
 
 // reserve is the most a completion with at most inputTokens of prompt and
-// MaxOutputTokens of reply per call costs at the model's rates, for every
-// call the backend can make (maxCalls), as hosted extraction reserves one
-// call; false when the list would not price it.
+// MaxOutputTokens of reply per call costs at the model's rates, as hosted
+// extraction reserves one call; false when the list would not price it. A
+// further call the backend can make (maxCalls) resends the same prompt, which
+// the first call cached, so it is reserved at the cache-read rate plus its
+// reply.
 func reserve(list *pricing.List, backend, model string, inputTokens int64) (float64, bool) {
 	v := vendor(backend)
 	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: MaxOutputTokens, SingleRequest: true})
 	if !ok {
 		return 0, false
 	}
-	return float64(maxCalls(backend)) * (float64(inputTokens)*rates.Input + float64(MaxOutputTokens)*rates.Output) / 1_000_000, true
+	reply := float64(MaxOutputTokens) * rates.Output
+	first := float64(inputTokens)*rates.Input + reply
+	further := float64(maxCalls(backend)-1) * (float64(inputTokens)*rates.CacheRead + reply)
+	return (first + further) / 1_000_000, true
 }
 
 // cost prices a call's reported usage, whose buckets are disjoint
@@ -167,8 +172,8 @@ func decisionModel(list *pricing.List, backend string, model *string) string {
 }
 
 // maxCalls is the most model calls one completion of the backend can make:
-// claude may answer after its StructuredOutput call; codex runs one turn
-// without tools and the anthropic backend sends one request.
+// claude may try its structured reply once more after the harness rejected
+// it; codex runs one turn and the anthropic backend sends one request.
 func maxCalls(backend string) int {
 	if backend == agent.BackendClaude {
 		return claude.CompleteMaxTurns

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -63,6 +64,11 @@ func runDecisionCapture(ctx context.Context, cmd *cobra.Command, target decision
 		registry = found
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	if options.DebugDir != "" {
+		if err := os.MkdirAll(options.DebugDir, 0o700); err != nil {
+			return err
+		}
 	}
 	state, err := jobs.Directory()
 	if err != nil {

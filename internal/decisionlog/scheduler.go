@@ -61,13 +61,16 @@ func settled(s livesessions.Session, now time.Time) bool {
 
 // due reports why the session is to be captured now, empty when it is not:
 // it settled since it was last queued, or it has been running RunningEvery
-// since it entered StateRunning or was last queued for that.
+// since it started running after it last settled, or since it was last
+// queued for that. A brief wait between prompts does not restart the count.
 func due(s livesessions.Session, m memo, now time.Time) (string, memo) {
 	if s.State != livesessions.StateRunning {
-		m.running = time.Time{}
-		if settled(s, now) && !s.LastActivityAt.Equal(m.fired) {
-			m.fired = s.LastActivityAt
-			return "settled", m
+		if settled(s, now) {
+			m.running = time.Time{}
+			if !s.LastActivityAt.Equal(m.fired) {
+				m.fired = s.LastActivityAt
+				return "settled", m
+			}
 		}
 		return "", m
 	}
