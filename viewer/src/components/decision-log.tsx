@@ -208,7 +208,7 @@ export function DecisionRow({
 
 /** What expanding a decision shows: its files, pull requests, session and the
  *  prompts it cites. `decisionId` picks it among those the detail carries. */
-export function DecisionDetailBody({
+export function DecisionDetailBody<T>({
   state,
   decisionId,
   at,
@@ -228,7 +228,7 @@ export function DecisionDetailBody({
   pullRequestHref: (number: number) => string;
   /** Loads the session a decision was made in and draws it at the cited
    *  turn; see {@link OpenSessionSource}. */
-  openSession: OpenSessionSource;
+  openSession: OpenSessionSource<T>;
   onFile: (path: string) => void;
   onRetry: () => void;
 }) {
@@ -463,35 +463,51 @@ function SessionFact({ label, children }: { label: string; children: ReactNode }
 /** A session and the turn a decision cites in it. */
 export type SessionTurn = { sessionId: string; turn: number };
 
-/** How the host opens a decision's session: it loads the session and answers
- *  what to draw for it at the cited turn, such as its transcript card. The
- *  panel asks once, the first time the reader opens it, and keeps the answer
- *  while it is closed and opened again. A rejection reads as a session that
- *  could not be loaded. */
-export type OpenSessionSource = (at: SessionTurn, signal: AbortSignal) => Promise<ReactNode>;
+/** How the host opens a decision's session. `load` fetches the session by
+ *  id, as data only the host reads; `render` draws it at the turn the decision
+ *  cites, such as the host's transcript card, and is called on every render
+ *  with the current turn, so the panel follows the decision shown. The panel
+ *  loads once per session, the first time the reader opens it, and keeps the
+ *  session while it is closed and opened again; another session loads afresh.
+ *  A rejection reads as a session that could not be loaded. */
+export type OpenSessionSource<T> = {
+  load: (sessionId: string, signal: AbortSignal) => Promise<T>;
+  render: (session: T, at: SessionTurn) => ReactNode;
+};
+
+type LoadedSession<T> =
+  | { status: "loading" }
+  | { status: "failed" }
+  | { status: "ready"; session: T };
 
 /** The session opens in place, at the turn the decision cites, as the host
  *  draws it. */
-function OpenSession({ at, source }: { at: SessionTurn; source: OpenSessionSource }) {
+function OpenSession<T>({ at, source }: { at: SessionTurn; source: OpenSessionSource<T> }) {
   const [open, setOpen] = useState(false);
-  const [session, setSession] = useState<{ content: ReactNode } | "loading" | "failed">("loading");
+  const [loaded, setLoaded] = useState<LoadedSession<T>>({ status: "loading" });
+  // Another session starts over; a new turn in the same one does not.
+  const [loadedFor, setLoadedFor] = useState(at.sessionId);
+  if (loadedFor !== at.sessionId) {
+    setLoadedFor(at.sessionId);
+    setLoaded({ status: "loading" });
+  }
   const panelId = useId();
   // The host's latest loader, so a new function each render does not restart
   // a load in flight.
-  const latest = useRef(source);
-  latest.current = source;
-  const { sessionId, turn } = at;
+  const latest = useRef(source.load);
+  latest.current = source.load;
+  const { sessionId } = at;
   useEffect(() => {
-    if (!open || session !== "loading") return;
+    if (!open || loaded.status !== "loading") return;
     const controller = new AbortController();
     latest
-      .current({ sessionId, turn }, controller.signal)
-      .then((content) => setSession({ content }))
+      .current(sessionId, controller.signal)
+      .then((session) => setLoaded({ status: "ready", session }))
       .catch(() => {
-        if (!controller.signal.aborted) setSession("failed");
+        if (!controller.signal.aborted) setLoaded({ status: "failed" });
       });
     return () => controller.abort();
-  }, [open, session, sessionId, turn]);
+  }, [open, loaded, sessionId]);
   return (
     <div className="min-w-0">
       <Button
@@ -504,17 +520,17 @@ function OpenSession({ at, source }: { at: SessionTurn; source: OpenSessionSourc
         {open ? "Hide session" : `Open session at turn ${formatCount(at.turn)}`}
       </Button>
       <div id={panelId} hidden={!open} className="mt-3">
-        {!open ? null : session === "loading" ? (
+        {!open ? null : loaded.status === "loading" ? (
           <p className="flex items-center gap-2 text-base text-(--text-tertiary) italic">
             <Spinner />
             Loading this session…
           </p>
-        ) : session === "failed" ? (
+        ) : loaded.status === "failed" ? (
           <p role="alert" className="text-base text-(--status-critical)">
             This session could not be loaded. It may also belong to repositories you can't read.
           </p>
         ) : (
-          session.content
+          source.render(loaded.session, at)
         )}
       </div>
     </div>

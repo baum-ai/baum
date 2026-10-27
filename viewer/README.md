@@ -384,10 +384,16 @@ filters, the address and which decision or feature is open.
   (loading, failed with a retry, missing, ready): the rejected alternative,
   its files (each calling `onFile`), pull requests, session facts and cited
   prompts. `pullRequestHref` says where a pull request opens; the link is a
-  `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. `openSession` (`OpenSessionSource`) loads a session and
-  answers what to draw for it at the cited turn; the detail asks once, when
-  the reader first opens it, and says so when the promise rejects. A detail
-  whose prompts are withheld offers no session.
+  `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. A
+  detail whose prompts are withheld offers no session.
+- `openSession` (`OpenSessionSource`) opens the decision's session in place,
+  in two parts: `load` fetches a session by id as data only the host reads,
+  and `render` draws it at the cited turn, called on every render with the
+  current turn. The panel loads once per session, the first time the reader
+  opens it, and keeps it while closed; another turn of the same session
+  redraws without loading, and another session loads afresh. Closing the
+  panel during a load aborts it, and a rejection says the session could not
+  be loaded.
 - `FeatureItem`, `TimelineHeading`, `TimelineRail` and `TIMELINE_ROW` lay out
   the feature timeline: month and day headings, a dot per feature by status,
   and each feature's card with its people, counts and up to three key
