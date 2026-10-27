@@ -1065,28 +1065,41 @@ Origin and Host checks as every application route. How it works:
   hold their agent while the daemon waits for your answer, over the control
   socket only you can reach. Claude Code keeps its own dialog in the terminal
   at the same time, and the first answer wins; the hook stops waiting when
-  the same tool call finishes, the session's turn ends or a new prompt is
-  submitted, and Claude Code kills it after an hour, leaving the dialog as it
-  was. Codex hides its prompt while the hook waits, so the daemon answers a
-  Codex request only with the setting on, and only for about 25 seconds;
-  then the hook prints nothing and Codex asks in its terminal. With no
-  daemon, an older one or any failure, the hooks print nothing and the agent
-  asks as it always did.
-- The app is shown exactly what you approve: the command, file and text of
-  the edit, URL, or the tool's input as compact JSON, Claude Code's own
-  suggestions for "always allow" (only the one you pick is applied), and a
-  question's options. Every string is cleaned and masked as transcripts are
-  (secrets and e-mail addresses masked, your home directory as `~`) and cut
-  (4000 characters for a value), so what you approve can differ from the
-  real input only where a secret was masked or a long value cut. The hook
-  keeps the agent's own payload and builds the answer from it; the daemon
-  never hands tool input back to an agent.
-- To notice an answer given in the terminal, the `post-tool-use` hook event
-  carries a SHA-256 digest of the tool's name and input (`tool_digest`),
-  never the input.
+  the same tool call finishes or fails, the session's turn ends or a new
+  prompt is submitted (a subagent's request waits for that subagent's stop
+  instead), and Claude Code kills it after an hour, leaving the dialog as it
+  was. A Claude Code session nobody answers in a terminal (`claude -p` and
+  the SDK, whose `CLAUDE_CODE_ENTRYPOINT` is not `cli` or whose
+  `CLAUDE_CODE_SESSION_ATTENDED` is `0`) is never held. Codex hides its
+  prompt while the hook waits, so the daemon answers a Codex request only
+  with the setting on, and only for about 25 seconds; then the hook prints
+  nothing and Codex asks in its terminal. With no daemon, an older one or
+  any failure, the hooks print nothing and the agent asks as it always did.
+- The app is shown everything the approval covers: rows for what the tool
+  call does (a command and its description; an edit's file, the text it
+  replaces and the new text, every edit of a MultiEdit with their count; a
+  file's new content; a URL; a subagent's description, type, model and
+  prompt), a row for each switch that widens it when it is on (a command
+  run outside the sandbox or in the background, an edit of every
+  occurrence), then every other member of the tool's input that is not
+  empty, as compact JSON (all of it for a tool baum has no rows for).
+  Claude Code's own suggestions for "always allow" are listed, and only the
+  one you pick is applied; a question shows its options. Every string is
+  cleaned and masked as transcripts are (secrets and e-mail addresses
+  masked, your home directory as `~`) and cut (4000 characters for a value),
+  so what you approve can differ from the real input only where a secret
+  was masked or a long value cut. When masking fails, or a question's
+  answers could not be told apart, the request is not shown and the agent
+  asks in its terminal. The hook keeps the agent's own payload and builds
+  the answer from it; the daemon never hands tool input back to an agent.
+- To notice an answer given in the terminal, the `post-tool-use` and
+  `post-tool-use-failure` hook events carry a SHA-256 digest of the tool's
+  name and input (`tool_digest`), never the input, and the subagent's
+  `agent_id` when the tool ran in one.
 - A message you queue is held for its session until that session's next
   Stop hook, which tells the agent it came from you through the baum app.
-  One message per session; a new one replaces it.
+  One message per session; a new one replaces it, and a new prompt or the
+  session's end drops one queued before it.
 - Pending requests and messages are held in the daemon's memory only: never
   written to disk, logged or sent to a baum server, and gone when the daemon
   stops. Only the Codex setting is saved, in `agent-requests.json` in the

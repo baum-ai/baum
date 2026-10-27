@@ -54,6 +54,10 @@ var userWide = map[string]UserWide{
 			// seen working again once it was given: the hooks above report
 			// only subagent and todo tools.
 			{Event: "post-tool-use", HookEvent: "PostToolUse", Matcher: matcher(""), Async: true, RecordOnly: true},
+			// A tool call that failed, which PostToolUse does not report: the
+			// session works on, and a permission the user gave in the
+			// terminal for it is answered.
+			{Event: "post-tool-use-failure", HookEvent: "PostToolUseFailure", Matcher: matcher(""), Async: true, RecordOnly: true},
 			// Claude Code asks for a permission or an answer: the hook holds
 			// until the app answers, the request is withdrawn (the terminal,
 			// which asks alongside, answered first) or the timeout kills it,

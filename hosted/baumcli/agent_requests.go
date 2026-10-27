@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,6 +26,7 @@ import (
 const (
 	permissionRequestEvent = "permission-request"
 	postToolUseEvent       = "post-tool-use"
+	postToolFailureEvent   = "post-tool-use-failure"
 	stopEvent              = "stop"
 	// maxFullHookInput bounds the input of the events whose whole payload a
 	// hook reads, which it echoes back to the agent; a longer one is left to
@@ -46,8 +48,17 @@ const (
 	// past the cut.
 	maxAskValue = agentrequests.MaxValue + 2000
 	maxAskLabel = 600
-	// maxShownEdits is how many of a MultiEdit's edits are shown.
-	maxShownEdits = 3
+	// maxShownEdits is how many of a MultiEdit's edits get rows of their
+	// own; the rest are shown as JSON.
+	maxShownEdits = 8
+)
+
+// Claude Code's environment says whether anyone can answer in the terminal:
+// an interactive session has the entrypoint "cli" and is attended ("1");
+// `claude -p` and the SDK are not. Without either variable the hook holds.
+const (
+	claudeEntrypointEnv = "CLAUDE_CODE_ENTRYPOINT"
+	claudeAttendedEnv   = "CLAUDE_CODE_SESSION_ATTENDED"
 )
 
 // What the agent is told of a request the user turned down in the app.
@@ -65,7 +76,20 @@ func appAgent(agent string) bool {
 // permission request, whose input the answer may echo, and a finished tool
 // call, whose input it digests.
 func readsFullInput(agent, event string) bool {
-	return appAgent(agent) && (event == permissionRequestEvent || event == postToolUseEvent)
+	return appAgent(agent) && (event == permissionRequestEvent || digestsToolCall(agent, event))
+}
+
+// digestsToolCall reports whether a hook's event carries the digest of its
+// tool call: one that finished, or failed.
+func digestsToolCall(agent, event string) bool {
+	return appAgent(agent) && (event == postToolUseEvent || event == postToolFailureEvent)
+}
+
+// unattendedClaude reports a Claude Code session nobody answers in a
+// terminal, which a held hook would only stall.
+func unattendedClaude() bool {
+	entrypoint, attended := os.Getenv(claudeEntrypointEnv), os.Getenv(claudeAttendedEnv)
+	return (entrypoint != "" && entrypoint != "cli") || attended == "0"
 }
 
 // toolDigest is the digest of a finished tool call's name and input, empty
@@ -88,6 +112,9 @@ func toolDigest(input *hookInput) string {
 // answerFromApp shows a permission request in the app and prints its
 // decision for the agent, or nothing.
 func answerFromApp(ctx context.Context, agent string, input *hookInput, started time.Time, stdout io.Writer) {
+	if agent == agentrequests.AgentClaudeCode && unattendedClaude() {
+		return
+	}
 	payload, ok := input.complete(fullInputWait)
 	if !ok {
 		return
@@ -240,6 +267,7 @@ type claudeQuestion struct {
 func parsePermissionRequest(agent string, payload []byte) (*permissionPrompt, bool) {
 	var request struct {
 		SessionID   string            `json:"session_id"`
+		AgentID     string            `json:"agent_id"`
 		ToolName    string            `json:"tool_name"`
 		ToolInput   json.RawMessage   `json:"tool_input"`
 		Suggestions []json.RawMessage `json:"permission_suggestions"`
@@ -250,7 +278,7 @@ func parsePermissionRequest(agent string, payload []byte) (*permissionPrompt, bo
 	p := &permissionPrompt{agent: agent, tool: request.ToolName}
 	_ = json.Unmarshal(request.ToolInput, &p.input)
 	p.ask = agentrequests.Ask{
-		Agent: agent, SessionID: request.SessionID, Kind: agentrequests.KindPermission, Tool: request.ToolName,
+		Agent: agent, SessionID: request.SessionID, AgentID: request.AgentID, Kind: agentrequests.KindPermission, Tool: request.ToolName,
 		Digest: agentrequests.Digest(request.ToolName, request.ToolInput),
 	}
 	if agent == agentrequests.AgentClaudeCode && request.ToolName == "AskUserQuestion" {
@@ -354,18 +382,46 @@ func (p *permissionPrompt) answers(given []agentrequests.Answer) (map[string]str
 	return answers, true
 }
 
-// inputRows describe what a tool call would do, as the app shows it.
+// inputRows describe what a tool call would do, as the app shows it: rows
+// for what the tool's input means (a Bash command, an edit's file and text),
+// rows for the switches that change what approving it allows (a command run
+// outside the sandbox or in the background, an edit of every occurrence, a
+// subagent's type and model), then every other member that is not empty as
+// one compact JSON row, so nothing the approval covers goes unshown.
 func inputRows(agent, tool string, input map[string]json.RawMessage, raw json.RawMessage) []agentrequests.Row {
 	var rows []agentrequests.Row
+	shown := map[string]bool{}
+	row := func(label, value string, code bool) {
+		rows = append(rows, agentrequests.Row{Label: label, Value: value, Code: code})
+	}
 	add := func(label, member string, code bool) {
 		if value := memberText(input, member); value != "" {
-			rows = append(rows, agentrequests.Row{Label: label, Value: value, Code: code})
+			row(label, value, code)
+			shown[member] = true
+		}
+	}
+	// A switch that is off changes nothing, so it is shown only when on.
+	flag := func(label, value, member string) {
+		var on bool
+		if json.Unmarshal(input[member], &on) == nil {
+			shown[member] = true
+			if on {
+				row(label, value, false)
+			}
+		}
+	}
+	scalar := func(label, member string) {
+		if value := memberScalar(input, member); value != "" {
+			row(label, value, true)
+			shown[member] = true
 		}
 	}
 	switch {
 	case tool == "Bash":
 		add("Command", "command", true)
 		add("Description", "description", false)
+		flag("Sandbox", "Off: runs outside the sandbox", "dangerouslyDisableSandbox")
+		flag("Background", "Runs in the background", "run_in_background")
 	case agent == agentrequests.AgentCodex && tool == "apply_patch":
 		add("Patch", "command", true)
 	case agent == agentrequests.AgentCodex:
@@ -373,13 +429,27 @@ func inputRows(agent, tool string, input map[string]json.RawMessage, raw json.Ra
 		add("File", "file_path", true)
 		add("Replace", "old_string", true)
 		add("With", "new_string", true)
+		flag("Replace all", "Every occurrence", "replace_all")
 	case tool == "MultiEdit":
 		add("File", "file_path", true)
 		var edits []map[string]json.RawMessage
-		_ = json.Unmarshal(input["edits"], &edits)
-		for _, edit := range edits[:min(len(edits), maxShownEdits)] {
-			if value := memberText(edit, "new_string"); value != "" {
-				rows = append(rows, agentrequests.Row{Label: "With", Value: value, Code: true})
+		if json.Unmarshal(input["edits"], &edits) == nil && len(edits) > 0 {
+			shown["edits"] = true
+			row("Edits", strconv.Itoa(len(edits)), false)
+			for i, edit := range edits[:min(len(edits), maxShownEdits)] {
+				prefix := "Edit " + strconv.Itoa(i+1) + ": "
+				var all bool
+				_ = json.Unmarshal(edit["replace_all"], &all)
+				replace := prefix + "replace"
+				if all {
+					replace = prefix + "replace every occurrence of"
+				}
+				row(replace, memberText(edit, "old_string"), true)
+				row(prefix+"with", memberText(edit, "new_string"), true)
+			}
+			if len(edits) > maxShownEdits {
+				rest, _ := json.Marshal(edits[maxShownEdits:])
+				row("More edits", string(rest), true)
 			}
 		}
 	case tool == "Write":
@@ -387,6 +457,8 @@ func inputRows(agent, tool string, input map[string]json.RawMessage, raw json.Ra
 		add("Content", "content", true)
 	case tool == "NotebookEdit":
 		add("Notebook", "notebook_path", true)
+		scalar("Edit mode", "edit_mode")
+		scalar("Cell", "cell_id")
 		add("Source", "new_source", true)
 	case tool == "Read":
 		add("File", "file_path", true)
@@ -402,18 +474,63 @@ func inputRows(agent, tool string, input map[string]json.RawMessage, raw json.Ra
 		add("Plan", "plan", false)
 	case tool == "Agent" || tool == "Task":
 		add("Description", "description", false)
+		scalar("Subagent", "subagent_type")
+		scalar("Model", "model")
 		add("Prompt", "prompt", false)
 	}
+	label := "Other input"
 	if len(rows) == 0 {
+		label = "Input"
+	}
+	if input == nil {
 		var compact bytes.Buffer
-		if json.Compact(&compact, raw) == nil && compact.Len() > 0 && compact.String() != "{}" && compact.String() != "null" {
-			rows = append(rows, agentrequests.Row{Label: "Input", Value: compact.String(), Code: true})
+		if json.Compact(&compact, raw) == nil && !emptyJSON(compact.Bytes()) {
+			row(label, compact.String(), true)
+		}
+	} else {
+		other := map[string]json.RawMessage{}
+		for name, value := range input {
+			var compact bytes.Buffer
+			if !shown[name] && json.Compact(&compact, value) == nil && !emptyJSON(compact.Bytes()) {
+				other[name] = compact.Bytes()
+			}
+		}
+		if len(other) > 0 {
+			encoded, err := encodeJSON(other)
+			if err == nil {
+				row(label, string(encoded), true)
+			}
 		}
 	}
 	for i := range rows {
 		rows[i].Value = cutText(rows[i].Value, maxAskValue)
 	}
 	return rows
+}
+
+// emptyJSON reports a value that says nothing: null, "", [] or {}.
+func emptyJSON(value []byte) bool {
+	switch string(value) {
+	case "", "null", `""`, "[]", "{}":
+		return true
+	}
+	return false
+}
+
+// memberScalar is a member that is a string, number or boolean, as text.
+func memberScalar(input map[string]json.RawMessage, member string) string {
+	var text string
+	if json.Unmarshal(input[member], &text) == nil {
+		return text
+	}
+	var value any
+	if json.Unmarshal(input[member], &value) == nil {
+		switch value.(type) {
+		case float64, bool:
+			return string(bytes.TrimSpace(input[member]))
+		}
+	}
+	return ""
 }
 
 // memberText is a member that is a string, or an array of strings joined by

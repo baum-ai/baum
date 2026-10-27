@@ -56,7 +56,11 @@ send a running session a message. It adds Claude Code's `PermissionRequest`
 for every tool, with a one-hour timeout: the hook holds while the app can
 answer, alongside Claude Code's own dialog in the terminal (the first answer
 wins, and the hook stops waiting once the terminal answered); when it times
-out Claude Code kills it and the dialog stays as it was. Codex's hooks are
+out Claude Code kills it and the dialog stays as it was. A session run with
+`claude -p` or the SDK is never held. It also adds `PostToolUseFailure` for
+every tool (`async`, record-only), so a tool call that failed after you
+allowed it in the terminal still ends the app's request, and the session
+shows as working. Codex's hooks are
 unchanged, so their trust stands: its `PermissionRequest` hook waits for the
 app (about 25 seconds) only when you turn Codex approvals on in the app, since
 Codex hides its own prompt while the hook waits, and otherwise still prints

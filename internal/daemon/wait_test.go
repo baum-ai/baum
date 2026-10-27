@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"testing"
 	"time"
 )
@@ -70,6 +72,51 @@ func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 	}
 
 	// One of another protocol is refused as usual.
+	if r := rawCall(t, paths, `{"protocol":99,"method":"hold"}`); r.Error == nil || r.Error.Code != CodeProtocolMismatch {
+		t.Fatalf("mismatch %+v", r)
+	}
+}
+
+func TestDeliveryIsToldWhetherItsAnswerWasWritten(t *testing.T) {
+	paths := testPaths(t)
+	outcomes := make(chan error, 2)
+	runInProcess(t, paths, Options{Methods: map[string]Method{
+		"give": func(_ context.Context, params json.RawMessage) (any, error) {
+			if string(params) == `"late"` {
+				time.Sleep(200 * time.Millisecond)
+			}
+			return Delivery{Result: "given", Written: func(err error) { outcomes <- err }}, nil
+		},
+	}})
+	if r := rawCall(t, paths, fmt.Sprintf(`{"protocol":%d,"method":"give"}`, Protocol)); !r.OK || string(r.Result) != `"given"` {
+		t.Fatalf("give %+v", r)
+	}
+	if err := <-outcomes; err != nil {
+		t.Fatalf("a written answer reported %v", err)
+	}
+	conn, err := net.Dial("unix", paths.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fmt.Fprintf(conn, `{"protocol":%d,"method":"give","params":"late"}`+"\n", Protocol); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	select {
+	case err := <-outcomes:
+		if err == nil {
+			t.Fatal("an answer to a client that left was reported written")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Written was not called")
+	}
+}
+
+func TestWaitsKeepTheProtocolCheck(t *testing.T) {
+	paths := testPaths(t)
+	runInProcess(t, paths, Options{Waits: map[string]Method{
+		"hold": func(ctx context.Context, _ json.RawMessage) (any, error) { <-ctx.Done(); return nil, ctx.Err() },
+	}})
 	if r := rawCall(t, paths, `{"protocol":99,"method":"hold"}`); r.Error == nil || r.Error.Code != CodeProtocolMismatch {
 		t.Fatalf("mismatch %+v", r)
 	}

@@ -2582,13 +2582,14 @@ endpoint.
 
 - **Event.** One JSON object per hook run, sent as the params of the `event`
   control request: `v` (the event format, `hookevents.Version`, 1), a random
-  `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
+  `id`, `time` (when the hook started), `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
   `hook_event`, `source`, `reason`, and for Claude Code's `notification` its
   `notification_type` and `message`, cut to 512 bytes, read by a streaming
   scanner from the whole payload, the last of a repeated member winning, and
-  for Claude Code's and Codex's `post-tool-use` the `tool_digest` of the call
+  for Claude Code's and Codex's `post-tool-use` and `post-tool-use-failure`
+  the `tool_digest` of the call, and a Claude Code subagent's `agent_id`
   (see "Agent requests and messages"); nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
   wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
@@ -2733,7 +2734,8 @@ replace it.
   agents share baum's event names, which map to a normalised kind:
   `session-start` to `start`; `user-prompt-submit` and `before-submit-prompt`
   to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
-  `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
+  `post-tool-use-failure`, `pre-compact`, `subagent-start` and
+  `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
   runs, and Cursor prompts and compaction; the user-wide Claude Code plugin
   also reports every tool call as `post-tool-use`); `notification` (Claude
@@ -2931,14 +2933,26 @@ hook side is in `hosted/baumcli`, rules in its
 the daemon's memory; only `Settings` (`codex_approvals`, default false) is
 saved, in `agent-requests.json` in the state directory.
 
+- **Unattended sessions.** A Claude Code session nobody answers in a
+  terminal is never held: the hook gives no decision at once when
+  `CLAUDE_CODE_ENTRYPOINT` is set to anything but `cli` (`claude -p` sets
+  `sdk-cli`) or `CLAUDE_CODE_SESSION_ATTENDED` is `0`; an interactive session
+  sets `cli` and `1`, and without either variable the hook holds.
 - **Requests.** A `permission-request` hook whose event the daemon took sends
   an `Ask` over `agent.request` (a waiting control method): agent, session,
-  kind (`permission`, or `question` for Claude Code's AskUserQuestion), tool,
-  the hook's start time, `Digest` of the tool call (SHA-256 of the tool name
-  and the input's canonical JSON; an AskUserQuestion by its questions alone),
-  and what the app shows: label/value rows (Bash: Command and Description;
-  Edit: File, Replace, With; Write: File, Content; WebFetch: URL, Prompt;
-  others a compact JSON Input row; Codex `apply_patch`: Patch), Claude Code's
+  the subagent's `agent_id` when one asks, kind (`permission`, or `question`
+  for Claude Code's AskUserQuestion), tool, the hook's start time, `Digest`
+  of the tool call (SHA-256 of the tool name and the input's canonical JSON;
+  an AskUserQuestion by its questions alone), and what the app shows:
+  label/value rows (Bash: Command, Description, and Sandbox when
+  `dangerouslyDisableSandbox` and Background when `run_in_background` is on;
+  Edit: File, Replace, With, and Replace all when `replace_all` is on;
+  MultiEdit: File, the number of edits, the old and new text of the first 8
+  and the rest as JSON; Write: File, Content; NotebookEdit: Notebook, Edit
+  mode, Cell, Source; WebFetch: URL, Prompt; Agent: Description, Subagent,
+  Model, Prompt; Codex `apply_patch`: Patch), then every other member of the
+  input that is not null, "", [] or {} as one compact JSON row ("Other
+  input", or "Input" for a tool with no rows), Claude Code's
   `permission_suggestions` as labels ("Always allow Bash(make:*) in this
   project"), and questions with their options. The hook keeps the payload and
   builds the agent's answer from it; the daemon answers a `Decision`
@@ -2947,23 +2961,41 @@ saved, in `agent-requests.json` in the state directory.
   cuts every string (values keep newlines, 4000 characters; others one line),
   holds at most 64 requests, and waits for an answer, a withdrawal, the
   client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
-  answers nothing at once while `codex_approvals` is off, and turning it off
-  withdraws the waiting ones.
+  answers nothing at once while `codex_approvals` is off (checked again under
+  the lock it is inserted under), and turning it off withdraws the waiting
+  ones. A request is refused, answering nothing at once, when the mask turned
+  non-empty text into "" (the redaction failed: nothing unmasked is shown),
+  or when its answers could not be told apart once cleaned and cut: two
+  equal questions, two equal options of one question, or a label containing
+  ", " in a multi-select question.
 - **Withdrawal.** `Store.Run` follows the record's agent events
-  (`Store.Subscribe` with `Match`): a session's `user-prompt-submit`, `stop`
-  or `session-end` withdraws its requests, and a `post-tool-use` whose
-  `tool_digest` matches withdraws the oldest request of that tool call (the
-  user answered in Claude Code's terminal, which asks alongside); parallel
-  calls of other tools stay. Only requests whose hook started before the
-  event are withdrawn, and the last 512 such marks (10 minutes) are kept so a
+  (`Store.Subscribe` with `Match`): a session's `user-prompt-submit` or
+  `stop` withdraws its main agent's requests, a `subagent-stop` the requests
+  of that `agent_id`, `session-end` all of them, and a `post-tool-use` or
+  `post-tool-use-failure` (Claude Code's PostToolUseFailure, plugin 1.2.0)
+  whose `tool_digest` matches withdraws the oldest request of that tool call
+  (the user answered in Claude Code's terminal, which asks alongside);
+  parallel calls of other tools stay. Only requests whose hook started at or
+  before the event are withdrawn; hooks stamp their events with when they
+  started, so an asynchronous PostToolUse never post-dates the next request
+  for an identical call. The last 512 such marks (10 minutes) are kept so a
   request that arrives after its tool call finished, or its turn ended, is
   answered nothing at once.
 - **Messages.** At most one per session, replaced by a new one, accepted only
   for a listed session that has not ended and is not waiting for its next
   prompt (`turn_finished`): a Stop hook will come. `agent.take-message`
-  removes and returns it; the Stop hook makes it the agent's next
-  instruction. A session's end drops it, and so does the list once the
+  removes and returns it as a `daemon.Delivery`, whose `Written` puts it
+  back, unless a newer one replaced it, when the answer could not be
+  written; the Stop hook makes it the agent's next instruction. A
+  `user-prompt-submit` or `session-end` drops a message queued before it (it
+  belonged to the turn that is over; a `stop` does not, since its hook takes
+  the message after recording the stop), and so does the list once the
   session is no longer listed.
+- **Known limits.** An answer racing the hook's disconnect is best-effort:
+  the app is told `ok` and the hook may be gone. A written `take-message`
+  answer can still be lost by a hook that goes away before reading it. The
+  mask treats e-mail-like spans in URLs as addresses and masks them, so such
+  a URL is shown masked.
 - **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
   authentication as every route (without a record:
   `agent_requests_unavailable`). `GET /api/agent-requests` answers

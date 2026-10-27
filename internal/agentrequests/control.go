@@ -35,6 +35,14 @@ func (s *Store) take(_ context.Context, params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &take); err != nil {
 		return nil, &daemon.Error{Code: daemon.CodeBadRequest, Message: "the request is not valid JSON"}
 	}
-	text, _ := s.TakeMessage(take.Agent, take.SessionID)
-	return Taken{Text: text}, nil
+	message, ok := s.TakeMessage(take.Agent, take.SessionID)
+	if !ok {
+		return Taken{}, nil
+	}
+	// A message whose answer could not be written goes back in the queue.
+	return daemon.Delivery{Result: Taken{Text: message.Text}, Written: func(err error) {
+		if err != nil {
+			s.Requeue(message)
+		}
+	}}, nil
 }
