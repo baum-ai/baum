@@ -12,6 +12,7 @@ export const harnesses = [
   { id: "anthropic", name: "Anthropic API", detail: "Pay per use", logo: claudeLogo },
 ];
 const scopes: { id: PullRequests; label: string }[] = [
+  { id: "all", label: "All" },
   { id: "both", label: "Mine and requested" },
   { id: "authored", label: "Only mine" },
   { id: "requested", label: "Only requested" },
@@ -184,7 +185,10 @@ export function ReviewSettingsForm({
           />
         </label>
         {settings.automatic && (
-          <fieldset className="scope">
+          <fieldset
+            className="scope"
+            aria-describedby={settings.pull_requests === "all" ? "review-all-note" : undefined}
+          >
             <legend className="review-label">Which pull requests</legend>
             <div className="segmented">
               {scopes.map((scope) => (
@@ -201,6 +205,12 @@ export function ReviewSettingsForm({
                 </label>
               ))}
             </div>
+            {settings.pull_requests === "all" && (
+              <p id="review-all-note" className="review-note">
+                Every pull request in your repositories gets reviewed, including your team's, so
+                reviews, notifications and cost grow with their activity.
+              </p>
+            )}
             <p className="review-note">
               Drafts, forks and authors without write access are never reviewed automatically.
             </p>

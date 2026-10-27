@@ -33,7 +33,7 @@ const steps = [
   ],
   [
     "Connect your agents",
-    "Install the baum CLI, then add the baum plugin to each coding agent you use.",
+    "Install the baum CLI and connect baum to each coding agent you use.",
     "Connect agents",
     "The baum CLI, Codex and Claude Code",
   ],
@@ -340,7 +340,7 @@ export function Setup() {
                   const state = agent
                     ? describeAgent(agent)
                     : `${definition.name} status unavailable. Check again to retry.`;
-                  const verb = agent?.installed ? "Enable" : "Install";
+                  const verb = agent?.installed ? "Enable" : "Connect";
                   return (
                     <li className="agent-row" key={definition.id}>
                       <img
@@ -385,7 +385,7 @@ export function Setup() {
                                 change("install_hooks", { agent: definition.id }),
                               ),
                             "secondary compact",
-                            `${verb} ${definition.name} hooks`,
+                            `${verb} ${definition.name}`,
                           )}
                       </div>
                     </li>

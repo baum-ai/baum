@@ -219,7 +219,7 @@ export type Automatic = {
   enabled: boolean;
   cursor_agent_acknowledged: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
-  pull_requests?: "both" | "authored" | "requested";
+  pull_requests?: "all" | "both" | "authored" | "requested";
   repositories: AutomaticStatus[];
 };
 const jobReasons: Record<string, string> = {

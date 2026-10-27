@@ -2506,10 +2506,12 @@ it and `Queue.SubmitAutomatic` decides each job.
   new PR included), whose review request turned on (not merely because team
   membership became readable), or that was marked ready for review, gets a
   pending head if it is eligible: the user's review is requested or the user
-  authored it, it is not a draft, it is not from a fork, and its author has
-  known write access. Drafts get no automatic review, so pushes to a draft
-  wait for "ready for review"; manual generation of a draft still works. A
-  queued automatic job whose PR turned draft before it started is cancelled
+  authored it (narrowed to one of these, or widened to every pull request, by
+  the `pull_requests` preference), it is not a draft, it is not from a fork,
+  and its author has known write access. Hook refresh applies the same rule
+  before it triggers a poll. Drafts get no automatic review, so pushes to a
+  draft wait for "ready for review"; manual generation of a draft still works.
+  A queued automatic job whose PR turned draft before it started is cancelled
   (`draft`) by the recheck before any model call, and its head is pending
   again (trigger `ready_for_review`) once a snapshot shows the PR eligible at
   that head. A PR

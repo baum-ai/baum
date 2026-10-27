@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "daemon-pages",
-  "description": "The attached daemon pages may open the folder picker and manage the bundled CLI and agent plugins from Settings. Other setup commands remain restricted to the bundled screen.",
+  "description": "The attached daemon pages may open the folder picker, manage the bundled CLI and agent plugins and set the window's zoom from Settings, and use the zoom shortcuts. Other setup commands remain restricted to the bundled screen.",
   "windows": ["main"],
   "remote": { "urls": ["http://127.0.0.1:*/*"] },
   "local": false,
@@ -11,6 +11,9 @@
     "allow-install-command",
     "allow-uninstall-command",
     "allow-install-hooks",
-    "allow-uninstall-hooks"
+    "allow-uninstall-hooks",
+    "allow-zoom-state",
+    "allow-set-zoom",
+    "allow-step-zoom"
   ]
 }
