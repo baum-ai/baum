@@ -297,7 +297,7 @@ function DesktopIntegrations() {
                   variant="secondary"
                   onClick={() => void run("install_hooks", { agent: agent.agent })}
                 >
-{doing === `install_hooks:${agent.agent}`
+                  {doing === `install_hooks:${agent.agent}`
                     ? agent.installed
                       ? "Enabling…"
                       : "Connecting…"
