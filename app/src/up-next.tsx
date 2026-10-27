@@ -7,6 +7,7 @@ import {
   fixJob,
   fixLabel,
   isActiveJob,
+  jobReasonText,
   joinAnd,
   liveFor,
   request,
@@ -14,6 +15,7 @@ import {
   type Job,
   type LiveSession,
 } from "./api";
+import { phaseText } from "./fix";
 import { useNow } from "./live";
 import {
   canMerge,
@@ -41,6 +43,8 @@ export type UpNextItem = {
   facts: { label: string; value: string }[];
   /** The reading estimate of a review; null when there is none. */
   minutes: number | null;
+  /** The latest fix of a pull request in the queue as a fix, when it failed. */
+  failedFix?: Job;
 };
 
 // The order of the queue: someone else waits on a review, the person's own
@@ -54,6 +58,13 @@ const KINDS: Record<UpNextKind, { label: string; done: string; order: number }> 
   // It leaves the queue only when the review request goes, whoever answered it.
   clone: { label: "Clone", done: "Handled", order: 4 },
 };
+
+/** A fix job's transcript when it has one, else the job in the list. */
+function jobHref(job: Job) {
+  return job.has_transcript
+    ? appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)
+    : appURL(`?page=jobs#job-${encodeURIComponent(job.id)}`);
+}
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
   return `${pr.repository.toLowerCase()}#${pr.number}`;
@@ -203,7 +214,7 @@ export function upNext(
   entries: Entry[],
   live: LiveSession[] = [],
   jobs: Job[] = [],
-): { items: UpNextItem[]; waiting: Entry[] } {
+): { items: UpNextItem[]; waiting: Entry[]; fixing: { entry: Entry; job: Job }[] } {
   // Of the clones that hold a pull request, the one with a readable saved
   // review and a clone speaks for it.
   const score = (entry: Entry) =>
@@ -216,12 +227,18 @@ export function upNext(
   }
   const items: UpNextItem[] = [];
   const waiting: Entry[] = [];
+  const fixing: { entry: Entry; job: Job }[] = [];
   for (const [key, entry] of best) {
     const kind = kindOf(entry, jobs);
     if (!kind) {
-      if (isOpen(entry) && entry.pull_request.authored_by_me) waiting.push(entry);
+      if (isOpen(entry) && entry.pull_request.authored_by_me) {
+        waiting.push(entry);
+        const job = fixJob(entry, jobs);
+        if (job && isActiveJob(job)) fixing.push({ entry, job });
+      }
       continue;
     }
+    const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
     const sessions = liveFor(live, entry.pull_request);
     items.push({
       key,
@@ -230,6 +247,7 @@ export function upNext(
       why: why(kind, entry, sessions),
       facts: facts(kind, entry, sessions),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
+      ...(last?.state === "failed" ? { failedFix: last } : {}),
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -243,7 +261,7 @@ export function upNext(
       (a.kind === "review" ? readable(a) - readable(b) || risk(b) - risk(a) : 0) ||
       a.entry.pull_request.number - b.entry.pull_request.number,
   );
-  return { items, waiting };
+  return { items, waiting, fixing };
 }
 
 type Seen = {
@@ -347,7 +365,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const [stored, setStored] = useState(() => load(Date.now()));
   const day = dayOf(now);
   const state = stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now));
-  const { items, waiting } = upNext(entries, live, jobs);
+  const { items, waiting, fixing } = upNext(entries, live, jobs);
   const snoozed = items.filter((item) => (state.snoozed[item.key] ?? 0) > now);
   const active = items.filter((item) => !((state.snoozed[item.key] ?? 0) > now));
   const rank = (item: UpNextItem) =>
@@ -382,17 +400,28 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     ...items.map(
       (item) => `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.title}`,
     ),
-    ...[...waitingKeys].map((key) => `waiting:${key}`),
+    ...entries
+      .filter((entry) => waitingKeys.has(upNextKey(entry.pull_request)))
+      .map((entry) => {
+        const job = fixJob(entry, jobs);
+        return `waiting:${upNextKey(entry.pull_request)}:${job?.id ?? ""}:${job?.state ?? ""}`;
+      }),
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
   useEffect(() => {
     if (!ready) return;
     const keys = new Set(items.map((item) => item.key));
+    // A fix counts once it pushed: not while it runs, nor after it failed.
+    const fixed = (key: string) => {
+      const entry = entries.find((e) => upNextKey(e.pull_request) === key);
+      const job = entry && fixJob(entry, jobs);
+      return !job || (job.state === "completed" && !!job.commit);
+    };
     const clears = (key: string, record: Seen) =>
       !keys.has(key) &&
       record.cleared == null &&
       listed.has(record.repository.toLowerCase()) &&
-      (!waitingKeys.has(key) || record.kind === "fix" || record.kind === "update");
+      (!waitingKeys.has(key) || (record.kind === "fix" && fixed(key)) || record.kind === "update");
     const changed =
       stored.day !== day ||
       items.some((item) => {
@@ -439,6 +468,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     queue,
     snoozed,
     waiting,
+    fixing,
     cleared,
     snoozedUntil: (key: string) => state.snoozed[key] ?? 0,
     skip: (key: string) =>
@@ -712,6 +742,15 @@ function Card({
           <strong>Why now:</strong> {item.why}
         </span>
       </p>
+      {item.failedFix ? (
+        <p className="upnext-why upnext-failed" role="status">
+          <span>
+            The last fix failed
+            {item.failedFix.reason ? `: ${jobReasonText(item.failedFix.reason)}` : "."}{" "}
+            <Link href={jobHref(item.failedFix)}>See what the agent did</Link>
+          </span>
+        </p>
+      ) : null}
       {item.facts.length > 0 ? (
         <dl className="upnext-facts">
           {item.facts.map((fact) => (
@@ -752,7 +791,8 @@ function Queue({
 }) {
   const heading = useId();
   const minutes = Math.round(sumMinutes(items));
-  const { snoozed, waiting, now } = inbox;
+  const { snoozed, waiting, fixing, now } = inbox;
+  const others = waiting.length - fixing.length;
   const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
   return (
     <section aria-labelledby={heading} className="upnext-queue">
@@ -803,10 +843,17 @@ function Queue({
           </button>
         </p>
       ) : null}
-      {waiting.length > 0 ? (
+      {fixing.map(({ entry, job }) => (
+        <p key={job.id} className="upnext-note">
+          An agent is fixing #{entry.pull_request.number} {entry.pull_request.title} ·{" "}
+          {phaseText(job)}.{" "}
+          <Link href={appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)}>Watch</Link>
+        </p>
+      ))}
+      {others > 0 ? (
         <p className="upnext-note">
-          {plural(waiting.length, "pull request")} of yours{" "}
-          {waiting.length === 1 ? "waits" : "wait"} on reviewers, checks or an agent.{" "}
+          {plural(others, "pull request")} of yours {others === 1 ? "waits" : "wait"} on reviewers,
+          checks or an agent.{" "}
           <Link href={appURL("?page=pulls&filter=mine")}>See them in Pull requests</Link>
         </p>
       ) : null}

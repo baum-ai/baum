@@ -16,9 +16,11 @@ export type Clone = {
 export type Repository = { repository: string; settings: Clone["settings"]; clones: Clone[] };
 export class LocalRequestError extends Error {
   code?: string;
-  constructor(message: string, code?: string) {
+  status?: number;
+  constructor(message: string, code?: string, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 export type GitHubState = {
@@ -160,6 +162,8 @@ export type Job = {
   /** "fix" for a fix of the pull request; absent for a review. */
   kind?: "fix";
   fix?: FixInputs;
+  /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
+  has_transcript?: boolean;
   head_sha?: string;
   backend?: string;
   model?: string;
@@ -226,6 +230,7 @@ const jobReasons: Record<string, string> = {
   validation: "The agent's review didn't pass baum's checks, even after repairs.",
   interrupted: "The run stopped before it finished.",
   internal: "Something went wrong inside baum.",
+  signing: "Git couldn't sign a commit, so the agent didn't run.",
   superseded: "A newer commit replaced it.",
   draft: "The pull request became a draft.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
@@ -463,6 +468,7 @@ export async function request<T>(
         ? "Needs a local clone"
         : (body.message ?? `Local request failed (${response.status}): ${text}`),
       body.needs_clone ? "needs_clone" : body.code,
+      response.status,
     );
   }
   if (response.status === 204) return undefined as T;

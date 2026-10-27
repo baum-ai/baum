@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import { WarningIcon } from "@baum/viewer/components/icons";
 import {
+  appURL,
   cost,
   estimateFix,
   fixName,
@@ -18,10 +19,11 @@ import {
   type FixThread,
   type Job,
 } from "./api";
+import { ViewerLink } from "@baum/viewer/navigation";
 import { LoadingStatus } from "./nine-dots";
 import { harnessName } from "./desktop/reviews";
 
-const phases: Record<string, string> = {
+export const phases: Record<string, string> = {
   queued: "Queued",
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
@@ -34,6 +36,21 @@ const phases: Record<string, string> = {
   replying: "Replying on the review threads",
   finishing: "Finishing",
 };
+
+/** What a running fix is doing, in words. */
+export function phaseText(job: Job) {
+  return job.state === "queued" ? "Queued" : (phases[job.phase] ?? job.phase);
+}
+
+/** The link to a fix's transcript: Watch while it runs. Nothing without one. */
+export function TranscriptLink({ job }: { job: Job }) {
+  if (!job.has_transcript) return null;
+  return (
+    <ViewerLink href={appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)}>
+      {isActiveJob(job) ? "Watch" : "Transcript"}
+    </ViewerLink>
+  );
+}
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
@@ -228,6 +245,7 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
               : `${name}: ${phases[job.phase] ?? job.phase}`}
           </p>
         </div>
+        <TranscriptLink job={job} />
         <Button
           variant="secondary"
           size="compact"
@@ -272,6 +290,7 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
         {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
         <FixDetails job={job} />
       </div>
+      <TranscriptLink job={job} />
     </section>
   );
 }

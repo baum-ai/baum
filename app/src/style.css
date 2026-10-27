@@ -1527,6 +1527,85 @@ a.local-session-pr:hover {
   margin: 0.25rem 0 0;
   color: var(--text-secondary);
 }
+/* A fix agent's transcript. */
+.local-job-head {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.875rem 1.25rem;
+}
+.local-job-head p,
+.local-job-head pre {
+  margin: 0;
+}
+.local-job-phase {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+.local-job-detail,
+.local-job-tool pre {
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  background: var(--surface-muted, rgb(127 127 127 / 0.1));
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.local-job-transcript {
+  display: grid;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0.875rem 1.25rem;
+  list-style: none;
+}
+.local-job-message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.local-job-reasoning {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.local-job-reasoning p {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+.local-job-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+.local-job-tool summary span:not(.sr-only) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-job-tool pre {
+  margin: 0.375rem 0 0;
+}
+.local-job-tool-empty {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.local-tool-done {
+  color: var(--success, currentColor);
+}
+.local-tool-failed {
+  color: var(--danger, currentColor);
+}
+.upnext-failed {
+  color: var(--un-ink);
+}
 @media (width < 64rem) {
   .local-session-row,
   .local-session-row:has(.local-session-open),
@@ -2468,4 +2547,35 @@ span.inbox-fix svg {
   .upnext-ring-fill {
     transition: none;
   }
+}
+
+.settings-env {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0 1.25rem 1rem;
+}
+.settings-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+.settings-env-row input {
+  min-width: 0;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+}
+.settings-env-row input[aria-invalid="true"] {
+  border-color: var(--danger, currentColor);
+}
+.settings-env-problem {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }

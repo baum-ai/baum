@@ -24,7 +24,14 @@ import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
-import { SlidersIcon, TerminalIcon, SessionsIcon, CheckIcon } from "@baum/viewer/components/icons";
+import {
+  SlidersIcon,
+  TerminalIcon,
+  SessionsIcon,
+  CheckIcon,
+  CloseIcon,
+  PlusIcon,
+} from "@baum/viewer/components/icons";
 import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
 import {
   describeCommand,
@@ -115,6 +122,7 @@ export function SettingsPage({
         ) : (
           <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
+        <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
           and stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
@@ -401,6 +409,186 @@ function ReviewSettingsSection({
             onClick={() => void save()}
           >
             {pending ? "Saving…" : "Save review settings"}
+          </Button>
+        </div>
+      </footer>
+    </section>
+  );
+}
+
+type EnvRow = { id: number; name: string; value: string };
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_MAX = 32;
+
+const envRows = (env: Record<string, string>): EnvRow[] =>
+  Object.entries(env).map(([name, value], id) => ({ id, name, value }));
+
+/** Why a list of variables cannot be saved, per row; empty when it can. */
+function envProblems(rows: EnvRow[]): Record<number, string> {
+  const problems: Record<number, string> = {};
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!ENV_NAME.test(row.name))
+      problems[row.id] = row.name
+        ? "Use letters, digits and underscores, not starting with a digit."
+        : "Enter a name.";
+    else if (seen.has(row.name)) problems[row.id] = "Another row has this name.";
+    seen.add(row.name);
+  }
+  return problems;
+}
+
+/** Variables set for every agent baum runs and for the git commands that
+ *  commit and push a fix, kept by the daemon on this computer. */
+function AgentEnvSection() {
+  const [saved, setSaved] = useState<Record<string, string> | null>(null);
+  const [source, setSource] = useState("");
+  const [rows, setRows] = useState<EnvRow[]>([]);
+  const [next, setNext] = useState(0);
+  const [pending, setPending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const load = (env: Record<string, string>) => {
+    setSaved(env);
+    setRows(envRows(env));
+    setNext(Object.keys(env).length);
+  };
+  useEffect(() => {
+    request<{ agent_env?: Record<string, string>; agent_env_source?: string }>("api/settings").then(
+      (settings) => {
+        load(settings.agent_env ?? {});
+        setSource(settings.agent_env_source ?? "");
+      },
+      (e) => setLoadError(errorText(e)),
+    );
+  }, []);
+  const problems = envProblems(rows);
+  const current = Object.fromEntries(rows.map((row) => [row.name, row.value]));
+  const dirty =
+    saved !== null &&
+    (rows.length !== Object.keys(saved).length ||
+      rows.some((row, i) => row.name !== Object.keys(saved)[i] || row.value !== saved[row.name]));
+  const tooMany = rows.length > ENV_MAX;
+  const edit = (id: number, change: Partial<EnvRow>) => {
+    setDone(false);
+    setRows((list) => list.map((row) => (row.id === id ? { ...row, ...change } : row)));
+  };
+  const save = async () => {
+    setPending(true);
+    setError("");
+    setDone(false);
+    try {
+      const answer = await request<{ agent_env?: Record<string, string> }>(
+        "api/settings/agent-env",
+        { agent_env: current },
+        "PUT",
+      );
+      load(answer.agent_env ?? current);
+      setSource(
+        Object.keys(current).length
+          ? "app"
+          : Object.keys(answer.agent_env ?? {}).length
+            ? "file"
+            : "",
+      );
+      setDone(true);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-env-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="agent-env-heading"
+        icon={<TerminalIcon size={20} />}
+        title="Environment for agents"
+        detail="Variables set for every agent baum runs, and for the git commands that commit and push a fix — for example GIT_CONFIG_GLOBAL to sign agent commits with a different key. ~ and $VARS are expanded. Stored on this computer; don't put secrets here."
+      />
+      {loadError ? <Alert className="mx-5 mb-4">{loadError}</Alert> : null}
+      {source === "file" ? (
+        <p className="px-5 pb-3 text-xs text-(--text-tertiary)">
+          These come from the <code>[agent_env]</code> section of the config file. Saving here
+          replaces them.
+        </p>
+      ) : null}
+      {saved === null ? (
+        loadError ? null : (
+          <LoadingStatus block>Reading the environment…</LoadingStatus>
+        )
+      ) : (
+        <div className="settings-env">
+          {rows.map((row) => (
+            <div key={row.id} className="settings-env-row">
+              <input
+                aria-label="Variable name"
+                placeholder="NAME"
+                value={row.name}
+                disabled={pending}
+                aria-invalid={problems[row.id] ? true : undefined}
+                spellCheck={false}
+                onChange={(event) => edit(row.id, { name: event.target.value })}
+              />
+              <input
+                aria-label={`Value of ${row.name || "the variable"}`}
+                placeholder="value"
+                value={row.value}
+                disabled={pending}
+                spellCheck={false}
+                onChange={(event) => edit(row.id, { value: event.target.value })}
+              />
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={`Remove ${row.name || "variable"}`}
+                disabled={pending}
+                onClick={() => {
+                  setDone(false);
+                  setRows((list) => list.filter((r) => r.id !== row.id));
+                }}
+              >
+                <CloseIcon size={14} />
+              </Button>
+              {problems[row.id] && row.name !== "" ? (
+                <p className="settings-env-problem">{problems[row.id]}</p>
+              ) : null}
+            </div>
+          ))}
+          {error ? <Alert>{error}</Alert> : null}
+          {tooMany ? <Alert>At most {ENV_MAX} variables.</Alert> : null}
+        </div>
+      )}
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <Button
+          variant="secondary"
+          size="compact"
+          className="inline-flex items-center gap-2"
+          disabled={saved === null || pending || rows.length >= ENV_MAX}
+          onClick={() => {
+            setDone(false);
+            setRows((list) => [...list, { id: next, name: "", value: "" }]);
+            setNext(next + 1);
+          }}
+        >
+          <PlusIcon size={14} />
+          Add variable
+        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status" className="text-xs text-(--text-tertiary)">
+            {done
+              ? "Saved. Applies to the next agent run."
+              : dirty
+                ? "You have unsaved changes."
+                : ""}
+          </p>
+          <Button
+            size="compact"
+            disabled={!dirty || pending || tooMany || Object.keys(problems).length > 0}
+            onClick={() => void save()}
+          >
+            {pending ? "Saving…" : "Save environment"}
           </Button>
         </div>
       </footer>

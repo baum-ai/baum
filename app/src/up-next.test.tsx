@@ -153,7 +153,24 @@ let root: Root;
 let node: HTMLDivElement;
 let entries: Entry[] = [];
 let repositories: unknown[] = [];
+let jobsList: Job[] = [];
+const fixJobOf = (overrides: Partial<Job> = {}): Job => ({
+  id: "fix-1",
+  clone: "clone",
+  repository: "acme/demo",
+  pr: 2,
+  state: "running",
+  phase: "fixing",
+  calls: 0,
+  tokens: 0,
+  repairs: 0,
+  actual_cost_usd: null,
+  kind: "fix",
+  has_transcript: true,
+  ...overrides,
+});
 beforeEach(() => {
+  jobsList = [];
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
@@ -188,7 +205,7 @@ beforeEach(() => {
               : path.endsWith("api/prs") || path.endsWith("api/background")
                 ? []
                 : path.endsWith("api/jobs")
-                  ? { jobs: [] }
+                  ? { jobs: jobsList }
                   : path.includes("api/prs/merge-options")
                     ? {
                         methods: ["SQUASH"],
@@ -344,4 +361,67 @@ it("says how to start when no repository is picked", async () => {
   );
   await render();
   expect(node.textContent).toContain("Nothing to do yet");
+});
+
+const cleared = () => node.querySelector(".upnext-cleared")?.textContent ?? null;
+
+it("does not clear a pull request whose fix is running, and offers to watch it", async () => {
+  await render();
+  // Pressing Fix and confirming starts a job and the pull request leaves the queue.
+  jobsList = [fixJobOf()];
+  await render();
+  expect(queue()).toEqual(["Change 3", "Change 4"]);
+  expect(cleared()).toBeNull();
+  expect(node.textContent).toContain(
+    "An agent is fixing #2 Change 2 · The agent is fixing it. Watch",
+  );
+  const watch = Array.from(node.querySelectorAll("a")).find((a) => a.textContent === "Watch")!;
+  expect(watch.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
+  // The one other waiting pull request keeps the generic sentence.
+  expect(node.textContent).toContain("1 pull request of yours waits on reviewers");
+});
+
+it("clears a fixed pull request once its fix pushed", async () => {
+  await render();
+  jobsList = [fixJobOf({ state: "completed", commit: "abc1234" })];
+  entries = entries.map((e) => (e.pull_request.number === 2 ? mine(2, { checks: "running" }) : e));
+  await render();
+  expect(cleared()).toBe("Fixed #2 Change 2");
+});
+
+it("brings back a pull request whose fix failed, with what happened", async () => {
+  await render();
+  jobsList = [fixJobOf({ state: "failed", reason: "signing" })];
+  await render();
+  expect(cleared()).toBeNull();
+  expect(queue()).toContain("Change 2");
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>(".upnext-row"))
+      .find((row) => row.textContent?.includes("Change 2"))!
+      .click(),
+  );
+  expect(card()!.textContent).toContain("The last fix failed: Git couldn't sign a commit");
+  const see = Array.from(card()!.querySelectorAll("a")).find(
+    (a) => a.textContent === "See what the agent did",
+  )!;
+  expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
+  expect(button("Fix").textContent).toContain("Fix");
+});
+
+it("keeps a failed fix of a pull request in the queue for the card", () => {
+  const { items } = upNext(
+    [mine(2, { checks: "failing" })],
+    [],
+    [fixJobOf({ state: "failed", has_transcript: false })],
+  );
+  expect(items[0]!.failedFix!.id).toBe("fix-1");
+});
+
+it("shows nothing as cleared on starting a fix", async () => {
+  await render();
+  jobsList = [fixJobOf({ state: "queued", phase: "" })];
+  await render();
+  expect(cleared()).toBeNull();
+  expect(node.textContent).toContain("An agent is fixing #2 Change 2 · Queued");
+  expect(node.querySelector('[aria-label="0 of 3 cleared today"]')).not.toBeNull();
 });
