@@ -68,7 +68,8 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
-| `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, and the citation validator; no prompt |
+| `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, the citation validator, and the published extraction prompt |
+| `features` | grouping work into features: the assigner, summarizer and consolidation model calls with their published prompt versions, decision attribution, status and the large-update rule; [rules](features/README.md) |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
@@ -873,7 +874,10 @@ them; the hosted service imports it with its own private prompt.
   strict JSON Schema whose properties marshal in the order the model should
   write them. `PromptVersion` is the first 12 hex characters of the SHA-256 of
   the prompt and the marshalled schema, so cached extractions can be keyed on
-  it. The package ships no prompt.
+  it. `NewPublicExtractor` sends the published prompt,
+  `decisions-public-v1`; its `PromptVersion` is that name followed by the
+  hash, so its extractions never share a cache with a host's prompt of the
+  same text.
 - **Reply.** `ParseReply` decodes the reply strictly (unknown, missing or
   trailing data is an error) and normalizes it. `ValidateCitations` keeps the
   model's order and removes only what is wrong: turns that are not transcript

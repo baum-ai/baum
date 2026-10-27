@@ -111,9 +111,9 @@ func EstimateTokens(system, user string) int64 {
 const FramingTokens = 1024
 
 // Extractor asks a model for the decisions in a transcript with one system
-// prompt, and validates the reply. This package ships no prompt: the host
-// supplies its own, so a private hosted prompt and a public one share the
-// schema, parser and validator.
+// prompt, and validates the reply. The host supplies the prompt, so a private
+// hosted prompt and the published one (NewPublicExtractor) share the schema,
+// parser and validator.
 type Extractor struct {
 	system  string
 	version string
