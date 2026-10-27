@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/clonefind"
@@ -476,6 +477,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
 		}
+		// The delivery figures' searches, cached per repository; an account
+		// change forgets them.
+		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
 				return func(bool) {}
@@ -489,6 +493,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					worker.ResetIdentity()
 					notify.ResetIdentity()
 					pickList.ResetIdentity()
+					delivery.Reset()
 				}
 				finish(changedAccount)
 			}
@@ -498,7 +503,19 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
 		refreshRepository := func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: planusage.NewService().Handler(), Merge: uiserver.MergeHandler(registry, githubClient, refreshRepository, changed), Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: githubClient}, refreshRepository, changed), Changed: settingsChanged,
+		// Analytics keeps aggregates only, in the state directory: an index
+		// of the sessions in registered clones, the merges, branch updates
+		// and re-runs made from the app, and plan usage samples.
+		plans := planusage.NewService()
+		planHistory := &planusage.History{Path: filepath.Join(state, "plan-usage-history.json"), Service: plans}
+		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
+		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
+		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
+		// A session that ended has its last lines written: read it soon.
+		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
+			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
+		})
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
@@ -523,6 +540,24 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				if live != nil {
 					wg.Go(func() { live.Run(ctx) })
 				}
+				wg.Go(func() { sessionIndex.Run(ctx) })
+				wg.Go(func() { planHistory.Run(ctx) })
+				wg.Go(func() { delivery.Run(ctx) })
+				if endedSessions != nil {
+					wg.Go(func() {
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case _, ok := <-endedSessions:
+								if !ok {
+									return
+								}
+								sessionIndex.Trigger()
+							}
+						}
+					})
+				}
 				wg.Go(func() {
 					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
 				})
@@ -535,6 +570,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				api.Close()
 				unsubscribe()
 				unsubscribeClones()
+				unsubscribeEnded()
 				events.Close()
 				_ = groups.Close()
 				_ = registry.Close()

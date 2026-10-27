@@ -24,6 +24,7 @@ import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
 import { SessionsPage } from "./sessions";
 import { SessionTranscriptPage } from "./session-transcript";
+import { AnalyticsPage } from "./analytics";
 import { Notice, PageBar, Sidebar } from "./shell";
 import {
   appBase,
@@ -468,7 +469,7 @@ function Workspace({ url }: { url: UrlState }) {
     <div className="local-shell">
       <Sidebar
         page={
-          page === "jobs" || page === "repositories" || page === "sessions"
+          page === "jobs" || page === "repositories" || page === "sessions" || page === "analytics"
             ? page
             : page === "settings" || page === "diagnostics"
               ? "settings"
@@ -547,6 +548,8 @@ function Workspace({ url }: { url: UrlState }) {
               prHref={sessionPR}
               Link={LocalLink}
             />
+          ) : page === "analytics" ? (
+            <AnalyticsPage Link={LocalLink} />
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer" />

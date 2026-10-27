@@ -53,6 +53,9 @@ type LocalAPI struct {
 	// PlanUsage serves /api/plan-usage: what remains of the Claude and Codex
 	// plans.
 	PlanUsage http.Handler
+	// Analytics serves /api/analytics: what the agents did, cost and
+	// delivered (internal/analytics).
+	Analytics http.Handler
 	Changed   func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
@@ -127,6 +130,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))

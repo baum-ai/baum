@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import {
+  ChartIcon,
   type IconProps,
   PullRequestIcon,
   RepositoryIcon,
@@ -11,7 +12,7 @@ import {
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 
-type Page = "inbox" | "sessions" | "jobs" | "repositories" | "settings";
+type Page = "inbox" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
@@ -44,6 +45,12 @@ export function Sidebar({
       href: appURL("?page=sessions"),
       icon: SessionsIcon,
       badge: runningSessions > 0 ? runningSessions : null,
+    },
+    {
+      page: "analytics",
+      label: "Analytics",
+      href: appURL("?page=analytics"),
+      icon: ChartIcon,
     },
     {
       page: "repositories",

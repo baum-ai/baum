@@ -696,6 +696,51 @@ are refused. Results are kept in the daemon's memory for five minutes, at most
 one request a minute, and are served only by `GET /api/plan-usage` behind the
 daemon's authenticated Host/Origin boundary.
 
+For the Analytics page the daemon also reads the plans every 15 minutes while
+it runs, through the same cache, so Claude's endpoint is asked at most that
+often even with no window open. It keeps only the snapshot time, provider,
+window name, percent used and reset time, in `plan-usage-history.json` in its
+state directory (`$XDG_STATE_HOME/baum`, default `~/.local/state/baum`), for 90
+days.
+
+### Analytics
+
+The Analytics page (`GET /api/analytics`) is built from what is already on the
+computer, plus one GitHub search per picked repository:
+
+- **Agent sessions.** The daemon reads the Claude Code, Codex and Cursor session
+  stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
+  the same files the PR page reads, but only sessions whose working directory is
+  inside a registered clone and that were written in the last 90 days. It keeps
+  aggregates only, in `analytics-index.json` in its state directory (owner-only, 0600): per
+  session file, its path, size and modification time (to
+  read only what changed), the agent, session id, clone and repository, the
+  top-level branch, start and end, active seconds by hour, counts of human
+  prompts, tool calls, failed tool calls, subagents and model calls, token sums
+  by model, and the ids of commits the session recorded creating. No prompt,
+  reply, tool input or output, file path inside the repository or other session
+  text is stored. baum's own generation runs are marked and never counted.
+- **Your commits.** In each registered clone it reads the configured
+  `user.email` and lists that author's commits on local branches from the last
+  90 days (ids, dates and trailers), through the same private read-only
+  repository the PR page uses; nothing is fetched. They are held in memory for
+  five minutes and not stored.
+- **baum's own work.** The jobs list (`jobs.json`) and a small ledger,
+  `analytics-actions.json`, of the merges, branch updates and check re-runs you
+  made from the app (time, kind, repository and pull request number), kept 90
+  days.
+- **Delivery.** For each picked repository, one GraphQL search of GitHub with
+  your GitHub token for the pull requests you opened in the last 90 days
+  (`repo:owner/name is:pr author:@me`): number, state, draft, created and
+  merged times, the first reviews' times and authors, whether GitHub reports a
+  conflict and the head commit's combined check state. It is a read; the answer
+  is kept in the daemon's memory for an hour, never on disk, and forgotten when
+  the GitHub account changes. A failure is shown in fixed words, never GitHub's
+  text.
+
+Nothing of it is sent anywhere else. Costs are computed on the computer from the
+price list.
+
 ### Finding clones on this computer
 
 The daemon looks for local clones of the repositories you pick, so you are not

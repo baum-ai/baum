@@ -1823,6 +1823,35 @@ Anthropic's undocumented `https://api.anthropic.com/api/oauth/usage`, called wit
 Claude Code's stored OAuth token, which is never refreshed, logged or stored.
 That is the one outbound host the feature adds. Results are cached five minutes,
 with at most one read a minute. See its [README](internal/planusage/README.md).
+`planusage.History` samples the plans every 15 minutes while the daemon runs and
+keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
+
+### Local analytics
+
+`internal/analytics` serves `GET /api/analytics?days=7|30|90&repo=&agent=`
+(`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
+started in `localApplication`:
+
+- `Index` keeps per-session aggregates in `analytics-index.json` in the state
+  directory, for sessions whose working directory is inside a registered clone
+  (`sessions/collector.FindSessions` per clone with its worktrees, then
+  `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
+  files' sizes and modification times, so a refresh reads only what changed; it
+  runs at start, every five minutes and on a `session-end` hook event, and
+  answers requests with what it has and its progress while it works.
+- The report prices usage at read time from `pricing.Active()` (grouped by
+  model, speed and long-prompt band), counts the hosted way (root sessions,
+  human prompts, each commit once), and computes the agent-written share from
+  the clones' commits by their `user.email` (`gitlocal.AuthoredCommits`) against
+  the sessions' created commits, Entire checkpoints and co-author trailers.
+- baum's own work comes from the jobs queue and `Actions`, a ledger in
+  `analytics-actions.json` that the merge and update handlers' writers record
+  into when GitHub accepts a write (`Actions.RecordMerges`, `RecordUpdates`).
+- `Delivery` caches one GitHub search per picked repository
+  (`github.AuthoredPullRequests`) for an hour; a request starts the search and
+  answers `loading` rather than waiting.
+
+See its [README](internal/analytics/README.md).
 
 ## Authenticated local application host
 

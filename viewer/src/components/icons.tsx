@@ -350,6 +350,16 @@ export function TimelineIcon(props: IconProps) {
   );
 }
 
+/** A column chart: three bars standing on a baseline, for analytics. */
+export function ChartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 13.5h11" />
+      <path d="M4.75 11V8M8 11V3.5M11.25 11V6" />
+    </Icon>
+  );
+}
+
 /** A house: the organisation's home page. */
 export function HomeIcon(props: IconProps) {
   return (
