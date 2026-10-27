@@ -51,6 +51,16 @@
           }
         ],
         "matcher": "TaskCreate|TaskUpdate"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code post-tool-use >/dev/null 2>&1; then exec baum hooks agent --user claude-code post-tool-use; fi'",
+            "async": true
+          }
+        ],
+        "matcher": ""
       }
     ],
     "Stop": [
@@ -81,6 +91,17 @@
           {
             "type": "command",
             "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code subagent-stop >/dev/null 2>&1; then exec baum hooks agent --user claude-code subagent-stop; fi'"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v baum >/dev/null 2>&1 && baum hooks agent --check --user claude-code notification >/dev/null 2>&1; then exec baum hooks agent --user claude-code notification; fi'"
           }
         ],
         "matcher": ""

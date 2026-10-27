@@ -89,7 +89,7 @@ func waitState(t *testing.T, q *Queue, id, state string) Job {
 }
 func TestConfirmationCancellationDuringRepairAndRunningDedupe(t *testing.T) {
 	q, f := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, err := q.Submit(context.Background(), e.ID, false, false); err == nil {
 		t.Fatal("unconfirmed spend accepted")
 	}
@@ -98,7 +98,7 @@ func TestConfirmationCancellationDuringRepairAndRunningDedupe(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-f.started
-	again := estimate(t, q, "single", Item{"other-clone", 1})
+	again := estimate(t, q, "single", Item{Clone: "other-clone", PR: 1})
 	if _, err = q.Submit(context.Background(), again.ID, true, false); err == nil {
 		t.Fatal("duplicate running job accepted")
 	}
@@ -112,12 +112,12 @@ func TestConfirmationCancellationDuringRepairAndRunningDedupe(t *testing.T) {
 }
 func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	q, f := newQueue(t)
-	first := estimate(t, q, "single", Item{"clone", 1})
+	first := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, e := q.Submit(context.Background(), first.ID, true, false); e != nil {
 		t.Fatal(e)
 	}
 	<-f.started
-	batch := estimate(t, q, "batch", Item{"clone", 2}, Item{"clone", 3})
+	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 2}, Item{Clone: "clone", PR: 3})
 	if *batch.EstimateUSD != 4 {
 		t.Fatal(batch)
 	}
@@ -128,7 +128,7 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	f.mu.Lock()
 	f.head = "second"
 	f.mu.Unlock()
-	next := estimate(t, q, "single", Item{"second-clone", 2})
+	next := estimate(t, q, "single", Item{Clone: "second-clone", PR: 2})
 	replacement, e := q.Submit(context.Background(), next.ID, true, false)
 	if e != nil {
 		t.Fatal(e)
@@ -145,17 +145,17 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 }
 func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {
 	q, f := newQueue(t)
-	busy := estimate(t, q, "single", Item{"clone", 1})
+	busy := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, e := q.Submit(context.Background(), busy.ID, true, false); e != nil {
 		t.Fatal(e)
 	}
 	<-f.started
-	first := estimate(t, q, "single", Item{"clone", 2})
+	first := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	queued, e := q.Submit(context.Background(), first.ID, true, false)
 	if e != nil {
 		t.Fatal(e)
 	}
-	again := estimate(t, q, "single", Item{"clone", 2})
+	again := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	same, e := q.Submit(context.Background(), again.ID, true, false)
 	if e != nil || same[0].ID != queued[0].ID {
 		t.Fatal("identical confirmation not idempotent", same, e)
@@ -163,7 +163,7 @@ func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {
 	f.mu.Lock()
 	f.digest = "larger-budget"
 	f.mu.Unlock()
-	changed := estimate(t, q, "single", Item{"clone", 2})
+	changed := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	replacement, e := q.Submit(context.Background(), changed.ID, true, false)
 	if e != nil {
 		t.Fatal(e)
@@ -183,7 +183,7 @@ func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {
 func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 	q, f := newQueue(t)
 	f.restricted = true
-	one := estimate(t, q, "single", Item{"clone", 1})
+	one := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, e := q.Submit(context.Background(), one.ID, true, false); e == nil {
 		t.Fatal("isolation confirmation bypassed")
 	}
@@ -191,7 +191,7 @@ func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 		t.Fatal(e)
 	}
 	<-f.started
-	batch := estimate(t, q, "batch", Item{"clone", 2})
+	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 2})
 	if batch.Items[0].BlockedReason != "isolation_confirmation_required" {
 		t.Fatal(batch)
 	}
@@ -204,7 +204,7 @@ func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 // with no estimate.
 func TestChangedHeadFailsClosedAndUnknownPriceRuns(t *testing.T) {
 	q, f := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	f.mu.Lock()
 	f.head = "changed"
 	f.mu.Unlock()
@@ -212,7 +212,7 @@ func TestChangedHeadFailsClosedAndUnknownPriceRuns(t *testing.T) {
 		t.Fatal("stale head accepted")
 	}
 	f.price = nil
-	e = estimate(t, q, "single", Item{"clone", 1})
+	e = estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if e.Items[0].BlockedReason != "" || e.EstimateUSD != nil {
 		t.Fatal(e)
 	}
@@ -228,7 +228,7 @@ func TestUnpricedBackendRuns(t *testing.T) {
 	f.mu.Lock()
 	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
 	f.mu.Unlock()
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if e.EstimateUSD != nil || e.Items[0].BlockedReason != "" || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
 		t.Fatalf("estimate = %+v", e)
 	}
@@ -248,14 +248,14 @@ func TestUnpricedBackendRuns(t *testing.T) {
 	f.mu.Lock()
 	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
 	f.mu.Unlock()
-	e = estimate(t, q, "single", Item{"clone", 1})
+	e = estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true}); err == nil {
 		t.Fatal("a fork run was queued without isolation confirmation")
 	}
 	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Isolation: true}); err != nil {
 		t.Fatal(err)
 	}
-	batch := estimate(t, q, "batch", Item{"clone", 2})
+	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 2})
 	if batch.Items[0].BlockedReason != "isolation_confirmation_required" {
 		t.Fatalf("batch = %+v", batch)
 	}
@@ -288,7 +288,7 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 }
 func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
 	q, f := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	jobs, err := q.Submit(context.Background(), e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestShutdownStopsWaitingAtDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { close(stuck.release); q.Close() })
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, err = q.Submit(context.Background(), e.ID, true, false); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestOneProcessOwnsTheJournal(t *testing.T) {
 func TestDrainAndSubmitNeverBothSucceed(t *testing.T) {
 	for range 50 {
 		q, f := newQueue(t)
-		e := estimate(t, q, "single", Item{"clone", 1})
+		e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 		var drained bool
 		var submitted []Job
 		var submitErr error
@@ -393,7 +393,7 @@ func TestDrainAndSubmitNeverBothSucceed(t *testing.T) {
 
 func TestSubmitWhileRestartingIsAServiceUnavailableToRetry(t *testing.T) {
 	q, _ := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if !q.Drain() {
 		t.Fatal("empty queue not drained")
 	}
@@ -426,7 +426,7 @@ func TestOpenWaitsForThePreviousOwner(t *testing.T) {
 }
 func TestQueuePersistenceFailureDoesNotStartSpend(t *testing.T) {
 	q, f := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	q.mu.Lock()
 	q.path = filepath.Join(q.path, "not-a-directory")
 	q.mu.Unlock()
@@ -477,13 +477,13 @@ func TestSlowPreflightDoesNotBlockCancellationAndConcurrentEstimateUse(t *testin
 		t.Fatal(e)
 	}
 	defer q.Close()
-	first := estimate(t, q, "single", Item{"clone", 1})
+	first := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	running, e := q.Submit(context.Background(), first.ID, true, false)
 	if e != nil {
 		t.Fatal(e)
 	}
 	<-base.started
-	next := estimate(t, q, "single", Item{"clone", 2})
+	next := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	f.muBlock.Lock()
 	f.blocking = true
 	f.muBlock.Unlock()
@@ -522,12 +522,12 @@ func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
 		}
 		notifications <- job
 	}
-	first := estimate(t, q, "single", Item{"clone", 1})
+	first := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if _, e := q.Submit(context.Background(), first.ID, true, false); e != nil {
 		t.Fatal(e)
 	}
 	<-f.started
-	queued := estimate(t, q, "single", Item{"clone", 2})
+	queued := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	jobs, e := q.Submit(context.Background(), queued.ID, true, false)
 	if e != nil {
 		t.Fatal(e)
@@ -561,7 +561,7 @@ func privateDir(t *testing.T) string {
 
 func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	q, f := newQueue(t)
-	e := estimate(t, q, "single", Item{"clone", 1})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	jobs, err := q.Submit(context.Background(), e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)

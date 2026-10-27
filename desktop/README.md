@@ -261,6 +261,16 @@ The daemon outlives the app, so the app's presence is a tray icon.
   1 queued"); anything needing attention; Pause or Resume automatic reviews;
   Start at login; Command Line and Hooks… (see "First run"); a Notifications
   submenu (see "Notifications"); Quit; Quit and stop background reviews.
+- **Waiting on you.** While some pull requests wait on the user (review
+  requested from them, or their own with changes requested, failing checks or
+  a conflict, the "Review requested" and "Needs changes" groups of the app's
+  Pull requests),
+  the menu shows a disabled line such as "3 pull requests waiting on you", the
+  tooltip appends it, and the dock badge (macOS; any other platform whose
+  window badge Tauri supports, ignored silently elsewhere) shows the count.
+  Zero, an unknown count and a daemon that is not running clear all three. The
+  daemon counts them: `GET /api/index?view=waiting`, polled with the other
+  tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -297,7 +307,7 @@ Two channels, each the least that does the job:
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
    for what the daemon exposes only there: `GET /api/jobs` and
-   `GET /api/automatic` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/automatic` and `GET /api/index?view=waiting` every 3 s while jobs run and every 10 s otherwise,
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks), and
    `PUT /api/automatic`. This is the credential the app already reads for the
    window and the health check, accepted on `/api/` routes only; the request
@@ -359,35 +369,60 @@ daemon serves are not involved.
 | Review failed, with its failure category | `notice` `review_failed` |
 | Review requested from me | `notice` `review_requested` |
 | Review generated automatically | `notice` `review_automatic` |
+| My pull request: checks failing | `notice` `checks_failed` |
+| My pull request: merge conflict | `notice` `conflict` |
+| My pull request: changes requested | `notice` `changes_requested` |
+| My pull request: ready to merge | `notice` `ready_to_merge` |
+| Fix pushed, with its short commit | `notice` `fix_pushed` |
+| Fix failed, with its failure category | `notice` `fix_failed` |
+| Agent needs my permission | `notice` `session_permission` |
+| Agent waiting for my answer | `notice` `session_input` |
 | Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
+
+The agent session notifications read like "Claude Code needs your
+permission · acme/demo" or "Codex is waiting for your answer · acme/demo",
+with the line the agent showed (masked by the daemon; Codex sends none, so
+"It asks to run a tool.") and the branch and pull request as the text. The
+daemon publishes one when a session begins waiting for a permission or an
+answer, once per wait, never for a turn that just finished (see "Live
+sessions" in ARCHITECTURE.md).
+
+The pull request notifications read like "Checks failing · acme/demo #12",
+with the pull request's title as the text. They are about the user's own pull
+requests and fire when the state changes between two daemon polls, never for a
+pull request seen for the first time or for the daemon's first look at a
+repository.
 
 `notice` events are published by the daemon (`oss/internal/notices`, see
 `ARCHITECTURE.md`); the cap notification comes from the scheduler's existing
 `automatic` event. There is no default cap, so the cap notification exists only
 for a user who set one. The text comes only from fields the daemon already
 redacted: the repository, the pull request title as GitHub returned it
-(control characters stripped, 200 characters at most), the stored risk score
-and the failure category. A title is shown unchanged; where a Linux
+(control characters stripped, 200 characters at most), the stored risk score,
+the failure category, and an agent session's branch and masked message. A title is shown unchanged; where a Linux
 notification server renders markup, its `<`, `>` and `&` are escaped so the
 title is not interpreted.
 
 - **Click.** Clicking a notification shows the window if it is hidden or
   minimised, brings it to the front and loads
-  the pull request (`?clone=<id>&pr=<number>`) or, for the cap and for a
+  the pull request (`?clone=<id>&pr=<number>`), for an agent session its
+  transcript (`?page=sessions&session=<agent>:<id>`) or, for the cap and for a
   notice with no registered clone, the jobs list (`?page=jobs`). The app learns
   the daemon's secret app path with one `POST /api/auth/exchange` and loads the
   URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
   toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
   platform; no real notification was shown in testing.
 - **Focus.** No notification shows while the window has focus on the same pull
-  request (the same clone and number).
+  request (the same clone and number), nor an agent session's while it has
+  focus on that session's transcript.
 - **Permission.** The app never asks at launch. The operating system is asked
   when the first notification is due. Linux and Windows have no per-app prompt
   and macOS prompts when the first notification posts; `notify-rust` does not
   report a macOS refusal, so a refusal there simply shows nothing. A refusal
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
-- **Settings.** Each kind is on by default. A "Notifications" submenu with one
+- **Settings.** Each kind is on by default, and so is a kind added after
+  `notifications.json` was written. A "Notifications" submenu with one
   check item per kind is in the macOS menu bar and in the tray menu. Linux and
   Windows windows have no menu bar, so there the tray holds them. The choices, the
   permission answer, and the daily-cap pauses already announced (so a restart

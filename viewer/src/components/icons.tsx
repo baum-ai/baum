@@ -350,6 +350,26 @@ export function TimelineIcon(props: IconProps) {
   );
 }
 
+/** A column chart: three bars standing on a baseline, for analytics. */
+export function ChartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 13.5h11" />
+      <path d="M4.75 11V8M8 11V3.5M11.25 11V6" />
+    </Icon>
+  );
+}
+
+/** A tray: what waits on the person. */
+export function InboxIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 9 4.25 3.5h7.5L13.5 9v3.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
+      <path d="M2.5 9h3l1 1.5h3l1-1.5h3" />
+    </Icon>
+  );
+}
+
 /** A house: the organisation's home page. */
 export function HomeIcon(props: IconProps) {
   return (

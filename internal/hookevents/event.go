@@ -44,7 +44,9 @@ const (
 // Bounds on what one event carries, so an encoded event stays well below the
 // control protocol's 64 KiB line.
 const (
-	maxField     = 2048
+	maxField = 2048
+	// maxMessage bounds a notification's text: the app shows one line of it.
+	maxMessage   = 512
 	maxGitLines  = 64
 	maxGitLine   = 256
 	maxGitArgs   = 4
@@ -82,8 +84,9 @@ type Event struct {
 }
 
 // Session is the part of an agent hook's payload an event keeps: identifiers
-// and paths only. Prompts, tool input and output, and anything else the
-// payload carries are never kept.
+// and paths, and for a notification the line the agent showed its user.
+// Prompts, tool input and output, and anything else the payload carries are
+// never kept.
 type Session struct {
 	// ID is the agent's session id (Cursor's conversation id).
 	ID string `json:"id,omitempty"`
@@ -98,6 +101,12 @@ type Session struct {
 	// why it ended, where the agent reports them.
 	Source string `json:"source,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// NotificationType and Message are a Claude Code notification's
+	// (permission_prompt, idle_prompt, ...) and the text it showed, such as
+	// "Claude needs your permission to use Bash", cut to a few hundred
+	// bytes. No other event carries them.
+	NotificationType string `json:"notification_type,omitempty"`
+	Message          string `json:"message,omitempty"`
 }
 
 // Git is a Git hook run.
@@ -130,6 +139,9 @@ func New(kind, agent, name, dir, client string) Event {
 func (e *Event) Bound() {
 	for _, field := range e.fields() {
 		*field = cut(*field, maxField)
+	}
+	if s := e.Session; s != nil {
+		s.Message = cut(s.Message, maxMessage)
 	}
 	if g := e.Git; g != nil {
 		if len(g.Args) > maxGitArgs {
@@ -167,7 +179,7 @@ func (e *Event) Bound() {
 func (e *Event) fields() []*string {
 	fields := []*string{&e.Agent, &e.Name, &e.Dir, &e.Client}
 	if s := e.Session; s != nil {
-		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason)
+		fields = append(fields, &s.ID, &s.TranscriptPath, &s.Cwd, &s.HookEvent, &s.Source, &s.Reason, &s.NotificationType, &s.Message)
 	}
 	if g := e.Git; g != nil {
 		for i := range g.Args {

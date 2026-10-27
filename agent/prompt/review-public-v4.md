@@ -319,7 +319,8 @@ Use it for what a reviewer of this section must not miss.
 
 Blocks carry structured detail. Use those that help; most sections need two
 or three. A section has at most one of each of `intent`, `behavior`,
-`entities`, `groups`, `decisions`, `dependency`, `included_prs`.
+`groups`, `decisions`, `dependency`, `included_prs`. Do not write an
+`entities` block.
 
 - `intent`: why this part exists, with anchors to where the reason is stated
   (`pr_body`, a `prompt`, a `commit`, an `issue`). Leave it out rather than
@@ -327,8 +328,6 @@ or three. A section has at most one of each of `intent`, `behavior`,
 - `behavior`: the runtime behaviour after the change, as ordered steps
   (`beh_…`), each anchored to at least one hunk that implements it and
   listing the `ev_…` items that support it, if any.
-- `entities`: files, types, functions, endpoints, tables, migrations, config
-  keys or versions added, changed, removed or renamed, with their hunks.
 - `groups`: for the mechanical section: `{id: "grp_…", rule, hunks,
   count}`.
 - `decisions`: choices made during the work, from a session's `decisions`.

@@ -534,6 +534,19 @@ and `CODEX_HOME` under `<run>/home` with a fixed `PATH`, and requires an
 this. `codex.StrictSchema` turns the lenient review schema into the form
 OpenAI's strict structured outputs accept.
 
+`agent.Fixer` is the one write mode, for a fix a person confirmed
+(`internal/fix`, see "Fix jobs" below): `Fix` runs the agent over a checkout
+it may edit, with no schema, and returns its final message as the summary.
+Only the local profiles implement it. `claude` keeps restricted mode and the
+other review flags but has `Read,Glob,Grep,Edit,Write` and `--permission-mode
+acceptEdits`: it edits files and runs nothing. `codex` runs `--sandbox
+workspace-write` with `sandbox_workspace_write.network_access=false`,
+`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
+`Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
+`anthropic` have no write mode. The fix instructions are
+`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
+`fix-threads.md`).
+
 `agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
 one profile and refuses a request with an `Endpoint`. Before its first run a
 `Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
@@ -680,17 +693,26 @@ type Prompt struct {
 ```
 
 The module ships and maintains its own public prompt in `agent/prompt`:
-`review-public-v3.md`, shared by every backend and ending with a "Submitting"
+`review-public-v4.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
 and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v3` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v4` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
-each backend submits its result differently.
+each backend submits its result differently. `GroupPrompts` is the local
+review group's prompt (`group-review-public-v2`): the same text with
+`group-public-v1.md` inserted before the Submitting heading, which says how a
+group's bundle, per-member checkout and `members.json` differ and what a
+combined review covers (see "Review groups").
+
+A host can also pass `Run.Decorate`, which the loop applies to every document
+the model returns before masking and validation, to fill what the host
+decides and the model never writes: a review group's `stack` and each
+section's `pull_requests`.
 
 The loop owns the rest of what a run sends:
 
@@ -1347,7 +1369,8 @@ answer is 404. The answer keeps the linked sessions' graphs for this
 (`Result.Graphs`, never part of its JSON).
 
 The transcript is shaped and bounded first, from the graph as read, and
-redacted after, so nothing past the limits below is ever redacted or held:
+redacted after, so nothing past the limits below is ever redacted or held
+(`transcript.Renderer`, which the live sessions' transcripts use too):
 
 1. `internal/transcript` builds it (below). Each text it keeps (a prompt, a
    reply, an agent message, a tool call's input or output) is read up to 8 KiB past its
@@ -1614,10 +1637,14 @@ the hosted service's own command, `git archive --format=tar
 --worktree-attributes`, so it is the same archive: the clone's attributes and
 filters are not applied.
 
-The clone is written to only when it lacks a pull request commit: baum
-fetches it under `refs/baum/`, with the user's git configuration and no
-hooks. A partial clone missing the pull request's objects is reported, not
-fetched from on demand.
+The clone is written to only when it lacks a pull request commit: generation
+(`baum internal generate` and the daemon's jobs) fetches the head from
+`refs/pull/<N>/head` and the base from its branch, falling back to the commit
+id, into `refs/baum/pull/<N>/`, from the remote whose URL names the pull
+request's repository (`upstream` in a fork clone), with the user's git
+configuration and no hooks. A fetch that fails, or a clone with no such
+remote, fails the run with the `git fetch` to run. A partial clone missing the
+pull request's objects is reported, not fetched from on demand.
 
 `baum internal bundle` stops after step 5, and never fetches: a pull request commit
 the clone lacks fails the command with the `git fetch` to run, so it reads
@@ -1705,6 +1732,17 @@ the backend's `Check` with `generate.ExplicitPathError` naming
 runner both build their backends from the resolved configuration, and
 per-repository settings do not override the paths.
 
+`config.Config.AgentEnv` (TOML `[agent_env]`, validated names, at most 32) is
+the user's environment for agents; the app's `repos.Preferences.AgentEnv`,
+edited with `PUT /api/settings/agent-env`, replaces it when it sets anything.
+`AgentEnviron` expands a leading `~` and `$NAME` from the daemon's
+environment. `generate.DefaultBackendsFor` gives it to the `claude` (User
+profile), `codex` (Local profile) and `cursor-agent` backends, which set it
+over `LocalEnvironment` with `agent.WithUserEnv` before their own run
+variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
+it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
+push, without the variables that would redirect git.
+
 ## Explicit local repository registry
 
 `internal/repos` owns the private SQLite database beside `config.Path()` and
@@ -1791,6 +1829,45 @@ reserves non-overlapping resolved target paths and refuses starts during shutdow
 picks the repository if needed, registers the result with `Registry.AddFor` and
 publishes the registry change. See its [README](internal/githubrepos/README.md).
 
+### Plan usage
+
+`internal/planusage` serves `GET /api/plan-usage` (`uiserver.LocalAPI.PlanUsage`):
+what remains of the Claude and Codex plans. Codex comes from the newest
+`token_count` rate-limit snapshot in `$CODEX_HOME/sessions`; Claude from
+Anthropic's undocumented `https://api.anthropic.com/api/oauth/usage`, called with
+Claude Code's stored OAuth token, which is never refreshed, logged or stored.
+That is the one outbound host the feature adds. Results are cached five minutes,
+with at most one read a minute. See its [README](internal/planusage/README.md).
+`planusage.History` samples the plans every 15 minutes while the daemon runs and
+keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
+
+### Local analytics
+
+`internal/analytics` serves `GET /api/analytics?days=7|30|90&repo=&agent=`
+(`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
+started in `localApplication`:
+
+- `Index` keeps per-session aggregates in `analytics-index.json` in the state
+  directory, for sessions whose working directory is inside a registered clone
+  (`sessions/collector.FindSessions` per clone with its worktrees, then
+  `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
+  files' sizes and modification times, so a refresh reads only what changed; it
+  runs at start, every five minutes and on a `session-end` hook event, and
+  answers requests with what it has and its progress while it works.
+- The report prices usage at read time from `pricing.Active()` (grouped by
+  model, speed and long-prompt band), counts the hosted way (root sessions,
+  human prompts, each commit once), and computes the agent-written share from
+  the clones' commits by their `user.email` (`gitlocal.AuthoredCommits`) against
+  the sessions' created commits, Entire checkpoints and co-author trailers.
+- baum's own work comes from the jobs queue and `Actions`, a ledger in
+  `analytics-actions.json` that the merge and update handlers' writers record
+  into when GitHub accepts a write (`Actions.RecordMerges`, `RecordUpdates`).
+- `Delivery` caches one GitHub search per picked repository
+  (`github.AuthoredPullRequests`) for an hour; a request starts the search and
+  answers `loading` rather than waiting.
+
+See its [README](internal/analytics/README.md).
+
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
@@ -1811,18 +1888,43 @@ It does not persist a second review index.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
-"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?}` with `kind` one of
+"clone"?,"title"?,"risk"?,"risk_status"?,"reason"?,"commit"?,"agent"?,"session"?,
+"branch"?,"message"?}` with `kind` one of
 `review_finished`, `review_failed`, `review_automatic` (an automatic review
-finished) and `review_requested`. They are published when a job finishes or
-fails (not when it is cancelled, interrupted or superseded) and when a
-discovery snapshot shows a pull request newly review-requested from the user
-(a repository's first snapshot after the daemon starts is only a baseline).
+finished), `review_requested`, `checks_failed`, `conflict`,
+`changes_requested`, `ready_to_merge`, `fix_pushed`, `fix_failed`,
+`session_permission` and `session_input`. The last two are an agent session
+that began waiting for the user's permission or answer (see "Live
+sessions"): `agent`, `session` (its id), `branch` and `message` (the
+tracker's cleaned, masked `waiting_message`) name it, `pr` is 0 when its
+branch has none, and the tracker hands each wait over once. The others are
+published when a job finishes or fails (not when it is cancelled, interrupted
+or superseded) and when a discovery snapshot shows a pull request newly
+review-requested from the user (a repository's first snapshot after the
+daemon starts is only a baseline). A fix job gives `fix_pushed` with the
+pushed commit's first seven characters in `commit`, or `fix_failed` with its
+`reason`, instead of a review notice. The four pull request kinds are
+transitions of the user's own pull requests between two successive snapshots
+of one repository: checks became failing, the pull request became conflicting,
+the review decision became changes requested, or the merge state became
+ready (the state the inbox calls Ready). A pull request first seen, or gone
+from the snapshot (closed or merged), gives none; a state GitHub did not
+report keeps the previous one; one that changed several ways gives one notice
+(changes requested, conflict, checks, ready, in that order of precedence).
 The title is GitHub's, trimmed to 200 characters; `risk` (1 to 5) is the
 stored review's score, with `risk_status` `lower_bound` when incomplete
 coverage may hide a higher one; `reason` is the job's failure category and
-nothing free-form. A notice never holds review text, paths or error messages.
+nothing free-form. A notice never holds review text, paths, transcripts or
+error messages.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
+
+`GET /api/index` also carries `waiting`, the number of open pull requests
+waiting on the user: those review-requested from them plus their own with
+changes requested, failing checks or a conflict, each counted once. It is the
+set the app's Pull requests list shows under "Review requested" and "Needs changes".
+`GET /api/index?view=waiting` answers `{"waiting":N}` alone, which is what the
+desktop app polls for its tray text and dock badge.
 
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.
@@ -1843,6 +1945,9 @@ run's outcome afterwards is only a warning, and the lease later expires.
 `internal/discovery` reads the viewer and open pull requests through one GraphQL
 query per repository per poll, plus cursor pagination with 50 pulls per page.
 Each pull includes review, checks and merge states, and up to 100 review threads.
+The repository's `viewerPermission` becomes each pull's `viewer_can_push`
+(write, maintain or admin; null when GitHub does not say), which decides
+whether the app offers a fix.
 Missing state is unknown; unresolved counts are nullable and marked as lower
 bounds when threads exceed the cap. Comment-only reviews use the latest 100
 reviews as a fallback to GitHub's review decision and opinionated reviews.
@@ -1851,13 +1956,26 @@ REST requests. Truncated review requests fail the refresh rather than concealing
 an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
-authorization. This service has no generation or GitHub mutation capability.
+authorization. This service has no generation or GitHub mutation capability;
+the app's GitHub writes (merge, update branch, re-run checks, a confirmed
+fix's `git push` and that fix's replies on the review threads it addressed)
+live outside it (see "Fix jobs" and below).
 
 `Service.Cached` resolves the local credential and reads disk without network
 access. Disk data is stale until a successful poll in the running service.
 `Service.Poll` serializes polls, honors its next deadline, and backs off unchanged
 data from 30 seconds to 15 minutes, respecting GitHub's polling interval and rate
 reset. GraphQL has no ETag; only REST metadata uses conditional requests.
+`Service.PollNow` skips the deadline but not the budgets; the app's refresh
+(`r`) uses it. `Service.Probe` asks, in one GraphQL query for up to 50
+repositories (about one point), for each one's newest open pull request, open
+count and latest update, and reports those that differ from the fingerprint
+its last complete poll recorded. The background worker probes once a minute
+and polls a changed repository at once, so a pull request opened or pushed
+from anywhere shows within about a minute while unchanged repositories keep
+the backoff. A repository never polled or not returned waits for its scheduled
+poll; the probe assumes one credential, leaving out any repository whose
+credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
 REST requests and GraphQL points have separate persisted budgets, with the
 currently limiting budget exposed when exhausted. Both budgets and secondary
@@ -1875,6 +1993,44 @@ shared rate budgets. `GET /api/prs` lists every picked repository, and
 `POST /api/prs/refresh` takes exactly one of `{"clone": id}` or
 `{"repository": "owner/name"}` (a picked repository, with or without a clone;
 unknown is `404`).
+
+Merging is a GitHub write the local app makes, and it lives outside
+discovery. `GET /api/prs/merge-options?repository=&pr=` returns the allowed
+merge methods, GitHub's default for the viewer and the pull request's head and
+mergeability (`Client.MergeOptions`, one GraphQL query). `POST /api/prs/merge`
+takes `{repository, pr, method, head_sha}` and runs GraphQL `mergePullRequest`
+with `expectedHeadOid` set to `head_sha` (`Client.MergePullRequest`), so GitHub
+refuses a pull request whose head moved. Both accept only picked repositories
+(unpicked is `404`), send each document once with no retry, and map GitHub's
+errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
+`409`, `blocked` (required checks, reviews, branch protection) and
+`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
+a merge the daemon runs `Service.PollNow` for the repository and publishes an
+index change so the inbox drops the pull request.
+
+Two more confirmed writes live in `internal/prupdate`, served by
+`uiserver.UpdateHandler` on the same auth, CSRF and picked-repository rules as
+merging. Discovery reports `behind` (GraphQL `mergeStateStatus` `BEHIND`, not a
+draft, not conflicting) on each pull request; a head change in the review index
+clears it with the other merge-state fields. `GET /api/prs/update-branch-options`
+reads the pull request over REST (`fix.ReadPullRequest`: branches, `behind`,
+`conflict`, `fork`) and `POST /api/prs/update-branch` takes `{repository, pr,
+head_sha}`, re-checks that the pull request is open, its head is `head_sha`, it
+is not a fork or conflicting and the account can push (`fix.CanPush`), then
+sends `PUT .../pulls/{n}/update-branch` with `expected_head_sha` through
+`RESTReader.Write`, the one REST method that is not a read. GitHub answers 202
+and merges asynchronously. `GET /api/prs/rerun-checks-options` lists the head's
+workflow runs (`GET .../actions/runs?head_sha=`) whose conclusion is `failure`,
+`cancelled` or `timed_out`, plus the names of failing checks no Actions run is
+behind (`fix.FailingChecks` entries without a job ID: other apps' checks and
+commit statuses), and `POST /api/prs/rerun-checks` takes `{repository, pr,
+head_sha}`, repeats the checks above, re-reads the run list (the request never
+names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
+answers `{rerun, refused}`: an error only when no run started. Errors are
+`{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
+`409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
+anything else `502`. After either write the daemon runs `Service.PollNow` and
+publishes an index change.
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
@@ -1915,8 +2071,9 @@ unavailable, which includes every repository picked without a clone, is
 and a queued job whose clone was removed ends with the reason `needs_clone`
 without running (`cancelled` when automatic, so its head is not used up and
 it counts no spend; `failed` when manual). Pull requests of such a repository are still discovered.
-The runner has no subprocess invocation of baum itself. Only the existing
-read-only agent backends run child processes, cancelled through their context.
+The runner has no subprocess invocation of baum itself. Only the agent
+backends and a fix's git commands run child processes, cancelled through their
+context.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
 generation") queues a job nobody confirmed. It prepares the item like an
@@ -1960,6 +2117,140 @@ one exception is a backend billed outside the list (cursor-agent): its item has
 a nil estimate with an `estimate_reason`, the total is unknown, and
 `Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
 acknowledgement. Unknown actual usage remains null.
+
+### Review groups
+
+`internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
+requests of one repository reviewed together, in `groups.sqlite` in the
+daemon's state directory (beside `jobs.json`), not in a clone. Their combined
+reviews are versions keyed by group ID in the same file, so they never collide
+with a member's own versions in its clone's `versions.sqlite`; deleting a
+group hides it and keeps every version. `/api/groups` serves the definitions
+(create, rename, set members, delete), each with its latest version's
+metadata, risk, the members that version covered and whether it is outdated
+(other members, or a member head in the review index that differs from the one
+reviewed), and a group's versions, documents and patches.
+
+A job item names `{clone, group}` with `pr` 0, so automatic scheduling,
+duplicate-head checks and notices, all keyed by pull request, never match a
+group job. Preparation reads every member from GitHub like a pull request
+job (`Prepared.Members` holds each member's head, which the confirmation
+covers) and needs a saved review of each member in the clone's store, or
+answers `409 {"members_need_reviews": [...]}`. Execution passes
+`generate.Options.Group` and publishes through `reviewgroups.Publisher`.
+`generate.Run` then assembles each member with the ordinary assembler (no
+description images, an equal share of the checkout budget), merges the
+bundles with `assemble.MergeGroup` (the first member's header titled with the
+group's name and a body listing the members, every hunk once in member order,
+the union of the other evidence, one `FileComparison` per member, refitted to
+the caps), unpacks each checkout at `members/<number>/` with no top-level
+`head/`, writes `members.json` (each member's saved review in brief) and runs
+the group prompt. Its decorator sets `stack` (the group's name and each
+member's number, head and saved review version) and each section's
+`pull_requests` from the members whose hunks it lists, so the stored document
+is stack-shaped like a hosted stack review, with `review.pull_request` the
+lowest member. The group page reads patches from the member whose comparison
+changes the file and whose patch holds the cited hunk's range; it lists no
+linked sessions or commits.
+
+### Fix jobs
+
+A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
+shares the queue, journal, concurrency, progress events and cancellation with
+reviews and shows in the same Jobs list. A fix is estimated alone
+(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`)
+and queued only from that confirmed estimate (`POST /api/jobs` with
+`estimate_id`); a direct request is `400` (`ErrFixNeedsConfirmation`), and
+automatic generation never queues one. A review and a fix of one pull request
+neither supersede nor block each other, and a fix of a head does not count as
+that head's review for the automatic scheduler.
+
+`jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
+`/pulls/{n}` for the head, its branch and repository, the base branch and
+`mergeable` (read again once after 1.5 s while GitHub has not computed it),
+`/repos/{o}/{r}` for `permissions.push`, and the head's failing check runs and
+commit statuses. On a pull request the signed-in account opened
+(`viewerDidAuthor`), it also reads the unresolved review threads with one
+GraphQL document (`FixReviewThreads`, up to four pages of 50 threads with the
+first 10 comments of each; `github.Client.UnresolvedThreads`) and keeps,
+through `fix.SelectThreads`, those the account can reply to and resolve whose
+first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
+most 20, dropping other authors' comments and bounding each body to 2 KiB.
+`Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
+digest of the kept threads and their comments) and the branches;
+`fix_threads` previews the threads for the dialog, with
+`fix_threads_capped` and `fix_threads_untrusted`. A fork, an account that
+cannot push, a backend that cannot
+fix, or nothing broken is the item's `blocked_reason` (`fork`,
+`no_push_access`, `unsupported_backend`, `nothing_to_fix`), which the dialog
+explains. The harness, model and budgets resolve as a review's, and the
+estimate is the same budget-sized one. Before running, the executor prepares
+again and refuses a changed head (`head_changed`) or changed fix inputs, then
+reads the failing checks' output and the last 200 lines of up to four GitHub
+Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
+without the token), and reads the review threads again, refusing threads whose
+digest changed (`threads_changed`).
+
+`fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
+registered clone under the user cache directory's `baum/fixes/<id>`, detached
+at the head fetched into `refs/baum/fix/<id>/` from the remote whose URL names
+the repository (`ErrHeadMoved` when the branch moved on). For a conflict it
+merges the base commit itself; a clean merge needs no agent. The agent
+(`agent.Fixer`) runs with the prompt, the untrusted data between nonce-tagged
+markers, and the run budgets. baum then checks that no conflicted file keeps a
+marker, commits what was left (completing the merge), requires a new commit
+that descends from the head, and pushes it with a plain `git push` to the head
+branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+`merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
+records `commit`, `commit_url` and the agent's masked `summary`; a failed one
+a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
+`budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
+`workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+fix of review comments alone fails with `workflow_changed` when its commit
+changes a path under `.github/workflows/` or `.github/actions/`.
+
+A fix also keeps a live transcript of its agent's run for the app: the
+messages, reasoning, tool calls and tool output, taken from the harness's own
+event stream as it is already parsed (`agent.Request.Transcript`, entries of
+`agent.TranscriptEntry`; deliberately apart from `agent.Event`, which never
+holds text). The queue gives the executor `transcripts/<job id>.jsonl` beside
+`jobs.json`, created private (0700/0600), one `{"seq":N,...}` line per entry,
+appended and flushed as each arrives. Title and text are masked with the bundle
+redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
+entry, and only the 50 most recently written transcripts are kept. A tool
+appears as a `running` entry and again, with the same `id`, as `completed` or
+`failed` with its output. `Job.has_transcript` says one exists, and
+`GET /api/jobs/{id}/transcript?after=N` returns `{"entries","next","more","done"}`
+(at most 500 entries after `seq` N; `404` without a transcript). Transcripts
+never leave the machine.
+
+Review threads reach the prompt as untrusted blocks headed with local ids
+(`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
+contains. The agent ends its final message with a JSON array of
+`{"id","addressed","summary"}` in a code fence whose info string is
+`baum-threads <nonce>`, the nonce of the data markers. `parseAnswer` takes the
+last such fence, which must close the message, decodes it strictly (unknown
+fields, wrong types or trailing data answer nothing), ignores unknown and
+repeated ids, masks secrets in each summary and reduces it to one plain line
+of at most 200 characters without links, URLs, HTML, `@` or control and
+format characters; the job's `summary` is the message without the block.
+After a successful push, and only then, `fix.Run` replies on each addressed
+thread through `github.Client`: it reads the thread again by node id
+(`ReviewThreadState`) and skips one now resolved (`already_resolved`) or not
+on this pull request or not open to the account's reply (`failed`), posts
+`Addressed in <short sha>: <summary>` with `addPullRequestReviewThreadReply`,
+then resolves it with `resolveReviewThread`. Each document is sent once,
+never retried. The job's `thread_outcomes` hold each thread's `resolved`,
+`replied` (the reply posted, the resolution not), `skipped`,
+`already_resolved` or `failed` with the agent's cleaned summary; none of these
+fails the fix.
+The worktree, its registration and the refs are removed whatever happens.
+After a push the daemon polls the repository's discovery at once. Git commands
+in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
+`core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
+Before the merge and the agent, `Fix.CheckSigning` makes an unreferenced
+`commit-tree -S` commit when `commit.gpgSign` is set (commit-tree ignores the
+setting), and a failure is `fix.ReasonSigning` with git's error.
 
 ### Local application presentation
 
@@ -2294,8 +2585,10 @@ endpoint.
   `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
-  `hook_event`, `source`, `reason`, read by a streaming scanner from the whole
-  payload, the last of a repeated member winning; nothing else of it) or `git`
+  `hook_event`, `source`, `reason`, and for Claude Code's `notification` its
+  `notification_type` and `message`, cut to 512 bytes, read by a streaming
+  scanner from the whole payload, the last of a repeated member winning;
+  nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
   wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
   trims Git lines and halves the longest fields until the escaped encoding fits
@@ -2433,7 +2726,7 @@ replace it.
 
 - **Events.** `Tracker.Run` subscribes to `Store.Subscribe` (agent events whose
   name it knows), rebuilds from `Store.Recent` (every record, filtered to the
-  last two hours and applied in `event.time` order, since a spooled event is
+  last two hours (and all of a recently ended session) and applied in `event.time` order, since a spooled event is
   recorded late), and follows new events. An event counts when it has an
   agent, a session id, a time and a directory (`session.cwd`, else `dir`). The
   agents share baum's event names, which map to a normalised kind:
@@ -2441,8 +2734,12 @@ replace it.
   to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
   `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
-  runs, and Cursor prompts and compaction); `stop` to `stop`; `session-end` to
-  `end`. Other names are ignored. A session is keyed by agent and id; an id
+  runs, and Cursor prompts and compaction; the user-wide Claude Code plugin
+  also reports every tool call as `post-tool-use`); `notification` (Claude
+  Code) and `permission-request` (Codex) to `wait`; `stop` to `stop`;
+  `session-end` to `end`. Other names are ignored, so an older daemon ignores
+  the wait events a newer plugin sends, and nothing changes for a newer
+  daemon whose plugin sends none. A session is keyed by agent and id; an id
   over 128 bytes or an agent over 32 is not a session baum's hooks describe and
   is ignored. An event id is applied once (the last 4096 are remembered).
 - **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
@@ -2456,20 +2753,52 @@ replace it.
   seconds rather than leaving a session waiting until it times out. Without a
   drop the record is not read, since reading it takes the store's lock, which
   every hook's event needs too.
-- **States.** `running` after a start, prompt or tool event. `idle` after a
-  `stop`, which agents send at the end of every turn (waiting for the user),
-  and for a running session silent longer than `IdleAfter` (10 minutes): an
-  agent that crashed sends nothing, and one thinking for long reports nothing
-  either. `ended` after `end`. Any later work event makes an idle session
+- **States.** `running` after a start, prompt or tool event. `idle` while it
+  waits on its user, and for a running session silent longer than
+  `IdleAfter` (10 minutes): an agent that crashed sends nothing, and one
+  thinking for long reports nothing either.
+- **Waiting.** A session waits on its user for a `waiting_reason`, from
+  `waiting_since`: `permission` after a Claude Code `permission_prompt`
+  notification or a Codex permission request; `input` after a notification
+  asking a question (`elicitation_dialog`, `elicitation_url_dialog`,
+  `agent_needs_input`, `quota_auto_resume_stale`) or of a type it does not
+  know or with none; `turn_finished` after a `stop`, which agents send at the
+  end of every turn, and after Claude Code's `idle_prompt`, which repeats a
+  stop a minute later and never replaces a question asked since.
+  Notifications that ask nothing (`auth_success`, `elicitation_complete`,
+  `elicitation_response`, `agent_completed`, `quota_auto_resume_fired`,
+  `quota_auto_resume_disabled`, `plugin_notification`) are ignored. The same
+  reason again keeps the wait (and its start); a start, prompt or tool event,
+  or the end, clears it. A notification's `message` becomes
+  `waiting_message`: format characters dropped, control characters and runs of
+  spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
+  before it is cut), and cut to 160 characters. Claude Code says nothing when
+  a permission is given, so the user-wide plugin's every-tool-call hook (run
+  in the background, so the agent never waits for it) is what clears a
+  permission wait: at the end of the tool the user allowed. A Codex wait is
+  cleared by its own tool event. `Tracker.Waiting` is told of each
+  `permission` and `input` wait of a shown session once, as it begins (a new
+  session's once it is linked), never of a finished turn, of the waits a
+  rebuild replays or of one that began more than `AnnounceWithin` (5
+  minutes) ago; the daemon hands it to `notices`. `ended` after `end`. Any later work event makes an idle session
   running again; an event after the end, newer than it, starts a new run (a
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
-  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (10 minutes) after
-  its end, which leaves the app time to see the end. At most `MaxSessions`
-  (32) are held: a new one evicts an ended session, else the least recently
-  active. The clock is injected (`Tracker.Now`); `Sweep` applies the timeouts
-  every 30 seconds and the tracker keeps nothing on disk.
+  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (24 hours) after
+  its end, so the Sessions page can list what ended recently. At most
+  `MaxSessions` (200) are held: a new one evicts an ended session (the one
+  that ended longest ago), else the least recently active, so a running session
+  goes only when every session held is running. The clock is injected
+  (`Tracker.Now`); `Sweep` applies the timeouts every 30 seconds. The record
+  rotates by size and can hold less than a day, so the tracker also writes its
+  ended sessions (the API's fields, no path) to `live-sessions.json` in the
+  record's directory when they change, and a rebuild loads them first and then
+  applies the record's events over them; a rebuild also takes all events of a
+  session that ended within `EndedFor`, not only those of the last two hours.
+  An ended session waits for nothing, so the file holds no waiting fields,
+  and files written before them load unchanged; a running session's wait is
+  rebuilt from the record's events, its message included.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -2497,12 +2826,72 @@ replace it.
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers
   `{"sessions":[…]}`, the most recently active first, each
-  `{"agent","session_id","state","started_at","last_activity_at","last_event",
-  "repository","branch"?,"pr"?}`: `state` is `running`, `idle` or `ended`,
-  `last_event` is `start`, `prompt`, `tool`, `stop` or `end`, `repository` is
+  `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
+  "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
+  "repository","branch"?,"pr"?,"title"?,"summary"?}`: `state` is `running`, `idle` or `ended`,
+  `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
+  waiting fields are present while the session waits (see "Waiting"; the
+  message only when the agent sent one), `repository` is
   `owner/name` in lower case, `branch` is absent when detached and `pr` when
-  the branch has no pull request. The working directory and transcript path
+  the branch has no pull request, and `ended_at` unless the state is `ended`. The working directory and transcript path
   stay inside the tracker.
+- **Titles and summaries.** The list is served by `Transcripts`, which adds
+  each session's `title` and `summary` (`Listed`, `title.go`). The title is
+  Claude Code's last `custom-title`, else its last `ai-title`; Codex's last
+  `thread_name` for the id in `~/.codex/session_index.jsonl`; Cursor's
+  composer name. Without one it is the first prompt the user typed (a Claude
+  Code user line that is not meta, a compaction summary, a tool result or a
+  tag-wrapped command; a Codex `user_message` event). The summary is the
+  latest compaction's: a Claude Code `isCompactSummary` user line, without
+  the text wrapped around it, or a Codex `compacted` line's
+  `payload.message` (decoded from the start of the line, which the history
+  after it can make longer than a line is read). The list carries its first
+  numbered section, without the heading, as one line of at most 240
+  characters; the transcript route adds the whole of it (`summary`, masked,
+  at most 32 KiB) whenever it sends the transcript. The files are the
+  transcript's, under the same store checks (`inStore`); a session the hooks
+  named no path for is found by its id (`~/.claude/projects/*/<id>.jsonl`, or
+  the Codex store's index). Transcripts are read from where the last read
+  stopped, 16 MiB at a time (the last 256 KiB name a Claude Code session
+  until a long one is caught up), at most every 5 seconds (30 for Cursor),
+  again only when the files' sizes or times changed, and right away after a
+  failed read. Everything is one line or a block, masked and cut, and
+  dropped with the session.
+- **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
+  (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
+  provider) serves the transcript of a session the tracker lists, and only
+  those: any other agent and id is 404, whatever the disk holds. The file is
+  never named by the request. It is the `transcript_path` the session's
+  hooks last reported (kept in the tracker's entry, never served, and not in
+  `live-sessions.json`), read only when, its symbolic links resolved
+  (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
+  file strictly inside the agent's own store under the home directory, the
+  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  subagent transcript beside it that resolves outside the store is left out.
+  Without a path a Codex session is looked up by id in its store's
+  first-line index (`codex.ScanStore`, once per session); a Claude Code one
+  has no such lookup and is unavailable, as after a restart has only the
+  saved ended sessions. A Cursor session is read from Cursor's own database
+  (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
+  id, since Cursor keeps no transcript file baum reads. The files are mapped
+  with `sessions.Map`, as discovery maps them (a Codex root rollout without
+  its collaboration children, which only a scan of the whole store finds), and
+  rendered by `transcript.Renderer`, the same code as `GET /api/sessions/{id}`
+  (shaped, bounded and redacted as "Session transcripts" describes, home as
+  `~`). Each session's answer is cached: its files are stat'ed at most once a
+  second (Cursor's database, which Cursor writes all the time and whose
+  lookup reads its whole index, once every 5 seconds), and rebuilt only when
+  a file's size or modification time changed; requests arriving together wait
+  for one build. At most 8 transcripts are held, the least recently asked for
+  dropped first, and a session the tracker no longer lists is dropped at the
+  next request. A rebuild that fails (a line caught mid-write) keeps the last
+  good transcript. The answer is `{"available":true,"version","live",
+  "transcript"}`, `version` a hash of the files' paths, sizes and times and
+  `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
+  request's `?version=` is the current one; or `{"available":false,"live",
+  "code":"transcript_unavailable","message"}` with why, in a sentence the app
+  shows.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like
@@ -2514,10 +2903,23 @@ replace it.
   inbox row shows "Agent running" or "Agent idle" (a count when several) for
   sessions of its pull request, matched by repository and number across
   clones; the PR page lists them in a "Sessions in progress" panel, with their
-  agent, state, branch, start and last activity, above the review. Ended
-  sessions are not shown: when one leaves the list the page reads the session
+  agent, state, branch, start and last activity, above the review. The
+  Sessions page (`?page=sessions`, with a sidebar entry counting the sessions
+  waiting on the user, in the caution tone, or else the running ones) lists
+  first, under "Needs you", the sessions with a `waiting_reason` the app
+  knows, longest wait first, then the other running and idle sessions, and
+  those that ended within the retention, newest end first. The inbox and the PR page never show an ended
+  session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
+  Each Sessions row opens the session's transcript
+  (`?page=sessions&session=<agent>:<id>`), drawn with the viewer's
+  `SessionCard`. The view reads it 500 ms after the last of a burst of `live`
+  events and every 3 seconds while the session works (15 while it waits; a
+  change that only moves `last_activity_at` sends no event, and replies are
+  written between hooks), naming the version it shows, and draws again only
+  for a new one, keeping the reader's open turns and, at the end of the page,
+  their place at the end.
 
 ### Transports and control protocol
 

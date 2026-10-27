@@ -211,12 +211,18 @@ export type CostFormat = (cost: number | null, floor: boolean) => string | null;
  *  does not open onto its conversation. `loadSubagentActivity` is given the
  *  root session's run id; a rejection whose `status` is 404 reads as nothing
  *  captured rather than as a failure to retry. A source the host rebuilds on
- *  every render loads again, so keep it stable. */
+ *  every render loads again, so keep it stable.
+ *
+ *  `revision` is for a host whose session grows while it is read, as a live
+ *  one does: when it changes, each turn whose agent activity was loaded loads
+ *  it again, and shows what it had until the new answer arrives. Without it a
+ *  turn's activity is loaded once. */
 export type TranscriptSource = {
   loadSession?: (runId: string) => Promise<TranscriptSession>;
   loadPromptText?: (runId: string, turnId: string) => Promise<{ text: string }>;
   loadTurnActivity?: (runId: string, turnId: string) => Promise<TranscriptActivity>;
   loadSubagentActivity?: (runId: string, sessionId: string) => Promise<TranscriptSubagentActivity>;
+  revision?: string;
 };
 
 export type ActivityState = TranscriptActivity | "loading" | "failed" | null;

@@ -123,6 +123,11 @@ var (
 	}
 )
 
+// CoauthoredAgents are the agents a commit's Co-Authored-By trailers name by
+// address, each once, in the order they appear; a person or an unknown
+// address names none.
+func CoauthoredAgents(trailers []string) []string { return coauthoredAgents(trailers) }
+
 func coauthoredAgents(trailers []string) []string {
 	agents := []string{}
 	seen := map[string]bool{}

@@ -75,7 +75,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   );
   // Closing the panel cannot stop Go-owned polling.
   await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await mode("alice");
   await expect
     .poll(async () => (await (await page.request.get(`${base}api/github-auth`)).json()).login)
@@ -91,7 +91,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(panel).toContainText("baum credential store");
   // A private GitHub read used by generation must resolve this saved account
   // through production config; the mocked external boundary rejects other tokens.
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
@@ -103,7 +103,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await mode("bob");
   await expect(panel).toContainText("Signed in as bob");
   await expect(panel.getByLabel("GitHub sign-in code")).toHaveCount(0);
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
@@ -111,7 +111,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(panel).toContainText("Not connected");
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText(/Local fixture review version/).first()).toBeVisible();
   await page.getByRole("link", { name: "Settings", exact: true }).click();

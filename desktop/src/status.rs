@@ -54,6 +54,21 @@ pub fn parse_jobs(body: &[u8]) -> Result<Jobs, String> {
 }
 
 #[derive(Deserialize)]
+struct WaitingBody {
+    waiting: Option<usize>,
+}
+
+/// `GET /api/index?view=waiting`: how many pull requests wait on the user
+/// (review requested from them, or their own needing changes), counted by the
+/// daemon as the app's inbox groups them.
+pub fn parse_waiting(body: &[u8]) -> Result<usize, String> {
+    let body: WaitingBody =
+        serde_json::from_slice(body).map_err(|e| format!("unreadable waiting count: {e}"))?;
+    body.waiting
+        .ok_or_else(|| "the daemon did not report a waiting count".to_string())
+}
+
+#[derive(Deserialize)]
 struct AutomaticBody {
     enabled: Option<bool>,
     #[serde(default)]
@@ -161,6 +176,9 @@ pub struct Observed {
     pub automatic: Option<Automatic>,
     /// Ids of the checks reporting a problem; `None` until diagnostics ran.
     pub diagnostics: Option<Vec<String>>,
+    /// Pull requests waiting on the user; `None` while unknown, such as a
+    /// daemon without GitHub discovery.
+    pub waiting: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +200,35 @@ pub struct View {
     pub automatic: Option<bool>,
     pub running: usize,
     pub queued: usize,
+    /// Pull requests waiting on the user while the daemon is up and said so.
+    pub waiting: Option<usize>,
+}
+
+impl View {
+    /// "3 pull requests waiting on you"; nothing when none wait or it is not
+    /// known, which is also when the badge is clear.
+    pub fn waiting_label(&self) -> Option<String> {
+        match self.waiting? {
+            0 => None,
+            1 => Some("1 pull request waiting on you".to_string()),
+            n => Some(format!("{n} pull requests waiting on you")),
+        }
+    }
+
+    /// The tray's tooltip: what the daemon is doing, then who waits on whom.
+    pub fn tooltip(&self) -> String {
+        match self.waiting_label() {
+            Some(waiting) => format!("baum: {} · {waiting}", self.summary),
+            None => format!("baum: {}", self.summary),
+        }
+    }
+
+    /// The dock or taskbar badge; `None` clears it, as zero does.
+    pub fn badge(&self) -> Option<i64> {
+        self.waiting
+            .filter(|n| *n > 0)
+            .map(|n| i64::try_from(n).unwrap_or(i64::MAX))
+    }
 }
 
 impl Default for View {
@@ -271,6 +318,8 @@ impl Tracker {
             automatic: seen.automatic.as_ref().map(|a| a.enabled),
             running,
             queued,
+            // A daemon that is not running has nobody waiting on anything.
+            waiting: seen.waiting.filter(|_| seen.link == Link::Up),
         }
     }
 
@@ -328,6 +377,7 @@ mod tests {
                 capped: Vec::new(),
             }),
             diagnostics: Some(Vec::new()),
+            waiting: None,
         }
     }
 
@@ -537,6 +587,52 @@ mod tests {
         assert_eq!(view.icon, Icon::Attention);
         let view = tracker.update(&Observed::default());
         assert_eq!(view.icon, Icon::Idle);
+    }
+
+    #[test]
+    fn the_waiting_count_reads_the_daemons_answer() {
+        assert_eq!(parse_waiting(br#"{"waiting":3}"#), Ok(3));
+        assert_eq!(parse_waiting(br#"{"waiting":0}"#), Ok(0));
+        assert!(parse_waiting(br#"{"entries":[]}"#).is_err());
+        assert!(parse_waiting(b"nope").is_err());
+    }
+
+    #[test]
+    fn waiting_pull_requests_show_in_the_tooltip_and_the_badge() {
+        let waiting = |link, waiting| {
+            Tracker::default().update(&Observed {
+                link,
+                waiting,
+                ..Observed::default()
+            })
+        };
+        let view = waiting(Link::Up, Some(3));
+        assert_eq!(
+            view.waiting_label().as_deref(),
+            Some("3 pull requests waiting on you")
+        );
+        assert_eq!(
+            view.tooltip(),
+            "baum: Checking background reviews · 3 pull requests waiting on you"
+        );
+        assert_eq!(view.badge(), Some(3));
+        let one = waiting(Link::Up, Some(1));
+        assert_eq!(
+            one.waiting_label().as_deref(),
+            Some("1 pull request waiting on you")
+        );
+        // Zero clears the badge and says nothing; so does not knowing, and a
+        // daemon that is not running.
+        for view in [
+            waiting(Link::Up, Some(0)),
+            waiting(Link::Up, None),
+            waiting(Link::Down, Some(5)),
+            waiting(Link::Connecting, Some(5)),
+        ] {
+            assert_eq!(view.waiting_label(), None);
+            assert_eq!(view.badge(), None);
+            assert!(!view.tooltip().contains("waiting"), "{}", view.tooltip());
+        }
     }
 
     #[test]

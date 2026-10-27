@@ -119,7 +119,7 @@ func run(ctx context.Context, binary string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = environment()
+	cmd.Env = environment(nil)
 	proc.Configure(cmd)
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()

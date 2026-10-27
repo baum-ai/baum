@@ -29,7 +29,8 @@ const fixtures: Record<string, { block: unknown; shows: string[] }> = {
       kind: "entities",
       items: [{ kind: "function", name: "quuxfn", change: "added", hunks: [hunk] }],
     },
-    shows: ["Changed entities", "quuxfn"],
+    // Left out of the page for now; see the test below.
+    shows: [],
   },
   groups: {
     block: {
@@ -161,6 +162,12 @@ function render(blocks: unknown[], repository = "acme/widgets") {
 describe("review block fixtures", () => {
   it("cover every block kind the schema defines", () => {
     expect(Object.keys(fixtures).toSorted()).toEqual(schemaKinds.toSorted());
+  });
+
+  it("leave a section's entities out", () => {
+    const html = render([fixtures.entities!.block]);
+    expect(html).not.toContain("Changed entities");
+    expect(html).not.toContain("quuxfn");
   });
 
   for (const [kind, { block, shows }] of Object.entries(fixtures)) {

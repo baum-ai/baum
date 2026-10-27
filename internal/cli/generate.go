@@ -51,8 +51,10 @@ section and risk history. --store overrides the local store directory. A
 document that cannot be made valid is never written.
 
 The pull request is --pr, or the one for the current branch; the repository is
---repo, or the one the clone's origin remote names. It checks nothing out,
-does not touch your working tree, index or refs, and fetches nothing. The local
+--repo, or the one the clone's origin remote names. It checks nothing out and
+does not touch your working tree, index or branches. A head or base commit the
+clone lacks is fetched from the remote that names the repository, into
+refs/baum/pull/<number>/. The local
 version store is written under the shared git directory, or the fallback or
 override selected by --store.
 
@@ -229,7 +231,7 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	}
 
 	assembler := &assemble.Assembler{
-		GitHub: client, Git: clone,
+		GitHub: client, Git: clone, Fetcher: clone,
 		Sessions: assemble.LocalSessions{Dir: clone.Dir(), Stores: stores, Warn: stderr},
 		Images:   newImageFetcher(),
 		Warn:     stderr,

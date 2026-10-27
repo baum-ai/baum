@@ -10,6 +10,7 @@ import {
   type SetupView,
 } from "./setup-model";
 import { ReviewSettingsForm } from "./reviews";
+import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
 import logo from "./logo.svg";
@@ -274,7 +275,10 @@ export function Setup() {
               </>
             )}
             {step === reviewStep && reviews && (
-              <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
+              <>
+                <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
+                <PlanUsage className="setup-card" />
+              </>
             )}
             {step === reviewStep && !reviews && !error && (
               <LoadingStatus id="checking" block>

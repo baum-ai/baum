@@ -184,22 +184,43 @@ export function SessionTranscript({
 
 /** A turn's activity, fetched the first time anything asks for it: the
  *  activity toggle, or a reply whose preview somebody expands. A failed fetch
- *  is tried again on the next ask. Without a loader nothing is fetched. */
+ *  is tried again on the next ask. Without a loader nothing is fetched. Once
+ *  fetched, a new `revision` of the source fetches it again, keeping what is
+ *  shown until it arrives; only the latest fetch's answer is kept. */
 function useTurnActivity(runId: string, turnId: string, source: TranscriptSource | undefined) {
   const [activity, setActivity] = useState<ActivityState>(null);
   const requested = useRef(false);
+  const fetched = useRef<string | undefined>(undefined);
+  const latest = useRef(0);
   const loadTurnActivity = source?.loadTurnActivity;
+  const revision = source?.revision;
   const load = useCallback(() => {
     if (requested.current || !loadTurnActivity) return;
     requested.current = true;
+    fetched.current = revision;
+    const call = ++latest.current;
     setActivity("loading");
     loadTurnActivity(runId, turnId)
-      .then(setActivity)
+      .then((answer) => {
+        if (call === latest.current) setActivity(answer);
+      })
       .catch(() => {
+        if (call !== latest.current) return;
         requested.current = false;
         setActivity("failed");
       });
-  }, [runId, turnId, loadTurnActivity]);
+  }, [runId, turnId, loadTurnActivity, revision]);
+  useEffect(() => {
+    if (!requested.current || !loadTurnActivity || fetched.current === revision) return;
+    fetched.current = revision;
+    const call = ++latest.current;
+    loadTurnActivity(runId, turnId)
+      .then((answer) => {
+        if (call === latest.current) setActivity(answer);
+      })
+      // The activity shown stays; the next revision tries again.
+      .catch(() => undefined);
+  }, [runId, turnId, loadTurnActivity, revision]);
   return { activity, load, available: Boolean(loadTurnActivity) };
 }
 

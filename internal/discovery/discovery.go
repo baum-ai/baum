@@ -39,14 +39,22 @@ type PullRequest struct {
 	ReviewRequestedFromMe bool   `json:"review_requested_from_me"`
 	// Nil means the token could not establish repository write permission.
 	AuthorHasWrite *bool `json:"author_has_write"`
+	// ViewerCanPush is whether the signed-in account may push to the
+	// repository (GitHub's viewerPermission is write, maintain or admin),
+	// which a fix needs; nil when GitHub did not say.
+	ViewerCanPush *bool `json:"viewer_can_push"`
 	// False means team membership was unavailable; false review-request flags
 	// must not be interpreted as proof that no team requested this viewer.
 	TeamMembershipKnown bool   `json:"team_membership_known"`
 	Review              string `json:"review"`
 	Checks              string `json:"checks"`
 	Merge               string `json:"merge"`
-	Unresolved          *int   `json:"unresolved"`
-	UnresolvedCapped    bool   `json:"unresolved_capped"`
+	// Behind is GitHub's report (mergeStateStatus BEHIND) that the head
+	// branch is out of date with its base and not conflicting, which Update
+	// branch fixes. A draft never reports it.
+	Behind           bool `json:"behind"`
+	Unresolved       *int `json:"unresolved"`
+	UnresolvedCapped bool `json:"unresolved_capped"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -94,6 +102,8 @@ type diskCache struct {
 	Responses   map[string]cachedResponse
 	GraphQLRate RateLimit
 	Interval    time.Duration
+	// Fingerprint is the last complete poll's, which Probe compares with.
+	Fingerprint fingerprint
 }
 
 // cacheFormat changes when the minimal responses keep more fields: 1 added
@@ -242,6 +252,8 @@ type poll struct {
 	now       time.Time
 	unchanged bool
 	minimum   time.Duration
+	// fingerprint is the open pull requests' when all pages were read.
+	fingerprint fingerprint
 }
 
 var errRateLimit = errors.New("GitHub rate limit exhausted")
@@ -442,6 +454,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
+		p.cache.Fingerprint = p.fingerprint
 	}
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
@@ -472,7 +485,7 @@ func (p *poll) ResetIfExhausted() time.Time {
 
 func (p *poll) discover(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	snapshot := Snapshot{Repository: repository.String(), PullRequests: []PullRequest{}}
-	prs, viewer, err := p.openPulls(ctx, repository)
+	prs, viewer, canPush, err := p.openPulls(ctx, repository)
 	if err != nil {
 		return snapshot, err
 	}
@@ -535,7 +548,9 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 			permissions[key] = permission
 		}
 		item.AuthorHasWrite = permission
+		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
+		item.Behind = row.behind()
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil

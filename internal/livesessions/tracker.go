@@ -3,22 +3,33 @@
 // local application so a pull request page and the inbox can show work in
 // progress before any session file is complete.
 //
-// It reads identifiers only. A hook event never carries prompts or tool
-// input, and the tracker keeps from it the agent, the session id, when the
-// session started and was last active, a normalised event kind, and the
-// repository, branch and pull request the session's working directory links
-// to. The working directory itself and the transcript path stay inside the
-// tracker and are never served. Reading session files from disk is
-// unchanged and remains the full history.
+// It reads identifiers only, and one line of text. A hook event never carries
+// prompts or tool input, and the tracker keeps from it the agent, the session
+// id, when the session started and was last active, a normalised event kind,
+// why and since when it waits on its user, with the short message a Claude
+// Code notification showed (masked like a transcript), and the repository,
+// branch and pull request the session's working directory links to. The
+// working directory itself and the transcript path stay inside the tracker
+// and are never served. Reading session files from disk is unchanged and
+// remains the full history; Transcripts serves a tracked session's
+// transcript, redacted, while it runs.
 package livesessions
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/hookevents"
 )
@@ -28,9 +39,9 @@ const (
 	// StateRunning is a session whose agent is working: its last event was
 	// a start, a prompt or tool activity, and not longer ago than IdleAfter.
 	StateRunning = "running"
-	// StateIdle is a session waiting for its user (its last event was a
-	// stop, which agents send at the end of every turn) or silent for
-	// IdleAfter: an agent that crashed sends nothing.
+	// StateIdle is a session waiting for its user (it has a WaitingReason:
+	// its turn ended, or it asked for a permission or an answer) or silent
+	// for IdleAfter: an agent that crashed sends nothing.
 	StateIdle = "idle"
 	// StateEnded is a session that sent its end event.
 	StateEnded = "ended"
@@ -41,18 +52,37 @@ const (
 	EventStart  = "start"
 	EventPrompt = "prompt"
 	EventTool   = "tool"
-	EventStop   = "stop"
-	EventEnd    = "end"
+	// EventWait is the agent asking its user for something: a Claude Code
+	// notification or a Codex permission request.
+	EventWait = "wait"
+	EventStop = "stop"
+	EventEnd  = "end"
+)
+
+// Why a session waits on its user.
+const (
+	// WaitPermission is a session asking to be allowed to run a tool: a
+	// Claude Code permission_prompt notification or a Codex permission
+	// request.
+	WaitPermission = "permission"
+	// WaitInput is a session asking a question (an elicitation dialog, a
+	// background agent waiting on input) or any notification of a type baum
+	// does not know, which is taken to want the user.
+	WaitInput = "input"
+	// WaitTurnFinished is a session whose turn ended (a stop, or Claude
+	// Code's idle_prompt, which follows one a minute later).
+	WaitTurnFinished = "turn_finished"
 )
 
 // Timings and bounds. A session is dropped when it has been silent for
-// DropAfter or ended for EndedFor; at most MaxSessions are tracked, the
-// least recently active (an ended one first) making room for a new one.
+// DropAfter or ended for EndedFor, which is long enough for the Sessions page
+// to show what ended recently; at most MaxSessions are tracked, the least
+// recently active (an ended one first) making room for a new one.
 const (
 	IdleAfter   = 10 * time.Minute
 	DropAfter   = 2 * time.Hour
-	EndedFor    = 10 * time.Minute
-	MaxSessions = 32
+	EndedFor    = 24 * time.Hour
+	MaxSessions = 200
 	// SweepEvery is how often Run applies the timings, which events do not
 	// trigger.
 	SweepEvery = 30 * time.Second
@@ -66,10 +96,20 @@ const (
 	// else changed, for the app to be told: a busy agent's tool events would
 	// otherwise make every open window read the list once a second.
 	ActivityNotifyEvery = 30 * time.Second
+	// AnnounceWithin is how recent a wait must be for Waiting to be told of
+	// it: an event the spool delivers late is old news.
+	AnnounceWithin = 5 * time.Minute
+	// maxWaitingMessage bounds the message served, in characters: the app
+	// shows one line of it.
+	maxWaitingMessage = 160
 	// Bounds on the identifiers a session is keyed by; an event with longer
 	// ones is not a session baum's hooks describe.
 	maxID    = 128
 	maxAgent = 32
+	// StateFile is the name of the file in StateDir holding the ended
+	// sessions, since the hook event record rotates by size and may not reach
+	// back EndedFor.
+	StateFile = "live-sessions.json"
 	// rememberedEvents is how many applied event ids are kept, so applying
 	// an event twice (the subscription and a reconcile) changes nothing.
 	rememberedEvents = 4096
@@ -85,10 +125,23 @@ type Session struct {
 	StartedAt      time.Time `json:"started_at"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 	// LastEvent is the normalised kind of the latest event (EventStart,
-	// EventPrompt, EventTool, EventStop or EventEnd).
-	LastEvent  string `json:"last_event"`
-	Repository string `json:"repository"`
-	Branch     string `json:"branch,omitempty"`
+	// EventPrompt, EventTool, EventWait, EventStop or EventEnd).
+	LastEvent string `json:"last_event"`
+	// WaitingReason is why the session waits on its user (WaitPermission,
+	// WaitInput or WaitTurnFinished), absent while it works, once it ended,
+	// and for a session that is only silent.
+	WaitingReason string `json:"waiting_reason,omitempty"`
+	// WaitingSince is when that wait began.
+	WaitingSince time.Time `json:"waiting_since,omitzero"`
+	// WaitingMessage is the line a Claude Code notification showed for the
+	// wait, such as "Claude needs your permission to use Bash": format and
+	// control characters dropped, masked as transcripts are and at most
+	// maxWaitingMessage characters. Absent when the agent sent none.
+	WaitingMessage string `json:"waiting_message,omitempty"`
+	// EndedAt is when an ended session sent its end event, absent otherwise.
+	EndedAt    time.Time `json:"ended_at,omitzero"`
+	Repository string    `json:"repository"`
+	Branch     string    `json:"branch,omitempty"`
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
 	PR int `json:"pr,omitempty"`
@@ -127,10 +180,23 @@ type Tracker struct {
 	Log    *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// StateDir, when set, is a private directory where the ended sessions
+	// are kept across restarts (StateFile): identifiers and times only.
+	StateDir string
 	// Buffer is the subscription's size; zero is 256. A subscriber that falls
 	// behind misses events, which Reconcile applies from the record once the
 	// subscription reports it missed some.
 	Buffer int
+	// Mask, when set, masks the secrets and e-mail addresses in a waiting
+	// message, as transcripts are masked; nil keeps the text.
+	Mask func(string) string
+	// Waiting, when set, is called once for each wait for a permission or an
+	// answer (WaitPermission, WaitInput) of a session the application is
+	// shown, as it begins: not for a finished turn, not for the waits a
+	// rebuild replays when the daemon starts, and not for one that began more
+	// than AnnounceWithin ago. It is called without the tracker's lock and
+	// must not block.
+	Waiting func(Session)
 
 	ready    sync.Once
 	mu       sync.Mutex
@@ -146,19 +212,34 @@ type Tracker struct {
 	// many of them the last reconcile covered.
 	dropped    func() uint64
 	reconciled uint64
+	// saved is the ended sessions as last written.
+	saved []byte
+	// announcements are the waits to hand Waiting once the lock is released.
+	announcements []Session
+}
+
+// waitKey names one wait of a session.
+type waitKey struct {
+	reason string
+	since  time.Time
 }
 
 type key struct{ agent, id string }
 
-// entry is a tracked session. cwd stays here: it is never served.
+// entry is a tracked session. cwd and transcript stay here: they are never
+// served.
 type entry struct {
 	Session
 	cwd string
-	// waiting is set by a stop, until the next event of work.
-	waiting  bool
-	ended    bool
-	endedAt  time.Time
-	linkedAt time.Time
+	// transcript is the transcript file the session's hooks last named, empty
+	// when none did. Transcripts reads it only after checking it is inside the
+	// agent's own session store.
+	transcript string
+	// announced is the last wait handed to Waiting, or skipped.
+	announced waitKey
+	ended     bool
+	endedAt   time.Time
+	linkedAt  time.Time
 	// stale is set when an event arrived within RelinkEvery of the last lookup
 	// and so skipped one: the link may be out of date until Sweep looks again.
 	stale bool
@@ -192,6 +273,8 @@ func normalise(name string) (string, bool) {
 		return EventPrompt, true
 	case "pre-task", "post-task", "post-todo", "post-tool-use", "pre-compact", "subagent-start", "subagent-stop":
 		return EventTool, true
+	case "notification", "permission-request":
+		return EventWait, true
 	case "stop":
 		return EventStop, true
 	case "session-end":
@@ -200,15 +283,81 @@ func normalise(name string) (string, bool) {
 	return "", false
 }
 
+// waitReason is why a wait event (EventWait) says its session waits, or false
+// for a Claude Code notification that asks nothing of the user: a sign-in
+// that succeeded, an answer already given, a background agent that finished,
+// a usage limit that resumed on its own, a mod's notice. A notification of a
+// type not listed, or with none, is taken to want an answer, so a type Claude
+// Code adds later still shows.
+func waitReason(e hookevents.Event) (string, bool) {
+	if e.Name == "permission-request" {
+		return WaitPermission, true
+	}
+	switch e.Session.NotificationType {
+	case "permission_prompt":
+		return WaitPermission, true
+	case "idle_prompt":
+		return WaitTurnFinished, true
+	case "auth_success", "elicitation_complete", "elicitation_response", "agent_completed",
+		"quota_auto_resume_fired", "quota_auto_resume_disabled", "plugin_notification":
+		return "", false
+	}
+	return WaitInput, true
+}
+
 // state is the session's state at now.
 func (e *entry) state(now time.Time) string {
 	switch {
 	case e.ended:
 		return StateEnded
-	case e.waiting || now.Sub(e.LastActivityAt) > IdleAfter:
+	case e.WaitingReason != "" || now.Sub(e.LastActivityAt) > IdleAfter:
 		return StateIdle
 	}
 	return StateRunning
+}
+
+// wait records that the session waits on its user for reason from at, or,
+// with no reason, that it does not. A wait for the reason it already waits
+// for goes on: its start is kept, and its message unless a new one came.
+func (e *entry) wait(reason string, at time.Time, message string) {
+	switch {
+	case reason == "":
+		e.WaitingReason, e.WaitingSince, e.WaitingMessage = "", time.Time{}, ""
+	case reason != e.WaitingReason:
+		e.WaitingReason, e.WaitingSince, e.WaitingMessage = reason, at, message
+	case message != "":
+		e.WaitingMessage = message
+	}
+}
+
+// message is a notification's text as the application is shown it: one
+// line (oneLine) of at most maxWaitingMessage characters.
+func (t *Tracker) message(e hookevents.Event) string {
+	return t.oneLine(e.Session.Message, maxWaitingMessage)
+}
+
+// oneLine is text an agent wrote as the application is shown it: format
+// characters dropped, control characters and runs of spaces made one space,
+// masked (before it is cut, so a secret is never cut where the mask cannot
+// see it), then cut to limit characters.
+func (t *Tracker) oneLine(text string, limit int) string {
+	text = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(text, "�"))
+	text = strings.Join(strings.Fields(text), " ")
+	if text != "" && t.Mask != nil {
+		text = t.Mask(text)
+	}
+	if utf8.RuneCountInString(text) <= limit {
+		return text
+	}
+	return string([]rune(text)[:limit-1]) + "…"
 }
 
 // expired reports whether the session is dropped at now.
@@ -259,6 +408,7 @@ func (t *Tracker) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			t.persist()
 			return
 		case record, ok := <-events:
 			if !ok {
@@ -271,6 +421,7 @@ func (t *Tracker) Run(ctx context.Context) {
 			changed()
 		case <-sweep.C:
 			swept, reconciled := t.Sweep(), t.reconcileIfDropped(ctx)
+			t.persist()
 			if swept || reconciled {
 				changed()
 			}
@@ -301,17 +452,31 @@ func (t *Tracker) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// events are the record's agent events within DropAfter, in the order of
-// their time: a spooled event is recorded after later ones.
+// events are the record's agent events of the sessions that can still be
+// tracked, in the order of their time (a spooled event is recorded after later
+// ones): those within DropAfter, and all of a session that ended within
+// EndedFor.
 func (t *Tracker) events() ([]hookevents.Event, error) {
 	records, err := t.Source.Recent(0)
 	if err != nil {
 		return nil, err
 	}
+	now := t.now()
+	ended := map[key]bool{}
+	for _, record := range records {
+		e := record.Event
+		if kind, _ := normalise(e.Name); matchAgent(e) && kind == EventEnd && e.Session != nil && now.Sub(e.Time) <= EndedFor {
+			ended[key{e.Agent, e.Session.ID}] = true
+		}
+	}
 	events := make([]hookevents.Event, 0, len(records))
 	for _, record := range records {
-		if matchAgent(record.Event) {
-			events = append(events, record.Event)
+		e := record.Event
+		if !matchAgent(e) {
+			continue
+		}
+		if now.Sub(e.Time) <= DropAfter || (e.Session != nil && ended[key{e.Agent, e.Session.ID}] && now.Sub(e.Time) <= EndedFor) {
+			events = append(events, e)
 		}
 	}
 	slices.SortStableFunc(events, func(a, b hookevents.Event) int { return a.Time.Compare(b.Time) })
@@ -333,9 +498,16 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessions, t.pending, t.seen, t.order = map[key]*entry{}, map[key]bool{}, map[string]bool{}, nil
+	t.loadEndedLocked(now)
 	for _, e := range events {
 		t.applyLocked(e, now)
 	}
+	// The waits the record replays were told of, if at all, by the daemon
+	// that saw them begin.
+	for _, s := range t.sessions {
+		s.announced = waitKey{s.WaitingReason, s.WaitingSince}
+	}
+	t.announcements = nil
 }
 
 // reconcileIfDropped reconciles when the subscription missed events since
@@ -366,13 +538,15 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 	}
 	now := t.now()
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	changed := false
 	for _, e := range events {
 		if t.applyLocked(e, now) {
 			changed = true
 		}
 	}
+	announcements := t.takeAnnouncementsLocked()
+	t.mu.Unlock()
+	t.announce(announcements)
 	return changed
 }
 
@@ -396,8 +570,46 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 	t.init()
 	now := t.now()
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.applyLocked(e, now)
+	changed := t.applyLocked(e, now)
+	announcements := t.takeAnnouncementsLocked()
+	t.mu.Unlock()
+	t.announce(announcements)
+	return changed
+}
+
+// announceLocked queues the session's wait for Waiting when it is one to
+// announce and was not announced yet.
+func (t *Tracker) announceLocked(k key, now time.Time) {
+	s := t.sessions[k]
+	if s == nil || s.unlinked || s.ended || (s.WaitingReason != WaitPermission && s.WaitingReason != WaitInput) {
+		return
+	}
+	wait := waitKey{s.WaitingReason, s.WaitingSince}
+	if s.announced == wait {
+		return
+	}
+	s.announced = wait
+	if now.Sub(s.WaitingSince) > AnnounceWithin {
+		return
+	}
+	if view, ok := t.view(k, now); ok {
+		t.announcements = append(t.announcements, view)
+	}
+}
+
+func (t *Tracker) takeAnnouncementsLocked() []Session {
+	out := t.announcements
+	t.announcements = nil
+	return out
+}
+
+func (t *Tracker) announce(waits []Session) {
+	if t.Waiting == nil {
+		return
+	}
+	for _, s := range waits {
+		t.Waiting(s)
+	}
 }
 
 // ResolvePending looks up the link of each session waiting for one and
@@ -421,6 +633,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	}
 	t.mu.Unlock()
 	changed := false
+	var announcements []Session
 	for _, r := range todo {
 		link, ok := t.Linker.Link(ctx, r.cwd)
 		now := t.now()
@@ -432,6 +645,8 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			case ok:
 				r.s.setLink(link, now)
 				r.s.unlinked = false
+				// A new session's wait is announced once it is shown.
+				t.announceLocked(r.k, now)
 			case r.s.unlinked:
 				delete(t.sessions, r.k)
 			default:
@@ -444,8 +659,10 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				changed = true
 			}
 		}
+		announcements = append(announcements, t.takeAnnouncementsLocked()...)
 		t.mu.Unlock()
 	}
+	t.announce(announcements)
 	return changed
 }
 
@@ -507,6 +724,7 @@ func (t *Tracker) applyLocked(e hookevents.Event, now time.Time) bool {
 	k := key{e.Agent, e.Session.ID}
 	before, existed := t.view(k, now)
 	t.applyEvent(e, now)
+	t.announceLocked(k, now)
 	after, exists := t.view(k, now)
 	return significant(before, after, existed, exists)
 }
@@ -517,11 +735,18 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 		return
 	}
 	kind, _ := normalise(e.Name)
+	reason := ""
+	if kind == EventWait {
+		var ok bool
+		if reason, ok = waitReason(e); !ok {
+			return
+		}
+	}
 	at := e.Time.UTC()
 	if at.After(now) {
 		at = now
 	}
-	if now.Sub(at) > DropAfter {
+	if now.Sub(at) > EndedFor {
 		return
 	}
 	k := key{e.Agent, e.Session.ID}
@@ -561,6 +786,9 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	if cwd != "" {
 		s.cwd = cwd
 	}
+	if e.Session.TranscriptPath != "" {
+		s.transcript = e.Session.TranscriptPath
+	}
 	if kind == EventStart && at.Before(s.StartedAt) {
 		s.StartedAt = at
 	}
@@ -571,11 +799,18 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	s.LastActivityAt, s.LastEvent = at, kind
 	switch kind {
 	case EventStop:
-		s.waiting = true
+		s.wait(WaitTurnFinished, at, "")
+	case EventWait:
+		// Claude Code's idle_prompt follows a stop: the turn is the same
+		// one, and it never replaces a question asked since.
+		if reason != WaitTurnFinished || s.WaitingReason == "" {
+			s.wait(reason, at, t.message(e))
+		}
 	case EventEnd:
-		s.ended, s.endedAt = true, at
+		s.ended, s.endedAt, s.EndedAt = true, at, at
+		s.wait("", at, "")
 	default:
-		s.waiting = false
+		s.wait("", at, "")
 	}
 }
 
@@ -646,4 +881,104 @@ func (t *Tracker) Sessions() []Session {
 		return cmp.Or(cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
 	return out
+}
+
+// Lookup is a session the application is shown, with the transcript path its
+// hooks last reported (empty when none did, or for an ended session read back
+// from StateFile, which keeps no paths); false when the tracker does not list
+// it.
+func (t *Tracker) Lookup(agent, id string) (Session, string, bool) {
+	t.init()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	k := key{agent, id}
+	s := t.sessions[k]
+	if s == nil || s.expired(now) {
+		return Session{}, "", false
+	}
+	session, ok := t.view(k, now)
+	if !ok {
+		return Session{}, "", false
+	}
+	return session, s.transcript, true
+}
+
+// persisted is the ended sessions' file: identifiers and times, no paths.
+type persisted struct {
+	Sessions []Session `json:"sessions"`
+}
+
+// persist writes the ended sessions to StateDir when they changed since the
+// last write, so a restart keeps them even once the record has rotated past
+// them. A failure is logged and retried at the next sweep.
+func (t *Tracker) persist() {
+	if t.StateDir == "" {
+		return
+	}
+	t.init()
+	t.mu.Lock()
+	now := t.now()
+	var ended []Session
+	for _, s := range t.sessions {
+		if s.ended && !s.unlinked && !s.expired(now) {
+			ended = append(ended, s.Session)
+		}
+	}
+	t.mu.Unlock()
+	slices.SortFunc(ended, func(a, b Session) int {
+		return cmp.Or(a.EndedAt.Compare(b.EndedAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
+	})
+	data, err := json.Marshal(persisted{ended})
+	if err != nil || bytes.Equal(data, t.saved) {
+		return
+	}
+	if err := writeAtomic(filepath.Join(t.StateDir, StateFile), data); err != nil {
+		t.logger().Warn("ended live sessions not saved", "error", err)
+		return
+	}
+	t.saved = data
+}
+
+// loadEndedLocked adds the ended sessions of the last run that have not
+// expired; the record's events then apply over them.
+func (t *Tracker) loadEndedLocked(now time.Time) {
+	if t.StateDir == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(t.StateDir, StateFile))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			t.logger().Warn("ended live sessions not read", "error", err)
+		}
+		return
+	}
+	var saved persisted
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	for _, s := range saved.Sessions {
+		if s.EndedAt.IsZero() || s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent || now.Sub(s.EndedAt) > EndedFor {
+			continue
+		}
+		s.State = StateEnded
+		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: true, endedAt: s.EndedAt, linkedAt: now}
+	}
+}
+
+// writeAtomic replaces path with data through a private temporary file.
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".live-sessions-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

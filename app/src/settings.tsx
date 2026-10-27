@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
@@ -12,11 +19,19 @@ import {
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
+import { PlanUsage } from "./plan-usage";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
-import { SlidersIcon, TerminalIcon, SessionsIcon, CheckIcon } from "@baum/viewer/components/icons";
+import {
+  SlidersIcon,
+  TerminalIcon,
+  SessionsIcon,
+  CheckIcon,
+  CloseIcon,
+  PlusIcon,
+} from "@baum/viewer/components/icons";
 import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
 import {
   describeCommand,
@@ -107,6 +122,7 @@ export function SettingsPage({
         ) : (
           <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
+        <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">
           The daemon keeps generating after you close this window. Quit the desktop app with “Quit
           and stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
@@ -119,6 +135,8 @@ export function SettingsPage({
 function DesktopIntegrations() {
   const [view, setView] = useState<SetupView | null>(null);
   const [busy, setBusy] = useState(false);
+  // What the running action is, so only its own button changes its label.
+  const [doing, setDoing] = useState("");
   const [error, setError] = useState("");
   const [output, setOutput] = useState("");
   const working = useRef(false);
@@ -132,6 +150,7 @@ function DesktopIntegrations() {
     if (working.current) return;
     working.current = true;
     setBusy(true);
+    setDoing(command ? `${command}:${args?.agent ?? ""}` : "refresh");
     setError("");
     setOutput("");
     try {
@@ -204,19 +223,23 @@ function DesktopIntegrations() {
                   void run("install_command", command.replace ? { replace: command.replace } : {})
                 }
               >
-                {command.replace
-                  ? `Replace ${display(command.replace)}`
-                  : `${command.action} baum CLI`}
+                {doing === "install_command:"
+                  ? command.replace
+                    ? "Replacing…"
+                    : "Installing…"
+                  : command.replace
+                    ? `Replace ${display(command.replace)}`
+                    : `${command.action} baum CLI`}
               </Button>
             ) : null}
             {view?.command.record ? (
               <Button
                 disabled={busy}
                 size="compact"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => void run("uninstall_command")}
               >
-                Remove CLI
+                {doing === "uninstall_command:" ? "Removing…" : "Remove CLI"}
               </Button>
             ) : null}
           </div>
@@ -274,18 +297,22 @@ function DesktopIntegrations() {
                   variant="secondary"
                   onClick={() => void run("install_hooks", { agent: agent.agent })}
                 >
-                  {agent.installed ? "Enable" : "Connect"} {agent.name}
+{doing === `install_hooks:${agent.agent}`
+                    ? agent.installed
+                      ? "Enabling…"
+                      : "Connecting…"
+                    : `${agent.installed ? "Enable" : "Connect"} ${agent.name}`}
                 </Button>
               ) : null}
               {agent.installed ? (
                 <Button
                   disabled={busy}
                   size="compact"
-                  variant="ghost"
+                  variant="secondary"
                   aria-label={`Remove ${agent.name} hooks`}
                   onClick={() => void run("uninstall_hooks", { agent: agent.agent })}
                 >
-                  Remove
+                  {doing === `uninstall_hooks:${agent.agent}` ? "Removing…" : "Remove"}
                 </Button>
               ) : null}
             </div>
@@ -295,8 +322,8 @@ function DesktopIntegrations() {
           <p className="text-xs text-(--text-tertiary)">
             Installed something new? Refresh to check its status.
           </p>
-          <Button disabled={busy} size="compact" variant="ghost" onClick={() => void run()}>
-            {busy ? "Checking…" : "Check again"}
+          <Button disabled={busy} size="compact" variant="secondary" onClick={() => void run()}>
+            {doing === "refresh" && busy ? "Checking…" : "Check again"}
           </Button>
         </footer>
       </section>
@@ -362,13 +389,17 @@ function ReviewSettingsSection({
         onChange={setDraft}
         className="settings-form"
       />
+      <PlanUsage
+        className="settings-plan-usage"
+        heading={<h3 className="settings-plan-usage-title">Plan usage left</h3>}
+      />
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
         <p className="text-xs text-(--text-tertiary)">
           {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {dirty ? (
-            <Button variant="ghost" size="compact" onClick={() => setDraft(saved)}>
+            <Button variant="secondary" size="compact" onClick={() => setDraft(saved)}>
               Discard changes
             </Button>
           ) : null}
@@ -378,6 +409,186 @@ function ReviewSettingsSection({
             onClick={() => void save()}
           >
             {pending ? "Saving…" : "Save review settings"}
+          </Button>
+        </div>
+      </footer>
+    </section>
+  );
+}
+
+type EnvRow = { id: number; name: string; value: string };
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_MAX = 32;
+
+const envRows = (env: Record<string, string>): EnvRow[] =>
+  Object.entries(env).map(([name, value], id) => ({ id, name, value }));
+
+/** Why a list of variables cannot be saved, per row; empty when it can. */
+function envProblems(rows: EnvRow[]): Record<number, string> {
+  const problems: Record<number, string> = {};
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!ENV_NAME.test(row.name))
+      problems[row.id] = row.name
+        ? "Use letters, digits and underscores, not starting with a digit."
+        : "Enter a name.";
+    else if (seen.has(row.name)) problems[row.id] = "Another row has this name.";
+    seen.add(row.name);
+  }
+  return problems;
+}
+
+/** Variables set for every agent baum runs and for the git commands that
+ *  commit and push a fix, kept by the daemon on this computer. */
+function AgentEnvSection() {
+  const [saved, setSaved] = useState<Record<string, string> | null>(null);
+  const [source, setSource] = useState("");
+  const [rows, setRows] = useState<EnvRow[]>([]);
+  const [next, setNext] = useState(0);
+  const [pending, setPending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const load = (env: Record<string, string>) => {
+    setSaved(env);
+    setRows(envRows(env));
+    setNext(Object.keys(env).length);
+  };
+  useEffect(() => {
+    request<{ agent_env?: Record<string, string>; agent_env_source?: string }>("api/settings").then(
+      (settings) => {
+        load(settings.agent_env ?? {});
+        setSource(settings.agent_env_source ?? "");
+      },
+      (e) => setLoadError(errorText(e)),
+    );
+  }, []);
+  const problems = envProblems(rows);
+  const current = Object.fromEntries(rows.map((row) => [row.name, row.value]));
+  const dirty =
+    saved !== null &&
+    (rows.length !== Object.keys(saved).length ||
+      rows.some((row, i) => row.name !== Object.keys(saved)[i] || row.value !== saved[row.name]));
+  const tooMany = rows.length > ENV_MAX;
+  const edit = (id: number, change: Partial<EnvRow>) => {
+    setDone(false);
+    setRows((list) => list.map((row) => (row.id === id ? { ...row, ...change } : row)));
+  };
+  const save = async () => {
+    setPending(true);
+    setError("");
+    setDone(false);
+    try {
+      const answer = await request<{ agent_env?: Record<string, string> }>(
+        "api/settings/agent-env",
+        { agent_env: current },
+        "PUT",
+      );
+      load(answer.agent_env ?? current);
+      setSource(
+        Object.keys(current).length
+          ? "app"
+          : Object.keys(answer.agent_env ?? {}).length
+            ? "file"
+            : "",
+      );
+      setDone(true);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-env-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="agent-env-heading"
+        icon={<TerminalIcon size={20} />}
+        title="Environment for agents"
+        detail="Extra environment variables for the agents baum runs, and for the commit and push after a fix. Values can reference other environment variables. Stored on this computer, so don't put secrets here."
+      />
+      {loadError ? <Alert className="mx-5 mb-4">{loadError}</Alert> : null}
+      {source === "file" ? (
+        <p className="px-5 pb-3 text-xs text-(--text-tertiary)">
+          These come from the <code>[agent_env]</code> section of the config file. Saving here
+          replaces them.
+        </p>
+      ) : null}
+      {saved === null ? (
+        loadError ? null : (
+          <LoadingStatus block>Reading the environment…</LoadingStatus>
+        )
+      ) : (
+        <div className="settings-env">
+          {rows.map((row) => (
+            <div key={row.id} className="settings-env-row">
+              <input
+                aria-label="Variable name"
+                placeholder="NAME"
+                value={row.name}
+                disabled={pending}
+                aria-invalid={problems[row.id] ? true : undefined}
+                spellCheck={false}
+                onChange={(event) => edit(row.id, { name: event.target.value })}
+              />
+              <input
+                aria-label={`Value of ${row.name || "the variable"}`}
+                placeholder="value"
+                value={row.value}
+                disabled={pending}
+                spellCheck={false}
+                onChange={(event) => edit(row.id, { value: event.target.value })}
+              />
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={`Remove ${row.name || "variable"}`}
+                disabled={pending}
+                onClick={() => {
+                  setDone(false);
+                  setRows((list) => list.filter((r) => r.id !== row.id));
+                }}
+              >
+                <CloseIcon size={14} />
+              </Button>
+              {problems[row.id] && row.name !== "" ? (
+                <p className="settings-env-problem">{problems[row.id]}</p>
+              ) : null}
+            </div>
+          ))}
+          {error ? <Alert>{error}</Alert> : null}
+          {tooMany ? <Alert>At most {ENV_MAX} variables.</Alert> : null}
+        </div>
+      )}
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <Button
+          variant="secondary"
+          size="compact"
+          className="inline-flex items-center gap-2"
+          disabled={saved === null || pending || rows.length >= ENV_MAX}
+          onClick={() => {
+            setDone(false);
+            setRows((list) => [...list, { id: next, name: "", value: "" }]);
+            setNext(next + 1);
+          }}
+        >
+          <PlusIcon size={14} />
+          Add variable
+        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status" className="text-xs text-(--text-tertiary)">
+            {done
+              ? "Saved. Applies to the next agent run."
+              : dirty
+                ? "You have unsaved changes."
+                : ""}
+          </p>
+          <Button
+            size="compact"
+            disabled={!dirty || pending || tooMany || Object.keys(problems).length > 0}
+            onClick={() => void save()}
+          >
+            {pending ? "Saving…" : "Save environment"}
           </Button>
         </div>
       </footer>
@@ -398,7 +609,7 @@ function DiagnosticsDialog({
   authChanged: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   return (
@@ -512,7 +723,7 @@ function RepositorySettings({
   defaults: ReviewDefaults | null;
   status?: AutomaticStatus;
   save: (settings: Clone["settings"]) => Promise<void>;
-  remove?: () => void;
+  remove?: () => Promise<void>;
   cancel?: () => void;
 }) {
   const [backend, setBackend] = useState<string | null>(clone.settings.backend ?? null);
@@ -525,6 +736,7 @@ function RepositorySettings({
         : "off",
   );
   const [pending, setPending] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const globalBackend = shownBackend(defaults?.backend ?? "auto");
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -537,6 +749,11 @@ function RepositorySettings({
       backend,
       model: model?.trim() ? model.trim() : null,
     }).finally(() => setPending(false));
+  };
+  const unregister = () => {
+    if (!remove) return;
+    setRemoving(true);
+    void remove().finally(() => setRemoving(false));
   };
   const notice = status ? automaticNotice(status) : null;
   return (
@@ -575,7 +792,7 @@ function RepositorySettings({
         <HarnessPicker
           legend="Harness for this repository"
           value={backend}
-          disabled={pending}
+          disabled={pending || removing}
           inherit={{ label: "Global setting", detail: harnessName(globalBackend) }}
           onChange={(next) => {
             setBackend(next);
@@ -588,23 +805,29 @@ function RepositorySettings({
           label="Model for this repository"
           backend={backend ?? globalBackend}
           value={model}
-          disabled={pending}
+          disabled={pending || removing}
           inherit={`Global setting${defaults?.model ? ` (${defaults.model})` : ""}`}
           onChange={setModel}
         />
       </div>
       <div className="local-dialog-actions">
         {remove ? (
-          <Button variant="danger-outline" size="compact" onClick={remove} className="mr-auto">
-            Remove registration
+          <Button
+            variant="danger-outline"
+            size="compact"
+            disabled={pending || removing}
+            onClick={unregister}
+            className="mr-auto"
+          >
+            {removing ? "Removing…" : "Remove registration"}
           </Button>
         ) : null}
         {cancel ? (
-          <Button variant="ghost" size="compact" onClick={cancel}>
+          <Button variant="ghost" size="compact" disabled={pending || removing} onClick={cancel}>
             Cancel
           </Button>
         ) : null}
-        <Button type="submit" size="compact" disabled={pending}>
+        <Button type="submit" size="compact" disabled={pending || removing}>
           {pending ? "Saving…" : "Save repository settings"}
         </Button>
       </div>
@@ -628,7 +851,10 @@ function RepositoryRow({
   remove: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  // The panel that lists the registered clones and adds another.
+  const [changing, setChanging] = useState(false);
   const [cloneError, setCloneError] = useState("");
+  const [removingClone, setRemovingClone] = useState("");
   const clone: Clone = repository.clones.find((c) => c.available) ??
     repository.clones[0] ?? {
       id: repository.repository,
@@ -651,55 +877,82 @@ function RepositoryRow({
   ].filter(Boolean);
   return (
     <li className="local-repo-row">
-      <div className="min-w-0 flex-1">
+      <div className="local-repo-main">
         <h3>{clone.repository}</h3>
-        <p className="truncate" title={clone.path}>
-          {clone.path}
-        </p>
+        {clone.available ? (
+          <p className="truncate" title={clone.path}>
+            {clone.path}
+          </p>
+        ) : (
+          <p className="local-repo-missing">Needs a local clone</p>
+        )}
+        <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
-      <p className="local-repo-summary">{summary.join(" · ")}</p>
-      {cloneError ? <p role="alert">{cloneError}</p> : null}
-      {clone.available ? null : <span className="local-pill">Needs a local clone</span>}
-      {!clone.available ? (
-        <CloneActions repository={repository.repository} changed={changed} />
+      <div className="local-repo-actions">
+        {clone.available ? (
+          <Button
+            variant="secondary"
+            size="compact"
+            aria-expanded={changing}
+            onClick={() => setChanging(!changing)}
+          >
+            {changing ? "Done" : "Change clone"}
+          </Button>
+        ) : null}
+        <Button
+          variant="secondary"
+          size="compact"
+          aria-label={`Settings for ${clone.repository}`}
+          onClick={() => setOpen(true)}
+        >
+          Settings
+        </Button>
+      </div>
+      {cloneError ? (
+        <p role="alert" className="local-repo-panel">
+          {cloneError}
+        </p>
       ) : null}
-      {repository.clones.length > 0 ? (
-        <details className="text-xs">
-          <summary>Change local clone</summary>
+      {!clone.available ? (
+        <div className="local-repo-panel">
+          <CloneActions repository={repository.repository} changed={changed} />
+        </div>
+      ) : null}
+      {clone.available && changing ? (
+        <div className="local-repo-panel local-repo-clones">
           <p>
             Keep the clone you want baum to use registered. Removing a registration leaves its files
             and saved reviews on disk.
           </p>
-          {repository.clones.map((c) => (
-            <div key={c.id}>
-              <p>
-                {c.path}
-                {c.available ? "" : " · unavailable"}
-              </p>
-              <Button
-                size="compact"
-                variant="ghost"
-                onClick={() =>
-                  void request(`api/repos/${c.id}`, {}, "DELETE")
-                    .then(changed)
-                    .catch((e) => setCloneError(errorText(e)))
-                }
-              >
-                Remove this clone registration
-              </Button>
-            </div>
-          ))}
+          <ul>
+            {repository.clones.map((c) => (
+              <li key={c.id}>
+                <code className="truncate" title={c.path}>
+                  {c.path}
+                </code>
+                {c.available ? null : <span className="local-pill">Unavailable</span>}
+                <Button
+                  size="compact"
+                  variant="secondary"
+                  className="text-base"
+                  disabled={removingClone !== ""}
+                  onClick={() => {
+                    setRemovingClone(c.id);
+                    setCloneError("");
+                    void request(`api/repos/${c.id}`, {}, "DELETE")
+                      .then(changed)
+                      .catch((e) => setCloneError(errorText(e)))
+                      .finally(() => setRemovingClone(""));
+                  }}
+                >
+                  {removingClone === c.id ? "Removing…" : "Remove registration"}
+                </Button>
+              </li>
+            ))}
+          </ul>
           <CloneActions repository={repository.repository} changed={changed} />
-        </details>
+        </div>
       ) : null}
-      <Button
-        variant="secondary"
-        size="compact"
-        aria-label={`Settings for ${clone.repository}`}
-        onClick={() => setOpen(true)}
-      >
-        Settings
-      </Button>
       {open ? (
         <RepositoryDialog
           clone={clone}
@@ -734,7 +987,7 @@ function RepositoryDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  useLayoutEffect(() => {
     dialog.current?.showModal();
   }, []);
   return (
@@ -760,7 +1013,7 @@ function RepositoryDialog({
         defaults={defaults}
         status={status}
         cancel={close}
-        remove={() => void remove().then(close)}
+        remove={() => remove().then(close)}
         save={async (settings) => {
           try {
             await request(`api/repositories/${clone.repository}/settings`, settings, "PUT");

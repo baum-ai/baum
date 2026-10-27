@@ -125,6 +125,8 @@ export function CloneActions({
   const fieldId = useId();
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
+  // Which button started the running action, so only it changes its label.
+  const [doing, setDoing] = useState("");
   const [error, setError] = useState("");
   const [state, setState] = useState<CloneState | null>(null);
   const active = useRef(true);
@@ -135,10 +137,11 @@ export function CloneActions({
       active.current = false;
     };
   }, []);
-  const run = async (action: () => Promise<void>) => {
+  const run = async (name: string, action: () => Promise<void>) => {
     if (working.current) return;
     working.current = true;
     setBusy(true);
+    setDoing(name);
     setError("");
     try {
       await action();
@@ -203,7 +206,7 @@ export function CloneActions({
             type="button"
             disabled={busy}
             onClick={() =>
-              void run(async () => {
+              void run("choose", async () => {
                 if (hasFolderPicker()) {
                   const selected = await invoke<string | null>("choose_repository");
                   if (selected) await attach(selected);
@@ -211,13 +214,13 @@ export function CloneActions({
               })
             }
           >
-            Choose folder
+            {busy && doing === "choose" ? "Choosing…" : "Choose folder"}
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={() =>
-              void run(async () => {
+              void run("clone", async () => {
                 const target = await call<{ dir: string }>("target", { repository });
                 if (active.current) {
                   // Shown with ~ for the home directory; submitting expands it.
@@ -227,7 +230,7 @@ export function CloneActions({
               })
             }
           >
-            Clone it
+            {busy && doing === "clone" ? "Preparing…" : "Clone it"}
           </button>
         </div>
       )}
@@ -240,7 +243,7 @@ export function CloneActions({
               setError("Enter an absolute folder path.");
               return;
             }
-            void run(async () => {
+            void run("submit", async () => {
               if (mode === "folder") await attach(full);
               else {
                 const next = await call<CloneState>("clone", { repository, dir: full });
@@ -270,7 +273,7 @@ export function CloneActions({
                   aria-label="Choose a folder to clone into"
                   title="Choose a folder"
                   onClick={() =>
-                    void run(async () => {
+                    void run("parent", async () => {
                       const parent = await invoke<string | null>("choose_repository", {
                         cloneTarget: true,
                       });
@@ -326,6 +329,7 @@ export function RepositoryPicker({
   const [listed, setListed] = useState<boolean | null>(null);
   const loading = listed !== connected;
   const [busy, setBusy] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const active = useRef(true);
   const sequence = useRef(0);
   const working = useRef(false);
@@ -447,8 +451,17 @@ export function RepositoryPicker({
       {error ? (
         <div role="alert">
           <p>{error}</p>
-          <button type="button" onClick={() => void reload()}>
-            Try again
+          <button
+            type="button"
+            disabled={retrying}
+            onClick={() => {
+              setRetrying(true);
+              void reload().finally(() => {
+                if (active.current) setRetrying(false);
+              });
+            }}
+          >
+            {retrying ? "Trying…" : "Try again"}
           </button>
         </div>
       ) : null}
@@ -541,7 +554,7 @@ export function RepositoryPicker({
             void action("documents", () => call("refresh", { include_documents: true }))
           }
         >
-          Also look in Documents
+          {busy === "documents" ? "Looking…" : "Also look in Documents"}
         </button>
       ) : null}
     </section>

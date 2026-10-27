@@ -195,6 +195,18 @@ handshake, in [`apiclient`](../apiclient).
   holds. Where `--check --user` passed only because a baum daemon ran, it only
   records the event: no Entire, no bootstrap, no output, exit status 0, as
   where `--check` refuses.
+- The user-wide hooks also run record-only events, which Entire has no hook
+  for and only the daemon's live sessions read: Claude Code's `notification`
+  (its Notification hook, every type) and `post-tool-use` (PostToolUse for
+  every tool, run with `async`), and Codex's `permission-request`. For them
+  `baum hooks agent --user` only records the event, hosted or not: no Entire,
+  no output (so Codex's permission request decides nothing and Codex asks as
+  usual), exit status 0. `--check --user` applies the same rules (the second
+  never matches, as no hook file hands them to Entire). They are not in the
+  committed vocabulary: a committed dispatcher or `baum hooks agent` without
+  `--user` refuses them as unsupported, so repositories and the hosted
+  onboarding are unchanged, and an older baum's `--check` refuses them too,
+  leaving the hook quiet.
 - `--check --user` succeeds only when all of these hold, in this order:
   1. the working directory is inside a Git worktree (found by its `.git`,
      without starting git) whose Entire is enabled as Entire reads it: a
@@ -258,7 +270,9 @@ handshake, in [`apiclient`](../apiclient).
   `hook_event_name`, `source` and `reason`, read from the whole payload as it
   streams, however large, keeping at most 4 KiB of each (a member given twice
   keeps its last value; a payload cut short yields the members before the
-  cut). Prompts, tool input
+  cut). A Claude Code `notification` event also keeps `notification_type` and
+  `message`, the sentence Claude Code showed, cut to 512 bytes; no other event
+  keeps them. Prompts, tool input
   and output and every other member are never kept. A Git event keeps the
   hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
   (refs and commits), but never a pre-push remote URL, which can carry

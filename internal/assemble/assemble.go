@@ -59,6 +59,16 @@ type Git interface {
 
 var _ Git = (*gitlocal.Repo)(nil)
 
+// Fetcher brings a pull request's missing base and head commits into the
+// clone, under refs/baum/pull/<N>/ and from the remote the request names;
+// *gitlocal.Repo implements it. It changes no other ref, the index or the
+// working tree.
+type Fetcher interface {
+	ResolvePull(ctx context.Context, pr gitlocal.PullRequest) (gitlocal.Pull, error)
+}
+
+var _ Fetcher = (*gitlocal.Repo)(nil)
+
 // Sessions finds the coding-agent sessions linked to the pull request's
 // commits, as the bundle's sessions, unredacted: the assembler's redaction
 // masks them with the rest of the bundle.
@@ -73,6 +83,10 @@ type Assembler struct {
 	Git      Git
 	Sessions Sessions
 	Images   ImageFetcher
+	// Fetcher fetches a pull request commit the clone lacks from the remote
+	// whose URL names the pull request's repository. Nil fetches nothing, and
+	// a missing commit is a MissingCommitError with the fetch to run.
+	Fetcher Fetcher
 	// Redactor masks the bundle's text; nil builds the default one.
 	Redactor *bundle.Redactor
 	// Warn receives one line for each input that was left out and why; nil
@@ -113,8 +127,8 @@ type Result struct {
 	Images []bundle.DescriptionImage
 }
 
-// MissingCommitError reports a pull request commit that is not in the clone.
-// Assembly never fetches it: the user's refs stay as they are.
+// MissingCommitError reports a pull request commit that is not in the clone,
+// either because the assembly had no Fetcher or because fetching it failed.
 type MissingCommitError struct {
 	// Role is "head" or "base".
 	Role   string
@@ -126,6 +140,8 @@ type MissingCommitError struct {
 	// repository; "" when none does, and Repository is then named in the hint.
 	Remote     string
 	Repository string
+	// Fetch is why fetching the commit failed; nil when it was not fetched.
+	Fetch error
 }
 
 func (e *MissingCommitError) Error() string {
@@ -137,10 +153,18 @@ func (e *MissingCommitError) Error() string {
 	if e.Role == "base" {
 		fetch = "git fetch " + remote + " " + e.BaseRef
 	}
-	return fmt.Sprintf("the pull request's %s commit %s is not in this clone; run `%s` (or git fetch) and try again. baum does not fetch or change your refs", e.Role, e.SHA, fetch)
+	if e.Fetch != nil {
+		return fmt.Sprintf("the pull request's %s commit %s is not in this clone and fetching it from %s failed: %v; check that %s is reachable, or run `%s`, and try again", e.Role, e.SHA, remote, e.Fetch, remote, fetch)
+	}
+	return fmt.Sprintf("the pull request's %s commit %s is not in this clone; run `%s` (or git fetch) and try again", e.Role, e.SHA, fetch)
 }
 
-func (e *MissingCommitError) Unwrap() error { return gitlocal.ErrObjectNotFound }
+func (e *MissingCommitError) Unwrap() []error {
+	if e.Fetch != nil {
+		return []error{gitlocal.ErrObjectNotFound, e.Fetch}
+	}
+	return []error{gitlocal.ErrObjectNotFound}
+}
 
 // Assemble builds the bundle for req. It follows the hosted assembler:
 // description images, pull request header, checks and conversation, the diff
@@ -165,11 +189,7 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	a.warnUnavailable(evidence)
 	pr := evidence.PullRequest
-	head, err := a.commit(ctx, "head", pr.HeadSHA, req, pr.BaseRef)
-	if err != nil {
-		return Result{}, err
-	}
-	base, err := a.commit(ctx, "base", pr.BaseSHA, req, pr.BaseRef)
+	head, base, err := a.commits(ctx, req, pr.HeadSHA, pr.BaseSHA, pr.BaseRef)
 	if err != nil {
 		return Result{}, err
 	}
@@ -281,6 +301,34 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 		Bundle: b, JSON: append(encoded, '\n'),
 		Head: head, Base: base, MergeBase: mergeBase, Images: images,
 	}, nil
+}
+
+// commits finds the pull request's head and base commits in the clone. When
+// one is missing and the assembly has a Fetcher, both are fetched from the
+// remote that names the pull request's repository and looked up again.
+func (a *Assembler) commits(ctx context.Context, req Request, headSHA, baseSHA, baseRef string) (head, base string, err error) {
+	resolve := func() (string, string, error) {
+		head, err := a.commit(ctx, "head", headSHA, req, baseRef)
+		if err != nil {
+			return "", "", err
+		}
+		base, err := a.commit(ctx, "base", baseSHA, req, baseRef)
+		return head, base, err
+	}
+	head, base, err = resolve()
+	var missing *MissingCommitError
+	if a.Fetcher == nil || !errors.As(err, &missing) || missing.Remote == "" {
+		return head, base, err
+	}
+	pr := gitlocal.PullRequest{Number: req.Number, BaseSHA: baseSHA, HeadSHA: headSHA, BaseRef: baseRef, Remote: missing.Remote}
+	if _, err := a.Fetcher.ResolvePull(ctx, pr); err != nil {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		missing.Fetch = err
+		return "", "", missing
+	}
+	return resolve()
 }
 
 // commit checks that the pull request's commit is in the clone.

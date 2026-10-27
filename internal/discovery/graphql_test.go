@@ -171,3 +171,20 @@ func TestGraphQLRequestCapAndRateErrorPreserveCache(t *testing.T) {
 		})
 	}
 }
+
+func TestBehindOffersOnlyACleanOutOfDateBranch(t *testing.T) {
+	for name, c := range map[string]struct {
+		pr   gqlPR
+		want bool
+	}{
+		"behind":      {gqlPR{MergeStateStatus: "BEHIND", Mergeable: "MERGEABLE"}, true},
+		"conflicting": {gqlPR{MergeStateStatus: "BEHIND", Mergeable: "CONFLICTING"}, false},
+		"draft":       {gqlPR{MergeStateStatus: "BEHIND", IsDraft: true}, false},
+		"clean":       {gqlPR{MergeStateStatus: "CLEAN", Mergeable: "MERGEABLE"}, false},
+		"blocked":     {gqlPR{MergeStateStatus: "BLOCKED"}, false},
+	} {
+		if got := c.pr.behind(); got != c.want {
+			t.Errorf("%s: behind = %v, want %v", name, got, c.want)
+		}
+	}
+}

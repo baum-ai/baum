@@ -63,8 +63,12 @@ const (
 )
 
 // payloadIdentifiers are the members of an agent hook's payload its event
-// keeps.
-var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason"}
+// keeps; agentSession keeps the last two for a notification only.
+var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "notification_type", "message"}
+
+// notificationEvent is Claude Code's Notification hook, the one event whose
+// event keeps the text the agent showed its user.
+const notificationEvent = "notification"
 
 // hookInput keeps, for the hook's event, a bounded copy of its standard input
 // and the identifiers of the JSON payload it carries, read from all of it,
@@ -176,8 +180,10 @@ func (h *hookInput) identifiers() map[string]string {
 }
 
 // agentSession builds an event's session from the payload's identifiers. Only
-// these string members are kept, never prompts or tool input and output.
-func agentSession(fields map[string]string) *hookevents.Session {
+// these string members are kept, never prompts or tool input and output; a
+// notification also keeps its type and the line it showed the user
+// ("Claude needs your permission to use Bash"), which Event.Bound cuts short.
+func agentSession(event string, fields map[string]string) *hookevents.Session {
 	text := func(names ...string) string {
 		for _, name := range names {
 			if value := fields[name]; value != "" {
@@ -193,6 +199,9 @@ func agentSession(fields map[string]string) *hookevents.Session {
 		HookEvent:      text("hook_event_name"),
 		Source:         text("source"),
 		Reason:         text("reason"),
+	}
+	if event == notificationEvent {
+		session.NotificationType, session.Message = text("notification_type"), text("message")
 	}
 	if *session == (hookevents.Session{}) {
 		return nil
