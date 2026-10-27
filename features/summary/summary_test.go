@@ -184,8 +184,8 @@ func TestRenderPullRequestIsBounded(t *testing.T) {
 	if strings.Contains(small, "old") || !slices.Equal(smallIndexes, []int{1}) {
 		t.Fatalf("a superseded decision was rendered: %s, %v", small, smallIndexes)
 	}
-	if ContentHash(PublicVersion, small) != ContentHash(PublicVersion, small) ||
-		ContentHash(PublicVersion, small) == ContentHash("other", small) {
+	hash := ContentHash(PublicVersion, small)
+	if hash != ContentHash(PublicVersion, strings.Clone(small)) || hash == ContentHash("other", small) {
 		t.Fatal("the content hash is not a function of version and input")
 	}
 }
