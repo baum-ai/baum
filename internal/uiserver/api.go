@@ -40,10 +40,13 @@ type LocalAPI struct {
 	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
 	// request from the app.
 	Merge http.Handler
+	// Review serves /api/prs/review: submitting a pull request review with
+	// inline comments from the app.
+	Review http.Handler
 	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
 	// their -options reads: updating a pull request's branch and re-running its
-	// failed workflow runs. With merging and a fix's push, they are the
-	// GitHub writes the app makes.
+	// failed workflow runs. With merging, submitting a review and a
+	// fix's push, they are the GitHub writes the app makes.
 	Update http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
@@ -111,6 +114,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
+	mux.Handle("POST /api/prs/review", provider(a.Review, "review_unavailable"))
 	update := provider(a.Update, "update_unavailable")
 	mux.Handle("GET /api/prs/update-branch-options", update)
 	mux.Handle("POST /api/prs/update-branch", update)

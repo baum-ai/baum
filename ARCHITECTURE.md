@@ -693,13 +693,13 @@ type Prompt struct {
 ```
 
 The module ships and maintains its own public prompt in `agent/prompt`:
-`review-public-v4.md`, shared by every backend and ending with a "Submitting"
+`review-public-v5.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
 and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v4` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v5` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
@@ -1957,8 +1957,9 @@ an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
 authorization. This service has no generation or GitHub mutation capability;
-the app's GitHub writes (merge, update branch, re-run checks, a confirmed
-fix's `git push` and that fix's replies on the review threads it addressed)
+the app's GitHub writes (merge, update branch, re-run checks, a submitted
+review, a confirmed fix's `git push` and that fix's replies on the review
+threads it addressed)
 live outside it (see "Fix jobs" and below).
 
 `Service.Cached` resolves the local credential and reads disk without network
@@ -2007,6 +2008,19 @@ errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
 a merge the daemon runs `Service.PollNow` for the repository and publishes an
 index change so the inbox drops the pull request.
+
+Submitting a review is the app's other write outside discovery.
+`POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
+comments: [{path, line, side, start_line?, body}]}` for a picked repository
+(unpicked is `404`) and creates one pull request review through REST
+(`Client.SubmitReview`) with `commit_id` set to `head_sha`, the commit the
+review was generated for, sent once with no retry. `event` is `APPROVE`,
+`COMMENT` or `REQUEST_CHANGES`; the last two need a body or a comment; at most
+100 comments, `side` `RIGHT` by default, and a range sends `start_side` equal to
+`side`. GitHub's refusals map to `{code, message}`: `forbidden` `403`,
+`not_found` `404`, `own_pull_request` and `invalid_line` (a line outside the
+diff) `422`, anything else `failed` `502`. The answer is `{url}`, the review on
+GitHub.
 
 Two more confirmed writes live in `internal/prupdate`, served by
 `uiserver.UpdateHandler` on the same auth, CSRF and picked-repository rules as
