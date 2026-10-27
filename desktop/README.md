@@ -85,16 +85,16 @@ or add action. Displayed paths abbreviate the current home directory as
 2. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
    the Anthropic API), its model (the harness default, a listed model or a
    custom one), whether reviews run automatically and, if so, for which pull
-   requests (authored, requested, or both). The screen reads them with
-   `baum internal reviews show` and saves changes with `baum internal reviews
-   set` when the user opens baum at the end of setup. They are stored as app
-   preferences in the repository registry, which the daemon rereads for every
-   job.
+   requests (authored, requested, both, or all open pull requests). The
+   screen reads them with `baum internal reviews show` and saves changes with
+   `baum internal reviews set` when the user opens baum at the end of setup.
+   They are stored as app preferences in the repository registry, which the
+   daemon rereads for every job.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
      baum it replaces; PATH and administrator warnings show beneath it.
-   - Connect the agents you use, with separate install or enable buttons. The
+   - Connect the agents you use, with separate Connect or Enable buttons. The
      Codex marketplace plugin is installed with `baum hooks install --user
      --agent codex`. The screen explains reviewing trust with `/hooks`. The
      Claude Code plugin is installed separately with `--agent claude-code`.

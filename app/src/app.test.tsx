@@ -666,11 +666,21 @@ it("saves the global review settings from the form the desktop setup uses", asyn
   expect(node.querySelector<HTMLSelectElement>("#review-model")!.value).toBe("claude-haiku-5-5");
   const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(global.checked).toBe(true);
+  expect(node.querySelector("#review-all-note")).toBeNull();
+  await act(async () =>
+    node.querySelector<HTMLInputElement>('input[name="pull-requests"][value="all"]')!.click(),
+  );
+  expect(node.querySelector("#review-all-note")).not.toBeNull();
+  await act(async () => save().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/automatic",
+    body: { enabled: true, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
+  });
   await act(async () => global.click());
   await act(async () => save().click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/automatic",
-    body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "both" },
+    body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
   });
 });
 it("sets automatic reviews per repository and clears an old daily cap", async () => {
