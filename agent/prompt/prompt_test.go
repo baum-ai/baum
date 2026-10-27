@@ -22,7 +22,7 @@ func readFile(t *testing.T, name string) string {
 }
 
 func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
-	shared := readFile(t, "review-public-v3.md")
+	shared := readFile(t, "review-public-v4.md")
 	if !strings.HasSuffix(shared, "## 10. Submitting\n") {
 		t.Fatal("shared text must end with the Submitting heading")
 	}
@@ -54,7 +54,7 @@ func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
 		if !strings.HasPrefix(got.Body, shared) || !strings.HasSuffix(got.Body, block) {
 			t.Fatalf("%s: body is not the shared text then %s", backend, file)
 		}
-		if got.Version != "review-public-v3" {
+		if got.Version != "review-public-v4" {
 			t.Fatalf("version %q", got.Version)
 		}
 		sum := sha256.Sum256([]byte(got.Body))
@@ -78,5 +78,35 @@ func TestUnknownBackendIsAnError(t *testing.T) {
 		if _, err := (prompt.Prompts{}).Instructions(context.Background(), backend); err == nil {
 			t.Fatalf("%q: want an error", backend)
 		}
+	}
+}
+
+func TestGroupInstructionsInsertGroupTextBeforeSubmitting(t *testing.T) {
+	shared := readFile(t, "review-public-v4.md")
+	group := readFile(t, "group-public-v1.md")
+	for _, phrase := range []string{"members/<number>/head/", "members.json", "Do not write `stack`"} {
+		if !strings.Contains(group, phrase) {
+			t.Errorf("the group text does not say %q", phrase)
+		}
+	}
+	for backend, file := range map[string]string{agent.BackendClaude: "submit-claude.md", agent.BackendCodex: "submit-codex.md", agent.BackendCursorAgent: "submit-cursor.md"} {
+		got, err := (prompt.GroupPrompts{}).Instructions(context.Background(), backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Version != prompt.GroupVersion {
+			t.Fatalf("%s: version %q", backend, got.Version)
+		}
+		want := strings.TrimSuffix(shared, "## 10. Submitting\n") + group + "## 10. Submitting\n\n" + readFile(t, file)
+		if got.Body != want {
+			t.Fatalf("%s: the group text must sit before the Submitting heading and its submit block", backend)
+		}
+		sum := sha256.Sum256([]byte(got.Body))
+		if got.Digest != hex.EncodeToString(sum[:]) {
+			t.Fatalf("%s: digest is not the sha256 of the body", backend)
+		}
+	}
+	if _, err := (prompt.GroupPrompts{}).Instructions(context.Background(), "nope"); err == nil {
+		t.Fatal("an unknown backend must be an error")
 	}
 }

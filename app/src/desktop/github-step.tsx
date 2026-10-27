@@ -24,8 +24,19 @@ function GitHubLogo() {
 
 /** First setup step: sign in to GitHub, so baum can find pull requests. */
 export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) => void }) {
-  const { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy } =
-    useGitHubConnection(viaApp);
+  const {
+    connection,
+    pending,
+    error,
+    busy,
+    working,
+    checking,
+    copied,
+    recheck,
+    action,
+    signIn,
+    copy,
+  } = useGitHubConnection(viaApp);
   // An explicit credential (environment or config) is in use and wins over a
   // saved account, so it counts as connected.
   const connected = Boolean((connection?.saved || connection?.override) && !connection.error);
@@ -59,11 +70,15 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 id="github-sign-in"
                 type="button"
                 disabled={busy || connection.state === "loading"}
-                className={`${connected ? "secondary" : ""}${busy ? " loading" : ""}`}
+                className={`${connected ? "secondary" : ""}${working === "start" ? " loading" : ""}`}
                 onClick={signIn}
               >
-                {busy && <NineDots size={14} tone="text" />}
-                {connection.saved ? "Reconnect" : "Sign in with GitHub"}
+                {working === "start" && <NineDots size={14} tone="text" />}
+                {working === "start"
+                  ? "Working…"
+                  : connection.saved
+                    ? "Reconnect"
+                    : "Sign in with GitHub"}
               </button>
             </div>
           )}
@@ -93,7 +108,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 disabled={busy}
                 onClick={() => void action("cancel")}
               >
-                Cancel
+                {working === "cancel" ? "Cancelling…" : "Cancel"}
               </button>
             </div>
             <p className="github-note">
@@ -118,7 +133,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 disabled={checking || busy}
                 onClick={() => void (error ? recheck() : action("retry"))}
               >
-                {checking ? "Checking…" : "Check again"}
+                {checking || working === "retry" ? "Checking…" : "Check again"}
               </button>
             )}
           </div>

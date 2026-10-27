@@ -1,0 +1,505 @@
+/* The Analytics page: cards of figures and charts on the page body, in the
+   app's panel style. Every colour is a token, so dark mode follows. */
+.local-page-body.analytics {
+  gap: 1rem;
+  padding-bottom: 1.5rem;
+}
+/* A new window or filter holds the last report, faded, until it answers. */
+.analytics[data-stale] > * {
+  opacity: 0.55;
+  transition: opacity 150ms;
+}
+.analytics-filters {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+.analytics-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.analytics-card {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  min-width: 0;
+}
+.analytics-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+.analytics-card-head p {
+  margin: 0.15rem 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.analytics-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 1rem;
+}
+@media (width < 64rem) {
+  .analytics-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.analytics-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.analytics-empty {
+  padding: 1.25rem 0.5rem;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.analytics-empty h3 {
+  margin: 0 0 0.25rem;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.analytics-empty p {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.analytics-unknown {
+  color: var(--text-tertiary);
+  cursor: help;
+}
+
+/* The headline tiles, one strip divided by hairlines. They wrap as a row,
+   not a grid, so a short last row stretches instead of leaving a hole. */
+.local-panel.analytics-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--border-subtle);
+}
+.analytics-tile {
+  flex: 1 1 11rem;
+  min-width: 0;
+  padding: 1rem 1.25rem;
+  background: var(--surface-card);
+}
+.analytics-tile dt {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.analytics-tile dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0.35rem 0 0;
+}
+.analytics-tile-value {
+  font-size: var(--text-3xl);
+  line-height: var(--text-3xl--line-height);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.analytics-tile-detail {
+  flex-basis: 100%;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* Charts. The plot leaves room on the left for its ticks. */
+.analytics-chart {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 3rem;
+}
+.analytics-plot {
+  position: relative;
+}
+.analytics-grid {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.analytics-grid span {
+  position: absolute;
+  top: -0.6em;
+  right: calc(100% + 0.5rem);
+  font-size: var(--text-3xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.analytics-columns {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+/* The whole slot is the hit target, not just the bar. */
+.analytics-column {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  outline: none;
+}
+.analytics-column[data-active] {
+  background: var(--surface-wash);
+}
+.analytics-column:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.analytics-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: min(24px, 70%);
+  overflow: hidden;
+  border-radius: 4px 4px 0 0;
+}
+.analytics-stack > div {
+  flex-basis: 0;
+  min-height: 2px;
+}
+.analytics-ticks {
+  display: flex;
+  font-size: var(--text-3xs);
+  color: var(--text-tertiary);
+}
+.analytics-ticks span {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+.analytics-span {
+  justify-content: space-between;
+}
+.analytics-span span {
+  flex: none;
+}
+.analytics-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.analytics-crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-default);
+  pointer-events: none;
+}
+.analytics-tip {
+  position: absolute;
+  top: 0.25rem;
+  z-index: 2;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.analytics-column .analytics-tip[data-side="right"] {
+  left: calc(50% + 10px);
+}
+.analytics-column .analytics-tip[data-side="left"] {
+  right: calc(50% + 10px);
+}
+.analytics-step .analytics-tip[data-side="right"] {
+  transform: translateX(10px);
+}
+.analytics-step .analytics-tip[data-side="left"] {
+  transform: translateX(calc(-100% - 10px));
+}
+.analytics-tip-title {
+  color: var(--text-tertiary);
+}
+.analytics-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.analytics-tip-row strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.analytics-key-line {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+.analytics-key-box {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.analytics-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.analytics-legend strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.analytics-meter {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 4px;
+}
+.analytics-meter > div {
+  flex-basis: 0;
+  min-width: 2px;
+}
+
+/* Tables: compact, ruled, numbers aligned. */
+.analytics-scroll {
+  position: relative;
+  overflow-x: auto;
+}
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.analytics-table th,
+.analytics-table td {
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+.analytics-table th:first-child,
+.analytics-table td:first-child {
+  padding-left: 0;
+}
+.analytics-table th:last-child,
+.analytics-table td:last-child {
+  padding-right: 0;
+}
+.analytics-table thead th {
+  border-top: 0;
+  padding-top: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.analytics-table tbody th {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.analytics-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.analytics-table code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.analytics-compact th,
+.analytics-compact td {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  font-size: var(--text-xs);
+}
+.analytics-none {
+  padding: 1.25rem 0;
+  text-align: center !important;
+  color: var(--text-secondary);
+}
+.analytics-table-toggle summary {
+  width: fit-content;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.analytics-table-toggle summary:hover {
+  color: var(--text-primary);
+}
+.analytics-table-toggle[open] summary {
+  margin-bottom: 0.5rem;
+}
+.analytics-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.analytics-agent img {
+  flex: none;
+}
+
+/* Figures in a card: label over value. */
+.analytics-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.9rem 1.25rem;
+  margin: 0;
+}
+.analytics-stats dt {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.analytics-stats dd {
+  margin: 0.15rem 0 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.analytics-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+}
+.analytics-headline strong {
+  font-size: var(--text-3xl);
+  line-height: var(--text-3xl--line-height);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.analytics-headline span {
+  color: var(--text-secondary);
+}
+.analytics-reasons {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+}
+.analytics-reasons li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.analytics-reasons strong {
+  color: var(--text-primary);
+}
+.analytics-provider {
+  display: grid;
+  gap: 0.5rem;
+}
+.analytics-provider + .analytics-provider {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.analytics-provider h3 {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.analytics-plan-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* The longest sessions: who and where, then how long and how much. */
+.analytics-sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.analytics-sessions li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 1rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.analytics-sessions li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.analytics-session-main {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.analytics-session-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.analytics-session-where code {
+  max-width: 14rem;
+  overflow: hidden;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-wash);
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.analytics-session-facts {
+  display: grid;
+  justify-items: end;
+  gap: 0.1rem;
+  font-size: var(--text-xs);
+  text-align: right;
+  color: var(--text-tertiary);
+}
+.analytics-session-facts strong {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}

@@ -14,6 +14,8 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
     new URL(response.url()).pathname.endsWith("/api/events"),
   );
   await page.goto(launch.href);
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
   const base = new URL(page.url()).pathname;
@@ -38,7 +40,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
   expect(rejected.status()).toBe(403);
 
   // A page reload would erase this marker. Both edits must update in place.
-  const selection = page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true });
+  const selection = page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true });
   await selection.check();
   await page.evaluate(() => Object.assign(window, { hotReloadMarker: "preserved" }));
   const cssPath = "src/style.css";

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -131,6 +132,11 @@ type Config struct {
 	// codex and cursor-agent are accepted; per-repository settings do not
 	// override it.
 	BackendPaths map[Backend]string `toml:"backend_paths,omitempty"`
+	// AgentEnv are variables set for every agent baum runs on this computer
+	// and for the git commands that commit and push a fix, over the inherited
+	// environment: for example GIT_CONFIG_GLOBAL, to sign an agent's commits
+	// with another key. The app's own choice replaces it (repos.Preferences).
+	AgentEnv map[string]string `toml:"agent_env,omitempty"`
 }
 
 // PathBackends are the backends whose executable BackendPaths can name.
@@ -153,6 +159,59 @@ func validateBackendPaths(paths map[Backend]string) error {
 		}
 	}
 	return nil
+}
+
+// MaxAgentEnv bounds how many variables AgentEnv may set.
+const MaxAgentEnv = 32
+
+// ValidateAgentEnv rejects a name that is not a portable variable name, a
+// value with a NUL byte or longer than 4 KiB, and more than MaxAgentEnv
+// variables.
+func ValidateAgentEnv(env map[string]string) error {
+	if len(env) > MaxAgentEnv {
+		return fmt.Errorf("at most %d variables", MaxAgentEnv)
+	}
+	names := slices.Sorted(maps.Keys(env))
+	for _, name := range names {
+		if !validEnvName(name) {
+			return fmt.Errorf("%q is not a variable name; use letters, digits and underscores, not starting with a digit", name)
+		}
+		if value := env[name]; len(value) > 4<<10 || strings.ContainsRune(value, 0) {
+			return fmt.Errorf("%s: the value must be at most 4 KiB, without NUL bytes", name)
+		}
+	}
+	return nil
+}
+
+func validEnvName(name string) bool {
+	if name == "" || len(name) > 256 || (name[0] >= '0' && name[0] <= '9') {
+		return false
+	}
+	for _, r := range name {
+		if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// AgentEnviron is AgentEnv as "NAME=value" entries sorted by name, each
+// value with a leading ~ and $NAME or ${NAME} expanded from this process's
+// environment, as a shell would.
+func (c Config) AgentEnviron() []string {
+	if len(c.AgentEnv) == 0 {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	env := make([]string, 0, len(c.AgentEnv))
+	for _, name := range slices.Sorted(maps.Keys(c.AgentEnv)) {
+		value := c.AgentEnv[name]
+		if home != "" && (value == "~" || strings.HasPrefix(value, "~/")) {
+			value = home + value[1:]
+		}
+		env = append(env, name+"="+os.ExpandEnv(value))
+	}
+	return env
 }
 
 func examplePath(name string) string {
@@ -267,6 +326,9 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 	}
 	if err := validateBackendPaths(cfg.BackendPaths); err != nil {
 		return Config{}, false, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := ValidateAgentEnv(cfg.AgentEnv); err != nil {
+		return Config{}, false, fmt.Errorf("%s: agent_env: %w", path, err)
 	}
 	if cfg.GitHubToken != "" {
 		cfg.GitHubTokenSource = SourceConfigFile

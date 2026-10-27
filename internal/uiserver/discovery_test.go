@@ -17,7 +17,7 @@ type fakePRs struct{ polled []string }
 func (f *fakePRs) Cached(_ context.Context, r github.Repository) (discovery.Snapshot, error) {
 	return discovery.Snapshot{Repository: r.String(), PullRequests: []discovery.PullRequest{{Number: 7}}}, nil
 }
-func (f *fakePRs) Poll(_ context.Context, r github.Repository) (discovery.Snapshot, error) {
+func (f *fakePRs) PollNow(_ context.Context, r github.Repository) (discovery.Snapshot, error) {
 	f.polled = append(f.polled, r.String())
 	return discovery.Snapshot{Repository: r.String()}, nil
 }

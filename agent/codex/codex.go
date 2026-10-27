@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,9 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
+	// Env are the user's agent variables (agent.WithUserEnv), for the Local
+	// profile only.
+	Env []string
 
 	mu           sync.Mutex
 	checked      bool
@@ -69,7 +73,24 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendCodex }
 
-func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
+	return c.run(ctx, request, false)
+}
+
+// Fix runs Codex with write access to the request's directory, for a fix a
+// person asked for (agent.Fixer). Codex's workspace-write sandbox lets the
+// commands it runs write to that directory and to Request.Scratch, which
+// becomes their TMPDIR, and nowhere else (not /tmp or the caller's TMPDIR),
+// with the network off. As in a review, they can read any file the user can.
+// Its final message is the result's Document. Only the Local profile fixes.
+func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
+	if c.Profile != Local {
+		return agent.Result{}, errors.New("codex: only the Local profile runs fixes")
+	}
+	return c.run(ctx, request, true)
+}
+
+func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (result agent.Result, err error) {
 	result.Model = c.Model
 	result.ModelSource = "configured"
 	pendingTurns := 0
@@ -113,15 +134,31 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(request.Directory, "home"),
 			"CODEX_HOME=" + codexHome, "CODEX_API_KEY=" + endpoint.Key}
 	} else {
-		env = agent.LocalEnvironment(os.Environ(), "CODEX_HOME")
+		env = agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
 		if endpoint != nil {
 			env = append(env, "CODEX_API_KEY="+endpoint.Key)
+		}
+	}
+	var fixConfig []string
+	if fix {
+		sandbox = "workspace-write"
+		fixConfig = []string{"-c", "sandbox_workspace_write.network_access=false",
+			"-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"}
+		if request.Scratch != "" {
+			encoded, err := json.Marshal([]string{request.Scratch})
+			if err != nil {
+				return result, err
+			}
+			fixConfig = append(fixConfig, "-c", "sandbox_workspace_write.writable_roots="+string(encoded))
+			env = slices.DeleteFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "TMPDIR=") })
+			env = append(env, "TMPDIR="+request.Scratch)
 		}
 	}
 	args := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
 		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent",
 		"--sandbox", sandbox, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
 		"--skip-git-repo-check"}
+	args = append(args, fixConfig...)
 	// An empty Model leaves the flag out so Codex uses its configured default.
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
@@ -133,7 +170,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		}
 		args = append(args, "-c", "openai_base_url="+string(encoded))
 	}
-	if len(request.Schema) > 0 {
+	if len(request.Schema) > 0 && !fix {
 		schema, err := StrictSchema(request.Schema)
 		if err != nil {
 			return result, fmt.Errorf("deriving Codex output schema: %w", err)
@@ -193,6 +230,18 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				Command  string `json:"command"`
 				ExitCode *int   `json:"exit_code"`
 				Status   string `json:"status"`
+				Output   string `json:"aggregated_output"`
+				Message  string `json:"message"`
+				Query    string `json:"query"`
+				Server   string `json:"server"`
+				Tool     string `json:"tool"`
+				Changes  []struct {
+					Path string `json:"path"`
+					Kind string `json:"kind"`
+				} `json:"changes"`
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
 			} `json:"item"`
 			Error struct {
 				Message string `json:"message"`
@@ -208,9 +257,19 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			break
 		}
 		request.Activity.Progress()
+		if strings.HasPrefix(event.Type, "item.") {
+			var paths []string
+			for _, change := range event.Item.Changes {
+				paths = append(paths, change.Kind+" "+change.Path)
+			}
+			emitItem(request, event.Type, itemFields{ID: event.Item.ID, Type: event.Item.Type, Status: event.Item.Status, Text: event.Item.Text,
+				Command: event.Item.Command, Output: event.Item.Output, Message: event.Item.Message, Query: event.Item.Query,
+				Server: event.Item.Server, Tool: event.Item.Tool, Error: event.Item.Error.Message, ExitCode: event.Item.ExitCode, Paths: paths})
+		}
 		switch event.Type {
 		case "error":
 			lastError = event.Message
+			request.Emit(agent.TranscriptEntry{Kind: "error", Text: event.Message})
 		case "turn.started":
 			// Codex exposes turn totals, not the model cycles inside each turn.
 			// Count every started turn; never overwrite an earlier turn.
@@ -340,6 +399,13 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			}
 		}
 		return result, fmt.Errorf("codex failed: %w", waitErr)
+	}
+	if fix {
+		if !completed {
+			return result, errors.New("codex did not finish the fix")
+		}
+		result.Document = []byte(bounded(strings.TrimSpace(string(document)), agent.MaxFixSummaryBytes))
+		return result, nil
 	}
 	if !completed || len(document) == 0 || bytes.Equal(document, []byte("null")) {
 		return result, errors.New("codex returned no review document")

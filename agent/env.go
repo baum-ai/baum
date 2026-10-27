@@ -71,6 +71,35 @@ var deniedPrefixes = []string{"ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE
 
 var deniedNames = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CODEX_API_KEY", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"}
 
+// WithUserEnv is environ with the user's own agent variables (agent_env),
+// each "NAME=value", set over it. They are the user's explicit choice, so
+// unlike inherited variables they may name a Git setting, such as
+// GIT_CONFIG_GLOBAL. Callers append the variables a run itself needs after
+// them, which then win.
+func WithUserEnv(environ, user []string) []string {
+	if len(user) == 0 {
+		return environ
+	}
+	names := map[string]bool{}
+	for _, entry := range user {
+		name, _, _ := strings.Cut(entry, "=")
+		names[envKey(name)] = true
+	}
+	kept := slices.DeleteFunc(slices.Clone(environ), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return names[envKey(name)]
+	})
+	return append(kept, user...)
+}
+
+// envKey is name as the platform compares it: upper case on Windows.
+func envKey(name string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(name)
+	}
+	return name
+}
+
 // denied reports a provider or source-host credential or setting. name is
 // already upper case on Windows; elsewhere names are case-sensitive.
 func denied(name string) bool {

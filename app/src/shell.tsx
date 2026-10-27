@@ -1,28 +1,40 @@
 import type { ComponentType, ReactNode } from "react";
 import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import {
+  ChartIcon,
   type IconProps,
+  InboxIcon,
   PullRequestIcon,
   RepositoryIcon,
+  SessionsIcon,
   SettingsIcon,
   SparkleIcon,
 } from "@baum/viewer/components/icons";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 
-type Page = "inbox" | "jobs" | "repositories" | "settings";
+type Page = "inbox" | "pulls" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel. Below `lg` it folds to its glyphs. */
 export function Sidebar({
   page,
+  inbox,
   activeJobs,
+  runningSessions,
+  needsYou,
   problems,
   Link,
 }: {
   page: Page;
+  /** What waits on the person in the inbox, not counting snoozed. */
+  inbox: number;
   activeJobs: number;
+  runningSessions: number;
+  /** Agent sessions waiting on the person; the Sessions badge counts them,
+   *  in the caution tone, while there are any. */
+  needsYou: number;
   problems: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -32,9 +44,36 @@ export function Sidebar({
     href: string;
     icon: ComponentType<IconProps>;
     badge?: ReactNode;
+    tone?: "warn" | "caution";
   };
   const main: Item[] = [
-    { page: "inbox", label: "Inbox", href: appURL(), icon: PullRequestIcon },
+    {
+      page: "inbox",
+      label: "Inbox",
+      href: appURL(),
+      icon: InboxIcon,
+      badge: inbox > 0 ? inbox : null,
+    },
+    {
+      page: "pulls",
+      label: "Pull requests",
+      href: appURL("?page=pulls"),
+      icon: PullRequestIcon,
+    },
+    {
+      page: "sessions",
+      label: "Sessions",
+      href: appURL("?page=sessions"),
+      icon: SessionsIcon,
+      badge: needsYou > 0 ? needsYou : runningSessions > 0 ? runningSessions : null,
+      tone: needsYou > 0 ? "caution" : undefined,
+    },
+    {
+      page: "analytics",
+      label: "Analytics",
+      href: appURL("?page=analytics"),
+      icon: ChartIcon,
+    },
     {
       page: "repositories",
       label: "Repositories",
@@ -59,7 +98,7 @@ export function Sidebar({
       badge: problems > 0 ? problems : null,
     },
   ];
-  const link = ({ page: target, label, href, icon: Icon, badge }: Item) => (
+  const link = ({ page: target, label, href, icon: Icon, badge, tone }: Item) => (
     <Link
       key={target}
       href={href}
@@ -72,7 +111,7 @@ export function Sidebar({
       {badge ? (
         <span
           aria-hidden="true"
-          className={target === "settings" ? "local-rail-badge warn" : "local-rail-badge"}
+          className={`local-rail-badge ${target === "settings" ? "warn" : (tone ?? "")}`.trim()}
         >
           {badge}
         </span>

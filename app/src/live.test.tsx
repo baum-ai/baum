@@ -71,7 +71,9 @@ let liveFails = false;
 const streams: EventTarget[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  history.replaceState(null, "", "/s/test-ns/");
+  // Every open pull request; the default Inbox view has its own test.
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  localStorage.clear();
   liveBody = { sessions: [] };
   liveFails = false;
   streams.length = 0;
@@ -189,6 +191,179 @@ it("keeps the sessions shown when rereading them fails", async () => {
   expect(node.textContent).toContain("Agent running");
 });
 
+const sidebarBadge = () =>
+  node.querySelector('a[href$="?page=sessions"] .local-rail-badge')?.textContent ?? null;
+
+it("shows running and recently ended sessions on the Sessions page, updated by the live event", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("No agent sessions are running");
+  expect(node.textContent).toContain("No sessions ended in the last day");
+  expect(sidebarBadge()).toBeNull();
+  liveBody = {
+    sessions: [
+      session(),
+      session({ session_id: "s2", state: "idle", agent: "codex", pr: undefined, branch: "wip" }),
+      session({
+        session_id: "s3",
+        state: "ended",
+        last_event: "end",
+        started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+        last_activity_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+        ended_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+      }),
+    ],
+  };
+  await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+  const running = node.querySelector('[aria-label="Running now"]')!;
+  expect(running.querySelectorAll("li")).toHaveLength(2);
+  expect(running.textContent).toContain("Claude Code");
+  expect(running.textContent).toContain("Working");
+  expect(running.querySelector(".local-session-repo")!.textContent).toBe("acme/demo");
+  expect(running.querySelector(".local-session-branch")!.textContent).toBe("feature");
+  expect(running.textContent).toContain("Started 5 minutes ago");
+  expect(running.textContent).toContain("Active 20 seconds ago");
+  expect(running.textContent).toContain("Codex");
+  expect(running.textContent).toContain("Waiting for you");
+  expect(running.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
+  expect(running.querySelector("li:nth-child(2) a.local-session-pr")).toBeNull();
+  // Every row opens its transcript.
+  expect(running.querySelector("li a.local-session-open")?.getAttribute("href")).toBe(
+    "/s/test-ns/?page=sessions&session=claude-code%3As1",
+  );
+  const ended = node.querySelector('[aria-label="Ended recently"]')!;
+  expect(ended.querySelectorAll("li")).toHaveLength(1);
+  expect(ended.textContent).toContain("Ended 2 hours ago");
+  expect(ended.textContent).toContain("Lasted 1 h");
+  // Only sessions that are working count on the sidebar.
+  expect(sidebarBadge()).toBe("1");
+  liveBody = { sessions: [session({ state: "ended", ended_at: new Date().toISOString() })] };
+  await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+  expect(sidebarBadge()).toBeNull();
+  expect(node.querySelector('[aria-label="Running now"]')!.textContent).toContain(
+    "No agent sessions are running",
+  );
+  expect(node.querySelector('[aria-label="Ended recently"]')!.querySelectorAll("li")).toHaveLength(
+    1,
+  );
+});
+
+it("puts the sessions waiting on the person in Needs you, longest wait first, and counts them on the sidebar", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    history.replaceState(null, "", "/s/test-ns/?page=sessions");
+    await act(async () => root.render(<App />));
+    expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    liveBody = {
+      sessions: [
+        session(),
+        session({
+          session_id: "finished",
+          state: "idle",
+          last_event: "stop",
+          waiting_reason: "turn_finished",
+          waiting_since: ago(2),
+        }),
+        session({
+          session_id: "asking",
+          agent: "codex",
+          state: "idle",
+          last_event: "wait",
+          waiting_reason: "permission",
+          waiting_since: ago(4),
+          branch: "wip",
+          pr: undefined,
+        }),
+        session({
+          session_id: "question",
+          state: "idle",
+          last_event: "wait",
+          waiting_reason: "input",
+          waiting_since: new Date(Date.now() - 30_000).toISOString(),
+          waiting_message: "Which database should the migration use?",
+          title: "Plan the orders migration",
+          summary: "Move orders to the new schema without downtime.",
+        }),
+        // A reason the app does not know, from a newer daemon, is not listed.
+        session({
+          session_id: "later",
+          state: "idle",
+          waiting_reason: "something_new" as never,
+          waiting_since: ago(9),
+        }),
+        session({
+          session_id: "over",
+          state: "ended",
+          last_event: "end",
+          ended_at: ago(1),
+          waiting_reason: "permission",
+          waiting_since: ago(3),
+        }),
+      ],
+    };
+    await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+    const needs = node.querySelector('[aria-label="Needs you"]')!;
+    const rows = [...needs.querySelectorAll("li")];
+    expect(rows.map((r) => r.getAttribute("title"))).toEqual(["asking", "finished", "question"]);
+    expect(needs.querySelector("h2")!.textContent).toBe("Needs you 3");
+    expect(rows[0]!.textContent).toContain("Codex");
+    expect(rows[0]!.textContent).toContain("Asking permission");
+    expect(rows[0]!.textContent).toContain("Waiting 4 min");
+    expect(rows[0]!.querySelector(".local-session-branch")!.textContent).toBe("wip");
+    expect(rows[0]!.querySelector(".local-needs-message")).toBeNull();
+    expect(rows[1]!.textContent).toContain("Finished its turn");
+    expect(rows[2]!.textContent).toContain("Waiting for your answer");
+    expect(rows[2]!.textContent).toContain("Waiting under a minute");
+    expect(rows[2]!.querySelector(".local-needs-message")!.textContent).toBe(
+      "Which database should the migration use?",
+    );
+    // The title leads the row; a session without one goes without.
+    expect(rows[2]!.querySelector(".local-session-title")!.textContent).toBe(
+      "Plan the orders migration",
+    );
+    expect(rows[0]!.querySelector(".local-session-title")).toBeNull();
+    expect(rows[2]!.querySelector(".local-session-summary-line")!.textContent).toBe(
+      "Move orders to the new schema without downtime.",
+    );
+    expect(rows[0]!.querySelector(".local-session-summary-line")).toBeNull();
+    expect(rows[2]!.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
+    expect(rows[2]!.querySelector("a.local-session-open")?.getAttribute("href")).toBe(
+      "/s/test-ns/?page=sessions&session=claude-code%3Aquestion",
+    );
+    // They are not listed again under Running now; the working session and
+    // the one of an unknown reason are.
+    const running = node.querySelector('[aria-label="Running now"]')!;
+    expect([...running.querySelectorAll("li")].map((r) => r.getAttribute("title"))).toEqual([
+      "s1",
+      "later",
+    ]);
+    // The sidebar counts what needs the person, in the caution tone.
+    expect(sidebarBadge()).toBe("3");
+    expect(
+      node
+        .querySelector('a[href$="?page=sessions"] .local-rail-badge')!
+        .classList.contains("caution"),
+    ).toBe(true);
+    // The wait's length goes on without an event.
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(rows[2]!.textContent).toContain("Waiting 2 min");
+    expect(needs.querySelector("li")!.textContent).toContain("Waiting 5 min");
+    // Once nothing waits, the section goes and the badge counts the running ones.
+    liveBody = { sessions: [session()] };
+    await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+    expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
+    expect(sidebarBadge()).toBe("1");
+    expect(
+      node
+        .querySelector('a[href$="?page=sessions"] .local-rail-badge')!
+        .classList.contains("caution"),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 async function renderReview(live: LiveSession[]) {
   await act(async () =>
     root.render(
@@ -207,15 +382,20 @@ async function renderReview(live: LiveSession[]) {
 }
 
 it("lists sessions in progress on the pull request page and has no section without them", async () => {
-  await renderReview([session(), session({ session_id: "s2", state: "idle", agent: "codex" })]);
+  await renderReview([
+    session({ title: "Add a retry budget" }),
+    session({ session_id: "s2", state: "idle", agent: "codex" }),
+  ]);
   const section = node.querySelector('[aria-label="Sessions in progress"]')!;
+  expect(section.querySelector(".local-pr-session-title")?.textContent).toBe("Add a retry budget");
   expect(section.textContent).toContain("Claude Code");
   expect(section.textContent).toContain("Working");
   expect(section.textContent).toContain("feature");
-  expect(section.textContent).toContain("Started 5 minutes ago");
   expect(section.textContent).toContain("Last activity 20 seconds ago");
   expect(section.textContent).toContain("Codex");
   expect(section.textContent).toContain("Waiting for you");
+  // Each session opens its transcript, as on the Sessions page.
+  expect(section.querySelectorAll('a[aria-label^="Open transcript"]')).toHaveLength(2);
   await renderReview([session({ pr: 8 })]);
   expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
 });

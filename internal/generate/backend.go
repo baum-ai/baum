@@ -43,20 +43,21 @@ type Backends struct {
 func DefaultBackends() Backends { return DefaultBackendsFor(config.Config{}) }
 
 // DefaultBackendsFor is DefaultBackends with the executables cfg names in
-// BackendPaths. A named path replaces the PATH lookup: when it cannot be run,
+// BackendPaths and the variables of its AgentEnv. A named path replaces the PATH lookup: when it cannot be run,
 // the backend fails naming backend_paths.<name> and PATH is not searched.
 func DefaultBackendsFor(cfg config.Config) Backends {
 	claudePath, codexPath := cfg.BackendPaths[config.BackendClaude], cfg.BackendPaths[config.BackendCodex]
 	cursorPath := cfg.BackendPaths[config.BackendCursorAgent]
+	env := cfg.AgentEnviron()
 	return Backends{
 		Claude: func(model string) CheckedBackend {
-			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User}, config.BackendClaude, claudePath)
+			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Env: env}, config.BackendClaude, claudePath)
 		},
 		Codex: func(model string) CheckedBackend {
-			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local}, config.BackendCodex, codexPath)
+			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Env: env}, config.BackendCodex, codexPath)
 		},
 		CursorAgent: func(model string) CheckedBackend {
-			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model}, config.BackendCursorAgent, cursorPath)
+			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model, Env: env}, config.BackendCursorAgent, cursorPath)
 		},
 		Anthropic: func(model string) CheckedBackend {
 			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model}
@@ -114,6 +115,15 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return e.CheckedBackend.Check(ctx)
+}
+
+// Fix forwards a fix (agent.Fixer) to a backend that can make one.
+func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
+	fixer, ok := e.CheckedBackend.(agent.Fixer)
+	if !ok {
+		return agent.Result{}, fmt.Errorf("%s cannot fix pull requests", e.name)
+	}
+	return fixer.Fix(ctx, request)
 }
 
 // Selected is the backend a run uses.

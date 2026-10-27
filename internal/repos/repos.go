@@ -82,6 +82,9 @@ type Preferences struct {
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, or empty for both.
 	PullRequests string `json:"pull_requests,omitempty"`
+	// AgentEnv, when it sets any variable, replaces the config file's
+	// agent_env (config.Config.AgentEnv).
+	AgentEnv map[string]string `json:"agent_env,omitempty"`
 }
 
 // The PullRequests choices besides both.
@@ -99,6 +102,9 @@ func (p Preferences) Validate() error {
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
 	}
+	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
+		return fmt.Errorf("agent environment: %w", err)
+	}
 	switch p.PullRequests {
 	case "", PullRequestsAuthored, PullRequestsRequested:
 		return nil
@@ -106,8 +112,12 @@ func (p Preferences) Validate() error {
 	return fmt.Errorf("unknown pull requests choice %q; use %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested)
 }
 
-// Resolve overlays the app's backend and model on the config file's.
+// Resolve overlays the app's backend, model and agent environment on the
+// config file's.
 func (p Preferences) Resolve(global config.Config) config.Config {
+	if len(p.AgentEnv) > 0 {
+		global.AgentEnv = p.AgentEnv
+	}
 	if p.Backend != nil {
 		global.Backend = *p.Backend
 	}

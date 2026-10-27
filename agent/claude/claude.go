@@ -61,6 +61,9 @@ type Backend struct {
 	// bring a model proxy endpoint. Local prompt evaluation sets it because it
 	// runs on a developer's host without a proxy.
 	DefaultEndpoint *agent.Endpoint
+	// Env are the user's agent variables (agent.WithUserEnv), for the User
+	// profile only.
+	Env []string
 
 	mu         sync.Mutex
 	versionOK  bool
@@ -70,7 +73,24 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendClaude }
 
-func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
+	return c.run(ctx, request, false)
+}
+
+// Fix runs Claude Code with write access to the request's directory, for a
+// fix a person asked for (agent.Fixer). It runs in restricted mode with the
+// file tools only (Read, Glob, Grep, Edit and Write), confined to the
+// directory: it cannot run a command, so it cannot run tests, git or anything
+// else, and the caller commits what it changed. Its final message is the
+// result's Document. Only the User profile fixes.
+func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
+	if c.Profile != User {
+		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
+	}
+	return c.run(ctx, request, true)
+}
+
+func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (result agent.Result, err error) {
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
@@ -119,7 +139,11 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	// --json-schema registers. Text output cannot be validated, so the
 	// instructions never ask for JSON as text: a text answer only costs a
 	// truncated response and a second call.
-	cmd := exec.CommandContext(ctx, binary, c.args(request)...)
+	args := c.args(request)
+	if fix {
+		args = c.fixArgs(request)
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = request.Directory
 	cmd.Env = c.environment(request.Directory, endpoint)
 	cmd.Stdin = strings.NewReader(request.Prompt)
@@ -264,6 +288,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	}
 	completed := false
 	toolsSeen := map[string]string{}
+	titles := map[string]string{}
 	done := make(chan struct{})
 	defer close(done)
 	if request.Logger != nil {
@@ -293,12 +318,15 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				ID, Model string
 				Content   []struct {
 					Type, ID, Name string
+					Text, Thinking string
 					ToolUseID      string `json:"tool_use_id"`
 					IsError        bool   `json:"is_error"`
 					Content        json.RawMessage
 					Input          struct {
 						FilePath      string `json:"file_path"`
 						Path          string
+						Pattern       string
+						Command       string
 						Offset, Limit int
 					}
 				}
@@ -318,6 +346,8 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 			} `json:"event"`
 			Usage    usage           `json:"usage"`
 			Document json.RawMessage `json:"structured_output"`
+			// Result is the final message's text, which a fix keeps.
+			Result string `json:"result"`
 		}
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			break
@@ -361,12 +391,25 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		for _, content := range event.Message.Content {
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
+				titles[content.ID] = toolTitle(content.Name, content.Input.FilePath, content.Input.Path, content.Input.Pattern, content.Input.Command)
+				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ID, Tool: content.Name, Title: titles[content.ID], Status: "running"})
 				request.Activity.ToolStarted(content.ID, content.Name)
 				path := agent.EventPath(request.Directory, cmp.Or(content.Input.FilePath, content.Input.Path))
 				record(agent.Event{Kind: "tool_call", ID: content.ID, Tool: content.Name, Path: path, Offset: content.Input.Offset, Limit: content.Input.Limit})
 			}
+			if event.Type == "assistant" && content.Type == "text" && strings.TrimSpace(content.Text) != "" {
+				request.Emit(agent.TranscriptEntry{Kind: "message", Text: content.Text})
+			}
+			if event.Type == "assistant" && content.Type == "thinking" && strings.TrimSpace(content.Thinking) != "" {
+				request.Emit(agent.TranscriptEntry{Kind: "reasoning", Text: content.Thinking})
+			}
 			if content.Type == "tool_result" {
 				request.Activity.ToolFinished(content.ToolUseID)
+				finished := "completed"
+				if content.IsError {
+					finished = "failed"
+				}
+				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ToolUseID, Tool: toolsSeen[content.ToolUseID], Title: titles[content.ToolUseID], Text: toolResultText(content.Content), Status: finished})
 				status := "success"
 				tool := toolsSeen[content.ToolUseID]
 				if content.IsError && tool == structuredOutputTool {
@@ -423,6 +466,9 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 				break
 			}
 			result.Document = bytes.TrimSpace(event.Document)
+			if fix {
+				result.Document = []byte(boundedSummary(event.Result))
+			}
 			if len(result.Document) > 8<<20 {
 				err = errors.New("agent document exceeds output size limit")
 				break
@@ -496,10 +542,31 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		}
 		return result, fmt.Errorf("claude code failed: %w (%s)", waitErr, stderr.String())
 	}
-	if !completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null")) {
+	if fix && !completed {
+		return result, errors.New("claude code did not finish the fix")
+	}
+	if !fix && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
 		return result, errors.New("claude code returned no structured document")
 	}
 	return result, nil
+}
+
+// boundedSummary trims a fix's final message to agent.MaxFixSummaryBytes.
+func boundedSummary(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > agent.MaxFixSummaryBytes {
+		text = strings.ToValidUTF8(text[:agent.MaxFixSummaryBytes], "") + "…"
+	}
+	return text
+}
+
+// toolTitle names a tool call for the transcript: the tool and its main
+// argument, the first of path, pattern and command that it has.
+func toolTitle(name string, arguments ...string) string {
+	if argument := cmp.Or(arguments...); argument != "" {
+		return name + " " + argument
+	}
+	return name
 }
 
 const structuredOutputTool = "StructuredOutput"

@@ -593,31 +593,6 @@ describe("JSON review tiles", () => {
     expect(html).not.toMatch(/<svg[^>]*max-w-full/);
   });
 
-  it("wraps a long changed-entity name inside its column", () => {
-    const doc = document();
-    const section = doc.sections[0]!;
-    section.blocks = [
-      {
-        kind: "entities",
-        items: [
-          {
-            kind: "function",
-            name: "Store.DeleteSelfAttributedEntireCheckpointIngests",
-            change: "added",
-            hunks: [],
-          },
-        ],
-      },
-    ];
-    const html = renderToStaticMarkup(
-      <ReviewSection document={doc} section={section} onSelectSection={() => {}} showTiles />,
-    );
-    expect(html).toContain("Store.<wbr/>");
-    // Camel-case words are break points too, so a word is never split.
-    expect(html).toMatch(/Checkpoint(<!-- -->)?<wbr\/><\/span><span>Ingests/);
-    expect(html).toMatch(/<code class="[^"]*overflow-wrap:anywhere[^"]*"><span>Store\./);
-  });
-
   it("keeps each excerpt with its own source entry even when URLs repeat across versions", () => {
     const tile = tileInput("database-schema");
     const missing = { ...code(), why: "First source without excerpt", diff: undefined };

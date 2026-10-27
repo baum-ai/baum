@@ -3,6 +3,7 @@ package gitlocal
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,30 @@ func TestRemoteFetchURLAppliesInsteadOf(t *testing.T) {
 	for _, name := range []string{"upstream", "", "--upload-pack=x"} {
 		if got, err := r.RemoteFetchURL(ctx, name); err != nil || got != "" {
 			t.Errorf("remote %q = %q, %v; want none", name, got, err)
+		}
+	}
+}
+
+func TestRemotePushURLs(t *testing.T) {
+	f := newFixture(t)
+	r := open(t, f.dir, Options{})
+	git(t, f.dir, "config", "url.https://github.com/.insteadOf", "gh:")
+	git(t, f.dir, "remote", "add", "origin", "gh:acme/widgets")
+	ctx := context.Background()
+	configured, effective, err := r.RemotePushURLs(ctx, "origin")
+	if err != nil || strings.Join(configured, ",") != "gh:acme/widgets" || strings.Join(effective, ",") != "https://github.com/acme/widgets" {
+		t.Errorf("without a pushurl = %q, %q, %v; want the fetch URL as written and rewritten", configured, effective, err)
+	}
+	git(t, f.dir, "config", "--add", "remote.origin.pushurl", "gh:acme/widgets")
+	git(t, f.dir, "config", "--add", "remote.origin.pushurl", "git@github.com:someone/fork.git")
+	configured, effective, err = r.RemotePushURLs(ctx, "origin")
+	if err != nil || strings.Join(configured, ",") != "gh:acme/widgets,git@github.com:someone/fork.git" ||
+		strings.Join(effective, ",") != "https://github.com/acme/widgets,git@github.com:someone/fork.git" {
+		t.Errorf("with pushurls = %q, %q, %v; want every pushurl", configured, effective, err)
+	}
+	for _, name := range []string{"upstream", "", "--upload-pack=x"} {
+		if configured, effective, err := r.RemotePushURLs(ctx, name); err != nil || configured != nil || effective != nil {
+			t.Errorf("remote %q = %q, %q, %v; want none", name, configured, effective, err)
 		}
 	}
 }

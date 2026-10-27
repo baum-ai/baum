@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
@@ -19,6 +19,9 @@ async function launchURL(): Promise<string> {
 }
 
 test("local inbox, reused PR viewer, versions, generation and settings", async ({ page }) => {
+  // The longest story here waits on several real generations: about 10 s
+  // locally, close to the default 30 s on a busy CI runner.
+  test.slow();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const evidence: string[] = [];
@@ -48,6 +51,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   });
   const launch = await launchURL();
   await page.goto(launch);
+  // The app opens on the Inbox; the pull request list is one click away.
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
   // The app is relaunched against a long-lived daemon: the same credential
@@ -55,9 +61,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const relaunched = await page.context().browser()?.newPage();
   if (relaunched) {
     await relaunched.goto(launch);
-    await expect(
-      relaunched.getByRole("heading", { name: "Pull requests", exact: true }),
-    ).toBeVisible();
+    await expect(relaunched.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
     // The desktop app's first run opens the diagnostics page; the bootstrap
     // carries only that page over, and the address keeps no token.
     await relaunched.goto(`${launch}&page=diagnostics`);
@@ -79,30 +83,19 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const row = (title: string) => inbox.getByRole("listitem").filter({ hasText: title });
   const approved = row("Reuse the existing PR page");
   await expect(approved).toContainText("Review time: ~12 min");
-  await expect(approved).toContainText("Unresolved: 0");
   await expect(approved).toContainText("Review: Approved");
-  await expect(approved).toContainText("Checks: Passing");
-  await expect(approved).toContainText("Merge: Ready");
+  await expect(approved).toContainText("Status: Ready");
+  await expect(approved.locator(".inbox-threads")).toHaveCount(0);
   const changes = row("A pull request without a review");
-  await expect(changes).toContainText("Review time: —");
-  await expect(changes).toContainText("Unresolved: 3");
-  await expect(changes).toContainText("Review: Changes requested");
-  await expect(changes).toContainText("Checks: Failing");
-  await expect(changes).toContainText("Merge: Conflict");
-  const fork = row("A fork requiring confirmation");
-  await expect(fork).toContainText("Unresolved: 6+");
-  await expect(fork.locator('[title*="only the first 100"]')).toBeVisible();
-  await expect(fork).toContainText("Review: Commented");
-  await expect(fork).toContainText("Checks: Running");
-  await expect(fork).toContainText("Merge: Blocked");
+  await expect(changes).toContainText("Review time: not estimated");
+  await expect(changes).toContainText("Review: Changes requested3 unresolved");
+  await expect(changes).toContainText("Status: Conflict");
   const unreviewed = row("An automatically reviewed change");
   await expect(unreviewed).toContainText("Review: Unreviewed");
-  await expect(unreviewed).toContainText("Checks: —");
-  await expect(unreviewed).toContainText("Merge: Draft");
-  const unknown = row("Other repository change");
-  await expect(unknown.locator(".inbox-status")).toHaveCount(5);
-  for (const cell of await unknown.locator(".inbox-status").all())
-    await expect(cell).toContainText("—");
+  await expect(unreviewed).toContainText("Status: Draft");
+  // The Inbox holds what is the person's to check; the rest is under Others.
+  await expect(row("A fork requiring confirmation")).toHaveCount(0);
+  await expect(row("Other repository change")).toHaveCount(0);
   await expect(inbox).not.toContainText(/Generated|Cost|Stale discovery/);
   await page.screenshot({
     path: "test-results/inbox-wide.png",
@@ -110,8 +103,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     animations: "disabled",
   });
   await page.setViewportSize({ width: 720, height: 900 });
-  await expect(approved.getByText("Checks:", { exact: true })).toBeVisible();
-  await expect(approved.getByText("Checks: Passing", { exact: true })).toBeVisible();
+  await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
+  // The cell also holds the Merge button of a ready pull request.
+  await expect(
+    approved.locator(".inbox-status").filter({ hasText: "Status: Ready" }),
+  ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
   await page.screenshot({ path: "test-results/inbox-desktop-minimum.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -132,7 +128,16 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await views.getByRole("button", { name: /^Mine/ }).click();
   await expect(page.getByRole("link", { name: /without a review/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Reuse the existing/ })).toHaveCount(0);
-  await views.getByRole("button", { name: /^Open/ }).click();
+  await views.getByRole("button", { name: /^Others/ }).click();
+  const fork = row("A fork requiring confirmation");
+  await expect(fork).toContainText("Review: Commented6+ unresolved");
+  await expect(fork.locator('[title*="only the first 100"]')).toBeVisible();
+  await expect(fork).toContainText("Status: Checks running");
+  const unknown = row("Other repository change");
+  await expect(unknown.locator(".inbox-status")).toHaveCount(3);
+  await expect(unknown.locator(".inbox-status-empty")).toHaveCount(3);
+  await expect(unknown).not.toContainText("—");
+  await page.screenshot({ path: "test-results/inbox-others.png", animations: "disabled" });
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
   await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
   // Only a fork asks before generating, in a batch as on its own page.
@@ -143,7 +148,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
   await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(base);
@@ -192,7 +197,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   // Generate starts the review at once: no estimate, no confirmation.
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
@@ -230,7 +235,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/usage-narrow.png", animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(
@@ -310,6 +315,48 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toEqual([]);
 });
 
+// The root is the Inbox: one pull request to do next, a queue behind it and
+// what was cleared today. Skipping moves on to the next card.
+test("the Inbox shows one card to do next, the queue and what was cleared", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(await launchURL());
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  const card = page.locator("article.upnext-card");
+  await expect(card).toBeVisible({ timeout: 15000 });
+  const title = card.locator("h2");
+  await expect(title).not.toHaveText("");
+  await expect(card).toContainText("Why now:");
+  const queue = page.getByRole("region", { name: "Then", exact: true });
+  await expect(queue.locator("button.upnext-row").first()).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Cleared today" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/up-next-wide.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  const first = (await title.textContent()) ?? "";
+  await card.getByRole("button", { name: "Skip", exact: true }).click();
+  await expect(title).not.toHaveText(first);
+  await expect(card).toContainText("Why now:");
+  await page.setViewportSize({ width: 720, height: 900 });
+  await expect(card).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
+  await page.screenshot({
+    path: "test-results/up-next-desktop-minimum.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: "test-results/up-next-narrow.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  expect(errors).toEqual([]);
+});
+
 // The daemon generates a review by itself when a pull request the user wrote
 // gets a new head after automatic generation was enabled, and says so on the
 // PR page and in the jobs list. Turning it off is a setting the server keeps.
@@ -317,6 +364,7 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const pr = page.getByRole("link", { name: /An automatically reviewed change/ });
   await expect(pr).toBeVisible();
   await pr.click();
@@ -370,6 +418,7 @@ test("a running agent session shows in the inbox and on the PR page until it end
 }) => {
   const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-session");
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const row = page.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
   // The first inbox load can take a while on a busy CI runner.
   await expect(row).toBeVisible({ timeout: 15000 });
@@ -385,12 +434,123 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await expect(live.getByText("feature")).toBeVisible();
   await page.screenshot({ path: "test-results/live-pr.png", animations: "disabled" });
   await writeFile(marker, "idle");
-  await expect(live.getByText("Waiting for you")).toBeVisible({ timeout: 10000 });
+  // A stop ends the agent's turn; the card says so, as Needs you does.
+  await expect(live.getByText("Finished its turn")).toBeVisible({ timeout: 10000 });
   await writeFile(marker, "ended");
   await expect(live).toHaveCount(0, { timeout: 10000 });
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  // The Sessions page keeps it under "Ended recently" and has none running.
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const ended = page.getByRole("region", { name: "Ended recently", exact: true });
+  await expect(ended.getByText("Claude Code")).toBeVisible();
+  await expect(ended.getByText("feature")).toBeVisible();
+  // Its title, and the request its compaction summary records.
+  await expect(
+    ended.getByText("Reuse the PR page in the local app", { exact: true }),
+  ).toBeVisible();
+  await expect(ended.getByText(/^Serve saved reviews in the local app/)).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(row).toBeVisible();
   await expect(row.getByText("Agent")).toHaveCount(0);
+});
+
+test("a session's transcript opens from the Sessions page and grows without a reload", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // The fixture turns the marker's first line into hook events of one Claude
+  // Code session and its other lines into the transcript its hooks name.
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-transcript");
+  await writeFile(marker, "running\nFix the flaky retry test\n");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const open = page
+    .getByRole("region", { name: "Running now", exact: true })
+    .getByRole("link", { name: /^Open transcript/ });
+  await expect(open).toBeVisible({ timeout: 10000 });
+  await open.click();
+  // The session has no title of its own yet, so its first prompt names it.
+  await expect(
+    page.getByRole("heading", { name: "Fix the flaky retry test", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Working");
+  await expect(
+    page.getByText("Local transcript; secrets and e-mail addresses masked."),
+  ).toBeVisible();
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  // The card's title is the session's first prompt too; the prompts are the
+  // conversation's list items below it.
+  const prompts = transcript.getByRole("listitem");
+  await expect(prompts.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Done: Fix the flaky retry test")).toBeVisible();
+  // The agent writes another turn without a hook event: the open view shows
+  // it without a reload, and masks the address in it.
+  let loads = 0;
+  page.on("load", () => loads++);
+  await writeFile(
+    marker,
+    "running\nFix the flaky retry test\nMail ada.lovelace@example.com the summary\n",
+  );
+  await expect(transcript.getByText(/^Mail .* the summary$/)).toBeVisible({ timeout: 15000 });
+  await expect(transcript.getByText("ada.lovelace@example.com")).toHaveCount(0);
+  await expect(prompts.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  expect(loads).toBe(0);
+  // Ended, the view says so; u goes back to the list, which keeps it.
+  await writeFile(
+    marker,
+    "ended\nFix the flaky retry test\nMail ada.lovelace@example.com the summary\n",
+  );
+  await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Ended", {
+    timeout: 10000,
+  });
+  await page.keyboard.press("u");
+  await expect(page.getByRole("region", { name: "Ended recently", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a session asking for a permission shows in Needs you and leaves once it works again", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // The fixture turns the marker into hook events of one Claude Code
+  // session; "permission" is a permission prompt notification.
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-needs");
+  await writeFile(marker, "running");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const running = page.getByRole("region", { name: "Running now", exact: true });
+  const needs = page.getByRole("region", { name: "Needs you", exact: true });
+  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible({ timeout: 10000 });
+  await expect(needs).toHaveCount(0);
+  await writeFile(marker, "permission");
+  const row = needs.locator('li[title="needs-e2e"]');
+  await expect(row).toBeVisible({ timeout: 10000 });
+  await expect(row.getByText("Asking permission")).toBeVisible();
+  await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
+  // The title Claude Code gave the session leads the row.
+  await expect(row.getByText("Run the migration tests", { exact: true })).toBeVisible();
+  await expect(row.getByText("Waiting under a minute")).toBeVisible();
+  await expect(row.getByText("feature")).toBeVisible();
+  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
+  // The sidebar counts it, in the caution tone.
+  const badge = page.locator('a[href$="?page=sessions"] .local-rail-badge.caution');
+  await expect(badge).toHaveText("1");
+  // Its transcript opens from the row.
+  await row.getByRole("link", { name: /^Open transcript/ }).click();
+  await expect(page).toHaveURL(/[?&]session=claude-code%3Aneeds-e2e/);
+  await page.keyboard.press("u");
+  // Given the permission, the agent works again: the row goes back.
+  await writeFile(marker, "running");
+  await expect(needs).toHaveCount(0, { timeout: 10000 });
+  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible();
+  await expect(page.locator('a[href$="?page=sessions"] .local-rail-badge.caution')).toHaveCount(0);
+  await writeFile(marker, "ended");
+  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0, { timeout: 10000 });
+  expect(errors).toEqual([]);
 });
 
 test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
@@ -437,6 +597,7 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const missing = page.getByRole("link", {
     name: "A GitHub pull request waiting for a clone",
     exact: true,
@@ -490,4 +651,182 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await expect(row).toContainText("Found at", { timeout: 15000 });
   await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
+});
+
+// PR 8 is the viewer's own, with a conflict, failing checks and unresolved
+// review threads; the dialog is checked and cancelled, so nothing runs.
+test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
+  await row.hover();
+  await row
+    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
+  await expect(dialog).toContainText(
+    "baum replies on each thread the agent addressed and resolves it",
+  );
+  const threads = dialog.getByRole("list", { name: "Review threads" }).getByRole("listitem");
+  await expect(threads).toHaveCount(2);
+  await expect(threads.first()).toContainText("src/parser.go:42");
+  await expect(threads.first()).toContainText("Return the error instead of logging it.");
+  await expect(dialog).toContainText(
+    "1 thread started by an account without access to the repository is left out.",
+  );
+  await expect(dialog).not.toContainText("uploads the secrets");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+});
+
+// The fix dialog opened from a pull request's page sits beside that page;
+// leaving afterwards must replace the page, not stack the next one under it.
+test("leaves a pull request page cleanly after its fix dialog", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  const title = page.getByRole("heading", { name: /A pull request without a review/ });
+  await expect(title).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(title).toHaveCount(1);
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+  await expect(title).toHaveCount(0);
+});
+
+// The fake GitHub drops PR 7 from the open list once merged; removing its
+// marker afterwards gives it back to the specs that run after this one.
+test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  const row = inbox.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
+  await expect(row).toContainText("Status: Ready");
+  // Only a ready pull request offers Merge.
+  await expect(inbox.getByRole("button", { name: "Merge acme/demo #8", exact: true })).toHaveCount(
+    0,
+  );
+  await row.hover();
+  await row.getByRole("button", { name: "Merge acme/demo #7", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Merge pull request #7?" });
+  // The fixture repository allows merge commits and squashing, not rebasing.
+  await expect(dialog.getByRole("radio")).toHaveCount(2);
+  await expect(dialog.getByRole("radio", { name: /Squash and merge/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Create a merge commit/ }).check();
+  await dialog.getByRole("button", { name: "Merge pull request", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The inbox refreshed: the merged pull request is no longer open or mergeable.
+  await expect(inbox.getByRole("button", { name: /^Merge acme\/demo #7/ })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
+});
+
+// The fake GitHub marks PR 8's checks as running once its failed run is
+// re-run; removing the marker afterwards gives the specs after this one
+// their failing checks back.
+test("re-runs the failed checks of a pull request from its page", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  // The row's Status cell keeps its one action (Fix); Re-run is on the page.
+  await expect(inbox.getByRole("button", { name: /Re-run/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  await page.getByRole("button", { name: "Re-run checks", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Re-run failed checks of pull request #8?" });
+  await expect(dialog.getByRole("listitem")).toHaveText(["CI", "test"]);
+  await expect(dialog).toContainText("Not re-runnable from baum");
+  await dialog.screenshot({ path: "test-results/rerun-dialog.png", animations: "disabled" });
+  await dialog.getByRole("button", { name: "Re-run failed checks", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The page refreshed: the checks run again, so there is nothing to re-run.
+  await expect(page.getByRole("button", { name: "Re-run checks", exact: true })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "rerun-8"), { force: true });
+});
+
+test("updates the branch of a pull request that is behind its base from its page", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  await expect(inbox.getByRole("button", { name: /Update/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /A branch behind its base/ }).click();
+  await page.getByRole("button", { name: "Update branch", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Update branch of pull request #11?" });
+  await expect(dialog).toContainText("merge main into feature");
+  await dialog.screenshot({ path: "test-results/update-dialog.png", animations: "disabled" });
+  await dialog.getByRole("button", { name: "Update branch", exact: true }).click();
+  await expect(dialog).toContainText("GitHub accepted the update");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The page refreshed: GitHub no longer reports the branch as behind.
+  await expect(page.getByRole("button", { name: "Update branch", exact: true })).toHaveCount(0);
+  await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "updated-11"), { force: true });
+});
+
+// The fixture writes two Claude Code sessions in the demo clone (13 minutes of
+// work and two prompts each; one on a model the price list does not know),
+// two commits of the person's in the other clone (one co-authored by Claude),
+// plan samples and GitHub's answer to the delivery search. The specs before
+// this one merged, updated and re-ran from the app.
+test("Analytics shows what the agents did, cost and delivered", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Analytics", exact: true })).toBeVisible();
+  expect(new URL(page.url()).search).toBe("?page=analytics");
+  const tile = (label: string) =>
+    page
+      .getByLabel("Summary")
+      .locator(".analytics-tile")
+      .filter({ has: page.locator("dt", { hasText: new RegExp(`^${label}$`) }) });
+  await expect(tile("Sessions")).toContainText("2");
+  await expect(tile("Human prompts")).toContainText("4");
+  await expect(tile("Active agent time")).toContainText("26 min");
+  // One model has no price: the estimate is a floor, never a full figure.
+  await expect(tile("Estimated cost")).toContainText("≥ $");
+  await expect(tile("Estimated cost")).toContainText("Incomplete");
+  await expect(tile("Agent-written")).toContainText("50%");
+  await expect(tile("Agent-written")).toContainText("1 of 2 of your commits");
+  const delivery = page.getByRole("region", { name: "Delivery" });
+  await expect(delivery).toContainText("Median time to first review");
+  await expect(delivery.locator("dd").first()).toHaveText("2");
+  await expect(delivery).toContainText("6 h");
+  await expect(delivery).toContainText("1 (50%)");
+  const baum = page.getByRole("region", { name: "baum's work" });
+  await expect(baum.locator("div").filter({ hasText: /^Merges from baum/ })).toContainText("1");
+  await expect(page.getByRole("region", { name: "Plan usage" })).toContainText(
+    "5-hour: peak 100%, at its limit 1 time",
+  );
+  const breakdown = page.getByRole("region", { name: "Breakdown" });
+  await expect(breakdown.getByRole("row", { name: /Claude Code/ })).toContainText("50%");
+  await breakdown.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(breakdown).toContainText("claude-sonnet-4-5");
+  await expect(breakdown.getByRole("row", { name: /fixture-model-x/ })).toContainText("—");
+  // The window and filters are in the address and change the figures.
+  await page.getByRole("button", { name: "90 days", exact: true }).click();
+  await expect(page).toHaveURL(/days=90/);
+  await page.getByLabel("Repository").selectOption("acme/other");
+  await expect(page).toHaveURL(/repo=acme%2Fother/);
+  await expect(tile("Sessions")).toContainText("0");
+  await expect(page.getByRole("region", { name: "Agent activity" })).toContainText(
+    "No agent sessions in this window",
+  );
+  await expect(tile("Agent-written")).toContainText("50%");
+  await page.reload();
+  await expect(page.getByLabel("Repository")).toHaveValue("acme/other");
+  // Narrow: the page folds without scrolling sideways.
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.getByLabel("Repository").selectOption("");
+  await expect(tile("Sessions")).toContainText("2");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  expect(errors).toEqual([]);
 });

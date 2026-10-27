@@ -265,7 +265,8 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 		if j.State == "queued" || j.State == "running" {
 			return ErrBusy
 		}
-		if j.HeadSHA == head && !unsettled(j) {
+		// A fix of the head is not its review.
+		if j.HeadSHA == head && !unsettled(j) && j.Kind != KindFix {
 			sameHead++
 			retryable = j.Automatic && j.State == "interrupted"
 		}
@@ -301,7 +302,9 @@ func (q *Queue) Refused() []Job {
 	defer q.mu.Unlock()
 	latest := map[string]int{}
 	for i, j := range q.jobs {
-		latest[headKey(j)] = i
+		if j.Kind != KindFix {
+			latest[headKey(j)] = i
+		}
 	}
 	var out []Job
 	for i, j := range q.jobs {
@@ -320,7 +323,7 @@ func (q *Queue) Interrupted() []Job {
 	defer q.mu.Unlock()
 	count := map[string]int{}
 	for _, j := range q.jobs {
-		if !unsettled(j) {
+		if !unsettled(j) && j.Kind != KindFix {
 			count[headKey(j)]++
 		}
 	}

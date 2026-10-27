@@ -32,8 +32,8 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/locallink"
+	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/viewer"
-	"github.com/baum-ai/baum/redact"
 )
 
 // MaxDocumentBytes is the largest document the server accepts, at start-up and
@@ -128,11 +128,8 @@ type Server struct {
 	sessions       *sessionsEntry
 	sessionsClosed bool
 	compute        sync.WaitGroup
-	// engine redacts transcripts; it is compiled on the first one asked for.
-	engineOnce sync.Once
-	engine     *redact.Engine
-	engineErr  error
-	homes      []homeForm
+	// render writes transcripts, with the home directory as ~.
+	render *transcript.Renderer
 	// life ends when the server stops, and bounds sessions computations,
 	// which outlive the request that started them.
 	life       context.Context
@@ -168,11 +165,7 @@ func New(opts Options) (*Server, error) {
 		opts.PingInterval = defaultPingInterval
 	}
 	s := &Server{opts: opts, assets: opts.Assets, done: make(chan struct{})}
-	home := opts.Home
-	if home == "" {
-		home = userHome()
-	}
-	s.homes = homeForms(home)
+	s.render = transcript.NewRenderer(opts.Home)
 	s.life, s.lifeCancel = context.WithCancel(context.Background())
 	if s.assets == nil {
 		s.assets = viewer.Assets()

@@ -3,8 +3,10 @@
 //! The app subscribes to the daemon's events stream itself (`events`), so a
 //! hidden or minimised window does not stop them (closing the window hides it
 //! and the app keeps running). `toast` turns the events that matter into text: a `notice` event (review finished or failed,
-//! review requested from the user, review generated automatically) and an
-//! `automatic` event reporting the daily cost cap. `notifier` applies the
+//! review requested from the user, review generated automatically, news of
+//! the user's own pull requests and fixes, an agent session waiting for the
+//! user's permission or answer) and an `automatic` event reporting the daily
+//! cost cap. `notifier` applies the
 //! settings, the operating system's permission and the focused window;
 //! `platform` shows the notification. A click makes Rust load the right app
 //! URL in the window, so pages the daemon serves need no capability.
@@ -72,14 +74,44 @@ fn pr_of(url: &Url, daemon: &url::Origin) -> Option<(String, u64)> {
     Some((clone?, number?))
 }
 
-impl Host for AppHost {
-    fn focused_pr(&self) -> Option<(String, u64)> {
+/// The agent session whose transcript a URL on the daemon's origin shows, by
+/// its `agent:id` key.
+fn session_of(url: &Url, daemon: &url::Origin) -> Option<String> {
+    if &url.origin() != daemon {
+        return None;
+    }
+    let (mut sessions, mut key) = (false, None);
+    for (name, value) in url.query_pairs() {
+        match &*name {
+            "page" => sessions = value == "sessions",
+            "session" => key = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+    key.filter(|k| sessions && !k.is_empty())
+}
+
+impl AppHost {
+    /// The window's page while it has focus, with the daemon's origin.
+    fn focused_url(&self) -> Option<(Url, url::Origin)> {
         let origin = self.endpoint().as_ref()?.origin();
         let window = self.app.get_webview_window(MAIN_WINDOW)?;
         if !window.is_focused().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
             return None;
         }
-        pr_of(&window.url().ok()?, &origin)
+        Some((window.url().ok()?, origin))
+    }
+}
+
+impl Host for AppHost {
+    fn focused_pr(&self) -> Option<(String, u64)> {
+        let (url, origin) = self.focused_url()?;
+        pr_of(&url, &origin)
+    }
+
+    fn focused_session(&self) -> Option<String> {
+        let (url, origin) = self.focused_url()?;
+        session_of(&url, &origin)
     }
 
     fn open(&self, route: &Route) {
@@ -235,6 +267,26 @@ mod tests {
             "tauri://localhost/index.html",
         ] {
             assert_eq!(pr_of(&url(other), &origin()), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn the_window_shows_a_session_when_its_url_says_so() {
+        let url = |s: &str| Url::parse(s).unwrap();
+        assert_eq!(
+            session_of(
+                &url("http://127.0.0.1:4100/s/ns/?page=sessions&session=claude-code%3As-1"),
+                &origin()
+            ),
+            Some("claude-code:s-1".into())
+        );
+        for other in [
+            "http://127.0.0.1:4100/s/ns/?page=sessions",
+            "http://127.0.0.1:4100/s/ns/?session=claude-code%3As-1",
+            "http://127.0.0.1:4100/s/ns/?page=jobs&session=claude-code%3As-1",
+            "http://127.0.0.1:4200/s/ns/?page=sessions&session=claude-code%3As-1",
+        ] {
+            assert_eq!(session_of(&url(other), &origin()), None, "{other}");
         }
     }
 }

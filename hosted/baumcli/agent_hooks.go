@@ -23,6 +23,15 @@ func lookupAgentHookSpec(agent string) (agentHookSpec, bool) { return agenthooks
 
 func validateAgentHook(agent, event string) error { return agenthooks.Validate(agent, event) }
 
+// validateHook checks a hook's agent and event: a user-wide hook also runs
+// the events baum only records, which no committed hook carries.
+func validateHook(userWide bool, agent, event string) error {
+	if userWide {
+		return agenthooks.ValidateUserWide(agent, event)
+	}
+	return validateAgentHook(agent, event)
+}
+
 func missingEntireNotice(spec agentHookSpec, event string) string {
 	return agenthooks.MissingEntireNotice(spec, event)
 }
