@@ -677,6 +677,26 @@ test("offers to fix review comments and lists the threads baum will answer", asy
   await expect(dialog).toBeHidden();
 });
 
+// The fix dialog opened from a pull request's page sits beside that page;
+// leaving afterwards must replace the page, not stack the next one under it.
+test("leaves a pull request page cleanly after its fix dialog", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  const title = page.getByRole("heading", { name: /A pull request without a review/ });
+  await expect(title).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(title).toHaveCount(1);
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+  await expect(title).toHaveCount(0);
+});
+
 // The fake GitHub drops PR 7 from the open list once merged; removing its
 // marker afterwards gives it back to the specs that run after this one.
 test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {

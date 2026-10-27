@@ -862,7 +862,9 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
           {fixing && cloneFor(fixing) ? (
             <FixDialog
-              key={rowKey(fixing)}
+              // The review it opens from is a sibling keyed by the same row;
+              // a shared key leaves copies of that page behind.
+              key={`fix:${rowKey(fixing)}`}
               entry={fixing}
               clone={cloneFor(fixing)}
               close={() => setFixing(null)}
