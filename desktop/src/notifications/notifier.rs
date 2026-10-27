@@ -11,6 +11,9 @@ pub trait Host: Send + Sync {
     /// The pull request the window shows while it has focus, as clone and
     /// number; `None` when the window is unfocused, hidden or elsewhere.
     fn focused_pr(&self) -> Option<(String, u64)>;
+    /// The agent session whose transcript the window shows while it has
+    /// focus, by its `agent:id` key; `None` otherwise.
+    fn focused_session(&self) -> Option<String>;
     /// Brings the window to the front on `route`.
     fn open(&self, route: &Route);
 }
@@ -23,7 +26,8 @@ pub enum Outcome {
     Off,
     /// The operating system refuses notifications.
     Denied,
-    /// The window has focus on the same pull request.
+    /// The window has focus on the same pull request, or on the session's
+    /// transcript.
     Focused,
     /// An event that repeats while its condition lasts, already shown.
     Duplicate,
@@ -104,6 +108,11 @@ impl Notifier {
         {
             return Outcome::Focused;
         }
+        if let Some(session) = toast.route.session()
+            && self.host.focused_session().as_deref() == Some(session)
+        {
+            return Outcome::Focused;
+        }
         if let Some(key) = &toast.dedupe
             && settings.announced.contains(key)
         {
@@ -166,12 +175,16 @@ mod tests {
     #[derive(Default)]
     struct FakeHost {
         focused: Mutex<Option<(String, u64)>>,
+        focused_session: Mutex<Option<String>>,
         opened: Mutex<Vec<Route>>,
     }
 
     impl Host for FakeHost {
         fn focused_pr(&self) -> Option<(String, u64)> {
             self.focused.lock().unwrap().clone()
+        }
+        fn focused_session(&self) -> Option<String> {
+            self.focused_session.lock().unwrap().clone()
         }
         fn open(&self, route: &Route) {
             self.opened.lock().unwrap().push(route.clone());
@@ -234,6 +247,12 @@ mod tests {
 
     const CAP: &str = r#"{"repository":"acme/widgets","enabled":true,"daily_cap":5.0,"spent_today":5.2,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0}"#;
 
+    fn session_notice(kind: &str) -> String {
+        format!(
+            r#"{{"kind":"{kind}","repository":"acme/widgets","pr":7,"agent":"claude-code","session":"s-1","branch":"feature","message":"Claude needs your permission to use Bash"}}"#
+        )
+    }
+
     #[test]
     fn each_event_kind_is_shown() {
         let (notifier, _, platform) = setup(Permission::Granted);
@@ -246,6 +265,14 @@ mod tests {
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
             ("automatic", CAP.to_string()),
+            ("notice", notice("checks_failed", "")),
+            ("notice", notice("conflict", "")),
+            ("notice", notice("changes_requested", "")),
+            ("notice", notice("ready_to_merge", "")),
+            ("notice", notice("fix_pushed", r#","commit":"0123456""#)),
+            ("notice", notice("fix_failed", r#","reason":"push_failed""#)),
+            ("notice", session_notice("session_permission")),
+            ("notice", session_notice("session_input")),
         ];
         for (name, data) in &events {
             assert_eq!(
@@ -263,7 +290,15 @@ mod tests {
                 Kind::Failed,
                 Kind::Requested,
                 Kind::Automatic,
-                Kind::CapReached
+                Kind::CapReached,
+                Kind::ChecksFailed,
+                Kind::Conflict,
+                Kind::ChangesRequested,
+                Kind::ReadyToMerge,
+                Kind::FixPushed,
+                Kind::FixFailed,
+                Kind::SessionPermission,
+                Kind::SessionInput
             ]
         );
         assert_eq!(shown[0].title, "Review finished: risk 4 of 5");
@@ -359,6 +394,44 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_session_notification_opens_its_transcript() {
+        let (notifier, host, platform) = setup(Permission::Granted);
+        notifier.handle_event("notice", &session_notice("session_permission"));
+        platform.click();
+        assert_eq!(
+            *host.opened.lock().unwrap(),
+            [Route::Session {
+                key: "claude-code:s-1".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_window_focused_on_the_sessions_transcript_is_not_interrupted() {
+        let (notifier, host, platform) = setup(Permission::Granted);
+        let waiting = session_notice("session_permission");
+        *host.focused_session.lock().unwrap() = Some("claude-code:s-1".into());
+        assert_eq!(
+            notifier.handle_event("notice", &waiting),
+            Some(Outcome::Focused)
+        );
+        // Another session's transcript, or the pull request the session is
+        // on, does not count.
+        *host.focused_session.lock().unwrap() = Some("claude-code:s-2".into());
+        assert_eq!(
+            notifier.handle_event("notice", &waiting),
+            Some(Outcome::Shown)
+        );
+        *host.focused_session.lock().unwrap() = None;
+        *host.focused.lock().unwrap() = Some(("acme/widgets".into(), 7));
+        assert_eq!(
+            notifier.handle_event("notice", &session_notice("session_input")),
+            Some(Outcome::Shown)
+        );
+        assert_eq!(platform.shown.lock().unwrap().len(), 2);
+    }
+
+    #[test]
     fn a_kind_switched_off_is_not_shown_and_the_others_are() {
         let (notifier, _, platform) = setup(Permission::Granted);
         notifier.set_kind(Kind::Failed, false);
@@ -388,6 +461,14 @@ mod tests {
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
             ("automatic", CAP.to_string()),
+            ("notice", notice("checks_failed", "")),
+            ("notice", notice("conflict", "")),
+            ("notice", notice("changes_requested", "")),
+            ("notice", notice("ready_to_merge", "")),
+            ("notice", notice("fix_pushed", "")),
+            ("notice", notice("fix_failed", "")),
+            ("notice", session_notice("session_permission")),
+            ("notice", session_notice("session_input")),
         ] {
             assert_eq!(
                 notifier.handle_event(name, &data),
@@ -458,6 +539,9 @@ mod tests {
             {
                 self.released.fetch_add(1, Ordering::SeqCst);
             }
+            None
+        }
+        fn focused_session(&self) -> Option<String> {
             None
         }
         fn open(&self, _: &Route) {}

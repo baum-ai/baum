@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+
+	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
 func (q *Queue) Handler() http.Handler {
@@ -35,6 +38,23 @@ func (q *Queue) Handler() http.Handler {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{ReasonNeedsClone: true})
 	}
+	// groupRefusal answers a group job refused before it was queued: members
+	// without a saved review (409, naming them) or a group that does not
+	// exist (404). It reports whether it answered.
+	groupRefusal := func(w http.ResponseWriter, e error) bool {
+		var missing *MembersNeedReviewsError
+		switch {
+		case errors.As(e, &missing):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"members_need_reviews": missing.Numbers})
+		case errors.Is(e, reviewgroups.ErrNotFound):
+			http.Error(w, "review group not found", http.StatusNotFound)
+		default:
+			return false
+		}
+		return true
+	}
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]any{"available": true, "jobs": q.List()})
 	})
@@ -51,8 +71,15 @@ func (q *Queue) Handler() http.Handler {
 			needsClone(w)
 			return
 		}
+		if groupRefusal(w, e) {
+			return
+		}
 		if e != nil {
-			http.Error(w, "cannot estimate: select available PRs with an explicit priced model", 400)
+			message := "cannot estimate: select available PRs with an explicit priced model"
+			if len(request.Items) == 1 && request.Items[0].Kind == KindFix {
+				message = "cannot prepare the fix: GitHub, the local clone or the agent is unavailable"
+			}
+			http.Error(w, message, 400)
 			return
 		}
 		respond(w, v)
@@ -82,6 +109,10 @@ func (q *Queue) Handler() http.Handler {
 		} else {
 			v, e = q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation})
 		}
+		if errors.Is(e, ErrFixNeedsConfirmation) {
+			http.Error(w, e.Error(), http.StatusBadRequest)
+			return
+		}
 		if errors.Is(e, ErrRestarting) {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)
@@ -89,6 +120,9 @@ func (q *Queue) Handler() http.Handler {
 		}
 		if errors.Is(e, ErrNeedsClone) {
 			needsClone(w)
+			return
+		}
+		if groupRefusal(w, e) {
 			return
 		}
 		if e != nil {
@@ -112,6 +146,47 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		respond(w, v)
+	})
+	// transcript serves a fix job's transcript from entry after on, read
+	// fresh from its file.
+	mux.HandleFunc("GET /api/jobs/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
+		after := 0
+		if v := r.URL.Query().Get("after"); v != "" {
+			n, e := strconv.Atoi(v)
+			if e != nil || n < 0 {
+				http.Error(w, "invalid after", 400)
+				return
+			}
+			after = n
+		}
+		var job Job
+		found := false
+		for _, j := range q.List() {
+			if j.ID == r.PathValue("id") {
+				job, found = j, true
+			}
+		}
+		if !found || !job.HasTranscript {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		lines, more, e := readTranscript(transcriptPath(q.transcripts, job.ID), after)
+		if errors.Is(e, os.ErrNotExist) {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		if e != nil {
+			http.Error(w, http.StatusText(500), 500)
+			return
+		}
+		next := after
+		if len(lines) > 0 {
+			next = lines[len(lines)-1].Seq
+		}
+		if lines == nil {
+			lines = []transcriptLine{}
+		}
+		respond(w, map[string]any{"entries": lines, "next": next, "more": more, "done": job.State != "queued" && job.State != "running"})
 	})
 	return mux
 }

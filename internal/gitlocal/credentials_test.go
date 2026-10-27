@@ -21,7 +21,7 @@ func TestHTTPSCredentialsAreScopedAndNeverPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, used, err := r.fetchCredentials(context.Background(), []string{"PATH=/usr/bin", "GIT_TRACE_CURL=1", "GIT_CURL_VERBOSE=1", "GIT_CONFIG_KEY_0=evil", "GIT_CONFIG_COUNT=1"})
+	env, used, err := r.fetchCredentials(context.Background(), "origin", []string{"PATH=/usr/bin", "GIT_TRACE_CURL=1", "GIT_CURL_VERBOSE=1", "GIT_CONFIG_KEY_0=evil", "GIT_CONFIG_COUNT=1"})
 	if err != nil || !used {
 		t.Fatalf("used=%v err=%v", used, err)
 	}
@@ -42,12 +42,12 @@ func TestHTTPSCredentialsAreScopedAndNeverPersisted(t *testing.T) {
 		t.Fatal("credentials changed git config")
 	}
 	git(t, f.dir, "remote", "set-url", "origin", "https://attacker.example/org/repo.git")
-	env, used, err = r.fetchCredentials(context.Background(), []string{"PATH=/usr/bin"})
+	env, used, err = r.fetchCredentials(context.Background(), "origin", []string{"PATH=/usr/bin"})
 	if err != nil || used || strings.Contains(strings.Join(env, "\n"), encoded) {
 		t.Fatalf("credential escaped host: %v %v", used, err)
 	}
 	git(t, f.dir, "remote", "set-url", "origin", "git@github.com:org/repo.git")
-	env, used, err = r.fetchCredentials(context.Background(), []string{"SSH_AUTH_SOCK=/working/agent"})
+	env, used, err = r.fetchCredentials(context.Background(), "origin", []string{"SSH_AUTH_SOCK=/working/agent"})
 	if err != nil || used || len(env) != 1 || env[0] != "SSH_AUTH_SOCK=/working/agent" {
 		t.Fatalf("SSH authentication changed: %v %v", env, err)
 	}
@@ -69,7 +69,7 @@ func TestAuthenticatedFetchDoesNotExposeGitErrorSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	err := r.fetch(context.Background(), []string{"refs/pull/1/head:refs/baum/1/head"})
+	err := r.fetch(context.Background(), "origin", []string{"refs/pull/1/head:refs/baum/1/head"})
 	if err == nil || strings.Contains(err.Error(), "PRIVATE_GITHUB_CREDENTIAL") || strings.Contains(err.Error(), "Authorization:") {
 		t.Fatalf("unsafe error %v", err)
 	}

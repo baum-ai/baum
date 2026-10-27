@@ -303,7 +303,8 @@ func TestOnlyRequestedAndAuthoredPRsGetJobsForNewHeadsAfterEnabling(t *testing.T
 }
 
 // Narrowing the pull requests to authored or requested ones leaves the others
-// without automatic jobs, including a pending one.
+// without automatic jobs, including a pending one; all reviews every PR, still
+// not drafts, forks or authors without write access.
 func TestPullRequestsPreferenceNarrowsWhatGetsJobs(t *testing.T) {
 	for _, tc := range []struct {
 		choice string
@@ -311,6 +312,7 @@ func TestPullRequestsPreferenceNarrowsWhatGetsJobs(t *testing.T) {
 	}{
 		{repos.PullRequestsAuthored, []string{"org/repo#2@b2:new_head"}},
 		{repos.PullRequestsRequested, []string{"org/repo#1@a2:new_head"}},
+		{repos.PullRequestsAll, []string{"org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#3@c2:new_head"}},
 	} {
 		t.Run(tc.choice, func(t *testing.T) {
 			h := newHarness(t)
@@ -318,9 +320,11 @@ func TestPullRequestsPreferenceNarrowsWhatGetsJobs(t *testing.T) {
 				p.PullRequests = tc.choice
 				return p
 			})
-			open := []pr{{number: 1, head: "a1", requested: true}, {number: 2, head: "b1", authored: true}}
+			open := []pr{{number: 1, head: "a1", requested: true}, {number: 2, head: "b1", authored: true}, {number: 3, head: "c1"}, {number: 4, head: "d1", fork: true}, {number: 5, head: "e1", draft: true}, {number: 6, head: "f1", write: "no"}}
 			h.observe(open...)
-			open[0].head, open[1].head = "a2", "b2"
+			for i := range open {
+				open[i].head = open[i].head[:1] + "2"
+			}
 			h.observe(open...)
 			h.pass()
 			h.want(tc.want...)
@@ -698,6 +702,12 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 	prefs, _ := h.registry.Preferences(context.Background())
 	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested || !prefs.CursorAgentAcknowledged {
 		t.Fatalf("%+v", prefs)
+	}
+	if code := put(h.scheduler, `{"pull_requests":"all"}`); code != 200 {
+		t.Fatal(code)
+	}
+	if o, _ := h.scheduler.Overview(context.Background()); o.PullRequests != "all" {
+		t.Fatalf("%+v", o)
 	}
 	if code := put(h.scheduler, `{"pull_requests":"both"}`); code != 200 {
 		t.Fatal(code)

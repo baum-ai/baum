@@ -11,14 +11,16 @@ import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import { WarningIcon } from "@baum/viewer/components/icons";
+import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
+import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
   appURL,
+  backTo,
   request,
   selector,
   documentRequest,
@@ -28,13 +30,18 @@ import {
   automaticLabel,
   jobReasonText,
   liveFor,
+  fixLabel,
   type LiveSession,
   type Provenance,
 } from "./api";
+import { FixNotice } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
-import { LiveSessions } from "./live";
+import { LiveSessions } from "./sessions";
 import { LoadingStatus } from "./nine-dots";
+import { canMerge, MergeDialog } from "./merge";
+import { PullRequestState, pullRequestStates } from "./inbox";
+import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -86,20 +93,39 @@ export function LocalReview({
   clone,
   revision,
   generate,
+  starting = false,
   job,
   changed,
   live = [],
+  groups = [],
+  fix,
+  fixJob,
 }: {
   entry: Entry;
   clone: string;
   revision: number;
   generate: () => void;
+  /** The review was asked for and the daemon has not answered yet. */
+  starting?: boolean;
   job?: Job;
   changed: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
+  /** The review groups this pull request belongs to. */
+  groups?: { id: string; name: string }[];
+  /** Opens the fix confirmation; absent when the pull request offers no fix. */
+  fix?: () => void;
+  /** The pull request's latest fix job. */
+  fixJob?: Job;
 }) {
   const pr = entry.pull_request;
+  const back = backTo(useUrlState().search);
+  const fixLabelText = fixLabel(entry);
+  const fixing = isActiveJob(fixJob);
+  // A finished fix stays on the page while it concerns the head shown: the
+  // one it started from, or the commit it pushed.
+  const showFix =
+    !!fixJob && (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha);
   const running = liveFor(live, pr);
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
@@ -112,7 +138,10 @@ export function LocalReview({
       setEnded((n) => n + 1);
     previousKeys.current = liveKeys;
   }, [liveKeys]);
-  const generating = isActiveJob(job) || (!job && entry.status === "generating");
+  const [merging, setMerging] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const generating = starting || isActiveJob(job) || (!job && entry.status === "generating");
   const generationState = generating
     ? "pending"
     : job?.state === "failed" || job?.state === "interrupted"
@@ -227,23 +256,68 @@ export function LocalReview({
               url: pr.url,
               state: pr.state.toLowerCase(),
             },
-            back: { href: appURL(), label: "Inbox" },
+            back: { href: back.href, label: back.label },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
-            beside: doc ? (
-              <Button
-                variant="secondary"
-                size="compact"
-                disabled={generating || entry.needs_clone}
-                onClick={generate}
-              >
-                {generating
-                  ? job?.state === "queued"
-                    ? "Review queued"
-                    : "Generating review…"
-                  : "Regenerate review"}
-              </Button>
-            ) : null,
+            // The GitHub state leads, so a reader sees why a fix, a re-run or an
+            // update is offered; a fix comes first of those, re-running checks
+            // and updating the branch are its smaller remedies.
+            beside:
+              doc ||
+              pullRequestStates(entry).length > 0 ||
+              (fix && fixLabelText) ||
+              canMerge(entry) ||
+              canRerunChecks(entry) ||
+              canUpdateBranch(entry) ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-2 empty:hidden">
+                    <PullRequestState entry={entry} />
+                  </span>
+                  {fix && fixLabelText ? (
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={fixing}
+                      onClick={fix}
+                      className="gap-1.5"
+                    >
+                      <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
+                      {fixing ? "Fixing…" : fixLabelText}
+                    </Button>
+                  ) : null}
+                  {canRerunChecks(entry) ? (
+                    <Button variant="secondary" size="compact" onClick={() => setRerunning(true)}>
+                      Re-run checks
+                    </Button>
+                  ) : null}
+                  {canUpdateBranch(entry) ? (
+                    <Button variant="secondary" size="compact" onClick={() => setUpdating(true)}>
+                      Update branch
+                    </Button>
+                  ) : null}
+                  {doc ? (
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={generating || entry.needs_clone}
+                      onClick={generate}
+                    >
+                      {generating
+                        ? starting
+                          ? "Starting review…"
+                          : job?.state === "queued"
+                            ? "Review queued"
+                            : "Generating review…"
+                        : "Regenerate review"}
+                    </Button>
+                  ) : null}
+                  {canMerge(entry) ? (
+                    <Button size="compact" onClick={() => setMerging(true)}>
+                      Merge…
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null,
           }}
           placeholder={
             entry.needs_clone ? (
@@ -255,13 +329,17 @@ export function LocalReview({
               <section aria-label="Review generation" className="local-review-empty">
                 <LiveDot />
                 <h2 role="status">
-                  {job?.state === "queued" ? "Review queued" : "Generating the review"}
+                  {starting
+                    ? "Starting the review"
+                    : job?.state === "queued"
+                      ? "Review queued"
+                      : "Generating the review"}
                 </h2>
                 <p>
-                  {job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This page updates
-                  when it is ready.
+                  {!starting && job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This
+                  page updates when it is ready.
                 </p>
-                {job ? <CancelJob job={job} changed={changed} /> : null}
+                {!starting && job ? <CancelJob job={job} changed={changed} /> : null}
               </section>
             ) : failed && entry.version_count > 0 ? (
               <div className="local-review-empty">
@@ -301,7 +379,18 @@ export function LocalReview({
           )}
           notices={
             <>
-              <LiveSessions sessions={running} />
+              {groups.map((group) => (
+                <Notice key={group.id}>
+                  In review group{" "}
+                  <ViewerLink href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}>
+                    {group.name}
+                  </ViewerLink>
+                </Notice>
+              ))}
+              {showFix && fixJob ? (
+                <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+              ) : null}
+              <LiveSessions sessions={running} Link={ViewerLink} />
               {entry.needs_clone && doc ? (
                 <Notice>
                   Needs a local clone. This saved review remains available.
@@ -339,6 +428,15 @@ export function LocalReview({
           commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
           hunkPatches={patches}
         />
+        {merging ? (
+          <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
+        ) : null}
+        {rerunning ? (
+          <RerunChecksDialog entry={entry} close={() => setRerunning(false)} rerun={changed} />
+        ) : null}
+        {updating ? (
+          <UpdateBranchDialog entry={entry} close={() => setUpdating(false)} updated={changed} />
+        ) : null}
       </AttachmentUrlProvider>
     </ReviewBoundary>
   );
@@ -402,7 +500,7 @@ function GeneratedBy({
 }
 /** What became of the PR's last generation that did not complete: what
  *  happened in a sentence, and the generator's own words behind a toggle. */
-function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
+export function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
   const failed = job.state === "failed";
   const title = failed
     ? compact
@@ -432,13 +530,13 @@ function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boole
   );
 }
 /** Stops the PR's queued or running job. */
-function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   return (
     <>
       <Button
-        variant="ghost"
+        variant="secondary"
         size="compact"
         disabled={cancelling}
         onClick={() => {
@@ -457,7 +555,7 @@ function CancelJob({ job, changed }: { job: Job; changed: () => Promise<void> })
   );
 }
 /** A new version being generated above the review the reader is on. */
-function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
   const started = automaticLabel(job);
   return (
     <section aria-label="Review generation" className="local-job-outcome">

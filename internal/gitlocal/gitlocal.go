@@ -22,7 +22,8 @@
 // finding the repository, and fetching a missing pull request commit, which
 // lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
-// changed. An export is the hosted mirror's own git archive command run in
+// changed, except by a Fix: the temporary worktree, refs and push of a fix a
+// person confirmed (see Fix). An export is the hosted mirror's own git archive command run in
 // the private repository, so it is byte for byte the archive the hosted
 // service produces, including whatever attributes that archive applies: it
 // still applies working-tree-encoding from the tree.
@@ -220,7 +221,7 @@ func Open(ctx context.Context, dir string, opts Options) (*Repo, error) {
 	if opts.Remote == "" {
 		opts.Remote = DefaultRemote
 	}
-	if strings.HasPrefix(opts.Remote, "-") || strings.ContainsAny(opts.Remote, " \t\r\n\x00") {
+	if !validRemoteName(opts.Remote) {
 		return nil, fmt.Errorf("%w: remote name", ErrInvalidInput)
 	}
 	opts.MaxComparisonBytes = orDefault(opts.MaxComparisonBytes, DefaultMaxComparison)
@@ -383,6 +384,9 @@ type PullRequest struct {
 	// BaseRef is the base branch name (for example "main"); it is fetched
 	// only when the base commit is missing locally.
 	BaseRef string
+	// Remote is the remote a missing commit is fetched from; "" is the
+	// Repo's Options.Remote.
+	Remote string
 }
 
 // Pull is a pull request whose commits all exist locally.
@@ -399,7 +403,11 @@ type Pull struct {
 // since the commit was recorded) is then fetched by its ID, as the hosted
 // mirror recovers one. A clone with both commits makes no network call.
 func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
-	if pr.Number <= 0 || !validOID(pr.BaseSHA) || !validOID(pr.HeadSHA) {
+	remote := pr.Remote
+	if remote == "" {
+		remote = r.opts.Remote
+	}
+	if pr.Number <= 0 || !validOID(pr.BaseSHA) || !validOID(pr.HeadSHA) || !validRemoteName(remote) {
 		return Pull{}, ErrInvalidInput
 	}
 	done, err := r.begin()
@@ -435,7 +443,7 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 			}
 			refspecs = append(refspecs, fmt.Sprintf("+refs/heads/%s:%s", baseRef, w.ref))
 		}
-		if err := r.fetch(ctx, refspecs); err != nil {
+		if err := r.fetch(ctx, remote, refspecs); err != nil {
 			fetchErrs = append(fetchErrs, err)
 		}
 		if absent = missing(); len(absent) > 0 {
@@ -443,13 +451,12 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 			for _, w := range absent {
 				refspecs = append(refspecs, "+"+w.oid+":"+w.ref)
 			}
-			if err := r.fetch(ctx, refspecs); err != nil {
+			if err := r.fetch(ctx, remote, refspecs); err != nil {
 				fetchErrs = append(fetchErrs, err)
 			}
 		}
 		if absent = missing(); len(absent) > 0 {
-			remote := sanitize([]byte(r.opts.Remote))
-			err := fmt.Errorf("%w: %s commit %s is not available from %s", ErrObjectNotFound, absent[0].name, absent[0].oid, remote)
+			err := fmt.Errorf("%w: %s commit %s is not available from %s", ErrObjectNotFound, absent[0].name, absent[0].oid, sanitize([]byte(remote)))
 			if len(fetchErrs) > 0 {
 				err = fmt.Errorf("%w: fetching pull request %d: %w", err, pr.Number, errors.Join(fetchErrs...))
 			}
@@ -468,17 +475,18 @@ func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 	return err == nil
 }
 
-// fetch brings refspecs into the private refs/baum/ namespace of the clone.
+// fetch brings refspecs from remote into the private refs/baum/ namespace of
+// the clone.
 // It keeps the user's configuration for credentials, URL rewrites and
 // safe.directory, and runs no hooks and writes no FETCH_HEAD, tags,
 // remote-tracking branches, commit-graph or auto-maintenance. In a partial
 // clone the fetch keeps the clone's filter.
-func (r *Repo) fetch(ctx context.Context, refspecs []string) error {
-	env, authenticated, err := r.fetchCredentials(ctx, r.fetchEnv(ctx))
+func (r *Repo) fetch(ctx context.Context, remote string, refspecs []string) error {
+	env, authenticated, err := r.fetchCredentials(ctx, remote, r.fetchEnv(ctx, remote))
 	if err != nil {
 		return err
 	}
-	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-prune", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", r.opts.Remote}
+	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--no-prune", "--no-auto-gc", "--no-auto-maintenance", "--refmap=", "--", remote}
 	_, err = run(ctx, runSpec{
 		dir: r.dir, env: env, timeout: r.opts.FetchTimeout,
 		config: []string{

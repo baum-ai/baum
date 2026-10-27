@@ -22,7 +22,7 @@ describe("review section blocks", () => {
     const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
     const section = document.sections[0]!;
     document.summary.text = "**Summary** with [details](https://example.com/details)";
-    section.summary.text = "**Section** overview";
+    section.summary.text = "**Section** overview of `access`";
     section.attention!.text = "Check `access` before release";
     section.risks[0]!.text = "- First risk\n- Second risk";
     const behavior = section.blocks.find((block) => block.kind === "behavior") as

@@ -101,7 +101,7 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				if len(args) != 3 {
 					return errors.New("usage: baum hooks agent --check [--user] AGENT EVENT")
 				}
-				if err := validateAgentHook(args[1], args[2]); err != nil {
+				if err := validateHook(userWide, args[1], args[2]); err != nil {
 					return err
 				}
 				if userWide {
@@ -117,13 +117,16 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				return errors.New("usage: baum hooks agent [--user] AGENT EVENT")
 			}
 			agent, event := args[0], args[1]
-			if err := validateAgentHook(agent, event); err != nil {
+			if err := validateHook(userWide, agent, event); err != nil {
 				return err
 			}
 			input := newHookInput(cmd.InOrStdin())
-			hosted := hookRunsHosted(cmd.Context(), ".")
+			// An event Entire has no hook for is only recorded, hosted or
+			// not, so it is not asked.
+			recordOnly := userWide && agenthooks.RecordOnly(agent, event)
+			hosted := !recordOnly && hookRunsHosted(cmd.Context(), ".")
 			var err error
-			if userWide && !hosted {
+			if recordOnly || (userWide && !hosted) {
 				// A user-wide hook admitted only because the user has a
 				// daemon records the event and does nothing else, as the
 				// dispatcher does where `--check` refuses.
@@ -132,7 +135,7 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				err = runEntireAgentHook(cmd, hosted, agent, event, input, stdout, stderr)
 			}
 			hookEvent := newHookEvent(hookevents.KindAgent, agent, event)
-			hookEvent.Session = agentSession(input.identifiers())
+			hookEvent.Session = agentSession(event, input.identifiers())
 			hookEvent.Exit = exitStatus(err)
 			sendHookEvent(cmd.Context(), hookEvent)
 			return err

@@ -294,3 +294,28 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 		t.Fatalf("lost settings %#v %v", list, e)
 	}
 }
+
+// Each pull requests choice covers what it names; all covers pull requests
+// the viewer neither authored nor was asked to review.
+func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
+	for _, tc := range []struct {
+		choice                       string
+		authored, requested, neither bool
+	}{
+		{"", true, true, false},
+		{PullRequestsAuthored, true, false, false},
+		{PullRequestsRequested, false, true, false},
+		{PullRequestsAll, true, true, true},
+	} {
+		p := Preferences{PullRequests: tc.choice}
+		if p.Validate() != nil {
+			t.Fatalf("%q rejected", tc.choice)
+		}
+		if got := [3]bool{p.Covers(true, false), p.Covers(false, true), p.Covers(false, false)}; got != [3]bool{tc.authored, tc.requested, tc.neither} {
+			t.Fatalf("%q covers %v", tc.choice, got)
+		}
+	}
+	if (Preferences{PullRequests: "everyone"}).Validate() == nil {
+		t.Fatal("unknown choice accepted")
+	}
+}

@@ -36,6 +36,7 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
   const [connection, setConnection] = useState<GitHubConnection>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [working, setWorking] = useState<GitHubAuthAction | null>(null);
   const [checking, setChecking] = useState(false);
   const [copied, setCopied] = useState("");
   const sequence = useRef(0);
@@ -104,6 +105,7 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
     mutating.current = true;
     const mine = ++sequence.current;
     setBusy(true);
+    setWorking(name);
     setCopied("");
     try {
       const body = await transport.current(name);
@@ -118,7 +120,10 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
       return undefined;
     } finally {
       mutating.current = false;
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        setBusy(false);
+        setWorking(null);
+      }
     }
   };
   // Opens GitHub and copies the code the daemon is about to return, both
@@ -150,7 +155,19 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
       if (alive.current) setCopied("Could not copy. Select and copy the code above.");
     }
   };
-  return { connection, pending, error, busy, checking, copied, recheck, action, signIn, copy };
+  return {
+    connection,
+    pending,
+    error,
+    busy,
+    working,
+    checking,
+    copied,
+    recheck,
+    action,
+    signIn,
+    copy,
+  };
 }
 
 /** The daemon's own reason, so a repeated failure says why it keeps failing. */

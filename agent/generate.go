@@ -60,6 +60,12 @@ type Run struct {
 	Budgets     Budgets
 	// Endpoint is how the backend reaches the model; nil leaves its own.
 	Endpoint *Endpoint
+	// Decorate, when set, adds to every document the model returns what the
+	// host decides and the model never writes, such as a group review's
+	// stack and its sections' members, before the document is masked and
+	// validated. It must not fail: a document it cannot read is returned
+	// as it came, for the validator to report.
+	Decorate func([]byte) []byte
 }
 
 // Generate runs the loop. The returned document is the validated and prepared
@@ -146,6 +152,9 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 			return outcome, nil, callErr
 		}
 		document = review.DocumentWithTileKinds(result.Document, run.TileKinds)
+		if run.Decorate != nil {
+			document = run.Decorate(document)
+		}
 		if attempt == 0 {
 			assessed = document
 		} else {

@@ -52,6 +52,8 @@ type Backend struct {
 	// Binary is the executable. Empty looks up cursor-agent on PATH, then
 	// agent, which is used only when its help says it is the Cursor Agent.
 	Binary, Model string
+	// Env are the user's agent variables (agent.WithUserEnv).
+	Env []string
 
 	mu      sync.Mutex
 	checked bool
@@ -132,7 +134,7 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	defer stop()
 	cmd := exec.CommandContext(runCtx, binary, c.args(request.Directory)...)
 	cmd.Dir = request.Directory
-	cmd.Env = environment()
+	cmd.Env = environment(c.Env)
 	cmd.Stdin = strings.NewReader(promptWithSchema(request.Prompt, request.Schema))
 	proc.Configure(cmd)
 	// A command the agent started may hold stdout open after the group kill;
@@ -332,8 +334,8 @@ var environmentNames = []string{"CURSOR_CONFIG_DIR", "CURSOR_DATA_DIR", "AGENT_C
 // environment is the process environment, which is never the caller's
 // wholesale. NO_OPEN_BROWSER stops a run that is not signed in from opening a
 // login page.
-func environment() []string {
-	return append(agent.LocalEnvironment(os.Environ(), environmentNames...), "NO_OPEN_BROWSER=1")
+func environment(user []string) []string {
+	return append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), environmentNames...), user), "NO_OPEN_BROWSER=1")
 }
 
 // schemaHeading introduces the output schema at the end of every prompt.

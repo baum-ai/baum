@@ -66,6 +66,36 @@ type Problem struct {
 type Snapshot struct {
 	Entries  []Entry   `json:"entries"`
 	Problems []Problem `json:"problems"`
+	// Waiting is the number of open pull requests waiting on the user: those
+	// asking for their review and their own that need changes. It counts the
+	// same pull requests as the app inbox's "Review requested" and "Needs
+	// changes" groups, so the desktop app's badge matches what the inbox shows.
+	Waiting int `json:"waiting"`
+}
+
+// NeedsChanges reports whether one of the user's own pull requests has
+// changes requested, failing checks or a merge conflict.
+func (e Entry) NeedsChanges() bool {
+	return e.PullRequest.AuthoredByMe && (e.Review == "changes_requested" || e.Checks == "failing" || e.Merge == "conflict")
+}
+
+// waiting counts the pull requests that wait on the user, once each even
+// when several clones of a repository list the same one.
+func waiting(entries []Entry) int {
+	type key struct {
+		repository string
+		number     int
+	}
+	seen := map[key]bool{}
+	for _, e := range entries {
+		if e.Historical || strings.EqualFold(e.PullRequest.State, "CLOSED") || strings.EqualFold(e.PullRequest.State, "MERGED") {
+			continue
+		}
+		if e.PullRequest.ReviewRequestedFromMe || e.NeedsChanges() {
+			seen[key{strings.ToLower(e.PullRequest.Repository), e.PullRequest.Number}] = true
+		}
+	}
+	return len(seen)
 }
 
 func (s *Service) Build(ctx context.Context) (Snapshot, error) {
@@ -224,6 +254,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			if value.HeadSHA != entry.PullRequest.HeadSHA {
 				// Observations carry no review/merge/thread state for a changed revision.
 				entry.Review, entry.Merge, entry.Unresolved, entry.UnresolvedCapped = "", "", nil, false
+				entry.PullRequest.Behind = false
 			}
 			if value.Draft {
 				entry.Merge = "draft"
@@ -268,10 +299,11 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 		}
 		return a.CloneID < b.CloneID
 	})
+	out.Waiting = waiting(out.Entries)
 	return out, nil
 }
 
-// Handler serves GET /api/index. The host must apply its launch authentication
+// Handler serves GET /api/index, or with view=waiting only the waiting count. The host must apply its launch authentication
 // and Host/Origin checks before routing here. history=1 includes saved-only rows.
 func (s *Service) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +321,13 @@ func (s *Service) Handler() http.Handler {
 			if !errors.Is(err, context.Canceled) {
 				http.Error(w, "index unavailable", http.StatusInternalServerError)
 			}
+			return
+		}
+		// The desktop app's badge polls only the count.
+		if r.URL.Query().Get("view") == "waiting" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]int{"waiting": snapshot.Waiting})
 			return
 		}
 		if r.URL.Query().Get("history") != "1" {

@@ -147,6 +147,54 @@ func (r *Repo) RemotePushURL(ctx context.Context, name string) (string, error) {
 	return r.remoteURL(ctx, name, true)
 }
 
+// RemotePushURLs lists every URL git pushes the named remote to, in the order
+// git pushes them: as configured (its pushurl entries, else its url entries)
+// and, at the same index, as git rewrites it with url.<base>.pushInsteadOf and
+// insteadOf. Both are empty when the clone has no such remote. It reads
+// configuration only and never contacts the remote.
+func (r *Repo) RemotePushURLs(ctx context.Context, name string) (configured, effective []string, err error) {
+	if !validRemoteName(name) {
+		return nil, nil, nil
+	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer done()
+	all := func(args ...string) ([]string, error) {
+		out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 64 << 10, timeout: r.opts.CommandTimeout}, args...)
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && (exitErr.ExitCode() == 1 || exitErr.ExitCode() == 2) {
+				return nil, nil // the key is not set, or no such remote
+			}
+			return nil, err
+		}
+		var urls []string
+		for _, line := range strings.Split(string(out), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				urls = append(urls, line)
+			}
+		}
+		return urls, nil
+	}
+	if configured, err = all("config", "--get-all", "remote."+name+".pushurl"); err != nil {
+		return nil, nil, err
+	}
+	if len(configured) == 0 {
+		if configured, err = all("config", "--get-all", "remote."+name+".url"); err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(configured) == 0 {
+		return nil, nil, nil
+	}
+	if effective, err = all("remote", "get-url", "--push", "--all", name); err != nil {
+		return nil, nil, err
+	}
+	return configured, effective, nil
+}
+
 func (r *Repo) remoteURL(ctx context.Context, name string, push bool) (string, error) {
 	if !validRemoteName(name) {
 		return "", nil

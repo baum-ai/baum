@@ -124,12 +124,22 @@ const assert = require('node:assert/strict');
   await page.locator('#review-automatic').uncheck();
   assert.equal(await page.locator('input[name=pull-requests]').count(), 0, 'Scope shows while automatic reviews are off');
   await page.locator('#review-automatic').check();
+  assert(await page.locator('#review-all-note').isHidden(), 'The all note shows for another scope');
+  await page.locator('.segmented label', { hasText: 'All' }).click();
+  assert(await page.locator('#review-all-note').isVisible(), 'Choosing all explains its reach');
+  for (const width of [720, 1000]) {
+    await page.setViewportSize({ width, height: 800 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Overflow at ${width} with four scopes`);
+  }
+  await page.screenshot({ path: `${screenshots}/onboarding-reviews-all.png` });
   await page.locator('.segmented label', { hasText: 'Only requested' }).click();
   await page.screenshot({ path: `${screenshots}/onboarding-reviews-changed.png` });
   await page.locator('#continue').click();
   assert.equal(await page.locator('#step-label').textContent(), 'STEP 3 OF 3');
   assert((await page.locator('#command-state').textContent()).includes('~/.local/bin/baum'));
   await page.screenshot({ path: `${screenshots}/onboarding-agents.png` });
+  assert.equal(await page.locator('#codex-install').textContent(), 'Connect');
+  assert.equal(await page.locator('#claude-code-install').getAttribute('aria-label'), 'Connect Claude Code');
   assert(await page.locator('#refresh').isVisible(), 'An unfinished step should offer to recheck');
   assert.equal(await page.locator('#continue').textContent(), 'Open baum →');
   assert(await page.locator('.agent-logo').evaluateAll(images => images.every(image => image.complete && image.naturalWidth > 0)), 'Bundled icons must load under the native CSP');

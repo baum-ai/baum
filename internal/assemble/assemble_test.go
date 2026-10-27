@@ -347,6 +347,63 @@ func TestMissingCommitsFailWithAFetchHintAndTouchNothing(t *testing.T) {
 	}
 }
 
+// cloneWithoutPull clones the fixture's main branch alone, so the pull
+// request's head is missing, and points remote, whose URL names acme/demo,
+// at source: the fixture with the pull request under refs/pull/7/head, or a
+// path that does not exist.
+func cloneWithoutPull(t *testing.T, repo assembletest.Repo, remote, source string) string {
+	t.Helper()
+	assembletest.Git(t, repo.Dir, "update-ref", "refs/pull/7/head", repo.Head)
+	dir := filepath.Join(t.TempDir(), "clone")
+	assembletest.Git(t, repo.Dir, "clone", "-q", "--no-local", "--single-branch", "--branch", "main", repo.Dir, dir)
+	assembletest.Git(t, dir, "remote", "set-url", "origin", "https://github.com/someone/demo-fork.git")
+	assembletest.Git(t, dir, "remote", "add", remote, "https://github.com/acme/demo.git")
+	assembletest.Git(t, dir, "config", "url."+source+".insteadOf", "https://github.com/acme/demo.git")
+	return dir
+}
+
+func TestMissingCommitsAreFetchedFromTheRepositoryRemote(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	dir := cloneWithoutPull(t, repo, "upstream", repo.Dir)
+	clone := open(t, dir)
+	if _, err := clone.ResolveCommit(context.Background(), repo.Head); !errors.Is(err, gitlocal.ErrObjectNotFound) {
+		t.Fatalf("the clone already has the head: %v", err)
+	}
+	branches := assembletest.Git(t, dir, "for-each-ref", "refs/heads", "refs/remotes")
+	r, err := assembleWith(t, repo, repo.Evidence(), nil, func(_ *assemble.Request, a *assemble.Assembler) {
+		a.Git, a.Fetcher = clone, clone
+	})
+	if err != nil {
+		t.Fatalf("assemble: %v\n%s", err, r.stderr.String())
+	}
+	if r.result.Head != repo.Head || r.result.MergeBase != repo.MergeBase || len(hunksOf(r.result.Bundle, "src/list.go")) == 0 {
+		t.Errorf("head %s, merge base %s, diff %d hunks", r.result.Head, r.result.MergeBase, len(r.result.Bundle.Diff))
+	}
+	if got := assembletest.Git(t, dir, "rev-parse", "refs/baum/pull/7/head"); got != repo.Head {
+		t.Errorf("refs/baum/pull/7/head = %q, want %s", got, repo.Head)
+	}
+	if after := assembletest.Git(t, dir, "for-each-ref", "refs/heads", "refs/remotes"); after != branches {
+		t.Errorf("the fetch changed branches:\n%s\n--- after ---\n%s", branches, after)
+	}
+}
+
+func TestFailedFetchReportsTheMissingCommit(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	clone := open(t, cloneWithoutPull(t, repo, "upstream", filepath.Join(t.TempDir(), "gone")))
+	_, err := assembleWith(t, repo, repo.Evidence(), nil, func(_ *assemble.Request, a *assemble.Assembler) {
+		a.Git, a.Fetcher = clone, clone
+	})
+	var missingErr *assemble.MissingCommitError
+	if !errors.As(err, &missingErr) || missingErr.Role != "head" || missingErr.Fetch == nil || !errors.Is(err, gitlocal.ErrObjectNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{repo.Head, "fetching it from upstream failed", "`git fetch upstream pull/7/head`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q lacks %q", err, want)
+		}
+	}
+}
+
 // A remote that reaches GitHub over SSH on port 443 names the repository
 // as pull request resolution reads it, ssh.github.com being github.com.
 func TestFetchHintNamesAnSSHOverHTTPSRemote(t *testing.T) {

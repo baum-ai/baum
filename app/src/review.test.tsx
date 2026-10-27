@@ -135,6 +135,27 @@ it("shows queued initial generation and progress instead of an empty review", as
   expect(node.querySelector("[data-back]")!.getAttribute("data-back")).toBe("/s/test-ns/");
   expect(node.textContent).not.toContain("Started automatically");
 });
+it("shows a review as starting from the click, before the daemon answers", async () => {
+  await act(async () =>
+    root.render(
+      <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+        <LocalReview
+          entry={entry}
+          clone="selected-clone"
+          revision={0}
+          job={job("failed")}
+          starting
+          changed={changed}
+          generate={generate}
+        />
+      </UrlStateProvider>,
+    ),
+  );
+  expect(node.textContent).toContain("Starting the review");
+  expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
+  // The failed job before it is not the one starting: nothing to cancel.
+  expect(node.textContent).not.toContain("Cancel job");
+});
 it("says when the PR's job was started automatically", async () => {
   await render({ ...job("running"), automatic: true, trigger: "review_requested" });
   expect(node.textContent).toContain("Started automatically because your review was requested");
@@ -271,4 +292,92 @@ it("keeps the PR page through queued, running and completed SSE states across cl
       (button) => button.textContent === "Regenerate review",
     )!.disabled,
   ).toBe(false);
+});
+it("offers Merge in the PR page header only for an open, ready pull request", async () => {
+  await render(job("completed"));
+  expect(node.textContent).not.toContain("Merge…");
+  await render(job("completed"), 0, { ...entry, merge: "ready" });
+  expect(node.textContent).toContain("Merge…");
+  await render(job("completed"), 0, {
+    ...entry,
+    merge: "ready",
+    pull_request: { ...entry.pull_request, draft: true },
+  });
+  expect(node.textContent).not.toContain("Merge…");
+});
+it("offers Re-run checks and Update branch in the PR page header when they apply", async () => {
+  const withPush = { ...entry.pull_request, viewer_can_push: true };
+  await render(job("completed"));
+  expect(node.textContent).not.toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+  await render(job("completed"), 0, { ...entry, checks: "failing", pull_request: withPush });
+  expect(node.textContent).toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+  await render(job("completed"), 0, {
+    ...entry,
+    merge: "blocked",
+    pull_request: { ...withPush, behind: true },
+  });
+  expect(node.textContent).toContain("Update branch");
+  expect(node.textContent).not.toContain("Re-run checks");
+  // Without push access neither is offered.
+  await render(job("completed"), 0, {
+    ...entry,
+    checks: "failing",
+    pull_request: { ...withPush, behind: true, viewer_can_push: false },
+  });
+  expect(node.textContent).not.toContain("Re-run checks");
+  expect(node.textContent).not.toContain("Update branch");
+});
+it("leads with the fix of a broken pull request and follows its job", async () => {
+  const fix = vi.fn();
+  const broken: Entry = {
+    ...entry,
+    merge: "conflict",
+    pull_request: { ...entry.pull_request, viewer_can_push: true },
+  };
+  const fixJob = (state: string, patch: Partial<Job> = {}): Job => ({
+    ...job(state),
+    kind: "fix",
+    fix: { conflicts: true, head_ref: "feature" },
+    head_sha: "head",
+    phase: "merging",
+    ...patch,
+  });
+  const show = (current?: Job) =>
+    act(async () =>
+      root.render(
+        <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+          <LocalReview
+            entry={broken}
+            clone="selected-clone"
+            revision={0}
+            changed={changed}
+            generate={generate}
+            fix={fix}
+            fixJob={current}
+          />
+        </UrlStateProvider>,
+      ),
+    );
+  await show();
+  const button = Array.from(node.querySelectorAll("button")).find(
+    (b) => b.textContent === "Fix conflicts",
+  )!;
+  await act(async () => button.click());
+  expect(fix).toHaveBeenCalled();
+  await show(fixJob("running"));
+  expect(node.textContent).toContain("Fix conflicts: Merging the base branch");
+  expect(
+    Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Fixing…")!.disabled,
+  ).toBe(true);
+  await show(
+    fixJob("completed", {
+      commit: "abcdef1234567890",
+      commit_url: "https://github.com/acme/demo/commit/abcdef1234567890",
+    }),
+  );
+  expect(node.textContent).toContain("Fix conflicts: pushed abcdef1 to feature");
+  await show(fixJob("failed", { reason: "push_rejected" }));
+  expect(node.textContent).toContain("GitHub refused the push");
 });

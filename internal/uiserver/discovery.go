@@ -13,9 +13,10 @@ import (
 
 // DiscoveryCache is shared with the review index. Cached must never contact
 // GitHub; polling runs in the background or an authenticated same-origin mutation.
+// A refresh the person asks for polls now, without waiting for the backoff.
 type DiscoveryCache interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
-	Poll(context.Context, github.Repository) (discovery.Snapshot, error)
+	PollNow(context.Context, github.Repository) (discovery.Snapshot, error)
 }
 
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
@@ -76,7 +77,7 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 			apiError(w, err)
 			return
 		}
-		snapshot, err := service.Poll(r.Context(), repo)
+		snapshot, err := service.PollNow(r.Context(), repo)
 		if err != nil {
 			snapshot.Repository = repo.String()
 			snapshot.Stale = true

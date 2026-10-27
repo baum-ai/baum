@@ -2,7 +2,9 @@ package uiserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,15 +32,33 @@ type LocalAPI struct {
 	// Automatic serves /api/automatic: the automatic generation preferences
 	// and per-repository status.
 	Automatic http.Handler
-	// Live serves /api/live-sessions: the agent sessions in progress.
+	// Live serves /api/live-sessions: the agent sessions in progress, and
+	// /api/live-sessions/{agent}/{id}/transcript: one of their transcripts.
 	Live http.Handler
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
+	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
+	// request from the app.
+	Merge http.Handler
+	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
+	// their -options reads: updating a pull request's branch and re-running its
+	// failed workflow runs. With merging and a fix's push, they are the
+	// GitHub writes the app makes.
+	Update http.Handler
+	// Groups serves /api/groups: review groups and their combined reviews
+	// (internal/reviewgroups).
+	Groups http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
 	GitHubRepositories http.Handler
-	Changed            func()
+	// PlanUsage serves /api/plan-usage: what remains of the Claude and Codex
+	// plans.
+	PlanUsage http.Handler
+	// Analytics serves /api/analytics: what the agents did, cost and
+	// delivered (internal/analytics).
+	Analytics http.Handler
+	Changed   func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -88,11 +108,22 @@ func (a LocalAPI) Handler() *LocalHandler {
 			writeJSON(w, map[string]any{"available": false, "code": code})
 		})
 	}
+	merge := provider(a.Merge, "merge_unavailable")
+	mux.Handle("GET /api/prs/merge-options", merge)
+	mux.Handle("POST /api/prs/merge", merge)
+	update := provider(a.Update, "update_unavailable")
+	mux.Handle("GET /api/prs/update-branch-options", update)
+	mux.Handle("POST /api/prs/update-branch", update)
+	mux.Handle("GET /api/prs/rerun-checks-options", update)
+	mux.Handle("POST /api/prs/rerun-checks", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/live-sessions/", provider(a.Live, "live_sessions_unavailable"))
+	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
+	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
@@ -100,6 +131,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone-target", repositories)
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
+	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
@@ -108,15 +141,54 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		// The app's backend and model, chosen during setup, override the file.
 		cfg := a.Config
+		source := ""
+		if len(cfg.AgentEnv) > 0 {
+			source = "file"
+		}
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
+			if len(prefs.AgentEnv) > 0 {
+				source = "app"
+			}
 		}
 		writeJSON(w, struct {
-			Backend config.Backend `json:"backend"`
-			Model   string         `json:"model"`
-			Budgets config.Budgets `json:"budgets"`
-			Caps    map[string]int `json:"caps"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps})
+			Backend        config.Backend    `json:"backend"`
+			Model          string            `json:"model"`
+			Budgets        config.Budgets    `json:"budgets"`
+			Caps           map[string]int    `json:"caps"`
+			AgentEnv       map[string]string `json:"agent_env"`
+			AgentEnvSource string            `json:"agent_env_source"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+	})
+	// The app's agent environment replaces the config file's; an empty one
+	// goes back to the file's.
+	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AgentEnv map[string]string `json:"agent_env"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if err := config.ValidateAgentEnv(input.AgentEnv); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(input.AgentEnv) == 0 {
+			input.AgentEnv = nil
+		}
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.AgentEnv = input.AgentEnv
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]map[string]string{"agent_env": prefs.Resolve(a.Config).AgentEnv})
 	})
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated

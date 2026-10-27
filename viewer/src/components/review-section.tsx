@@ -540,70 +540,10 @@ function BlockView({
         </Part>
       );
     }
-    case "entities": {
-      const entities = block as Extract<Block, { kind: "entities" }>;
-      type Row = (typeof entities.items)[number] & { key: string };
-      const rows: Row[] = entities.items.map((item, position) => ({
-        ...item,
-        key: `${item.kind}-${item.name}-${position}`,
-      }));
-      const columns: Column<Row>[] = [
-        { key: "kind", header: "Kind", cell: (row) => humanize(row.kind) },
-        {
-          key: "name",
-          header: "Name",
-          cell: (row) => (
-            // The gap lives on the content, not the cell, so it cannot fight the
-            // table's own cell padding; a long identifier wraps inside its own
-            // column rather than running under the change badge beside it.
-            <div className="min-w-0 pr-3">
-              <code className="block font-mono text-base text-(--text-primary) [overflow-wrap:anywhere]">
-                <BreakableName name={row.name} />
-              </code>
-              {row.path && row.path !== row.name && (
-                <span className="block text-xs text-(--text-tertiary) [overflow-wrap:anywhere]">
-                  <BreakableName name={row.path} />
-                </span>
-              )}
-            </div>
-          ),
-          className: "max-w-[28rem]",
-        },
-        {
-          key: "change",
-          header: "Change",
-          cell: (row) => (
-            <Badge
-              size="compact"
-              tone={
-                row.change === "added"
-                  ? "positive"
-                  : row.change === "removed"
-                    ? "critical"
-                    : "neutral"
-              }
-            >
-              {humanize(row.change)}
-            </Badge>
-          ),
-        },
-        { key: "hunks", header: "Hunks", cell: (row) => hunkChips(row.hunks) },
-      ];
-      return (
-        <Part
-          label="Changed entities"
-          aside={<span className="text-xs text-(--text-tertiary)">{rows.length}</span>}
-        >
-          <Table
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => row.key}
-            density="compact"
-            minWidth={520}
-          />
-        </Part>
-      );
-    }
+    // Entities are left out for now: a list of changed names repeated what
+    // the hunks show without saying more. Stored reviews may still carry one.
+    case "entities":
+      return null;
     case "groups": {
       const groups = block as Extract<Block, { kind: "groups" }>;
       return (
@@ -886,24 +826,5 @@ function DecisionSessionLink({ session, turn }: { session: string; turn: number 
     >
       View in session →
     </ViewerLink>
-  );
-}
-
-/** An identifier or path that may wrap: a break is offered after each `.`,
- *  `/`, `_` or `::`, and between camel-case words, so
- *  `Store.DeleteSelfAttributedEntireCheckpointIngests` breaks after `Store.`
- *  or between `Checkpoint` and `Ingests`, never inside a word. */
-function BreakableName({ name }: { name: string }) {
-  const parts = name.split(/(?<=[./_]|::)|(?<=[a-z0-9])(?=[A-Z])/);
-  return (
-    <>
-      {parts.map((part, index) => (
-        // Parts of one fixed string never reorder.
-        <span key={index}>
-          {part}
-          {index < parts.length - 1 ? <wbr /> : null}
-        </span>
-      ))}
-    </>
   );
 }

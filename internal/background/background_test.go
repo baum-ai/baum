@@ -38,6 +38,9 @@ func (r registry) Repositories(context.Context) ([]repos.Repository, error) {
 
 type fakeDiscovery struct {
 	polls        int
+	forced       []string
+	probes       int
+	changed      map[string]bool
 	observations []discovery.Observation
 	err          error
 	next         time.Time
@@ -46,6 +49,14 @@ type fakeDiscovery struct {
 func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	f.polls++
 	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new"}}}, f.err
+}
+func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	f.forced = append(f.forced, repo.String())
+	return f.Poll(ctx, repo)
+}
+func (f *fakeDiscovery) Probe(context.Context, []github.Repository) (map[string]bool, error) {
+	f.probes++
+	return f.changed, nil
 }
 func (f *fakeDiscovery) Observe(_ context.Context, _ github.Repository, o discovery.Observation) error {
 	f.observations = append(f.observations, o)
@@ -287,5 +298,33 @@ func TestPickedRepositoryWithoutCloneIsPolledNotRefreshed(t *testing.T) {
 	}
 	if st := s.state("acme/bare"); st.Error != "" || st.LastSuccess.IsZero() {
 		t.Fatalf("clone-less state = %+v", st)
+	}
+}
+
+func TestProbedChangePollsBeforeItsSchedule(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	s := &Service{Registry: registry{{Repository: "acme/a", Available: true}, {Repository: "acme/b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		return discovery.Observation{Number: n}, nil
+	}}
+	s.Sync(context.Background())
+	if d.probes != 1 || d.polls != 2 || len(d.forced) != 0 {
+		t.Fatalf("first pass probes=%d polls=%d forced=%v", d.probes, d.polls, d.forced)
+	}
+	// Within the interval neither repository is due and no probe runs.
+	now = now.Add(30 * time.Second)
+	d.changed = map[string]bool{"acme/b": true}
+	s.Sync(context.Background())
+	if d.probes != 1 || d.polls != 2 {
+		t.Fatalf("probed or polled early: probes=%d polls=%d", d.probes, d.polls)
+	}
+	// The next probe finds acme/b changed: it polls now, past discovery's
+	// backoff, and acme/a keeps its scheduled poll.
+	now = now.Add(30 * time.Second)
+	s.put(State{Repository: "acme/a", NextRefresh: now.Add(time.Hour)}, s.identityEpoch())
+	s.put(State{Repository: "acme/b", NextRefresh: now.Add(time.Hour)}, s.identityEpoch())
+	s.Sync(context.Background())
+	if d.probes != 2 || d.polls != 3 || len(d.forced) != 1 || d.forced[0] != "acme/b" {
+		t.Fatalf("changed repository not polled now: probes=%d polls=%d forced=%v", d.probes, d.polls, d.forced)
 	}
 }

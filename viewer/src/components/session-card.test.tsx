@@ -338,6 +338,55 @@ describe("SessionCard", () => {
     expect(text).toContain("package client\n…");
   });
 
+  it("loads an opened turn's activity again for a new revision, keeping the card open", async () => {
+    const grown: TranscriptActivity = {
+      ...activity,
+      messages: [
+        ...activity.messages,
+        { text: "Running the tests.", timestamp: "2026-07-01T10:06:00Z", model: "claude-opus" },
+      ],
+    };
+    const loadTurnActivity = vi.fn(async () => activity);
+    const card = (revision: string | undefined, load = loadTurnActivity) =>
+      createElement(SessionCard, {
+        session: session(),
+        source: { loadTurnActivity: load, revision },
+        defaultOpen: true,
+      });
+    render(card("v1"));
+    act(() => button("Agent activity").click());
+    await settle();
+    expect(loadTurnActivity).toHaveBeenCalledTimes(1);
+    // The same revision loads nothing more.
+    act(() => root!.render(card("v1")));
+    await settle();
+    expect(loadTurnActivity).toHaveBeenCalledTimes(1);
+    const again = vi.fn(async () => grown);
+    act(() => root!.render(card("v2", again)));
+    await settle();
+    expect(again).toHaveBeenCalledWith("run-1", "turn-1");
+    expect(container.textContent).toContain("Running the tests.");
+    expect(button("Agent activity").getAttribute("aria-expanded")).toBe("true");
+    // A turn whose activity was never opened is not fetched.
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads a turn's activity once without a revision", async () => {
+    const loadTurnActivity = vi.fn(async () => activity);
+    const card = () =>
+      createElement(SessionCard, {
+        session: session(),
+        source: { loadTurnActivity },
+        defaultOpen: true,
+      });
+    render(card());
+    act(() => button("Agent activity").click());
+    await settle();
+    act(() => root!.render(card()));
+    await settle();
+    expect(loadTurnActivity).toHaveBeenCalledTimes(1);
+  });
+
   it("opens activity below its toggle and explains when no visible output was recorded", async () => {
     const loadTurnActivity = vi.fn(async () => ({
       ...activity,
