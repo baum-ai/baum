@@ -194,9 +194,7 @@ export function PullRequestDecisionsList({
           <div key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
             <h4>
               <span>{agentName(s.agent)}</span>
-              <span className="local-decisions-session-title" title={title}>
-                {title}
-              </span>
+              <span className="local-decisions-session-title">{title}</span>
               {s.live ? (
                 <Badge tone="info" size="compact">
                   In progress

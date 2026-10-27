@@ -1532,7 +1532,7 @@ a.local-session-pr:hover {
 }
 .local-decisions-session h4 {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 0.5rem;
   margin: 0 0 0.15rem;
@@ -1543,13 +1543,10 @@ a.local-session-pr:hover {
   flex: none;
 }
 .local-decisions-session-title {
-  flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
   font-weight: 400;
   color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .local-decisions-session ul {
   display: grid;
