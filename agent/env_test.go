@@ -85,3 +85,18 @@ func TestLocalEnvironmentWindows(t *testing.T) {
 		t.Errorf("non-windows kept %v", got)
 	}
 }
+
+func TestWithUserEnvSetsTheUsersVariablesOverTheInherited(t *testing.T) {
+	inherited := []string{"PATH=/bin", "HOME=/home/ada", "LANG=C"}
+	got := WithUserEnv(inherited, []string{"GIT_CONFIG_GLOBAL=/home/ada/agent.gitconfig", "LANG=en_GB.UTF-8"})
+	want := []string{"PATH=/bin", "HOME=/home/ada", "GIT_CONFIG_GLOBAL=/home/ada/agent.gitconfig", "LANG=en_GB.UTF-8"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("WithUserEnv = %q, want %q", got, want)
+	}
+	if !slices.Equal(inherited, []string{"PATH=/bin", "HOME=/home/ada", "LANG=C"}) {
+		t.Fatal("WithUserEnv changed its input")
+	}
+	if got := WithUserEnv(inherited, nil); !slices.Equal(got, inherited) {
+		t.Fatalf("no user variables changed the environment: %q", got)
+	}
+}

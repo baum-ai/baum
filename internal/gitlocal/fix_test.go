@@ -151,3 +151,38 @@ func TestFixRefusesAMovedBranchAndARejectedPush(t *testing.T) {
 		t.Fatalf("the head's parent descends from it: %v %v", ok, err)
 	}
 }
+
+func TestFixChecksSigningWithTheAgentEnvironment(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	// The user's own global configuration signs nothing; the agent's signs
+	// with a program that always fails, as gpg does when it cannot prompt.
+	plain := filepath.Join(t.TempDir(), "plain.gitconfig")
+	write(t, filepath.Dir(plain), "plain.gitconfig", "[user]\n\tname = Ada\n\temail = ada@example.com\n", 0o644)
+	t.Setenv("GIT_CONFIG_GLOBAL", plain)
+	signing := filepath.Join(t.TempDir(), "agent.gitconfig")
+	write(t, filepath.Dir(signing), "agent.gitconfig", "[include]\n\tpath = "+filepath.ToSlash(plain)+"\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n", 0o644)
+
+	fix, err := startFix(t, f, FixOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fix.CheckSigning(ctx); err != nil {
+		t.Fatalf("a configuration that does not sign must pass: %v", err)
+	}
+	if err := fix.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	fix, err = startFix(t, f, FixOptions{ID: "job2", Env: []string{"GIT_CONFIG_GLOBAL=" + signing, "GIT_DIR=/nowhere"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	if err := fix.CheckSigning(ctx); err == nil {
+		t.Fatal("signing with a failing program passed the check")
+	}
+	if head, err := fix.HEAD(ctx); err != nil || head != f.head {
+		t.Fatalf("the check moved HEAD to %s (%v), or GIT_DIR from the agent environment was used", head, err)
+	}
+}

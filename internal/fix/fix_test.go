@@ -199,6 +199,21 @@ func TestFixRefusals(t *testing.T) {
 	}
 }
 
+func TestFixThatCannotSignRunsNoAgent(t *testing.T) {
+	r := NewRepositories(t)
+	signing := filepath.Join(t.TempDir(), "agent.gitconfig")
+	if err := os.WriteFile(signing, []byte("[user]\n\tname = Ada\n\temail = ada@example.com\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := options(t, r, &fakeAgent{fix: func(context.Context, string) error { t.Error("the agent ran"); return nil }})
+	o.Checks = true
+	o.Env = []string{"GIT_CONFIG_GLOBAL=" + signing}
+	if _, err := Run(context.Background(), o); reasonOf(err) != ReasonSigning {
+		t.Fatalf("err %v (reason %q), want %s", err, reasonOf(err), ReasonSigning)
+	}
+	checkCleanedUp(t, r, o)
+}
+
 func TestFixRefusesAMovedHead(t *testing.T) {
 	r := NewRepositories(t)
 	o := options(t, r, &fakeAgent{fix: func(context.Context, string) error { t.Error("the agent ran"); return nil }})

@@ -3,6 +3,7 @@ package uiserver
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -113,5 +114,54 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	list, err := registry.List(ctx)
 	if err != nil || len(list) != 1 {
 		t.Fatal("CSRF removed registry record", err)
+	}
+}
+
+func TestLocalAPIAgentEnvironment(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	cfg := config.Default()
+	cfg.AgentEnv = map[string]string{"FROM_FILE": "1"}
+	handler := LocalAPI{Registry: registry, Config: cfg}.Handler()
+	defer handler.Close()
+	settings := func() (env map[string]string, source string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+		var body struct {
+			AgentEnv       map[string]string `json:"agent_env"`
+			AgentEnvSource string            `json:"agent_env_source"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(rec.Body.String(), err)
+		}
+		return body.AgentEnv, body.AgentEnvSource
+	}
+	put := func(body string) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/settings/agent-env", strings.NewReader(body)))
+		return rec.Code
+	}
+	if env, source := settings(); env["FROM_FILE"] != "1" || source != "file" {
+		t.Fatalf("before a choice: %v from %q", env, source)
+	}
+	if code := put(`{"agent_env":{"GIT_CONFIG_GLOBAL":"~/agent.gitconfig"}}`); code != 200 {
+		t.Fatalf("PUT = %d", code)
+	}
+	if env, source := settings(); len(env) != 1 || env["GIT_CONFIG_GLOBAL"] != "~/agent.gitconfig" || source != "app" {
+		t.Fatalf("after the app's choice: %v from %q", env, source)
+	}
+	if code := put(`{"agent_env":{"1BAD":"x"}}`); code != 400 {
+		t.Fatalf("an invalid name = %d", code)
+	}
+	if code := put(`{"agent_env":{}}`); code != 200 {
+		t.Fatalf("clearing = %d", code)
+	}
+	if env, source := settings(); env["FROM_FILE"] != "1" || source != "file" {
+		t.Fatalf("after clearing: %v from %q", env, source)
 	}
 }

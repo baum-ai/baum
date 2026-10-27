@@ -61,6 +61,9 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
+	// Env are the user's agent variables (agent.WithUserEnv), for the Local
+	// profile only.
+	Env []string
 
 	mu           sync.Mutex
 	checked      bool
@@ -131,7 +134,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(request.Directory, "home"),
 			"CODEX_HOME=" + codexHome, "CODEX_API_KEY=" + endpoint.Key}
 	} else {
-		env = agent.LocalEnvironment(os.Environ(), "CODEX_HOME")
+		env = agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
 		if endpoint != nil {
 			env = append(env, "CODEX_API_KEY="+endpoint.Key)
 		}

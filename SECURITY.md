@@ -495,6 +495,17 @@ What the agent can do, per backend:
 - Both get the same environment allowlist as a review: no SSH agent, no
   `GIT_` variable, no GitHub token, no provider credential baum did not set.
   The agent never gets git credentials or network access to push anything.
+  The one addition is the environment for agents you set yourself (Settings,
+  or `[agent_env]` in the config file), which every agent baum runs on this
+  computer and the git commands that commit and push a fix receive, for
+  example `GIT_CONFIG_GLOBAL` to sign the fix's commit with another key. It
+  is your choice, so it may name a `GIT_` variable; baum's own run variables
+  win over it, and git commands drop one that would point git at another
+  repository (`GIT_DIR` and the like).
+- When your configuration signs commits (`commit.gpgSign`), baum makes one
+  signed commit object in the checkout before the agent runs, referenced by
+  nothing. A key that needs a passphrase prompt the daemon cannot show fails
+  the fix there, with git's error, before the agent's work is paid for.
 
 What reaches the agent: the pull request's title and branches, the conflicted
 paths, and for failing checks the failing check runs and commit statuses of

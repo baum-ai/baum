@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -35,6 +36,8 @@ type Fix struct {
 	remote  string
 	headRef string
 	refs    []string
+	// env are the user's agent variables, set over the user's environment.
+	env []string
 	// Head is the pull request's head commit the fix starts from; Base the
 	// base branch's commit, empty when the base was not fetched.
 	Head, Base string
@@ -52,6 +55,11 @@ type FixOptions struct {
 	HeadRef, HeadSHA string
 	// BaseRef, when set, is the base branch, fetched for a merge.
 	BaseRef string
+	// Env are the user's agent variables ("NAME=value", config.Config.AgentEnv)
+	// for every command in the checkout and the push, set over the user's
+	// environment; one that would redirect git to another repository is
+	// left out.
+	Env []string
 }
 
 // ErrHeadMoved reports a pull request branch that no longer points at the
@@ -80,7 +88,7 @@ func (r *Repo) StartFix(ctx context.Context, opts FixOptions) (*Fix, error) {
 		return nil, err
 	}
 	defer done()
-	f := &Fix{repo: r, dir: opts.Dir, tree: filepath.Join(opts.Dir, "checkout"), hooks: filepath.Join(opts.Dir, "hooks"), remote: r.opts.Remote, headRef: opts.HeadRef, Head: opts.HeadSHA}
+	f := &Fix{repo: r, dir: opts.Dir, tree: filepath.Join(opts.Dir, "checkout"), hooks: filepath.Join(opts.Dir, "hooks"), remote: r.opts.Remote, headRef: opts.HeadRef, Head: opts.HeadSHA, env: opts.Env}
 	if err := os.MkdirAll(f.hooks, 0o700); err != nil {
 		return nil, err
 	}
@@ -117,7 +125,7 @@ func (r *Repo) StartFix(ctx context.Context, opts FixOptions) (*Fix, error) {
 	if err := f.clone(ctx, r.opts.CommandTimeout, "worktree", "add", "--detach", f.tree, opts.HeadSHA); err != nil {
 		return nil, err
 	}
-	out, err := run(ctx, runSpec{dir: f.tree, env: userEnv(), limit: 64 << 10, timeout: r.opts.CommandTimeout}, "rev-parse", "--absolute-git-dir")
+	out, err := run(ctx, runSpec{dir: f.tree, env: f.userEnv(), limit: 64 << 10, timeout: r.opts.CommandTimeout}, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +140,43 @@ func (r *Repo) StartFix(ctx context.Context, opts FixOptions) (*Fix, error) {
 // Dir is the checkout the agent works in.
 func (f *Fix) Dir() string { return f.tree }
 
+// userEnv is userEnv with the user's agent variables set over it. The fixed
+// variables come last again, so those win.
+func (f *Fix) userEnv() []string {
+	env := userEnv()
+	if len(f.env) == 0 {
+		return env
+	}
+	for _, kv := range f.env {
+		name, _, _ := strings.Cut(kv, "=")
+		upper := strings.ToUpper(name)
+		if strippedEnv[upper] || slices.ContainsFunc(strippedEnvPrefixes, func(p string) bool { return strings.HasPrefix(upper, p) }) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, fixedEnv...)
+}
+
+// CheckSigning makes sure a commit in the checkout can be made at all when
+// the user's configuration signs commits (commit.gpgSign): it creates a
+// signed commit object of HEAD's tree that nothing refers to, so a key that
+// needs a passphrase prompt or an agent that is not running fails now, before
+// the agent has run, instead of at the commit.
+func (f *Fix) CheckSigning(ctx context.Context) error {
+	out, err := f.git(ctx, 64, "config", "--type=bool", "--get", "commit.gpgsign")
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return nil
+	}
+	if err != nil || strings.TrimSpace(string(out)) != "true" {
+		return err
+	}
+	// commit-tree reads no commit.gpgSign; -S signs as a commit would.
+	_, err = f.git(ctx, maxOIDOutputBytes, "commit-tree", "-S", "-p", "HEAD", "-m", "baum signing check", "HEAD^{tree}")
+	return err
+}
+
 // config are the settings every command of a fix runs with: no hooks, no
 // file-system monitor left running for a temporary checkout, no automatic
 // maintenance, no external transport, and no git run inside a nested
@@ -143,18 +188,18 @@ func (f *Fix) config() []string {
 
 // clone runs a command in the clone itself.
 func (f *Fix) clone(ctx context.Context, timeout time.Duration, args ...string) error {
-	_, err := run(ctx, runSpec{dir: f.repo.dir, env: userEnv(), timeout: timeout, config: f.config()}, args...)
+	_, err := run(ctx, runSpec{dir: f.repo.dir, env: f.userEnv(), timeout: timeout, config: f.config()}, args...)
 	return err
 }
 
 // git runs a command in the checkout, naming its git directory explicitly.
 func (f *Fix) git(ctx context.Context, limit int64, args ...string) ([]byte, error) {
-	env := append(userEnv(), "GIT_DIR="+f.admin, "GIT_WORK_TREE="+f.tree)
+	env := append(f.userEnv(), "GIT_DIR="+f.admin, "GIT_WORK_TREE="+f.tree)
 	return run(ctx, runSpec{dir: f.tree, env: env, limit: limit, timeout: f.repo.opts.CommandTimeout, config: f.config()}, args...)
 }
 
 func (f *Fix) resolve(ctx context.Context, ref string) (string, error) {
-	out, err := run(ctx, runSpec{dir: f.repo.dir, env: userEnv(), limit: maxOIDOutputBytes, timeout: f.repo.opts.CommandTimeout},
+	out, err := run(ctx, runSpec{dir: f.repo.dir, env: f.userEnv(), limit: maxOIDOutputBytes, timeout: f.repo.opts.CommandTimeout},
 		"rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", ErrObjectNotFound, ref)
@@ -275,7 +320,7 @@ func (f *Fix) Push(ctx context.Context, commit string) error {
 	if !validOID(commit) {
 		return ErrInvalidInput
 	}
-	env := userEnv()
+	env := f.userEnv()
 	if b := background.Load(); b != nil {
 		url, err := f.repo.RemotePushURL(ctx, f.remote)
 		env = b.env(ctx, f.repo.dir, env, err != nil || sshRemote(url))

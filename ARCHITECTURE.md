@@ -1732,6 +1732,17 @@ the backend's `Check` with `generate.ExplicitPathError` naming
 runner both build their backends from the resolved configuration, and
 per-repository settings do not override the paths.
 
+`config.Config.AgentEnv` (TOML `[agent_env]`, validated names, at most 32) is
+the user's environment for agents; the app's `repos.Preferences.AgentEnv`,
+edited with `PUT /api/settings/agent-env`, replaces it when it sets anything.
+`AgentEnviron` expands a leading `~` and `$NAME` from the daemon's
+environment. `generate.DefaultBackendsFor` gives it to the `claude` (User
+profile), `codex` (Local profile) and `cursor-agent` backends, which set it
+over `LocalEnvironment` with `agent.WithUserEnv` before their own run
+variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
+it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
+push, without the variables that would redirect git.
+
 ## Explicit local repository registry
 
 `internal/repos` owns the private SQLite database beside `config.Path()` and
@@ -2222,6 +2233,9 @@ The worktree, its registration and the refs are removed whatever happens.
 After a push the daemon polls the repository's discovery at once. Git commands
 in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
 `core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
+Before the merge and the agent, `Fix.CheckSigning` makes an unreferenced
+`commit-tree -S` commit when `commit.gpgSign` is set (commit-tree ignores the
+setting), and a failure is `fix.ReasonSigning` with git's error.
 
 ### Local application presentation
 

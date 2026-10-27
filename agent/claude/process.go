@@ -85,7 +85,7 @@ func (c *Backend) environment(directory string, endpoint *agent.Endpoint) []stri
 		}
 		return env
 	}
-	env := append(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), fixedEnvironment()...)
+	env := append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment()...)
 	if endpoint != nil {
 		env = append(env, "ANTHROPIC_API_KEY="+endpoint.Key)
 		if endpoint.BaseURL != "" {
@@ -141,7 +141,7 @@ func (c *Backend) checkVersion(ctx context.Context, binary string) (string, erro
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--version")
-	cmd.Env = append(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), fixedEnvironment()...)
+	cmd.Env = append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment()...)
 	// The timeout and the caller's cancellation kill the whole group, and
 	// WaitDelay stops a descendant that holds the pipe from stalling the wait.
 	proc.Configure(cmd)

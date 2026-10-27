@@ -61,6 +61,9 @@ type Backend struct {
 	// bring a model proxy endpoint. Local prompt evaluation sets it because it
 	// runs on a developer's host without a proxy.
 	DefaultEndpoint *agent.Endpoint
+	// Env are the user's agent variables (agent.WithUserEnv), for the User
+	// profile only.
+	Env []string
 
 	mu         sync.Mutex
 	versionOK  bool

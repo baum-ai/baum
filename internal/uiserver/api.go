@@ -2,7 +2,9 @@ package uiserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,15 +141,54 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		// The app's backend and model, chosen during setup, override the file.
 		cfg := a.Config
+		source := ""
+		if len(cfg.AgentEnv) > 0 {
+			source = "file"
+		}
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
+			if len(prefs.AgentEnv) > 0 {
+				source = "app"
+			}
 		}
 		writeJSON(w, struct {
-			Backend config.Backend `json:"backend"`
-			Model   string         `json:"model"`
-			Budgets config.Budgets `json:"budgets"`
-			Caps    map[string]int `json:"caps"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps})
+			Backend        config.Backend    `json:"backend"`
+			Model          string            `json:"model"`
+			Budgets        config.Budgets    `json:"budgets"`
+			Caps           map[string]int    `json:"caps"`
+			AgentEnv       map[string]string `json:"agent_env"`
+			AgentEnvSource string            `json:"agent_env_source"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+	})
+	// The app's agent environment replaces the config file's; an empty one
+	// goes back to the file's.
+	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AgentEnv map[string]string `json:"agent_env"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if err := config.ValidateAgentEnv(input.AgentEnv); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(input.AgentEnv) == 0 {
+			input.AgentEnv = nil
+		}
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.AgentEnv = input.AgentEnv
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]map[string]string{"agent_env": prefs.Resolve(a.Config).AgentEnv})
 	})
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated

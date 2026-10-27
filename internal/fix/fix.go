@@ -46,6 +46,7 @@ const (
 	ReasonThreadsChanged   = "threads_changed"
 	ReasonNoRemote         = "no_remote"
 	ReasonGit              = "git"
+	ReasonSigning          = "signing"
 	ReasonBackend          = "backend"
 	ReasonBudget           = "budget"
 	ReasonNoChanges        = "no_changes"
@@ -106,6 +107,9 @@ type Options struct {
 	Directory string
 	// Progress receives the phase the fix is in.
 	Progress func(phase string)
+	// Env are the user's agent variables for the git commands of the fix
+	// (gitlocal.FixOptions.Env).
+	Env []string
 }
 
 // Outcome is what a fix did.
@@ -170,7 +174,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if o.Conflicts {
 		base = o.BaseRef
 	}
-	checkout, err := repo.StartFix(ctx, gitlocal.FixOptions{Dir: dir, ID: o.ID, HeadRef: o.HeadRef, HeadSHA: o.HeadSHA, BaseRef: base})
+	checkout, err := repo.StartFix(ctx, gitlocal.FixOptions{Dir: dir, ID: o.ID, HeadRef: o.HeadRef, HeadSHA: o.HeadSHA, BaseRef: base, Env: o.Env})
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -185,6 +189,13 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			o.Logger.Warn("fix checkout not fully removed", "error", closeErr)
 		}
 	}()
+	// A commit that cannot be signed fails before the agent's work is paid for.
+	if err := checkout.CheckSigning(ctx); err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		return out, fail(ReasonSigning, fmt.Errorf("git could not sign a commit, so the agent did not run: %w", err))
+	}
 	message := commitMessage(o)
 	var conflicts []string
 	if o.Conflicts {
