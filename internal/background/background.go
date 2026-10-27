@@ -25,6 +25,8 @@ type Registry interface {
 }
 type Discovery interface {
 	Poll(context.Context, github.Repository) (discovery.Snapshot, error)
+	PollNow(context.Context, github.Repository) (discovery.Snapshot, error)
+	Probe(context.Context, []github.Repository) (map[string]bool, error)
 	Observe(context.Context, github.Repository, discovery.Observation) error
 }
 type Problem struct {
@@ -62,6 +64,7 @@ type Service struct {
 	nextRepo    string
 	epoch       uint64
 	cursorEpoch uint64
+	probed      time.Time
 }
 
 // ResetIdentity drops credential-dependent backoff without waiting for an old
@@ -149,6 +152,7 @@ func (s *Service) Sync(ctx context.Context) {
 	if s.cursorEpoch != epoch {
 		s.cursors = nil
 		s.nextRepo = ""
+		s.probed = time.Time{}
 		s.cursorEpoch = epoch
 	}
 	picked, err := s.Registry.Repositories(ctx)
@@ -190,21 +194,26 @@ func (s *Service) Sync(ctx context.Context) {
 	if s.cursors == nil {
 		s.cursors = map[string]int{}
 	}
+	changed := s.probe(ctx, names)
 	for repoIndex, name := range names {
 		if ctx.Err() != nil {
 			return
 		}
-		previous := s.state(name)
-		if s.now().Before(previous.NextRefresh) {
-			continue
-		}
-		state := State{Repository: name}
 		repo, err := github.ParseRepository(name)
 		if err != nil {
 			continue
 		}
+		previous := s.state(name)
+		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] {
+			continue
+		}
+		state := State{Repository: name}
+		poll := s.Discovery.Poll
+		if changed[repo.String()] {
+			poll = s.Discovery.PollNow
+		}
 		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		snapshot, pollErr := s.Discovery.Poll(requestCtx, repo)
+		snapshot, pollErr := poll(requestCtx, repo)
 		cancel()
 		if pollErr == nil && s.Discovered != nil {
 			s.Discovered(ctx, snapshot)
@@ -310,6 +319,31 @@ func (s *Service) Sync(ctx context.Context) {
 			s.Changed()
 		}
 	}
+}
+
+// probe asks discovery, at most once per interval, which repositories' open
+// pull requests changed since their last poll: those poll at once rather than
+// after discovery's backoff, so a pull request opened or pushed from anywhere
+// shows within about a minute. A failed probe changes nothing; the scheduled
+// polls go on.
+func (s *Service) probe(ctx context.Context, names []string) map[string]bool {
+	if s.now().Before(s.probed.Add(s.interval())) {
+		return nil
+	}
+	s.probed = s.now()
+	repositories := make([]github.Repository, 0, len(names))
+	for _, name := range names {
+		if repo, err := github.ParseRepository(name); err == nil {
+			repositories = append(repositories, repo)
+		}
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	changed, err := s.Discovery.Probe(requestCtx, repositories)
+	if err != nil {
+		return nil
+	}
+	return changed
 }
 
 // pause is when the host's rate limit lets refreshes resume.

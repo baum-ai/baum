@@ -1951,6 +1951,16 @@ access. Disk data is stale until a successful poll in the running service.
 `Service.Poll` serializes polls, honors its next deadline, and backs off unchanged
 data from 30 seconds to 15 minutes, respecting GitHub's polling interval and rate
 reset. GraphQL has no ETag; only REST metadata uses conditional requests.
+`Service.PollNow` skips the deadline but not the budgets; the app's refresh
+(`r`) uses it. `Service.Probe` asks, in one GraphQL query for up to 50
+repositories (about one point), for each one's newest open pull request, open
+count and latest update, and reports those that differ from the fingerprint
+its last complete poll recorded. The background worker probes once a minute
+and polls a changed repository at once, so a pull request opened or pushed
+from anywhere shows within about a minute while unchanged repositories keep
+the backoff. A repository never polled or not returned waits for its scheduled
+poll; the probe assumes one credential, leaving out any repository whose
+credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
 REST requests and GraphQL points have separate persisted budgets, with the
 currently limiting budget exposed when exhausted. Both budgets and secondary

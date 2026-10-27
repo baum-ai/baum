@@ -20,7 +20,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
   pullRequests(states: OPEN, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
-    number title headRefOid headRefName isDraft author { login }
+    number title headRefOid headRefName isDraft updatedAt author { login }
     headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
@@ -45,10 +45,13 @@ type gqlPR struct {
 	Number                         int
 	Title, HeadRefOid, HeadRefName string
 	IsDraft                        bool
-	Author                         actor
-	HeadRepository                 *gqlRepository
-	BaseRepository                 gqlRepository
-	ReviewRequests                 struct {
+	// UpdatedAt feeds the probe's fingerprint only; it is cleared before the
+	// unchanged comparison so the backoff is unaffected.
+	UpdatedAt      time.Time `json:",omitzero"`
+	Author         actor
+	HeadRepository *gqlRepository
+	BaseRepository gqlRepository
+	ReviewRequests struct {
 		Nodes []struct {
 			RequestedReviewer struct {
 				Typename   string `json:"__typename"`
@@ -204,71 +207,94 @@ func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]g
 	return result, viewer, push, nil
 }
 
+type graphQLError struct {
+	Type string
+	Path []any
+}
+
+// graphQL sends one query on the shared GraphQL budget: it refuses while the
+// budget is exhausted, records what the response says of the budget and turns
+// a rate-limited response into errRateLimit. The caller judges the data and
+// errors it returns.
+func (p *poll) graphQL(ctx context.Context, query string, variables map[string]any) (json.RawMessage, []graphQLError, error) {
+	if rateDeadline(p.graphRate).After(p.now) {
+		return nil, nil, errRateLimit
+	}
+	status, headers, body, err := p.reader.GraphQL(ctx, query, variables)
+	if err != nil {
+		return nil, nil, err
+	}
+	// GraphQL response headers describe its point budget, never the REST budget.
+	if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
+		p.graphRate.Remaining = &n
+	}
+	if n, e := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); e == nil {
+		p.graphRate.Reset = time.Unix(n, 0)
+	}
+	var response struct {
+		Data   json.RawMessage
+		Errors []graphQLError
+	}
+	parseErr := json.Unmarshal(body, &response)
+	var budget struct {
+		RateLimit *struct {
+			Cost, Remaining int
+			ResetAt         time.Time
+		}
+	}
+	if json.Unmarshal(response.Data, &budget) == nil && budget.RateLimit != nil {
+		rate := budget.RateLimit
+		p.graphRate.Cost, p.graphRate.Remaining, p.graphRate.Reset = &rate.Cost, &rate.Remaining, rate.ResetAt
+	}
+	limited := status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "")
+	for _, issue := range response.Errors {
+		limited = limited || issue.Type == "RATE_LIMITED"
+	}
+	if limited {
+		resume := p.now.Add(time.Minute)
+		if seconds, e := strconv.Atoi(headers.Get("Retry-After")); e == nil && seconds >= 0 {
+			resume = p.now.Add(time.Duration(seconds) * time.Second)
+		} else if at, e := http.ParseTime(headers.Get("Retry-After")); e == nil {
+			resume = at
+		}
+		p.graphRate.RetryAt = resume
+		return nil, nil, errRateLimit
+	}
+	if status != 200 {
+		return nil, nil, fmt.Errorf("GitHub discovery HTTP %d", status)
+	}
+	if parseErr != nil {
+		return nil, nil, errors.New("invalid GitHub discovery response")
+	}
+	return response.Data, response.Errors, nil
+}
+
 func (p *poll) openPullPages(ctx context.Context, repository github.Repository) ([]gqlPR, actor, string, error) {
 	var result []gqlPR
 	var viewer actor
 	var permission string
 	var cursor any
 	for page := 0; page < 1000; page++ {
-		if rateDeadline(p.graphRate).After(p.now) {
-			return nil, viewer, "", errRateLimit
-		}
-		status, headers, body, err := p.reader.GraphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
+		data, issues, err := p.graphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
 		if err != nil {
 			return nil, viewer, "", err
 		}
-		// GraphQL response headers describe its point budget, never the REST budget.
-		if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
-			p.graphRate.Remaining = &n
-		}
-		if n, e := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); e == nil {
-			p.graphRate.Reset = time.Unix(n, 0)
-		}
 		var response struct {
-			Data struct {
-				Viewer    actor
-				RateLimit *struct {
-					Cost, Remaining int
-					ResetAt         time.Time
-				}
-				Repository *struct {
-					ViewerPermission string
-					PullRequests     struct {
-						Nodes    []gqlPR
-						PageInfo pageInfo
-					}
+			Viewer     actor
+			Repository *struct {
+				ViewerPermission string
+				PullRequests     struct {
+					Nodes    []gqlPR
+					PageInfo pageInfo
 				}
 			}
-			Errors []struct{ Type string }
 		}
-		parseErr := json.Unmarshal(body, &response)
-		if response.Data.RateLimit != nil {
-			rate := response.Data.RateLimit
-			p.graphRate.Cost, p.graphRate.Remaining, p.graphRate.Reset = &rate.Cost, &rate.Remaining, rate.ResetAt
-		}
-		limited := status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "")
-		for _, issue := range response.Errors {
-			limited = limited || issue.Type == "RATE_LIMITED"
-		}
-		if limited {
-			resume := p.now.Add(time.Minute)
-			if seconds, e := strconv.Atoi(headers.Get("Retry-After")); e == nil && seconds >= 0 {
-				resume = p.now.Add(time.Duration(seconds) * time.Second)
-			} else if at, e := http.ParseTime(headers.Get("Retry-After")); e == nil {
-				resume = at
-			}
-			p.graphRate.RetryAt = resume
-			return nil, viewer, "", errRateLimit
-		}
-		if status != 200 {
-			return nil, viewer, "", fmt.Errorf("GitHub discovery HTTP %d", status)
-		}
-		if parseErr != nil || len(response.Errors) > 0 || response.Data.Repository == nil {
+		if len(issues) > 0 || json.Unmarshal(data, &response) != nil || response.Repository == nil {
 			return nil, viewer, "", errors.New("invalid GitHub discovery response")
 		}
-		viewer = response.Data.Viewer
-		permission = response.Data.Repository.ViewerPermission
-		pulls := response.Data.Repository.PullRequests
+		viewer = response.Viewer
+		permission = response.Repository.ViewerPermission
+		pulls := response.Repository.PullRequests
 		for _, pr := range pulls.Nodes {
 			// Missing request pages could conceal automatic eligibility; do not publish
 			// a partial inbox as if it represented all requests.
@@ -278,6 +304,12 @@ func (p *poll) openPullPages(ctx context.Context, repository github.Repository) 
 		}
 		result = append(result, pulls.Nodes...)
 		if !pulls.PageInfo.HasNextPage {
+			p.fingerprint = fingerprint{Open: len(result)}
+			for i := range result {
+				p.fingerprint.Newest = max(p.fingerprint.Newest, result[i].Number)
+				p.fingerprint.Updated = maxTime(p.fingerprint.Updated, result[i].UpdatedAt)
+				result[i].UpdatedAt = time.Time{}
+			}
 			// Compare only the typed, minimal result: no raw GraphQL payload is cached.
 			minimal, _ := json.Marshal(result)
 			const cacheKey = "graphql:open-pulls"

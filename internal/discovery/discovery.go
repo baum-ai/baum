@@ -102,6 +102,8 @@ type diskCache struct {
 	Responses   map[string]cachedResponse
 	GraphQLRate RateLimit
 	Interval    time.Duration
+	// Fingerprint is the last complete poll's, which Probe compares with.
+	Fingerprint fingerprint
 }
 
 // cacheFormat changes when the minimal responses keep more fields: 1 added
@@ -250,6 +252,8 @@ type poll struct {
 	now       time.Time
 	unchanged bool
 	minimum   time.Duration
+	// fingerprint is the open pull requests' when all pages were read.
+	fingerprint fingerprint
 }
 
 var errRateLimit = errors.New("GitHub rate limit exhausted")
@@ -450,6 +454,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
+		p.cache.Fingerprint = p.fingerprint
 	}
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
