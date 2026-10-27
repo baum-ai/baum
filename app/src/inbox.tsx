@@ -446,7 +446,13 @@ function Bucket({
  *  generated, or one that failed. A current or outdated review needs nothing
  *  from the reader here; its risk is in the first column. */
 function ReviewActivity({ entry }: { entry: Entry }) {
-  if (entry.needs_clone) return <span className="inbox-activity">Needs a local clone</span>;
+  if (entry.needs_clone)
+    return (
+      <span className="inbox-activity text-(--status-caution)">
+        <WarningIcon size={12} className="flex-none" />
+        Needs a local clone
+      </span>
+    );
   if (entry.status === "generating")
     return (
       <span className="inbox-activity text-(--text-secondary)">

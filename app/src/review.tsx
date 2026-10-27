@@ -11,7 +11,7 @@ import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import { WarningIcon } from "@baum/viewer/components/icons";
+import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { ViewerLink } from "@baum/viewer/navigation";
@@ -266,7 +266,14 @@ export function LocalReview({
               canUpdateBranch(entry) ? (
                 <div className="flex flex-wrap items-center gap-2">
                   {fix && fixLabelText ? (
-                    <Button size="compact" disabled={fixing} onClick={fix}>
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={fixing}
+                      onClick={fix}
+                      className="gap-1.5"
+                    >
+                      <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
                       {fixing ? "Fixing…" : fixLabelText}
                     </Button>
                   ) : null}

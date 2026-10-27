@@ -733,7 +733,9 @@ function Workspace({ url }: { url: UrlState }) {
                         ? "Pick GitHub repositories in Repositories to get started."
                         : filter === "inbox"
                           ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                          : "Refresh from GitHub or choose another filter. Cached reviews remain in Saved history."}
+                          : filter === "history"
+                            ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
+                            : "Nothing matches this view. Refresh from GitHub or choose another tab."}
                     </p>
                   </div>
                 ) : null}
@@ -856,8 +858,8 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
       {error ? <Alert>{error}</Alert> : null}
       {jobs.length === 0 ? (
         <div className="local-empty">
-          <h2>No reviews generated yet</h2>
-          <p>Reviews you generate, or that run automatically, show here.</p>
+          <h2>No jobs yet</h2>
+          <p>Reviews and fixes you start, or that run automatically, show here.</p>
         </div>
       ) : (
         <ul className="local-panel local-job-list">

@@ -143,7 +143,7 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   await act(async () => jobs.click());
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?page=jobs");
-  expect(node.textContent).toContain("No reviews generated yet");
+  expect(node.textContent).toContain("No jobs yet");
   await act(async () => {
     Array.from(node.querySelectorAll("a"))
       .find((a) => a.textContent === "Inbox")!

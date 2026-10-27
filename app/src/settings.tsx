@@ -381,9 +381,10 @@ function ReviewSettingsSection({
         onChange={setDraft}
         className="settings-form"
       />
-      <div className="px-5 pb-4">
-        <PlanUsage />
-      </div>
+      <PlanUsage
+        className="settings-plan-usage"
+        heading={<h3 className="settings-plan-usage-title">Plan usage left</h3>}
+      />
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
         <p className="text-xs text-(--text-tertiary)">
           {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
@@ -662,6 +663,8 @@ function RepositoryRow({
   remove: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  // The panel that lists the registered clones and adds another.
+  const [changing, setChanging] = useState(false);
   const [cloneError, setCloneError] = useState("");
   const [removingClone, setRemovingClone] = useState("");
   const clone: Clone = repository.clones.find((c) => c.available) ??
@@ -686,59 +689,81 @@ function RepositoryRow({
   ].filter(Boolean);
   return (
     <li className="local-repo-row">
-      <div className="min-w-0 flex-1">
+      <div className="local-repo-main">
         <h3>{clone.repository}</h3>
-        <p className="truncate" title={clone.path}>
-          {clone.path}
-        </p>
+        {clone.available ? (
+          <p className="truncate" title={clone.path}>
+            {clone.path}
+          </p>
+        ) : (
+          <p className="local-repo-missing">Needs a local clone</p>
+        )}
+        <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
-      <p className="local-repo-summary">{summary.join(" · ")}</p>
-      {cloneError ? <p role="alert">{cloneError}</p> : null}
-      {clone.available ? null : <span className="local-pill">Needs a local clone</span>}
-      {!clone.available ? (
-        <CloneActions repository={repository.repository} changed={changed} />
+      <div className="local-repo-actions">
+        {clone.available ? (
+          <Button
+            variant="ghost"
+            size="compact"
+            aria-expanded={changing}
+            onClick={() => setChanging(!changing)}
+          >
+            {changing ? "Done" : "Change clone"}
+          </Button>
+        ) : null}
+        <Button
+          variant="secondary"
+          size="compact"
+          aria-label={`Settings for ${clone.repository}`}
+          onClick={() => setOpen(true)}
+        >
+          Settings
+        </Button>
+      </div>
+      {cloneError ? (
+        <p role="alert" className="local-repo-panel">
+          {cloneError}
+        </p>
       ) : null}
-      {repository.clones.length > 0 ? (
-        <details className="text-xs">
-          <summary>Change local clone</summary>
+      {!clone.available ? (
+        <div className="local-repo-panel">
+          <CloneActions repository={repository.repository} changed={changed} />
+        </div>
+      ) : null}
+      {clone.available && changing ? (
+        <div className="local-repo-panel local-repo-clones">
           <p>
             Keep the clone you want baum to use registered. Removing a registration leaves its files
             and saved reviews on disk.
           </p>
-          {repository.clones.map((c) => (
-            <div key={c.id}>
-              <p>
-                {c.path}
-                {c.available ? "" : " · unavailable"}
-              </p>
-              <Button
-                size="compact"
-                variant="ghost"
-                disabled={removingClone !== ""}
-                onClick={() => {
-                  setRemovingClone(c.id);
-                  setCloneError("");
-                  void request(`api/repos/${c.id}`, {}, "DELETE")
-                    .then(changed)
-                    .catch((e) => setCloneError(errorText(e)))
-                    .finally(() => setRemovingClone(""));
-                }}
-              >
-                {removingClone === c.id ? "Removing…" : "Remove this clone registration"}
-              </Button>
-            </div>
-          ))}
+          <ul>
+            {repository.clones.map((c) => (
+              <li key={c.id}>
+                <code className="truncate" title={c.path}>
+                  {c.path}
+                </code>
+                {c.available ? null : <span className="local-pill">Unavailable</span>}
+                <Button
+                  size="compact"
+                  variant="ghost"
+                  disabled={removingClone !== ""}
+                  onClick={() => {
+                    setRemovingClone(c.id);
+                    setCloneError("");
+                    void request(`api/repos/${c.id}`, {}, "DELETE")
+                      .then(changed)
+                      .catch((e) => setCloneError(errorText(e)))
+                      .finally(() => setRemovingClone(""));
+                  }}
+                >
+                  {removingClone === c.id ? "Removing…" : "Remove registration"}
+                </Button>
+              </li>
+            ))}
+          </ul>
           <CloneActions repository={repository.repository} changed={changed} />
-        </details>
+        </div>
       ) : null}
-      <Button
-        variant="secondary"
-        size="compact"
-        aria-label={`Settings for ${clone.repository}`}
-        onClick={() => setOpen(true)}
-      >
-        Settings
-      </Button>
       {open ? (
         <RepositoryDialog
           clone={clone}

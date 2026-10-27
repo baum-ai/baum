@@ -200,7 +200,7 @@ body {
   justify-content: space-between;
   gap: 0.5rem 1rem;
   min-height: 2.25rem;
-  padding: 0.625rem 0.75rem 0.625rem 1.5rem;
+  padding: 0.625rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 .local-page-title {
@@ -228,6 +228,11 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+}
+/* An icon button's glyph sits inside its padding: pull the last one out so
+   the glyph, not its box, lines up with the page's right edge. */
+.local-page-actions > .local-icon-button:last-child {
+  margin-right: -0.5rem;
 }
 .local-filter-bar {
   display: flex;
@@ -762,6 +767,12 @@ dialog.local-dialog-wide {
 .local-notice p {
   margin: 0;
 }
+.local-notice a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 :root[data-theme="dark"] .local-notice {
   background: #2a2214;
   color: #e9cf9a;
@@ -789,10 +800,10 @@ dialog.local-dialog-wide {
   list-style: none;
 }
 .local-repo-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.5rem 1rem;
+  gap: 0.75rem 1rem;
   padding: 0.875rem 0;
 }
 .local-repo-row + .local-repo-row {
@@ -803,14 +814,60 @@ dialog.local-dialog-wide {
   font-size: var(--text-base);
   font-weight: 600;
 }
-.local-repo-row p {
+.local-repo-main p {
   margin: 0.125rem 0 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
-.local-repo-row .local-repo-summary {
+.local-repo-main .local-repo-summary {
+  color: var(--text-secondary);
+}
+.local-repo-main .local-repo-missing {
+  color: var(--status-caution);
+}
+.local-repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+/* What opens under a row, across its width: the clone choices of a
+   repository without one, or the registered clones of one that has. */
+.local-repo-panel {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.local-repo-clones {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  font-size: var(--text-xs);
+}
+.local-repo-clones > p {
   margin: 0;
   color: var(--text-secondary);
+}
+.local-repo-clones ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.local-repo-clones li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.local-repo-clones code {
+  min-width: 0;
+  flex: 1;
+}
+@media (max-width: 40rem) {
+  .local-repo-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .local-dialog-actions {
   display: flex;
@@ -1101,6 +1158,19 @@ dialog.local-dialog-wide {
 }
 .settings-card .review-section + .review-section {
   border-top-color: var(--border-subtle);
+}
+/* The plan meters close the Reviews card as a section of their own. */
+.settings-plan-usage {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-plan-usage-title {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 .settings-card .review-label,
 .settings-card .review-section legend {

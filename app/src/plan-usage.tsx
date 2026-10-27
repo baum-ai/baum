@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { request } from "./api";
 
 export type PlanWindow = {
@@ -119,8 +119,17 @@ export function PlanUsageView({
 }
 
 /** Plan usage from the daemon, fetched on mount and every five minutes. A
- *  failed request shows nothing: the figures are a convenience, not a setting. */
-export function PlanUsage({ only }: { only?: string }) {
+ *  failed request shows nothing, heading and wrapper included: the figures
+ *  are a convenience, not a setting. */
+export function PlanUsage({
+  only,
+  heading,
+  className,
+}: {
+  only?: string;
+  heading?: ReactNode;
+  className?: string;
+}) {
   const [plans, setPlans] = useState<PlanUsageEntry[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -148,5 +157,11 @@ export function PlanUsage({ only }: { only?: string }) {
       window.clearInterval(timer);
     };
   }, []);
-  return plans ? <PlanUsageView plans={plans} now={now} only={only} /> : null;
+  if (!plans?.some((plan) => !only || plan.provider === only)) return null;
+  return (
+    <div className={className}>
+      {heading}
+      <PlanUsageView plans={plans} now={now} only={only} />
+    </div>
+  );
 }
