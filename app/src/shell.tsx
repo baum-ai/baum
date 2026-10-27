@@ -12,12 +12,14 @@ import {
 } from "@baum/viewer/components/icons";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
+import { PlanUsageRail } from "./plan-usage";
 
 type Page = "inbox" | "pulls" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
- *  panel. Below `lg` it folds to its glyphs. */
+ *  panel, with what is left of the agents' plans above the foot. Below `lg`
+ *  it folds to its glyphs. */
 export function Sidebar({
   page,
   inbox,
@@ -127,9 +129,12 @@ export function Sidebar({
       <nav aria-label="Main" className="local-rail-nav">
         {main.map(link)}
       </nav>
-      <nav aria-label="More" className="local-rail-nav local-rail-foot">
-        {secondary.map(link)}
-      </nav>
+      <div className="local-rail-foot">
+        <PlanUsageRail />
+        <nav aria-label="More" className="local-rail-nav">
+          {secondary.map(link)}
+        </nav>
+      </div>
     </aside>
   );
 }

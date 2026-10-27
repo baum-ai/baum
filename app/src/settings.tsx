@@ -19,7 +19,6 @@ import {
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
-import { PlanUsage } from "./plan-usage";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
 import codexLogo from "./desktop/codex.svg";
@@ -388,10 +387,6 @@ function ReviewSettingsSection({
         disabled={pending}
         onChange={setDraft}
         className="settings-form"
-      />
-      <PlanUsage
-        className="settings-plan-usage"
-        heading={<h3 className="settings-plan-usage-title">Plan usage left</h3>}
       />
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
         <p className="text-xs text-(--text-tertiary)">
