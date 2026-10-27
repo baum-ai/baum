@@ -272,7 +272,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   like a menu: the status line, waiting sessions as highlighted rows that
   open them, the plan usage left as coloured meters, Open baum, Pause or
   Resume automatic reviews and Quit and stop background reviews. It hides
-  when it loses focus; the right click keeps the full menu. Linux tray hosts
+  when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
+  through its items (from the first or last, wrapping), `Home` and `End` go
+  to either end, and `Enter` or `Space` presses the focused one. The right
+  click keeps the full menu. Linux tray hosts
   report no clicks, so Linux has the menu only. The panel is the bundled
   `tray.html`, created hidden at startup.
 - **Waiting on you.** While some pull requests wait on the user (review
@@ -340,7 +343,8 @@ the daemon serves still reach no command or plugin. The tray panel's
 capability (`tray-panel`) lets only its bundled page, in its own window, read
 the tray's last view (`tray_panel`), fit the window to its height
 (`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
-waiting session (`tray_action`, which refuses any other menu id).
+waiting session, or only hide the panel (`close`) (`tray_action`, which
+refuses any other menu id).
 
 ## Start at login
 

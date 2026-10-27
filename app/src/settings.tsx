@@ -21,6 +21,7 @@ import { GitHubConnectionSection } from "./github-connection";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
+import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
 import {
@@ -642,6 +643,22 @@ export function RepositoriesPage({
 }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  // The keyboard moves through the repositories as through any list, onto
+  // each one's Settings; `a` opens or closes the picker and `/` searches it.
+  const rows = useRowFocus<HTMLUListElement>(repositories.map((r) => r.repository));
+  const page = useRef<HTMLElement>(null);
+  useShortcuts((event) => {
+    if (listKeys(event, rows)) return;
+    if (event.key === "a") {
+      event.preventDefault();
+      setAdding(!adding);
+    } else if (event.key === "/") {
+      event.preventDefault();
+      if (adding)
+        page.current?.querySelector<HTMLInputElement>(".repository-search input")?.focus();
+      else setAdding(true);
+    }
+  });
   const action = async (fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -652,7 +669,7 @@ export function RepositoriesPage({
     }
   };
   return (
-    <section>
+    <section ref={page}>
       <PageBar
         title="Repositories"
         detail="GitHub repositories baum follows on this computer"
@@ -664,7 +681,7 @@ export function RepositoriesPage({
       />
       <div className="local-page-body">
         {error ? <Alert>{error}</Alert> : null}
-        {adding ? <RepositoryPicker changed={changed} /> : null}
+        {adding ? <RepositoryPicker changed={changed} autoFocus /> : null}
         {repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
@@ -675,10 +692,11 @@ export function RepositoriesPage({
           </div>
         ) : null}
         {repositories.length > 0 ? (
-          <ul className="local-panel local-repo-list">
+          <ul ref={rows.list} className="local-panel local-repo-list">
             {repositories.map((repository) => (
               <RepositoryRow
                 key={repository.repository}
+                focused={rows.focused === repository.repository}
                 repository={repository}
                 automatic={automatic}
                 defaults={defaults}
@@ -834,12 +852,14 @@ function RepositorySettings({
  *  dialog. */
 function RepositoryRow({
   repository,
+  focused,
   automatic,
   defaults,
   changed,
   remove,
 }: {
   repository: Repository;
+  focused: boolean;
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   changed: () => Promise<void>;
@@ -871,7 +891,11 @@ function RepositoryRow({
     harness,
   ].filter(Boolean);
   return (
-    <li className="local-repo-row">
+    <li
+      data-row-id={repository.repository}
+      data-focused={focused || undefined}
+      className="local-repo-row"
+    >
       <div className="local-repo-main">
         <h3>{clone.repository}</h3>
         {clone.available ? (
@@ -897,6 +921,7 @@ function RepositoryRow({
         <Button
           variant="secondary"
           size="compact"
+          data-row-link=""
           aria-label={`Settings for ${clone.repository}`}
           onClick={() => setOpen(true)}
         >

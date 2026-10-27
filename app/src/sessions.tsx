@@ -14,6 +14,10 @@ import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { useNow } from "./live";
+import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+
+/** What marks a list row for the row focus (`useRowFocus`). */
+type RowProps = (s: LiveSession) => { "data-row-id": string; "data-focused"?: true };
 
 const agentLogos: Record<string, string> = {
   "claude-code": claudeLogo,
@@ -237,11 +241,13 @@ function NeedsYou({
   prHref,
   Link,
   open,
+  row,
 }: {
   sessions: LiveSession[];
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
   open: (s: LiveSession) => ReactNode;
+  row: RowProps;
 }) {
   const now = useNow(10_000);
   if (sessions.length === 0) return null;
@@ -255,7 +261,7 @@ function NeedsYou({
           const since = waitingSince(s);
           const seconds = Math.max(0, (now - new Date(since).getTime()) / 1000);
           return (
-            <li key={sessionKey(s)} className="local-session-row" title={s.session_id}>
+            <li key={sessionKey(s)} className="local-session-row" title={s.session_id} {...row(s)}>
               <div className="local-session-agent">
                 <Agent agent={s.agent} />
                 {s.waiting_reason ? <WaitingFor reason={s.waiting_reason} /> : null}
@@ -279,7 +285,9 @@ function NeedsYou({
 /** The sessions page: the sessions waiting on their user, what agents are
  * doing on this computer now, and what ended in the last day. `prHref` is
  * where a session's pull request opens in the app, or null when it is not
- * one the app knows. Each row opens the session's transcript. */
+ * one the app knows. Each row opens the session's transcript. The keyboard
+ * moves through the rows of all three as one list, and `p` opens the focused
+ * session's pull request. */
 export function SessionsPage({
   sessions,
   prHref,
@@ -297,9 +305,25 @@ export function SessionsPage({
   const ended = sessions
     .filter((s) => s.state === "ended")
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
+  const rows = useRowFocus<HTMLDivElement>([...waiting, ...active, ...ended].map(sessionKey));
+  const row: RowProps = (s) => ({
+    "data-row-id": sessionKey(s),
+    "data-focused": rows.focused === sessionKey(s) || undefined,
+  });
+  useShortcuts((event) => {
+    if (listKeys(event, rows) || event.key !== "p" || !rows.focused) return;
+    const pr = rows
+      .rowLink(rows.focused)
+      ?.closest("[data-row-id]")
+      ?.querySelector<HTMLElement>(".local-session-pr");
+    if (!pr) return;
+    event.preventDefault();
+    pr.click();
+  });
   const open = (s: LiveSession) => (
     <Link
       href={transcriptHref(s)}
+      data-row-link=""
       className="inbox-action local-session-open"
       aria-label={`Open transcript: ${agentName(s.agent)} on ${s.branch ?? s.repository}`}
     >
@@ -307,8 +331,8 @@ export function SessionsPage({
     </Link>
   );
   return (
-    <div className="local-stack">
-      <NeedsYou sessions={waiting} prHref={prHref} Link={Link} open={open} />
+    <div ref={rows.list} className="local-stack">
+      <NeedsYou sessions={waiting} prHref={prHref} Link={Link} open={open} row={row} />
       <section aria-label="Running now" className="local-panel local-sessions">
         <h2>
           Running now
@@ -323,7 +347,12 @@ export function SessionsPage({
         ) : (
           <ul>
             {active.map((s) => (
-              <li key={sessionKey(s)} className="local-session-row" title={s.session_id}>
+              <li
+                key={sessionKey(s)}
+                className="local-session-row"
+                title={s.session_id}
+                {...row(s)}
+              >
                 <div className="local-session-agent">
                   <Agent agent={s.agent} />
                   <SessionState session={s} />
@@ -359,7 +388,12 @@ export function SessionsPage({
                 (new Date(endedAt).getTime() - new Date(s.started_at).getTime()) / 1000,
               );
               return (
-                <li key={sessionKey(s)} className="local-session-row" title={s.session_id}>
+                <li
+                  key={sessionKey(s)}
+                  className="local-session-row"
+                  title={s.session_id}
+                  {...row(s)}
+                >
                   <div className="local-session-agent">
                     <Agent agent={s.agent} />
                     <SessionState session={s} />
