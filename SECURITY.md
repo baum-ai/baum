@@ -1008,9 +1008,11 @@ through the redacted transcript routes below.
 
 `GET /api/decisions` serves the decisions decision capture stored, behind the
 same checks and limited to `GET`: for a session, or the sessions of a pull
-request, their titles, summaries, rationale, evidence quotes and edited file
-names, all derived from redacted transcripts and masked again after the model
-replied, with each session's capture state and skip reason. The `decisions`
+request, each decision's id, title, summary, category, who decided, rationale,
+rejected alternative, edited file names and date, all derived from redacted
+transcripts and masked again after the model replied, with each session's
+agent, id, capture state and skip reason. Evidence quotes, turns, branches
+and repositories stay in the store. The `decisions`
 event carries no data. Its settings change only through the authenticated
 `PUT /api/settings/decisions` and repository settings routes.
 

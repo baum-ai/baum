@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +30,10 @@ func TestAPISessionAndPullRequest(t *testing.T) {
 	changes := 0
 	s.Changed = func() { changes++ }
 	// A running session with two decisions, one dated after the review.
-	running := Meta{Agent: "claude-code", ID: "run", Repository: "acme/demo", Fingerprint: "f"}
-	if err := s.Save(ctx, Extraction{Meta: running, ContentHash: "h", Decisions: []decisions.Decision{decision("d1", "before", 1), decision("d2", "after", 2)},
+	running := Meta{Agent: "claude-code", ID: "run", Repository: "acme/demo", Branch: "feature", Fingerprint: "f"}
+	quoted := decision("d1", "before", 1)
+	quoted.Evidence = "a quote from the session"
+	if err := s.Save(ctx, Extraction{Meta: running, ContentHash: "h", Decisions: []decisions.Decision{quoted, decision("d2", "after", 2)},
 		TurnTimes: map[int]time.Time{1: t0.Add(-2 * time.Hour), 2: t0.Add(-10 * time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +80,12 @@ func TestAPISessionAndPullRequest(t *testing.T) {
 	}
 
 	code, body = serveDecisions(t, api, "repository=acme/demo&pr=7")
+	// Only what the app shows: no evidence, turns, branch or repository.
+	for _, field := range []string{`"evidence`, `"turns"`, `"branch"`, `"repository"`, `"decided_turn"`} {
+		if strings.Contains(string(body), field) {
+			t.Errorf("the answer has %s: %s", field, body)
+		}
+	}
 	var pr PullRequestDecisions
 	if code != 200 || json.Unmarshal(body, &pr) != nil {
 		t.Fatalf("%d %s", code, body)

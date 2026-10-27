@@ -893,6 +893,27 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
     body: { enabled: true, model: "", daily_cap: null },
   });
 });
+it("says when the harness capture uses could not be determined in time", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, {
+    backend: "auto",
+    model: "",
+    decisions: {
+      enabled: true,
+      model: "",
+      daily_cap: null,
+      backend: "",
+      backend_undetermined: true,
+      effective_model: "",
+      model_ignored: false,
+    },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  expect(section.textContent).toContain("could not be determined");
+  expect(section.textContent).not.toContain("No harness that can capture");
+});
 it("saves the decision capture switch, model and daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

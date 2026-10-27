@@ -452,7 +452,8 @@ the pull request, in progress or linked by the saved review, marking those
 made after that review was generated "Provisional", ended sessions the
 tracker still holds included; it is not drawn while no session has decisions,
 a capture state or a capture in flight. Both read again on the `decisions`
-event, which carries no data. Settings' **Decision capture** section holds
+event, which carries no data (events within 250 ms make one read), and when
+the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
 the switch, the decision log model (the harness's cheap default, or another
 of its models) and an optional daily cap, read with `GET
 api/settings/decisions` and saved with `PUT api/settings/decisions`
@@ -462,9 +463,10 @@ and whether the saved model is ignored (unknown, with a note that capture
 does not run, when no harness resolves); the section reads them again when
 the review harness or model changes. A saved model it ignores is listed as
 "<model> (not used)" with a note naming the harness, so choosing the default
-clears it. `GET api/settings` returns the settings alone, as `decisions`. A
-repository's dialog turns capture off for it (`decisions: false`; on sends
-`null`). The desktop setup's review step offers the decision log model beside the harness, reset to that
+clears it. When the harness cannot be resolved the section says so, apart
+from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
+`null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
+its own guess) offers the decision log model beside the harness, reset to that
 harness's cheap model when the harness changes, and says what capture sends;
 the default is saved as none, so it follows the harness, and a saved model
 the daemon reports ignored (`baum internal reviews show`, with the harness it

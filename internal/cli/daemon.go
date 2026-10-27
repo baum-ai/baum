@@ -546,9 +546,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
-				return uiserver.DecisionModel{Backend: e.Backend, Model: e.Model, Ignored: e.Ignored}
+				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{

@@ -81,7 +81,10 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 			defer release()
 			result, ok := viewer.LinkedSessions(ctx)
 			if !ok {
-				return nil, time.Time{}, context.Cause(ctx)
+				if ctx.Err() != nil {
+					return nil, time.Time{}, context.Cause(ctx)
+				}
+				return unlinked("viewer stopped")
 			}
 			if !result.Available && result.Code == locallink.CodeError {
 				return unlinked(result.Reason)
@@ -105,8 +108,10 @@ type decisionSettings struct {
 // (decisionlog.EffectiveModel), and whether the chosen model is ignored.
 type DecisionModel struct {
 	Backend string `json:"backend"`
-	Model   string `json:"effective_model"`
-	Ignored bool   `json:"model_ignored"`
+	// Undetermined is a backend whose checks did not answer in time.
+	Undetermined bool   `json:"backend_undetermined"`
+	Model        string `json:"effective_model"`
+	Ignored      bool   `json:"model_ignored"`
 }
 
 // decisionView is GET /api/settings/decisions: the settings and what
@@ -181,6 +186,9 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	if invalid != nil {
 		http.Error(w, invalid.Error(), http.StatusBadRequest)
 		return
+	}
+	if a.DecisionsChanged != nil {
+		a.DecisionsChanged()
 	}
 	writeJSON(w, map[string]decisionView{"decisions": a.decisionView(r.Context(), prefs)})
 }

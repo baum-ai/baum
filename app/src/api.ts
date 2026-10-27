@@ -463,6 +463,8 @@ export type DecisionSettings = {
   /** What the daemon makes of them (`api/settings/decisions` only): the
    *  harness capture resolves to, its model, and whether `model` is ignored. */
   backend?: string;
+  /** The harness's checks did not answer in time, so it is unknown. */
+  backend_undetermined?: boolean;
   effective_model?: string;
   model_ignored?: boolean;
 };

@@ -86,6 +86,7 @@ func TestLinkedSessionsFollowTheSavedReview(t *testing.T) {
 func TestDecisionSettingsAndRoute(t *testing.T) {
 	registry, _ := decisionsRegistry(t)
 	var linked LinkedSessions
+	changes := 0
 	handler := LocalAPI{Registry: registry, Config: config.Default(), Decisions: func(l LinkedSessions) http.Handler {
 		linked = l
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
@@ -94,7 +95,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 			return DecisionModel{Backend: "codex", Model: "gpt-6-luna", Ignored: true}
 		}
 		return DecisionModel{Backend: "codex", Model: "gpt-6-luna"}
-	}}.Handler()
+	}, DecisionsChanged: func() { changes++ }}.Handler()
 	defer handler.Close()
 	serve := func(method, path, body string) (int, string) {
 		w := httptest.NewRecorder()
@@ -106,7 +107,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	}
 	settings := func() decisionSettings {
 		t.Helper()
-		code, body := serve("GET", "/api/settings", "")
+		code, body := serve("GET", "/api/settings/decisions", "")
 		var got struct{ Decisions decisionSettings }
 		if code != 200 || json.Unmarshal([]byte(body), &got) != nil {
 			t.Fatalf("%d %s", code, body)
@@ -116,12 +117,26 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	if got := settings(); !got.Enabled || got.Model != "" || got.DailyCap != nil {
 		t.Fatalf("defaults %+v", got)
 	}
+	// GET /api/settings, which the app reads on every reload, leaves them out.
+	if _, body := serve("GET", "/api/settings", ""); strings.Contains(body, "decisions") {
+		t.Fatalf("settings carry decisions: %s", body)
+	}
+	if changes != 0 {
+		t.Fatalf("a read published %d changes", changes)
+	}
 	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":false,"model":" gpt-6-luna ","daily_cap":1.5}`); code != 200 ||
-		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","daily_cap":1.5,"backend":"codex","effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
+		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","daily_cap":1.5,"backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
 		t.Fatalf("put %d %q", code, body)
 	}
 	if got := settings(); got.Enabled || got.Model != "gpt-6-luna" || got.DailyCap == nil || *got.DailyCap != 1.5 {
 		t.Fatalf("after put %+v", got)
+	}
+	// Saving the settings, or a repository's, changes what capture does.
+	if changes != 1 {
+		t.Fatalf("changes after a put: %d", changes)
+	}
+	if code, _ := serve("POST", "/api/repositories", `{"repository":"owner/other"}`); code != 200 || changes != 2 {
+		t.Fatalf("a repository change: %d, %d changes", code, changes)
 	}
 	// The settings' own route also says what capture makes of them.
 	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null}`); code != 200 ||
@@ -129,7 +144,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		t.Fatalf("put an ignored model %d %s", code, body)
 	}
 	if code, body := serve("GET", "/api/settings/decisions", ""); code != 200 ||
-		body != `{"decisions":{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null,"backend":"codex","effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
+		body != `{"decisions":{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null,"backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
 		t.Fatalf("get %d %s", code, body)
 	}
 	for _, body := range []string{`{"enabled":true,"daily_cap":-1}`, `{"model":"x"}`, `{"enabled":true,"other":1}`} {

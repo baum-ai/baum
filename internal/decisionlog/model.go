@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"time"
@@ -193,6 +194,9 @@ type Effective struct {
 	// Backend is the backend reviews resolve to, empty when none passes its
 	// check.
 	Backend string `json:"backend"`
+	// Undetermined is a backend whose checks did not answer in time, apart
+	// from none being usable.
+	Undetermined bool `json:"backend_undetermined"`
 	// Model is the decision model; empty without a backend and with
 	// cursor-agent, which cannot capture.
 	Model string `json:"effective_model"`
@@ -223,10 +227,11 @@ func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Prefere
 	defer cancel()
 	backend, model, err := resolveModel(ctx, cfg.Backend, backends, list, prefs.Decisions.Model)
 	if err != nil {
-		return Effective{}
+		return Effective{Undetermined: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	}
+	// cursor-agent uses no model at all, so it ignores none in particular.
 	chosen := prefs.Decisions.Model
-	return Effective{Backend: backend, Model: model, Ignored: chosen != nil && *chosen != "" && *chosen != model}
+	return Effective{Backend: backend, Model: model, Ignored: chosen != nil && *chosen != "" && model != "" && *chosen != model}
 }
 
 // resolveModel names the backend capture uses (resolveBackend) and its

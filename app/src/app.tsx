@@ -1,4 +1,3 @@
-import { DecisionsRevision } from "./decisions";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +27,7 @@ import {
   type ShortcutsPlace,
 } from "./shortcuts";
 import { LocalReview } from "./review";
+import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage } from "./sessions";
@@ -192,7 +192,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [live, setLive] = useState<LiveSession[]>([]);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
-  // Counts the `decisions` events, on which decision lists read again.
+  // Counts the reads decision lists make again: on a `decisions` event,
+  // several at once coalesced, and when the stream opens or resets or the
+  // automatic switch changes.
   const [decisionsTick, setDecisionsTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   // The pull requests being grouped, while the group name is asked.
@@ -289,13 +291,24 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("open", refresh);
     source.addEventListener("open", refreshLive);
     source.addEventListener("live", refreshLive);
-    source.addEventListener("decisions", () => setDecisionsTick((n) => n + 1));
+    let decisionsTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshDecisions = () => {
+      decisionsTimer ??= setTimeout(() => {
+        decisionsTimer = undefined;
+        setDecisionsTick((n) => n + 1);
+      }, 250);
+    };
+    for (const kind of ["decisions", "open", "reset", "automatic"])
+      source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
-    return () => source.close();
+    return () => {
+      clearTimeout(decisionsTimer);
+      source.close();
+    };
   }, [reload, reloadLive]);
   const authChanged = () => {
     setAuthRevision((n) => n + 1);
@@ -492,164 +505,161 @@ function Workspace({ url }: { url: UrlState }) {
     { allowSheet: true },
   );
   return (
-    <DecisionsRevision.Provider value={decisionsTick}>
-      <div className="local-shell">
-        <Sidebar
-          page={
-            page === "jobs" ||
-            page === "repositories" ||
-            page === "sessions" ||
-            page === "analytics" ||
-            page === "pulls"
-              ? page
-              : page === "settings" || page === "diagnostics"
-                ? "settings"
-                : "inbox"
-          }
-          inbox={inbox.queue.length}
-          activeJobs={jobs.filter(isActiveJob).length}
-          runningSessions={live.filter((s) => s.state === "running").length}
-          needsYou={needsYou(live).length}
-          problems={diagnostics.problems}
-          Link={LocalLink}
-        />
-        <div className="local-frame">
-          <div className="local-notices">
-            {attached.map((a) => (
-              <Notice key={`${a.repository}:${a.at}`}>
-                Found a local clone for {a.repository}.{" "}
-                <LocalLink href={appURL("?page=repositories")}>View repositories</LocalLink>
+    <div className="local-shell">
+      <Sidebar
+        page={
+          page === "jobs" ||
+          page === "repositories" ||
+          page === "sessions" ||
+          page === "analytics" ||
+          page === "pulls"
+            ? page
+            : page === "settings" || page === "diagnostics"
+              ? "settings"
+              : "inbox"
+        }
+        inbox={inbox.queue.length}
+        activeJobs={jobs.filter(isActiveJob).length}
+        runningSessions={live.filter((s) => s.state === "running").length}
+        needsYou={needsYou(live).length}
+        problems={diagnostics.problems}
+        Link={LocalLink}
+      />
+      <div className="local-frame">
+        <div className="local-notices">
+          {attached.map((a) => (
+            <Notice key={`${a.repository}:${a.at}`}>
+              Found a local clone for {a.repository}.{" "}
+              <LocalLink href={appURL("?page=repositories")}>View repositories</LocalLink>
+            </Notice>
+          ))}
+          {unsynced.length > 0 && page !== "settings" ? (
+            <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
+              {syncNotice(github, unsynced)}
+            </Notice>
+          ) : null}
+          {(automatic?.repositories ?? [])
+            .filter((status) => status.enabled && status.paused_until)
+            .map((status) => (
+              <Notice key={`automatic-${status.repository}`}>
+                {status.repository}: {automaticNotice(status)}
               </Notice>
             ))}
-            {unsynced.length > 0 && page !== "settings" ? (
-              <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
-                {syncNotice(github, unsynced)}
-              </Notice>
-            ) : null}
-            {(automatic?.repositories ?? [])
-              .filter((status) => status.enabled && status.paused_until)
-              .map((status) => (
-                <Notice key={`automatic-${status.repository}`}>
-                  {status.repository}: {automaticNotice(status)}
-                </Notice>
-              ))}
-            {diagnostics.problems > 0 && page !== "diagnostics" ? (
-              <Notice>
-                baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
-                {diagnostics.problems === 1 ? "problem" : "problems"}.{" "}
-                <LocalLink href={appURL("?page=diagnostics")}>Show the fixes</LocalLink>
-              </Notice>
-            ) : null}
-          </div>
-          <main className="local-main">
-            {error ? (
-              <Alert>
-                {error} <Button onClick={() => void reload()}>Retry</Button>
-              </Alert>
-            ) : null}
-            {page === "repositories" ? (
-              <RepositoriesPage
-                repositories={picked}
-                automatic={automatic}
-                defaults={defaults}
-                changed={reload}
-              />
-            ) : page === "settings" || page === "diagnostics" ? (
-              <SettingsPage
-                authRevision={authRevision}
-                authChanged={authChanged}
-                automatic={automatic}
-                defaults={defaults}
-                changed={reload}
-                problems={diagnostics.problems}
-                diagnosticsOpen={page === "diagnostics"}
-                setDiagnosticsOpen={(open) =>
-                  url.update((current) => {
-                    current.set("page", open ? "diagnostics" : "settings");
-                    return current;
-                  })
-                }
-                onDiagnostics={diagnostics.update}
-              />
-            ) : page === "sessions" && openSession ? (
-              <SessionTranscriptPage
-                key={openSession}
-                agent={openAgent}
-                id={openID}
-                session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
-                tick={liveTick}
-                prHref={sessionPR}
-                Link={LocalLink}
-              />
-            ) : page === "analytics" ? (
-              <AnalyticsPage Link={LocalLink} />
-            ) : page === "sessions" ? (
-              <>
-                <PageBar title="Sessions" detail="Agent sessions on this computer" />
-                <div className="local-page-body">
-                  <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
-                </div>
-              </>
-            ) : page === "jobs" && url.search.get("job") ? (
-              <JobPage
-                job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
-                loading={loading}
-                Link={LocalLink}
-              />
-            ) : page === "jobs" ? (
-              <>
-                <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
-                <div className="local-page-body">
-                  <Jobs jobs={jobs} changed={reload} />
-                </div>
-              </>
-            ) : groupId ? (
-              (() => {
-                const group = groups.find((g) => g.id === groupId);
-                return group ? (
-                  <GroupPage
-                    key={group.id}
-                    group={group}
-                    entries={indexedEntries}
-                    jobs={jobs}
-                    clones={clones}
-                    cloneFor={cloneFor}
-                    revision={revision}
-                    changed={reload}
-                  />
-                ) : loading ? (
-                  <LoadingStatus block>Loading review group…</LoadingStatus>
-                ) : (
-                  <GroupMissing />
-                );
-              })()
-            ) : selectedEntry?.needs_clone && !cloneFor(selectedEntry) ? (
-              <section>
-                <PageBar
-                  title={selectedEntry.pull_request.title}
-                  detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
+          {diagnostics.problems > 0 && page !== "diagnostics" ? (
+            <Notice>
+              baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
+              {diagnostics.problems === 1 ? "problem" : "problems"}.{" "}
+              <LocalLink href={appURL("?page=diagnostics")}>Show the fixes</LocalLink>
+            </Notice>
+          ) : null}
+        </div>
+        <main className="local-main">
+          {error ? (
+            <Alert>
+              {error} <Button onClick={() => void reload()}>Retry</Button>
+            </Alert>
+          ) : null}
+          {page === "repositories" ? (
+            <RepositoriesPage
+              repositories={picked}
+              automatic={automatic}
+              defaults={defaults}
+              changed={reload}
+            />
+          ) : page === "settings" || page === "diagnostics" ? (
+            <SettingsPage
+              authRevision={authRevision}
+              authChanged={authChanged}
+              automatic={automatic}
+              defaults={defaults}
+              changed={reload}
+              problems={diagnostics.problems}
+              diagnosticsOpen={page === "diagnostics"}
+              setDiagnosticsOpen={(open) =>
+                url.update((current) => {
+                  current.set("page", open ? "diagnostics" : "settings");
+                  return current;
+                })
+              }
+              onDiagnostics={diagnostics.update}
+            />
+          ) : page === "sessions" && openSession ? (
+            <SessionTranscriptPage
+              key={openSession}
+              agent={openAgent}
+              id={openID}
+              session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
+              tick={liveTick}
+              prHref={sessionPR}
+              Link={LocalLink}
+            />
+          ) : page === "analytics" ? (
+            <AnalyticsPage Link={LocalLink} />
+          ) : page === "sessions" ? (
+            <>
+              <PageBar title="Sessions" detail="Agent sessions on this computer" />
+              <div className="local-page-body">
+                <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
+              </div>
+            </>
+          ) : page === "jobs" && url.search.get("job") ? (
+            <JobPage
+              job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
+              loading={loading}
+              Link={LocalLink}
+            />
+          ) : page === "jobs" ? (
+            <>
+              <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
+              <div className="local-page-body">
+                <Jobs jobs={jobs} changed={reload} />
+              </div>
+            </>
+          ) : groupId ? (
+            (() => {
+              const group = groups.find((g) => g.id === groupId);
+              return group ? (
+                <GroupPage
+                  key={group.id}
+                  group={group}
+                  entries={indexedEntries}
+                  jobs={jobs}
+                  clones={clones}
+                  cloneFor={cloneFor}
+                  revision={revision}
+                  changed={reload}
                 />
-                <div className="local-page-body local-stack">
-                  {page === "pulls" ? (
-                    <LocalLink href={appURL("?page=pulls")}>Pull requests</LocalLink>
-                  ) : (
-                    <LocalLink href={appURL()}>Inbox</LocalLink>
-                  )}
-                  <h2>Needs a local clone</h2>
-                  <p>
-                    Pull requests are available from GitHub. Choose a local folder before generating
-                    a review.
-                  </p>
-                  <CloneActions
-                    repository={selectedEntry.pull_request.repository}
-                    changed={reload}
-                  />
-                  <a href={selectedEntry.pull_request.url} target="_blank" rel="noreferrer">
-                    Open on GitHub
-                  </a>
-                </div>
-              </section>
-            ) : selectedEntry ? (
+              ) : loading ? (
+                <LoadingStatus block>Loading review group…</LoadingStatus>
+              ) : (
+                <GroupMissing />
+              );
+            })()
+          ) : selectedEntry?.needs_clone && !cloneFor(selectedEntry) ? (
+            <section>
+              <PageBar
+                title={selectedEntry.pull_request.title}
+                detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
+              />
+              <div className="local-page-body local-stack">
+                {page === "pulls" ? (
+                  <LocalLink href={appURL("?page=pulls")}>Pull requests</LocalLink>
+                ) : (
+                  <LocalLink href={appURL()}>Inbox</LocalLink>
+                )}
+                <h2>Needs a local clone</h2>
+                <p>
+                  Pull requests are available from GitHub. Choose a local folder before generating a
+                  review.
+                </p>
+                <CloneActions repository={selectedEntry.pull_request.repository} changed={reload} />
+                <a href={selectedEntry.pull_request.url} target="_blank" rel="noreferrer">
+                  Open on GitHub
+                </a>
+              </div>
+            </section>
+          ) : selectedEntry ? (
+            <DecisionsRevision.Provider value={decisionsTick}>
               <LocalReview
                 key={rowKey(selectedEntry)}
                 entry={selectedEntry}
@@ -668,240 +678,238 @@ function Workspace({ url }: { url: UrlState }) {
                 fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
                 fixJob={fixJob(selectedEntry, jobs)}
               />
-            ) : page !== "pulls" ? (
-              <UpNextPage
-                inbox={inbox}
-                // Until a read succeeds there is nothing to say an empty inbox about.
-                loading={revision === 0}
-                hasRepositories={picked.length > 0 || clones.length > 0}
-                cloneFor={cloneFor}
-                fix={setFixing}
-                changed={reload}
-                Link={LocalLink}
+            </DecisionsRevision.Provider>
+          ) : page !== "pulls" ? (
+            <UpNextPage
+              inbox={inbox}
+              // Until a read succeeds there is nothing to say an empty inbox about.
+              loading={revision === 0}
+              hasRepositories={picked.length > 0 || clones.length > 0}
+              cloneFor={cloneFor}
+              fix={setFixing}
+              changed={reload}
+              Link={LocalLink}
+            />
+          ) : (
+            <>
+              <PageBar
+                title="Pull requests"
+                actions={
+                  <>
+                    {selection.size > 1 ? (
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={generating}
+                        onClick={reviewTogether}
+                      >
+                        Review together ({selection.size})
+                      </Button>
+                    ) : null}
+                    {selection.size > 0 ? (
+                      <Button
+                        size="compact"
+                        disabled={
+                          generating ||
+                          indexedEntries.some(
+                            (entry) =>
+                              selection.has(rowKey(entry)) &&
+                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
+                          )
+                        }
+                        onClick={() =>
+                          void generate(
+                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
+                            "batch",
+                          )
+                        }
+                      >
+                        {generating ? "Starting reviews…" : `Generate selected (${selection.size})`}
+                      </Button>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label="Keyboard shortcuts"
+                      title="Keyboard shortcuts (?)"
+                      onClick={() => setShortcuts(true)}
+                      className="local-icon-button"
+                    >
+                      ?
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Refresh from GitHub"
+                      title="Refresh from GitHub"
+                      disabled={loading}
+                      onClick={() => void refresh()}
+                      className="local-icon-button"
+                    >
+                      <RefreshIcon size={16} className={loading ? "local-spin" : undefined} />
+                    </button>
+                  </>
+                }
               />
-            ) : (
-              <>
-                <PageBar
-                  title="Pull requests"
-                  actions={
-                    <>
-                      {selection.size > 1 ? (
-                        <Button
-                          variant="secondary"
-                          size="compact"
-                          disabled={generating}
-                          onClick={reviewTogether}
-                        >
-                          Review together ({selection.size})
-                        </Button>
-                      ) : null}
-                      {selection.size > 0 ? (
-                        <Button
-                          size="compact"
-                          disabled={
-                            generating ||
-                            indexedEntries.some(
-                              (entry) =>
-                                selection.has(rowKey(entry)) &&
-                                (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
-                            )
-                          }
-                          onClick={() =>
-                            void generate(
-                              snapshot.entries.filter((e) => selection.has(rowKey(e))),
-                              "batch",
-                            )
-                          }
-                        >
-                          {generating
-                            ? "Starting reviews…"
-                            : `Generate selected (${selection.size})`}
-                        </Button>
-                      ) : null}
+              <div className="local-filter-bar">
+                <div role="group" aria-label="Show" className="local-tabs">
+                  {(
+                    [
+                      ["inbox", "For you"],
+                      ["requested", "Requested"],
+                      ["mine", "Mine"],
+                      ["other", "Others"],
+                      ["no_review", "Not reviewed"],
+                      ["history", "Saved history"],
+                    ] as const
+                  ).map(([value, label]) => {
+                    const count = filtered(indexedEntries, value, repo).length;
+                    return (
                       <button
+                        key={value}
                         type="button"
-                        aria-label="Keyboard shortcuts"
-                        title="Keyboard shortcuts (?)"
-                        onClick={() => setShortcuts(true)}
-                        className="local-icon-button"
-                      >
-                        ?
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Refresh from GitHub"
-                        title="Refresh from GitHub"
-                        disabled={loading}
-                        onClick={() => void refresh()}
-                        className="local-icon-button"
-                      >
-                        <RefreshIcon size={16} className={loading ? "local-spin" : undefined} />
-                      </button>
-                    </>
-                  }
-                />
-                <div className="local-filter-bar">
-                  <div role="group" aria-label="Show" className="local-tabs">
-                    {(
-                      [
-                        ["inbox", "For you"],
-                        ["requested", "Requested"],
-                        ["mine", "Mine"],
-                        ["other", "Others"],
-                        ["no_review", "Not reviewed"],
-                        ["history", "Saved history"],
-                      ] as const
-                    ).map(([value, label]) => {
-                      const count = filtered(indexedEntries, value, repo).length;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={filter === value}
-                          className={count === 0 ? "local-tab empty" : "local-tab"}
-                          onClick={() => {
-                            setSelection(new Set());
-                            url.update((current) => {
-                              current.set("filter", value);
-                              return current;
-                            });
-                          }}
-                        >
-                          {label}
-                          <span className="local-tab-count">{formatCount(count)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {repositories.length > 1 ? (
-                    <label className="local-repo-filter">
-                      <span className="sr-only">Repository</span>
-                      <select
-                        value={repo}
-                        onChange={(e) => {
+                        aria-pressed={filter === value}
+                        className={count === 0 ? "local-tab empty" : "local-tab"}
+                        onClick={() => {
                           setSelection(new Set());
                           url.update((current) => {
-                            if (e.target.value) current.set("repo", e.target.value);
-                            else current.delete("repo");
+                            current.set("filter", value);
                             return current;
                           });
                         }}
                       >
-                        <option value="">All repositories</option>
-                        {repositories.map((name) => (
-                          <option key={name}>{name}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
+                        {label}
+                        <span className="local-tab-count">{formatCount(count)}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="local-page-body">
-                  {/* A cache older than the poll interval is normal; only a failed refresh
-                    or a spent GitHub allowance is worth a word. */}
-                  {limited.length > 0 ? (
-                    <Notice>
-                      GitHub's request limit for {repositoryList(limited.map((r) => r.repository))}{" "}
-                      is used up until{" "}
-                      {new Date(
-                        Math.max(...limited.map((r) => Date.parse(r.rate.reset))),
-                      ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      . Showing what was saved.
-                    </Notice>
-                  ) : null}
-                  {snapshot.problems.map((p) => (
-                    <Notice key={p.clone_id + p.reason}>
-                      {clones.find((c) => c.id === p.clone_id)?.repository ?? "Clone"}: {p.reason}
-                    </Notice>
-                  ))}
-                  {loading ? (
-                    <LoadingStatus block>Loading local inbox…</LoadingStatus>
-                  ) : rows.length === 0 ? (
-                    <div className="local-empty">
-                      <h2>
-                        {filter === "inbox" && clones.length
-                          ? "Nothing is waiting on you"
-                          : "No pull requests here"}
-                      </h2>
-                      <p>
-                        {!clones.length
-                          ? "Pick GitHub repositories in Repositories to get started."
-                          : filter === "inbox"
-                            ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                            : filter === "history"
-                              ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
-                              : "Nothing matches this view. Refresh from GitHub or choose another tab."}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-                {!loading && rows.length > 0 ? (
-                  <Inbox
-                    rows={rows}
-                    cloneFor={cloneFor}
-                    selection={selection}
-                    setSelection={setSelection}
-                    Link={LocalLink}
-                    live={live}
-                    changed={reload}
-                    groups={groups}
-                    fix={setFixing}
-                    jobs={jobs}
-                    generate={(entry) => void generate([entry], "single")}
-                    refresh={loading ? undefined : () => void refresh()}
-                  />
+                {repositories.length > 1 ? (
+                  <label className="local-repo-filter">
+                    <span className="sr-only">Repository</span>
+                    <select
+                      value={repo}
+                      onChange={(e) => {
+                        setSelection(new Set());
+                        url.update((current) => {
+                          if (e.target.value) current.set("repo", e.target.value);
+                          else current.delete("repo");
+                          return current;
+                        });
+                      }}
+                    >
+                      <option value="">All repositories</option>
+                      {repositories.map((name) => (
+                        <option key={name}>{name}</option>
+                      ))}
+                    </select>
+                  </label>
                 ) : null}
-              </>
-            )}
-            {generationError ? <Alert>{generationError}</Alert> : null}
-            {shortcuts ? (
-              <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
-            ) : null}
-            {grouping ? (
-              <NameDialog
-                title="Review these pull requests together"
-                detail={`${grouping.length} pull requests of ${grouping[0]!.pull_request.repository}. baum writes one review across them: how they fit together, the risks only visible across them, and the order to merge them.`}
-                initial={grouping[0]!.pull_request.title.slice(0, 80)}
-                action="Create group"
-                close={() => setGrouping(null)}
-                submit={async (name) => {
-                  const created = await request<ReviewGroup>("api/groups", {
-                    name,
-                    members: grouping.map((e) => ({
-                      repository: e.pull_request.repository,
-                      number: e.pull_request.number,
-                    })),
-                  });
-                  setGrouping(null);
-                  setSelection(new Set());
-                  // Groups are made from Pull requests, so the group page goes back there.
-                  url.update(() => new URLSearchParams({ page: "pulls", group: created.id }));
-                  await reload();
-                }}
-              />
-            ) : null}
-            {fork ? (
-              <ForkConfirmation
-                entries={fork.entries}
-                close={() => setFork(null)}
-                confirm={() => void generate(fork.entries, fork.mode, true)}
-                pending={generating}
-              />
-            ) : null}
-            {fixing && cloneFor(fixing) ? (
-              <FixDialog
-                // The review it opens from is a sibling keyed by the same row;
-                // a shared key leaves copies of that page behind.
-                key={`fix:${rowKey(fixing)}`}
-                entry={fixing}
-                clone={cloneFor(fixing)}
-                close={() => setFixing(null)}
-                started={reload}
-              />
-            ) : null}
-          </main>
-        </div>
+              </div>
+              <div className="local-page-body">
+                {/* A cache older than the poll interval is normal; only a failed refresh
+                    or a spent GitHub allowance is worth a word. */}
+                {limited.length > 0 ? (
+                  <Notice>
+                    GitHub's request limit for {repositoryList(limited.map((r) => r.repository))} is
+                    used up until{" "}
+                    {new Date(
+                      Math.max(...limited.map((r) => Date.parse(r.rate.reset))),
+                    ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    . Showing what was saved.
+                  </Notice>
+                ) : null}
+                {snapshot.problems.map((p) => (
+                  <Notice key={p.clone_id + p.reason}>
+                    {clones.find((c) => c.id === p.clone_id)?.repository ?? "Clone"}: {p.reason}
+                  </Notice>
+                ))}
+                {loading ? (
+                  <LoadingStatus block>Loading local inbox…</LoadingStatus>
+                ) : rows.length === 0 ? (
+                  <div className="local-empty">
+                    <h2>
+                      {filter === "inbox" && clones.length
+                        ? "Nothing is waiting on you"
+                        : "No pull requests here"}
+                    </h2>
+                    <p>
+                      {!clones.length
+                        ? "Pick GitHub repositories in Repositories to get started."
+                        : filter === "inbox"
+                          ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
+                          : filter === "history"
+                            ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
+                            : "Nothing matches this view. Refresh from GitHub or choose another tab."}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              {!loading && rows.length > 0 ? (
+                <Inbox
+                  rows={rows}
+                  cloneFor={cloneFor}
+                  selection={selection}
+                  setSelection={setSelection}
+                  Link={LocalLink}
+                  live={live}
+                  changed={reload}
+                  groups={groups}
+                  fix={setFixing}
+                  jobs={jobs}
+                  generate={(entry) => void generate([entry], "single")}
+                  refresh={loading ? undefined : () => void refresh()}
+                />
+              ) : null}
+            </>
+          )}
+          {generationError ? <Alert>{generationError}</Alert> : null}
+          {shortcuts ? (
+            <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
+          ) : null}
+          {grouping ? (
+            <NameDialog
+              title="Review these pull requests together"
+              detail={`${grouping.length} pull requests of ${grouping[0]!.pull_request.repository}. baum writes one review across them: how they fit together, the risks only visible across them, and the order to merge them.`}
+              initial={grouping[0]!.pull_request.title.slice(0, 80)}
+              action="Create group"
+              close={() => setGrouping(null)}
+              submit={async (name) => {
+                const created = await request<ReviewGroup>("api/groups", {
+                  name,
+                  members: grouping.map((e) => ({
+                    repository: e.pull_request.repository,
+                    number: e.pull_request.number,
+                  })),
+                });
+                setGrouping(null);
+                setSelection(new Set());
+                // Groups are made from Pull requests, so the group page goes back there.
+                url.update(() => new URLSearchParams({ page: "pulls", group: created.id }));
+                await reload();
+              }}
+            />
+          ) : null}
+          {fork ? (
+            <ForkConfirmation
+              entries={fork.entries}
+              close={() => setFork(null)}
+              confirm={() => void generate(fork.entries, fork.mode, true)}
+              pending={generating}
+            />
+          ) : null}
+          {fixing && cloneFor(fixing) ? (
+            <FixDialog
+              // The review it opens from is a sibling keyed by the same row;
+              // a shared key leaves copies of that page behind.
+              key={`fix:${rowKey(fixing)}`}
+              entry={fixing}
+              clone={cloneFor(fixing)}
+              close={() => setFixing(null)}
+              started={reload}
+            />
+          ) : null}
+        </main>
       </div>
-    </DecisionsRevision.Provider>
+    </div>
   );
 }
 /** The one confirmation generation still asks for: an agent runs with code

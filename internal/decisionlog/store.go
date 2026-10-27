@@ -505,9 +505,30 @@ type Decision struct {
 	Repository string    `json:"repository"`
 	Branch     string    `json:"branch,omitempty"`
 	DecidedAt  time.Time `json:"decided_at"`
+}
+
+// DecisionView is what the app is told of a current decision: no evidence
+// quote, turns or branch.
+type DecisionView struct {
+	ID                  string             `json:"decision_id"`
+	Title               string             `json:"title,omitempty"`
+	Summary             string             `json:"summary"`
+	Category            decisions.Category `json:"category"`
+	Who                 decisions.Who      `json:"who"`
+	Rationale           string             `json:"rationale,omitempty"`
+	RejectedAlternative string             `json:"rejected_alternative,omitempty"`
+	Superseded          bool               `json:"superseded"`
+	Files               []string           `json:"files"`
+	// DecidedAt is when the decision was first raised (Decision.DecidedAt).
+	DecidedAt time.Time `json:"decided_at"`
 	// Provisional marks, for a pull request, a decision dated after its
 	// saved review was generated: the review has not seen it.
 	Provisional bool `json:"provisional,omitempty"`
+}
+
+func viewOf(d Decision) DecisionView {
+	return DecisionView{ID: d.ID, Title: d.Title, Summary: d.Summary, Category: d.Category, Who: d.Who, Rationale: d.Rationale,
+		RejectedAlternative: d.RejectedAlternative, Superseded: d.Superseded, Files: d.Files, DecidedAt: d.DecidedAt}
 }
 
 // SessionKey names a session.
@@ -599,8 +620,8 @@ type SessionDecisions struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"session_id"`
 	// Repository is the session's, as last captured; empty for a session
-	// never captured.
-	Repository string `json:"repository,omitempty"`
+	// never captured. The gate reads it; the app is not told.
+	Repository string `json:"-"`
 	// CaptureOff says why capture does not run for the session now
 	// (API.Registry; CaptureOff* values), empty when it does or is not known.
 	CaptureOff string `json:"capture_off,omitempty"`
@@ -610,8 +631,8 @@ type SessionDecisions struct {
 	SkipReason string     `json:"skip_reason,omitempty"`
 	UpdatedAt  *time.Time `json:"updated_at"`
 	// Capturing is a model call for the session that has not settled.
-	Capturing bool       `json:"capturing"`
-	Decisions []Decision `json:"decisions"`
+	Capturing bool           `json:"capturing"`
+	Decisions []DecisionView `json:"decisions"`
 }
 
 // Sessions reads what the app shows of each session, in the given order.
@@ -622,7 +643,7 @@ func (s *Store) Sessions(ctx context.Context, keys ...SessionKey) ([]SessionDeci
 		if err != nil {
 			return nil, err
 		}
-		view := SessionDecisions{Agent: key.Agent, SessionID: key.ID, Decisions: []Decision{}}
+		view := SessionDecisions{Agent: key.Agent, SessionID: key.ID, Decisions: []DecisionView{}}
 		if found {
 			updated := row.UpdatedAt
 			view.Repository, view.Coverage, view.SkipReason, view.UpdatedAt = row.Repository, row.Coverage, row.SkipReason, &updated
@@ -635,8 +656,8 @@ func (s *Store) Sessions(ctx context.Context, keys ...SessionKey) ([]SessionDeci
 		if err != nil {
 			return nil, err
 		}
-		if current != nil {
-			view.Decisions = current
+		for _, d := range current {
+			view.Decisions = append(view.Decisions, viewOf(d))
 		}
 		out = append(out, view)
 	}

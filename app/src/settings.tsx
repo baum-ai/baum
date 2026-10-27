@@ -588,8 +588,9 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         {saved.backend === "" ? (
           <div className="review-section">
             <p className="review-note">
-              No harness that can capture decisions is available on this computer, so capture does
-              not run.
+              {saved.backend_undetermined
+                ? "The harness capture uses could not be determined: its check did not answer in time."
+                : "No harness that can capture decisions is available on this computer, so capture does not run."}
             </p>
           </div>
         ) : null}

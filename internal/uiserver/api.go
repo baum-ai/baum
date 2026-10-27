@@ -66,6 +66,10 @@ type LocalAPI struct {
 	// DecisionModel resolves the decision model capture uses with the given
 	// preferences, for GET and PUT /api/settings/decisions; nil reports none.
 	DecisionModel func(context.Context, repos.Preferences) DecisionModel
+	// DecisionsChanged, when set, is called after a change to what decision
+	// capture does: its settings or a repository's. The daemon publishes the
+	// app's decisions event with it.
+	DecisionsChanged func()
 	// Log receives what the API logs; nil is slog.Default.
 	Log     *slog.Logger
 	Changed func()
@@ -98,8 +102,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 	registry := a.Registry.Handler()
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registry.ServeHTTP(w, r)
-		if r.Method != "GET" && r.Method != "HEAD" && a.Changed != nil {
-			a.Changed()
+		if r.Method != "GET" && r.Method != "HEAD" {
+			if a.Changed != nil {
+				a.Changed()
+			}
+			if a.DecisionsChanged != nil {
+				a.DecisionsChanged()
+			}
 		}
 	})
 	mux.Handle("/api/repos", mutate)
@@ -160,13 +169,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
-		decisions := decisionSettingsOf(repos.Preferences{})
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
 			}
-			decisions = decisionSettingsOf(prefs)
 		}
 		writeJSON(w, struct {
 			Backend        config.Backend    `json:"backend"`
@@ -175,8 +182,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps           map[string]int    `json:"caps"`
 			AgentEnv       map[string]string `json:"agent_env"`
 			AgentEnvSource string            `json:"agent_env_source"`
-			Decisions      decisionSettings  `json:"decisions"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, decisions})
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
 	})
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)

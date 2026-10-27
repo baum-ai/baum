@@ -117,7 +117,12 @@ export function Setup() {
         // "auto" and an unset model have no choice on screen: show the harness
         // "auto" picks and that harness's default model. They differ from what
         // is saved, so opening baum saves the explicit choice.
-        const backend = settings.backend === "auto" ? autoBackend(view) : settings.backend;
+        // The daemon resolves auto as capture and reviews do; the screen's
+        // guess is the fallback.
+        const backend =
+          settings.backend === "auto"
+            ? settings.decisions_backend || autoBackend(view)
+            : settings.backend;
         setReviews(withModel({ ...settings, backend }));
         // The daemon resolved the harness it ignores the model with.
         if (

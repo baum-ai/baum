@@ -136,24 +136,33 @@ transcripts, never the transcripts themselves.
   on this machine (`locallink`, the computation its PR page's sessions list
   shares; a failure to link is logged and links none, and a review too large
   to serve links none but still dates the provisional marks). A session in
-  both appears once; `live` is a tracked session not over. Decisions dated after the
-  review's `generated_at` are `provisional`; without a saved review none are,
-  and only the tracked sessions are listed.
+  both appears once; `live` is a tracked session not over. Decisions dated
+  after the review's `generated_at` are `provisional`. A decision is dated
+  when it was first raised (its first cited turn, as hosted decisions are), so
+  provisional counts from then, not from when it was last revised; without a
+  saved review none are, and only the tracked sessions are listed.
+
+A decision carries only what the app shows (`DecisionView`): id, title,
+summary, category, who, rationale, rejected alternative, superseded, files
+and date; evidence, turns and branch are not served, nor a session's
+repository.
 
 `Store.Changed` is called after every write the app shows (a skip, a cover,
 a save, an attempt beginning or settling; the beginning is what shows
-"Capturing…", and the settling ends it when no save or skip follows); the daemon publishes the app's
-`decisions` event, which carries no data, with it. The settings are
-`preferences.decisions`, which `GET /api/settings` returns as they are.
-Only `GET` and `PUT /api/settings/decisions` (in `internal/uiserver`) add
+"Capturing…", and the settling ends it when no save or skip follows); the
+daemon publishes the app's `decisions` event, which carries no data, with it,
+and also after the settings or a repository's are saved. The settings are
+`preferences.decisions`, served only by `GET` and `PUT
+/api/settings/decisions` (in `internal/uiserver`), which add
 `EffectiveModel`: the backend and model a capture would use, resolved by the
 same helper a capture uses, `auto` included, and whether the chosen model is
-ignored. Its backend checks get 5 seconds; no backend, or none in time, is
+ignored (never with cursor-agent, which uses no model). Its backend checks
+get 5 seconds; no backend, or none in time (`backend_undetermined`), is
 unknown (empty) and ignores nothing. `baum internal reviews show` reports the
 same as `decisions_backend`, `decisions_effective_model` and
 `decisions_model_ignored`. A repository's own setting is `settings.decisions`,
-through the repository settings API. Analytics counts the ledger (`Store.Ledger`) under
-baum's work.
+through the repository settings API. Analytics counts the ledger
+(`Store.Ledger`) under baum's work.
 
 ## Testing by hand
 

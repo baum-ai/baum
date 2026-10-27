@@ -396,7 +396,7 @@ export function LocalReview({
                 repository={pr.repository}
                 number={pr.number}
                 live={running}
-                revision={revision + ended}
+                revision={ended}
               />
               {entry.needs_clone && doc ? (
                 <Notice>

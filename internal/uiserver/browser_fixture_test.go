@@ -548,8 +548,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			Decisions: browserDecisionsAPI(decided, registry, live),
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
-				return uiserver.DecisionModel{Backend: e.Backend, Model: e.Model, Ignored: e.Ignored}
-			}}.Handler()
+				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}.Handler()
 		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close(); _ = decided.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.

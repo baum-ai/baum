@@ -526,7 +526,7 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 		"an unknown family is kept": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &house}},
 			Effective{Backend: agent.BackendCodex, Model: house}},
 		"cursor-agent captures nothing": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
-			Effective{Backend: agent.BackendCursorAgent, Ignored: true}},
+			Effective{Backend: agent.BackendCursorAgent}},
 	} {
 		if got := EffectiveModel(ctx, config.Config{Backend: config.BackendClaude}, tc.prefs, noClaude, pricing.Active()); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
@@ -544,7 +544,7 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 	t.Cleanup(func() { effectiveTimeout = 5 * time.Second })
 	hanging := none
 	hanging.Claude = func(string) generate.CheckedBackend { return &fakeBackend{name: agent.BackendClaude, hang: true} }
-	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, saved, hanging, nil); got != (Effective{}) {
+	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, saved, hanging, nil); got != (Effective{Undetermined: true}) {
 		t.Errorf("a hanging check: %+v", got)
 	}
 }
