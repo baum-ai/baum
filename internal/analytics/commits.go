@@ -39,22 +39,20 @@ type cloneCommits struct {
 
 // commitReader reads and caches each clone's commits of the last Retention.
 type commitReader struct {
-	now func() time.Time
-
 	mu     sync.Mutex
 	clones map[string]cloneCommits
 }
 
 // read returns the clone's commits by its configured author, or why there
-// are none to count.
-func (c *commitReader) read(ctx context.Context, clone repos.Clone) cloneCommits {
+// are none to count, as of now.
+func (c *commitReader) read(ctx context.Context, clone repos.Clone, now time.Time) cloneCommits {
 	c.mu.Lock()
-	if cached, ok := c.clones[clone.ID]; ok && c.now().Sub(cached.at) < commitsTTL {
+	if cached, ok := c.clones[clone.ID]; ok && now.Sub(cached.at) < commitsTTL {
 		c.mu.Unlock()
 		return cached
 	}
 	c.mu.Unlock()
-	result := cloneCommits{at: c.now()}
+	result := cloneCommits{at: now}
 	repo, err := gitlocal.Open(ctx, clone.Path, gitlocal.Options{})
 	if err != nil {
 		result.reason = "baum could not read the clone of " + clone.Repository + " with git."
@@ -67,7 +65,7 @@ func (c *commitReader) read(ctx context.Context, clone repos.Clone) cloneCommits
 		case email == "":
 			result.reason = "The clone of " + clone.Repository + " has no git user.email, so baum cannot tell your commits."
 		default:
-			list, err := repo.AuthoredCommits(ctx, c.now().Add(-Retention), email)
+			list, err := repo.AuthoredCommits(ctx, now.Add(-Retention), email)
 			if err != nil {
 				result.reason = "baum could not list the commits in the clone of " + clone.Repository + "."
 			}

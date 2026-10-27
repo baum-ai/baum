@@ -314,12 +314,9 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 			scoped = append(scoped, c)
 		}
 	}
-	if s.commits.now == nil {
-		s.commits.now = s.now
-	}
 	byClone := map[string]cloneCommits{}
 	for _, c := range scoped {
-		byClone[c.ID] = s.commits.read(ctx, c)
+		byClone[c.ID] = s.commits.read(ctx, c, s.now())
 	}
 	report.Commits = share(byClone, scoped, entries, start, q.Agent)
 	if len(scoped) == 0 {

@@ -388,8 +388,8 @@ func TestShareReadsTheClonesCommits(t *testing.T) {
 	runGit(t, f.repo, "config", "user.email", "me@example.com")
 	runGit(t, f.repo, "commit", "-q", "--allow-empty", "-m", "Mine\n\nCo-Authored-By: Claude <noreply@anthropic.com>")
 	runGit(t, f.repo, "commit", "-q", "--allow-empty", "-m", "Also mine")
-	reader := commitReader{now: time.Now}
-	got := reader.read(context.Background(), repos.Clone{ID: "c1", Path: f.repo, Repository: "acme/demo"})
+	var reader commitReader
+	got := reader.read(context.Background(), repos.Clone{ID: "c1", Path: f.repo, Repository: "acme/demo"}, time.Now())
 	if got.reason != "" || len(got.commits) != 2 {
 		t.Fatalf("commits = %+v", got)
 	}
