@@ -129,7 +129,8 @@ are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggle
 its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
-state), `r` refreshes from GitHub, `?` (or the `?` button in the page bar) shows
+state), `r` refreshes from GitHub at once rather than after the polling backoff,
+`?` (or the `?` button in the page bar) shows
 the sheet of keys and `Esc` closes it or clears the focus. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
@@ -162,7 +163,11 @@ repository's pull requests.
 
 The Inbox (the app's root, `src/up-next.tsx`) holds one thing at a time: the
 next pull request that waits on the person, as a card, with the rest under
-"Then" and what they cleared today beside it. `upNext` places each open pull
+"Then" and what they cleared today beside it. Its "Up next" header counts the
+queue and sums baum's reading estimates into the minutes of work; only reviews
+have one. The page follows the Up next design's own colours and sizes rather
+than the app's tokens and type scale (`--un-*` in `src/style.css`, mapped onto
+the app's dark tokens in dark mode). `upNext` places each open pull
 request in at most one kind, from discovery's flags only: **Review** (their
 review is requested), **Fix** (theirs, with changes requested, unresolved
 threads, a conflict or failing checks), **Merge** (theirs, and `canMerge`),
@@ -182,8 +187,9 @@ Choose a local clone (both open the PR page), the fix's own label (opening
 `FixDialog`), Merge (`MergeDialog`) or Update branch (`UpdateBranchDialog`),
 with Open pull request beside a write. **Snooze until …** hides the pull
 request until the next whole hour three hours on, or 9 AM the next day once
-that is past 6 PM; **Skip** moves it to the end; a row under "Then" moves it up
-next. With two or more Merge items, the bar offers **Merge N ready**: one
+that is past 6 PM; **Skip** moves it to the end (both slide the card away first); a row under
+"Then" moves it up next. With two or more Merge items, the header offers
+**Quick wins: merge N ready**: one
 confirmation that reads each pull request's merge options, merges each with
 GitHub's default method for the person at the head commit shown, one after
 another, and names any GitHub refused with the reason; leaving the page stops
@@ -194,8 +200,8 @@ clone), or their fix or branch update left it waiting on checks or reviewers.
 Their own pull request that only stopped being mergeable (a push, checks
 running) waits uncleared, and nothing is cleared for a repository the latest
 read lists no open pull request of, since GitHub may only be unreachable. A
-ring shows cleared against cleared plus remaining; one that comes back is no
-longer cleared. Skips, the promoted card, snoozes and today's record are kept in this
+ring shows cleared against cleared plus remaining, with the reading minutes of
+what was cleared; one that comes back is no longer cleared. Skips, the promoted card, snoozes and today's record are kept in this
 browser's `localStorage` (`baum.inbox.v1`) and start again each day, snoozes
 excepted; nothing reaches the daemon. The sidebar's Inbox badge counts the
 queue without snoozed pull requests. It is not the desktop tray's waiting count,

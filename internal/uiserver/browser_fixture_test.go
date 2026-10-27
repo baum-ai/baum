@@ -93,6 +93,9 @@ func (d browserDiscovery) Cached(_ context.Context, repository github.Repository
 func (d browserDiscovery) Poll(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
 	return d.Cached(ctx, repository)
 }
+func (d browserDiscovery) PollNow(ctx context.Context, repository github.Repository) (discovery.Snapshot, error) {
+	return d.Cached(ctx, repository)
+}
 
 // The account listing boundary is synthetic; routing, picking and cloning state
 // still use the production local repository service.
