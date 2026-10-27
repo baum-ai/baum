@@ -1907,7 +1907,7 @@ event: it gets a `reset` and then only new events.
 `GET /api/index` also carries `waiting`, the number of open pull requests
 waiting on the user: those review-requested from them plus their own with
 changes requested, failing checks or a conflict, each counted once. It is the
-set the app inbox shows under "Review requested" and "Needs changes".
+set the app's Pull requests list shows under "Review requested" and "Needs changes".
 `GET /api/index?view=waiting` answers `{"waiting":N}` alone, which is what the
 desktop app polls for its tray text and dock badge.
 

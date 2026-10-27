@@ -768,7 +768,7 @@ function GroupRow({
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
             <Link
-              href={appURL(`?group=${encodeURIComponent(group.id)}`)}
+              href={appURL(`?page=pulls&group=${encodeURIComponent(group.id)}`)}
               title={group.name}
               className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
             >
@@ -850,7 +850,7 @@ function InboxRow({
         <div className="flex min-w-0 items-baseline gap-2">
           <Link
             href={appURL(
-              `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
+              `?page=pulls&${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
             )}
             title={pr.title}
             className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"

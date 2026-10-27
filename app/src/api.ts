@@ -423,6 +423,18 @@ export function appBase(pathname = location.pathname): string {
 export function appURL(path = ""): string {
   return appBase() + path;
 }
+/** Where a pull request or group page goes back to: Pull requests, with its
+ *  view, when the page was opened from there, else the Inbox. `prefix` starts
+ *  the query of a link that should go back to the same place. */
+export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
+  if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
+  const back = new URLSearchParams({ page: "pulls" });
+  for (const key of ["filter", "repo"]) {
+    const value = search.get(key);
+    if (value) back.set(key, value);
+  }
+  return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
+}
 /** Requests `path`, relative to the namespace, as `api/repos`. */
 export async function request<T>(
   path: string,

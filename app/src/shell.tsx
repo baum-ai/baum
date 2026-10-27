@@ -3,6 +3,7 @@ import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import {
   ChartIcon,
   type IconProps,
+  InboxIcon,
   PullRequestIcon,
   RepositoryIcon,
   SessionsIcon,
@@ -12,13 +13,14 @@ import {
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 
-type Page = "inbox" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
+type Page = "inbox" | "pulls" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel. Below `lg` it folds to its glyphs. */
 export function Sidebar({
   page,
+  inbox,
   activeJobs,
   runningSessions,
   needsYou,
@@ -26,6 +28,8 @@ export function Sidebar({
   Link,
 }: {
   page: Page;
+  /** What waits on the person in the inbox, not counting snoozed. */
+  inbox: number;
   activeJobs: number;
   runningSessions: number;
   /** Agent sessions waiting on the person; the Sessions badge counts them,
@@ -43,7 +47,19 @@ export function Sidebar({
     tone?: "warn" | "caution";
   };
   const main: Item[] = [
-    { page: "inbox", label: "Inbox", href: appURL(), icon: PullRequestIcon },
+    {
+      page: "inbox",
+      label: "Inbox",
+      href: appURL(),
+      icon: InboxIcon,
+      badge: inbox > 0 ? inbox : null,
+    },
+    {
+      page: "pulls",
+      label: "Pull requests",
+      href: appURL("?page=pulls"),
+      icon: PullRequestIcon,
+    },
     {
       page: "sessions",
       label: "Sessions",

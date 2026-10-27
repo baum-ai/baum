@@ -263,7 +263,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   submenu (see "Notifications"); Quit; Quit and stop background reviews.
 - **Waiting on you.** While some pull requests wait on the user (review
   requested from them, or their own with changes requested, failing checks or
-  a conflict, the app inbox's "Review requested" and "Needs changes" groups),
+  a conflict, the "Review requested" and "Needs changes" groups of the app's
+  Pull requests),
   the menu shows a disabled line such as "3 pull requests waiting on you", the
   tooltip appends it, and the dock badge (macOS; any other platform whose
   window badge Tauri supports, ignored silently elsewhere) shows the count.

@@ -19,6 +19,30 @@ const METHODS: Record<string, { label: string; detail: string }> = {
   REBASE: { label: "Rebase and merge", detail: "Replay the commits onto the base branch." },
 };
 
+/** A merge method in words, as GitHub's button names it. */
+export function mergeMethodLabel(name: string) {
+  return METHODS[name]?.label ?? name;
+}
+
+/** Why GitHub's current answer rules a merge out, or "" when nothing does. */
+export function mergeRefusal(options: MergeOptions, entry: Entry) {
+  return options.state !== "OPEN"
+    ? "This pull request is no longer open."
+    : options.draft
+      ? "This pull request is a draft. Mark it ready for review on GitHub first."
+      : options.head_sha !== entry.pull_request.head_sha
+        ? "The pull request has new commits since baum last refreshed. Refresh the inbox and review them first."
+        : options.methods.length === 0
+          ? "This repository allows no merge method."
+          : "";
+}
+
+/** The method a merge uses unless the person picks another: GitHub's default
+ *  for them when the repository allows it. */
+export function defaultMergeMethod(options: MergeOptions) {
+  return options.methods.includes(options.default) ? options.default : (options.methods[0] ?? "");
+}
+
 /** Whether to offer Merge: an open pull request GitHub reports as ready. */
 export function canMerge(entry: Entry) {
   return (
@@ -60,9 +84,7 @@ export function MergeDialog({
     )
       .then((answer) => {
         setOptions(answer);
-        setMethod(
-          answer.methods.includes(answer.default) ? answer.default : (answer.methods[0] ?? ""),
-        );
+        setMethod(defaultMergeMethod(answer));
       })
       .catch((e) => {
         if (!abort.signal.aborted)
@@ -70,17 +92,7 @@ export function MergeDialog({
       });
     return () => abort.abort();
   }, [pr.repository, pr.number]);
-  const refusal = !options
-    ? ""
-    : options.state !== "OPEN"
-      ? "This pull request is no longer open."
-      : options.draft
-        ? "This pull request is a draft. Mark it ready for review on GitHub first."
-        : options.head_sha !== pr.head_sha
-          ? "The pull request has new commits since baum last refreshed. Refresh the inbox and review them first."
-          : options.methods.length === 0
-            ? "This repository allows no merge method."
-            : "";
+  const refusal = options ? mergeRefusal(options, entry) : "";
   const merge = async () => {
     setMerging(true);
     setError("");
@@ -127,7 +139,7 @@ export function MergeDialog({
                 onChange={() => setMethod(name)}
               />
               <span>
-                {METHODS[name]?.label ?? name}
+                {mergeMethodLabel(name)}
                 <small>{METHODS[name]?.detail}</small>
               </span>
             </label>

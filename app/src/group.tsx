@@ -15,6 +15,7 @@ import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-doc
 import {
   MAX_GROUP_MEMBERS,
   appURL,
+  backTo,
   automaticLabel,
   generateGroup,
   generateReviews,
@@ -159,11 +160,12 @@ function ConfirmDialog({
 
 /** The page of a group id the daemon does not have, or no longer has. */
 export function GroupMissing() {
+  const back = backTo(useUrlState().search);
   return (
     <section>
       <PageBar title="Review group not found" />
       <div className="local-page-body local-stack">
-        <ViewerLink href={appURL()}>Inbox</ViewerLink>
+        <ViewerLink href={back.href}>{back.label}</ViewerLink>
         <p>
           This review group does not exist any more. Its pull requests and saved reviews are kept.
         </p>
@@ -193,6 +195,7 @@ export function GroupPage({
   changed: () => Promise<void>;
 }) {
   const url = useUrlState();
+  const back = backTo(url.search);
   const job = groupJob(group, jobs);
   const generating = isActiveJob(job);
   const clone = clones.find((c) => sameRepository(c.repository, group.repository) && c.available);
@@ -208,7 +211,7 @@ export function GroupPage({
   const memberHref = (entry: Entry) => {
     const cloneId = cloneFor(entry);
     return appURL(
-      `?${cloneId ? `clone=${encodeURIComponent(cloneId)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${entry.pull_request.number}`,
+      `?${back.prefix}${cloneId ? `clone=${encodeURIComponent(cloneId)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${entry.pull_request.number}`,
     );
   };
   const addable = [
@@ -427,7 +430,7 @@ export function GroupPage({
               {group.repository} · {group.members.length} pull requests reviewed together
             </p>
           ),
-          back: { href: appURL(), label: "Inbox" },
+          back: { href: back.href, label: back.label },
           generation: { state: generationState, rewriting: generating && Boolean(doc) },
           beside: doc ? regenerate : null,
         }}

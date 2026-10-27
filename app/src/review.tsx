@@ -14,12 +14,13 @@ import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
-import { ViewerLink } from "@baum/viewer/navigation";
+import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
 import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
   appURL,
+  backTo,
   request,
   selector,
   documentRequest,
@@ -118,6 +119,7 @@ export function LocalReview({
   fixJob?: Job;
 }) {
   const pr = entry.pull_request;
+  const back = backTo(useUrlState().search);
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
   // A finished fix stays on the page while it concerns the head shown: the
@@ -254,7 +256,7 @@ export function LocalReview({
               url: pr.url,
               state: pr.state.toLowerCase(),
             },
-            back: { href: appURL(), label: "Inbox" },
+            back: { href: back.href, label: back.label },
             generation: { state: generationState, rewriting: generating && Boolean(doc) },
             // Without a review, the button in the page's middle generates it.
             // The GitHub state leads, so a reader sees why a fix, a re-run or an
@@ -380,7 +382,7 @@ export function LocalReview({
               {groups.map((group) => (
                 <Notice key={group.id}>
                   In review group{" "}
-                  <ViewerLink href={appURL(`?group=${encodeURIComponent(group.id)}`)}>
+                  <ViewerLink href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}>
                     {group.name}
                   </ViewerLink>
                 </Notice>

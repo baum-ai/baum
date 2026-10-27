@@ -31,7 +31,7 @@ Setup and Repositories list the signed-in GitHub account's repositories, with
 search. Nothing is picked automatically: once the person picks a repository,
 the daemon looks for its local clone and the row says where it was found or
 offers to choose or clone one. A picked repository can have
-no clone: its pull requests remain in the inbox and link by repository and PR
+no clone: its pull requests remain in Pull requests and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
 **Clone it**; generating waits for a clone. Clone it shows an editable default
 folder and polls the daemon's background clone, including after reopening.
@@ -84,8 +84,8 @@ comments** or a combination such as **Fix conflicts, CI and review comments**
 request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
-button first beside the version menu, and the inbox puts a small **Fix** in
-the row's Status cell. Either opens
+button first beside the version menu, Pull requests puts a small **Fix** in
+the row's Status cell, and the Inbox's card offers it as its action. Either opens
 `FixDialog` (`src/fix.tsx`), which estimates the fix
 (`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
 (the review's), the branch the result is pushed to, the estimate, and that the
@@ -110,7 +110,8 @@ push, so the new head appears without a manual refresh.
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, beside Ready
-in its inbox row (always drawn on touch screens). It opens a confirmation dialog
+in its Pull requests row (always drawn on touch screens), and as the Inbox
+card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -119,10 +120,10 @@ has moved. The daemon accepts only picked repositories and never retries. A
 refusal (head moved, conflicts, required checks or branch protection, no
 permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
-re-reads the repository's pull requests and the inbox drops it.
+re-reads the repository's pull requests and the lists drop it.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
-the sheet read). On the inbox, `j`/`↓` and `k`/`↑` move a row focus through the
+the sheet read). On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
@@ -135,10 +136,11 @@ the row's own link, so screen readers follow, and the row scrolls into view.
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
-returns to the inbox with the filter kept.
+returns to the page it was opened from (the Inbox, or Pull requests with the
+filter kept).
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in the inbox: the Status cell is
+PR page header beside Fix and Merge…, not in Pull requests: the Status cell is
 9.5rem wide and holds one action (Merge on a ready row, else Fix), and a second
 button would crowd "Checks failing" or wrap. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
@@ -158,7 +160,49 @@ because GitHub merges asynchronously; a re-run where GitHub refused only some
 runs stays open and names them. Either success makes the daemon re-read the
 repository's pull requests.
 
-The inbox spans picked repositories, with or without a local clone, with Risk,
+The Inbox (the app's root, `src/up-next.tsx`) holds one thing at a time: the
+next pull request that waits on the person, as a card, with the rest under
+"Then" and what they cleared today beside it. `upNext` places each open pull
+request in at most one kind, from discovery's flags only: **Review** (their
+review is requested), **Fix** (theirs, with changes requested, unresolved
+threads, a conflict or failing checks), **Merge** (theirs, and `canMerge`),
+**Update** (theirs, and `canUpdateBranch`) and **Clone** (a requested review
+whose repository has no local clone). Their own pull requests with nothing to
+do (drafts, those waiting on reviewers or checks, and those a fix agent is
+working on) are counted under the queue and linked to Pull requests; everyone
+else's are only there. The queue runs in that order of kinds, so a review
+someone waits on comes first; within Review a saved review ready to read comes
+before one being written, then the riskier first; otherwise the lower number
+first. Each pull request appears once, whatever clones hold it.
+The card names the kind, the repository and number, baum's reading estimate,
+the title (linking to the PR page), a "Why now" sentence built from the same
+state, and up to four facts (risk, baum's review, GitHub's review, unresolved
+threads, merge state, checks, agents working). Its action is Start reviewing or
+Choose a local clone (both open the PR page), the fix's own label (opening
+`FixDialog`), Merge (`MergeDialog`) or Update branch (`UpdateBranchDialog`),
+with Open pull request beside a write. **Snooze until …** hides the pull
+request until the next whole hour three hours on, or 9 AM the next day once
+that is past 6 PM; **Skip** moves it to the end; a row under "Then" moves it up
+next. With two or more Merge items, the bar offers **Merge N ready**: one
+confirmation that reads each pull request's merge options, merges each with
+GitHub's default method for the person at the head commit shown, one after
+another, and names any GitHub refused with the reason; leaving the page stops
+the merges not yet sent. "Cleared today" lists the pull requests that left the
+queue since first seen today because the person's part is done: it merged or
+closed, the review request went ("Reviewed", or "Handled" for one that needed a
+clone), or their fix or branch update left it waiting on checks or reviewers.
+Their own pull request that only stopped being mergeable (a push, checks
+running) waits uncleared, and nothing is cleared for a repository the latest
+read lists no open pull request of, since GitHub may only be unreachable. A
+ring shows cleared against cleared plus remaining; one that comes back is no
+longer cleared. Skips, the promoted card, snoozes and today's record are kept in this
+browser's `localStorage` (`baum.inbox.v1`) and start again each day, snoozes
+excepted; nothing reaches the daemon. The sidebar's Inbox badge counts the
+queue without snoozed pull requests. It is not the desktop tray's waiting count,
+which counts only review requests and the person's blocked pull requests.
+
+Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
+of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
 repository without a local clone are listed from discovery (its entries have
 `needs_clone` and no clone); a review needs a local clone. Risk is the latest
@@ -184,8 +228,8 @@ colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes
 requested, failing checks or a conflict), Ready to merge (GitHub's merge state
 is ready) and Your pull requests (the rest); Other pull requests; and Saved
-history. The inbox opens on the Inbox view, which holds only what is the
-person's to check now: pull requests asking for their review and their own.
+history. The list opens on the For you view (`filter=inbox`), which holds only
+what is the person's to check now: pull requests asking for their review and their own.
 Everyone else's open pull requests are under Others, so Other pull requests
 appears only there; Requested, Mine, Not reviewed and Saved history are the
 other views, and a view with nothing in it is dimmed.
@@ -225,7 +269,7 @@ Review groups (`internal/reviewgroups` owns the daemon side). Selecting two or
 more rows shows "Review together (N)": it asks for a name (prefilled with the
 first pull request's title) and creates a group of 2 to 8 pull requests of one
 repository, then opens `?group=<id>`; a selection across repositories or of
-more than eight is refused in the app without a request. In the inbox a group
+more than eight is refused in the app without a request. In Pull requests a group
 with at least one shown member is one row, placed in the bucket of its
 highest-priority shown member (Review requested, then Needs changes, Ready to merge and Your pull
 requests, then Other pull requests; Saved history only when every shown member is
@@ -256,8 +300,8 @@ they are; a provider the daemon cannot read shows "Unavailable: <reason>" and a
 failed request shows nothing. See the daemon's
 [plan usage README](../internal/planusage/README.md).
 
-The app's sidebar leads to the Inbox, Sessions, Analytics, Repositories, Jobs and Settings;
-Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
+The app's sidebar leads to the Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs
+and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
@@ -320,7 +364,7 @@ its end, a notice, and every repository's status after a settings change in
 any window) reload the page and are what the desktop app can notify on.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
-running" or "Agent idle" marker on the inbox rows of their pull request and as
+running" or "Agent idle" marker on the Pull requests rows of their pull request and as
 a "Sessions in progress" panel (agent, working or waiting, title, branch, last
 activity and Open transcript) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last

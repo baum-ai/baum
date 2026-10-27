@@ -72,7 +72,8 @@ const streams: EventTarget[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // Every open pull request; the default Inbox view has its own test.
-  history.replaceState(null, "", "/s/test-ns/?filter=all");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  localStorage.clear();
   liveBody = { sessions: [] };
   liveFails = false;
   streams.length = 0;

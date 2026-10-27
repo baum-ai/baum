@@ -46,7 +46,8 @@ let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // Every open pull request; the default Inbox view has its own test.
-  history.replaceState(null, "", "/s/test-ns/?filter=all");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  localStorage.clear();
   fail = false;
   entries = [];
   node = document.createElement("div");
@@ -146,7 +147,7 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   expect(node.textContent).toContain("No jobs yet");
   await act(async () => {
     Array.from(node.querySelectorAll("a"))
-      .find((a) => a.textContent === "Inbox")!
+      .find((a) => a.textContent === "Pull requests")!
       .click();
   });
   await act(async () => {
@@ -155,7 +156,7 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
       .click();
   });
   expect(location.pathname).toBe("/s/test-ns/");
-  expect(location.search).toBe("?filter=mine");
+  expect(location.search).toBe("?page=pulls&filter=mine");
 });
 it("shows actionable launch authorization failure", async () => {
   fail = true;
@@ -415,8 +416,8 @@ it("groups requested PRs first, splits the person's own by what they need, and k
     ["history", [5, 4]],
   ]);
 });
-it("opens on the Inbox, with only review requests and the person's own, and the rest under Others", async () => {
-  history.replaceState(null, "", "/s/test-ns/");
+it("opens Pull requests on For you, with only review requests and the person's own, and the rest under Others", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=pulls");
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
   const titles = () =>
@@ -426,7 +427,7 @@ it("opens on the Inbox, with only review requests and the person's own, and the 
     Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')).find(
       (button) => button.textContent?.startsWith(name),
     )!;
-  expect(tab("Inbox").getAttribute("aria-pressed")).toBe("true");
+  expect(tab("For you").getAttribute("aria-pressed")).toBe("true");
   expect(tab("Others").textContent).toBe("Others1");
   await act(async () => tab("Others").click());
   expect(titles()).toEqual(["Change 3"]);
@@ -437,12 +438,12 @@ it("opens on the Inbox, with only review requests and the person's own, and the 
       ? Promise.resolve(Response.json([{ id: "clone", repository: "acme/demo", path: "/c" }]))
       : original(...args),
   );
-  history.replaceState(null, "", "/s/test-ns/");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls");
   await act(async () => root.unmount());
   root = createRoot(node);
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Nothing is waiting on you");
-  expect(tab("Inbox").className).toContain("empty");
+  expect(tab("For you").className).toContain("empty");
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];

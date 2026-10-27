@@ -18,6 +18,7 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
+import { UpNextPage, useUpNext } from "./up-next";
 import { onBody, ShortcutsSheet, useShortcuts } from "./shortcuts";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
@@ -326,6 +327,10 @@ function Workspace({ url }: { url: UrlState }) {
     );
   const groupId = url.search.get("group");
   const page = url.search.get("page") ?? "inbox";
+  // The inbox's queue counts in the sidebar on every page. Its record of what
+  // was cleared waits for the first complete read, and pauses while reads
+  // fail, so an empty or failed read clears nothing.
+  const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -411,9 +416,10 @@ function Workspace({ url }: { url: UrlState }) {
       setLoading(false);
     }
   };
-  // The inbox's own keys live in `Inbox`, which knows its rows; these are the
-  // page's: the shortcuts sheet, and the way back from a pull request or group.
-  const onInbox = page === "inbox" && !groupId && !selectedEntry;
+  // The list's own keys live in `Inbox`, which knows its rows; these are the
+  // page's: the shortcuts sheet, and the way back from a pull request or group
+  // to the inbox or list it was opened from.
+  const onList = page === "pulls" && !groupId && !selectedEntry;
   // A session's transcript, `?page=sessions&session=<agent>:<id>`.
   const openSession = url.search.get("session");
   const [openAgent = "", openID = ""] = openSession
@@ -436,11 +442,11 @@ function Workspace({ url }: { url: UrlState }) {
   };
   useShortcuts(
     (event) => {
-      if (event.key === "?" && onInbox) {
+      if (event.key === "?" && onList) {
         event.preventDefault();
         setShortcuts((open) => !open);
       } else if (
-        page === "inbox" &&
+        (page === "inbox" || page === "pulls") &&
         (groupId || requestedNumber) &&
         (event.key === "u" || (event.key === "Escape" && onBody(event)))
       ) {
@@ -469,12 +475,17 @@ function Workspace({ url }: { url: UrlState }) {
     <div className="local-shell">
       <Sidebar
         page={
-          page === "jobs" || page === "repositories" || page === "sessions" || page === "analytics"
+          page === "jobs" ||
+          page === "repositories" ||
+          page === "sessions" ||
+          page === "analytics" ||
+          page === "pulls"
             ? page
             : page === "settings" || page === "diagnostics"
               ? "settings"
               : "inbox"
         }
+        inbox={inbox.queue.length}
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={needsYou(live).length}
@@ -592,7 +603,11 @@ function Workspace({ url }: { url: UrlState }) {
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
               />
               <div className="local-page-body local-stack">
-                <LocalLink href={appURL()}>Inbox</LocalLink>
+                {page === "pulls" ? (
+                  <LocalLink href={appURL("?page=pulls")}>Pull requests</LocalLink>
+                ) : (
+                  <LocalLink href={appURL()}>Inbox</LocalLink>
+                )}
                 <h2>Needs a local clone</h2>
                 <p>
                   Pull requests are available from GitHub. Choose a local folder before generating a
@@ -622,6 +637,18 @@ function Workspace({ url }: { url: UrlState }) {
               starting={starting.has(rowKey(selectedEntry))}
               fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
               fixJob={fixJob(selectedEntry, jobs)}
+            />
+          ) : page !== "pulls" ? (
+            <UpNextPage
+              inbox={inbox}
+              // Until a read succeeds there is nothing to say an empty inbox about.
+              loading={revision === 0}
+              hasRepositories={picked.length > 0 || clones.length > 0}
+              cloneFor={cloneFor}
+              fix={setFixing}
+              changed={reload}
+              refresh={loading ? undefined : () => void refresh()}
+              Link={LocalLink}
             />
           ) : (
             <>
@@ -686,7 +713,7 @@ function Workspace({ url }: { url: UrlState }) {
                 <div role="group" aria-label="Show" className="local-tabs">
                   {(
                     [
-                      ["inbox", "Inbox"],
+                      ["inbox", "For you"],
                       ["requested", "Requested"],
                       ["mine", "Mine"],
                       ["other", "Others"],
@@ -795,7 +822,7 @@ function Workspace({ url }: { url: UrlState }) {
             </>
           )}
           {generationError ? <Alert>{generationError}</Alert> : null}
-          {shortcuts && onInbox ? <ShortcutsSheet close={() => setShortcuts(false)} /> : null}
+          {shortcuts && onList ? <ShortcutsSheet close={() => setShortcuts(false)} /> : null}
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"
@@ -813,7 +840,8 @@ function Workspace({ url }: { url: UrlState }) {
                 });
                 setGrouping(null);
                 setSelection(new Set());
-                url.update(() => new URLSearchParams({ group: created.id }));
+                // Groups are made from Pull requests, so the group page goes back there.
+                url.update(() => new URLSearchParams({ page: "pulls", group: created.id }));
                 await reload();
               }}
             />

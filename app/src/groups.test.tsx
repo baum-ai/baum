@@ -81,7 +81,8 @@ let jobAnswer: () => Response;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // Every open pull request; the default Inbox view hides other people's.
-  history.replaceState(null, "", "/s/test-ns/?filter=all");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  localStorage.clear();
   entries = [];
   groups = [];
   jobs = [];
@@ -175,7 +176,7 @@ it("creates a group from the selected rows and opens its page", async () => {
       },
     },
   ]);
-  expect(location.search).toBe("?group=g1");
+  expect(location.search).toBe("?page=pulls&group=g1");
   expect(node.textContent).not.toContain("Review together");
 });
 
@@ -242,9 +243,9 @@ it("renders a group as one row with its members nested when expanded", async () 
   await act(async () => toggle.click());
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(document.getElementById(toggle.getAttribute("aria-controls")!)!.hidden).toBe(false);
-  expect(node.querySelector<HTMLAnchorElement>('a[href="/s/test-ns/?group=g1"]')!.textContent).toBe(
-    "Auth rework",
-  );
+  expect(
+    node.querySelector<HTMLAnchorElement>('a[href="/s/test-ns/?page=pulls&group=g1"]')!.textContent,
+  ).toBe("Auth rework");
   // Select all covers the loose row and the expanded members.
   await selectAll();
   expect(node.textContent).toContain("Generate selected (3)");

@@ -48,6 +48,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   });
   const launch = await launchURL();
   await page.goto(launch);
+  // The app opens on the Inbox; the pull request list is one click away.
+  await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Pull requests", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
   // The app is relaunched against a long-lived daemon: the same credential
@@ -55,9 +58,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   const relaunched = await page.context().browser()?.newPage();
   if (relaunched) {
     await relaunched.goto(launch);
-    await expect(
-      relaunched.getByRole("heading", { name: "Pull requests", exact: true }),
-    ).toBeVisible();
+    await expect(relaunched.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
     // The desktop app's first run opens the diagnostics page; the bootstrap
     // carries only that page over, and the address keeps no token.
     await relaunched.goto(`${launch}&page=diagnostics`);
@@ -144,7 +145,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
   await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(base);
@@ -193,7 +194,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   // Generate starts the review at once: no estimate, no confirmation.
   await page.getByRole("button", { name: "Generate review", exact: true }).first().click();
@@ -231,7 +232,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/usage-narrow.png", animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(
@@ -311,6 +312,48 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toEqual([]);
 });
 
+// The root is the Inbox: one pull request to do next, a queue behind it and
+// what was cleared today. Skipping moves on to the next card.
+test("the Inbox shows one card to do next, the queue and what was cleared", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(await launchURL());
+  await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+  const card = page.locator("article.upnext-card");
+  await expect(card).toBeVisible({ timeout: 15000 });
+  const title = card.locator("h2");
+  await expect(title).not.toHaveText("");
+  await expect(card).toContainText("Why now:");
+  const queue = page.getByRole("region", { name: "Then", exact: true });
+  await expect(queue.locator("button.upnext-row").first()).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Cleared today" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/up-next-wide.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  const first = (await title.textContent()) ?? "";
+  await card.getByRole("button", { name: "Skip", exact: true }).click();
+  await expect(title).not.toHaveText(first);
+  await expect(card).toContainText("Why now:");
+  await page.setViewportSize({ width: 720, height: 900 });
+  await expect(card).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
+  await page.screenshot({
+    path: "test-results/up-next-desktop-minimum.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: "test-results/up-next-narrow.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  expect(errors).toEqual([]);
+});
+
 // The daemon generates a review by itself when a pull request the user wrote
 // gets a new head after automatic generation was enabled, and says so on the
 // PR page and in the jobs list. Turning it off is a setting the server keeps.
@@ -318,6 +361,7 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const pr = page.getByRole("link", { name: /An automatically reviewed change/ });
   await expect(pr).toBeVisible();
   await pr.click();
@@ -371,6 +415,7 @@ test("a running agent session shows in the inbox and on the PR page until it end
 }) => {
   const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-session");
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const row = page.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
   // The first inbox load can take a while on a busy CI runner.
   await expect(row).toBeVisible({ timeout: 15000 });
@@ -403,7 +448,7 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await expect(
     page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
   ).toHaveCount(0);
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(row).toBeVisible();
   await expect(row.getByText("Agent")).toHaveCount(0);
 });
@@ -549,6 +594,7 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const missing = page.getByRole("link", {
     name: "A GitHub pull request waiting for a clone",
     exact: true,
@@ -608,6 +654,7 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
 // review threads; the dialog is checked and cancelled, so nothing runs.
 test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
   await row.hover();
@@ -634,6 +681,7 @@ test("offers to fix review comments and lists the threads baum will answer", asy
 // marker afterwards gives it back to the specs that run after this one.
 test("merges a ready pull request from the inbox after choosing a method", async ({ page }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
   await expect(row).toContainText("Status: Ready");
@@ -660,6 +708,7 @@ test("merges a ready pull request from the inbox after choosing a method", async
 // their failing checks back.
 test("re-runs the failed checks of a pull request from its page", async ({ page }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   // The row's Status cell keeps its one action (Fix); Re-run is on the page.
   await expect(inbox.getByRole("button", { name: /Re-run/ })).toHaveCount(0);
@@ -680,6 +729,7 @@ test("updates the branch of a pull request that is behind its base from its page
   page,
 }) => {
   await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   await expect(inbox.getByRole("button", { name: /Update/ })).toHaveCount(0);
   await page.getByRole("link", { name: /A branch behind its base/ }).click();
