@@ -152,3 +152,104 @@ func TestCodexTitleIsTheThreadNameElseTheFirstPrompt(t *testing.T) {
 		t.Fatalf("title %q", got)
 	}
 }
+
+// summaries is the list's summary of each session, by agent and id.
+func summaries(t *testing.T, f *transcriptFixture) map[string]string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	f.live.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/live-sessions", nil))
+	var body struct {
+		Sessions []struct {
+			Agent   string `json:"agent"`
+			ID      string `json:"session_id"`
+			Summary string `json:"summary"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%s: %v", w.Body.String(), err)
+	}
+	out := map[string]string{}
+	for _, s := range body.Sessions {
+		out[s.Agent+"/"+s.ID] = s.Summary
+	}
+	return out
+}
+
+var compactions int
+
+// compactSummary is the user line Claude Code writes after compacting a
+// session, wrapped as it wraps the summary.
+func compactSummary(body string) string {
+	text := "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n" +
+		body + "\n\nIf you need specific details from before compaction, read the full transcript."
+	compactions++
+	line, _ := json.Marshal(map[string]any{"type": "user", "isCompactSummary": true, "sessionId": "s1",
+		"uuid": fmt.Sprintf("c-%d", compactions), "parentUuid": nil, "cwd": "/work/demo", "gitBranch": "feature",
+		"timestamp": t0.Add(time.Duration(compactions) * time.Hour).Format(time.RFC3339Nano),
+		"message":   map[string]any{"role": "user", "content": text}})
+	return string(line)
+}
+
+func TestClaudeCodeSummaryIsTheLatestCompactionsOpeningAndWholeOnTheTranscript(t *testing.T) {
+	f := newTranscriptFixture(t)
+	f.tracker.Mask = func(s string) string { return strings.ReplaceAll(s, plantedDSN, "[masked]") }
+	if got := summaries(t, f)["claude-code/s1"]; got != "" {
+		t.Fatalf("summary %q before any compaction", got)
+	}
+	appendLines(t, f.path, compactSummary("1. Primary Request and Intent:\n   Add a retry budget.\n2. Key Technical Concepts:\n   - backoff"))
+	appendLines(t, f.path, compactSummary("1. Primary Request and Intent:\n   - Add a retry budget to the queue.\n   - Connect to "+plantedDSN+".\n2. Key Technical Concepts:\n   - backoff"))
+	f.clock.advance(TitleRecheckEvery)
+	if got := summaries(t, f)["claude-code/s1"]; got != "Add a retry budget to the queue. Connect to [masked]." {
+		t.Fatalf("summary %q", got)
+	}
+	// The compaction is not the session's first prompt.
+	if got := titles(t, f)["claude-code/s1"]; !strings.HasPrefix(got, "Connect to") {
+		t.Fatalf("title %q", got)
+	}
+	_, _, raw := get(t, f.live.Handler(), "/api/live-sessions/claude-code/s1/transcript")
+	var answer struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(raw), &answer); err != nil {
+		t.Fatal(err)
+	}
+	want := "1. Primary Request and Intent:\n   - Add a retry budget to the queue.\n   - Connect to [masked].\n2. Key Technical Concepts:\n   - backoff"
+	if answer.Summary != want {
+		t.Fatalf("summary %q", answer.Summary)
+	}
+}
+
+func TestCodexSummaryIsReadFromACompactionLongerThanALine(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000003"
+	path := filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl")
+	history, _ := json.Marshal([]map[string]string{{"type": "message", "text": strings.Repeat("y", maxLine)}})
+	write(t, path, `{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","cli_version":"0.69.0","model_provider":"openai"}}
+{"timestamp":"2026-10-20T09:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"Rename the flag"}}
+{"timestamp":"2026-10-20T09:30:00.000Z","type":"compacted","payload":{"message":"Renamed the flag in the CLI; docs remain.","replacement_history":`+string(history)+`}}
+{"timestamp":"2026-10-20T09:31:00.000Z","type":"compacted","payload":{"message":"","replacement_history":[]}}
+`)
+	e := hookevents.New(hookevents.KindAgent, "codex", "user-prompt-submit", "/work/demo", "test")
+	e.Time = f.clock.now
+	e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+	if !apply(f.tracker, e) {
+		t.Fatal("not tracked")
+	}
+	// An encrypted compaction, with no message, keeps the last readable one.
+	if got := summaries(t, f)["codex/"+id]; got != "Renamed the flag in the CLI; docs remain." {
+		t.Fatalf("summary %q", got)
+	}
+}
+
+func TestSummaryOpeningIsPlainTextWithoutTheSectionName(t *testing.T) {
+	for _, c := range []struct{ body, want string }{
+		{"1. Primary Request and Intent:\n   Add a retry budget.\n2. Key Technical Concepts:\n   - x", "Add a retry budget."},
+		{"Writing the summary.\n\n1. **Primary Request and Intent**\n   - **First message:** \"Next steps?\"\n2. **Concepts**", "First message: \"Next steps?\""},
+		{"1. **Primary Request and Intent** - Fix the [flaky test](https://example.com) in `queue`.\n2. Concepts", "Fix the flaky test in queue."},
+		{"## Goal\nShip the `retry` budget.\n### Setup and environment notes\n- Worktree ready", "Ship the retry budget. Setup and environment notes Worktree ready"},
+	} {
+		if got := strings.Join(strings.Fields(summaryOpening(c.body)), " "); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.body, got, c.want)
+		}
+	}
+}

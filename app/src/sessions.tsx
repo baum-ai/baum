@@ -197,8 +197,9 @@ export function LiveSessions({
   );
 }
 
-/** What the session is about and where: its title, the line it waits on
- *  (Needs you only), and its repository, branch and pull request. */
+/** What the session is about and where: its title, the opening of its
+ *  compaction summary when it has one, the line it waits on (Needs you
+ *  only), and its repository, branch and pull request. */
 function SessionWhat({
   session: s,
   message,
@@ -215,6 +216,11 @@ function SessionWhat({
       {s.title ? (
         <p className="local-session-title" title={s.title}>
           {s.title}
+        </p>
+      ) : null}
+      {s.summary ? (
+        <p className="local-session-summary-line" title={s.summary}>
+          {s.summary}
         </p>
       ) : null}
       {message ? <p className="local-needs-message">{message}</p> : null}

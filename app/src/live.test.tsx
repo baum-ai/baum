@@ -282,6 +282,7 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
           waiting_since: new Date(Date.now() - 30_000).toISOString(),
           waiting_message: "Which database should the migration use?",
           title: "Plan the orders migration",
+          summary: "Move orders to the new schema without downtime.",
         }),
         // A reason the app does not know, from a newer daemon, is not listed.
         session({
@@ -321,6 +322,10 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
       "Plan the orders migration",
     );
     expect(rows[0]!.querySelector(".local-session-title")).toBeNull();
+    expect(rows[2]!.querySelector(".local-session-summary-line")!.textContent).toBe(
+      "Move orders to the new schema without downtime.",
+    );
+    expect(rows[0]!.querySelector(".local-session-summary-line")).toBeNull();
     expect(rows[2]!.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
     expect(rows[2]!.querySelector("a.local-session-open")?.getAttribute("href")).toBe(
       "/s/test-ns/?page=sessions&session=claude-code%3Aquestion",

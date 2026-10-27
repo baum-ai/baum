@@ -10,6 +10,7 @@ import {
 } from "react";
 import { formatRelative } from "@baum/viewer/components/format";
 import { SessionCard } from "@baum/viewer/components/session-card";
+import { Markdown } from "@baum/viewer/components/markdown";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSource } from "@baum/viewer/transcript";
@@ -33,7 +34,15 @@ export const LIVE_DEBOUNCE = 500;
 /** The daemon's answer for a live session's transcript: the transcript, or
  *  null when the request named the version it has; or why there is none. */
 export type LiveTranscriptAnswer =
-  | { available: true; version: string; live: boolean; transcript: LocalTranscript | null }
+  | {
+      available: true;
+      version: string;
+      live: boolean;
+      transcript: LocalTranscript | null;
+      /** The session's latest compaction summary, masked; sent with the
+       *  transcript, absent before the agent compacted the session. */
+      summary?: string;
+    }
   | { available: false; live: boolean; message: string };
 
 export function parseLiveTranscript(body: unknown): LiveTranscriptAnswer | null {
@@ -51,12 +60,21 @@ export function parseLiveTranscript(body: unknown): LiveTranscriptAnswer | null 
   if (answer.transcript === undefined)
     return { available: true, version: answer.version, live, transcript: null };
   const transcript = parseTranscript(answer.transcript);
-  return transcript ? { available: true, version: answer.version, live, transcript } : null;
+  const summary = typeof answer.summary === "string" && answer.summary ? answer.summary : undefined;
+  return transcript
+    ? {
+        available: true,
+        version: answer.version,
+        live,
+        transcript,
+        ...(summary ? { summary } : {}),
+      }
+    : null;
 }
 
 export type LiveTranscriptState =
   | { kind: "loading" }
-  | { kind: "ready"; version: string; transcript: LocalTranscript }
+  | { kind: "ready"; version: string; transcript: LocalTranscript; summary?: string }
   | { kind: "unavailable"; message: string }
   | { kind: "failed"; message: string };
 
@@ -106,7 +124,12 @@ export function useLiveTranscript(
               next = { kind: "unavailable", message: answer.message };
             } else if (answer.transcript) {
               known = answer.version;
-              next = { kind: "ready", version: answer.version, transcript: answer.transcript };
+              next = {
+                kind: "ready",
+                version: answer.version,
+                transcript: answer.transcript,
+                summary: answer.summary,
+              };
             } else if (answer.version !== known) {
               // Told "unchanged" of a version this view does not have.
               known = null;
@@ -328,6 +351,19 @@ const TranscriptBody = memo(function TranscriptBody({
   };
   return (
     <section aria-label="Transcript" className="local-transcript">
+      {state.summary ? (
+        <details className="local-panel local-session-summary">
+          <summary>
+            <span className="local-session-summary-title">Summary of the earlier conversation</span>
+            <span className="local-session-summary-note">
+              Written by the agent when it compacted the session
+            </span>
+          </summary>
+          <Markdown html={false} className="local-session-summary-body">
+            {state.summary}
+          </Markdown>
+        </details>
+      ) : null}
       <p className="local-transcript-note">
         Local transcript; secrets and e-mail addresses masked.
         {transcript.truncated ? " Some content was omitted." : ""}

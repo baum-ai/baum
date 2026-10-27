@@ -171,13 +171,22 @@ func feedLiveSession(ctx context.Context, events *hookevents.Store, marker, id, 
 }
 
 // writeFixtureTitle leaves a Claude Code transcript holding only the title
-// Claude Code generated for the session id, where the store keeps it, so the
-// session's hooks need not name it: the Sessions page finds it by the id.
-func writeFixtureTitle(home, id, title string) {
+// Claude Code generated for the session id and, when summary is set, a
+// compaction summary whose first section it is, where the store keeps it, so
+// the session's hooks need not name it: the Sessions page finds it by the id.
+func writeFixtureTitle(home, id, title, summary string) {
 	line, _ := json.Marshal(map[string]any{"type": "ai-title", "aiTitle": title, "sessionId": id})
+	lines := append(line, '\n')
+	if summary != "" {
+		text := "This session is being continued from a previous conversation that ran out of context.\n\nSummary:\n" +
+			"1. Primary Request and Intent:\n   " + summary + "\n2. Key Technical Concepts:\n   - The PR page's viewer\n"
+		compacted, _ := json.Marshal(map[string]any{"type": "user", "isCompactSummary": true, "sessionId": id, "uuid": "compacted",
+			"message": map[string]any{"role": "user", "content": text}})
+		lines = append(append(lines, compacted...), '\n')
+	}
 	path := filepath.Join(home, ".claude", "projects", "-fixture-live", id+".jsonl")
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	_ = os.WriteFile(path, append(line, '\n'), 0o600)
+	_ = os.WriteFile(path, lines, 0o600)
 }
 
 // writeFixtureTranscript replaces the Claude Code transcript at path with one
@@ -469,8 +478,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	needsMarker := filepath.Join(state, "live-needs")
 	_ = os.Remove(needsMarker)
 	// The first and third have titles; the second's is its first prompt.
-	writeFixtureTitle(home, "live-e2e", "Reuse the PR page in the local app")
-	writeFixtureTitle(home, "needs-e2e", "Run the migration tests")
+	writeFixtureTitle(home, "live-e2e", "Reuse the PR page in the local app",
+		"Serve saved reviews in the local app with the hosted PR page's viewer, without a second implementation.")
+	writeFixtureTitle(home, "needs-e2e", "Run the migration tests", "")
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)

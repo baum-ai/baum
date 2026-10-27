@@ -180,6 +180,30 @@ it("reads the daemon's answers", () => {
   expect(parseLiveTranscript(null)).toBeNull();
 });
 
+it("shows the compaction summary the daemon sends, closed above the transcript", async () => {
+  answer = {
+    body: {
+      available: true,
+      version: "v1",
+      live: true,
+      transcript: transcript("Add a retry budget"),
+      summary: "1. Primary Request and Intent:\n   Add a retry budget.",
+    },
+  };
+  await show(session());
+  const panel = node.querySelector("details.local-session-summary")!;
+  expect(panel.hasAttribute("open")).toBe(false);
+  expect(panel.querySelector("summary")!.textContent).toContain(
+    "Summary of the earlier conversation",
+  );
+  expect(panel.textContent).toContain("Add a retry budget.");
+});
+
+it("shows no summary for a session that was never compacted", async () => {
+  await show(session());
+  expect(node.querySelector("details.local-session-summary")).toBeNull();
+});
+
 it("titles the page with the session's title when its agent gave one", async () => {
   await show(session({ title: "Wire the retry budget" }));
   expect(node.querySelector("h1")?.textContent).toBe("Wire the retry budget");

@@ -333,7 +333,8 @@ from disk again, where the full session is. A daemon without the record serves
 none.
 
 The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
-now" (agent, working or waiting for you, the session's title, repository and branch,
+now" (agent, working or waiting for you, the session's title and, once the agent
+compacted it, the request its compaction summary records, repository and branch,
 a link to the pull request's page when the inbox has it, start and last activity) and
 "Ended recently"
 (sessions that ended in the last 24 hours, newest first, with when they ended and how
@@ -356,7 +357,8 @@ starts asking for a permission or an answer (see the desktop README).
 
 Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`), titled with the session's title (else "Claude
-Code session"): the session's header (agent, working, waiting
+Code session"), with the agent's compaction summary, when it has one, closed above
+the transcript: the session's header (agent, working, waiting
 or ended, repository, branch, pull request, start and last activity) above its
 transcript, drawn with the viewer's `SessionCard` as a review's linked session
 is on the PR page, with the same "Local transcript; secrets and e-mail

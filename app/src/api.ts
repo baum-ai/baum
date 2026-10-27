@@ -375,6 +375,9 @@ export type LiveSession = {
    *  line, masked by the daemon. Absent when the agent's files cannot be
    *  read, and from a daemon older than this field. */
   title?: string;
+  /** The opening of the session's latest compaction summary (the request
+   *  it records), one line, masked; absent until the agent compacted it. */
+  summary?: string;
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",

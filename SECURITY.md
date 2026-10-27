@@ -1008,6 +1008,14 @@ cleaned, masked and cut as the waiting message is (120 characters), held in
 memory only while the session is listed, never written to
 `live-sessions.json`, and never sent to a baum server.
 
+Once an agent has compacted a session, the same files give its summary: the
+summary Claude Code writes into the transcript when it compacts, or a Codex
+compaction's when Codex kept it as text (one done by OpenAI's server is
+encrypted and gives none). The list carries its first section, the request
+it records, as one masked line of at most 240 characters; the transcript
+route sends the whole summary, masked and cut to 32 KiB, with the transcript.
+Both are held as the title is.
+
 The Sessions page opens a listed session's transcript through
 `GET /api/live-sessions/{agent}/{id}/transcript`, behind the same
 authentication, Origin and Host checks, `GET` only. The daemon reads, for it,

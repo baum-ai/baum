@@ -81,8 +81,8 @@ type Transcripts struct {
 
 	mu    sync.Mutex
 	cache map[key]*cached
-	// titles are the listed sessions' titles (title.go).
-	titles map[key]*titled
+	// described is what the listed sessions' files say of them (title.go).
+	described map[key]*described
 }
 
 // cached is one session's transcript as last built.

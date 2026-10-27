@@ -395,6 +395,11 @@ test("a running agent session shows in the inbox and on the PR page until it end
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
   await expect(ended.getByText("Claude Code")).toBeVisible();
   await expect(ended.getByText("feature")).toBeVisible();
+  // Its title, and the request its compaction summary records.
+  await expect(
+    ended.getByText("Reuse the PR page in the local app", { exact: true }),
+  ).toBeVisible();
+  await expect(ended.getByText(/^Serve saved reviews in the local app/)).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
   ).toHaveCount(0);
@@ -428,7 +433,10 @@ test("a session's transcript opens from the Sessions page and grows without a re
     page.getByText("Local transcript; secrets and e-mail addresses masked."),
   ).toBeVisible();
   const transcript = page.getByRole("region", { name: "Transcript", exact: true });
-  await expect(transcript.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  // The card's title is the session's first prompt too; the prompts are the
+  // conversation's list items below it.
+  const prompts = transcript.getByRole("listitem");
+  await expect(prompts.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
   await expect(transcript.getByText("Done: Fix the flaky retry test")).toBeVisible();
   // The agent writes another turn without a hook event: the open view shows
   // it without a reload, and masks the address in it.
@@ -440,7 +448,7 @@ test("a session's transcript opens from the Sessions page and grows without a re
   );
   await expect(transcript.getByText(/^Mail .* the summary$/)).toBeVisible({ timeout: 15000 });
   await expect(transcript.getByText("ada.lovelace@example.com")).toHaveCount(0);
-  await expect(transcript.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
+  await expect(prompts.getByText("Fix the flaky retry test", { exact: true })).toBeVisible();
   expect(loads).toBe(0);
   // Ended, the view says so; u goes back to the list, which keeps it.
   await writeFile(

@@ -25,9 +25,10 @@ func (t *Tracker) Handler() http.Handler {
 // with its title (Listed), and GET
 // /api/live-sessions/{agent}/{id}/transcript: the transcript of a session
 // the list has, for as long as it has it. The answer is
-// {"available":true,"version","live","transcript"}, the transcript as GET
-// /api/sessions/{id} answers it, without "transcript" when the request names
-// the current version (?version=), so a window polling a session that did not
+// {"available":true,"version","live","transcript","summary"?}, the transcript
+// as GET /api/sessions/{id} answers it and the session's latest compaction
+// summary (masked), both left out when the request names the current version
+// (?version=), so a window polling a session that did not
 // change receives a few bytes; or {"available":false,"live",
 // "code":"transcript_unavailable","message"} with why it is not served. A
 // session the tracker does not list is 404.
@@ -56,9 +57,13 @@ func (t *Transcripts) Handler() http.Handler {
 				Version    string          `json:"version"`
 				Live       bool            `json:"live"`
 				Transcript json.RawMessage `json:"transcript,omitempty"`
-			}{true, answer.Version, live, answer.Body}
+				Summary    string          `json:"summary,omitempty"`
+			}{Available: true, Version: answer.Version, Live: live, Transcript: answer.Body}
 			if r.URL.Query().Get("version") == answer.Version {
 				out.Transcript = nil
+			} else {
+				_, path, _ := t.Tracker.Lookup(answer.Session.Agent, answer.Session.ID)
+				_, _, out.Summary = t.describe(key{answer.Session.Agent, answer.Session.ID}, path)
 			}
 			writeJSON(w, http.StatusOK, out)
 		}
