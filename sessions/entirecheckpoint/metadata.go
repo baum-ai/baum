@@ -220,10 +220,6 @@ var sessionMetadataKeys = keySet(
 	"investigate_topic", "commit_sha", "imported",
 )
 
-func decodeCheckpointMetadata(raw []byte) (CheckpointMetadata, error) {
-	return decodeCheckpointMetadataWith(raw, traceprocessing.Local)
-}
-
 func decodeCheckpointMetadataWith(raw []byte, profile traceprocessing.MappingProfile) (CheckpointMetadata, error) {
 	var out CheckpointMetadata
 	var target any = &out

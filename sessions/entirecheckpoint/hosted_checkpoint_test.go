@@ -10,24 +10,11 @@ import (
 	"testing"
 	"testing/fstest"
 
-	adaptertest "github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
-func TestHostedCorpusFixturesGolden(t *testing.T) {
-	for _, name := range []string{"two_claude", "codex", "skill_events", "pi", "claude_subagent"} {
-		t.Run(name, func(t *testing.T) {
-			checkpoint, err := hostedParseCheckpoint(hostedOsDirFS(filepath.Join("testdata", "hosted", name)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			adaptertest.Golden(t, filepath.Join("testdata", "hosted", "golden", name+".json"), hostedSummarize(checkpoint))
-		})
-	}
-}
-
 func TestHostedParseCheckpointResolvesBranchRootRefs(t *testing.T) {
-	checkpoint, err := hostedParseCheckpoint(hostedOsDirFS(filepath.Join("testdata", "hosted", "two_claude")))
+	checkpoint, err := hostedParseCheckpoint(hostedOsDirFS(filepath.Join("testdata", "two_claude")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +35,7 @@ func TestHostedParseCheckpointResolvesBranchRootRefs(t *testing.T) {
 // session paths without the branch's shard prefix: "/0/metadata.json" where
 // the branch writes "/00/04a7a444a0/0/metadata.json". Both read the same.
 func TestHostedParseCheckpointResolvesRefStoreRefs(t *testing.T) {
-	root := filepath.Join("testdata", "hosted", "two_claude")
+	root := filepath.Join("testdata", "two_claude")
 	files := fstest.MapFS{}
 	err := fs.WalkDir(os.DirFS(root), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -92,7 +79,7 @@ func TestHostedParseCheckpointResolvesRefStoreRefs(t *testing.T) {
 }
 
 func TestHostedParseCheckpointAcceptsMissingOptionalFiles(t *testing.T) {
-	checkpoint, err := hostedParseCheckpoint(hostedOsDirFS(filepath.Join("testdata", "hosted", "skill_events")))
+	checkpoint, err := hostedParseCheckpoint(hostedOsDirFS(filepath.Join("testdata", "skill_events")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,50 +230,6 @@ func TestHostedContentHashMismatchIsData(t *testing.T) {
 	}
 }
 
-type hostedFixtureSummary struct {
-	CheckpointID string                 `json:"checkpoint_id"`
-	CLIVersion   string                 `json:"cli_version"`
-	Sessions     []hostedSessionSummary `json:"sessions"`
-	Tasks        []*Task                `json:"tasks,omitempty"`
-	Shape        Shape                  `json:"shape"`
-}
-
-type hostedSessionSummary struct {
-	Index          int              `json:"index"`
-	SessionID      string           `json:"session_id"`
-	Agent          string           `json:"agent"`
-	FullBytes      int              `json:"full_bytes"`
-	CompactRecords int              `json:"compact_records"`
-	BlockKinds     map[string]int   `json:"block_kinds"`
-	PromptPresent  bool             `json:"prompt_present"`
-	SkillEvents    int              `json:"skill_events"`
-	Hash           HashVerification `json:"hash"`
-}
-
-func hostedSummarize(checkpoint *Checkpoint) hostedFixtureSummary {
-	summary := hostedFixtureSummary{
-		CheckpointID: checkpoint.Metadata.CheckpointID,
-		CLIVersion:   checkpoint.Metadata.CLIVersion,
-		Tasks:        checkpoint.Tasks,
-		Shape:        Survey([]*Checkpoint{checkpoint}),
-	}
-	for _, snapshot := range checkpoint.Sessions {
-		session := hostedSessionSummary{
-			Index: snapshot.Index, SessionID: snapshot.Metadata.SessionID, Agent: snapshot.Metadata.Agent,
-			FullBytes: len(snapshot.Full), CompactRecords: len(snapshot.Compact),
-			BlockKinds: map[string]int{}, PromptPresent: snapshot.PromptPresent,
-			SkillEvents: len(snapshot.Metadata.SkillEvents), Hash: snapshot.Hash,
-		}
-		for _, record := range snapshot.Compact {
-			for _, block := range record.Content {
-				session.BlockKinds[string(block.Kind)]++
-			}
-		}
-		summary.Sessions = append(summary.Sessions, session)
-	}
-	return summary
-}
-
 // osDirFS is a seam so fixture tests use the same fs.FS contract as tar/git
 // callers while keeping their paths relative in failures.
 func hostedOsDirFS(dir string) fs.FS { return os.DirFS(dir) }
@@ -295,7 +238,7 @@ func hostedOsDirFS(dir string) fs.FS { return os.DirFS(dir) }
 // read the same from the archive filesystem the hosted ingest builds as from
 // a directory.
 func TestHostedParseCheckpointReadsTasksFromAnArchiveTree(t *testing.T) {
-	root := filepath.Join("testdata", "hosted", "claude_subagent")
+	root := filepath.Join("testdata", "claude_subagent")
 	files := map[string][]byte{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {

@@ -48,8 +48,10 @@ The standalone OSS module runs the same `go test ./sessions/...` command inside
 its development or CI environment. Its tests need no appliance source checkout
 or database. Hosted pure cases use `TestHosted` names and retain their own
 expected output under `testdata/hosted`; local cases retain their original
-fixtures. Optional corpus reconciliation tests remain opt-in. Platform corpus
-storage tests stay at the persistence boundary.
+fixtures. Captured appliance Entire transcripts and goldens remain in the
+appliance test suite; public policy tests use synthetic inputs. Optional corpus
+reconciliation tests remain opt-in. Platform corpus storage tests stay at the
+persistence boundary.
 
 Golden updates are for intentional behavior changes. A consolidation must
 produce no expected-output changes: compare all existing local and hosted

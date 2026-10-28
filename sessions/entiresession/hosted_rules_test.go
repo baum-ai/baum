@@ -457,7 +457,7 @@ func hostedSyntheticCheckpoint(t *testing.T, agent, compact string, files []stri
 	if usage {
 		usageJSON = `,"token_usage":{"input_tokens":10,"cache_creation_tokens":20,"cache_read_tokens":30,"output_tokens":40,"api_call_count":2}`
 	}
-	root := fmt.Sprintf(`{"checkpoint_id":"abcdef123456","sessions":[{"metadata":"/ab/cdef123456/0/metadata.json","compact_transcript":"/ab/cdef123456/0/transcript.jsonl"}]}`)
+	root := `{"checkpoint_id":"abcdef123456","sessions":[{"metadata":"/ab/cdef123456/0/metadata.json","compact_transcript":"/ab/cdef123456/0/transcript.jsonl"}]}`
 	metadata := fmt.Sprintf(`{"cli_version":"0.9.0","checkpoint_id":"abcdef123456","session_id":"11111111-2222-4333-8444-555555555555","strategy":"manual-commit","created_at":"2026-08-05T10:01:00Z","branch":"main","checkpoints_count":1,"files_touched":%s,"agent":%q,"model":"model","turn_id":"123456abcdef"%s}`, filesJSON, agent, usageJSON)
 	fsys := fstest.MapFS{
 		"metadata.json":   &fstest.MapFile{Data: []byte(root)},

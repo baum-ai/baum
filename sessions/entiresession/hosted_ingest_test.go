@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	adaptertest "github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/sessions/claudesession"
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/cursorsession"
@@ -18,27 +17,6 @@ import (
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
-
-func TestHostedFixtureGoldens(t *testing.T) {
-	for _, name := range []string{"two_claude", "codex", "skill_events", "pi", "claude_subagent"} {
-		t.Run(name, func(t *testing.T) {
-			checkpoint := hostedFixtureCheckpoint(t, name)
-			results, report, err := hostedBuild(checkpoint)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !report.Balanced() {
-				t.Fatalf("unbalanced report: %+v", report)
-			}
-			goldenResults := any(results)
-			if name == "two_claude" {
-				goldenResults = hostedProjectFixtureResults(results)
-			}
-			adaptertest.Golden(t, filepath.Join("testdata", "hosted", "golden", name+"_results.json"), goldenResults)
-			adaptertest.Golden(t, filepath.Join("testdata", "hosted", "golden", name+"_report.json"), report)
-		})
-	}
-}
 
 func TestHostedReportCarriesCheckpointShape(t *testing.T) {
 	checkpoint := hostedFixtureCheckpoint(t, "codex")
@@ -136,7 +114,8 @@ func TestHostedEnvelopeOnlyIsAdditiveToDirectGraph(t *testing.T) {
 
 func hostedFixtureCheckpoint(t *testing.T, name string) *entirecheckpoint.Checkpoint {
 	t.Helper()
-	checkpoint, err := entirecheckpoint.ParseHostedCheckpoint(os.DirFS(filepath.Join("..", "entirecheckpoint", "testdata", "hosted", name)))
+	root := filepath.Join("..", "entirecheckpoint", "testdata", name)
+	checkpoint, err := entirecheckpoint.ParseHostedCheckpoint(os.DirFS(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,92 +221,4 @@ func hostedGraphIDs(graph *session.Graph) map[string][]string {
 		sort.Strings(ids[key])
 	}
 	return ids
-}
-
-// fixtureResultProjection keeps the large Claude integration golden focused on
-// the Entire wrapper contract. The Claude mapper owns a full graph golden;
-// repeating its complete output here made one representative checkpoint
-// produce a multi-megabyte fixture.
-type hostedFixtureResultProjection struct {
-	SessionID     string                          `json:"session_id"`
-	CheckpointID  string                          `json:"checkpoint_id"`
-	CreatedAt     time.Time                       `json:"created_at"`
-	Fidelity      FidelityRank                    `json:"fidelity_rank"`
-	Warnings      []string                        `json:"warnings,omitempty"`
-	Root          hostedFixtureRootProjection     `json:"root"`
-	Rows          Rows                            `json:"rows"`
-	EntityIDs     map[string][]string             `json:"entity_ids"`
-	AttributeKeys []string                        `json:"attribute_keys,omitempty"`
-	FileTouches   []hostedFixtureTouchProjection  `json:"file_touches,omitempty"`
-	VendorIDs     []hostedFixtureVendorProjection `json:"vendor_ids,omitempty"`
-}
-
-type hostedFixtureRootProjection struct {
-	ID        string          `json:"id"`
-	Outcome   session.Outcome `json:"outcome"`
-	StartedAt *time.Time      `json:"started_at,omitempty"`
-	EndedAt   *time.Time      `json:"ended_at,omitempty"`
-	GitBranch *string         `json:"git_branch,omitempty"`
-}
-
-type hostedFixtureTouchProjection struct {
-	Path string            `json:"path"`
-	Kind session.TouchKind `json:"kind"`
-}
-
-type hostedFixtureVendorProjection struct {
-	OurType session.EntityType `json:"our_type"`
-	Vendor  string             `json:"vendor"`
-	Kind    string             `json:"kind"`
-}
-
-func hostedProjectFixtureResults(results []Result) []hostedFixtureResultProjection {
-	projected := make([]hostedFixtureResultProjection, 0, len(results))
-	for _, result := range results {
-		root := result.Graph.Root()
-		attributes := make([]string, 0, len(result.Graph.Attributes))
-		for _, attribute := range result.Graph.Attributes {
-			attributes = append(attributes, attribute.Key)
-		}
-		sort.Strings(attributes)
-
-		touches := make([]hostedFixtureTouchProjection, 0, len(result.Graph.FileTouches))
-		for _, touch := range result.Graph.FileTouches {
-			touches = append(touches, hostedFixtureTouchProjection{Path: touch.Path, Kind: touch.Kind})
-		}
-		sort.Slice(touches, func(i, j int) bool {
-			if touches[i].Path == touches[j].Path {
-				return touches[i].Kind < touches[j].Kind
-			}
-			return touches[i].Path < touches[j].Path
-		})
-
-		vendors := make([]hostedFixtureVendorProjection, 0, len(result.Graph.VendorIDs))
-		for _, vendor := range result.Graph.VendorIDs {
-			vendors = append(vendors, hostedFixtureVendorProjection{
-				OurType: vendor.OurType, Vendor: vendor.Vendor, Kind: vendor.VendorIDKind,
-			})
-		}
-		sort.Slice(vendors, func(i, j int) bool {
-			if vendors[i].OurType != vendors[j].OurType {
-				return vendors[i].OurType < vendors[j].OurType
-			}
-			if vendors[i].Vendor != vendors[j].Vendor {
-				return vendors[i].Vendor < vendors[j].Vendor
-			}
-			return vendors[i].Kind < vendors[j].Kind
-		})
-
-		projected = append(projected, hostedFixtureResultProjection{
-			SessionID: result.SessionID, CheckpointID: result.CheckpointID,
-			CreatedAt: result.CreatedAt, Fidelity: result.Fidelity, Warnings: result.Warnings,
-			Root: hostedFixtureRootProjection{
-				ID: root.ID, Outcome: root.Outcome, StartedAt: root.StartedAt,
-				EndedAt: root.EndedAt, GitBranch: root.GitBranch,
-			},
-			Rows: rowsFrom(traceprocessing.TallyRows(result.Graph)), EntityIDs: hostedGraphIDs(result.Graph),
-			AttributeKeys: attributes, FileTouches: touches, VendorIDs: vendors,
-		})
-	}
-	return projected
 }

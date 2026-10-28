@@ -125,11 +125,6 @@ func (f *fileState) markInterrupted(line claudetranscript.Line) {
 	}
 }
 
-// classifyInput decides what kind of ask a user record is.
-func classifyInput(line claudetranscript.Line, text string) session.InputKind {
-	return classifyInputWith(line, text, traceprocessing.Local)
-}
-
 func classifyInputWith(line claudetranscript.Line, text string, profile traceprocessing.MappingProfile) session.InputKind {
 	stripped := prompttext.Strip(text)
 

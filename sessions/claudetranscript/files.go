@@ -228,7 +228,7 @@ func readFile(fsys fs.FS, path, name, label, agentID string) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening transcript %s: %w", label, err)
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 
 	return decodeFile(handle, name, label, agentID)
 }
