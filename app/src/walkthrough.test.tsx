@@ -155,17 +155,23 @@ const type = (field: HTMLTextAreaElement, value: string) =>
 const key = (k: string) =>
   act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
 
-it("walks the stops, marks what was passed as looked at and skips it next time", () => {
+it("walks the stops in order and marks what was passed as looked at", () => {
   render();
   expect(node.textContent).toContain("The route · riskiest first");
   click("Start the tour");
-  expect(node.querySelector("h2.walk-title")?.textContent).toBe(buildTour(doc).stops[0]!.title);
+  const title = () => node.querySelector("h2.walk-title")?.textContent;
+  const stops = buildTour(doc).stops;
+  expect(title()).toBe(stops[0]!.title);
   key("ArrowRight");
   expect(node.textContent).toContain("1 of");
   key("ArrowLeft");
-  // Next from the first stop jumps over the one already looked at.
+  key("ArrowLeft");
+  // Next visits every stop, the ones already looked at too.
   key("ArrowRight");
-  expect(node.textContent).toContain("Skipped 1 stop you already looked at");
+  key("ArrowRight");
+  expect(title()).toBe(stops[1]!.title);
+  key("j");
+  expect(title()).toBe(stops[2]!.title);
 });
 
 // Comments on the first stop, then goes to the wrap-up.

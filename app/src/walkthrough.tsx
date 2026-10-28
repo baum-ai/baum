@@ -83,7 +83,6 @@ export function Walkthrough({
   const last = tour.stops.length + 1;
   // 0 is the introduction, 1… the stops, `last` the wrap-up.
   const [step, setStep] = useState(0);
-  const [skipped, setSkipped] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const detail = useRef<HTMLDivElement>(null);
@@ -92,22 +91,14 @@ export function Walkthrough({
     detail.current?.scrollTo?.({ top: 0 });
   }, [step]);
 
-  const go = (next: number, skip = 0) => {
+  const go = (next: number) => {
     next = Math.max(0, Math.min(last, next));
     const leaving = tour.stops[step - 1];
     if (leaving && next !== step) markSeen(leaving);
     setStep(next);
-    setSkipped(skip);
     setEditing(null);
   };
-  // Next jumps over stops already looked at; Back and the list still visit
-  // them.
-  const forward = () => {
-    if (step >= last) return;
-    const from = step;
-    const next = tour.stops.findIndex((stop, i) => i >= from && i !== step - 1 && !done(stop));
-    go(next === -1 ? last : next + 1, Math.max(0, (next === -1 ? tour.stops.length : next) - from));
-  };
+  const forward = () => go(step + 1);
   const startComment = (stop: Stop) => {
     setDraft(progress.notes[stop.id] ?? "");
     setEditing(stop.id);
@@ -235,8 +226,7 @@ export function Walkthrough({
                 removeComment={() => setNote(claim, "")}
                 next={forward}
                 back={() => go(step - 1)}
-                nextLabel={tour.stops.slice(step).some((stop) => !done(stop)) ? "Next" : "Wrap up"}
-                skipped={skipped}
+                nextLabel={step === tour.stops.length ? "Wrap up" : "Next"}
               />
             ) : (
               <WrapUp
@@ -444,7 +434,7 @@ function Intro({
   document: ReviewDocument;
   tour: Tour;
   done: (stop: Stop) => boolean;
-  go: (step: number, skip?: number) => void;
+  go: (step: number) => void;
   start: () => void;
 }) {
   const level = tour.level;
@@ -491,30 +481,26 @@ function Intro({
       <section className="walk-block" aria-label="The route">
         <h3 className="walk-label">The route · riskiest first</h3>
         <ul>
-          {tour.chapters.map((chapter, index) => {
-            const open = chapter.stops.filter((at) => !done(tour.stops[at]!));
-            const first = chapter.stops[0]!;
-            return (
-              <li key={chapter.id}>
-                <button
-                  type="button"
-                  className="walk-block-row"
-                  onClick={() => go((open[0] ?? first) + 1, open.length ? open[0]! - first : 0)}
-                >
-                  <span className="walk-number">{index + 1}</span>
-                  <span className="walk-block-text">
-                    <span>{chapter.title}</span>
-                    <span className="walk-block-sub">
-                      {plural(chapter.stops.length, "behaviour")}
-                      {chapter.meaning ? ` · ${chapter.meaning.toLowerCase()}` : ""}
-                    </span>
+          {tour.chapters.map((chapter, index) => (
+            <li key={chapter.id}>
+              <button
+                type="button"
+                className="walk-block-row"
+                onClick={() => go(chapter.stops[0]! + 1)}
+              >
+                <span className="walk-number">{index + 1}</span>
+                <span className="walk-block-text">
+                  <span>{chapter.title}</span>
+                  <span className="walk-block-sub">
+                    {plural(chapter.stops.length, "behaviour")}
+                    {chapter.meaning ? ` · ${chapter.meaning.toLowerCase()}` : ""}
                   </span>
-                  <ChapterProgress tour={tour} chapter={chapter} done={done} />
-                  <RiskBadge level={chapter.level} />
-                </button>
-              </li>
-            );
-          })}
+                </span>
+                <ChapterProgress tour={tour} chapter={chapter} done={done} />
+                <RiskBadge level={chapter.level} />
+              </button>
+            </li>
+          ))}
         </ul>
       </section>
       {tour.releaseNote ? (
@@ -564,7 +550,6 @@ function Claim({
   next,
   back,
   nextLabel,
-  skipped,
 }: {
   tour: Tour;
   stop: Stop;
@@ -581,7 +566,6 @@ function Claim({
   next: () => void;
   back: () => void;
   nextLabel: string;
-  skipped: number;
 }) {
   const chapter = tour.chapters[stop.chapter]!;
   const hasNote = Boolean(note.trim());
@@ -643,11 +627,6 @@ function Claim({
             <ChevronLeftIcon size={14} />
             Back
           </button>
-          {skipped > 0 ? (
-            <span className="walk-skipped">
-              Skipped {plural(skipped, "stop")} you already looked at
-            </span>
-          ) : null}
         </div>
       )}
       {editing ? (

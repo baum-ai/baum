@@ -93,8 +93,8 @@ source. The walkthrough is drawn as the inbox is, with the Up next design's
 overview, every stop by chapter and the wrap-up are listed on the left, and
 the one being read is beside them: its title, its before and after, Next and
 Something looks off, the question to ask, the chapter's risk and its code. The
-wrap-up lists the stops not looked at and sends the review. Next and → skip
-stops already looked at. Leaving a stop or commenting on it marks it looked at; seen marks and
+wrap-up lists the stops not looked at and sends the review. Next and → go
+to the next stop, looked at or not. Leaving a stop or commenting on it marks it looked at; seen marks and
 drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
 request and review version, the 40 most recent. Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
