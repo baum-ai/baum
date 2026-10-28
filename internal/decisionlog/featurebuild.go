@@ -41,7 +41,7 @@ type BuildOptions struct {
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
 	// Gated refuses a repository whose decisions are not captured (the
-	// gate), with Reason "disabled".
+	// gate), with Reason ReasonDisabled.
 	Gated bool
 	// Progress, when set, is told after every batch and stage.
 	Progress func(BuildProgress)
@@ -172,7 +172,7 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 		}
 	}
 	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
-		estimate.Reason = "disabled"
+		estimate.Reason = ReasonDisabled
 		return estimate, err
 	}
 	items, err := r.buildItems(ctx)
@@ -305,7 +305,8 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 		report.Stopped = estimate.Reason
 		return report, nil
 	}
-	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, Backend: o.Backend, Model: o.Model, building: true})
+	// A gated build checks the gate before every call, as the live stages do.
+	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: !o.Gated, Backend: o.Backend, Model: o.Model, building: true})
 	if err != nil {
 		return report, err
 	}

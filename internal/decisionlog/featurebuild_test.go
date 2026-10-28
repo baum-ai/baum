@@ -193,3 +193,22 @@ func TestBuildStopsAtTheCapAndResumes(t *testing.T) {
 		t.Fatalf("version %s, stopped %q", state, stopped)
 	}
 }
+
+// A gated build, the job's, reads the gate before every call: a repository
+// turned off during the build stops it, its version still building.
+func TestGatedBuildStopsWhenTurnedOff(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(60 * 24 * time.Hour)
+	f.history(50)
+	f.backend.batch = func(user string) (string, error) {
+		f.off = true
+		return batchReply(t, user, ""), nil
+	}
+	report := f.build(BuildOptions{Gated: true, MaxCostUSD: 1})
+	if report.Current || report.Stopped != ReasonDisabled || report.Placed != 25 || f.backend.calls["batch"] != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	if again := f.build(BuildOptions{Gated: true, MaxCostUSD: 1}); again.Stopped != ReasonDisabled || f.backend.calls["batch"] != 1 {
+		t.Fatalf("a build of a repository turned off = %+v", again)
+	}
+}
