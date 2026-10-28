@@ -155,6 +155,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   // A deep link reloads into the same PR page under the namespace.
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
+  // The pull request opens on its overview; the versions are in the full review.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Review version", exact: true }).click();
   await page.getByRole("button", { name: "View v1", exact: true }).click();
   await expect(page.getByText("Local fixture review version 1", { exact: true })).toBeVisible();
@@ -853,12 +855,12 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  await page.getByRole("button", { name: "Walk through", exact: true }).click();
+  // A pull request opens on the walkthrough's overview.
   const walk = page.getByRole("region", { name: "Walkthrough" });
-  await expect(walk.getByText("The route · riskiest first")).toBeVisible();
-  expect(page.url()).toContain("walk=tour");
+  await expect(walk.getByText("The tour · riskiest first")).toBeVisible();
   await walk.screenshot({ path: "test-results/walkthrough-intro.png", animations: "disabled" });
-  await walk.getByRole("button", { name: "Start the tour", exact: true }).click();
+  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
+  await expect(page).toHaveURL(/walk=tour/);
   await expect(walk.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(
     "Operator-only dead-letter endpoints",
   );
@@ -899,7 +901,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   );
   await page.screenshot({ path: "test-results/walkthrough-narrow.png", fullPage: true });
   await walk.getByRole("button", { name: "Full review", exact: true }).click();
-  await expect(page).not.toHaveURL(/walk=/);
+  await expect(page).toHaveURL(/walk=full/);
   expect(errors).toEqual([]);
 });
 
@@ -939,6 +941,9 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   );
   await page.keyboard.press("Enter");
   await expect(goTo).toHaveCount(0);
+  // It opens on the overview; v opens the full review.
+  await expect(page.getByRole("button", { name: "Start the review" })).toBeVisible();
+  await page.keyboard.press("v");
   await expect(page.locator("[data-review-page]")).toBeVisible();
   await expect.poll(() => search().get("pr")).toBe("7");
   // j and k step through the review in reading order, from the Summary, once

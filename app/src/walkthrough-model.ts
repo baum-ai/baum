@@ -50,6 +50,8 @@ export type Chapter = {
   why: string;
   /** What the section changes, in a sentence or three. */
   summary: string;
+  /** The lines its hunks add and remove. */
+  lines: { additions: number; deletions: number };
   /** What the change set out to do, as the pull request and its sessions
    *  say, when the review found it. */
   intent: string | null;
@@ -191,6 +193,7 @@ export function buildTour(document: ReviewDocument): Tour {
       meaning: level ? RISK_SCORE_MEANING[level] : null,
       why: sectionWhy(section),
       summary: text(section.summary?.text),
+      lines: { additions: section.derived.additions, deletions: section.derived.deletions },
       risks: (section.risks ?? [])
         .filter((risk) => risk.state !== "mitigated" && text(risk.text))
         .map((risk) => ({ text: text(risk.text), tier: risk.tier }))

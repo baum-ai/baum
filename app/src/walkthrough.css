@@ -1039,3 +1039,92 @@
 .walk-code details[open] > summary {
   margin-bottom: 10px;
 }
+
+/* The overview a pull request opens on: one column, no list beside it. */
+.walk-landing {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+.walk-landing .walk-panel {
+  flex: 1;
+  padding-top: 22px;
+}
+.walkthrough .walk-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin-bottom: -6px;
+  color: var(--un-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.walkthrough .walk-back:hover {
+  color: var(--un-ink);
+}
+.walk-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: -6px;
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-facts:empty {
+  display: none;
+}
+.walk-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.walk-fact.caution {
+  color: var(--un-working);
+  font-weight: 600;
+}
+.walk-add {
+  color: var(--un-done);
+}
+.walk-del {
+  color: var(--un-hot);
+}
+.walk-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.walk-notices:empty {
+  display: none;
+}
+/* What the approver must not miss, and what breaks for others. */
+.walk-flag {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 14px 16px;
+  border-left: 3px solid var(--un-risk-mid);
+  border-radius: 0 10px 10px 0;
+  background: var(--un-working-bg);
+  color: var(--un-ink);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.walk-flag.breaking {
+  border-left-color: var(--un-hot);
+  background: var(--un-fix-bg);
+}
+.walk-flag p {
+  margin: 0;
+}
+.walk-landing .walk-block-row .walk-badge {
+  margin-top: 1px;
+}
+.walk-fact.failing {
+  color: var(--un-hot);
+}

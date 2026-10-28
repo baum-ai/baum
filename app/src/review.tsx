@@ -43,7 +43,7 @@ import { canMerge, MergeDialog } from "./merge";
 import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
-import { Walkthrough } from "./walkthrough";
+import { Walkthrough, type WalkMode } from "./walkthrough";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -123,14 +123,22 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
-  // The walkthrough is opt-in: the full review stays the page's default.
-  // walk=all named the list view the walkthrough once had; it opens the tour.
+  // A pull request opens on the walkthrough's overview, the tour one step
+  // in; walk=full, or a link to a place in the review (pane=…), is the full
+  // review. walk=all named the list view the walkthrough once had.
   const walk = url.search.get("walk");
-  const walking = walk === "tour" || walk === "all";
-  const setWalk = (open: boolean) =>
+  const walkMode: WalkMode | null =
+    walk === "full" || (!walk && url.search.has("pane"))
+      ? null
+      : walk === "tour" || walk === "all"
+        ? "tour"
+        : "landing";
+  const setWalk = (mode: WalkMode | null) =>
     url.update((current) => {
-      if (open) current.set("walk", "tour");
-      else current.delete("walk");
+      if (mode === "tour") current.set("walk", "tour");
+      else if (mode === "landing") current.delete("walk");
+      else current.set("walk", "full");
+      current.delete("pane");
       return current;
     });
   const fixLabelText = fixLabel(entry);
@@ -175,8 +183,8 @@ export function LocalReview({
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
   useShortcuts((event) => {
-    // The walkthrough has keys of its own.
-    if (walking && doc) return;
+    // The tour has keys of its own; the overview leaves the page's to it.
+    if (walkMode === "tour" && doc) return;
     const step =
       event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
     if (step) {
@@ -277,15 +285,81 @@ export function LocalReview({
   return (
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
-        {walking && doc ? (
+        {walkMode && doc ? (
           // A new version starts afresh, with that version's own progress.
           <Walkthrough
             key={doc.review.version}
             entry={entry}
             document={doc}
-            close={() => setWalk(false)}
+            mode={walkMode}
+            setMode={setWalk}
+            close={() => setWalk(null)}
+            back={back}
             patches={patches}
             changed={changed}
+            actions={
+              <>
+                {fix && fixLabelText ? (
+                  <button type="button" className="walk-secondary" disabled={fixing} onClick={fix}>
+                    <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
+                    {fixing ? "Fixing…" : fixLabelText}
+                  </button>
+                ) : null}
+                {canMerge(entry) ? (
+                  <button type="button" className="walk-secondary" onClick={() => setMerging(true)}>
+                    Merge…
+                  </button>
+                ) : null}
+                {canUpdateBranch(entry) ? (
+                  <button
+                    type="button"
+                    className="walk-secondary"
+                    onClick={() => setUpdating(true)}
+                  >
+                    Update branch
+                  </button>
+                ) : null}
+                {canRerunChecks(entry) ? (
+                  <button
+                    type="button"
+                    className="walk-secondary"
+                    onClick={() => setRerunning(true)}
+                  >
+                    Re-run checks
+                  </button>
+                ) : null}
+                {entry.status === "outdated" || generating ? (
+                  <button
+                    type="button"
+                    className="walk-secondary"
+                    disabled={generating || entry.needs_clone}
+                    onClick={generate}
+                  >
+                    {generating ? "Generating review…" : "Regenerate review"}
+                  </button>
+                ) : null}
+              </>
+            }
+            notices={
+              <>
+                {showFix && fixJob ? (
+                  <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+                ) : null}
+                <LiveSessions sessions={running} Link={ViewerLink} />
+                {failed ? (
+                  <Alert>
+                    The latest review could not be read. This saved version remains available.{" "}
+                    <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
+                  </Alert>
+                ) : null}
+                {generating ? (
+                  <Notice>
+                    A new review is being generated. This saved version remains available while it
+                    runs.
+                  </Notice>
+                ) : null}
+              </>
+            }
           />
         ) : (
           <ReviewViewer
@@ -359,7 +433,7 @@ export function LocalReview({
                       </Button>
                     ) : null}
                     {doc ? (
-                      <Button variant="secondary" size="compact" onClick={() => setWalk(true)}>
+                      <Button variant="secondary" size="compact" onClick={() => setWalk("landing")}>
                         Walk through
                       </Button>
                     ) : null}

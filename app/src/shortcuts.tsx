@@ -43,6 +43,7 @@ const WALKTHROUGH_SHORTCUTS = [
   { keys: ["ArrowLeft"], label: "Previous chapter" },
   { keys: ["o"], label: "Show the behaviour's code" },
   { keys: ["c"], label: "Comment on the behaviour" },
+  { keys: ["v"], label: "Open the full review" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */

@@ -14,6 +14,7 @@ import {
   SearchIcon,
 } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
+import { ViewerLink } from "@baum/viewer/navigation";
 import { EvidenceBadge } from "@baum/viewer/components/review-section";
 import {
   RISK_SCORE_MEANING,
@@ -21,6 +22,7 @@ import {
   type RiskScoreLevel,
 } from "@baum/viewer/review-document";
 import { LocalRequestError, request, type Entry } from "./api";
+import { PullRequestState } from "./inbox";
 import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
@@ -37,6 +39,9 @@ import {
 } from "./walkthrough-model";
 import "./walkthrough.css";
 
+/** The overview a pull request opens on, or the tour it leads into. */
+export type WalkMode = "landing" | "tour";
+
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
@@ -44,7 +49,8 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  *  written before steps had titles does. */
 const echoes = (stop: Stop) => stop.text.replace(/[.!?]\s*$/, "") === stop.title;
 
-/** The review as a guided tour, one page per chapter, riskiest first: the
+/** A pull request's overview, what matters about it on one page, and from
+ *  there the review as a guided tour, one page per chapter, riskiest first: the
  *  chapter's intent and risk once at the top, then its behaviours, one of
  *  them picked out for the keys. Nobody has to sign off on every behaviour:
  *  moving past one, or leaving its chapter, counts as having looked at it,
@@ -55,16 +61,29 @@ const echoes = (stop: Stop) => stop.text.replace(/[.!?]\s*$/, "") === stop.title
 export function Walkthrough({
   entry,
   document,
+  mode,
+  setMode,
   close,
+  back,
   patches,
   changed,
+  actions,
+  notices,
 }: {
   entry: Entry;
   document: ReviewDocument;
-  /** Back to the full review. */
+  mode: WalkMode;
+  setMode: (mode: WalkMode) => void;
+  /** To the full review. */
   close: () => void;
+  /** Where the pull request was opened from. */
+  back: { href: string; label: string };
   patches: HunkPatchSource;
   changed: () => Promise<void>;
+  /** The pull request's own actions, such as a fix or a merge. */
+  actions?: ReactNode;
+  /** What is happening on it now, such as agents on its branch. */
+  notices?: ReactNode;
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
@@ -84,8 +103,8 @@ export function Walkthrough({
     setProgress((current) => ({ ...current, notes: { ...current.notes, [stop.id]: note } }));
 
   const last = tour.chapters.length + 1;
-  // 0 is the overview, 1… the chapters, `last` the wrap-up.
-  const [page, setPage] = useState(0);
+  // 1… the chapters, `last` the wrap-up; before the first is the overview.
+  const [page, setPage] = useState(1);
   // The behaviour the keys act on, an index into `tour.stops`.
   const [cur, setCur] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
@@ -109,8 +128,13 @@ export function Walkthrough({
   /** Opens a page; on a chapter, picks `at` or the chapter's first
    *  behaviour. Leaving a chapter counts all of it as looked at. */
   const open = (next: number, at?: number) => {
-    next = Math.max(0, Math.min(last, next));
+    next = Math.min(last, next);
     if (chapter && next !== page) markSeen(...chapter.stops.map((index) => tour.stops[index]!));
+    if (next < 1) {
+      setEditing(null);
+      return setMode("landing");
+    }
+    if (mode !== "tour") setMode("tour");
     const target = tour.chapters[next - 1];
     if (target) setCur(at ?? target.stops[0]!);
     reveal.current = at !== undefined;
@@ -129,6 +153,7 @@ export function Walkthrough({
   };
   // j and k walk the behaviours, across chapters; → and ← whole pages.
   const down = () => {
+    if (mode === "landing") return open(1);
     if (!chapter) return open(page + 1);
     const index = chapter.stops.indexOf(cur);
     if (index < chapter.stops.length - 1) pick(chapter.stops[index + 1]!);
@@ -158,6 +183,25 @@ export function Walkthrough({
 
   useShortcuts((event) => {
     const key = event.key;
+    if (key === "v") {
+      event.preventDefault();
+      return close();
+    }
+    if (mode === "landing") {
+      // The overview's one move is into the tour; the page's own keys, such
+      // as m to merge, stay with the page.
+      if (key === "ArrowRight" || key === "j" || key === "Enter") {
+        if (
+          key === "Enter" &&
+          event.target instanceof HTMLElement &&
+          event.target.closest("a, button")
+        )
+          return;
+        event.preventDefault();
+        open(1);
+      }
+      return;
+    }
     const stop = chapter ? tour.stops[cur] : undefined;
     if (key === "j" || key === "ArrowDown") {
       event.preventDefault();
@@ -203,6 +247,25 @@ export function Walkthrough({
       </div>
     );
 
+  if (mode === "landing")
+    return (
+      <section aria-label="Walkthrough" className="walkthrough">
+        <div className="walk-landing">
+          <Landing
+            entry={entry}
+            document={document}
+            tour={tour}
+            done={done}
+            open={open}
+            close={close}
+            back={back}
+            actions={actions}
+            notices={notices}
+          />
+        </div>
+      </section>
+    );
+
   return (
     <section aria-label="Walkthrough" className="walkthrough">
       <header className="walk-head">
@@ -226,6 +289,7 @@ export function Walkthrough({
         <div className="walk-head-actions">
           <button type="button" className="walk-secondary" onClick={close}>
             Full review
+            <kbd aria-hidden>v</kbd>
           </button>
         </div>
         <div aria-hidden className="walk-head-bar">
@@ -259,9 +323,7 @@ export function Walkthrough({
             pick={pick}
           />
           <div ref={detail} className="walk-detail">
-            {page === 0 ? (
-              <Intro entry={entry} document={document} tour={tour} done={done} open={open} />
-            ) : chapter ? (
+            {chapter ? (
               <ChapterPage
                 key={chapter.id}
                 tour={tour}
@@ -429,7 +491,7 @@ function StopList({
         <ul>
           {row(
             "overview",
-            page === 0,
+            false,
             () => open(0),
             "Overview",
             "What it does, and the route",
@@ -509,40 +571,128 @@ function StopList({
   );
 }
 
-function Intro({
+/** What matters about the pull request before reading it: where it stands
+ *  on GitHub, what it does, what to look at closely and how risky it is,
+ *  and its chapters; then the way into the tour. Only what says something
+ *  is shown: a state with nothing to report is left out. */
+function Landing({
   entry,
   document,
   tour,
   done,
   open,
+  close,
+  back,
+  actions,
+  notices,
 }: {
   entry: Entry;
   document: ReviewDocument;
   tour: Tour;
   done: (stop: Stop) => boolean;
   open: (page: number) => void;
+  close: () => void;
+  back: { href: string; label: string };
+  actions?: ReactNode;
+  notices?: ReactNode;
 }) {
+  const pr = entry.pull_request;
   const level = tour.level;
+  const unresolved = entry.unresolved ?? 0;
+  const stats = document.stats;
+  const started = tour.stops.some(done);
+  const attention = document.summary.attention?.text?.trim();
+  const attentionChapter = tour.chapters.findIndex(
+    (chapter) => chapter.id === document.summary.attention?.refs?.[0],
+  );
+  const breaking = document.summary.breaking_change?.trim();
   return (
-    <article aria-labelledby="walk-intro-title" className="walk-panel">
+    <article aria-labelledby="walk-landing-title" className="walk-panel">
+      <ViewerLink href={back.href} className="walk-back">
+        <ChevronLeftIcon size={13} />
+        {back.label}
+      </ViewerLink>
       <div className="walk-meta">
-        <span className="walk-chip">Overview</span>
+        {pr.review_requested_from_me ? (
+          <span className="walk-chip risk-3">Review requested</span>
+        ) : pr.authored_by_me ? (
+          <span className="walk-chip">Yours</span>
+        ) : null}
         <span className="walk-where">
-          {entry.pull_request.repository} · #{entry.pull_request.number} · Review v
-          {document.review.version}
+          {pr.repository} · #{pr.number}
+          {pr.author && !pr.authored_by_me ? ` · ${pr.author}` : ""}
+          {pr.draft ? " · Draft" : ""}
         </span>
-        {tour.minutes ? <span className="walk-minutes">≈ {tour.minutes} min</span> : null}
+        {tour.minutes ? <span className="walk-minutes">≈ {tour.minutes} min to review</span> : null}
       </div>
-      <h2 id="walk-intro-title" className="walk-title">
-        What this pull request does
-      </h2>
+      <h1 id="walk-landing-title" className="walk-title">
+        {pr.title}
+      </h1>
+      <div className="walk-facts">
+        <PullRequestState entry={entry} />
+        {/* The state above names one blocker; failing checks behind a
+            conflict still need saying. */}
+        {entry.checks === "failing" && entry.merge === "conflict" ? (
+          <span className="walk-fact failing">Checks failing</span>
+        ) : null}
+        {unresolved > 0 ? (
+          <span className="walk-fact caution">
+            <CommentsIcon size={13} />
+            {plural(unresolved, "unresolved thread")}
+            {entry.unresolved_capped ? " or more" : ""}
+          </span>
+        ) : null}
+        <span className="walk-fact">
+          <span className="walk-add">+{stats.additions.toLocaleString("en-US")}</span>{" "}
+          <span className="walk-del">−{stats.deletions.toLocaleString("en-US")}</span> in{" "}
+          {plural(stats.files, "file")}
+        </span>
+      </div>
       {tour.intro ? <p className="walk-why">{tour.intro}</p> : null}
       <div className="walk-actions">
         <button type="button" className="walk-primary" onClick={() => open(1)}>
-          Start the tour
+          {started ? "Continue the review" : "Start the review"}
           <kbd aria-hidden>→</kbd>
         </button>
+        {actions}
+        <button type="button" className="walk-secondary" onClick={close}>
+          Full review
+          <kbd aria-hidden>v</kbd>
+        </button>
+        <a href={pr.url} target="_blank" rel="noreferrer" className="walk-secondary">
+          GitHub
+          <ExternalLinkIcon size={12} />
+        </a>
       </div>
+      {notices ? <div className="walk-notices">{notices}</div> : null}
+      {document.review.head && pr.head_sha && pr.head_sha !== document.review.head ? (
+        <p className="walk-flag">
+          The pull request has new commits since this review was generated.
+        </p>
+      ) : null}
+      {attention ? (
+        <section className="walk-flag" aria-label="Look closely at">
+          <h2 className="walk-label">Look closely at</h2>
+          <p>
+            {attention}{" "}
+            {attentionChapter >= 0 ? (
+              <button
+                type="button"
+                className="walk-link"
+                onClick={() => open(attentionChapter + 1)}
+              >
+                Go to {tour.chapters[attentionChapter]!.title} →
+              </button>
+            ) : null}
+          </p>
+        </section>
+      ) : null}
+      {breaking ? (
+        <section className="walk-flag breaking" aria-label="Breaking change">
+          <h2 className="walk-label">Breaking change</h2>
+          <p>{breaking}</p>
+        </section>
+      ) : null}
       {tour.risks.length || level ? (
         <RiskCard level={level} meaning={level ? RISK_SCORE_MEANING[level] : null}>
           {tour.risks.map((risk, index) => {
@@ -565,21 +715,28 @@ function Intro({
         </RiskCard>
       ) : null}
       <section className="walk-block" aria-label="The route">
-        <h3 className="walk-label">The route · riskiest first</h3>
+        <h2 className="walk-label">The tour · riskiest first</h2>
         <ul>
           {tour.chapters.map((chapter, index) => (
             <li key={chapter.id}>
               <button type="button" className="walk-block-row" onClick={() => open(index + 1)}>
-                <span className="walk-number">{index + 1}</span>
+                <RiskBadge level={chapter.level} />
                 <span className="walk-block-text">
                   <span>{chapter.title}</span>
                   <span className="walk-block-sub">
                     {plural(chapter.stops.length, "behaviour")}
                     {chapter.meaning ? ` · ${chapter.meaning.toLowerCase()}` : ""}
+                    {` · ${chapter.stops.filter((at) => done(tour.stops[at]!)).length} looked at`}
                   </span>
                 </span>
-                <ChapterProgress tour={tour} chapter={chapter} done={done} />
-                <RiskBadge level={chapter.level} />
+                <span className="walk-block-right">
+                  <span className="walk-add">
+                    +{chapter.lines.additions.toLocaleString("en-US")}
+                  </span>{" "}
+                  <span className="walk-del">
+                    −{chapter.lines.deletions.toLocaleString("en-US")}
+                  </span>
+                </span>
               </button>
             </li>
           ))}
@@ -587,33 +744,11 @@ function Intro({
       </section>
       {tour.releaseNote ? (
         <section className="walk-block" aria-label="Release note">
-          <h3 className="walk-label">Release note</h3>
+          <h2 className="walk-label">Release note</h2>
           <p className="walk-lead">{tour.releaseNote}</p>
         </section>
       ) : null}
-      <p className="walk-note">
-        Each chapter is one page: what it is for and how risky it is, then its behaviours. Read them
-        and move on. You only need to act when something looks off: leave a comment and it goes into
-        the review.
-      </p>
     </article>
-  );
-}
-
-function ChapterProgress({
-  tour,
-  chapter,
-  done,
-}: {
-  tour: Tour;
-  chapter: Chapter;
-  done: (stop: Stop) => boolean;
-}) {
-  const count = chapter.stops.filter((at) => done(tour.stops[at]!)).length;
-  return (
-    <span className="walk-block-right">
-      {count}/{chapter.stops.length}
-    </span>
   );
 }
 

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import example from "../../schema/review-example.json" with { type: "json" };
 import type { Entry } from "./api";
-import { Walkthrough } from "./walkthrough";
+import { Walkthrough, type WalkMode } from "./walkthrough";
 import {
   buildTour,
   firstSentence,
@@ -103,12 +103,13 @@ it("keeps progress per review version and survives junk in storage", () => {
   expect(loadProgress(`${key}x`).seen).toEqual([]);
 });
 
-let root: Root, node: HTMLDivElement, posted: unknown[], answer: Response;
+let root: Root, node: HTMLDivElement, mode: WalkMode, posted: unknown[], answer: Response;
 const changed = vi.fn(async () => {});
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   localStorage.clear();
+  mode = "landing";
   posted = [];
   answer = Response.json({ url: "https://github.com/acme/demo/pull/7#pullrequestreview-1" });
   node = document.createElement("div");
@@ -134,6 +135,12 @@ const render = (authored = false) =>
       <Walkthrough
         entry={entry(authored)}
         document={doc}
+        mode={mode}
+        setMode={(next) => {
+          mode = next;
+          render(authored);
+        }}
+        back={{ href: "/s/test-ns/", label: "Inbox" }}
         close={() => {}}
         patches={async () => null}
         changed={changed}
@@ -158,8 +165,8 @@ const key = (k: string) =>
 
 it("walks chapter by chapter and behaviour by behaviour, marking what was passed", () => {
   render();
-  expect(node.textContent).toContain("The route · riskiest first");
-  click("Start the tour");
+  expect(node.textContent).toContain("The tour · riskiest first");
+  click("Start the review");
   const tour = buildTour(doc);
   const [first, second] = tour.chapters;
   const title = () => node.querySelector("h2.walk-title")?.textContent;
@@ -187,12 +194,12 @@ it("walks chapter by chapter and behaviour by behaviour, marking what was passed
   expect(title()).toBe(second!.title);
   key("ArrowLeft");
   key("ArrowLeft");
-  expect(node.textContent).toContain("The route · riskiest first");
+  expect(node.textContent).toContain("The tour · riskiest first");
 });
 
 // Comments on the first behaviour, then goes to the wrap-up.
 const commentAndWrapUp = (text: string) => {
-  click("Start the tour");
+  click("Start the review");
   key("c");
   type(node.querySelector("textarea")!, text);
   click("Save comment");
@@ -201,7 +208,7 @@ const commentAndWrapUp = (text: string) => {
 
 it("sends one review with each comment on its line", async () => {
   render();
-  click("Start the tour");
+  click("Start the review");
   key("c");
   type(node.querySelector("textarea")!, "Trusts a client header");
   click("Save comment");
@@ -225,6 +232,7 @@ it("sends one review with each comment on its line", async () => {
 
 it("offers neither a verdict on the reader's own pull request", () => {
   render(true);
+  click("Start the review");
   click("Send your review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(node.textContent).toContain("GitHub doesn’t let you approve your own pull request");

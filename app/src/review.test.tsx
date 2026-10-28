@@ -99,10 +99,11 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
 });
+// These test the full review's page; the walkthrough has its own tests.
 async function render(current: Job, revision = 0, currentEntry = entry) {
   await act(async () =>
     root.render(
-      <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+      <UrlStateProvider value={{ search: new URLSearchParams("walk=full"), update: () => {} }}>
         <LocalReview
           entry={currentEntry}
           clone="selected-clone"
@@ -272,7 +273,7 @@ it("keeps the PR page through queued, running and completed SSE states across cl
                 : original(path, ...(args as [])),
     ),
   );
-  history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7");
+  history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7&walk=full");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Review queued");
   currentJob = job("running");
