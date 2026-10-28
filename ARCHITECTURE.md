@@ -2964,11 +2964,12 @@ the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
 refused, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
-newer one drops them. The app reads it through `GET /api/decisions` (a
-session, or the sessions of a pull request: those the tracker links to it and
-those its saved review links, with decisions newer than that review marked
-provisional) and rereads on the `decisions` event the store's writes publish.
-See [its README](internal/decisionlog/README.md).
+newer one drops them; only the ledger's settled calls are pruned, after 90
+days. The app reads it through `GET /api/decisions` (a session, or the
+sessions of a pull request: those the tracker links to it and those its saved
+review links, with decisions newer than that review marked provisional) and
+rereads on the `decisions` event the store's writes publish. See [its
+README](internal/decisionlog/README.md).
 
 ### Transports and control protocol
 
