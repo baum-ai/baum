@@ -25,13 +25,13 @@ func (f *threadState) addTouchesFromTool(evidence *toolEvidence) {
 	if use.Verb == session.VerbRead {
 		kind = session.TouchRead
 	}
-	paths := structuredPaths(use.Name, use.Input)
+	paths := structuredPaths(use.Name, use.Input, f.b.profile)
 	for _, path := range paths {
 		f.addTouch(evidence.callLine, use, nil, path, kind, "")
 	}
 }
 
-func structuredPaths(name string, input json.RawMessage) []string {
+func structuredPaths(name string, input json.RawMessage, profiles ...traceprocessing.MappingProfile) []string {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(input, &object) == nil {
 		var out []string
@@ -43,21 +43,25 @@ func structuredPaths(name string, input json.RawMessage) []string {
 		}
 		var patch string
 		_ = json.Unmarshal(object["patch"], &patch)
-		out = append(out, pathsFromPatch(patch)...)
+		out = append(out, pathsFromPatch(patch, profiles...)...)
 		return uniqueStrings(out)
 	}
 	if strings.EqualFold(name, "apply_patch") {
 		var patch string
 		if json.Unmarshal(input, &patch) == nil {
-			return uniqueStrings(pathsFromPatch(patch))
+			return uniqueStrings(pathsFromPatch(patch, profiles...))
 		}
 	}
 	return nil
 }
 
-func pathsFromPatch(patch string) []string {
+func pathsFromPatch(patch string, profiles ...traceprocessing.MappingProfile) []string {
+	profile := traceprocessing.Local
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
 	var out []string
-	for _, path := range traceprocessing.PatchHeaderPaths(patch) {
+	for _, path := range traceprocessing.PatchHeaderPathsWith(patch, profile) {
 		out = append(out, strings.TrimSpace(path))
 	}
 	return out

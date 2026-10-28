@@ -1,0 +1,373 @@
+{
+  "sessions": [
+    {
+      "id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "parent_session_id": null,
+      "spawned_by_tool_use_id": null,
+      "started_at": "2026-08-01T12:00:00Z",
+      "ended_at": "2026-08-01T12:00:09Z",
+      "working_dir": "/repo",
+      "git_branch": "main",
+      "outcome": "unknown"
+    },
+    {
+      "id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "parent_session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "spawned_by_tool_use_id": "ba16b0d6-fdb5-56d3-a51b-5f9e747c1b35",
+      "started_at": "2026-08-01T12:01:00Z",
+      "ended_at": "2026-08-01T12:01:06Z",
+      "working_dir": "/repo",
+      "outcome": "unknown"
+    }
+  ],
+  "session_attributes": [
+    {
+      "id": "52939c42-6dc9-5930-bec2-a3b1763bdb58",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "key": "git.branch",
+      "value": "main",
+      "valid_from": "2026-08-01T12:00:00Z"
+    },
+    {
+      "id": "68249572-be97-5a51-b742-7a854e53b5b1",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "key": "cwd",
+      "value": "/repo",
+      "valid_from": "2026-08-01T12:00:02Z"
+    },
+    {
+      "id": "63f61c54-ca25-53de-aa69-37f43a6f33ed",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "key": "effort",
+      "value": "high",
+      "valid_from": "2026-08-01T12:00:02Z"
+    },
+    {
+      "id": "f21f103b-b315-5b17-b6ab-f4673a8489c2",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "key": "model",
+      "value": "gpt-5",
+      "valid_from": "2026-08-01T12:00:02Z"
+    },
+    {
+      "id": "7e7ff6ba-e6ae-51d5-a3cb-ded13e8ac372",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "key": "cwd",
+      "value": "/repo",
+      "valid_from": "2026-08-01T12:01:04Z"
+    },
+    {
+      "id": "13bbb929-3bf3-5f73-a310-21b72bc02b0f",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "key": "effort",
+      "value": "high",
+      "valid_from": "2026-08-01T12:01:04Z"
+    },
+    {
+      "id": "d126ec0f-6657-5323-b55c-afda42c723e1",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "key": "model",
+      "value": "gpt-5",
+      "valid_from": "2026-08-01T12:01:04Z"
+    }
+  ],
+  "user_inputs": [
+    {
+      "id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "ordinal": 1,
+      "text": "Delegate the audit",
+      "triggered_at": "2026-08-01T12:00:03Z",
+      "interrupted": false,
+      "kind": "prompt",
+      "origin": "human",
+      "metadata": {}
+    },
+    {
+      "id": "1e01382d-c5ac-5fb5-bce5-fe8e5f66689e",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "ordinal": 1,
+      "text": "Audit the mapper",
+      "triggered_at": "2026-08-01T12:01:03Z",
+      "interrupted": false,
+      "kind": "other",
+      "origin": "agent",
+      "metadata": {
+        "author": "/root",
+        "recipient": "/root/a"
+      }
+    }
+  ],
+  "model_invocations": [
+    {
+      "id": "7c2a08da-61b3-5f3e-ab0a-21606c65877e",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "user_input_id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "parent_model_invocation_id": null,
+      "model": "gpt-5",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "total_tokens": 0,
+      "started_at": "2026-08-01T12:00:05Z"
+    },
+    {
+      "id": "16815929-c998-5a18-8888-542b3a839807",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "user_input_id": "1e01382d-c5ac-5fb5-bce5-fe8e5f66689e",
+      "parent_model_invocation_id": null,
+      "model": "gpt-5",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "total_tokens": 0,
+      "started_at": "2026-08-01T12:01:05Z"
+    }
+  ],
+  "assistant_messages": [
+    {
+      "id": "a73033a4-5ded-5b21-a074-0115ce8bd9d0",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "user_input_id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "model_invocation_id": "7c2a08da-61b3-5f3e-ab0a-21606c65877e",
+      "text": "I will delegate this.",
+      "content": {
+        "items": [
+          {
+            "type": "output_text",
+            "text": "I will delegate this."
+          }
+        ],
+        "phase": "commentary"
+      },
+      "timestamp": "2026-08-01T12:00:05Z"
+    },
+    {
+      "id": "0e5576dc-6e33-581b-913b-8e1668809dbf",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "user_input_id": "1e01382d-c5ac-5fb5-bce5-fe8e5f66689e",
+      "model_invocation_id": "16815929-c998-5a18-8888-542b3a839807",
+      "text": "The mapper is sound.",
+      "content": {
+        "items": [
+          {
+            "type": "output_text",
+            "text": "The mapper is sound."
+          }
+        ],
+        "phase": "final_answer"
+      },
+      "timestamp": "2026-08-01T12:01:05Z"
+    }
+  ],
+  "tool_uses": [
+    {
+      "id": "ba16b0d6-fdb5-56d3-a51b-5f9e747c1b35",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "user_input_id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "model_invocation_id": "7c2a08da-61b3-5f3e-ab0a-21606c65877e",
+      "name": "spawn_agent",
+      "verb": "spawn_subagent",
+      "input": {
+        "task": "Audit"
+      },
+      "status": "ok",
+      "metadata": {
+        "namespace": "collaboration",
+        "subagent_detail": "transcript"
+      },
+      "timestamp": "2026-08-01T12:00:06Z"
+    }
+  ],
+  "tool_results": [
+    {
+      "id": "c4a5c2f0-a936-56d9-8a2c-63d326900cd9",
+      "tool_use_id": "ba16b0d6-fdb5-56d3-a51b-5f9e747c1b35",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "user_input_id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "status": "ok",
+      "output_text": "spawned /root/a",
+      "output": {
+        "completion_events": [
+          {
+            "type": "sub_agent_activity",
+            "kind": "started",
+            "event_id": "call-spawn",
+            "agent_thread_id": "22222222-2222-4222-8222-222222222222",
+            "agent_path": "/root/a"
+          }
+        ],
+        "response_output": "spawned /root/a"
+      },
+      "timestamp": "2026-08-01T12:00:07Z"
+    }
+  ],
+  "file_touches": null,
+  "token_usage": null,
+  "vendor_ids": [
+    {
+      "our_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "our_type": "session",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "thread_id",
+      "vendor_id": "11111111-1111-4111-8111-111111111111",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#1"
+    },
+    {
+      "our_id": "52939c42-6dc9-5930-bec2-a3b1763bdb58",
+      "our_type": "session_attribute",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "11111111-1111-4111-8111-111111111111:1:git.branch",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#1"
+    },
+    {
+      "our_id": "68249572-be97-5a51-b742-7a854e53b5b1",
+      "our_type": "session_attribute",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "11111111-1111-4111-8111-111111111111:3:cwd",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#3"
+    },
+    {
+      "our_id": "63f61c54-ca25-53de-aa69-37f43a6f33ed",
+      "our_type": "session_attribute",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "11111111-1111-4111-8111-111111111111:3:effort",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#3"
+    },
+    {
+      "our_id": "f21f103b-b315-5b17-b6ab-f4673a8489c2",
+      "our_type": "session_attribute",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "11111111-1111-4111-8111-111111111111:3:model",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#3"
+    },
+    {
+      "our_id": "33d1bb99-918d-52eb-a10c-2f9d119fa9e5",
+      "our_type": "user_input",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line",
+      "vendor_id": "11111111-1111-4111-8111-111111111111:4",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#4"
+    },
+    {
+      "our_id": "7c2a08da-61b3-5f3e-ab0a-21606c65877e",
+      "our_type": "model_invocation",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "turn_id.invocation",
+      "vendor_id": "turn-parent:4:1",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#6"
+    },
+    {
+      "our_id": "a73033a4-5ded-5b21-a074-0115ce8bd9d0",
+      "our_type": "assistant_message",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "item.id",
+      "vendor_id": "assistant-parent",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#6"
+    },
+    {
+      "our_id": "ba16b0d6-fdb5-56d3-a51b-5f9e747c1b35",
+      "our_type": "tool_use",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "call_id",
+      "vendor_id": "call-spawn",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#7"
+    },
+    {
+      "our_id": "c4a5c2f0-a936-56d9-8a2c-63d326900cd9",
+      "our_type": "tool_result",
+      "session_id": "c5ff00bd-41c5-5746-9389-14391db30bec",
+      "vendor": "codex",
+      "vendor_id_kind": "call_id",
+      "vendor_id": "call-spawn",
+      "source_ref": "rollout-2026-08-01T12-00-00-11111111-1111-4111-8111-111111111111.jsonl#8"
+    },
+    {
+      "our_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "our_type": "session",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "thread_id",
+      "vendor_id": "22222222-2222-4222-8222-222222222222",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#1"
+    },
+    {
+      "our_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "our_type": "session",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "agent_path",
+      "vendor_id": "/root/a",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#1"
+    },
+    {
+      "our_id": "1e01382d-c5ac-5fb5-bce5-fe8e5f66689e",
+      "our_type": "user_input",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line",
+      "vendor_id": "22222222-2222-4222-8222-222222222222:5",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#5"
+    },
+    {
+      "our_id": "7e7ff6ba-e6ae-51d5-a3cb-ded13e8ac372",
+      "our_type": "session_attribute",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "22222222-2222-4222-8222-222222222222:6:cwd",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#6"
+    },
+    {
+      "our_id": "13bbb929-3bf3-5f73-a310-21b72bc02b0f",
+      "our_type": "session_attribute",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "22222222-2222-4222-8222-222222222222:6:effort",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#6"
+    },
+    {
+      "our_id": "d126ec0f-6657-5323-b55c-afda42c723e1",
+      "our_type": "session_attribute",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "rollout.line.key",
+      "vendor_id": "22222222-2222-4222-8222-222222222222:6:model",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#6"
+    },
+    {
+      "our_id": "16815929-c998-5a18-8888-542b3a839807",
+      "our_type": "model_invocation",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "turn_id.invocation",
+      "vendor_id": "turn-child:5:1",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#7"
+    },
+    {
+      "our_id": "0e5576dc-6e33-581b-913b-8e1668809dbf",
+      "our_type": "assistant_message",
+      "session_id": "f6ed9a29-d1b6-5874-ae4d-cd8f3443e634",
+      "vendor": "codex",
+      "vendor_id_kind": "item.id",
+      "vendor_id": "assistant-child",
+      "source_ref": "rollout-2026-08-01T12-01-00-22222222-2222-4222-8222-222222222222.jsonl#7"
+    }
+  ]
+}

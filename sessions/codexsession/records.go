@@ -399,6 +399,7 @@ func (f *threadState) subAgentActivity(line codextranscript.Line, activity codex
 	if activity.Kind == "started" {
 		evidence.ok = true
 	}
+	f.trackSpawnActivity(evidence, activity)
 	return accountMerged, "", nil
 }
 
@@ -480,7 +481,11 @@ func (f *threadState) activateInput(row *session.UserInput, line int) {
 func (f *threadState) agentMessage(line codextranscript.Line, message *codextranscript.AgentMessage) (accountCategory, string, error) {
 	meta := f.pendingInter
 	f.pendingInter = nil
+	reported := f.attachFinalAnswer(message)
 	if meta == nil {
+		if reported {
+			return accountMerged, "", nil
+		}
 		return accountDiscarded, "context/agent_message_without_trigger", nil
 	}
 	f.batch = nil
@@ -493,7 +498,11 @@ func (f *threadState) agentMessage(line codextranscript.Line, message *codextran
 	if len(message.OtherRecipients) > 0 {
 		metadata["other_recipients"], _ = json.Marshal(message.OtherRecipients)
 	}
-	return f.addAgentInput(line, message.Recipient, message.Content, metadata)
+	category, reason, err := f.addAgentInput(line, message.Recipient, message.Content, metadata)
+	if err == nil && reported && category == accountDiscarded {
+		return accountMerged, "", nil
+	}
+	return category, reason, err
 }
 
 func (f *threadState) interAgentCommunication(line codextranscript.Line) (accountCategory, string, error) {

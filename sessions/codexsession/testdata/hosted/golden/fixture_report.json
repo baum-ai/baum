@@ -1,0 +1,52 @@
+{
+  "sessions": 2,
+  "rows": {
+    "user_inputs": 2,
+    "model_invocations": 2,
+    "assistant_messages": 2,
+    "tool_uses": 1,
+    "tool_results": 1,
+    "file_touches": 0,
+    "session_attributes": 7,
+    "token_usage": 0,
+    "vendor_ids": 18
+  },
+  "records": {
+    "total": 18,
+    "mapped": 8,
+    "attribute_bearing": 2,
+    "merged": 2,
+    "discarded": {
+      "context/model_visible_user_copy": 1,
+      "context/turn_lifecycle": 4,
+      "inherited history": 1
+    },
+    "torn_final_lines": 0
+  },
+  "tokens": {
+    "records": 0,
+    "assigned_invocations": 0,
+    "ambiguous_rows": 0,
+    "repeated_totals": 0
+  },
+  "unsupported_turns": 0,
+  "transcript": {
+    "cli_versions": {
+      "seen": {
+        "0.146.0": 2
+      },
+      "min": "0.146.0",
+      "max": "0.146.0"
+    },
+    "subtypes": {
+      "event_msg/sub_agent_activity": 1,
+      "event_msg/task_complete": 2,
+      "event_msg/task_started": 3,
+      "event_msg/user_message": 1,
+      "response_item/agent_message": 1,
+      "response_item/function_call": 1,
+      "response_item/function_call_output": 1,
+      "response_item/message": 3
+    }
+  }
+}

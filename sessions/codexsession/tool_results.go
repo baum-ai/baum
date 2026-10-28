@@ -3,6 +3,7 @@ package codexsession
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"sort"
 	"strings"
 
@@ -25,6 +26,7 @@ func (f *threadState) toolOutput(line codextranscript.Line, callID string, outpu
 	evidence.output = append(json.RawMessage(nil), output...)
 	evidence.outputSeen = true
 	evidence.outputLine = line
+	f.trackAgentCall(evidence)
 	f.batch = nil
 	return accountMapped, "", nil
 }
@@ -184,6 +186,14 @@ func (b *builder) finalizeTools() {
 	for _, state := range b.order {
 		for _, use := range state.tools {
 			evidence := b.toolByID[use.ID]
+			switch {
+			case b.profile != traceprocessing.Hosted:
+			case spawnTools[use.Name]:
+				use.Metadata = session.WithSubagentDetail(use.Metadata, subagentDetail(evidence))
+			case use.Name == "followup_task" && evidence != nil && evidence.report != "":
+				// A follow-up that received the child's next report carries it.
+				use.Metadata = session.WithSubagentDetail(use.Metadata, session.SubagentReport)
+			}
 			if evidence == nil || (!evidence.outputSeen && len(evidence.completions) == 0) {
 				use.Status = session.StatusNoResult
 				continue
@@ -200,7 +210,7 @@ func (b *builder) finalizeTools() {
 			use.Status = status
 			output := map[string]any{}
 			if evidence.outputSeen {
-				output["response_output"] = evidence.output
+				output["response_output"] = json.RawMessage(evidence.output)
 			}
 			if len(evidence.completions) > 0 {
 				events := make([]json.RawMessage, len(evidence.completions))
@@ -214,7 +224,10 @@ func (b *builder) finalizeTools() {
 				ID: state.ids.Mint("tool_result", evidence.callID), ToolUseID: use.ID,
 				SessionID: use.SessionID, UserInputID: use.UserInputID, Status: status, Output: outputRaw,
 			}
-			if evidence.outputSeen {
+			if evidence.report != "" {
+				report := evidence.report
+				row.OutputText = &report
+			} else if evidence.outputSeen {
 				if text := outputText(evidence.output); text != "" {
 					row.OutputText = &text
 				}
@@ -234,19 +247,27 @@ func (b *builder) finalizeTools() {
 			}
 			state.vendorRow(row.ID, session.EntityToolResult, "call_id", evidence.callID, ordinal)
 
-			if status == session.StatusOK && use.Verb == session.VerbExecute && gitevidence.IsCommitCommand(evidence.command) {
-				captured := outputText(evidence.output)
-				for _, completion := range evidence.completions {
-					if end := completion.EventMsg.ExecCommandEnd; end != nil {
-						captured += "\n" + end.Stdout + "\n" + end.AggregatedOutput
-					}
-				}
-				if len(gitevidence.CommitSHAs(captured, gitevidence.TrustsOnelineLog(evidence.command))) > 0 {
-					state.committed = true
-				}
+			if status == session.StatusOK && use.Verb == session.VerbExecute && gitevidence.IsCommitCommand(evidence.command) && capturedCommitSHAFor(evidence, b.profile) {
+				state.committed = true
 			}
 		}
 	}
+}
+
+// capturedCommitSHA is whether the call's output or any of its completions
+// names a commit. Each output is scanned on its own: a SHA never spans two.
+func capturedCommitSHA(evidence *toolEvidence) bool {
+	trust := gitevidence.TrustsOnelineLog(evidence.command)
+	if len(gitevidence.CommitSHAs(outputText(evidence.output), trust)) > 0 {
+		return true
+	}
+	for _, completion := range evidence.completions {
+		end := completion.EventMsg.ExecCommandEnd
+		if end != nil && (len(gitevidence.CommitSHAs(end.Stdout, trust)) > 0 || len(gitevidence.CommitSHAs(end.AggregatedOutput, trust)) > 0) {
+			return true
+		}
+	}
+	return false
 }
 
 func outputText(raw json.RawMessage) string {
@@ -293,4 +314,17 @@ func commandFromInput(input json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+func capturedCommitSHAFor(evidence *toolEvidence, profile traceprocessing.MappingProfile) bool {
+	if profile == traceprocessing.Hosted {
+		return capturedCommitSHA(evidence)
+	}
+	captured := outputText(evidence.output)
+	for _, completion := range evidence.completions {
+		if end := completion.EventMsg.ExecCommandEnd; end != nil {
+			captured += "\n" + end.Stdout + "\n" + end.AggregatedOutput
+		}
+	}
+	return len(gitevidence.CommitSHAs(captured, gitevidence.TrustsOnelineLog(evidence.command))) > 0
 }
