@@ -949,7 +949,12 @@ export function SessionsPage({
               );
               const files = s.activity?.files_touched;
               return (
-                <li key={sessionKey(s)} className="local-feed-card compact" title={s.session_id} {...row(s)}>
+                <li
+                  key={sessionKey(s)}
+                  className="local-feed-card compact"
+                  title={s.session_id}
+                  {...row(s)}
+                >
                   <Agent agent={s.agent} />
                   {s.title ? (
                     <span className="local-feed-title" title={s.title}>
