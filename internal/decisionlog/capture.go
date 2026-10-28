@@ -94,6 +94,9 @@ type Capturer struct {
 	Now    func() time.Time
 	Log    *slog.Logger
 
+	// locate is livesessions.Locate unless a test replaces it.
+	locate func(home, cursorStore, agent, id, path string) (livesessions.Location, error)
+
 	once     sync.Once
 	redactor *bundle.Redactor
 	initErr  error
@@ -257,10 +260,30 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		}
 	}
 
-	loc, err := livesessions.Locate(c.home(), c.cursorStore(), t.Agent, t.ID, t.Path)
+	head, found, err := c.Store.Session(ctx, t.Agent, t.ID)
+	if err != nil {
+		return report, err
+	}
+	// A session whose hooks named no transcript (a Codex one is then looked up
+	// by id, a scan of its whole store) is read from where the last capture
+	// found it, checked again; only a path that no longer holds it is looked
+	// up afresh.
+	locate := c.locate
+	if locate == nil {
+		locate = livesessions.Locate
+	}
+	path := t.Path
+	if path == "" && found {
+		path = head.Path
+	}
+	loc, err := locate(c.home(), c.cursorStore(), t.Agent, t.ID, path)
+	if err != nil && path != t.Path {
+		loc, err = locate(c.home(), c.cursorStore(), t.Agent, t.ID, t.Path)
+	}
 	if err != nil {
 		return Report{Outcome: OutcomeUnavailable, Reason: err.Error()}, nil
 	}
+	meta.Path = loc.Path()
 	if meta.Fingerprint, err = loc.Version(); err != nil {
 		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
 	}
@@ -270,10 +293,6 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 	if size > MaxTranscriptBytes {
 		return skip(ReasonTooLarge)
-	}
-	head, found, err := c.Store.Session(ctx, t.Agent, t.ID)
-	if err != nil {
-		return report, err
 	}
 	if found && !o.Force && covered(head, meta.Fingerprint, day) {
 		return Report{Outcome: OutcomeUnchanged}, nil

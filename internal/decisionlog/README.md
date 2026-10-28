@@ -44,8 +44,11 @@ not a failure.
 ## Capture
 
 1. The transcript is located as the live session view locates it: a regular
-   file inside the agent's own session store, symbolic links resolved. Its
-   mapped root session must be the hook event's session. A session whose own
+   file inside the agent's own session store, symbolic links resolved. A
+   session whose hooks named no transcript (a Codex one is then found by id,
+   which scans the store) is read from the path the last capture stored,
+   checked the same way, and looked up again only when that path no longer
+   holds it. Its mapped root session must be the hook event's session. A session whose own
    files exceed 64 MiB is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
    unchanged and the session is covered, nothing happens.

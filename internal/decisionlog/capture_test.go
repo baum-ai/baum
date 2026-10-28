@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/sessions"
@@ -491,5 +492,47 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 		} else if want && info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
 		}
+	}
+}
+
+// A Codex session whose hooks named no transcript is looked up in the store
+// once; later captures read the path the first one stored.
+func TestCaptureLooksACodexSessionUpOnce(t *testing.T) {
+	f := newFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000001"
+	write(t, filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl"),
+		`{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","cli_version":"0.69.0","model_provider":"openai"}}
+{"timestamp":"2026-10-20T09:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"Keep the flag name."}}
+`)
+	scans, paths := 0, []string{}
+	f.capturer.locate = func(home, cursorStore, agent, id, path string) (livesessions.Location, error) {
+		if path == "" {
+			scans++
+		}
+		paths = append(paths, path)
+		return livesessions.Locate(home, cursorStore, agent, id, path)
+	}
+	f.target = Target{Agent: "codex", ID: id, Repository: "o/r"}
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
+		t.Fatalf("%+v", report)
+	}
+	row, _, _ := f.store.Session(context.Background(), "codex", id)
+	if !strings.HasSuffix(row.Path, id+".jsonl") {
+		t.Fatalf("stored path %q", row.Path)
+	}
+	f.later(MinInterval)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeUnchanged {
+		t.Fatalf("%+v", report)
+	}
+	if scans != 1 || paths[1] != row.Path {
+		t.Fatalf("%d scans, paths %q", scans, paths)
+	}
+	// A stored path that no longer holds the session is looked up afresh.
+	if _, err := f.store.db.Exec(`UPDATE capture_session SET transcript_path=? WHERE agent='codex'`, filepath.Join(f.home, ".codex", "sessions", "gone.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	f.later(MinInterval)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeUnchanged || scans != 2 {
+		t.Fatalf("%+v, %d scans", report, scans)
 	}
 }
