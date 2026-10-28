@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 // The fixture daemon publishes its launch URL in its credential file.
 async function launchURL(): Promise<string> {
@@ -17,10 +17,17 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
-// With TIMELINE_SHOTS set, the views are also saved there for a look.
-async function shot(page: Page, name: string) {
+// With TIMELINE_SHOTS set, the views are also saved there for a look: the
+// whole page, or with `at` the window scrolled to that element (a full-page
+// shot resizes the window, which moves the opened feature out of its side
+// panel).
+async function shot(page: Page, name: string, at?: Locator) {
   const dir = process.env.TIMELINE_SHOTS;
-  if (dir) await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
+  if (!dir) return;
+  if (at) {
+    await at.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(dir, `${name}.png`) });
+  } else await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
 }
 
 for (const scheme of ["light", "dark"] as const) {
@@ -57,8 +64,46 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(panel).toContainText("Adds the local Timeline API and page.");
     await panel.getByRole("button", { name: /Serve the Timeline from the daemon/ }).click();
     await expect(panel).toContainText("Sync the hosted log down");
-    await expect(panel).toContainText("The Timeline does not show prompts.");
-    await shot(page, `feature-panel-${scheme}`);
+    // The prompt it cites, from the transcript on this computer, masked.
+    await expect(panel).toContainText("Serve the Timeline from the daemon's own store; ask");
+    await expect(panel).not.toContainText("ada.lovelace@example.com");
+    await shot(page, `decision-prompts-${scheme}`);
+    // The session opens at the cited turn, though no tracker lists it.
+    await panel.getByRole("button", { name: "Open session at turn 1" }).click();
+    const card = panel.getByRole("region", { name: "Transcript" });
+    await expect(card).toContainText("Draw it with the review viewer's decision log components.");
+    await expect(card).not.toContainText("ada.lovelace@example.com");
+    await shot(
+      page,
+      `session-at-turn-${scheme}`,
+      card.getByText("Draw it with the review viewer").first(),
+    );
+
+    // The user is one person: their sessions and the pull request their
+    // login opened.
+    const person = page.getByLabel("Person");
+    await expect(person.locator("option")).toHaveText([
+      "Everyone",
+      "Ada Lovelace (3)",
+      "author (2)",
+    ]);
+    await person.selectOption({ label: "author (2)" });
+    await expect(page).toHaveURL(/person=author%40users.noreply.github.com/);
+    await expect(features).toContainText("Hosted-only Timeline");
+    await expect(features).not.toContainText("Keyword search over decisions");
+    await person.selectOption({ label: "Ada Lovelace (3)" });
+    await expect(features).toContainText("Keyword search over decisions");
+    if (process.env.TIMELINE_SHOTS) {
+      // The list the select offers, drawn open for the shot.
+      await person.evaluate((select: HTMLSelectElement) => {
+        select.size = 3;
+      });
+      await shot(page, `people-${scheme}`, person);
+      await person.evaluate((select: HTMLSelectElement) => {
+        select.size = 0;
+      });
+    }
+    await person.selectOption("");
 
     // Filters: status and keywords narrow the features.
     await page.getByLabel("Status").selectOption("abandoned");
@@ -72,6 +117,18 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(features).not.toContainText("Local decision log");
     await page.getByLabel("Search features").fill("");
     await expect(page).not.toHaveURL(/q=/);
+    // A file narrows the features to those touching it.
+    await page.getByLabel("Filter by file").fill("internal/decisionlog/featurestore.go");
+    await page.getByLabel("Filter by file").press("Enter");
+    await expect(page).toHaveURL(/file=internal%2Fdecisionlog%2Ffeaturestore.go/);
+    await expect(features).toContainText("Keyword search over decisions");
+    await expect(features).not.toContainText("Local decision log");
+    await page.getByRole("button", { name: /Remove filter: File/ }).click();
+    // A range after everything leaves nothing.
+    await page.getByLabel("From", { exact: true }).fill("2099-01-01");
+    await expect(page.getByText("No features match these filters")).toBeVisible();
+    await page.getByLabel("From", { exact: true }).fill("");
+    await expect(features).toContainText("Local decision log");
 
     // All decisions, with one open.
     await page.getByRole("tab", { name: "All decisions" }).click();
@@ -83,10 +140,10 @@ for (const scheme of ["light", "dark"] as const) {
     ).toContainText("acme/other");
     await page.getByRole("button", { name: /Match keywords with SQLite FTS5/ }).click();
     await expect(page.getByText("internal/decisionlog/featurestore.go")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Open the session" })).toHaveAttribute(
-      "href",
-      /page=sessions&session=claude-code%3Atimeline-2/,
-    );
+    // Its session's transcript is gone from this computer.
+    await expect(
+      page.getByText("The session's transcript is no longer on this computer."),
+    ).toBeVisible();
     await shot(page, `decisions-${scheme}`);
     await page.getByLabel("Category").selectOption("scope");
     const listed = page.locator("main section > ol");
@@ -99,6 +156,7 @@ for (const scheme of ["light", "dark"] as const) {
 
     // Another repository with nothing placed yet explains how features
     // appear.
+    await page.getByRole("tab", { name: "Features" }).click();
     await page
       .getByLabel("Repositories without feature history")
       .getByRole("button", { name: "Open acme/other" })

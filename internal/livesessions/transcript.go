@@ -1,6 +1,7 @@
 package livesessions
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -98,6 +99,9 @@ type cached struct {
 	// found is the rollout a lookup by id found, so the store is scanned
 	// once per session.
 	found string
+	// untracked is an entry Read made for a session the tracker may not
+	// list: only the least recently used rule drops it.
+	untracked bool
 }
 
 // Answer is a session's transcript as served.
@@ -138,7 +142,29 @@ func (t *Transcripts) Get(ctx context.Context, agent, id string) (Answer, error)
 		t.forget(agent, id)
 		return Answer{}, ErrNotTracked
 	}
-	c := t.entry(key{agent, id})
+	return t.serve(ctx, session, path, false)
+}
+
+// Read answers with the transcript of the session agent/id whether the
+// tracker lists it or not, such as one that ended long ago: from path, the
+// transcript its hooks named when it was captured (empty when none did), on
+// branch. While the tracker lists it, its session and path are the
+// tracker's. The file read is held to the same rules as Get's. An error is
+// an *Unavailable or the context's.
+func (t *Transcripts) Read(ctx context.Context, agent, id, path, branch string) (Answer, error) {
+	if t.Tracker != nil {
+		if session, tracked, ok := t.Tracker.Lookup(agent, id); ok {
+			return t.serve(ctx, session, cmp.Or(tracked, path), false)
+		}
+	}
+	return t.serve(ctx, Session{Agent: agent, ID: id, State: StateEnded, Branch: branch}, path, true)
+}
+
+// serve answers with the session's transcript from path, building it again
+// only when its files changed.
+func (t *Transcripts) serve(ctx context.Context, session Session, path string, untracked bool) (Answer, error) {
+	agent, id := session.Agent, session.ID
+	c := t.entry(key{agent, id}, untracked)
 	select {
 	case c.turn <- struct{}{}:
 	case <-ctx.Done():
@@ -192,15 +218,18 @@ func (t *Transcripts) Get(ctx context.Context, agent, id string) (Answer, error)
 }
 
 // entry is the session's cache entry, made when there is none. The sessions
-// the tracker no longer lists are dropped first, and a new entry beyond
-// MaxCached drops the least recently asked for.
-func (t *Transcripts) entry(k key) *cached {
+// the tracker no longer lists are dropped first, but for those Read asked
+// for, and a new entry beyond MaxCached drops the least recently asked for.
+func (t *Transcripts) entry(k key, untracked bool) *cached {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.cache == nil {
 		t.cache = map[key]*cached{}
 	}
-	for other := range t.cache {
+	for other, c := range t.cache {
+		if c.untracked || other == k || t.Tracker == nil {
+			continue
+		}
 		if _, _, ok := t.Tracker.Lookup(other.agent, other.id); !ok {
 			delete(t.cache, other)
 		}
@@ -208,6 +237,7 @@ func (t *Transcripts) entry(k key) *cached {
 	now := t.now()
 	if c := t.cache[k]; c != nil {
 		c.used = now
+		c.untracked = untracked
 		return c
 	}
 	for len(t.cache) >= MaxCached {
@@ -220,7 +250,7 @@ func (t *Transcripts) entry(k key) *cached {
 		}
 		delete(t.cache, oldest)
 	}
-	c := &cached{turn: make(chan struct{}, 1), used: now}
+	c := &cached{turn: make(chan struct{}, 1), used: now, untracked: untracked}
 	t.cache[k] = c
 	return c
 }

@@ -39,7 +39,7 @@ import {
   localDayKey,
   personLabel,
 } from "@baum/viewer/decision-log";
-import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
+import { useUrlState } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
 import { appURL, isActiveJob, request, type Job } from "./api";
 import {
@@ -50,6 +50,11 @@ import {
   useBuildState,
 } from "./feature-build";
 import { LoadingStatus } from "./nine-dots";
+import {
+  type LiveTranscriptAnswer,
+  parseLiveTranscript,
+  TranscriptCard,
+} from "./session-transcript";
 import { PageBar } from "./shell";
 import "./timeline.css";
 
@@ -91,23 +96,54 @@ export function pullRequestHref(repository: string, number: number): string {
   return appURL(`?repository=${encodeURIComponent(repository)}&pr=${number}`);
 }
 
-/** The app page of a session, by the Timeline's `<agent>:<id>`. */
-export function sessionHref(id: string): string {
-  return appURL(`?page=sessions&session=${encodeURIComponent(id)}`);
-}
-
 /** A decision's prompts are read from its session's transcript on this
  *  computer; once that is gone they are withheld. */
 export const WITHHELD_NOTE = "The session's transcript is no longer on this computer.";
 
-/** A decision's session opens as a link to its page. */
-const OPEN_SESSION: OpenSessionSource<string> = {
-  load: async (sessionId) => sessionId,
-  render: (sessionId) => (
-    <ViewerLink href={sessionHref(sessionId)} className="text-base underline">
-      Open the session
-    </ViewerLink>
-  ),
+/** A decision's session opens in its detail at the turn it cites, read
+ *  from its transcript on this computer whether it still runs or ended long
+ *  ago (`api/timeline/sessions/<agent>:<id>/transcript`). */
+const OPEN_SESSION: OpenSessionSource<LiveTranscriptAnswer> = {
+  load: async (sessionId, signal) => {
+    const answer = parseLiveTranscript(
+      await request<unknown>(
+        `api/timeline/sessions/${encodeURIComponent(sessionId)}/transcript`,
+        undefined,
+        "GET",
+        signal,
+      ),
+    );
+    if (!answer || (answer.available && !answer.transcript))
+      throw Error("The daemon's answer was not a transcript.");
+    return answer;
+  },
+  render: (answer, at) => {
+    if (!answer.available || !answer.transcript)
+      return (
+        <p className="text-base text-(--text-tertiary) italic">
+          {answer.available ? WITHHELD_NOTE : answer.message}
+        </p>
+      );
+    const { prompts } = answer.transcript.session;
+    return (
+      <>
+        {/* The transcript lists the prompts it kept; a decision can cite a
+            turn that is not one of them. */}
+        {prompts.length === 0 || prompts.some((prompt) => prompt.ordinal === at.turn) ? null : (
+          <p className="mb-2 text-base text-(--text-tertiary) italic">
+            Turn {formatCount(at.turn)} is not among the prompts shown for this session.
+          </p>
+        )}
+        <TranscriptCard
+          transcript={answer.transcript}
+          version={answer.version}
+          summary={answer.summary}
+          live={answer.live}
+          focusTurn={at.turn}
+        />
+      </>
+    );
+  },
 };
 
 type ServedRepository = { repository: string; has_features?: boolean };

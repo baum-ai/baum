@@ -486,12 +486,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		renderer := transcript.NewRenderer("")
 		live := events.liveSessions(paths, registry, discover, server, log)
 		var liveAPI http.Handler
+		var transcripts *livesessions.Transcripts
 		if live != nil {
 			live.Mask = func(text string) string { return renderer.Mask(ctx, text) }
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}).Handler()
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}
+			liveAPI = transcripts.Handler()
 		}
 		// Decision capture follows the tracked sessions; its store keeps the
 		// derived, redacted decisions in the daemon's state.
@@ -508,7 +510,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
-				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry),
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
 			}
 		}

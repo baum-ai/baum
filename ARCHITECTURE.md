@@ -2909,7 +2909,13 @@ replace it.
   `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
   request's `?version=` is the current one; or `{"available":false,"live",
   "code":"transcript_unavailable","message"}` with why, in a sentence the app
-  shows.
+  shows. The Timeline's `GET /api/timeline/sessions/{agent}:{id}/transcript`
+  answers the same way for a captured session of a repository it serves,
+  whether the tracker lists it or not (`Transcripts.Read`): from the path
+  capture stored, the tracker's while it lists the session, held to the same
+  store rules; `live` is false once the tracker does not list it. Its cache
+  entries are kept until the least recently asked for makes room, not dropped
+  with the tracker's list.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like

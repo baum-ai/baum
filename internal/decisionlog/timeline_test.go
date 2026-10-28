@@ -3,9 +3,9 @@ package decisionlog
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/transcript"
 )
 
 type timelineRegistry struct {
@@ -150,12 +152,12 @@ type featurePage struct {
 	Features []struct {
 		Repository       *timelineRepository `json:"repository"`
 		ID               string              `json:"id"`
-		Title            *string `json:"title"`
-		Status           string  `json:"status"`
-		SummaryPending   bool    `json:"summary_pending"`
-		PullRequestCount int     `json:"pull_request_count"`
-		SessionCount     int     `json:"session_count"`
-		DecisionCount    int     `json:"decision_count"`
+		Title            *string             `json:"title"`
+		Status           string              `json:"status"`
+		SummaryPending   bool                `json:"summary_pending"`
+		PullRequestCount int                 `json:"pull_request_count"`
+		SessionCount     int                 `json:"session_count"`
+		DecisionCount    int                 `json:"decision_count"`
 		People           []Person
 		KeyDecisions     []timelineKeyDecision `json:"key_decisions"`
 	} `json:"features"`
@@ -615,6 +617,31 @@ func TestTimelineCitedPrompts(t *testing.T) {
 		first.TriggeredAt == nil || !first.TriggeredAt.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("turn 1 = %+v", first)
 	}
+	// The session opens though no tracker lists it.
+	readAt := t0
+	f.timeline.Transcripts = &livesessions.Transcripts{Home: home, Render: transcript.NewRenderer(home).Render, Now: func() time.Time { return readAt }}
+	type answer struct {
+		Available  bool            `json:"available"`
+		Live       bool            `json:"live"`
+		Transcript json.RawMessage `json:"transcript"`
+		Message    string          `json:"message"`
+	}
+	var opened answer
+	if code := f.get("/api/timeline/sessions/claude-code:p1/transcript", nil, &opened); code != http.StatusOK || !opened.Available || opened.Live ||
+		!strings.Contains(string(opened.Transcript), "Keep the header row.") || strings.Contains(string(opened.Transcript), plantedMail) {
+		t.Fatalf("transcript = %d %+v", code, opened)
+	}
+	for _, path := range []string{"/api/timeline/sessions/claude-code:nope/transcript", "/api/timeline/sessions/p1/transcript"} {
+		if code := f.get(path, nil, nil); code != http.StatusNotFound {
+			t.Fatalf("%s = %d", path, code)
+		}
+	}
+	off := false
+	f.registry.list[0].Settings.Decisions = &off
+	if code := f.get("/api/timeline/sessions/claude-code:p1/transcript", nil, nil); code != http.StatusNotFound {
+		t.Fatalf("a session of a repository turned off = %d", code)
+	}
+	f.registry.list[0].Settings.Decisions = nil
 	// Gone from this computer: the prompts are withheld.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -623,6 +650,11 @@ func TestTimelineCitedPrompts(t *testing.T) {
 	f.get("/api/timeline/decisions/d-p1", nil, &got)
 	if !got.PromptsWithheld || len(got.Turns) != 0 {
 		t.Fatalf("without the transcript = %+v", got)
+	}
+	opened = answer{}
+	readAt = readAt.Add(time.Minute)
+	if f.get("/api/timeline/sessions/claude-code:p1/transcript", nil, &opened); opened.Available || opened.Message == "" {
+		t.Fatalf("transcript without its file = %+v", opened)
 	}
 }
 

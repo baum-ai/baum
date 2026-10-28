@@ -17,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/features"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 )
@@ -94,11 +95,14 @@ type Timeline struct {
 	Home string
 	// CursorStore is Cursor's database; empty is its default.
 	CursorStore string
+	// Transcripts serves a captured session's transcript, tracked or ended;
+	// nil serves none.
+	Transcripts *livesessions.Transcripts
 
 	prompts timelinePrompts
 	selfMu  sync.Mutex
-	selfAt time.Time
-	self   *Person
+	selfAt  time.Time
+	self    *Person
 }
 
 // timelineRepository names the repository a row is listed under, as the
@@ -115,17 +119,17 @@ func repositoryRef(name string) *timelineRepository {
 
 type timelineDecision struct {
 	Repository *timelineRepository `json:"repository,omitempty"`
-	ID         string    `json:"id"`
-	SessionID  string    `json:"session_id"`
-	Turn       int       `json:"turn"`
-	DecidedAt  time.Time `json:"decided_at"`
-	Who        string    `json:"who"`
-	Person     *Person   `json:"person"`
-	Vendor     string    `json:"vendor"`
-	Category   string    `json:"category"`
-	Summary    string    `json:"summary"`
-	Superseded bool      `json:"superseded"`
-	FileCount  int       `json:"file_count"`
+	ID         string              `json:"id"`
+	SessionID  string              `json:"session_id"`
+	Turn       int                 `json:"turn"`
+	DecidedAt  time.Time           `json:"decided_at"`
+	Who        string              `json:"who"`
+	Person     *Person             `json:"person"`
+	Vendor     string              `json:"vendor"`
+	Category   string              `json:"category"`
+	Summary    string              `json:"summary"`
+	Superseded bool                `json:"superseded"`
+	FileCount  int                 `json:"file_count"`
 }
 
 type timelineKeyDecision struct {
@@ -237,6 +241,7 @@ func (t *Timeline) Handler() http.Handler {
 			writeTimeline(w, map[string]any{"people": people})
 		})
 	}
+	mux.HandleFunc("GET /api/timeline/sessions/{session}/transcript", t.sessionTranscript)
 	mux.HandleFunc("GET /api/timeline/features/{id}", func(w http.ResponseWriter, r *http.Request) {
 		detail, err := t.feature(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -1423,6 +1428,38 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 		"prompts_withheld": !readable,
 		"pull_requests":    listed,
 	}, nil
+}
+
+// sessionTranscript serves the transcript of a captured session of a served
+// repository, named as the Timeline names it (<agent>:<id>), as the live
+// sessions' route answers it, whether the tracker still lists it or not:
+// from the path capture found it at.
+func (t *Timeline) sessionTranscript(w http.ResponseWriter, r *http.Request) {
+	agent, id, ok := strings.Cut(r.PathValue("session"), ":")
+	if !ok || t.Transcripts == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var repository, branch, path string
+	err := t.Store.db.QueryRowContext(r.Context(), `SELECT repository, branch, transcript_path FROM capture_session WHERE agent=? AND session_id=?`,
+		agent, id).Scan(&repository, &branch, &path)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		timelineError(w, err)
+		return
+	}
+	if _, err := t.allowed(r.Context(), repository); err != nil {
+		if errors.Is(err, errTimelineRepository) {
+			err = errTimelineNotFound
+		}
+		timelineError(w, err)
+		return
+	}
+	answer, err := t.Transcripts.Read(r.Context(), agent, id, path, branch)
+	t.Transcripts.WriteAnswer(w, r, answer, err)
 }
 
 // LocalClones is a Timeline's Clone: the first available clone of the

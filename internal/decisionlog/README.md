@@ -515,6 +515,12 @@ and never writes it.
   sessions last read. When the transcript is no longer on this computer, or
   cannot be read, `prompts_withheld` is true and `turns` empty. No
   rationale or evidence is served.
+- **`GET /sessions/{agent}:{id}/transcript`**: a captured session's
+  transcript, as `GET /api/live-sessions/{agent}/{id}/transcript` answers
+  it, whether the tracker still lists the session or it ended long ago
+  (`livesessions.Transcripts.Read`, from its stored `transcript_path`;
+  `live` from the tracker). A session of a repository the Timeline does not
+  serve, or one never captured, is a 404.
 
 `q` matches keywords, each word a prefix and all of them required, with
 SQLite FTS5 (the `unicode61` tokenizer, diacritics folded, no stemming, so

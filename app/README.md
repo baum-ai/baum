@@ -392,7 +392,12 @@ skipped by reason, being read); a decision opened by address but not listed
 shows above the list. A decision a later capture replaced opens with a line
 saying so. A decision's detail shows the prompts it cites, read from the
 session's transcript on this computer, or says "The session's transcript is
-no longer on this computer." once it is gone; a pull request links to its PR page
+no longer on this computer." once it is gone. **Open session at turn N**
+opens the session in the detail, at that turn, ended or not
+(`api/timeline/sessions/<agent>:<id>/transcript`): the same card the Sessions
+page draws (`TranscriptCard` in `src/session-transcript.tsx`), with the cited
+turn marked and scrolled to, and "Turn N is not among the prompts shown for
+this session." when the transcript does not list it. A pull request links to its PR page
 (`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
 with a button for more. The app's event stream counts `timeline` events and
 every connection after the first; on each the page reads its repositories, list

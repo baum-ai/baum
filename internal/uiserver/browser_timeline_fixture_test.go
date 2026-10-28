@@ -3,7 +3,6 @@ package uiserver_test
 import (
 	"context"
 	"database/sql"
-	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ import (
 // a session on its own, one abandoned and one whose text is not written
 // yet. acme/other has decisions on, one session's decision and no feature
 // history.
-func browserTimeline(t *testing.T, home string, registry *repos.Registry) http.Handler {
+func browserTimeline(t *testing.T, home string, registry *repos.Registry) *decisionlog.Timeline {
 	t.Helper()
 	ctx := context.Background()
 	path := filepath.Join(home, "decisions", "decisions.sqlite")
@@ -146,9 +145,9 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	exec(`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?,12,'commit-1',?)`, repo, ms(day(1, 11)))
 	exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','timeline-1',?,'commit-1','checkpoint',1)`, repo)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
-	return (&decisionlog.Timeline{Store: store, Registry: registry, Home: home,
+	return &decisionlog.Timeline{Store: store, Registry: registry, Home: home,
 		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} },
-		Login: func(context.Context) string { return "ada-l" }}).Handler()
+		Login: func(context.Context) string { return "ada-l" }}
 }
 
 // fixtureClone names the sessions' person and has no saved reviews.

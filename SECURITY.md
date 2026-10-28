@@ -1100,6 +1100,18 @@ written as `~`, nothing else removed. The path itself never reaches the app.
 At most 8 transcripts are held in memory, and only while their session is
 listed.
 
+The Timeline opens the session of a decision through
+`GET /api/timeline/sessions/{agent}:{id}/transcript`, behind the same
+checks, for a session decision capture recorded in a repository the Timeline
+shows, also once the session ended and is no longer listed. It reads the
+transcript path capture stored for that session (the one its hooks reported),
+under the same folder rules, with the same redaction; the path never reaches
+the app. Such transcripts count towards the same 8 held, the least recently
+opened making room. A decision's detail also shows the prompts its decisions
+cite, read from that transcript and redacted as decision capture reads it
+(secrets and identities masked, the harness's wrappers stripped), and none
+once the file is gone.
+
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.

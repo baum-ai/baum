@@ -225,6 +225,24 @@ it("shows the prompts a decision cites", async () => {
   expect(node.textContent).not.toContain("no longer on this computer");
 });
 
+it("opens a decision's session from the Timeline's own route", async () => {
+  answers["api/timeline/decisions/d1"] = { ...decisionDetail, prompts_withheld: false };
+  answers["api/timeline/sessions/claude-code%3As1/transcript"] = {
+    available: false,
+    live: false,
+    code: "transcript_unavailable",
+    message: "The transcript file is not there any more.",
+  };
+  await show("page=timeline&tab=all&open=d1");
+  const open = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Open session at turn 2",
+  )!;
+  await act(async () => open.click());
+  await act(async () => {});
+  expect(requests).toContain("/s/test-ns/api/timeline/sessions/claude-code%3As1/transcript");
+  expect(node.textContent).toContain("The transcript file is not there any more.");
+});
+
 it("says how features appear before there are any", async () => {
   answers["api/timeline/features"] = { features: [], next_cursor: null };
   await show();
