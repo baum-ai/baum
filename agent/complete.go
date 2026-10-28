@@ -1,9 +1,6 @@
 package agent
 
-import (
-	"context"
-	"log/slog"
-)
+import "context"
 
 // Completer is a backend that can make a single structured-output model call
 // without tools, files or a working directory: the system prompt, one user
@@ -24,9 +21,6 @@ type CompleteRequest struct {
 	Schema []byte
 	// MaxOutputTokens caps the reply; zero is the backend's default.
 	MaxOutputTokens int
-	// Logger, when set, receives a bounded copy of each reply the harness
-	// rejected against the schema (claude), for the private log.
-	Logger *slog.Logger
 }
 
 // Completion is a Completer's reply.
@@ -37,6 +31,8 @@ type Completion struct {
 	Model string
 	Usage Usage
 	// Rejections counts the replies the harness rejected against the schema
-	// before the last one (claude).
-	Rejections int
+	// (claude), and RejectionDetail is a bounded copy of the last one's
+	// reason, which describes the reply's shape, for the private log.
+	Rejections      int
+	RejectionDetail string
 }

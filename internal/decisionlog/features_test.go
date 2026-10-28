@@ -727,3 +727,26 @@ INSERT INTO pull_sync(repository, etag, cursor_updated_at, activated_at) VALUES 
 		_ = s.Close()
 	}
 }
+
+// A store made with today's schema is not migrated, and keeps its sync state.
+func TestOpenKeepsACurrentStoresSyncState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions", "decisions.sqlite")
+	s, err := Open(path, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Activate(context.Background(), "acme/widgets"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE pull_sync SET etag='"e1"', cursor_updated_at=5`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if s, err = Open(path, OpenOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if state, err := s.Activate(context.Background(), "acme/widgets"); err != nil || state.ETag != `"e1"` || state.Cursor.IsZero() {
+		t.Fatalf("state %+v, %v", state, err)
+	}
+}

@@ -638,7 +638,8 @@ func (s *Store) pullLinks(ctx context.Context, repository string, number int, me
 	}
 	for kind, query := range map[string]string{
 		"stacked": `SELECT o.number FROM pull_request i JOIN pull_request o ON o.repository=i.repository AND o.number != i.number
-WHERE i.repository=?1 AND i.number=?2 AND i.cross_repository=0 AND o.cross_repository=0
+WHERE i.repository=?1 AND i.number=?2 AND i.cross_repository=0 AND o.cross_repository=0 AND i.default_branch != ''
+
 AND ((o.head_ref = i.base_ref AND i.base_ref NOT IN ('', i.default_branch))
   OR (o.base_ref = i.head_ref AND i.head_ref NOT IN ('', i.default_branch)))
 AND (SELECT COUNT(*) FROM pull_request same WHERE same.repository=i.repository
@@ -751,9 +752,24 @@ assigned_at=excluded.assigned_at`, version, repository, session.Agent, session.I
 // attributed to: those of the pull requests their commits are linked to,
 // and those they are in on their own.
 func sessionFeatures(ctx context.Context, tx *sql.Tx, version int64, repository string, sessions []SessionKey) ([]string, error) {
-	if len(sessions) == 0 {
-		return nil, nil
+	sessions = slices.Compact(slices.SortedFunc(slices.Values(sessions), func(a, b SessionKey) int {
+		return cmp.Or(cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
+	}))
+	var ids []string
+	for chunk := range slices.Chunk(sessions, maxParameters/2) {
+		found, err := chunkFeatures(ctx, tx, version, repository, chunk)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, found...)
 	}
+	return ids, nil
+}
+
+// maxParameters bounds the parameters of one IN or VALUES list.
+const maxParameters = 500
+
+func chunkFeatures(ctx context.Context, tx *sql.Tx, version int64, repository string, sessions []SessionKey) ([]string, error) {
 	args := []any{version, repository}
 	values := make([]string, len(sessions))
 	for i, key := range sessions {
@@ -770,15 +786,20 @@ AND fs.agent=linked.agent AND fs.session_id=linked.session_id`, args...))
 
 // commitSessions are the sessions linked to the commits shas.
 func commitSessions(ctx context.Context, tx *sql.Tx, repository string, shas []string) ([]SessionKey, error) {
-	if len(shas) == 0 {
-		return nil, nil
+	var out []SessionKey
+	for chunk := range slices.Chunk(shas, maxParameters) {
+		args := []any{repository}
+		for _, sha := range chunk {
+			args = append(args, sha)
+		}
+		found, err := collect(scanSession)(tx.QueryContext(ctx, `SELECT DISTINCT agent, session_id FROM session_commit
+WHERE repository=?1 AND sha IN (`+placeholders(2, len(chunk))+`)`, args...))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, found...)
 	}
-	args := []any{repository}
-	for _, sha := range shas {
-		args = append(args, sha)
-	}
-	return collect(scanSession)(tx.QueryContext(ctx, `SELECT DISTINCT agent, session_id FROM session_commit
-WHERE repository=?1 AND sha IN (`+placeholders(2, len(shas))+`)`, args...))
+	return out, nil
 }
 
 // placeholders are n numbered parameters from first: "?3,?4".

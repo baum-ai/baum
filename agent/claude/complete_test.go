@@ -3,7 +3,6 @@ package claude
 import (
 	"bytes"
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +60,7 @@ func TestCompleteReportsUsageOfAFailedCall(t *testing.T) {
 	}
 }
 
-// A rejected reply is counted and its detail goes to the request's logger.
+// A rejected reply is counted and its detail kept.
 func TestCompleteReportsRejectedReplies(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "claude")
 	events := []string{
@@ -72,10 +71,9 @@ func TestCompleteReportsRejectedReplies(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+strings.Join(events, "\n")+"\nEVENTS\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	var logs bytes.Buffer
 	completion, _ := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(),
-		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`), Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
-	if completion.Rejections != 1 || !bytes.Contains(logs.Bytes(), []byte("Output validation failed: choice")) {
-		t.Fatalf("%+v, logs %s", completion, logs.String())
+		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
+	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" {
+		t.Fatalf("%+v", completion)
 	}
 }

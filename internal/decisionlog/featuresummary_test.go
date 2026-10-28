@@ -58,7 +58,7 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	title, keys, clean := f.text(feature)
-	if title != "Widget export" || keys != `[{"id":"d-s1","agent":"claude-code","session":"s1","turn":1}]` || !clean {
+	if title != "Widget export" || keys != `[{"id":"d-s1","agent":"claude-code","session":"s1","turn":1,"ordinal":0}]` || !clean {
 		t.Fatalf("text %q %s clean %v", title, keys, clean)
 	}
 
@@ -169,7 +169,7 @@ func TestFeatureTextHashesDecisionsByAddress(t *testing.T) {
 	if report.Features[0].Outcome != FeatureReused || f.backend.calls["text"] != 1 || report.Features[0].KeyDecisions != 1 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
-	if _, keys, clean := f.text(feature); keys != `[{"id":"renamed","agent":"claude-code","session":"s1","turn":1}]` || !clean {
+	if _, keys, clean := f.text(feature); keys != `[{"id":"renamed","agent":"claude-code","session":"s1","turn":1,"ordinal":0}]` || !clean {
 		t.Fatalf("key decisions %s, clean %v", keys, clean)
 	}
 	r, err := f.worker.newRun(context.Background(), repo, "", FeatureOptions{})
@@ -178,5 +178,49 @@ func TestFeatureTextHashesDecisionsByAddress(t *testing.T) {
 	}
 	if out, err := r.summarize(context.Background(), "gone"); err != nil || out.Outcome != FeatureSkipped {
 		t.Fatalf("a missing feature: %+v, %v", out, err)
+	}
+}
+
+// A key decision keeps its ID while it is current; extracted again under
+// new IDs, it takes the one at its address and place, not the first there.
+func TestFeatureTextKeepsTheNamedKeyDecision(t *testing.T) {
+	f := newFeatureFixture(t)
+	feature := f.placed()
+	save := func(first, second, hash string) {
+		t.Helper()
+		var list []decisions.Decision
+		for _, id := range []string{first, second} {
+			list = append(list, decisions.Decision{ID: id, Summary: "Choice " + id[1:], Category: decisions.CategoryImplementation,
+				Who: decisions.WhoHuman, Turns: []int{1}, Files: []string{"export.go"}})
+		}
+		if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "s1", Repository: repo},
+			ContentHash: hash, Decisions: list}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("a1", "a2", "h-a")
+	f.backend.text = func() (string, error) {
+		return `{"title":"Widget export","description":"Exports widgets.","digest":"D.","key_decisions":["D2"]}`, nil
+	}
+	f.summarize(FeatureOptions{Manual: true})
+	if _, keys, _ := f.text(feature); keys != `[{"id":"a2","agent":"claude-code","session":"s1","turn":1,"ordinal":1}]` {
+		t.Fatalf("keys %s", keys)
+	}
+	f.markAll(feature)
+	if report := f.summarize(FeatureOptions{Manual: true}); report.Features[0].Outcome != FeatureReused {
+		t.Fatalf("report = %+v", report)
+	}
+	save("b1", "b2", "h-b")
+	if report := f.summarize(FeatureOptions{Manual: true}); report.Features[0].Outcome != FeatureReused || f.backend.calls["text"] != 1 {
+		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+	if _, keys, _ := f.text(feature); !strings.Contains(keys, `"id":"b2"`) {
+		t.Fatalf("keys %s", keys)
+	}
+	// The earlier form, bare IDs, still reads.
+	f.exec(`UPDATE feature SET key_decisions_json='["b2"]' WHERE id=?`, feature)
+	f.markAll(feature)
+	if report := f.summarize(FeatureOptions{Manual: true}); len(report.Features) != 1 || report.Features[0].Error != "" {
+		t.Fatalf("report = %+v", report)
 	}
 }

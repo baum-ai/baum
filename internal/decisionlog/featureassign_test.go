@@ -76,8 +76,10 @@ type featureFixture struct {
 	backend *scriptBackend
 	worker  *FeatureWorker
 	prefs   repos.Preferences
-	// off turns the repository's decisions off.
-	off bool
+	// off turns the repository's decisions off; prefsErr fails reading the
+	// preferences.
+	off      bool
+	prefsErr error
 }
 
 func newFeatureFixture(t *testing.T) *featureFixture {
@@ -106,7 +108,7 @@ type fixtureRegistry struct{ f *featureFixture }
 func registryOf(f *featureFixture) FeatureRegistry { return fixtureRegistry{f} }
 
 func (r fixtureRegistry) Preferences(context.Context) (repos.Preferences, error) {
-	return r.f.prefs, nil
+	return r.f.prefs, r.f.prefsErr
 }
 func (r fixtureRegistry) Repositories(context.Context) ([]repos.Repository, error) {
 	return nil, nil
@@ -126,7 +128,7 @@ func (f *featureFixture) pull(number int, title string, opened time.Time, head s
 		encoded, pathsHead = string(raw), head
 	}
 	if _, err := f.store.db.Exec(`INSERT INTO pull_request(repository, number, title, body, state, head_ref, head_sha, base_ref, base_sha,
-created_at, updated_at, paths_head_sha, paths_json) VALUES (?,?,?,?,'open',?,?,'main','base',?,?,?,?)
+created_at, updated_at, paths_head_sha, paths_json, default_branch) VALUES (?,?,?,?,'open',?,?,'main','base',?,?,?,?,'main')
 ON CONFLICT(repository, number) DO UPDATE SET head_sha=excluded.head_sha, paths_head_sha=excluded.paths_head_sha, paths_json=excluded.paths_json,
 updated_at=excluded.updated_at`,
 		repo, number, title, strings.Join(extra, ""), fmt.Sprintf("branch-%d", number), head, opened.UnixMilli(), f.clock.now.UnixMilli(), pathsHead, encoded); err != nil {
@@ -641,7 +643,7 @@ func TestPlacementDryRunWritesNothing(t *testing.T) {
 	f.exec(`DELETE FROM pull_sync`)
 	f.clock.now = t0.Add(time.Hour)
 	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
-	f.assign(FeatureOptions{DryRun: true, Manual: true})
+	f.assign(FeatureOptions{DryRun: true})
 	var rows int
 	_ = f.store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM pull_sync) + (SELECT COUNT(*) FROM feature_version) + (SELECT COUNT(*) FROM feature_settle)`).Scan(&rows)
 	if rows != 0 {
@@ -669,7 +671,54 @@ func TestSavePullsKeepsForksAndLedgerKeepsRejections(t *testing.T) {
 	f.backend.rejections = 1
 	f.assign(FeatureOptions{})
 	var reason string
-	if err := f.store.db.QueryRow(`SELECT reason FROM capture_attempt WHERE stage=?`, StageAssign).Scan(&reason); err != nil || reason != "rejected_replies=1" {
-		t.Fatalf("reason %q, %v", reason, err)
+	var rejections int
+	if err := f.store.db.QueryRow(`SELECT reason, rejections FROM capture_attempt WHERE stage=?`, StageAssign).Scan(&reason, &rejections); err != nil ||
+		reason != "" || rejections != 1 {
+		t.Fatalf("reason %q, rejections %d, %v", reason, rejections, err)
+	}
+}
+
+// Preferences that cannot be read stop a run; a ledger that cannot be
+// written after a good reply keeps the reply.
+func TestPlacementUnreadablePreferencesAndLedger(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
+	f.pull(2, "Two", t0.Add(2*time.Minute), "h2", []string{"b"})
+	f.backend.onCall = func() { f.prefsErr = errors.New("registry gone") }
+	report, err := f.worker.Assign(context.Background(), repo, t.TempDir(), FeatureOptions{})
+	if err == nil || report.Stopped != "preferences_unreadable" || len(report.Items) != 1 {
+		t.Fatalf("report = %+v, %v", report, err)
+	}
+	f.prefsErr, f.backend.onCall = nil, nil
+	f.exec(`CREATE TRIGGER no_settle BEFORE UPDATE ON capture_attempt BEGIN SELECT RAISE(ABORT, 'read-only ledger'); END`)
+	if report := f.assign(FeatureOptions{}); len(report.Items) != 1 || report.Items[0].Outcome != FeatureCreated || f.featureOf(2) == "" {
+		t.Fatalf("report = %+v", report)
+	}
+}
+
+// A re-link of many commits, some named twice, reads and marks them in
+// chunks.
+func TestRelinkManyCommitsMarksTheirFeatures(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
+	f.assign(FeatureOptions{})
+	feature := f.featureOf(1)
+	f.exec(`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?, 1, 'c600', 0)`, repo)
+	var shas []string
+	var links []SessionCommit
+	for i := range 601 {
+		sha := fmt.Sprintf("c%d", i)
+		shas = append(shas, sha)
+		links = append(links, SessionCommit{Agent: "claude-code", SessionID: fmt.Sprintf("s%d", i), SHA: sha, Method: "entire", Confidence: 1})
+	}
+	shas = append(shas, "c600", "c1")
+	before := f.membership(feature)
+	if err := f.store.ReplaceSessionCommits(context.Background(), repo, shas, links, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.membership(feature) != before+1 {
+		t.Fatalf("membership %d, want %d", f.membership(feature), before+1)
 	}
 }

@@ -1,13 +1,12 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -129,9 +128,11 @@ type completerModel struct {
 	model string
 	usage agent.Usage
 	// rejections counts the replies the harness rejected against the
-	// schema; log receives their detail.
+	// schema, detail the last one's reason.
 	rejections int
-	log        *slog.Logger
+	detail     string
+	// attempt names the ledger row, for the log.
+	attempt Attempt
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
@@ -141,8 +142,8 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 	}
 	m.called, m.user = true, req.User
 	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema,
-		MaxOutputTokens: int(req.MaxOutputTokens), Logger: m.log})
-	m.model, m.usage, m.raw, m.rejections = out.Model, out.Usage, out.Document, out.Rejections
+		MaxOutputTokens: int(req.MaxOutputTokens)})
+	m.model, m.usage, m.raw, m.rejections, m.detail = out.Model, out.Usage, out.Document, out.Rejections, out.RejectionDetail
 	billed := func(err error) error {
 		return &decisions.BilledError{Model: out.Model, Usage: decisionUsage(out.Usage), Err: err}
 	}
@@ -282,7 +283,7 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
 	id, err := c.store.Begin(ctx, a)
-	return &completerModel{completer: completer, redactor: c.redactor, log: c.log}, id, "", err
+	return &completerModel{completer: completer, redactor: c.redactor, attempt: a}, id, "", err
 }
 
 // finish settles the attempt once its call returned: abandoned when the
@@ -303,11 +304,12 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 		state, reason = AttemptFailed, failureReason(callErr)
 	}
 	if m.rejections > 0 {
-		// The harness rejected a reply against the schema: kept with the
-		// attempt, the detail in the private log.
-		reason = strings.TrimPrefix(fmt.Sprintf("%s rejected_replies=%d", reason, m.rejections), " ")
+		// The harness rejected a reply against the schema: counted with the
+		// attempt, the reason in the private log.
+		c.log.Info("decision log: structured reply rejected", "stage", cmp.Or(m.attempt.Stage, StageCapture), "item", m.attempt.Item,
+			"attempt", id, "rejections", m.rejections, "detail", m.detail)
 	}
-	return state, spent, usage, c.store.Settle(ctx, id, state, reason, spent, usage)
+	return state, spent, usage, c.store.settle(ctx, id, state, reason, spent, usage, m.rejections)
 }
 
 // callResult is one feature stage call: its reply, or why none was made.

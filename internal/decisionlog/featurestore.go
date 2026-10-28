@@ -84,14 +84,21 @@ const (
 	VersionRetired  = "retired"
 )
 
-// migrate brings a store an earlier release made up to the schema: the
-// ledger's stage and item columns, and the pull requests' fork and default
-// branch columns, added when missing. Pull requests listed before the
-// latter are listed again: the sync state's ETag and cursor are reset.
+// migrate brings a store an earlier release made up to the schema, in one
+// transaction: the ledger's stage, item and rejections columns, and the pull
+// requests' fork and default branch columns, added when missing. Pull
+// requests listed before the latter are listed again: the sync state's ETag
+// and cursor are reset. A column another process added first means it
+// migrated the store.
 func migrate(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
 	have := map[string]bool{}
 	for _, table := range []string{"capture_attempt", "pull_request"} {
-		names, err := collect(scanString)(db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
+		names, err := collect(scanString)(tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
 		if err != nil {
 			return err
 		}
@@ -106,24 +113,27 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}{
 		{"capture_attempt.stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
 		{"capture_attempt.item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
+		{"capture_attempt.rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
 		{"pull_request.cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
 		{"pull_request.default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
 	} {
 		if have[column.name] {
 			continue
 		}
-		// Another process opening the store may add it first.
-		_, err := db.ExecContext(ctx, column.ddl)
-		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		if _, err := tx.ExecContext(ctx, column.ddl); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				return nil
+			}
 			return err
 		}
-		relist = relist || (err == nil && column.relist)
+		relist = relist || column.relist
 	}
 	if relist {
-		_, err := db.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // querier is a *sql.DB or *sql.Tx.
@@ -438,9 +448,10 @@ type SessionCommit struct {
 // with it and the features of its old and new sessions.
 func (s *Store) ReplaceSessionCommits(ctx context.Context, repository string, shas []string, links []SessionCommit, relinked time.Time) error {
 	now := s.now()
+	shas = slices.Compact(slices.Sorted(slices.Values(shas)))
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		before := map[string][]SessionKey{}
-		for chunk := range slices.Chunk(shas, 500) {
+		for chunk := range slices.Chunk(shas, maxParameters) {
 			args := []any{repository}
 			for _, sha := range chunk {
 				args = append(args, sha)
@@ -510,15 +521,22 @@ func markLinkChanges(ctx context.Context, tx *sql.Tx, repository string, shas []
 	if err != nil || version == 0 {
 		return err
 	}
-	args := []any{version, repository}
-	for _, sha := range shas {
-		args = append(args, sha)
-	}
-	held, err := collect(scanString)(tx.QueryContext(ctx, `SELECT DISTINCT fp.feature_id FROM pull_commit pc
+	var held []string
+	for chunk := range slices.Chunk(shas, maxParameters) {
+		args := []any{version, repository}
+		for _, sha := range chunk {
+			args = append(args, sha)
+		}
+		features, err := collect(scanString)(tx.QueryContext(ctx, `SELECT DISTINCT fp.feature_id FROM pull_commit pc
 JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
-WHERE pc.repository=?2 AND pc.sha IN (`+placeholders(3, len(shas))+`)`, args...))
-	if err != nil || len(held) == 0 {
-		return err
+WHERE pc.repository=?2 AND pc.sha IN (`+placeholders(3, len(chunk))+`)`, args...))
+		if err != nil {
+			return err
+		}
+		held = append(held, features...)
+	}
+	if len(held) == 0 {
+		return nil
 	}
 	linked, err := sessionFeatures(ctx, tx, version, repository, sessions)
 	if err != nil {

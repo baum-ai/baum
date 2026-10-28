@@ -88,9 +88,12 @@ not a failure.
    call to a tool Codex still offers, such as its patch or plan tool, makes
    another within the turn). The attempt
    is settled with its cost from the reported usage, or none when it cannot be
-   priced. Spend counts the cost, else the reservation. An attempt still
-   pending when the daemon starts is settled as abandoned and its reservation
-   counts.
+   priced, and with how many replies the harness rejected against the schema
+   (`rejections`; the last one's reason goes to the private log with the
+   attempt's stage, item and id). Spend counts the cost, else the
+   reservation. An attempt still pending when the daemon starts is settled as
+   abandoned and its reservation counts. A reply stands when the ledger
+   cannot be written after it; the failure is logged.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
@@ -112,7 +115,7 @@ changes; other skips only when it changes.
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
-  reservation, cost, tokens, state), with the `stage` that made the call
+  reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
 
 Settled attempts and obsolete decisions older than 90 days are pruned daily.
@@ -200,12 +203,10 @@ Placement and feature text call as capture does (steps 6 to 8 above): the
 same backend, model, reservation (the request's byte bound and the call's
 reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
 summary), daily cap and ledger, each attempt recorded with its stage
-(`feature_assign`, `feature_summary` or `pr_summary`) and item. An attempt
-whose reply the harness rejected against the schema before the last records
-how many (`rejected_replies=N`), the rejection detail going to the private
-log. A reply stands when the ledger cannot be written after it. A missing
-backend, an unpriced model or the daily cap stops the stage until its next
-run, with no failure counted.
+(`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
+replies and a ledger that cannot be written are handled as capture's. A
+missing backend, an unpriced model or the daily cap stops the stage until
+its next run, with no failure counted.
 
 ### Placement
 
@@ -235,7 +236,8 @@ pull request. Each of the item's paths a feature holds scores one over the
 number of these features holding it. The current feature comes first, then
 the features holding a pull request linked to the item (stacked on it or it
 on them: one's base branch is the other's head branch, other than the
-default branch, both in the repository rather than a fork, and opened from
+default branch (none while the default branch is not known), both in the
+repository rather than a fork, and opened from
 by one pull request only; sharing a linked session; or mentioned as `#N`),
 best path
 score first, then the best path scores of the rest (10), then the most

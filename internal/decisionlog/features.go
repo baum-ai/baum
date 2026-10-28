@@ -506,6 +506,8 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	if w.initErr != nil {
 		return nil, w.initErr
 	}
+	// A dry run is a manual one: it records no activation.
+	o.Manual = o.Manual || o.DryRun
 	r := &featureRun{w: w, repository: repository, dir: dir, opts: o, now: w.now(), reviews: map[int]string{}}
 	if _, err := r.refresh(ctx); err != nil {
 		return nil, err

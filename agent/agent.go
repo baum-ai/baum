@@ -122,6 +122,9 @@ type Result struct {
 	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
+	// LastRejection is a bounded copy of the last rejection's detail, which
+	// describes the document's shape, not repository content.
+	LastRejection string
 }
 
 // Event stores bounded metadata, never assistant text, tool output or search patterns.

@@ -407,7 +407,8 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 		// One key decision per address, the first named.
 		if address := addressOf(src.Decisions[index]); !keyed[address] {
 			keyed[address] = true
-			stored.KeyDecisions = append(stored.KeyDecisions, keyDecision{ID: src.Decisions[index].ID, decisionAddress: address})
+			stored.KeyDecisions = append(stored.KeyDecisions, keyDecision{ID: src.Decisions[index].ID, decisionAddress: address,
+				Ordinal: ordinalAt(src.Decisions, index)})
 		}
 	}
 	if pullErr == nil {
@@ -519,35 +520,83 @@ func featureTextHash(inputHash string, text featureText, decisions []Decision) s
 	if !ok {
 		return ""
 	}
-	keys := []decisionAddress{}
+	type hashed struct {
+		decisionAddress
+		Ordinal int `json:"ordinal"`
+	}
+	keys := []hashed{}
 	for _, key := range current {
-		keys = append(keys, key.decisionAddress)
+		keys = append(keys, hashed{key.decisionAddress, key.Ordinal})
 	}
 	encoded, _ := json.Marshal(struct {
-		Title        string            `json:"title"`
-		Description  string            `json:"description"`
-		Digest       string            `json:"digest"`
-		KeyDecisions []decisionAddress `json:"key_decisions"`
+		Title        string   `json:"title"`
+		Description  string   `json:"description"`
+		Digest       string   `json:"digest"`
+		KeyDecisions []hashed `json:"key_decisions"`
 	}{text.Title, text.Description, text.Digest, keys})
 	return summary.ContentHash(inputHash, string(encoded))
 }
 
-// keyDecision is a key decision as stored: its ID and its address.
+// keyDecision is a key decision as stored: its ID, its address and its
+// place among the decisions at that address (Ordinal).
 type keyDecision struct {
 	ID string `json:"id"`
 	decisionAddress
+	Ordinal int `json:"ordinal"`
 }
 
-// currentKeys maps key decisions to the current decisions at their
-// addresses, with those decisions' IDs; false when one has none.
+// UnmarshalJSON also reads a bare ID, an earlier form with no address.
+func (k *keyDecision) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		*k = keyDecision{}
+		return json.Unmarshal(data, &k.ID)
+	}
+	type plain keyDecision
+	return json.Unmarshal(data, (*plain)(k))
+}
+
+// ordinalAt is decision index's place among the decisions at its address.
+func ordinalAt(decisions []Decision, index int) int {
+	n := 0
+	for _, d := range decisions[:index] {
+		if addressOf(d) == addressOf(decisions[index]) {
+			n++
+		}
+	}
+	return n
+}
+
+// currentKeys maps key decisions to current decisions: the one with the
+// stored ID while it is current, else, at its address, the one at the same
+// place if not superseded, else the first not superseded, else the first;
+// false when one has none.
 func currentKeys(keys []keyDecision, decisions []Decision) ([]keyDecision, bool) {
 	out := make([]keyDecision, 0, len(keys))
 	for _, key := range keys {
-		i := slices.IndexFunc(decisions, func(d Decision) bool { return addressOf(d) == key.decisionAddress })
+		i := slices.IndexFunc(decisions, func(d Decision) bool { return d.ID == key.ID })
 		if i < 0 {
-			return nil, false
+			var at []int
+			for j, d := range decisions {
+				if key.Session != "" && addressOf(d) == key.decisionAddress {
+					at = append(at, j)
+				}
+			}
+			switch {
+			case len(at) == 0:
+				return nil, false
+			case key.Ordinal < len(at) && !decisions[at[key.Ordinal]].Superseded:
+				i = at[key.Ordinal]
+			default:
+				i = at[0]
+				for _, j := range at {
+					if !decisions[j].Superseded {
+						i = j
+						break
+					}
+				}
+			}
 		}
-		out = append(out, keyDecision{ID: decisions[i].ID, decisionAddress: key.decisionAddress})
+		out = append(out, keyDecision{ID: decisions[i].ID, decisionAddress: addressOf(decisions[i]), Ordinal: ordinalAt(decisions, i)})
 	}
 	return out, true
 }

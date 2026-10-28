@@ -34,7 +34,7 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	}
 	defer os.RemoveAll(dir)
 	run := agent.Request{Directory: dir, Prompt: sessions.GenerationRunMarker + "\n" + request.User, Schema: request.Schema,
-		MaxCalls: CompleteMaxTurns, MaxTokens: 1 << 30, Logger: request.Logger}
+		MaxCalls: CompleteMaxTurns, MaxTokens: 1 << 30}
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
@@ -45,5 +45,5 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(cmp.Or(request.MaxOutputTokens, maxOutputTokens))}
 	result, err := c.run(ctx, run, args, env, false)
 	return agent.Completion{Document: result.Document, Model: cmp.Or(result.Model, c.Model), Usage: result.Usage,
-		Rejections: result.StructuredOutputRejections}, err
+		Rejections: result.StructuredOutputRejections, RejectionDetail: result.LastRejection}, err
 }

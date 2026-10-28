@@ -373,7 +373,9 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	state, spent, _, err := calls.finish(write, attempt, model, callErr, ctx.Err() != nil)
 	report.Cost = spent
 	if err != nil {
-		return report, err
+		// The reply stands: a ledger that could not be written is not the
+		// call's failure.
+		c.logger().Warn("decision capture: call not settled in the ledger", "agent", t.Agent, "error", err)
 	}
 	if state == AttemptAbandoned {
 		// Cut short by the daemon stopping: not the session's failure.
